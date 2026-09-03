@@ -25,7 +25,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 
 // --- the mark, in fractions of the canvas --------------------------------------------
 // Everything below is normalised, so the same numbers draw the 16px favicon and the 1024
@@ -318,6 +318,13 @@ function ico(sizes) {
 const args = process.argv.slice(2)
 const sizeArg = args.indexOf('--size')
 const outArg = args.indexOf('--out')
+// `--root <dir>` writes the whole set under another folder. favicon-test.mjs uses it:
+// rendering into the checkout on every `npm test` left icon.png, build/icon.png and the
+// favicons modified in every worktree, and `lane.mjs ready` refuses a dirty checkout -
+// a release was held up on 2026-09-03 by blobs a test had rewritten (bytes differ per
+// machine, so git always saw a change).
+const rootArg = args.indexOf('--root')
+const root = rootArg === -1 ? repoRoot : args[rootArg + 1]
 
 if (outArg !== -1) {
   const size = sizeArg === -1 ? 1024 : Number(args[sizeArg + 1])

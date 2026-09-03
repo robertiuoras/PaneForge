@@ -408,8 +408,13 @@ if (event === 'pretool') {
   // The engine's own repository is always in the list, registered or not: it has lanes by
   // definition, and its guard has to work in a chat that has not prompted yet.
   const roots = [...new Set([...Object.keys(reg.repos), ENGINE_REPO])]
+  // The engine can be the INSTALLED app's resources folder (no .git, nobody releases
+  // from it). Reading a release mode off that made the guard refuse `npm version` in a
+  // source checkout that was in `merge` mode, and point at resources/ for the fix
+  // (2026-09-03). Only a checkout with a .git is a repo a release could come from.
   const modeOf = (repo) =>
-    reg.repos[repo]?.release ?? (repo === ENGINE_REPO ? engineReleaseMode() : null)
+    reg.repos[repo]?.release ??
+    (repo === ENGINE_REPO && existsSync(join(repo, '.git')) ? engineReleaseMode() : null)
 
   /** The registered repo a path belongs to - its own folder, or one of its lanes. */
   const ownerOf = (p) => {
