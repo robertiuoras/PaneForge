@@ -18,6 +18,7 @@ import {
   clientFromPath,
   clientFromText,
   nameFromHeading,
+  repeatedClient,
   titleCase,
   withAliases,
   type ClientEntry
@@ -137,4 +138,14 @@ export function clientForCwd(cwd: string): ClientEntry | undefined {
 export function clientForText(cwd: string, text: string): ClientEntry | undefined {
   const roster = rosterFor(cwd)
   return roster.length ? clientFromText(text, roster) : undefined
+}
+
+/**
+ * The client several asks agree this pane is for - see `repeatedClient`. A name lifted
+ * from a sentence is inference, so unlike `clientForCwd` it needs the desk to have said
+ * the same thing three times before it is allowed to rename anything.
+ */
+export function clientForTexts(cwd: string, asks: string[]): ClientEntry | undefined {
+  const roster = rosterFor(cwd)
+  return roster.length ? repeatedClient(asks, roster) : undefined
 }

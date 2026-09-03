@@ -27,7 +27,17 @@ buildSync({
   platform: 'node',
   outfile: out
 })
+const outPlace = join(work, 'place.cjs')
+buildSync({
+  absWorkingDir: root,
+  entryPoints: ['src/shared/place.ts'],
+  bundle: true,
+  format: 'cjs',
+  platform: 'node',
+  outfile: outPlace
+})
 const { topicTitle, mayTopicName } = createRequire(import.meta.url)(out)
+const { projectTag } = createRequire(import.meta.url)(outPlace)
 
 const cases = [
   ['/Users/robertiuoras/Projects/PaneForge', 'pizzasrus and the invoice template'],
@@ -45,4 +55,34 @@ for (const [cwd, ask] of cases) {
     `      ${folder.padEnd(26)} ${('"' + ask + '"').padEnd(38)} ${named || folder + '   (folder name kept)'}`
   )
 }
-console.log('      before this build: "Pizzasrus And Invoice Tem", on any folder\n')
+console.log('      before this build: "Pizzasrus And Invoice Tem", on any folder')
+
+// docs/brief-session-naming-2026-09-04.md - four cards read off this session's own asks,
+// each a defect in the rule rather than in the app: an opener that ate the budget, a name
+// that dangled on a filler word, two trailing fillers in a row, and two verbs where the
+// card had room for one.
+const fixed = [
+  ['whenever you open the dev window it will say whats different', 'Whenever You Open Dev'],
+  ['can you measure right now why im lagging?', 'Measure Right Now Why'],
+  ['we need to tune the naming of session as well, broken like this', 'Tune Naming Of As'],
+  ['when pressing on sidebar icon everything breaks', 'Fixing Pressing On Sidebar']
+]
+console.log('\n      the four defects Robert was shown, before and after this build')
+console.log('      first ask                                                    before this build       ->  now')
+for (const [ask, before] of fixed) {
+  console.log(`      ${('"' + ask + '"').padEnd(60)} ${before.padEnd(24)} ->  ${topicTitle(ask)}`)
+}
+
+// The addition: a name says WHICH PROJECT it belongs to, appended after the subject.
+console.log('\n      subject                       project      tag        card reads')
+for (const [subject, project] of [
+  ['Dev Window Testing', 'PaneForge'],
+  ['Sort Invoice Reminders', 'taskdriver.ai'],
+  ['Chasing Invoices', 'Cars']
+]) {
+  const tag = projectTag(project)
+  console.log(
+    `      ${subject.padEnd(29)} ${project.padEnd(12)} ${tag.padEnd(10)} ${subject} · ${tag}`
+  )
+}
+console.log('')

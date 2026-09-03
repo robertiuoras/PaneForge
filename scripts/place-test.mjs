@@ -29,7 +29,8 @@ buildSync({
   platform: 'node',
   outfile: out
 })
-const { describePlace, isTrunk, laneOfCheckout, paneRef, projectOf, samePlace } = createRequire(import.meta.url)(out)
+const { describePlace, isTrunk, laneOfCheckout, paneRef, projectOf, projectTag, samePlace } =
+  createRequire(import.meta.url)(out)
 
 let checks = 0
 const is = (actual, expected, what) => {
@@ -193,6 +194,22 @@ is(
   'taskdriver.ai',
   'and the strip then names the project instead of the folder'
 )
+
+// ---------------------------------------------------------------------------
+// projectTag - which project a card is in, said beside a subject: `Chasing Invoices · Cars`
+
+is(projectTag('Cars'), 'Cars', 'a short project name is shown whole')
+is(projectTag('Momin'), 'Momin', 'and so is another')
+is(projectTag('PaneForge'), 'PF', 'a longer name with internal capitals is its initials')
+is(projectTag('taskdriver.ai'), 'TA', 'a longer name with a separator is initials too')
+is(projectTag('clients'), 'clients', 'short enough to say whole, even for a folder name')
+is(projectTag(''), '', 'no project, no tag')
+is(projectTag('supercalifragilistic'), 'supercal', '')
+is(projectTag('supercalifragilistic').length, 8, 'one part, no humps, is capped to 8 characters')
+// "Never invent a tag for a pane whose name is ALREADY the project" is the CALLER's job,
+// not projectTag's - projectTag only ever answers what the tag would say. A card titled
+// `PaneForge` must not print `PaneForge · PF`, which is a caller check (title === project)
+// done before this function is ever called, not something projectTag decides on its own.
 
 rmSync(work, { recursive: true, force: true })
 console.log(`PASS place: ${checks} assertions`)
