@@ -159,6 +159,37 @@ export const IDLE_CLOSE_MINUTES = 5
  * of resources".
  */
 export const IDLE_SLEEP_MINUTES = 5
+/**
+ * The idle wait a finished pane gets while the machine is MEASURED short of memory (the
+ * capacity verdict's own level, 'tight' or 'over' - never a pane count, never a clock).
+ *
+ * This is the pause Robert asked for on 2026-09-03: "add pause feature where sessions are
+ * paused so that i can create a new session local and work on something just to save
+ * resources and dont crash again". A pane whose agent has finished and that nobody is
+ * reading gives its ~190 MB back within a minute of the desk getting tight, and within
+ * half a minute once it is over - its card, screen and conversation stay exactly where
+ * they were, and a press wakes it. That is a cheaper rung than moving work to the other
+ * machine or closing anything, and it runs BEFORE either: it is what makes room for the
+ * next pane to start on this desk.
+ *
+ * Half a minute at 'over' rather than zero: the pane that just went quiet is the one
+ * whose reply somebody is about to read, and `focused`/`watched` only cover the pane
+ * they are already looking at.
+ */
+export const TIGHT_SLEEP_MINUTES = 1
+export const OVER_SLEEP_MINUTES = 0.5
+export type SleepPressure = 'ok' | 'tight' | 'over'
+
+/** How long a finished pane must have been quiet before it is put to sleep, in ms. */
+export function pressureSleepMs(minutes: number, pressure: SleepPressure): number {
+  const m =
+    pressure === 'over'
+      ? Math.min(minutes, OVER_SLEEP_MINUTES)
+      : pressure === 'tight'
+        ? Math.min(minutes, TIGHT_SLEEP_MINUTES)
+        : minutes
+  return m * 60_000
+}
 
 export const DEFAULT_RECLAIM: ReclaimConfig = {
   enabled: true,
@@ -563,12 +594,13 @@ export function idleSleepPlan(
   panes: ReclaimPane[],
   cfg: ReclaimConfig = DEFAULT_RECLAIM,
   now = 0,
-  personHere = true
+  personHere = true,
+  pressure: SleepPressure = 'ok'
 ): Reclaim[] {
   if (!cfg.enabled) return []
   const minutes = Math.max(0, cfg.idleSleepMinutes ?? IDLE_SLEEP_MINUTES)
   if (!minutes) return []
-  const minIdle = minutes * 60_000
+  const minIdle = pressureSleepMs(minutes, pressure)
   return panes
     .filter((p) => sleepable(p, personHere))
     .filter((p) => now - quietSince(p) >= minIdle)

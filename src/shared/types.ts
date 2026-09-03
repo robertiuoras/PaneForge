@@ -2280,6 +2280,12 @@ export interface Api {
   onLaneMoved(cb: (id: string, message: string) => void): () => void
   /** A queued handoff finished, failed, or gave up waiting - said on screen, not only logged. */
   onHandoffMoved(cb: (message: string) => void): () => void
+  /** A new pane the app decided to start on the other machine, before it does. */
+  onOffloadSoon(
+    cb: (ask: { id: string; project: string; deviceName: string; reason: string; deadline: number }) => void
+  ): () => void
+  /** Answer that card: `go` false keeps the pane on this machine. */
+  answerOffload(id: string, go: boolean): Promise<void>
   /**
    * Absolute path of a dropped File. Electron removed File.path, so the real path
    * only comes from webUtils in the preload.

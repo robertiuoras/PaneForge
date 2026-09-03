@@ -33,6 +33,7 @@ import SessionInfo from './components/SessionInfo'
 import HandoffDialog, { type HandoffTarget } from './components/HandoffDialog'
 import Mascot, { type CloseSoon } from './components/Mascot'
 import MoveSoon, { soonKey } from './components/MoveSoon'
+import OffloadSoon from './components/OffloadSoon'
 import StopServer from './components/StopServer'
 import { chordAllowed, raiseLogin, type LoginRequest } from '../../shared/remoteLogin'
 import LoginCard from './components/LoginCard'
@@ -106,6 +107,7 @@ import {
   DEFAULT_RECLAIM,
   idleClosePlan,
   idleSleepPlan,
+  type SleepPressure,
   sameDeadline,
   idleCloseAt,
   quietSince,
@@ -2877,6 +2879,8 @@ export default function App(): JSX.Element {
    * different questions at different lengths and one loop doing both would have to agree
    * with `idleCloseAt` about a deadline this rung does not publish.
    */
+  const pressure: SleepPressure =
+    capacity?.level === 'over' ? 'over' : capacity?.level === 'tight' ? 'tight' : 'ok'
   useEffect(() => {
     const cfg = config?.reclaim ?? DEFAULT_RECLAIM
     if (!cfg.enabled) return
@@ -2898,13 +2902,19 @@ export default function App(): JSX.Element {
         deskNow(Date.now(), awayRef.current),
         // ...and whether `focused` means anything: on a desk nobody has touched the app
         // focused that pane by itself. See `keepable` in shared/reclaim.ts.
-        personRef.current
+        personRef.current,
+        // Short of memory, a finished pane is paused within a minute instead of five - the
+        // cheapest rung there is, and the one that makes room for the next pane to start
+        // HERE rather than on the other machine. See `pressureSleepMs`.
+        pressure
       )
       for (const p of plan) void api.sleepSession(p.id)
     }
-    const timer = window.setInterval(sweep, 60_000)
+    // A verdict turning tight is the moment to act, not up to a minute later.
+    if (pressure !== 'ok') sweep()
+    const timer = window.setInterval(sweep, pressure === 'ok' ? 60_000 : 15_000)
     return () => window.clearInterval(timer)
-  }, [config?.reclaim])
+  }, [config?.reclaim, pressure])
 
   /**
    * The same clock for the whole app: quit when nobody has used PaneForge for a while.
@@ -6895,6 +6905,8 @@ export default function App(): JSX.Element {
           doSoonNow(ids)
         }
       />
+      {/* A new pane the app decided to start on the other machine, before it does. */}
+      <OffloadSoon />
       {/* A pane that has just worked out whose work it is doing. */}
       <ClientToast
         named={clientNamed}

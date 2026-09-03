@@ -53,14 +53,22 @@ const at = (over) => ({
   cwd: '/Users/robert/Projects/taskdriver',
   peerAlive: true,
   peerBusyPanes: 0,
+  pressure: 'normal',
+  mode: 'auto',
   ...over
 })
 
 // --- the refusals, which come first ------------------------------------------------------
 
-is(placeNewPane(at({ keepHere: true })).where, 'local', 'a kept project never leaves')
+is(placeNewPane(at({ mode: 'never' })).where, 'local', 'never keeps every pane here')
 is(
-  placeNewPane(at({ machineBound: 'Chrome' })).where,
+  placeNewPane(at({ mode: 'never', pressure: 'critical' })).where,
+  'local',
+  '...whatever the desk says'
+)
+is(placeNewPane(at({ keepHere: true, mode: 'always' })).where, 'local', 'a kept project never leaves')
+is(
+  placeNewPane(at({ machineBound: 'Chrome', mode: 'always' })).where,
   'local',
   'work driving a browser on this screen never leaves'
 )
@@ -69,60 +77,37 @@ ok(
   '...and the refusal names what pinned it'
 )
 
-// --- 2026-09-03: a pane started here starts here, no matter what --------------------------
-//
-// Robert: "its automatically starting session remote when i want to start it on this
-// laptop. if load is a lot then it can handoff mid session running with the countdown,
-// but at the start i need to be able to start sessions here no matter what if i want to."
-// Nothing this machine can measure about itself - and no "the work looks self-contained
-// enough" guess - may move an unpicked pane at start any more.
-
-is(
-  placeNewPane(at({ pressure: 'critical' })).where,
-  'local',
-  'machine measured full: still local'
-)
-is(
-  placeNewPane(at({ pressure: 'warn' })).where,
-  'local',
-  '...even just warned'
-)
-is(
-  placeNewPane(at({ mode: 'always' })).where,
-  'local',
-  'self-contained work: still local, even with the old always switch set'
-)
-is(
-  placeNewPane(at({ mode: 'always', pressure: 'critical' })).where,
-  'local',
-  '...both at once'
-)
-is(
-  placeNewPane(at({ localPanes: 9 })).where,
-  'local',
-  'nine panes with room is not a reason'
-)
-is(placeNewPane(at({ onBattery: true })).where, 'local', 'battery is not a reason')
-
 // --- the person's own pane ---------------------------------------------------------------
 //
 // 2026-09-02: Robert pressed + on the Mac with two panes running and the pane opened on
 // the PC. A pane with no brief is somebody about to type into it, and it stays under
-// their hands.
+// their hands whatever the desk says and whatever the switch says.
 
-is(placeNewPane(at({ prompt: undefined })).where, 'local', 'a bare + stays here')
-is(placeNewPane(at({ prompt: '   ' })).where, 'local', '...blank is bare')
+is(placeNewPane(at({ prompt: undefined, pressure: 'critical' })).where, 'local', 'a bare + stays here')
+is(placeNewPane(at({ prompt: '   ', pressure: 'critical' })).where, 'local', '...blank is bare')
+is(placeNewPane(at({ prompt: undefined, mode: 'always' })).where, 'local', '...even set to always')
+is(
+  placeNewPane(at({ prompt: undefined, pressure: 'critical', mode: 'always' })).where,
+  'local',
+  '...even out of memory, set to always'
+)
 ok(/yourself/.test(placeNewPane(at({ prompt: undefined })).reason), '...and says whose pane it is')
-is(placeNewPane(at({})).where, 'local', 'a brief with nothing picked stays here too, now')
+is(placeNewPane(at({ pressure: 'critical' })).where, 'remote', 'the same desk with a brief still sends it')
+// 2026-09-03: 'warn' is the everyday reading of a 16 GB desk, and moving on it sent every
+// briefed pane to the PC. Only a desk measured OUT of memory moves work at start; at
+// 'warn' the sleep rung is making room here.
+is(placeNewPane(at({ pressure: 'warn' })).where, 'local', 'a desk merely getting low keeps the pane')
+is(placeNewPane(at({ pressure: 'normal' })).where, 'local', '...and a desk with room does')
 
 is(
-  placeNewPane(at({ resumes: true })).where,
+  placeNewPane(at({ resumes: true, pressure: 'critical' })).where,
   'local',
   'a resumed conversation stays with its transcript'
 )
+is(placeNewPane(at({ resumes: true, mode: 'always' })).where, 'local', '...even set to always')
 
 is(
-  placeNewPane(at({ devServer: 'dev' })).where,
+  placeNewPane(at({ devServer: 'dev', pressure: 'critical' })).where,
   'local',
   'a project already serving from here stays here'
 )
@@ -153,7 +138,7 @@ is(pinned('write a migration for the users table'), undefined, '...and this')
 is(pinned(''), undefined, 'an empty brief pins nothing - the bare rule owns it')
 is(pinned(undefined), undefined, '...and so does undefined')
 is(
-  placeNewPane(at({ prompt: 'compare with ~/Desktop/old.png' })).where,
+  placeNewPane(at({ prompt: 'compare with ~/Desktop/old.png', pressure: 'critical' })).where,
   'local',
   'a pinned brief stays here'
 )
@@ -161,45 +146,83 @@ ok(
   placeNewPane(at({ prompt: 'compare with ~/Desktop/old.png' })).reason.includes('Desktop/old.png'),
   '...and the reason names the file'
 )
+is(
+  placeNewPane(at({ prompt: 'the page on localhost:3006 is blank', mode: 'always' })).where,
+  'local',
+  '...even set to always'
+)
 
 // The control: an unmeasured folder is a folder nobody has asked about, and guessing
 // remote opens a pane in a directory the other machine does not have.
 is(
-  placeNewPane(at({ shareable: undefined })).where,
+  placeNewPane(at({ shareable: undefined, pressure: 'critical' })).where,
   'local',
-  'an unmeasured folder stays here - not read at all without a pick'
-)
-is(placeNewPane(at({ peerAlive: false })).where, 'local', 'no live peer, no move')
-
-// --- the person's own pick, the only way a start pane leaves this desk --------------------
-
-is(placeNewPane(at({ where: 'local' })).where, 'local', 'picked this machine: final')
-is(placeNewPane(at({ where: 'remote', prompt: undefined })).where, 'remote', 'picked the other machine: a bare pane still goes')
-is(placeNewPane(at({ where: 'remote', keepHere: true })).where, 'remote', '...over a kept project')
-is(placeNewPane(at({ where: 'remote', resumes: true })).where, 'remote', '...over a resume')
-is(placeNewPane(at({ where: 'remote', shareable: false })).where, 'local', 'but not onto a machine without the folder')
-is(placeNewPane(at({ where: 'remote', peerAlive: false })).where, 'local', '...nor one that is offline')
-is(
-  placeNewPane(at({ where: 'remote', peerBusyPanes: PEER_FULL_PANES })).where,
-  'local',
-  '...nor one that is full'
+  'an unmeasured folder stays here'
 )
 is(
-  placeNewPane(at({ where: 'remote', peerBusyPanes: PEER_FULL_PANES - 1 })).where,
+  placeNewPane(at({ shareable: undefined, mode: 'always' })).where,
+  'local',
+  '...even set to always'
+)
+ok(
+  placeNewPane(at({ shareable: undefined })).reason !== placeNewPane(at({ shareable: false })).reason,
+  'unmeasured and unshareable are different sentences'
+)
+is(placeNewPane(at({ shareable: false, mode: 'always' })).where, 'local', 'a folder with nowhere to push stays here')
+
+is(placeNewPane(at({ peerAlive: false, pressure: 'critical' })).where, 'local', 'no live peer, no move')
+is(placeNewPane(at({ peerAlive: false, mode: 'always' })).where, 'local', '...even set to always')
+
+is(
+  placeNewPane(at({ peerBusyPanes: PEER_FULL_PANES, pressure: 'critical' })).where,
+  'local',
+  'a peer already full is not a destination'
+)
+is(
+  placeNewPane(at({ peerBusyPanes: PEER_FULL_PANES - 1, pressure: 'critical' })).where,
   'remote',
   '...and one pane under it still is'
 )
 ok(
-  placeNewPane(at({ where: 'remote', peerBusyPanes: PEER_FULL_PANES })).reason.includes(String(PEER_FULL_PANES)),
+  placeNewPane(at({ peerBusyPanes: PEER_FULL_PANES, pressure: 'critical' })).reason.includes(String(PEER_FULL_PANES)),
   '...and the refusal carries the count'
 )
+
+// --- auto: what the desk says ------------------------------------------------------------
+
+is(placeNewPane(at({ pressure: 'normal' })).where, 'local', 'a desk with room keeps its new pane')
+is(placeNewPane(at({ pressure: undefined })).where, 'local', '...and an unmeasured desk is a desk with room')
+is(placeNewPane(at({ pressure: 'warn' })).where, 'local', 'a desk the kernel is merely warning about keeps it - the sleep rung is making room')
+is(placeNewPane(at({ pressure: 'critical' })).where, 'remote', '...and a struggling one does')
+ok(/memory|lagging/.test(placeNewPane(at({ pressure: 'warn' })).reason), '...and says which reading')
+// The 2026-09-02 rule, pinned dead: a MacBook that is the desk has many panes and is on
+// battery all day, and neither is a measurement of anything.
+is(placeNewPane(at({ pressure: 'normal', localPanes: 9 })).where, 'local', 'nine panes with room is not a reason')
+is(placeNewPane(at({ pressure: 'normal', onBattery: true })).where, 'local', 'battery is not a reason')
+
+// --- the person's own pick ---------------------------------------------------------------
+
+is(placeNewPane(at({ where: 'local', mode: 'always', pressure: 'critical' })).where, 'local', 'picked this machine: final')
+is(placeNewPane(at({ where: 'remote', prompt: undefined })).where, 'remote', 'picked the other machine: a bare pane still goes')
+is(placeNewPane(at({ where: 'remote', mode: 'never' })).where, 'remote', '...over the never switch')
+is(placeNewPane(at({ where: 'remote', keepHere: true })).where, 'remote', '...over a kept project')
+is(placeNewPane(at({ where: 'remote', resumes: true })).where, 'remote', '...over a resume')
+is(placeNewPane(at({ where: 'remote', shareable: false })).where, 'local', 'but not onto a machine without the folder')
+is(placeNewPane(at({ where: 'remote', peerAlive: false })).where, 'local', '...nor one that is offline')
+is(placeNewPane(at({ where: 'remote', peerBusyPanes: PEER_FULL_PANES })).where, 'local', '...nor one that is full')
 ok(/chose/.test(placeNewPane(at({ where: 'remote' })).reason), '...and the reason says who chose')
 ok(/chose/.test(placeNewPane(at({ where: 'local' })).reason), '...both ways')
+
+// --- always ------------------------------------------------------------------------------
+
+is(placeNewPane(at({ pressure: 'normal', mode: 'always' })).where, 'remote', 'always sends it with room to spare')
 
 // --- every answer explains itself --------------------------------------------------------
 
 const cases = [
   at({}),
+  at({ mode: 'never' }),
+  at({ mode: 'always' }),
   at({ shareable: undefined }),
   at({ shareable: false }),
   at({ peerAlive: false }),
@@ -218,7 +241,7 @@ const cases = [
 ]
 for (const c of cases) {
   const p = placeNewPane(c)
-  ok(p.reason.length > 8, `every answer carries a reason (${JSON.stringify(c.where)})`)
+  ok(p.reason.length > 8, `every answer carries a reason (${JSON.stringify(c.mode)})`)
   ok(!/\b(lane|worktree|trunk|checkout|origin|repo|commit)\b/i.test(p.reason), `plain words: "${p.reason}"`)
 }
 
