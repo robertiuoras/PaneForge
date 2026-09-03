@@ -19,6 +19,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { devPlan, devSignalOf, inRepo, managerFor, type DevServer } from '../shared/devServers'
 import { runningDevs, type DevPane, type RunningDev } from '../shared/devList'
+import { cwdsFor } from './devList'
 
 const WIN = process.platform === 'win32'
 
@@ -172,7 +173,13 @@ export function localDevCommand(dir: string, script: string): string | null {
 export async function listRunningDevs(panes: DevPane[]): Promise<RunningDev[]> {
   const procs = await table()
   if (!procs.length) return []
-  return runningDevs(procs, panes)
+  const seen = runningDevs(procs, panes)
+  // A server no pane started is the one somebody has to ask about, and until its own
+  // folder is read it has nothing to be called. Only those pids are looked up - a `lsof`
+  // per dev server on a desk where every one of them is owned would be work for nothing.
+  const unowned = seen.filter((d) => d.paneId === null).map((d) => d.pid)
+  if (!unowned.length) return seen
+  return runningDevs(procs, panes, await cwdsFor(unowned))
 }
 
 /**

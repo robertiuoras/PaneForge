@@ -2172,6 +2172,12 @@ export interface Api {
    * card is never an error and never empty. See `shared/whatsNew.ts`.
    */
   whatsNew(): Promise<import('./whatsNew').WhatsNew | null>
+  /**
+   * The change list for a dev copy, as steps to walk through - `null` when there is
+   * nothing to show (the installed app, or a build that is not ahead of it). See
+   * `shared/tour.ts`.
+   */
+  tour(): Promise<import('./tour').TourState | null>
   /** replay of everything the pty printed so far, for re-attaching a pane */
   getBuffer(id: string): Promise<string>
   /**

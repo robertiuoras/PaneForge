@@ -52,6 +52,7 @@ export const SURFACE: Surface = {
   quitIdle: ['invoke', 'app:quitIdle'],
   getBuffer: ['invoke', 'sessions:buffer'],
   whatsNew: ['invoke', 'app:whatsNew'],
+  tour: ['invoke', 'app:tour'],
   paneLog: ['invoke', 'sessions:log'],
   pipePane: ['invoke', 'sessions:pipe'],
   reorderSessions: ['send', 'sessions:reorder'],
