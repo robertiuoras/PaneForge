@@ -161,6 +161,7 @@ import UpdateToast from './components/UpdateToast'
 import WhatsNewCard from './components/WhatsNewCard'
 import Tips from './components/Tips'
 import { DEFAULT_TIPS } from '../../shared/tips'
+import { folderLabel } from '../../shared/revealPane'
 
 /**
  * When this window opened.
@@ -3565,9 +3566,8 @@ export default function App(): JSX.Element {
           id: 'reveal',
           group: 'This pane',
           title: 'Open folder in Explorer',
-          hint: 'the project folder - to reach the agent, drag files onto the pane',
-          run: () =>
-            void api.revealProject(active.cwd, active.title).then((p) => p || flash('That folder is gone.'))
+          hint: `this pane's own folder - ${folderLabel(active.cwd)}. To reach the agent, drag files onto the pane.`,
+          run: () => void api.revealPane(active.cwd).then((p) => p || flash('That folder is gone.'))
         },
         {
           id: 'board',
@@ -5881,14 +5881,12 @@ export default function App(): JSX.Element {
                   <button
                     className="icon desk-only pt-reveal"
                     title={
-                      /* A lane is a worktree and its untracked files are swept with it,
-                         so this opens the PROJECT. Dropping a file where the agent can
-                         read it is what dragging onto the pane is for. */
-                      `Open this project in Explorer - to reach the agent, drag files onto this pane`
+                      /* Always this pane's own folder, never the project it belongs to -
+                         see shared/revealPane.ts. The basename is on the tooltip so a
+                         mismatch is visible before the click, not after it. */
+                      `Open ${folderLabel(s.cwd)} in Explorer - to reach the agent, drag files onto this pane`
                     }
-                    onClick={() =>
-                      void api.revealProject(s.cwd, s.title).then((p) => p || flash('That folder is gone.'))
-                    }
+                    onClick={() => void api.revealPane(s.cwd).then((p) => p || flash('That folder is gone.'))}
                   >
                     📁
                   </button>
@@ -6643,7 +6641,13 @@ export default function App(): JSX.Element {
                     {
                       key: 'reveal',
                       label: 'Open folder',
-                      hint: 'reveal this project - drag files onto the pane to reach the agent',
+                      hint: `this pane's own folder, ${folderLabel(s.cwd)} - drag files onto the pane to reach the agent`,
+                      run: () => void api.revealPane(s.cwd).then((p) => p || flash('That folder is gone.'))
+                    },
+                    {
+                      key: 'reveal-project',
+                      label: 'Open the main copy of this project',
+                      hint: 'a different folder than this pane\'s own - use this to see the whole project, not just this session\'s work',
                       run: () => void api.revealProject(s.cwd, s.title).then((p) => p || flash('That folder is gone.'))
                     },
                     { key: 'folder', label: 'Open in editor', run: () => void api.openInEditor(s.cwd).then((err) => err && flash(err)) },

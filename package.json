@@ -176,6 +176,7 @@
     "eval:prompts:live": "node scripts/prompt-eval.mjs --live",
     "eval:prompts:report": "node scripts/prompt-eval.mjs --report",
     "test:reveal": "node scripts/reveal-test.mjs",
+    "test:revealpane": "node scripts/reveal-pane-test.mjs",
     "test:restore": "node scripts/restore-context-test.mjs",
     "test:consoles": "node scripts/console-sweep-test.mjs",
     "test:caffeinate": "node scripts/caffeinate-orphan-test.mjs",

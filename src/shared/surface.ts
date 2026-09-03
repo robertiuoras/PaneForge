@@ -81,6 +81,7 @@ export const SURFACE: Surface = {
   onDiscordStatus: ['on', 'discord:status'],
   reveal: ['send', 'shell:reveal'],
   revealProject: ['invoke', 'shell:revealProject'],
+  revealPane: ['invoke', 'shell:revealPane'],
   pathKind: ['invoke', 'shell:pathKind'],
   openInEditor: ['invoke', 'shell:editor'],
   openExternal: ['send', 'shell:external'],
