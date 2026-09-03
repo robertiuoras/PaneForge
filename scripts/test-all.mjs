@@ -189,6 +189,7 @@ const TESTS = [
   ['history', 'history-prune-test.mjs'],
   ['buffer', 'outbuffer-test.mjs'],
   ['notes', 'release-notes-test.mjs'],
+  ['uploadretry', 'release-upload-retry-test.mjs'],
   ['pickrelease', 'pickrelease-test.mjs'],
   ['promote', 'promote-test.mjs'],
   ['stash', 'stash-test.mjs'],
