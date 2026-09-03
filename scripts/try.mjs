@@ -1,6 +1,10 @@
 // Open the working copy as a SECOND PaneForge, beside the one you are sitting in:
 //   npm run try            build, then launch it as the `dev` profile, minimized
 //   npm run try -- --keep  skip the build and just launch what is already in out/
+//   npm run try -- --pull  fast-forward this checkout to origin first, then build and launch -
+//                          the way a change merged from the OTHER machine is tested here
+//                          (Robert 2026-09-04: no release until it was tried in a dev window,
+//                          on the PC and on the Mac)
 //   npm run try -- --show  put the window on screen (still without taking focus)
 //
 // Minimized is the DEFAULT, not an option. This is normally run by an agent working in
@@ -36,6 +40,7 @@ const keep = args.includes('--keep')
 const minimized = !args.includes('--show')
 const close = args.includes('--close')
 const clipboardTest = args.includes('--clipboard-test')
+const pull = args.includes('--pull')
 
 // `npm run try -- --close` shuts the test copy without touching the live app. Lane
 // release calls the same thing, so this is only for closing one by hand mid-session.
@@ -61,7 +66,7 @@ const profile = (args.find((a) => a.startsWith('--profile='))?.split('=')[1] ?? 
 // --remote-debugging-port=<n>: with it, a change to how a pane handles the mouse or lays
 // itself out can be checked against the real window instead of a screenshot of it.
 const passThrough = args.filter(
-  (a) => !['--keep', '--minimized', '-m', '--show', '--close', '--clipboard-test'].includes(a) && !a.startsWith('--profile=')
+  (a) => !['--keep', '--minimized', '-m', '--show', '--close', '--clipboard-test', '--pull'].includes(a) && !a.startsWith('--profile=')
 )
 
 // A UI copy test must never replace the user's real clipboard, including non-text
@@ -93,8 +98,25 @@ if (!existsSync(electron)) {
 // "the dev copy isn't loading", and it survives every relaunch because `--keep` never looks.
 // So the page the launch depends on is checked, and a build that is not there is built
 // whatever was asked for - being loud costs a few seconds, being blank costs an hour.
+if (pull) {
+  // A dirty checkout is never pulled over: the point is to test what MASTER holds, and a
+  // half-edited file would make the window show neither that nor the edit.
+  const dirty = spawnSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' })
+  if (dirty.status !== 0 || dirty.stdout.trim()) {
+    console.error('== --pull refused: this checkout has uncommitted changes. Commit them or drop --pull.')
+    process.exit(1)
+  }
+  console.log('== Pulling origin (fast-forward only)')
+  const p = spawnSync('git', ['pull', '--ff-only'], { cwd: root, stdio: 'inherit' })
+  if (p.status !== 0) {
+    console.error('== --pull failed: this branch does not fast-forward onto origin. Merge first.')
+    process.exit(p.status ?? 1)
+  }
+  const head = spawnSync('git', ['log', '-1', '--format=%h %s'], { cwd: root, encoding: 'utf8' }).stdout.trim()
+  console.log(`== Testing ${head}`)
+}
 const page = join(root, 'out', 'renderer', 'index.html')
-if (!keep || !existsSync(page)) {
+if (pull || !keep || !existsSync(page)) {
   if (keep) console.log('== out/renderer/index.html is missing - building anyway (--keep would open a blank window)')
   else console.log('== Building')
   const r = spawnSync('npm', ['run', 'build'], {
