@@ -28,6 +28,7 @@ import {
   type TopicReading
 } from '../shared/clientName'
 import { handleOf, resolvedName } from '../shared/resolvedName'
+import { chromeCdpFor } from '../shared/peerChrome'
 import type { ClientNamed } from '../shared/types'
 
 /**
@@ -2434,6 +2435,9 @@ export class SessionManager extends EventEmitter {
         // a pane for a sub-task is told when that pane is done without being able to name
         // itself any other way - nothing else in the environment says which card this is.
         ...(id ? { PF_PANE: id } : {}),
+        // Where the Chrome this pane may drive is, when the pane was started for another
+        // desk: browser work stops being a reason to keep a pane here. `shared/peerChrome.ts`.
+        ...(chromeCdpFor(req.fromAddress) ? { PF_CHROME_CDP: chromeCdpFor(req.fromAddress)! } : {}),
         ...(req.laneEnv ?? {})
       }
     })

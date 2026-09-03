@@ -188,6 +188,12 @@ hotkey earns the foreground.
 `src/main/remote/` lets a second device drive this one's panes. Both ends are peers.
 
 - No self-pair: `Remote.probe` refuses id==ours; `start()` drops one already saved.
+- A pane started over the link is told where the asking desk's Chrome is:
+  `PF_CHROME_CDP=http://<address it connected from>:9333` (`shared/peerChrome.ts`, host stamps
+  `fromAddress` on `start`). The Mac serves its CDP port on the tailnet (`tailscale serve --bg
+  --tcp 9333`); claude-config's `browser/chrome-devtools-mcp.mjs`, `cdp-bg-tab.mjs` and
+  `chrome-automation.sh` probe it before use, and `wrong-machine.mjs` (PC PreToolUse) queues a
+  pane back through `remote:handoff` when a call needs the Mac. `npm run test:peerchrome`.
 - Pty never moves: agent, checkout, transcript, worktree stay put. Session id `@<device>/<id>`;
   `remote.owns(id)` routes every message.
 - Mirror borrows terminal size, never owns it (`resize(borrowed)`, `main/sessions.ts`);

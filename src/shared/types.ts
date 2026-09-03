@@ -444,6 +444,12 @@ export interface PipeInfo {
 
 export interface StartSessionRequest {
   cwd: string
+  /**
+   * Set by the remote host on a start that arrived over the link: the address the asking
+   * desk connected from. The pane is told where that desk's Chrome is (`PF_CHROME_CDP`,
+   * `shared/peerChrome.ts`); a local start carries none.
+   */
+  fromAddress?: string
   title?: string
   agent?: Agent
   model?: string

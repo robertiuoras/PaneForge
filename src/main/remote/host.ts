@@ -374,7 +374,9 @@ export class RemoteHost extends EventEmitter {
           this.backend.switchAgent(id, String(m.agent ?? ''), (m.model as string) || undefined)
           return
         case 'start': {
-          const req = m.req as StartSessionRequest
+          // The asking desk's address rides on the request: its Chrome is the one this pane
+          // may drive (`shared/peerChrome.ts`).
+          const req = { ...(m.req as StartSessionRequest), fromAddress: conn.address }
           this.answer(conn, m, this.backend.startSession(req), 'start', (session) => ({ t: 'started', session }))
           return
         }
