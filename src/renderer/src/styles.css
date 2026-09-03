@@ -1655,8 +1655,14 @@ button.small { padding: 5px 9px; font-size: 11px; }
    panes column back the width, `side-reveal` is its own way back. `padding-left` moves
    the grid (normal flow); a focus-view pane is positioned off the padding box (`inset`
    above), so it needs its own `left` past the button instead. Handheld has no sidebar to
-   hide, so the class only matters here. */
-.app.side-hidden { grid-template-columns: 0 1fr; }
+   hide, so the class only matters here.
+
+   ONE column, not `0 1fr`. The sidebar and its grip are `display: none` right below, so
+   they leave the grid entirely - and auto-placement then puts the panes into the FIRST
+   track, which under `0 1fr` is the zero one. Measured: window 1002px wide, `.panes`
+   42px (its 36px reveal-button padding plus 6px), every pane crushed into a strip while
+   the 1fr track sat empty beside it. A hidden element does not hold its column. */
+.app.side-hidden { grid-template-columns: 1fr; }
 .app.side-hidden .sidebar,
 .app.side-hidden .side-grip { display: none; }
 .app.side-hidden .panes { padding-left: 36px; }
