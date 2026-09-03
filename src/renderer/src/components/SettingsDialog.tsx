@@ -539,10 +539,11 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                     and by then it has already paid for the agent it is about to move. This
                     is the same answer given at the moment it is free: a pane that has not
                     started yet has no conversation and nothing on screen to lose, so if the
-                    project is one the other machine also has, the agent starts over there
-                    and this screen gets the picture of it. Auto keeps the first two panes
-                    here and sends the rest, and sends everything while you are on battery.
-                    Always sends whatever it can; Never keeps it all here. A folder that is
+                    project is one the other machine also has, the agent can start over
+                    there and this screen gets the picture of it. Auto never does that on
+                    its own: a pane you open starts here, and only a pane already running
+                    is paused or moved when this machine runs short. Always sends every new
+                    pane it can; Never keeps it all here. A folder that is
                     not on GitHub, one the other machine does not have, a project you have
                     kept here, and anything driving a browser on this screen all stay,
                     whichever you pick - and if the other machine does not answer within
