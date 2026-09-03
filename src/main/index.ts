@@ -113,6 +113,19 @@ import { handoffReceiverCanQuit, type HandoffItem, type HandoffRequest } from '.
 import { HandoffQueue } from './handoffQueue'
 import { devServersOf, listRunningDevs, localDevCommand, stopDevServer } from './devServers'
 import { keepDevServer, stopNow, watchDeadDevs } from './deadDev'
+import {
+  closeLogin,
+  dismissLogin,
+  initRemoteLogin,
+  listLogins,
+  loginInput,
+  openLogin,
+  paintedFrame,
+  requestLogin,
+  resizeLogin,
+  shutdownLogins
+} from './remoteLogin'
+import type { LoginInput } from '../shared/remoteLogin'
 import { DEFAULT_DEAD_DEV } from '../shared/deadDev'
 import { listBackJobs, type BackJob } from './backJobs'
 import { DEFAULT_AUTO_HANDOFF } from '../shared/autoHandoff'
@@ -1233,6 +1246,30 @@ ipcMain.handle('usage:get', () => lastUsage)
 // and what that project is called - because that is the sidebar's own arithmetic and main
 // has never had it. Every FACT is read here: the folder off the pane's own record and the
 // pty's pid off the manager, so a caller cannot point this at a folder it does not own.
+/*
+ * Signing in to a browser on another machine - src/main/remoteLogin.ts.
+ *
+ * A scheduled job on the PC cannot type a password, so it says so and a card goes up
+ * here. Everything that touches CDP or ssh lives in that file; these are the six lines
+ * the window is allowed to say. The frames go out on `login:frame` rather than being
+ * answered to a caller, because the renderer does not ASK for a frame - it acknowledges
+ * the one it painted, and that acknowledgement is what asks Chrome for the next.
+ */
+initRemoteLogin({
+  publish: (reqs) => send('login:changed', reqs),
+  frame: (id, data, meta, ack) => send('login:frame', { id, data, meta, ack })
+})
+ipcMain.handle('login:list', () => listLogins())
+ipcMain.handle('login:need', (_e, req: Parameters<typeof requestLogin>[0]) => requestLogin(req))
+ipcMain.handle('login:open', (_e, id: string) => openLogin(String(id)))
+ipcMain.on('login:close', (_e, id: string) => closeLogin(String(id)))
+ipcMain.on('login:dismiss', (_e, id: string) => dismissLogin(String(id)))
+ipcMain.on('login:input', (_e, id: string, ev: LoginInput) => loginInput(String(id), ev))
+ipcMain.on('login:ack', (_e, id: string, ack: number) => paintedFrame(String(id), Number(ack)))
+ipcMain.on('login:size', (_e, id: string, w: number, h: number) =>
+  resizeLogin(String(id), Number(w), Number(h))
+)
+
 ipcMain.handle('devs:list', async (_e, panes: Array<{ id: string; pane: number; name: string }>) => {
   const roots = manager.roots()
   const live = manager.list()
@@ -4162,6 +4199,9 @@ app.on('before-quit', () => {
   // Not a pty, so `strays.ts` has never heard of it: without this line the app leaves a
   // cloudflared holding a public address open with nothing behind it.
   void tunnel.stop()
+  // An ssh child holding a forward open is not a pty either, and it outlives this process
+  // exactly as cloudflared does.
+  shutdownLogins()
   // shutdown() also flushes buffered transcript output, which would otherwise lose the
   // last 1.5 seconds of every pane. It runs once, so the two quit paths cannot double
   // the work between them.

@@ -11,6 +11,7 @@
  *   node scripts/pf-ctl.mjs list
  *   node scripts/pf-ctl.mjs open <cwd> [--title T] [--prompt P | --task BACKLOG_ID] [--model M] [--agent A]
  *                                       [--close-when-done] [--report-to <pane>]
+ *   node scripts/pf-ctl.mjs needs-login <site> --url <url> [--host user@ip] [--port N] [--machine WORDS]
  *   node scripts/pf-ctl.mjs close <title-or-id>
  *   node scripts/pf-ctl.mjs rename <title-or-id> <name...>
  *   node scripts/pf-ctl.mjs type <title-or-id> <text...>
@@ -36,12 +37,21 @@ import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
+/*
+ * `PF_USER_DATA` points this at ONE app's settings folder.
+ *
+ * A `npm run try` copy runs as its own profile with its own userData, its own phone
+ * server and its own port, so without this the only PaneForge a script could drive was
+ * the installed one - which is the app the session is running inside, and never the one
+ * a change has just been built into.
+ */
 const USER_DATA =
-  process.platform === 'win32'
+  process.env.PF_USER_DATA ||
+  (process.platform === 'win32'
     ? join(process.env.APPDATA ?? join(homedir(), 'AppData', 'Roaming'), 'claude-orchestrator')
     : process.platform === 'darwin'
       ? join(homedir(), 'Library', 'Application Support', 'claude-orchestrator')
-      : join(homedir(), '.config', 'claude-orchestrator')
+      : join(homedir(), '.config', 'claude-orchestrator'))
 
 function phoneConfig() {
   let raw
@@ -124,11 +134,48 @@ function flag(argv, name) {
 }
 
 const [cmd, ...rest] = process.argv.slice(2)
+
+/*
+ * A sign-in request is checked BEFORE the app is asked for anything.
+ *
+ * The whole point of the card is that a person walks over to it and types a password, so
+ * an ask that names no site, or an address that is not an address, must cost nobody that
+ * walk. It refuses here, where the mistake was made, rather than putting up a card that
+ * opens a browser at nothing.
+ */
+let loginArgs = null
+if (cmd === 'needs-login') {
+  const host = flag(rest, '--host')
+  const port = flag(rest, '--port')
+  const machine = flag(rest, '--machine')
+  const url = flag(rest, '--url')
+  const site = rest[0]
+  if (!site) fail(1, 'needs-login needs a site: pf-ctl needs-login <site> --url <url> [--host user@ip]')
+  if (!url) fail(1, 'needs-login needs --url <address of the sign-in page>')
+  if (!/^https?:\/\//i.test(url))
+    fail(1, `--url must start with http:// or https:// - got "${url}"`)
+  if (port && !/^\d+$/.test(port)) fail(1, `--port must be a number - got "${port}"`)
+  loginArgs = { site, url, host, port: port ? Number(port) : undefined, machine, from: process.env.PF_PANE }
+}
+
+// The suite drives the refusals above without an app on the machine; everything past this
+// line needs one.
+if (process.env.PF_CTL_NO_APP === '1') process.exit(0)
+
 await pair()
 
 if (cmd === 'list') {
   const list = await sessions()
   for (const s of list) console.log([s.id, s.status, s.title, s.cwd].join('\t'))
+  // A sign-in request is not a pane yet - it is a card waiting for somebody - so it is
+  // listed too, and says which computer it is waiting on.
+  const logins = (await call('login:list', [])) ?? []
+  for (const r of logins)
+    console.log([r.id, r.state, `Sign in to ${r.site} on ${r.machine}`, r.url].join('\t'))
+} else if (cmd === 'needs-login') {
+  const req = await call('login:need', [loginArgs])
+  if (!req?.id) fail(1, 'PaneForge did not accept the sign-in request')
+  console.log(req.id)
 } else if (cmd === 'open') {
   const title = flag(rest, '--title')
   // A pane opened on a backlog task is briefed FROM the task: the app compiles the prompt
@@ -232,5 +279,5 @@ if (cmd === 'list') {
   await send(channel, args)
   console.log('sent')
 } else {
-  fail(1, `unknown command "${cmd ?? ''}" - use: list | open | close | rename | type | call | send`)
+  fail(1, `unknown command "${cmd ?? ''}" - use: list | open | needs-login | close | rename | type | call | send`)
 }
