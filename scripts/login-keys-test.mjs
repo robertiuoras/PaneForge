@@ -218,13 +218,14 @@ const rig = (make, clock = { t: 0 }) => {
 // The original code, rebuilt: preventDefault and no stopPropagation. If this still shows
 // nothing in the pty, the harness above is not testing anything.
 {
-  const src = readFileSync(join(root, 'src/shared/remoteLogin.ts'), 'utf8')
+  // Line endings normalised on both sides: this checkout is CRLF on the PC (test:pc lesson).
+  const src = readFileSync(join(root, 'src/shared/remoteLogin.ts'), 'utf8').replace(/\r\n/g, '\n')
   const before = `  const claim = (e: KeyEventLike): void => {
     e.preventDefault()
     e.stopPropagation()
     e.stopImmediatePropagation?.()
   }`
-  assert.ok(src.includes(before), 'the fix is spelled the way the red proof expects')
+  assert.ok(src.includes(before.replace(/\r\n/g, '\n')), 'the fix is spelled the way the red proof expects')
   const buggy = join(work, 'remoteLogin.buggy.ts')
   writeFileSync(
     buggy,
