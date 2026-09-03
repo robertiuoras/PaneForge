@@ -119,6 +119,7 @@ const KEYS: Key[] = [
   ],
   ['Ctrl Shift A', 'Switch the focused pane to the next installed AI (Claude, Codex, ...)'],
   ['Ctrl G', 'Toggle grid view (every session at once)'],
+  ['Ctrl B', 'Hide or show the session list'],
   ['Ctrl Shift G', 'Cycle the grid: tiled, columns, rows, one big on the left, one big on top'],
   ['Ctrl Shift Z', 'Zoom the focused pane to the whole window and back - the grid is untouched'],
   [

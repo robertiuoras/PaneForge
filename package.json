@@ -1,6 +1,6 @@
 {
   "name": "claude-orchestrator",
-  "version": "0.8.192",
+  "version": "0.8.195",
   "private": true,
   "description": "PaneForge",
   "author": "Robert",
@@ -91,6 +91,7 @@
     "test:routecli": "node scripts/route-cli-test.mjs",
     "test:discord": "node scripts/discord-presence-test.mjs",
     "test:discordbrand": "node scripts/discord-brand-test.mjs",
+    "test:remotelogin": "node scripts/remote-login-test.mjs",
     "test:remote": "node scripts/remote-test.mjs",
     "test:remoteversion": "node scripts/remote-version-test.mjs",
     "test:deadlink": "node scripts/deadlink-test.mjs",
@@ -267,12 +268,14 @@
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
     "@lydell/node-pty": "1.2.0-beta.12",
-    "electron-updater": "^6.8.9"
+    "electron-updater": "^6.8.9",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
     "@types/react": "^18.3.17",
     "@types/react-dom": "^18.3.5",
+    "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^4.3.4",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/addon-search": "^0.15.0",

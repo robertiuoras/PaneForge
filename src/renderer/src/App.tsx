@@ -35,6 +35,9 @@ import Mascot, { type CloseSoon } from './components/Mascot'
 import MoveSoon, { soonKey } from './components/MoveSoon'
 import OffloadSoon from './components/OffloadSoon'
 import StopServer from './components/StopServer'
+import type { LoginRequest } from '../../shared/remoteLogin'
+import LoginCard from './components/LoginCard'
+import RemoteLoginView from './components/RemoteLoginView'
 import type { StopSoon } from '../../shared/deadDev'
 import ActivityFlyout from './components/ActivityFlyout'
 import type { ActivityEntry } from '@shared/activity'
@@ -706,6 +709,10 @@ export default function App(): JSX.Element {
   const [activitySeen, setActivitySeen] = useState(0)
   /** The bell's rectangle while the list is open, absent when it is shut. */
   const [activityAt, setActivityAt] = useState<DOMRect | null>(null)
+  /* A job somewhere cannot get past a login. The list is main's, the choice is a
+     person's: nothing opens a browser until the card is pressed. */
+  const [logins, setLogins] = useState<LoginRequest[]>([])
+  const [loginOpen, setLoginOpen] = useState<string | null>(null)
   // The dev server the app is about to close, published by main every sweep.
   const [stopSoon, setStopSoon] = useState<StopSoon | null>(null)
   const [devices, setDevices] = useState(false)
@@ -867,6 +874,22 @@ export default function App(): JSX.Element {
       /* the width goes back to the default next launch, and nothing else breaks */
     }
   }, [sideW])
+  // Whether the sidebar is hidden. A view preference like sideW, so localStorage not
+  // config.json - a phone client has no sidebar to hide.
+  const [sideHidden, setSideHidden] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('pf.sideHidden') === '1'
+    } catch {
+      return false
+    }
+  })
+  useEffect(() => {
+    try {
+      localStorage.setItem('pf.sideHidden', sideHidden ? '1' : '0')
+    } catch {
+      /* comes back shown next launch, and nothing else breaks */
+    }
+  }, [sideHidden])
   const [sideDrag, setSideDrag] = useState(false)
   const startSideDrag = (e: React.PointerEvent<HTMLDivElement>): void => {
     e.preventDefault()
@@ -1719,7 +1742,24 @@ export default function App(): JSX.Element {
   const capacityShown = useRef('')
   const capacityTimer = useRef<number | undefined>(undefined)
   useEffect(() => api.onStopSoon((soon) => setStopSoon(soon ?? null)), [])
+  /* Sign-in requests. Asked for once at startup as well as subscribed to, because a job
+     that asked while the window was reloading would otherwise wait for the next one. */
+  useEffect(() => {
+    void api.loginRequests().then(setLogins)
+    return api.onLogins(setLogins)
+  }, [])
+  /* A request that has gone - dismissed, or finished - must not leave the view open on
+     nothing, and one that failed while open puts its reason on screen rather than a
+     blank rectangle. */
+  useEffect(() => {
+    if (loginOpen && !logins.some((r) => r.id === loginOpen)) setLoginOpen(null)
+  }, [logins, loginOpen])
   useEffect(() => api.onCapacity(setCapacity), [])
+  /* One class, so the CSS owns the geometry: the pane column is padded, not covered. */
+  useEffect(() => {
+    document.documentElement.classList.toggle('login-open', Boolean(loginOpen))
+    return () => document.documentElement.classList.remove('login-open')
+  }, [loginOpen])
 
   /**
    * Since when nobody has been at this machine, or null while somebody is.
@@ -3167,6 +3207,11 @@ export default function App(): JSX.Element {
       } else if (hit('grid')) {
         e.preventDefault()
         patchConfig({ grid: !grid })
+      } else if (k === 'b' && !e.shiftKey) {
+        // Not in shared/keymap.ts: that file is another session's right now, so this
+        // one chord is spelled here rather than made reboundable.
+        e.preventDefault()
+        setSideHidden((v) => !v)
       } else if (hit('zoom')) {
         // Not a bare Ctrl+Z: that is SIGTSTP in a shell and undo in every agent's
         // prompt, and this app does not get to take either of them.
@@ -5177,7 +5222,7 @@ export default function App(): JSX.Element {
   return (
     <BlurbContext.Provider value={blurbs}>
     <AutoTick at={soonestAuto} tick={autoTick} />
-    <div className="app">
+    <div className={'app' + (sideHidden ? ' side-hidden' : '')}>
       <aside className={'sidebar' + (sideW < SIDE_NARROW ? ' narrow' : '')}>
         <LinkBanner />
         <div className="brand">
@@ -5186,6 +5231,13 @@ export default function App(): JSX.Element {
             <span className="brand-word">PaneForge</span>
           </span>
           <span className="icons">
+            <button
+              className="icon side-toggle"
+              title={keyLabel('Hide the list (Ctrl B)')}
+              onClick={() => setSideHidden(true)}
+            >
+              ◧
+            </button>
             <button className="icon" title={keyLabel('Settings (Ctrl ,)')} onClick={() => setSettings(true)}>
               ⚙
             </button>
@@ -5435,6 +5487,18 @@ export default function App(): JSX.Element {
         onDoubleClick={() => setSideW(SIDE_DEFAULT)}
         title="Drag to resize the sidebar. Double-click to put it back."
       />
+
+      {/* The list's own way back, over the corner it vacated. A phone has no sidebar to
+          hide in the first place. */}
+      {sideHidden && !handheld.handheld && (
+        <button
+          className="icon side-reveal"
+          title={keyLabel('Show the list (Ctrl B)')}
+          onClick={() => setSideHidden(false)}
+        >
+          ◨
+        </button>
+      )}
 
       <main
         ref={panesRef}
@@ -5918,7 +5982,15 @@ export default function App(): JSX.Element {
                     aria-label={`Actions for ${s.title}`}
                     onClick={(e) => {
                       e.stopPropagation()
-                      setPaneMenu(s.id)
+                      // A phone reaches this by a bottom sheet; a desk has room for the
+                      // same right-click menu the card already draws, opened at the
+                      // button rather than the pointer.
+                      if (handheld.handheld) {
+                        setPaneMenu(s.id)
+                        return
+                      }
+                      const r = e.currentTarget.getBoundingClientRect()
+                      setCardMenu({ id: s.id, x: r.left, y: r.bottom })
                     }}
                   >
                     ⋯
@@ -6058,6 +6130,31 @@ export default function App(): JSX.Element {
           </div>
         )}
       </main>
+
+      {/* The split: the chat keeps the left half of the pane column, the far machine's
+          browser takes the right. Not an overlay - `html.login-open` pads `.panes` out of
+          the way - because a picture drawn ON TOP of the pane you are talking to is the
+          thing this feature exists to avoid. */}
+      {loginOpen &&
+        (() => {
+          const req = logins.find((r) => r.id === loginOpen)
+          if (!req) return null
+          return (
+            <RemoteLoginView
+              req={req}
+              onToast={flash}
+              onDone={() => {
+                api.closeLogin(req.id)
+                setLoginOpen(null)
+                flash(`Signed in on ${req.machine}. The job can carry on.`)
+              }}
+              onClose={() => {
+                api.closeLogin(req.id)
+                setLoginOpen(null)
+              }}
+            />
+          )
+        })()}
 
       {note && <div className="toast">{note}</div>}
 
@@ -6529,8 +6626,23 @@ export default function App(): JSX.Element {
               { key: 'copy', label: 'Copy output', hint: 'the whole terminal', run: () => copyPaneOutput(s) },
               { key: 'text', label: 'Select text', run: () => setTextPane(s.id) },
               { key: 'fix', label: 'Fix the display', hint: 'refit and repaint, keeping the run', run: () => fixUi(s.id) },
+              ...(grid
+                ? [
+                    {
+                      key: 'zoom',
+                      label: zoom === s.id ? 'Back to the grid' : 'Zoom this pane',
+                      run: () => toggleZoom(s.id)
+                    }
+                  ]
+                : []),
               ...(local
                 ? [
+                    {
+                      key: 'reveal',
+                      label: 'Open folder',
+                      hint: 'reveal this project - drag files onto the pane to reach the agent',
+                      run: () => void api.revealProject(s.cwd, s.title).then((p) => p || flash('That folder is gone.'))
+                    },
                     { key: 'folder', label: 'Open in editor', run: () => void api.openInEditor(s.cwd).then((err) => err && flash(err)) },
                     { key: 'restart', label: 'Restart agent', run: () => void api.restartSession(s.id) }
                   ]
@@ -6724,6 +6836,22 @@ export default function App(): JSX.Element {
         onNow={(pid) => {
           api.stopDevNow(pid)
           setStopSoon(null)
+        }}
+      />
+      {/* A person has to type a password on another computer before a job can go on.
+          It sits with the countdowns because it is the same kind of thing - something
+          is waiting on the hand - and it is dismissable for as long as it is drawn. */}
+      <LoginCard
+        reqs={logins}
+        onOpen={(id) => {
+          setLoginOpen(id)
+          void api.openLogin(id).then((r) => {
+            if (!r.ok && r.error) flash(r.error)
+          })
+        }}
+        onDismiss={(id) => {
+          api.dismissLogin(id)
+          if (loginOpen === id) setLoginOpen(null)
         }}
       />
       <MoveSoon

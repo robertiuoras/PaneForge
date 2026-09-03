@@ -1,3 +1,5 @@
+import type { FrameMeta, LoginInput, LoginRequest } from './remoteLogin'
+
 import type { AutoClearAsk } from './autoclear'
 import type { SplitAnswer } from './splitPlan'
 import type { Away } from './away'
@@ -2064,6 +2066,8 @@ export interface Api {
   reorderSessions(ids: string[]): void
   /** Record why a pane was closed by a sweep, into `reclaim.log` under userData. */
   logReclaim(entry: Record<string, unknown>): void
+  /** One line to `fix.log` per Fix run: the screen's signature before the repair. */
+  logFix(entry: Record<string, unknown>): void
   /** What the app has done on its own lately, newest first. See `shared/activity.ts`. */
   listActivity(): Promise<ActivityFeed>
   /**
@@ -2308,6 +2312,31 @@ export interface Api {
    * Ask for a pane to be /clear'd after a countdown the desk can stop. The caller is the
    * `autoclear` Stop hook, never the window - see shared/autoclear.ts.
    */
+  /** Every sign-in a script is waiting on, newest first. */
+  loginRequests(): Promise<LoginRequest[]>
+  /** A script hit a login wall. Puts a card up; opens nothing. */
+  needsLogin(req: {
+    site: string
+    url: string
+    host?: string
+    port?: number
+    machine?: string
+    from?: string
+  }): Promise<LoginRequest>
+  /** Somebody pressed the card: open the tunnel, the browser and the picture. */
+  openLogin(id: string): Promise<{ ok: boolean; error?: string }>
+  /** Done, or Close. The sign-in stays on the machine it was typed into. */
+  closeLogin(id: string): void
+  /** Not now. */
+  dismissLogin(id: string): void
+  /** A pointer or a key, on the remote page. */
+  loginInput(id: string, ev: LoginInput): void
+  /** This frame is on screen - send the next one. */
+  loginPainted(id: string, ack: number): void
+  /** The view's size in CSS pixels; the remote page is made this shape. */
+  loginSize(id: string, w: number, h: number): void
+  onLoginFrame(cb: (f: { id: string; data: string; meta: FrameMeta; ack: number }) => void): () => void
+  onLogins(cb: (reqs: LoginRequest[]) => void): () => void
   askAutoClear(req: AutoClearAsk): Promise<{ ok: boolean; reason?: string; dueAt?: number }>
   /** The two buttons on that card. */
   /** Countdowns in flight, for a window that has just opened. */

@@ -1645,6 +1645,23 @@ button.small { padding: 5px 9px; font-size: 11px; }
 .mac-chrome .panes:not(.grid) .pane { top: 28px; }
 .panes.grid { display: grid; grid-auto-rows: 1fr; gap: 6px; }
 .panes:not(.grid) .pane { position: absolute; inset: 6px; }
+/* ---- sidebar hidden ---- */
+/* The list is a view of the same desk, not a second copy of it: hiding it gives the
+   panes column back the width, `side-reveal` is its own way back. `padding-left` moves
+   the grid (normal flow); a focus-view pane is positioned off the padding box (`inset`
+   above), so it needs its own `left` past the button instead. Handheld has no sidebar to
+   hide, so the class only matters here. */
+.app.side-hidden { grid-template-columns: 0 1fr; }
+.app.side-hidden .sidebar,
+.app.side-hidden .side-grip { display: none; }
+.app.side-hidden .panes { padding-left: 36px; }
+.app.side-hidden .panes:not(.grid) .pane { left: 36px; }
+.side-reveal {
+  position: absolute; top: 6px; left: 6px; z-index: 5;
+  width: 24px; height: 24px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.mac-chrome .side-reveal { top: 32px; }
 .pane {
   display: flex;
   flex-direction: column;
@@ -1780,34 +1797,28 @@ body.sizing * { user-select: none !important; }
   .pane-title .chip.res { display: none }
   .pane-title .pt-open { display: none }
 }
-@container pane (max-width: 520px) {
-  .pane-title .git-badge { display: none }
-  .pane-title .pt-handoff { display: none }
-}
 /* Below this the row stops fitting however tightly it is packed, so the tail of it goes
-   behind the ⋯ the phone already uses. What stays on the line is what somebody reaches
-   for without thinking - find, which agent runs here, and close - and everything that
-   opens a window elsewhere or restarts something goes one press away. A control that is
-   drawn off the edge of the pane is worse than one in a menu: it cannot be pressed and
-   nothing says it is there. */
+   behind the ⋯ the phone already uses. What stays on the line in a grid cell is the dot,
+   the agent's mark, the name, the clock, find, copy, ⋯ and close - everything that opens
+   a window elsewhere, restarts something, or repeats the git/handoff chip goes one press
+   away. A control that is drawn off the edge of the pane is worse than one in a menu: it
+   cannot be pressed and nothing says it is there. */
 .pt-actions .pt-more { display: none }
-@container pane (max-width: 460px) {
+@container pane (max-width: 760px) {
   .pane-title .pt-clear,
   .pane-title .pt-restart,
   .pane-title .icon.fix,
   .pane-title .pt-reveal,
   .pane-title [data-pt='editor'],
-  .pane-title .pt-zoom { display: none }
+  .pane-title .pt-zoom,
+  .pane-title .pt-handoff,
+  .pane-title .git-badge { display: none }
   .pt-actions .pt-more { display: inline-flex }
 }
 /* And one step below that, the agent picker - which is the fat control on this row and
-   not a control at all in a pane this size. Measured at a 198px pane with the 460px rules
-   already applied: find 24 + picker 118 + ⋯ 24 + × 24 is 190px of a 196px line before the
-   dot, the agent's mark, the name and the clock have had a pixel, so the row still wanted
-   297px. Nothing is lost - the picker is the ⋯ sheet's `extra`, drawn full width there,
-   which is where the other six controls already went. What stays is what says WHICH pane
-   this is and the three presses a person makes without thinking: find, ⋯, close. */
-@container pane (max-width: 380px) {
+   not a control at all in a pane this size. What stays is what says WHICH pane this is
+   and the three presses a person makes without thinking: find, ⋯, close. */
+@container pane (max-width: 560px) {
   .pane-title .agent-pick { display: none }
 }
 /* Narrower again, and the last thing with any width in it that is not a control or the
@@ -1860,7 +1871,11 @@ body.sizing * { user-select: none !important; }
    could ever constrain the font. That is why a mirror ended up cut across the screen
    rather than merely small. `overflow: hidden` on the wrap is the belt to this brace:
    whatever is left over is clipped to this pane instead of drawn over its neighbour. */
-.xterm-host { flex: 1; min-width: 0; min-height: 0; padding: 7px 0 7px 7px; user-select: text; }
+/* Painted in the TERMINAL's colour, not the pane's. The host's padding used to show the pane
+   surface between the header and the first row, so every pane wore a 7px band in a third
+   colour under its title (Robert, 2026-09-03: "fill this black part at the top"). One edge:
+   header, then terminal. */
+.xterm-host { flex: 1; min-width: 0; min-height: 0; padding: 5px 0 5px 7px; user-select: text; background: var(--term-bg); }
 
 /* Dropping files onto a pane types their paths at the prompt. */
 .xterm-wrap.dropping::after {
@@ -4568,3 +4583,81 @@ html.handheld .card-x { width: 44px; height: 44px; top: 0; right: 0; font-size: 
 /* The one kind that took something away reads in the accent, so a list of eight rows
    answers "did it close anything" without being read word by word. */
 .act-kind.k-closed, .act-kind.k-cleared { color: var(--acc); }
+
+/* ---- signing in to a browser on another machine ----------------------------
+   The chat keeps the left half of the pane column and the far machine's browser
+   takes the right. `.panes` is PADDED rather than covered, so the pane you are
+   talking to is still a whole pane - drawing a picture on top of it is the thing
+   this feature exists to avoid.
+
+   Surfaces follow design-vault/linear.app.md, the same ladder the pane header and
+   `.copy-menu` already use here: one hairline `--line`, `--surface` under the
+   header, `--bg` behind the picture, and no card shadow. */
+html.login-open .panes { padding-right: calc(50vw + 6px); }
+.login-split {
+  position: fixed; top: 0; right: 0; width: 50vw; height: 100vh;
+  z-index: 50;
+  display: flex; flex-direction: column;
+  background: var(--bg);
+  border-left: 1px solid var(--line);
+}
+.login-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 9px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+.login-site { font-weight: 600; color: var(--text); text-transform: capitalize; }
+.login-where { color: var(--muted); }
+.login-hint { color: var(--ok); }
+.login-badge {
+  margin-left: auto; padding: 0 6px; border-radius: 99px;
+  border: 1px solid var(--line); color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+/* Only the first badge is pushed to the right; the rest sit beside it. */
+.login-badge ~ .login-badge { margin-left: 0; }
+.login-badge.slow { color: var(--warn); border-color: var(--warn); }
+.login-badge.bad { color: var(--danger); border-color: var(--danger); }
+.login-btn {
+  padding: 3px 10px; border-radius: var(--r-sm);
+  border: 1px solid var(--line); background: transparent; color: var(--text);
+  font-size: 12px; cursor: pointer;
+  transition: border-color var(--fast), background var(--fast);
+}
+.login-btn:hover { border-color: var(--accent); }
+.login-btn.primary { border-color: var(--accent); color: var(--accent-text); background: var(--accent-dim); }
+.login-screen { position: relative; flex: 1; min-height: 0; overflow: hidden; cursor: default; }
+.login-canvas { display: block; width: 100%; height: 100%; object-fit: fill; }
+/* The pointer, drawn here the instant the mouse moves so it never waits on a frame. */
+.login-spot {
+  position: absolute; width: 12px; height: 12px; margin: -6px 0 0 -6px;
+  border: 1px solid var(--accent); border-radius: 99px;
+  pointer-events: none;
+}
+.login-tip {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  padding: 6px 9px; font-size: 12px; color: var(--muted);
+  background: var(--surface); border-top: 1px solid var(--line);
+}
+.login-screen.typing { outline: 1px solid var(--accent); outline-offset: -1px; }
+.login-failed { padding: 14px; color: var(--text); font-size: 12px; overflow: auto; }
+.login-failed pre { white-space: pre-wrap; color: var(--muted); }
+
+/* The card, in `.corner-stack` with everything else the app puts in that corner. */
+.login-card {
+  width: 300px; padding: 10px 12px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg);
+  pointer-events: auto;
+}
+.login-card-title { font-size: 13px; font-weight: 600; color: var(--text); }
+.login-card-body { margin: 5px 0 9px; font-size: 12px; color: var(--muted); line-height: 1.45; }
+.login-card-row { display: flex; gap: 7px; }
+
+/* A phone is not a second desk here: the picture is a desk-sized browser and the
+   keyboard is a desk keyboard. The card still shows, so the request is not lost. */
+@media (max-width: 720px) {
+  html.login-open .panes { padding-right: 6px; }
+  .login-split { display: none; }
+}
