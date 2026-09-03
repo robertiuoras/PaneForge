@@ -186,6 +186,11 @@ const PROMPT_POLL_MS = ms('PF_PROMPT_POLL_MS', 300)
 const PROMPT_ENTER_MS = ms('PF_PROMPT_ENTER_MS', 350)
 /** How much of the pane's tail the busy read looks at, and the confirm-and-retry. */
 const PROMPT_TAIL_CHARS = 2000
+/**
+ * What proves a queued line went in. A prompt is proven by the TURN it starts; a slash
+ * command (`/model opus`) starts none and is proven by the composer coming back idle.
+ */
+type PromptProof = 'turn' | 'idle'
 const PROMPT_CONFIRM_MS = ms('PF_PROMPT_CONFIRM_MS', 4000)
 /**
  * How many returns may be sent before the prompt is left for a person.
@@ -2211,7 +2216,9 @@ export class SessionManager extends EventEmitter {
         if (!switchCmd) return typeResume()
         // The model switch first, through the same idle-composer wait, then a bare CR a
         // beat later: leaving Fable opens a confirm dialog that the Enter accepts, and on
-        // an empty composer the Enter is a no-op. Only then the resume prompt.
+        // an empty composer the Enter is a no-op. Only then the resume prompt. The switch
+        // is proven by the composer coming back ('idle'), never by a turn - a slash
+        // command starts none.
         acLog(`${id} model switch queued: ${JSON.stringify(switchCmd)}`)
         this.queuePrompt(id, switchCmd, 0, CLEAR_PROMPT_START_MS, () => {
           const c = setTimeout(() => {
@@ -2220,7 +2227,7 @@ export class SessionManager extends EventEmitter {
             typeResume()
           }, SUBMIT_GAP_MS)
           c.unref?.()
-        }, CLEAR_RESUME_BUDGET_MS)
+        }, CLEAR_RESUME_BUDGET_MS, 'idle')
       }, ARM_CLEAR_LEAD_MS)
       t.unref?.()
     }
@@ -2589,7 +2596,8 @@ export class SessionManager extends EventEmitter {
     extraDelay = 0,
     startMs = PROMPT_START_MS,
     onSettled?: () => void,
-    budgetMs = PROMPT_WAIT_MAX_MS
+    budgetMs = PROMPT_WAIT_MAX_MS,
+    proof: PromptProof = 'turn'
   ): void {
     if (!prompt) return onSettled?.()
     // Called exactly once, however this ends - typed and submitted, dropped, or the pane
@@ -2679,6 +2687,20 @@ export class SessionManager extends EventEmitter {
             acLog(`${id} prompt left UNSENT: the pane was typed into by hand while confirming`)
             return settle()
           }
+          // A SLASH COMMAND STARTS NO TURN. `/model opus` prints one line ("Set model to
+          // Opus 5 and saved as your default") and hands the composer straight back, so
+          // the turn proof above can never fire for it. Measured on every autoclear from
+          // 2026-09-02 05:43 (the first with a model switch) to 2026-09-03 03:58: the
+          // switch went in on its first return, the confirm then read an idle composer
+          // with no turn behind it and fed it two more bare returns, and only at
+          // PROMPT_CONFIRM_MS x PROMPT_ENTER_TRIES (24s) did it give up as "still
+          // painting" - 24s and two stray keystrokes on every clear, before the resume
+          // prompt was even queued. For a command, the composer coming back idle IS the
+          // proof, read at the poll cadence rather than the confirm's.
+          if (proof === 'idle' && idle(still)) {
+            acLog(`${id} command landed - the composer is idle again (no turn expected)`)
+            return settle()
+          }
           if (!idle(still)) {
             // PAINTING IS NOT PROGRESS, and reading it as progress is what stranded pane
             // s7-mtfk52fv on 2026-08-30: `/clear` restarts the CLI, its banner and hook
@@ -2702,7 +2724,7 @@ export class SessionManager extends EventEmitter {
             return settle()
           }
           submit(tries + 1)
-        }, PROMPT_CONFIRM_MS)
+        }, proof === 'idle' ? PROMPT_POLL_MS : PROMPT_CONFIRM_MS)
       }
       confirm()
     }

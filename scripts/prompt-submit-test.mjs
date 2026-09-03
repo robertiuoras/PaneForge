@@ -297,6 +297,28 @@ ok(
   JSON.stringify(settlingProc.writes)
 )
 
+// A slash command starts no turn. `/model opus` prints "Set model to Opus 5 and saved as
+// your default" and hands the composer back; measured 2026-09-02/03 on every autoclear
+// carrying a model switch, the turn-proof confirm fed it two more bare returns and gave
+// up after 24s as "still painting". With proof 'idle' the composer coming back IS the
+// proof: exactly one return, settled at the poll cadence, no turn needed.
+const cmd = manager.start({ cwd: root, agent: 'shell' })
+const cmdProc = manager.sessions.get(cmd.id).proc
+let cmdDone = 0
+const cmdAt = Date.now()
+let cmdSettledAt = 0
+manager.queuePrompt(cmd.id, '/model opus', 0, 40, () => { cmdDone++; cmdSettledAt = Date.now() }, 5000, 'idle')
+await sleep(120)
+cmdProc.say(COMPOSER)
+await sleep(400)
+// The CLI answers the command with one line and the composer again - still no turn.
+cmdProc.say('\r\n  ⎿  Set model to Opus 5 and saved as your default for new sessions\r\n' + COMPOSER)
+await sleep(900)
+ok(cmdDone === 1, 'a slash command settles without a turn', String(cmdDone))
+ok(cmdProc.writes.filter((w) => w === '\r').length === 1, 'and it got exactly one return - the idle composer was the proof', JSON.stringify(cmdProc.writes))
+ok(cmdSettledAt - cmdAt < Number(process.env.PF_PROMPT_CONFIRM_MS) * Number(process.env.PF_PROMPT_ENTER_TRIES) + 500, 'and it settled at the poll cadence, not after the whole confirm budget', String(cmdSettledAt - cmdAt))
+manager.kill(cmd.id)
+
 // A pane that closes mid-wait settles too - otherwise the curtain outlives the pty.
 const dying = manager.start({ cwd: root, agent: 'shell' })
 let dead2 = 0
@@ -365,6 +387,8 @@ rmSync(work, { recursive: true, force: true })
     `${clearBudget} vs ${launchBudget}`)
   ok(/queuePrompt\(id, resume, 0, switchCmd \? SUBMIT_GAP_MS : CLEAR_PROMPT_START_MS,[\s\S]{0,80}?CLEAR_RESUME_BUDGET_MS\)/.test(src),
     'the autoclear resume is the call that uses it')
+  ok(/this\.queuePrompt\(id, switchCmd, 0, CLEAR_PROMPT_START_MS,[\s\S]{0,400}?CLEAR_RESUME_BUDGET_MS, 'idle'\)/.test(src),
+    'the model switch is proven by an idle composer, never by a turn - a slash command starts none')
   ok(/setHandover\(id, Date\.now\(\) \+ handoverMaxMs\(CLEAR_RESUME_BUDGET_MS\)\)/.test(src),
     'and the curtain outlives that wait, so the pane says a prompt is still coming')
 }
