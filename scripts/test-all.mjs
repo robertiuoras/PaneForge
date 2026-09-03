@@ -59,6 +59,7 @@ const TESTS = [
   ['choices', 'choices-test.mjs'],
   ['handoffsteps', 'handoff-steps-test.mjs'],
   ['staleframe', 'stale-frame-test.mjs'],
+  ['fixsign', 'fix-sign-test.mjs'],
   ['settingsearch', 'settings-search-test.mjs'],
   ['autoanswer', 'auto-answer-test.mjs'],
   ['asknotify', 'ask-notify-test.mjs'],

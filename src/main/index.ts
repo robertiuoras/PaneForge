@@ -176,7 +176,7 @@ import {
   updateShelfItems
 } from './shelfWindow'
 import { ACTIVATION_SETTLE_MS, revealOnActivation } from '../shared/activation'
-import { logActivation, logOffload, logReclaim } from './activationLog'
+import { logActivation, logOffload, logReclaim, logFix } from './activationLog'
 import { placeNewPane, preferRemoteOf, REMOTE_START_ACK_MS } from '../shared/offloadFirst'
 import { projectNameOf, projectOn } from '../shared/capacity'
 import { staysHere } from '../shared/autoHandoff'
@@ -3439,6 +3439,7 @@ ipcMain.handle('board:memory', (_e, path: string, memory: string) => writeMemory
 
 // --- history ---------------------------------------------------------------
 
+ipcMain.on('pane:fixlog', (_e, entry: Record<string, unknown>) => logFix(entry))
 ipcMain.on('reclaim:log', (_e, entry: Record<string, unknown>) => {
   logReclaim(entry)
   // Same line, twice: the file stays the place a week-old close is reconstructed from,
