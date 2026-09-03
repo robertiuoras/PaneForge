@@ -34,7 +34,7 @@ import HandoffDialog, { type HandoffTarget } from './components/HandoffDialog'
 import Mascot, { type CloseSoon } from './components/Mascot'
 import MoveSoon, { soonKey } from './components/MoveSoon'
 import StopServer from './components/StopServer'
-import type { LoginRequest } from '../../shared/remoteLogin'
+import { chordAllowed, raiseLogin, type LoginRequest } from '../../shared/remoteLogin'
 import LoginCard from './components/LoginCard'
 import RemoteLoginView from './components/RemoteLoginView'
 import type { StopSoon } from '../../shared/deadDev'
@@ -1759,6 +1759,15 @@ export default function App(): JSX.Element {
      blank rectangle. */
   useEffect(() => {
     if (loginOpen && !logins.some((r) => r.id === loginOpen)) setLoginOpen(null)
+    // A pane that asked for the picture itself gets it without anybody clicking the card:
+    // `pf login` is the session saying "open the sign-in again", so the window opens it.
+    const raise = raiseLogin(logins, loginOpen)
+    if (raise) {
+      setLoginOpen(raise)
+      void api.openLogin(raise).then((r) => {
+        if (!r.ok && r.error) flash(r.error)
+      })
+    }
   }, [logins, loginOpen])
   useEffect(() => api.onCapacity(setCapacity), [])
   /* One class, so the CSS owns the geometry: the pane column is padded, not covered. */
@@ -3052,6 +3061,22 @@ export default function App(): JSX.Element {
   // them as terminal input.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
+      // The other machine's picture has the keyboard: every key belongs to it except the
+      // ones it is never sent (see `chordAllowed`). This listener is on the window in the
+      // capture phase and was registered when the window opened, so it runs BEFORE the
+      // view's own listener and cannot be stopped by it - the view has to be asked about
+      // instead. Without this, Cmd+F while typing a password opened this app's Find box.
+      if (
+        !chordAllowed(Boolean(document.querySelector('.login-screen.typing')), {
+          key: e.key,
+          code: e.code,
+          ctrl: e.ctrlKey,
+          meta: e.metaKey,
+          shift: e.shiftKey,
+          alt: e.altKey
+        })
+      )
+        return
       const typing = /^(INPUT|TEXTAREA|SELECT)$/.test((e.target as HTMLElement)?.tagName ?? '')
       if (e.key === 'Escape') {
         // An open dropdown owns Escape: closing the dialog under it would be a

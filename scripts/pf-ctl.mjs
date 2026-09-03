@@ -12,6 +12,7 @@
  *   node scripts/pf-ctl.mjs open <cwd> [--title T] [--prompt P | --task BACKLOG_ID] [--model M] [--agent A]
  *                                       [--close-when-done] [--report-to <pane>]
  *   node scripts/pf-ctl.mjs needs-login <site> --url <url> [--host user@ip] [--port N] [--machine WORDS]
+ *   node scripts/pf-ctl.mjs login [url] [--site NAME] [--host user@ip] [--port N] [--machine WORDS]
  *   node scripts/pf-ctl.mjs close <title-or-id>
  *   node scripts/pf-ctl.mjs rename <title-or-id> <name...>
  *   node scripts/pf-ctl.mjs type <title-or-id> <text...>
@@ -158,6 +159,35 @@ if (cmd === 'needs-login') {
   loginArgs = { site, url, host, port: port ? Number(port) : undefined, machine, from: process.env.PF_PANE }
 }
 
+/*
+ * `pf login` is the same ask, said the short way, by the session that already hit the wall.
+ *
+ * Robert, 2026-09-03: "allow me to just ask, like that session who wanted it, to open
+ * again the login and it knows how to open it." So this names no site and no computer -
+ * the app remembers what this pane asked for last (`askAgain` in shared/remoteLogin.ts) -
+ * and it does not put a card up to be clicked: the picture opens.
+ */
+let reopenArgs = null
+if (cmd === 'login') {
+  const host = flag(rest, '--host')
+  const port = flag(rest, '--port')
+  const machine = flag(rest, '--machine')
+  const site = flag(rest, '--site')
+  const url = rest[0]
+  if (url && !/^https?:\/\//i.test(url))
+    fail(1, `a sign-in page starts with http:// or https:// - got "${url}"`)
+  if (port && !/^\d+$/.test(port)) fail(1, `--port must be a number - got "${port}"`)
+  reopenArgs = {
+    site,
+    url,
+    host,
+    port: port ? Number(port) : undefined,
+    machine,
+    from: process.env.PF_PANE,
+    open: true
+  }
+}
+
 // The suite drives the refusals above without an app on the machine; everything past this
 // line needs one.
 if (process.env.PF_CTL_NO_APP === '1') process.exit(0)
@@ -176,6 +206,10 @@ if (cmd === 'list') {
   const req = await call('login:need', [loginArgs])
   if (!req?.id) fail(1, 'PaneForge did not accept the sign-in request')
   console.log(req.id)
+} else if (cmd === 'login') {
+  const req = await call('login:need', [reopenArgs])
+  if (!req?.id) fail(1, 'PaneForge did not accept the sign-in request')
+  console.log(`sign in to ${req.site} on ${req.machine} - the picture is on screen now`)
 } else if (cmd === 'open') {
   const title = flag(rest, '--title')
   // A pane opened on a backlog task is briefed FROM the task: the app compiles the prompt
@@ -279,5 +313,5 @@ if (cmd === 'list') {
   await send(channel, args)
   console.log('sent')
 } else {
-  fail(1, `unknown command "${cmd ?? ''}" - use: list | open | needs-login | close | rename | type | call | send`)
+  fail(1, `unknown command "${cmd ?? ''}" - use: list | open | needs-login | login | close | rename | type | call | send`)
 }
