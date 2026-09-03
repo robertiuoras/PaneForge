@@ -64,3 +64,27 @@ place a project becomes words), exported as `projectTag(project: string): string
   Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
   Claude-Session: https://claude.ai/code/session_017v5QbYLvT75ydjv1NJuWxb
 - Budget about 70 tool calls, one verification pass at the end.
+
+## ...and a rename needs more than one ask
+
+Robert, 2026-09-04, minutes later: "it renamed way too early / too confident, now this
+session is called name like `Cars` which is wrong because we only said 1 prompt, needs
+multiple at least to get enough info for a rename".
+
+That session is a PaneForge chat. The word `Cars` appeared ONCE, inside a sentence about
+naming rules - and the card took it. One mention of a word that happens to match a client
+alias is not evidence about what a pane is for.
+
+- **A pane that already wears a name may only be renamed by AGREEMENT**: the same subject
+  reached by `repeatedTopic` across at least three asks, which is the reading
+  `mayTopicName` / `repeatedTopic` already implement for a real repo. Extend that bar to
+  the client-alias path: a client name lifted from PROMPT TEXT (`clientOf` on the words,
+  not the folder) needs the same three agreeing asks.
+- **The folder still outranks it.** A pane inside `clients/<who>/` is named from the ROSTER
+  on sight - that is a fact about where it is running, not a guess about what was typed,
+  and it keeps naming on the first ask exactly as today.
+- The first ask may still name a pane that has NO name yet in a folder that names no
+  project (`Desktop`, `Downloads`, the projects root) - that is today's behaviour and is
+  not what he is complaining about.
+- Add the exact case as a test: three asks in a PaneForge checkout where only ONE contains
+  a client alias must leave the card called `PaneForge`.
