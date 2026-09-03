@@ -5916,7 +5916,15 @@ export default function App(): JSX.Element {
                     aria-label={`Actions for ${s.title}`}
                     onClick={(e) => {
                       e.stopPropagation()
-                      setPaneMenu(s.id)
+                      // A phone reaches this by a bottom sheet; a desk has room for the
+                      // same right-click menu the card already draws, opened at the
+                      // button rather than the pointer.
+                      if (handheld.handheld) {
+                        setPaneMenu(s.id)
+                        return
+                      }
+                      const r = e.currentTarget.getBoundingClientRect()
+                      setCardMenu({ id: s.id, x: r.left, y: r.bottom })
                     }}
                   >
                     ⋯
@@ -6526,8 +6534,23 @@ export default function App(): JSX.Element {
               { key: 'copy', label: 'Copy output', hint: 'the whole terminal', run: () => copyPaneOutput(s) },
               { key: 'text', label: 'Select text', run: () => setTextPane(s.id) },
               { key: 'fix', label: 'Fix the display', hint: 'refit and repaint, keeping the run', run: () => fixUi(s.id) },
+              ...(grid
+                ? [
+                    {
+                      key: 'zoom',
+                      label: zoom === s.id ? 'Back to the grid' : 'Zoom this pane',
+                      run: () => toggleZoom(s.id)
+                    }
+                  ]
+                : []),
               ...(local
                 ? [
+                    {
+                      key: 'reveal',
+                      label: 'Open folder',
+                      hint: 'reveal this project - drag files onto the pane to reach the agent',
+                      run: () => void api.revealProject(s.cwd, s.title).then((p) => p || flash('That folder is gone.'))
+                    },
                     { key: 'folder', label: 'Open in editor', run: () => void api.openInEditor(s.cwd).then((err) => err && flash(err)) },
                     { key: 'restart', label: 'Restart agent', run: () => void api.restartSession(s.id) }
                   ]

@@ -1780,34 +1780,28 @@ body.sizing * { user-select: none !important; }
   .pane-title .chip.res { display: none }
   .pane-title .pt-open { display: none }
 }
-@container pane (max-width: 520px) {
-  .pane-title .git-badge { display: none }
-  .pane-title .pt-handoff { display: none }
-}
 /* Below this the row stops fitting however tightly it is packed, so the tail of it goes
-   behind the ⋯ the phone already uses. What stays on the line is what somebody reaches
-   for without thinking - find, which agent runs here, and close - and everything that
-   opens a window elsewhere or restarts something goes one press away. A control that is
-   drawn off the edge of the pane is worse than one in a menu: it cannot be pressed and
-   nothing says it is there. */
+   behind the ⋯ the phone already uses. What stays on the line in a grid cell is the dot,
+   the agent's mark, the name, the clock, find, copy, ⋯ and close - everything that opens
+   a window elsewhere, restarts something, or repeats the git/handoff chip goes one press
+   away. A control that is drawn off the edge of the pane is worse than one in a menu: it
+   cannot be pressed and nothing says it is there. */
 .pt-actions .pt-more { display: none }
-@container pane (max-width: 460px) {
+@container pane (max-width: 760px) {
   .pane-title .pt-clear,
   .pane-title .pt-restart,
   .pane-title .icon.fix,
   .pane-title .pt-reveal,
   .pane-title [data-pt='editor'],
-  .pane-title .pt-zoom { display: none }
+  .pane-title .pt-zoom,
+  .pane-title .pt-handoff,
+  .pane-title .git-badge { display: none }
   .pt-actions .pt-more { display: inline-flex }
 }
 /* And one step below that, the agent picker - which is the fat control on this row and
-   not a control at all in a pane this size. Measured at a 198px pane with the 460px rules
-   already applied: find 24 + picker 118 + ⋯ 24 + × 24 is 190px of a 196px line before the
-   dot, the agent's mark, the name and the clock have had a pixel, so the row still wanted
-   297px. Nothing is lost - the picker is the ⋯ sheet's `extra`, drawn full width there,
-   which is where the other six controls already went. What stays is what says WHICH pane
-   this is and the three presses a person makes without thinking: find, ⋯, close. */
-@container pane (max-width: 380px) {
+   not a control at all in a pane this size. What stays is what says WHICH pane this is
+   and the three presses a person makes without thinking: find, ⋯, close. */
+@container pane (max-width: 560px) {
   .pane-title .agent-pick { display: none }
 }
 /* Narrower again, and the last thing with any width in it that is not a control or the
