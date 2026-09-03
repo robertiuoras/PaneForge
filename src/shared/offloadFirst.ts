@@ -4,62 +4,54 @@
 // it moves, it closes, and every rung of it waits for a reading that says this machine is
 // in trouble - the kernel's memory verdict, the load average, or a budget counting agents
 // that are already running. That is the right shape for a pane somebody opened here on
-// purpose, and it is the wrong shape for the desk Robert actually has: a MacBook that is
-// the screen, and an i7 with an RTX 3080 Ti sitting idle three feet away. By the time the
-// pressure sweep fires, this machine has already paid for the CLI, the build it started
-// and the lag - and the move is then a recovery instead of a decision.
+// purpose, and once it is running it has a countdown and a Keep-it-here button, so a move
+// mid-session is never a surprise.
 //
-// So this is the decision, taken at the one moment it is free: the pane has no pty yet,
-// no conversation, no screen, nothing to lose. If the work is on GitHub and the other
-// machine is up, the agent starts THERE and this desk gets the mirror.
+// A pane that has not started yet is a different case, and 2026-09-03 is the second time
+// Robert had to say so: "its automatically starting session remote when i want to start it
+// on this laptop. if load is a lot then it can handoff mid session running with the
+// countdown, but at the start i need to be able to start sessions here no matter what if i
+// want to." A pane started from this desk - the + button, a shortcut, the composer, `pf
+// open`, a route, a split, a swarm - starts on this desk. Always. Nothing this machine can
+// measure about itself (memory, load, battery, how many panes are already open) moves it,
+// and neither does whether the work looks "self-contained" enough for the other machine to
+// run alone. The only automatic move left in the whole app is the mid-session ladder above.
+//
+// The one exception is the person's own pick: the New session dialog can send a pane to
+// the other machine on purpose (`where: 'remote'`), and that still works, because the
+// person chose it rather than the app guessing on their behalf.
 //
 // Every refusal names itself, because the whole feature is a pane appearing somewhere the
 // person did not choose, and "why did this open on the PC" has to be answerable from
 // `offload.log` without reading this file.
 //
-// Three rules decide, in this order, and the refusals come first so that `always` cannot
-// reach past them:
+// Two things decide, in this order:
 //
-//   1. The work has to be able to GET there. `shareable` (main/handoff.ts) is a git repo
-//      under the projects root with an origin remote. `undefined` is "nobody has asked
-//      yet", and it is LOCAL - never guess remote, because guessing wrong opens the pane
-//      on a machine where the folder does not exist.
-//   2. Nothing may pin it here: `machineBound` (a browser being driven on this desk),
-//      `keepHere` (the project list on the pressure card), or the switch set to `never`.
-//   3. The other machine has to be alive AND have room. A peer already running a desk
-//      full of agents is not an offload target; it is the next machine to fall over.
+//   1. Was this a deliberate pick? `where === 'local'` is final. `where === 'remote'` is
+//      the only path that can leave this desk at start, and even it still has to clear
+//      the refusals below - a pick cannot send work to a machine that does not have it.
+//   2. Everything else stays LOCAL. `machineBound` (a browser being driven on this desk),
+//      `keepHere` (the project list on the pressure card), a bare pane with no prompt yet
+//      (somebody about to type into it), a resumed conversation stored on this disk, and a
+//      prompt about something only this machine has (`pinnedByPrompt`) all stay for the
+//      same reason a pane with none of those reasons stays: nobody asked for it to move.
 //
-//   4. The pane has to be WORK, and work the other machine can do. A pane opened with no
-//      prompt is a person about to type into it - Robert on the Mac pressing +, which is
-//      how he works (2026-09-02: "my way of working is mainly on mac") - and it stays
-//      under his hands. A pane continuing a conversation stored on this disk stays with
-//      that conversation. A prompt naming a file outside the project, a dev server, a
-//      port, a browser, a screenshot, or this machine by name is about things the other
-//      machine does not have (`pinnedByPrompt`), and so is a project whose dev server is
-//      already serving from this desk.
-//
-// Then `auto` asks ONE thing: is this machine measured to be in trouble right now. The
-// reading is the same one every rung of the pressure ladder uses - the kernel's memory
-// verdict and the load per core (`shared/capacity.ts`), the worse of the two. Never a
-// pane count and never the battery. The first cut of this rule (2026-09-02) sent work over
-// past two panes running here, or on battery at any count, and both were guesses standing
-// in for a measurement: a MacBook that is the desk has more than two panes on it all day
-// and is off the charger half of it, so every pane opened with a brief left for the PC
-// and Robert was working in mirrors (2026-09-03: "i need to open in local mac"). A guess
-// at cost is not a reading of cost. `always` is the switch for somebody who wants the
-// work over there regardless; `auto` waits for the machine to say so.
+// A `where: 'remote'` pick still has to GET there: `shareable` (main/handoff.ts) is a git
+// repo under the projects root with an origin remote (`undefined` means nobody has asked
+// yet, and that is LOCAL - never guess remote, because guessing wrong opens the pane on a
+// machine where the folder does not exist), the other machine has to be alive, and it has
+// to have room (a peer already running a desk full of agents is not a destination; it is
+// the next machine to fall over).
 //
 // Pure. `npm run test:offloadfirst`.
 
 /**
- * The switch. `auto` is the default and is the only value that reads the desk.
- *
- * `always` still obeys every refusal above it - it means "whenever it can go, send it",
- * not "send it regardless", because the refusals are the things that would lose the work
- * rather than merely move it.
+ * The switch that used to decide whether an unpicked pane could leave this desk on its
+ * own. Kept only because it is still written to disk from an older build and still read
+ * by `preferRemoteOf` below (a value on disk is never assumed gone) - `placeNewPane` no
+ * longer looks at it: 2026-09-03, nothing but a deliberate `where: 'remote'` pick moves a
+ * pane at start any more.
  */
-import type { Pressure } from './capacity'
-
 export type PreferRemote = 'auto' | 'always' | 'never'
 
 /**
@@ -71,19 +63,6 @@ export const PEER_FULL_PANES = 8
 
 /** How long the far end has to say it started the pane before this desk opens it here. */
 export const REMOTE_START_ACK_MS = 8000
-
-/**
- * How long the corner card waits before an app-decided move goes ahead.
- *
- * A pane the APP decided to start on the other machine is announced first - "starting X
- * on PC in 8s", with a button that keeps it here - because a pane appearing on another
- * screen with nothing said is the app taking the desk away from the person at it
- * (2026-09-03: "it should at least have popup saying it will move the session over to
- * remote and allow me to stop it"). Doing nothing lets the decision stand, so a launch
- * from the phone or a script with nobody at the screen is never held up by a card nobody
- * will press. A pane the PERSON sent there (`where: 'remote'`) gets no card: they chose.
- */
-export const OFFLOAD_ASK_MS = 8000
 
 export interface PlaceInput {
   /**
@@ -99,12 +78,6 @@ export interface PlaceInput {
   peerAlive: boolean
   /** How many agents that device is already running, when it said. */
   peerBusyPanes?: number
-  /**
-   * What this machine says about itself right now: the memory verdict and the lag band,
-   * worse of the two (`worstPressure`). Absent reads as `normal` - an unmeasured desk is
-   * not a desk in trouble.
-   */
-  pressure?: Pressure
   /** This project is on the "never leaves this machine" list. */
   keepHere?: boolean
   /**
@@ -125,7 +98,6 @@ export interface PlaceInput {
   where?: 'local' | 'remote'
   /** The script name of a dev server already serving this project from THIS machine. */
   devServer?: string
-  mode: PreferRemote
 }
 
 export interface Placement {
@@ -194,17 +166,23 @@ export function placeNewPane(i: PlaceInput): Placement {
   // second-guess it: the dialog offered the choice, so the choice is the answer.
   if (i.where === 'local') return local('you chose this machine')
   if (i.where !== 'remote') {
-    if (i.mode === 'never') return local('set to always start work on this machine')
     if (i.keepHere) return local('this project is kept on this machine')
     if (i.machineBound) return local(`this work is driving ${i.machineBound} on this screen`)
     // The person's own pane. No brief means somebody is about to type into it, and a pane
     // that appears on another screen the moment + is pressed is the app taking the desk
-    // away from the one working at it. Above `always`: the switch is about WORK.
+    // away from the one working at it.
     if (!i.prompt?.trim()) return local('you opened this pane to work in it yourself')
     if (i.resumes) return local('it continues a conversation stored on this machine')
     const pinned = pinnedByPrompt(i.prompt, i.cwd)
     if (pinned) return local(pinned)
     if (i.devServer) return local(`this project's dev server (${i.devServer}) is already serving from this machine`)
+    // 2026-09-03 (Robert): "at the start i need to be able to start sessions here no
+    // matter what if i want to." A pane opened on this desk stays on this desk unless the
+    // person picked the other machine in the dialog - never because this desk measured
+    // itself full, and never because the work looked self-contained. The only automatic
+    // move left in the app is the mid-session handoff in autoHandoff.ts, which only ever
+    // touches a pane that already exists and already has something to lose.
+    return local('a pane you start here starts here')
   }
   // Not `!== true` written as a truthiness check on purpose: `undefined` and `false` are
   // both local, and they are different sentences. One is a folder nobody has measured, the
@@ -216,10 +194,5 @@ export function placeNewPane(i: PlaceInput): Placement {
     return local(`the other machine is already running ${i.peerBusyPanes} panes`)
   }
 
-  if (i.where === 'remote') return { where: 'remote', reason: 'you chose the other machine' }
-  if (i.mode === 'always') return { where: 'remote', reason: 'set to always start this work on the other machine' }
-  const pressure = i.pressure ?? 'normal'
-  if (pressure === 'critical') return { where: 'remote', reason: 'this machine is out of memory or struggling' }
-  if (pressure === 'warn') return { where: 'remote', reason: 'this machine is running low on memory or lagging' }
-  return local('this machine has room for it')
+  return { where: 'remote', reason: 'you chose the other machine' }
 }

@@ -33,7 +33,6 @@ import SessionInfo from './components/SessionInfo'
 import HandoffDialog, { type HandoffTarget } from './components/HandoffDialog'
 import Mascot, { type CloseSoon } from './components/Mascot'
 import MoveSoon, { soonKey } from './components/MoveSoon'
-import OffloadSoon from './components/OffloadSoon'
 import StopServer from './components/StopServer'
 import type { LoginRequest } from '../../shared/remoteLogin'
 import LoginCard from './components/LoginCard'
@@ -6864,8 +6863,6 @@ export default function App(): JSX.Element {
           doSoonNow(ids)
         }
       />
-      {/* A new pane the app decided to start on the other machine, before it does. */}
-      <OffloadSoon />
       {/* A pane that has just worked out whose work it is doing. */}
       <ClientToast
         named={clientNamed}
