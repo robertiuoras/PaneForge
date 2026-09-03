@@ -189,7 +189,6 @@ import {
   updateShelfItems
 } from './shelfWindow'
 import { ACTIVATION_SETTLE_MS, revealOnActivation } from '../shared/activation'
-import { logActivation, logOffload, logReclaim } from './activationLog'
 import { OFFLOAD_ASK_MS, placeNewPane, preferRemoteOf, REMOTE_START_ACK_MS } from '../shared/offloadFirst'
 import { logActivation, logOffload, logReclaim, logFix } from './activationLog'
 import { placeNewPane, preferRemoteOf, REMOTE_START_ACK_MS } from '../shared/offloadFirst'
