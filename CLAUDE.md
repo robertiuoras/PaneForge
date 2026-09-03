@@ -221,6 +221,39 @@ closes only on far end's ack, reappears as a mirror. Dirty/unpushed checkout ref
 name; paths graft onto receiver's root (`shared/handoff.ts`). `npm run test:handoff`, `npm run
 test:handofffit`.
 
+## A password gets typed on the machine that needs it
+
+A scheduled job on the other desk cannot type. `pf needs-login <site> --url <url> [--host
+user@ip] [--port 9333] [--machine WORDS]` puts a card up here; pressing it splits the
+window - chat left, that machine's automation Chrome live on the right - and the person
+signs in. `shared/remoteLogin.ts` is the arithmetic, `main/remoteLogin.ts` the ssh tunnel
+and the CDP socket, `RemoteLoginView.tsx` the picture, `LoginCard.tsx` the card.
+`npm run test:remotelogin`.
+
+- ONE frame in flight, never a queue: `Page.screencastFrame` -> paint -> `login:ack` ->
+  `Page.screencastFrameAck`, which is what asks Chrome for the next. A slow link loses
+  frame RATE and never grows a backlog. A frame arriving mid-paint REPLACES the one
+  waiting, so what is drawn next is the present.
+- `STEPS` is the ladder (quality 60/40/30 at 1440/960/720). Median rtt over `RTT_WINDOW`
+  (20) past `LAGGY_MS` (250) drops one rung, past `SLOW_MS` (600) goes straight to the
+  last; `GOOD_RUN` (20) frames under `GOOD_MS` (150) buys one back. Every change is a line
+  in `remote-login.log`. `PF_REMOTE_LOGIN_FAKE_LAG_MS` stubs lag into the ack path.
+- The tunnel is `ssh -N -L <free>:127.0.0.1:<port> <host>` with `BatchMode=yes` and
+  `ExitOnForwardFailure=yes`: Chrome's debugger refuses a non-loopback Host, and both ends
+  of the forward are 127.0.0.1, so nothing on the far machine is reconfigured. The local
+  port comes from a `net.createServer` probe; 15s to answer, then the ssh stderr is on the
+  card in full.
+- Coordinates are converted in MAIN, off the frame metadata (`toRemotePoint`) - the
+  renderer sends its own canvas point and size. Cmd is carried across as Ctrl against a
+  Windows Chrome (`mapMetaToCtrl`); Cmd/Ctrl+W, +Q and +N are never forwarded; paste is
+  one `Input.insertText`.
+- `login:need`, `login:open` and `login:input` are GATED (passkey); `login:list` and the
+  view's housekeeping sends are reviewed-safe. The renderer never speaks CDP.
+- Chrome and the tab stay up when the view closes - the signed-in session IS the point.
+  `shutdownLogins()` on quit, so no ssh child outlives the app.
+- Related, NOT this: `shared/peerChrome.ts` shares the MAC's Chrome with PC panes. Do not
+  merge them.
+
 ## A new pane starts where the work can run
 
 `shared/offloadFirst.ts` decides BEFORE a pty exists, in `startOrSend` above `laneFor`

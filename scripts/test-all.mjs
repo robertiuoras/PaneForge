@@ -117,6 +117,7 @@ const TESTS = [
   ['clientname', 'client-name-test.mjs'],
   ['resolvedname', 'resolved-name-test.mjs'],
   ['peerchrome', 'peer-chrome-test.mjs'],
+  ['remotelogin', 'remote-login-test.mjs'],
   ['projectname', 'project-name-test.mjs'],
   ['historysearch', 'history-search-test.mjs'],
   ['projectroot', 'projectroot-test.mjs'],
