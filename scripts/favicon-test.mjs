@@ -14,7 +14,8 @@
 //   node scripts/favicon-test.mjs
 
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, mkdtempSync, mkdirSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { inflateSync } from 'node:zlib'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -29,8 +30,15 @@ const ok = (name, cond) => {
   console.error('FAIL', name)
 }
 
-// Generated, not checked in by hand: the script is the source of every icon here.
-execFileSync(process.execPath, [join(root, 'scripts', 'make-icon.mjs')], { stdio: 'pipe' })
+// Generated, not checked in by hand: the script is the source of every icon here. It
+// renders into a scratch folder, NOT the checkout: the bytes differ per machine, so a
+// render into the repo left five files modified after every `npm test`, and
+// `lane.mjs ready` refuses a dirty checkout (2026-09-03).
+const scratch = mkdtempSync(join(tmpdir(), 'pf-icon-'))
+mkdirSync(join(scratch, 'src', 'renderer', 'public'), { recursive: true })
+execFileSync(process.execPath, [join(root, 'scripts', 'make-icon.mjs'), '--root', scratch], { stdio: 'pipe' })
+for (const rel of ['icon.png', 'icon.svg', 'build/icon.png', 'src/renderer/public/favicon.ico', 'src/renderer/public/favicon-32.png', 'src/renderer/public/favicon.svg'])
+  ok(`make-icon wrote ${rel}`, existsSync(join(scratch, rel)))
 
 // --- the page asks for it -------------------------------------------------------------
 const html = readFileSync(join(root, 'src', 'renderer', 'index.html'), 'utf8')
