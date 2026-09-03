@@ -1740,40 +1740,14 @@ export interface Config {
    */
   offloadWhenFull: boolean
   /**
-   * Ask before it does, rather than moving the pane and saying so afterwards.
-   *
-   * On, because where a pane runs is a decision with a reason this machine cannot see:
-   * the checkout being edited, the browser pointed at its dev server, the person sitting
-   * in front of it. The dialog recommends the paired device (it is the one that fixes the
-   * memory), and an answer holds for ten minutes so a burst of launches asks once. Off
-   * restores the silent move.
-   */
-  offloadAsk: boolean
-  /**
-   * The marker that says this config has been through the move onto `offloadAsk: false`.
-   *
-   * It is a separate key rather than an absent `offloadAsk`, because every config ever
-   * written by this app has that key set - see the migration in `getConfig`. Optional so a
-   * config from before it existed is recognised as one that has NOT been migrated.
-   */
-  offloadDefaultsV2?: boolean
-  /**
    * The one-time move onto the idle-offload clock being ON, at `IDLE_OFFLOAD_MINUTES`.
    *
-   * Same shape and same reason as the two below it: `defaults()` is WRITTEN at first
-   * launch, so every config in existence carries `offloadIdleMinutes: 0` explicitly and a
-   * changed default alone would read as somebody's own choice. It moves ONLY an exact 0 -
-   * any other number is a value somebody typed, and this has no licence over it.
+   * `defaults()` is WRITTEN at first launch, so every config in existence carries
+   * `offloadIdleMinutes: 0` explicitly and a changed default alone would read as
+   * somebody's own choice. It moves ONLY an exact 0 - any other number is a value
+   * somebody typed, and this has no licence over it.
    */
   offloadDefaultsV4?: boolean
-  /**
-   * The marker for the move BACK onto asking, which supersedes `offloadDefaultsV2`.
-   *
-   * A second key rather than clearing the first: V2 is on every config written since it
-   * shipped, so re-using it could not tell a desk that had already been through V2 from
-   * one that had not. Optional, for the same reason V2 is.
-   */
-  offloadDefaultsV3?: boolean
   /** roles offered in the swarm dialog, editable by the user */
   swarmRoles: SwarmRole[]
   /** pairing, hosting and the devices whose panes show up in this window */
