@@ -34,6 +34,8 @@ export interface HandoffTarget {
   title: string
   /** any of them is mid-turn or holding a question - it changes what the button promises */
   busy?: boolean
+  /** it is still booting its agent - not mid-turn, and the sentence must not say it is */
+  starting?: boolean
   /** one of them is sitting on a question, which is the one state a move must not take */
   asking?: boolean
 }
@@ -125,6 +127,11 @@ export default function HandoffDialog({ target, peers, flash, onPair, onClose }:
             This pane is sitting on a question it drew on screen, and a question lives on a
             screen and in no transcript - so it cannot travel. Queue it here and it moves as
             soon as you have answered; answer it first and it moves at once.
+          </p>
+        ) : target.starting ? (
+          <p className="ho-note">
+            This pane is still starting. It is queued and moves the moment it is ready - a
+            few seconds, usually.
           </p>
         ) : target.busy ? (
           <p className="ho-note">

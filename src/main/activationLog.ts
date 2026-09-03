@@ -71,6 +71,15 @@ export function logOffload(entry: Record<string, unknown>): void {
   write('offload.log', entry)
 }
 
+/**
+ * Every step of a pane moving to another machine, with how long it took. "It says moving
+ * and never moves" arrived three times with nothing on disk to read: the sender's steps
+ * went to console.info, which nobody keeps.
+ */
+export function logHandoff(line: string): void {
+  write('handoff.log', { line })
+}
+
 export function logActivation(entry: Record<string, unknown>): void {
   write('activation.log', entry)
 }

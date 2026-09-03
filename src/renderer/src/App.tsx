@@ -5031,11 +5031,20 @@ export default function App(): JSX.Element {
                             waiting <Elapsed since={s.handoffQueuedAt} title="Queued for a move" />
                           </button>
                         ) : (
+                          // Which half is running and for how long: a move is a repo push
+                          // and then a link transfer, and either can be the slow one. The
+                          // steps are in handoff.log under the app's data folder.
                           <span
                             className="chip"
-                            title="Moving to a paired device now."
+                            title="Moving to a paired device now: the repo is pushed, then the pane starts over there and closes here. Each step is in handoff.log."
                           >
-                            moving
+                            {s.handoffStage ?? 'moving'}
+                            {s.handoffSince ? (
+                              <>
+                                {' '}
+                                <Elapsed since={s.handoffSince} title="Moving for" />
+                              </>
+                            ) : null}
                           </span>
                         )
                       ) : s.asleep ? (
@@ -5966,9 +5975,11 @@ export default function App(): JSX.Element {
                   <button
                     className="ghost small desk-only pt-handoff"
                     title={
-                      s.status === 'working' || s.status === 'starting'
-                        ? `Move ${s.lane ? `lane ${s.lane}` : s.title} to another machine. It is mid-turn, so the move is queued until the turn ends - never killed.`
-                        : 'Where this agent runs: your paired machines, and what each of them is doing.'
+                      s.status === 'starting'
+                        ? `Move ${s.lane ? `lane ${s.lane}` : s.title} to another machine. It is still starting here, so the move waits until it is ready.`
+                        : s.status === 'working'
+                          ? `Move ${s.lane ? `lane ${s.lane}` : s.title} to another machine. It is mid-turn, so the move is queued until the turn ends - never killed.`
+                          : 'Where this agent runs: your paired machines, and what each of them is doing.'
                     }
                     onClick={(e) => {
                       e.stopPropagation()
@@ -5987,6 +5998,7 @@ export default function App(): JSX.Element {
                         ids,
                         title: s.lane ? `lane ${s.lane}` : s.title,
                         busy,
+                        starting: s.status === 'starting',
                         asking: Boolean(s.ask)
                       })
                     }}
@@ -6646,6 +6658,7 @@ export default function App(): JSX.Element {
                             : [s.id],
                           title: s.lane ? `lane ${s.lane}` : s.title,
                           busy: s.status === 'working' || s.status === 'starting',
+                          starting: s.status === 'starting',
                           asking: Boolean(s.ask)
                         })
                     }

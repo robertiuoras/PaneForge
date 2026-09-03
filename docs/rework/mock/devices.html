@@ -1,0 +1,670 @@
+<title>Devices, step by step</title>
+<style>
+  /* ------------------------------------------------------------------ tokens
+     Real PaneForge values, printed from src/shared/theme.ts paletteFor() with
+     the default theme (preset forge, accent #f0a868): depth 0.3 is the dark
+     one this app ships with, depth 0.98 is Paper. Nothing here is invented. */
+  :root {
+    --bg: #0d0907;
+    --surface: #140f0b;
+    --surface-2: #1c1510;
+    --surface-3: #251d17;
+    --line: #ffffff10;
+    --line-strong: #ffffff1f;
+    --text: #efecea;
+    --muted: #a0978f;
+    --accent: #f0a868;
+    --accent-text: #f0a868;
+    --accent-dim: #f0a86826;
+    --accent-soft: #f0a86817;
+    --accent-on: #0b0b0f;
+    --ok: #59d483;
+    --r-sm: 6px;
+    --r: 9px;
+    --r-lg: 13px;
+    /* linear.app.md: the one real drop shadow is reserved for the overlay */
+    --shadow: 0 18px 44px #000000a8, 0 2px 8px #0000005c;
+    /* linear.app.md: two durations, one curve */
+    --quick: 0.1s ease;
+    --move: 0.16s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+    color-scheme: dark;
+  }
+  /* The app is dark by default, so the bare :root above is the dark set and Paper is the
+     variant. The three states a viewer can be in - stamped light, stamped dark, or nothing
+     stamped and only the OS to go on - are all answered here, and the mock's own toggle
+     (.paper / .dark, last) beats every one of them. */
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]):not(.dark) {
+      --bg: #e5dfda;
+      --surface: #ece4de;
+      --surface-2: #f3eae3;
+      --surface-3: #fcf1e8;
+      --line: #0000000d;
+      --line-strong: #0000001c;
+      --text: #252422;
+      --muted: #625952;
+      --accent-text: #7e4500;
+      --accent-dim: #f0a8681f;
+      --accent-soft: #f0a86812;
+      --ok: #00612e;
+      --shadow: 0 14px 34px #0000002e, 0 2px 6px #00000018;
+      color-scheme: light;
+    }
+  }
+  :root[data-theme="light"], :root.paper {
+    --bg: #e5dfda;
+    --surface: #ece4de;
+    --surface-2: #f3eae3;
+    --surface-3: #fcf1e8;
+    --line: #0000000d;
+    --line-strong: #0000001c;
+    --text: #252422;
+    --muted: #625952;
+    --accent-text: #7e4500;
+    --accent-dim: #f0a8681f;
+    --accent-soft: #f0a86812;
+    --ok: #00612e;
+    --shadow: 0 14px 34px #0000002e, 0 2px 6px #00000018;
+    color-scheme: light;
+  }
+  /* last, so the toggle wins over both the stamp and the OS */
+  :root.dark {
+    --bg: #0d0907;
+    --surface: #140f0b;
+    --surface-2: #1c1510;
+    --surface-3: #251d17;
+    --line: #ffffff10;
+    --line-strong: #ffffff1f;
+    --text: #efecea;
+    --muted: #a0978f;
+    --accent-text: #f0a868;
+    --accent-dim: #f0a86826;
+    --accent-soft: #f0a86817;
+    --ok: #59d483;
+    --shadow: 0 18px 44px #000000a8, 0 2px 8px #0000005c;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.5 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    letter-spacing: -0.14px;
+    transition: background var(--move), color var(--move);
+  }
+
+  /* ---------------------------------------------------------------- chrome
+     Everything with class .note is the mock's own scaffolding - the toggles
+     and the counts. None of it is part of the page being proposed. */
+  .note { max-width: 980px; margin: 0 auto; padding: 28px 20px 0; }
+  .note h1 { font: 590 20px/1.35 inherit; letter-spacing: -0.44px; margin: 0 0 6px; }
+  .note p { color: var(--muted); margin: 0 0 14px; max-width: 68ch; }
+  .note .bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+  .note .seg { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 999px; }
+  .note .seg button {
+    appearance: none; background: transparent; border: 0; cursor: pointer;
+    color: var(--muted); font: 510 12px/1 inherit; padding: 7px 13px; border-radius: 999px;
+    transition: color var(--quick), background var(--quick);
+  }
+  .note .seg button:hover { color: var(--text); }
+  .note .seg button[aria-pressed="true"] { background: var(--accent-dim); color: var(--accent-text); }
+  .note .counts { border-top: 1px solid var(--line); margin-top: 26px; padding: 16px 0 40px; color: var(--muted); font-size: 13px; }
+  .note .counts b { color: var(--text); font-weight: 590; }
+  .note .counts ul { margin: 8px 0 0; padding-left: 18px; }
+  .note .counts li { margin-bottom: 3px; }
+
+  /* -------------------------------------------------------------- the page
+     .stage is the window the dialog floats in; .desk / .phone give it the two
+     widths the brief asks for. The dialog itself is width-agnostic - it is a
+     single column at both, which is the point. */
+  .stage {
+    margin: 20px auto 0;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    padding: 26px 20px;
+    display: flex; justify-content: center;
+    transition: max-width var(--move);
+  }
+  .stage.desk { max-width: 980px; }
+  .stage.phone { max-width: 420px; padding: 14px 10px; }
+
+  .dialog {
+    width: 100%;
+    max-width: 560px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+  .stage.phone .dialog { max-width: none; }
+
+  .head { padding: 18px 20px 14px; border-bottom: 1px solid var(--line); }
+  .head strong { display: block; font: 590 16px/1.3 inherit; letter-spacing: -0.35px; }
+  .head span { display: block; color: var(--muted); font-size: 13px; margin-top: 3px; }
+  .body { padding: 18px 20px; }
+  .stage.phone .body { padding: 16px 14px; }
+
+  /* the numbered steps: a done one collapses to its answer, the next one opens */
+  .step + .step { margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--line); }
+  .step-head { display: flex; align-items: baseline; gap: 10px; }
+  .num {
+    flex: none; width: 21px; height: 21px; border-radius: 999px;
+    display: grid; place-items: center; align-self: flex-start; margin-top: 1px;
+    background: var(--surface-3); color: var(--muted);
+    font: 510 11px/1 inherit; border: 1px solid var(--line);
+  }
+  .step.now .num { background: var(--accent-dim); color: var(--accent-text); border-color: transparent; }
+  .step.done .num { background: transparent; color: var(--ok); border-color: var(--line-strong); }
+  .step h2 { margin: 0; font: 590 14px/1.45 inherit; letter-spacing: -0.2px; }
+  .step .said { color: var(--muted); font-size: 13px; margin: 2px 0 0; }
+  .step-body { margin: 13px 0 0 31px; }
+  .stage.phone .step-body { margin-left: 0; }
+  .step.waiting { opacity: 0.42; }
+  .step.waiting .step-body { display: none; }
+  .step.done .step-body { display: none; }
+  .step.done .change {
+    appearance: none; background: transparent; border: 0; padding: 0; margin-left: auto;
+    color: var(--muted); font: 400 12px/1 inherit; cursor: pointer; text-decoration: underline;
+    text-underline-offset: 3px; transition: color var(--quick);
+  }
+  .step.done .change:hover { color: var(--text); }
+  .step:not(.done) .change { display: none; }
+
+  /* step 1: the two big choices, and nothing else on the page */
+  .choices { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; }
+  .stage.phone .choices { grid-template-columns: 1fr; }
+  .choice {
+    appearance: none; text-align: left; cursor: pointer;
+    background: var(--surface-2); border: 1px solid var(--line);
+    border-radius: var(--r); padding: 16px; color: inherit; font: inherit;
+    display: flex; flex-direction: column; gap: 7px; min-height: 118px;
+    transition: background var(--quick), border-color var(--quick);
+  }
+  .choice:hover { background: var(--surface-3); border-color: var(--line-strong); }
+  .choice svg { width: 22px; height: 22px; color: var(--accent-text); }
+  .choice b { font: 590 14px/1.35 inherit; letter-spacing: -0.2px; }
+  .choice span { color: var(--muted); font-size: 12.5px; line-height: 1.45; }
+
+  /* step 2, phone: one picture and one sentence */
+  .scan { text-align: center; }
+  .scan .sheet {
+    display: inline-block; padding: 14px; background: #ffffff; border-radius: var(--r);
+    border: 1px solid var(--line);
+  }
+  .scan .sheet svg { display: block; width: 168px; height: 168px; }
+  .scan .lead { display: block; font: 590 14px/1.4 inherit; margin-top: 13px; }
+  .scan .also { display: block; color: var(--muted); font-size: 12.5px; margin-top: 4px; }
+
+  /* step 2, computer: six digits, big */
+  .digits {
+    font: 510 34px/1 ui-monospace, "Berkeley Mono", SFMono-Regular, Menlo, monospace;
+    letter-spacing: 5px; text-align: center; padding: 18px 0 6px;
+  }
+  .digits span { color: var(--muted); margin-left: 6px; }
+  .digits + .lead { display: block; text-align: center; font-size: 13px; color: var(--muted); }
+
+  /* a device already asking to be let in */
+  .asking {
+    display: flex; align-items: center; gap: 10px; margin-top: 14px;
+    background: var(--accent-soft); border: 1px solid var(--line);
+    border-radius: var(--r); padding: 11px 12px;
+  }
+  .asking .who { flex: 1; min-width: 0; }
+  .asking b { display: block; font: 590 13px/1.35 inherit; }
+  .asking small { color: var(--muted); font-size: 12px; }
+
+  /* the reach switch: one line of outcome, no vendor names */
+  .reach {
+    display: flex; align-items: center; gap: 11px; margin-top: 16px;
+    padding-top: 14px; border-top: 1px solid var(--line);
+  }
+  .reach .who { flex: 1; min-width: 0; }
+  .reach b { display: block; font: 510 13px/1.4 inherit; }
+  .reach small { color: var(--muted); font-size: 12px; }
+  .sw {
+    appearance: none; flex: none; cursor: pointer; width: 36px; height: 21px; border-radius: 999px;
+    background: var(--surface-3); border: 1px solid var(--line-strong); position: relative;
+    transition: background var(--move), border-color var(--move);
+  }
+  .sw::after {
+    content: ""; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px;
+    border-radius: 999px; background: var(--muted); transition: transform var(--move), background var(--move);
+  }
+  .sw[aria-checked="true"] { background: var(--accent-dim); border-color: transparent; }
+  .sw[aria-checked="true"]::after { transform: translateX(15px); background: var(--accent-text); }
+
+  /* step 3: the one paired device */
+  .device {
+    display: flex; align-items: center; gap: 11px;
+    background: var(--surface-2); border: 1px solid var(--line);
+    border-radius: var(--r); padding: 12px 13px;
+  }
+  .device .who { flex: 1; min-width: 0; }
+  .device b { display: block; font: 590 13.5px/1.4 inherit; }
+  .device small { color: var(--muted); font-size: 12px; display: flex; align-items: center; gap: 6px; }
+  .dot { width: 6px; height: 6px; border-radius: 999px; background: var(--ok); flex: none; }
+  .acts { display: flex; gap: 6px; flex-wrap: wrap; }
+  .stage.phone .device { flex-wrap: wrap; }
+  .stage.phone .acts { width: 100%; }
+
+  /* buttons */
+  button.primary, button.ghost {
+    appearance: none; cursor: pointer; font: 510 12.5px/1 inherit; border-radius: 999px;
+    padding: 9px 14px; transition: background var(--quick), border-color var(--quick), color var(--quick);
+  }
+  button.primary { background: var(--accent); color: var(--accent-on); border: 1px solid transparent; }
+  button.primary:hover { background: var(--accent-text); }
+  button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line-strong); }
+  button.ghost:hover { color: var(--text); background: var(--surface-3); }
+  .stage.phone button.primary, .stage.phone button.ghost { min-height: 44px; padding: 12px 16px; }
+
+  /* one disclosure style for every fold on the page */
+  details { margin-top: 14px; }
+  details > summary {
+    list-style: none; cursor: pointer; color: var(--muted); font-size: 12.5px;
+    display: flex; align-items: center; gap: 7px; padding: 7px 0;
+    transition: color var(--quick);
+  }
+  details > summary::-webkit-details-marker { display: none; }
+  details > summary:hover { color: var(--text); }
+  details > summary::before {
+    content: ""; width: 5px; height: 5px; border-right: 1px solid currentColor;
+    border-bottom: 1px solid currentColor; transform: rotate(-45deg); transition: transform var(--move);
+  }
+  details[open] > summary::before { transform: rotate(45deg); }
+  .fold-body {
+    border: 1px solid var(--line); border-radius: var(--r); padding: 13px;
+    background: var(--surface-2); display: grid; gap: 11px;
+  }
+  .field { display: flex; align-items: center; gap: 10px; font-size: 12.5px; }
+  .field .k { color: var(--muted); flex: none; min-width: 92px; }
+  .field code {
+    font: 400 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: var(--surface-3); border: 1px solid var(--line); border-radius: var(--r-sm);
+    padding: 6px 8px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  }
+  .field input {
+    font: inherit; font-size: 12.5px; color: var(--text); flex: 1; min-width: 0;
+    background: var(--surface-3); border: 1px solid var(--line);
+    border-radius: var(--r-sm); padding: 7px 9px;
+  }
+  .runs { display: grid; gap: 6px; font-size: 12.5px; }
+  .runs div { display: flex; gap: 8px; align-items: center; color: var(--muted); }
+  .runs code {
+    font: 400 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--text); background: transparent; border: 0; padding: 0;
+  }
+  .runs .x { margin-left: auto; font-variant-numeric: tabular-nums; }
+  .adv { margin-top: 18px; padding-top: 4px; border-top: 1px solid var(--line); }
+  .adv .fold-body { gap: 14px; }
+
+  .foot {
+    display: flex; align-items: center; gap: 12px;
+    padding: 13px 20px; border-top: 1px solid var(--line);
+  }
+  .foot span { color: var(--muted); font-size: 12.5px; flex: 1; }
+  .foot button { margin-left: auto; }
+
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="note">
+  <h1>Devices, step by step</h1>
+  <p>
+    A mock of the rework in <code>docs/rework/devices.md</code>. Nothing is wired; every control is
+    drawn, none acts. The step buttons below the title are the mock's own, not part of the page.
+  </p>
+  <div class="bar">
+    <div class="seg" id="theme">
+      <button aria-pressed="true" data-t="dark">Dark</button>
+      <button aria-pressed="false" data-t="paper">Paper</button>
+    </div>
+    <div class="seg" id="width">
+      <button aria-pressed="true" data-w="desk">Desk</button>
+      <button aria-pressed="false" data-w="phone">Phone</button>
+    </div>
+    <div class="seg" id="jump">
+      <button aria-pressed="true" data-s="1">Step 1</button>
+      <button aria-pressed="false" data-s="2p">2 · phone</button>
+      <button aria-pressed="false" data-s="2c">2 · computer</button>
+      <button aria-pressed="false" data-s="3">Step 3</button>
+    </div>
+  </div>
+</div>
+
+<div class="stage desk" id="stage">
+  <div class="dialog">
+    <div class="head">
+      <strong>Devices</strong>
+      <span>See this machine's panes somewhere else, and type into them from there.</span>
+    </div>
+
+    <div class="body">
+
+      <!-- ---------------------------------------------------------- step 1
+           Nothing else is on the page until one of these is pressed. -->
+      <section class="step now" id="s1">
+        <div class="step-head">
+          <span class="num">1</span>
+          <div>
+            <h2>What do you want to connect?</h2>
+            <p class="said" id="s1-said">A phone or tablet</p>
+          </div>
+          <button class="change" data-go="1">Change</button>
+        </div>
+        <div class="step-body">
+          <div class="choices">
+            <button class="choice" data-go="2p">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+                <rect x="7" y="2.5" width="10" height="19" rx="2.5" />
+                <line x1="10.5" y1="18.5" x2="13.5" y2="18.5" />
+              </svg>
+              <b>A phone or tablet</b>
+              <span>Watch your panes and type into them from your pocket. Nothing to install.</span>
+            </button>
+            <button class="choice" data-go="2c">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+                <rect x="2.5" y="4" width="19" height="12.5" rx="2" />
+                <line x1="8" y1="20" x2="16" y2="20" />
+              </svg>
+              <b>Another computer running PaneForge</b>
+              <span>Work on this machine's panes from the other one, and move work between them.</span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- --------------------------------------------------- step 2, phone -->
+      <section class="step waiting" id="s2p">
+        <div class="step-head">
+          <span class="num">2</span>
+          <div>
+            <h2>Point your phone at this</h2>
+            <p class="said">Your phone signs in once and stays in.</p>
+          </div>
+          <button class="change" data-go="2p">Change</button>
+        </div>
+        <div class="step-body">
+          <div class="scan">
+            <span class="sheet">
+              <!-- a drawn stand-in, not a real code -->
+              <svg viewBox="0 0 21 21" shape-rendering="crispEdges" aria-label="a square code to point a camera at">
+                <rect width="21" height="21" fill="#fff"/>
+                <g fill="#000">
+                  <path d="M0 0h7v7H0zm1 1v5h5V1z"/><rect x="2" y="2" width="3" height="3"/>
+                  <path d="M14 0h7v7h-7zm1 1v5h5V1z"/><rect x="16" y="2" width="3" height="3"/>
+                  <path d="M0 14h7v7H0zm1 1v5h5v-5z"/><rect x="2" y="16" width="3" height="3"/>
+                  <rect x="9" y="0" width="1" height="1"/><rect x="11" y="0" width="1" height="2"/>
+                  <rect x="9" y="2" width="2" height="1"/><rect x="12" y="3" width="1" height="1"/>
+                  <rect x="9" y="4" width="1" height="2"/><rect x="11" y="5" width="2" height="1"/>
+                  <rect x="8" y="8" width="2" height="1"/><rect x="11" y="8" width="1" height="1"/>
+                  <rect x="13" y="8" width="1" height="2"/><rect x="15" y="8" width="2" height="1"/>
+                  <rect x="18" y="8" width="1" height="1"/><rect x="20" y="9" width="1" height="2"/>
+                  <rect x="8" y="10" width="1" height="2"/><rect x="10" y="10" width="2" height="1"/>
+                  <rect x="14" y="10" width="1" height="1"/><rect x="16" y="10" width="1" height="2"/>
+                  <rect x="18" y="11" width="2" height="1"/><rect x="9" y="12" width="1" height="1"/>
+                  <rect x="11" y="12" width="2" height="1"/><rect x="14" y="12" width="1" height="2"/>
+                  <rect x="17" y="13" width="1" height="1"/><rect x="19" y="13" width="1" height="2"/>
+                  <rect x="8" y="14" width="1" height="1"/><rect x="10" y="14" width="1" height="2"/>
+                  <rect x="12" y="15" width="2" height="1"/><rect x="15" y="15" width="1" height="2"/>
+                  <rect x="18" y="16" width="1" height="1"/><rect x="9" y="16" width="1" height="1"/>
+                  <rect x="11" y="17" width="1" height="2"/><rect x="13" y="17" width="2" height="1"/>
+                  <rect x="16" y="18" width="2" height="1"/><rect x="20" y="17" width="1" height="2"/>
+                  <rect x="9" y="19" width="2" height="1"/><rect x="12" y="19" width="1" height="2"/>
+                  <rect x="14" y="20" width="2" height="1"/><rect x="17" y="20" width="1" height="1"/>
+                  <rect x="19" y="19" width="1" height="1"/>
+                </g>
+              </svg>
+            </span>
+            <strong class="lead">Point your phone's camera at this</strong>
+            <span class="also">It opens this window in your phone's browser. It signs in once and stays in.</span>
+          </div>
+
+          <div class="reach">
+            <div class="who">
+              <b>Works from anywhere</b>
+              <small>Off, and your phone has to be on this Wi&#8209;Fi.</small>
+            </div>
+            <button class="sw" role="switch" aria-checked="true" aria-label="Works from anywhere"></button>
+          </div>
+
+          <details>
+            <summary>Other ways</summary>
+            <div class="fold-body">
+              <div class="field">
+                <span class="k">Open by hand</span>
+                <code>https://desk.example.net/pf</code>
+                <button class="ghost">Copy</button>
+              </div>
+              <div class="field">
+                <span class="k">Code</span>
+                <code>••••••</code>
+                <button class="ghost">Show</button>
+                <button class="ghost">New code</button>
+              </div>
+              <div class="field">
+                <span class="k">Port</span>
+                <input value="7312" aria-label="Port" />
+              </div>
+            </div>
+          </details>
+        </div>
+      </section>
+
+      <!-- ------------------------------------------------ step 2, computer -->
+      <section class="step waiting" id="s2c">
+        <div class="step-head">
+          <span class="num">2</span>
+          <div>
+            <h2>Type this on the other computer</h2>
+            <p class="said">Both screens have to show the same six numbers.</p>
+          </div>
+          <button class="change" data-go="2c">Change</button>
+        </div>
+        <div class="step-body">
+          <div class="digits">418 <span>207</span></div>
+          <span class="lead">Open Devices over there and type it in.</span>
+
+          <div class="asking">
+            <span class="dot"></span>
+            <div class="who">
+              <b>Robert's PC is asking to connect</b>
+              <small>It is showing 418 207 too. Let it in only if that matches.</small>
+            </div>
+            <div class="acts">
+              <button class="primary">Approve</button>
+              <button class="ghost">Ignore</button>
+            </div>
+          </div>
+
+          <details>
+            <summary>Other ways</summary>
+            <div class="fold-body">
+              <div class="field">
+                <span class="k">Send an invite</span>
+                <code>one line to paste over there, good for 15 minutes</code>
+                <button class="ghost">Copy</button>
+              </div>
+              <div class="field">
+                <span class="k">Paste an invite</span>
+                <input placeholder="Paste the invite from your other computer" aria-label="Paste an invite" />
+              </div>
+              <div class="field">
+                <span class="k">By hand</span>
+                <input placeholder="Address" aria-label="Address" />
+                <input placeholder="Code" aria-label="Code" style="max-width:110px" />
+                <button class="ghost">Connect</button>
+              </div>
+            </div>
+          </details>
+        </div>
+      </section>
+
+      <!-- ---------------------------------------------------------- step 3 -->
+      <section class="step waiting" id="s3">
+        <div class="step-head">
+          <span class="num">3</span>
+          <div>
+            <h2>Connected</h2>
+            <p class="said">Panes stay on the machine they were opened on. You are driving them from here.</p>
+          </div>
+        </div>
+        <div class="step-body">
+          <div class="device">
+            <span class="dot"></span>
+            <div class="who">
+              <b>Robert's PC</b>
+              <small>online · 3 panes there</small>
+            </div>
+            <div class="acts">
+              <button class="primary">Open a pane there</button>
+              <button class="ghost">Disconnect</button>
+            </div>
+          </div>
+
+          <details>
+            <summary>What else it is running</summary>
+            <div class="fold-body">
+              <div class="runs">
+                <div><code>npm run dev</code><span>taskdriver</span><span class="x">1</span></div>
+                <div><code>hook-guard.mjs</code><span>claude-memory</span><span class="x">&times; 32</span></div>
+                <div><code>model-pin-silent</code><span>every minute</span><span class="x">1</span></div>
+              </div>
+            </div>
+          </details>
+        </div>
+      </section>
+
+      <!-- Everything that used to be on the page and is still reachable. -->
+      <div class="adv">
+        <details>
+          <summary>Advanced</summary>
+          <div class="fold-body">
+            <div class="reach" style="margin:0;padding:0;border:0">
+              <div class="who">
+                <b>Let my other devices connect</b>
+                <small>They can watch and type into every pane open here.</small>
+              </div>
+              <button class="sw" role="switch" aria-checked="true" aria-label="Let my other devices connect"></button>
+            </div>
+            <div class="reach" style="margin:0;padding:0;border:0">
+              <div class="who">
+                <b>Let a device on this network ask to connect</b>
+                <small>It puts a card on this screen with six numbers to compare.</small>
+              </div>
+              <button class="sw" role="switch" aria-checked="true" aria-label="Let a device on this network ask to connect"></button>
+            </div>
+            <div class="reach" style="margin:0;padding:0;border:0">
+              <div class="who">
+                <b>Ask me to prove it is me before typing</b>
+                <small>A phone can watch without it; typing asks once every 15 minutes.</small>
+              </div>
+              <button class="sw" role="switch" aria-checked="false" aria-label="Ask me to prove it is me before typing"></button>
+            </div>
+            <div class="field">
+              <span class="k">Signed-in phones</span>
+              <code>iPhone &mdash; signed in 2 days ago</code>
+              <button class="ghost">Sign out</button>
+            </div>
+            <div class="field">
+              <span class="k">This device</span>
+              <input value="Roberts-MacBook-Pro" aria-label="This device's name" />
+            </div>
+            <div class="field">
+              <span class="k">Start over</span>
+              <code>a new code disconnects everything paired with the old one</code>
+              <button class="ghost">New code</button>
+            </div>
+          </div>
+        </details>
+      </div>
+    </div>
+
+    <div class="foot">
+      <span>Nothing here moves a pane. Work moves only when you ask it to.</span>
+      <button class="ghost">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="note">
+  <div class="counts">
+    <b>Controls on the page.</b> A control is one thing a person can press, type into or open:
+    button, text box, switch, disclosure. Counted on a machine with nothing paired yet, with
+    every disclosure counted once as a control and its contents counted too.
+    <ul>
+      <li><b>Today: 29.</b> Phone card 10 &middot; this device 11 &middot; pair another 7 &middot; Close 1.
+        Of those, <b>21 are on screen before anything is opened</b>, in two columns.</li>
+      <li><b>This mock: 4 on arrival</b> &mdash; two choices, Advanced, Close.
+        <b>10 in the phone step</b> (choice made, 2 of them behind Other ways &hellip; 3 more inside it),
+        <b>7 once connected</b>. Advanced holds the 6 that were loose on the old page.</li>
+      <li>Nothing was deleted: every control on the old page is in the mock, in a step or under
+        Advanced.</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+  // The mock's own wiring: pick a theme, a width, and which step is open.
+  const stage = document.getElementById('stage')
+  const steps = { '1': 's1', '2p': 's2p', '2c': 's2c', '3': 's3' }
+
+  function press(group, key, val) {
+    for (const b of document.querySelectorAll('#' + group + ' button'))
+      b.setAttribute('aria-pressed', String(b.dataset[key] === val))
+  }
+
+  function show(which) {
+    press('jump', 's', which)
+    const said = document.getElementById('s1-said')
+    if (which === '2c' || (which === '3' && window.__last === '2c'))
+      said.textContent = 'Another computer running PaneForge'
+    else said.textContent = 'A phone or tablet'
+    if (which !== '3') window.__last = which
+    const on = steps[which]
+    for (const [k, id] of Object.entries(steps)) {
+      const el = document.getElementById(id)
+      el.classList.remove('now', 'done', 'waiting')
+      if (id === on) el.classList.add('now')
+      else if (k === '1' && which !== '1') el.classList.add('done')
+      else if (which === '3' && (k === '2p' || k === '2c')) el.classList.add(k === (window.__last || '2p') ? 'done' : 'waiting')
+      else el.classList.add('waiting')
+    }
+    // Step 3 only exists once something is connected; before that it is not drawn at all.
+    document.getElementById('s3').style.display = which === '3' ? '' : 'none'
+    // The branch not taken is not on the page either.
+    if (which === '1') {
+      document.getElementById('s2p').style.display = 'none'
+      document.getElementById('s2c').style.display = 'none'
+    } else {
+      document.getElementById('s2p').style.display = which === '2p' || (which === '3' && window.__last === '2p') ? '' : 'none'
+      document.getElementById('s2c').style.display = which === '2c' || (which === '3' && window.__last === '2c') ? '' : 'none'
+    }
+  }
+
+  document.getElementById('theme').onclick = (e) => {
+    const t = e.target.dataset.t
+    if (!t) return
+    document.documentElement.classList.toggle('paper', t === 'paper')
+    press('theme', 't', t)
+  }
+  document.getElementById('width').onclick = (e) => {
+    const w = e.target.dataset.w
+    if (!w) return
+    stage.className = 'stage ' + w
+    press('width', 'w', w)
+  }
+  document.getElementById('jump').onclick = (e) => { if (e.target.dataset.s) show(e.target.dataset.s) }
+  document.body.addEventListener('click', (e) => {
+    const go = e.target.closest('[data-go]')
+    if (go) show(go.dataset.go)
+  })
+  for (const sw of document.querySelectorAll('.sw'))
+    sw.onclick = () => sw.setAttribute('aria-checked', sw.getAttribute('aria-checked') === 'true' ? 'false' : 'true')
+
+  show('1')
+</script>

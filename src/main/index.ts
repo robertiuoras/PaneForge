@@ -191,7 +191,7 @@ import {
 } from './shelfWindow'
 import { ACTIVATION_SETTLE_MS, revealOnActivation } from '../shared/activation'
 import { OFFLOAD_ASK_MS, placeNewPane, preferRemoteOf, REMOTE_START_ACK_MS } from '../shared/offloadFirst'
-import { logActivation, logOffload, logReclaim, logFix } from './activationLog'
+import { logActivation, logOffload, logReclaim, logFix, logHandoff } from './activationLog'
 import { projectNameOf, projectOn } from '../shared/capacity'
 import { staysHere } from '../shared/autoHandoff'
 import { listActivity, markActivitySeen, noteActivity, onActivityChange } from './activity'
@@ -2548,6 +2548,8 @@ function runHandoff(device: string, request: HandoffRequest): Promise<HandoffIte
       selfDevice: () => getConfig().remote.id,
       busy: paneBusy,
       queue: (id, dev, closeAfter) => handoffQueue.add(id, dev, closeAfter),
+      stage: (id, stage) => manager.setHandoffStage(id, stage),
+      log: logHandoff,
       devServersOf: (id, cwd) => {
         const root = manager.roots().find((r) => r.id === id)
         return root ? devServersOf(root.pid, cwd) : Promise.resolve({ servers: [], notes: [] })
@@ -2576,7 +2578,10 @@ const handoffQueue = new HandoffQueue({
   mark: (id, on, queuedAt) => manager.setHandingOff(id, on, queuedAt),
   deviceName: (dev) => remote.peerName(dev),
   config: () => getConfig().autoHandoff ?? DEFAULT_AUTO_HANDOFF,
-  log: (line) => console.info(line),
+  log: (line) => {
+    console.info(line)
+    logHandoff(line)
+  },
   // The queue finishes long after the dialog closed, and from the phone there was no
   // dialog at all - so its outcome goes to the window too, or a pane disappears with
   // no reason on screen and the desk it left reads as a frozen session.
