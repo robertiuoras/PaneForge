@@ -319,4 +319,53 @@ ok(/login:need/.test(ctl), 'and goes through the declared channel, not a second 
 ok(/--host/.test(ctl) && /--port/.test(ctl) && /--machine/.test(ctl), 'with the flags the spec named')
 ok(/'list'/.test(ctl) && /login:list/.test(ctl), '`pf list` shows the sign-in requests as well as the panes')
 
+// ------------------------------------------------------------- asking for it again
+// Robert, 2026-09-03: "allow me to just ask, like that session who wanted it, to open
+// again the login and it knows how to open it." Everything the pane leaves out is what it
+// said last time, and the picture opens instead of a card waiting to be clicked.
+{
+  eq(M.siteFromUrl('https://www.facebook.com/login'), 'facebook', 'the word a person uses for the address')
+  eq(M.siteFromUrl('https://accounts.google.co.uk/signin'), 'google', 'a two-part suffix is still a suffix')
+  eq(M.siteFromUrl('http://127.0.0.1:8899/'), '127.0.0.1', 'an address that is a number is its own name')
+  eq(M.siteFromUrl('not an address'), '', 'and nonsense names nothing')
+
+  const first = M.askAgain(undefined, { site: 'facebook', url: 'https://facebook.com/login', host: 'Gamer@100.78.1.77' })
+  ok(first.ok, 'a first ask that names a page is accepted')
+  eq(first.ask.site, 'facebook', 'with the site it named')
+
+  const again = M.askAgain(first.ask, {})
+  ok(again.ok, 'the same pane asking again with no words at all is accepted')
+  eq(again.ask.url, 'https://facebook.com/login', 'and gets the page it asked for last time')
+  eq(again.ask.host, 'Gamer@100.78.1.77', 'on the same computer')
+
+  const moved = M.askAgain(first.ask, { url: 'https://www.instagram.com/accounts/login/' })
+  eq(moved.ask.site, 'instagram', 'a new address renames the site rather than keeping the old name')
+
+  const cold = M.askAgain(undefined, {})
+  ok(!cold.ok, 'a pane that has never asked and names no page is refused')
+  ok(/pf login https/.test(cold.why), 'and is told exactly what to type')
+  const bad = M.askAgain(undefined, { url: 'facebook.com' })
+  ok(!bad.ok, 'an address with no http(s) is refused')
+
+  const reqs = [
+    { id: 'a', at: 10, show: false },
+    { id: 'b', at: 20, show: true },
+    { id: 'c', at: 15, show: true }
+  ]
+  eq(M.raiseLogin(reqs, null), 'b', 'the newest picture a pane asked for is the one the window opens')
+  eq(M.raiseLogin(reqs, 'b'), null, 'the one already open is never reopened')
+  eq(M.raiseLogin([{ id: 'a', at: 1, show: false }], null), null, 'a card nobody asked to open stays a card')
+}
+
+// ----------------------------------------------------------------------- `pf login`
+{
+  const bad = pf(['login', 'facebook.com'])
+  eq(bad.code, 1, 'an address with no http(s) refuses before the app is asked anything')
+  ok(/http:\/\//.test(bad.err), 'and says what a page address looks like')
+  const badPort = pf(['login', 'https://facebook.com/login', '--port', 'nine'])
+  eq(badPort.code, 1, 'a port that is not a number refuses')
+  ok(/'login'/.test(ctl) && /open: true/.test(ctl), '`pf login` asks for the picture, not a card')
+  ok(/PF_PANE/.test(ctl), 'and says which pane is asking, so the app knows what it asked for last')
+}
+
 console.log(`remote-login: ${n} checks passed`)

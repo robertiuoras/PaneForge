@@ -41,6 +41,10 @@ const eq = (got, want, why) => {
   n++
   assert.deepEqual(got, want, why)
 }
+const ok = (cond, why) => {
+  n++
+  assert.ok(cond, why)
+}
 
 // ------------------------------------------------------------------ a very small DOM
 /** A node in the path an event travels. `window` is the outermost. */
@@ -232,6 +236,37 @@ const rig = (make, clock = { t: 0 }) => {
   eq(r.sent.length, 7, 'the old code did reach the other computer')
   eq(r.pty, [...'hunter2'], 'AND typed the whole password into the local pane - the reported bug, reproduced')
   eq(r.composer, [], 'a plain text field was the half preventDefault did cover, which is why it looked fine in review')
+}
+
+// ------------------------------------------------------- the app's own shortcut list
+// The half `stopImmediatePropagation` cannot reach. The app's shortcut list is on the
+// WINDOW in the capture phase and is registered when the window opens, so it runs before
+// the picture's listener and cannot be stopped by it.
+//
+// Proved in a real window on 2026-09-03 (a dev copy, driven over CDP, the picture holding
+// the keyboard): the exact sequence below sent `hello` to the far machine and nothing at
+// all to the pane, and then Cmd+F opened THIS app's Find box while the F went over there
+// too. After the fix the same sequence leaves Find closed - `.find-input` absent - and
+// still types `hello` on the other computer.
+{
+  const seq = [
+    { key: 'h', code: 'KeyH' },
+    { key: 'e', code: 'KeyE' },
+    { key: 'l', code: 'KeyL' },
+    { key: 'l', code: 'KeyL' },
+    { key: 'o', code: 'KeyO' },
+    { key: 'f', code: 'KeyF', meta: true }
+  ]
+  for (const k of seq) eq(M.chordAllowed(true, k), false, `${k.meta ? 'Cmd+' : ''}${k.key} belongs to the picture while it has the keyboard`)
+  for (const k of seq) eq(M.chordAllowed(false, k), true, `${k.meta ? 'Cmd+' : ''}${k.key} is this desk's own again once the picture does not have it`)
+  // The keys the far machine is never sent are the ones this desk still owns - the same
+  // line `forwarded` draws, so a shortcut cannot go missing on both computers at once.
+  eq(M.chordAllowed(true, { key: 'w', code: 'KeyW', meta: true }), true, 'Cmd+W stays this window\'s, because it is never sent over')
+  eq(M.chordAllowed(true, { key: 'q', code: 'KeyQ', meta: true }), true, 'so does Cmd+Q')
+
+  const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
+  ok(/chordAllowed\(/.test(app), "the app's shortcut list asks before it acts")
+  ok(/login-screen\.typing/.test(app), 'and asks about the picture that has the keyboard')
 }
 
 console.log(`login keys: ${n} checks pass - one keystroke, one destination`)
