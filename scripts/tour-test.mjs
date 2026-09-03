@@ -64,11 +64,11 @@ console.log('it may never take the screen')
   const card = readFileSync(join(root, 'src/renderer/src/components/TourCard.tsx'), 'utf8')
   ok('drawn in the renderer, never a dialog', !/showMessageBox|dialog\./.test(card))
   ok('never focuses or raises anything', !/focus\(|setAlwaysOnTop|moveTop/.test(card))
-  ok('no animation of its own', !/animation/.test(card))
   const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
   ok('it is actually mounted', /<TourCard/.test(app))
   const css = readFileSync(join(root, 'src/renderer/src/styles.css'), 'utf8')
   ok('it is a static child of the corner stack, not its own fixed card', /corner-stack > \.tour-card/.test(css))
+  ok('and it has no animation of its own', !/\.tour-card[^}]*animation:/.test(css))
 }
 
 console.log(failed ? `\n${failed} failed` : '\ntour: all good')
