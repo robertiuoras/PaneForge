@@ -106,8 +106,11 @@ if (pull) {
     console.error('== --pull refused: this checkout has uncommitted changes. Commit them or drop --pull.')
     process.exit(1)
   }
-  console.log('== Pulling origin (fast-forward only)')
-  const p = spawnSync('git', ['pull', '--ff-only'], { cwd: root, stdio: 'inherit' })
+  // origin's trunk by name: a lane worktree's branch has no upstream, and a bare pull there
+  // only prints how to set one. Trunk is what a test is FOR.
+  const trunk = (spawnSync('git', ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], { cwd: root, encoding: 'utf8' }).stdout || 'origin/master').trim().replace(/^origin//, '')
+  console.log(`== Pulling origin/${trunk} (fast-forward only)`)
+  const p = spawnSync('git', ['pull', '--ff-only', 'origin', trunk], { cwd: root, stdio: 'inherit' })
   if (p.status !== 0) {
     console.error('== --pull failed: this branch does not fast-forward onto origin. Merge first.')
     process.exit(p.status ?? 1)
