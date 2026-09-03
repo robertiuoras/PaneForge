@@ -73,14 +73,16 @@ npm run ship   # ONLY when Robert asks
 
 `ready` merges master in, refuses while dirty.
 
-Never ASK whether to cut a dev release. `npm run unreleased` reads the installed app's
-version, the commits master carries past it, and how many a person would notice
-(`feat`/`fix`/`perf`); past `ENOUGH` (3) it prints them as sentences and exits 1.
+**NO RELEASE WITHOUT ROBERT'S WORD IN THIS CHAT** (2026-09-04: "no more releases without
+my permission ... stop releasing so many broken builds without testing"). This reverses
+the 2026-09-01 standing order. `npm run unreleased` exiting 1 is a REPORT, never a
+go-ahead; a release another chat is cutting is not yours to join; "make the dev release"
+said yesterday does not cover today. `npm run test:unreleased`.
 
-**When it exits 1, CUT IT - do not report it and wait** (standing 2026-09-01: "worth a dev
-release when you know the changes, just go ahead and make dev release"). Asking cost a
-round trip every time, and the answer was always yes. Under `ENOUGH` it says nothing and
-nothing is cut. `npm run test:unreleased`.
+A change is tested in a DEV WINDOW before anyone asks for a release, on both machines:
+`npm run try -- --pull --show` fast-forwards that checkout to origin, builds, and opens
+the copy on screen without focus. Merged from the PC and wanted on the Mac: open a pane
+on the Mac (New session, "Where it runs") with that command; the reverse the same way.
 
 When asked for (`"release": "version"`):
 
