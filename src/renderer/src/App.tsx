@@ -5582,7 +5582,8 @@ export default function App(): JSX.Element {
             of it and 28px tall - the traffic lights' own row - so the two halves of the
             window's top edge are one line you can pick the window up by. It draws
             nothing, and it is display:none off macOS, where there is still a real title
-            bar to grab. */}
+            bar to grab - and while the sidebar is up, where `.brand` is the handle and
+            the strip was 28px of empty black over every pane (styles.css, `.drag-top`). */}
         <div className="drag-top" aria-hidden="true" />
         {/* The way back to the list on a phone. Rendered rather than styled into
             existence because it has to sit above the pane's own overlays, and it is the
