@@ -27,6 +27,7 @@ import {
   topicReading,
   type TopicReading
 } from '../shared/clientName'
+import { handleOf, resolvedName } from '../shared/resolvedName'
 import type { ClientNamed } from '../shared/types'
 
 /**
@@ -388,6 +389,14 @@ interface Live {
   /** Auto-continues sent in a row on this pane. Reset by any turn that ends whole. */
   recoverTries: number
   /**
+   * The handle the last ask pointed at its subject with (`$50 task`), while the card is
+   * still waiting for the reply to say what that is. Unset once named, or when an ask
+   * names its subject outright. `shared/resolvedName.ts`.
+   */
+  handle?: string
+  /** How much of the screen had been painted when that ask went in: the reply starts there. */
+  handleSeen: number
+  /**
    * When the question now on this pane's screen was first seen, and what it was.
    *
    * The signature carries where the arrow is (`askSignature`), so a person arrowing at
@@ -690,6 +699,7 @@ export class SessionManager extends EventEmitter {
       footerEndedAt: 0,
       sawFooter: false,
       recoverSeen: 0,
+      handleSeen: 0,
       recoverTries: 0,
       askSince: 0,
       askHold: 0,
@@ -815,6 +825,15 @@ export class SessionManager extends EventEmitter {
       !found && from === 'prompt' && text
         ? this.topicFor(live, text)
         : { title: '', strong: false }
+    // An ask that points at its subject rather than naming it (`$50 task from
+    // yesterday`) is a question the reply answers; the sweep reads the answer off the
+    // screen and names the card for it. Remembered only while no client is found and
+    // the card still wears an app-given name - the same gate as every rename here.
+    if (!found && from === 'prompt' && text) {
+      const handle = handleOf(text)
+      live.handle = handle || undefined
+      live.handleSeen = handle ? strip(live.buffer.read()).length : 0
+    }
     // ...and a subject already on the card may be replaced by a BETTER one. The first
     // few asks in a repo are usually an errand ("what did we ship yesterday") and the
     // card then wears that errand through the job that follows it, which is the name
@@ -2744,6 +2763,37 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
+   * Name the pane for what its reply said the handle was.
+   *
+   * `Working On 50 Task` sat on a card all day (2026-09-03) while the first line the
+   * agent printed was `$50 task = Travel Video Editor, Jacob P. (board id 794 ...)`. The
+   * ask carried the handle, the reply carried the name; this joins them. Only output since
+   * the ask is read, and only once: a handle is spent the first time a reply resolves it,
+   * and dropped the moment a person types a title or a client is found.
+   */
+  private sweepResolved(live: Live): void {
+    const handle = live.handle
+    if (!handle) return
+    const s = live.meta
+    if (s.clientOff || s.clientSlug || !(mayRename(s.title, s.cwd) || s.autoTitled === 'topic')) {
+      live.handle = undefined
+      return
+    }
+    const text = strip(live.buffer.read())
+    if (text.length < live.handleSeen) live.handleSeen = 0
+    const name = resolvedName(text.slice(live.handleSeen), handle)
+    if (!name) return
+    live.handle = undefined
+    if (name === s.title) return
+    const was = s.title
+    s.title = name
+    s.autoTitled = 'topic'
+    console.info(`clientname: ${s.id} "${was}" -> "${name}" (reply resolved "${handle}")`)
+    this.emit('clientNamed', { id: s.id, slug: '', title: name, was, from: 'reply' } satisfies ClientNamed)
+    this.emitSessions()
+  }
+
+  /**
    * Press the obvious answer to the question on this pane, if there is one.
    *
    * The decision is `shared/autoAnswer.ts` and the keystrokes are `choose`, which already
@@ -3055,6 +3105,9 @@ export class SessionManager extends EventEmitter {
       ) {
         this.sweepRecover(live)
       }
+
+      // A pane that asked about `$50 task` and has now been told what that is.
+      if (live.handle && !meta.runSince) this.sweepResolved(live)
 
       // A question with an obvious answer, pressed rather than waited on. Here rather
       // than where the question is READ, for the same reason as recover: the frame

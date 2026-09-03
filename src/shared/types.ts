@@ -102,7 +102,7 @@ export interface ClientNamed {
    * `folder` is evidence, `prompt` is a client read out of what was typed, and `topic` is
    * the subject of the first ask when it named no client at all.
    */
-  from: 'folder' | 'prompt' | 'topic'
+  from: 'folder' | 'prompt' | 'topic' | 'reply'
 }
 
 export interface Session {
