@@ -157,6 +157,7 @@ const TESTS = [
   ['panebound', 'panebound-test.mjs'],
   ['surfacereach', 'surface-reach-test.mjs'],
   ['mirrorfit', 'mirrorfit-test.mjs'],
+  ['wirebatch', 'wire-batch-test.mjs'],
   ['handoff', 'handoff-test.mjs'],
   ['route', 'project-route-test.mjs'],
   ['laneargs', 'lane-args-test.mjs'],

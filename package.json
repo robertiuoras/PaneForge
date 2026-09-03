@@ -85,6 +85,7 @@
     "test:offloadfirst": "node scripts/offloadfirst-test.mjs",
     "test:surfacereach": "node scripts/surface-reach-test.mjs",
     "test:mirrorfit": "node scripts/mirrorfit-test.mjs",
+    "test:wirebatch": "node scripts/wire-batch-test.mjs",
     "test:route": "node scripts/project-route-test.mjs",
     "test:routeview": "node scripts/route-view-test.mjs",
     "test:sessionchoice": "node scripts/session-choice-test.mjs",
