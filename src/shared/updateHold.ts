@@ -101,3 +101,24 @@ export function decideInstall(opts: {
   const busy = agentsMidTurn(opts.sessions)
   return busy > 0 ? { act: 'wait', busy } : { act: 'install' }
 }
+
+// --- a held restart writing the log once a minute forever ---------------------------
+//
+// `autoInstall` rechecks every 60s while a desk stays busy, and used to log the same
+// "auto-restart held" line on every single recheck - a Mac left busy all afternoon wrote
+// hundreds of identical lines, burying the one that mattered (when the hold finally let
+// go). The line is worth writing once, when the hold starts, and again occasionally so a
+// week-later reader can still see the desk was busy the whole time - not every minute.
+
+/** How often a still-held restart repeats its log line, once the first one is written. */
+export const HOLD_LOG_INTERVAL_MS = 30 * 60_000
+
+/**
+ * Should this hold write its log line now?
+ *
+ * `lastLoggedAt` is 0 for a hold that has never logged - the first check of a fresh busy
+ * spell always writes, then the interval takes over.
+ */
+export function shouldLogHold(now: number, lastLoggedAt: number): boolean {
+  return lastLoggedAt === 0 || now - lastLoggedAt >= HOLD_LOG_INTERVAL_MS
+}

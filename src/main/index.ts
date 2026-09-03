@@ -211,7 +211,7 @@ import {
   updateLog,
   bootMs
 } from './updater'
-import { unattendedInstall } from '../shared/updateStale'
+import { READY_HOLD_MS } from '../shared/updateStale'
 import * as history from './history'
 import { readBoard, writeMemory, writeTasks } from './board'
 import * as voice from './voice'
@@ -223,7 +223,7 @@ import { DEFAULT_RECOVER } from '../shared/recover'
 import type { UsageReport } from '../shared/usage'
 import { loadPerCore, readPressure, totalMb, watchPressure } from './memory'
 import { backJobOf, trackUsage } from './usage'
-import { agentsMidTurn, deskBusy, decideInstall } from '../shared/updateHold'
+import { agentsMidTurn, deskBusy, decideInstall, shouldLogHold } from '../shared/updateHold'
 import { STASH_CONFIG_KEYS } from '../shared/types'
 import type {
   Config,
@@ -331,8 +331,6 @@ let panesAtQuit = -1
  */
 let lastFocusAt = 0
 let focused = false
-/** When this process came up: the floor for "nobody has focused the window since". */
-const launchedAt = Date.now()
 /**
  * How many panes were open when leaving started.
  *
@@ -3346,6 +3344,8 @@ let autoInstallTimer: NodeJS.Timeout | null = null
  * way. This path is the one nobody asked for, so it also keeps the 60s recheck rather
  * than reacting to every pane event.
  */
+/** When the busy hold last wrote its line - see `shouldLogHold` in shared/updateHold.ts. */
+let heldLogAt = 0
 function autoInstall(): void {
   if (autoInstallTimer) {
     clearTimeout(autoInstallTimer)
@@ -3357,26 +3357,33 @@ function autoInstall(): void {
   // panes away, it is the pause in the middle of their work. See DESK_QUIET_MS.
   const running = deskBusy(manager.list(), Date.now())
   if (running > 0) {
-    updateLog('install', `auto-restart held: ${running} pane(s) in use - looking again in 60s`)
+    // Once when the hold starts, then at most every 30 minutes - not every 60s recheck.
+    // A Mac busy all afternoon used to write the same line hundreds of times and bury the
+    // one that mattered: when the hold finally let go.
+    if (shouldLogHold(Date.now(), heldLogAt)) {
+      heldLogAt = Date.now()
+      updateLog('install', `auto-restart held: ${running} pane(s) in use - looking again in 60s`)
+    }
     autoInstallTimer = setTimeout(autoInstall, AUTO_INSTALL_RECHECK_MS)
     autoInstallTimer.unref?.()
     return
   }
+  // Clear, so the NEXT busy spell logs its own first line right away.
+  heldLogAt = 0
   whenClear('update-install', doInstall)
 }
 
 /**
- * The desk with nobody at it - see shared/updateStale.ts for the day this was written.
+ * A build stops being merely offered and starts being taken - see shared/updateStale.ts.
  *
- * A build that has been ready for a while on a window nobody has focused for half an
- * hour is taken, through `autoInstall` and its deskBusy hold, so two linked desks end up
- * on the same version without a person pressing anything on the one that has no person.
- * Once a minute, like the hold's own recheck; `autoInstall` is only entered when it is
- * not already looping, so the log says "held" once a minute and not twice.
+ * The card still lets somebody press Restart sooner; this is what happens when nobody
+ * does, on ANY desk, attended or not. It goes through `autoInstall` and its unchanged
+ * deskBusy hold, so a pane somebody is using is never interrupted - only the waiting to
+ * be asked stops, once the build has sat ready `READY_HOLD_MS`.
  */
 let readyAt = 0
 let readyVersion = ''
-let unattendedSaid = ''
+let readySaid = ''
 function noteReadyState(s: UpdateState): void {
   if (s.phase !== 'ready') {
     readyAt = 0
@@ -3387,20 +3394,19 @@ function noteReadyState(s: UpdateState): void {
   readyVersion = s.version ?? ''
   readyAt = Date.now()
 }
-function unattendedTick(): void {
+function readyTick(): void {
   if (installStarted || autoInstallTimer) return
   const s = getUpdateState()
   if (s.phase !== 'ready') return
   const now = Date.now()
-  if (!unattendedInstall({ now, readyAt, focused, lastFocusAt, launchedAt })) return
-  if (unattendedSaid !== readyVersion) {
-    unattendedSaid = readyVersion
-    const mins = Math.round((now - Math.max(lastFocusAt, launchedAt)) / 60_000)
-    updateLog('install', `nobody at this desk for ${mins}m - restarting into v${readyVersion} as soon as no pane is in use`)
+  if (!readyAt || now - readyAt < READY_HOLD_MS) return
+  if (readySaid !== readyVersion) {
+    readySaid = readyVersion
+    updateLog('install', `v${readyVersion} has been ready ${Math.round((now - readyAt) / 60_000)}m - restarting as soon as no pane is in use`)
   }
   autoInstall()
 }
-setInterval(unattendedTick, AUTO_INSTALL_RECHECK_MS).unref?.()
+setInterval(readyTick, AUTO_INSTALL_RECHECK_MS).unref?.()
 
 /**
  * A restart the user clicked while a pane was mid-turn, waiting for the panes to finish.

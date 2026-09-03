@@ -28,7 +28,8 @@ buildSync({
   format: 'esm',
   platform: 'node'
 })
-const { DESK_QUIET_MS, agentsMidTurn, deskBusy, decideInstall } = await import(pathToFileURL(outfile).href)
+const { DESK_QUIET_MS, HOLD_LOG_INTERVAL_MS, agentsMidTurn, deskBusy, decideInstall, shouldLogHold } =
+  await import(pathToFileURL(outfile).href)
 
 let failures = 0
 function ok(cond, what) {
@@ -128,6 +129,18 @@ ok(
   decideInstall({ phase: 'ready', installStarted: true, sessions: [working] }).act === 'install',
   'a second click during the teardown is still the one restart'
 )
+
+
+// --- a held restart writing the log once a minute forever -------------------------
+//
+// Measured: a Mac busy all afternoon wrote the same "auto-restart held" line every 60s
+// on autoInstall's own recheck - hundreds of identical lines burying the one that
+// mattered. The line is worth writing once per busy spell, then occasionally.
+ok(shouldLogHold(NOW, 0), 'a hold that has never logged writes the first time')
+ok(!shouldLogHold(NOW, NOW - 60_000), 'a minute after logging it stays quiet')
+ok(!shouldLogHold(NOW, NOW - HOLD_LOG_INTERVAL_MS + 60_000), 'a minute short of the interval it still holds its tongue')
+ok(shouldLogHold(NOW, NOW - HOLD_LOG_INTERVAL_MS), 'thirty minutes on it writes again')
+ok(HOLD_LOG_INTERVAL_MS === 30 * 60_000, 'the interval is named, not written into the rule')
 
 console.log(failures ? `\n${failures} failed` : '\nall passed')
 process.exit(failures ? 1 : 0)

@@ -44,49 +44,24 @@ export function updateIgnored(superseded: number): boolean {
  * when. See "Every word on screen is read by somebody who has never used git".
  */
 export function ignoredHint(current: string): string {
-  return `You are still on ${current}, and newer builds keep being downloaded and thrown away unused. PaneForge will restart into this one by itself as soon as no pane is in use.`
+  return `You are still on ${current}, and newer builds keep being downloaded and thrown away unused. PaneForge will restart into this one by itself once no pane has been used for 10 minutes.`
 }
 
-// --- a desk nobody sits at -----------------------------------------------------
+// --- a build that has sat ready ---------------------------------------------------
 //
-// 2026-09-03, the PC: 0.8.196 was downloaded and ready at 17:08 and the app went on
-// running 0.8.177 - nineteen releases behind the Mac it was linked to - until somebody
-// pressed Restart over ssh at 19:38. The supersede rule above never fired because the PC
-// was running a build older than the rule. Nothing else fires either: the card asks a
-// person, and that desk has no person. Every remote feature (handoff, mirror, restart
-// over the link, the autoclear hook that ships with the newer app) then runs between two
-// builds that disagree, and the failure reads as "remote sessions broke".
-//
-// The rule that makes two desks converge on one version: a desk nobody has focused for
-// half an hour treats a ready build as accepted, and restarts into it once no pane is in
-// use (the `deskBusy` hold in main/index.ts, unchanged). A desk with a person at it keeps
-// the card and the supersede rule; this only covers the desk with nobody to ask.
-
-/** How long a window must go unfocused before the desk counts as nobody's. */
-export const UNATTENDED_MS = 30 * 60_000
-/**
- * How long a build stays ready before an unattended desk takes it. Releases here go out
- * in bursts (a fix follows its release by minutes); five minutes lets the fix supersede
- * the build rather than restarting into the one it fixes.
- */
-export const UNATTENDED_READY_MS = 5 * 60_000
+// 2026-09-03, the PC: 0.8.196 was ready at 17:08 and the app went on running 0.8.177 -
+// nineteen releases behind the Mac it was linked to - until somebody pressed Restart over
+// ssh at 19:38. The first version of this rule only took a ready build on a window nobody
+// had focused for half an hour, to leave an attended desk alone. That distinction turned
+// out not to matter: `autoInstall` already refuses to touch a desk with a pane in use
+// (`deskBusy` in main/index.ts, unchanged) and the game hold on top of it, so a person at
+// the keyboard is protected either way. Robert, 2026-09-03: "if we release we should
+// probably auto update both pc and mac right?" - so the focus check was dropped and every
+// desk, attended or not, takes a build once it has sat ready this long.
 
 /**
- * Should a desk with nobody at it restart into the build it has ready?
- *
- * `focused` wins outright: a person is looking at the window right now. `lastFocusAt`
- * is 0 until the first focus, so a desk never focused since launch is measured from
- * `launchedAt` - a freshly (re)started app is not proof of absence.
+ * How long a build stays ready before it is taken, on any desk. Releases here go out in
+ * bursts (a fix follows its release by minutes); five minutes lets the fix supersede the
+ * build rather than restarting into the one it fixes.
  */
-export function unattendedInstall(opts: {
-  now: number
-  readyAt: number
-  focused: boolean
-  lastFocusAt: number
-  launchedAt: number
-}): boolean {
-  if (opts.focused) return false
-  if (!opts.readyAt || opts.now - opts.readyAt < UNATTENDED_READY_MS) return false
-  const lastSeen = Math.max(opts.lastFocusAt, opts.launchedAt)
-  return opts.now - lastSeen >= UNATTENDED_MS
-}
+export const READY_HOLD_MS = 5 * 60_000
