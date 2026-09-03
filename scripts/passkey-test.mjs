@@ -641,6 +641,9 @@ ok(!server.running, 'the gate test server stopped cleanly')
     'projects:list', 'projects:route', 'agents:list', 'sessions:list', 'sessions:rename', 'sessions:clientUndo',
     // Read-only, and the answer is a public release page's own notes.
     'app:whatsNew',
+    // Read-only, and only ever answers non-null in a dev copy (`tourAllowed`) - the
+    // installed app's own git history said back to it, same shape as `app:whatsNew`.
+    'app:tour',
     'app:quitIdle', 'sessions:buffer', 'sessions:log', 'drive:stop', 'drive:list',
     'drive:clear', 'goal:list', 'goal:cancel', 'goal:remove', 'goal:clear', 'config:get',
     'config:pickRoot', 'sounds:add', 'sounds:data', 'sounds:remove', 'sounds:rename',
