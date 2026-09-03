@@ -115,6 +115,7 @@ const TESTS = [
   ['projectfolder', 'project-folder-test.mjs'],
   ['clientname', 'client-name-test.mjs'],
   ['resolvedname', 'resolved-name-test.mjs'],
+  ['peerchrome', 'peer-chrome-test.mjs'],
   ['projectname', 'project-name-test.mjs'],
   ['historysearch', 'history-search-test.mjs'],
   ['projectroot', 'projectroot-test.mjs'],

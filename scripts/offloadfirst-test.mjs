@@ -11,7 +11,7 @@
 //   node scripts/offloadfirst-test.mjs
 
 import { buildSync } from 'esbuild'
-import { mkdirSync, rmSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -245,6 +245,19 @@ is(preferRemoteOf({ preferRemote: true }), 'auto', 'a hand-written true is auto,
 is(preferRemoteOf({ preferRemote: 'remote' }), 'auto', 'a word nobody defined is auto')
 
 ok(REMOTE_START_ACK_MS >= 1000, 'the far end gets a real window to answer in')
+
+// SOURCE: the app never asks where a pane runs.
+//
+// 2026-09-03: `offloadAsk` was a config key and a dialog on the pressure path
+// (`App.tsx`'s `offloadReqs`, unrelated to this file) that put "start it here or on the
+// paired device?" on screen. Removed - a card nobody presses is a decision nobody made,
+// and where a pane runs is `offloadFirst.ts`'s call alone. Pinned as a grep over the built
+// source rather than only this file's own decision function, because the whole point is
+// that NOTHING in the app asks any more, not just this one.
+for (const rel of ['src/renderer/src/App.tsx', 'src/shared/capacity.ts', 'src/main/config.ts', 'src/shared/types.ts']) {
+  const src = readFileSync(join(root, rel), 'utf8')
+  ok(!/offloadAsk/.test(src), `${rel} carries no offloadAsk`)
+}
 
 rmSync(work, { recursive: true, force: true })
 if (failed) {

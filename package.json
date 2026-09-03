@@ -62,6 +62,7 @@
     "test:place": "node scripts/place-test.mjs",
     "test:clientname": "node scripts/client-name-test.mjs",
     "test:resolvedname": "node scripts/resolved-name-test.mjs",
+    "test:peerchrome": "node scripts/peer-chrome-test.mjs",
     "test:projectname": "node scripts/project-name-test.mjs",
     "test:historysearch": "node scripts/history-search-test.mjs",
     "test:projectroot": "node scripts/projectroot-test.mjs",

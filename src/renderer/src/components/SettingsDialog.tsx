@@ -506,14 +506,6 @@ export default function SettingsDialog({ config, agents, initial, onChange, onCl
                   label="Start a pane on a paired device when this machine is full"
                   hint="Only once panes here already cost more memory than the machine has, and only for a project that device also has. The launch says where it went."
                 />
-                <Switch
-                  checked={config.offloadAsk === true}
-                  onChange={(v) =>
-                    onChange({ offloadAsk: v, offloadDefaultsV2: true, offloadDefaultsV3: true })
-                  }
-                  label="Ask first, rather than moving it"
-                  hint="On, and on is the default: a pane starting on the other machine is something you can say no to in the moment, rather than something the app decides and reports afterwards. It recommends the paired device, and remembers your answer for ten minutes so a burst of panes asks once. Off restores the silent move, decided by the budget below."
-                />
                 <div className="setting">
                   <label>Start new work on the other machine when the project is on GitHub</label>
                   <div className="pickrow">
