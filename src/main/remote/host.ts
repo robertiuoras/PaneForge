@@ -21,6 +21,7 @@ import type { AttachIn, AttachResult } from '../../shared/attach'
 import type { BackJob } from '../../shared/backJobs'
 import type { BusyReason } from '../../shared/busy'
 import type { Project, Session, StartSessionRequest, TurnClock } from '../../shared/types'
+import { WireBatch, type WireFrame } from '../../shared/wireBatch'
 import { Conn, deriveKey, type Msg, type PeerIdentity } from './wire'
 
 /** Everything the host is allowed to do to this app on a guest's behalf. */
@@ -137,6 +138,16 @@ export class RemoteHost extends EventEmitter {
    */
   private pending = new Set<Conn>()
   private unhook: (() => void)[] = []
+  /**
+   * Output waiting to go out, gathered per pane.
+   *
+   * The link used to put every scrap a program printed into its own encrypted message -
+   * 11,704 a second from one pane, measured 2026-09-03, which cost 516ms of this
+   * machine's time and 5.5 MB on the wire to move 3.5 MB of text. Gathered into 16ms the
+   * same recording is 55 messages, 123ms and 4.5 MB. See src/shared/wireBatch.ts.
+   */
+  private readonly batch = new WireBatch()
+  private batchTimer: ReturnType<typeof setTimeout> | null = null
   /** Why the listener is not up, when it should be. Surfaced in the dialog. */
   error = ''
   port = 0
@@ -198,6 +209,9 @@ export class RemoteHost extends EventEmitter {
   }
 
   stop(): void {
+    if (this.batchTimer) clearTimeout(this.batchTimer)
+    this.batchTimer = null
+    this.batch.drain()
     for (const off of this.unhook.splice(0)) off()
     for (const g of this.guests) g.conn.close()
     this.guests.clear()
@@ -220,12 +234,13 @@ export class RemoteHost extends EventEmitter {
   private wire(): void {
     if (this.unhook.length) return
     this.unhook.push(
-      this.backend.onData((id, data) => {
-        for (const g of this.guests) if (g.attached.has(id)) g.conn.send({ t: 'data', id, data })
-      })
+      this.backend.onData((id, data) => this.gather(id, data))
     )
     this.unhook.push(
       this.backend.onSessions((sessions) => {
+        // A pane's last words have to be on the wire before the list says it ended, or
+        // they arrive after the other device has already drawn the pane as finished.
+        this.flush(this.batch.drain())
         for (const g of this.guests) g.conn.send({ t: 'sessions', list: sessions })
       })
     )
@@ -234,6 +249,57 @@ export class RemoteHost extends EventEmitter {
         for (const g of this.guests) g.conn.send({ t: 'attention', session: s })
       })
     )
+  }
+
+  /**
+   * One scrap of a pane's output, on its way to whoever is watching that pane.
+   *
+   * A pane nobody is mirroring is dropped here rather than gathered: its text is already
+   * kept by this machine, and holding a second copy for a device that never asked for it
+   * would grow for as long as the pane runs.
+   */
+  private gather(id: string, data: string): void {
+    let watched = false
+    for (const g of this.guests) {
+      if (g.attached.has(id)) {
+        watched = true
+        break
+      }
+    }
+    if (!watched) {
+      this.batch.forget(id)
+      return
+    }
+    const now = Date.now()
+    const immediate = this.batch.push(id, data, now)
+    if (immediate.length) this.flush(immediate)
+    this.arm()
+  }
+
+  /** Put gathered output on the wire, to every device watching that pane. */
+  private flush(frames: WireFrame[]): void {
+    for (const f of frames) {
+      for (const g of this.guests) if (g.attached.has(f.id)) g.conn.send({ t: 'data', id: f.id, data: f.data })
+    }
+  }
+
+  /**
+   * One timer, set only while something is waiting.
+   *
+   * A repeating timer would tick 62 times a second for the life of the app on a machine
+   * nobody is mirroring anything from; this one exists only between the first scrap and
+   * the moment the last pane's text goes out.
+   */
+  private arm(): void {
+    if (this.batchTimer) return
+    const wait = this.batch.nextDue(Date.now())
+    if (wait === null) return
+    this.batchTimer = setTimeout(() => {
+      this.batchTimer = null
+      this.flush(this.batch.due(Date.now()))
+      if (!this.batch.idle) this.arm()
+    }, wait)
+    this.batchTimer.unref?.()
   }
 
   private async greet(socket: Socket): Promise<void> {
@@ -300,6 +366,10 @@ export class RemoteHost extends EventEmitter {
       switch (m.t) {
         case 'attach': {
           if (!id) return
+          // Anything gathered for this pane goes to the devices already watching it
+          // FIRST. The history this device is about to be sent already contains that
+          // text, so releasing it afterwards would show it twice.
+          this.flush(this.batch.drain(id))
           guest.attached.add(id)
           // The whole scrollback in one frame: the guest's xterm writes it and the
           // pane looks exactly as it does here, mid-turn included.
