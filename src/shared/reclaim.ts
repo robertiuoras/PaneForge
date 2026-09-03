@@ -205,6 +205,13 @@ export interface ReclaimPane {
    */
   lastFocus?: number
   /**
+   * Epoch ms this pane's session was created - set once, by a real open or a restore.
+   *
+   * Only read alongside `lastFocus` being unset: see `onTheClock` for the day a
+   * restarted desk closed its own restored panes before anyone could see them.
+   */
+  createdAt?: number
+  /**
    * A turn is in flight (the pane's run clock is going).
    *
    * Belt and braces beside `state`: `endRun` clears the run clock and flips the status in
@@ -469,7 +476,7 @@ export function dueForIdleClose(
   const minIdle = minutes * 60_000
 
   const eligible = panes
-    .filter((p) => onTheClock(p, personHere))
+    .filter((p) => onTheClock(p, personHere, now, minIdle))
     .filter((p) => now + lead - quietSince(p) >= minIdle)
     // Oldest quiet first, so the one held back is the one that went quiet most recently.
     .sort((a, b) => quietSince(a) - quietSince(b))
@@ -589,17 +596,39 @@ export function reclaimedMb(plan: Reclaim[]): number {
  * which arrives here as `busy`. Robert, 2026-08-23: "its actually stopped not just stopped
  * but shell or something background still running".
  */
-function onTheClock(p: ReclaimPane, personHere = true): boolean {
+/**
+ * How much longer a pane that has never been focused gets before the "nobody is here to
+ * read it" refusal-drop below applies to it too - twice the idle-close window.
+ *
+ * `personHere` starts false on every launch (`Away` only knows about THIS run) and a
+ * restored pane's "quiet since" is its restore time, so without this a desk restarted
+ * while its owner was away closed its own just-reopened panes at the exact moment they
+ * first qualified - they never had a chance to be seen. 2026-09-03, the PC: restored at
+ * 19:39, `desk.json` back to `{"specs":[],"reason":"live"}` by 19:44, `idleCloseMinutes`
+ * being the default five. Doubling only buys the never-focused case more time for a real
+ * person to be noticed; a desk that genuinely has nobody at it still reclaims them, just
+ * later, which is the behaviour this clock was built for in the first place.
+ */
+const RESTORE_GRACE_MULTIPLIER = 2
+
+function onTheClock(p: ReclaimPane, personHere = true, now = 0, idleMs = 0): boolean {
+  // A pane restored or opened this run and never focused has had no chance to be read -
+  // it is not the same as a pane that was read once and has since gone quiet, which is
+  // what the personHere=false drop below exists for.
+  const neverFocused = p.lastFocus === undefined
+  const freshlyRestored =
+    neverFocused && p.createdAt !== undefined && now - p.createdAt < idleMs * RESTORE_GRACE_MULTIPLIER
   return (
-    // Only while there is somebody here to have read it. A machine no person has touched
-    // this run (`Away.sawPerson`) is the second desk this clock exists for: nothing there
-    // is ever read, so an unread refusal would switch the feature off on the one machine
-    // that needs it.
+    // Only while there is somebody here to have read it, OR it is too fresh to have been
+    // read by anyone yet. A machine no person has touched this run (`Away.sawPerson`) is
+    // the second desk this clock exists for: nothing there is ever read, so an unread
+    // refusal would switch the feature off on the one machine that needs it - once a
+    // pane has had a real chance to be seen.
     // ...and never for a SLEEPING pane. Nothing has printed since it slept - what is on
     // its screen was there when it was put to sleep - and a restored pane comes back
     // asleep wearing a fresh `lastOutput` and no `lastFocus` at all, so `unread` would
     // hold it on the desk for ever, exactly as the `asleep` refusal used to.
-    !(personHere && !p.asleep && unread(p)) && keepable(p, personHere)
+    !(!p.asleep && unread(p) && (personHere || freshlyRestored)) && keepable(p, personHere)
   )
 }
 
@@ -684,7 +713,7 @@ export function idleCloseAt(
   if (!cfg.enabled) return null
   const minutes = Math.max(0, cfg.idleCloseMinutes ?? 0)
   if (!minutes) return null
-  if (!onTheClock(pane, personHere)) return null
+  if (!onTheClock(pane, personHere, now, minutes * 60_000)) return null
   if (all && !dueForIdleClose(all, cfg, now, personHere).some((p) => p.id === pane.id)) {
     // Not "later": the last-pane rule does not lift while the desk stays as it is, and a
     // pane that has not reached its own clock yet is caught by the arithmetic below.

@@ -228,6 +228,48 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
     check('...while a KEPT asleep pane stays', !idleClosePlan([pane({ ...slept, pinned: true }), pad], CLOCKED, NOW).length)
     eq('and the sleep clock never takes a pane already asleep', ids(idleSleepPlan([slept, pad], { ...DEFAULT_RECLAIM, idleSleepMinutes: 30 }, NOW)), '')
   }
+  // The restore-loses-the-desk bug, 2026-09-03: a pane restored this run comes back with
+  // `createdAt` equal to its own restore time, which is also its "quiet since" - so on a
+  // desk nobody has touched YET this run (`personHere` false until `Away` notices someone)
+  // it used to become eligible for the idle clock the exact instant its own window first
+  // applied. The PC's desk came back at 19:39 and `desk.json` read `{"specs":[],"reason":
+  // "live"}` by 19:44 - the restored panes never had a chance to be seen.
+  {
+    const fresh = pane({
+      id: 'fresh',
+      lastKeyboard: NOW - 130 * 60_000,
+      lastOutput: NOW - 130 * 60_000,
+      createdAt: NOW - 130 * 60_000
+    })
+    const pad = pane({ id: 'pad', lastKeyboard: NOW })
+    eq(
+      'a pane restored 130m ago, past its own idle window but never focused, is held',
+      ids(idleClosePlan([fresh, pad], CLOCKED, NOW, false)),
+      ''
+    )
+    const stale = pane({ ...fresh, id: 'stale', createdAt: NOW - 250 * 60_000, lastKeyboard: NOW - 250 * 60_000, lastOutput: NOW - 250 * 60_000 })
+    eq(
+      '...but a desk really left alone past double the window still reclaims it',
+      ids(idleClosePlan([stale, pad], CLOCKED, NOW, false)),
+      'stale'
+    )
+    // The grace is only for a pane nobody has had the CHANCE to read. One that WAS
+    // focused once and has since gone quiet again is an ordinary unread-or-not pane, and
+    // closes on the usual clock rather than waiting out the extra grace.
+    const readOnce = pane({
+      id: 'read',
+      lastKeyboard: NOW - 130 * 60_000,
+      lastOutput: NOW - 130 * 60_000,
+      lastFocus: NOW - 129 * 60_000,
+      createdAt: NOW - 130 * 60_000
+    })
+    eq(
+      'a pane that was read once does not get the fresh-restore grace',
+      ids(idleClosePlan([readOnce, pad], CLOCKED, NOW, false)),
+      'read'
+    )
+  }
+
   // NOT capped at maxPerSweep - that is the pressure sweep's rule, and it belongs to a
   // sweep that closes a pane in order to change a reading of the machine. Here it only
   // made the card lie: with one countdown on screen at a time, seven due panes went two at

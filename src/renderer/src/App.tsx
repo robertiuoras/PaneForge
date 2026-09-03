@@ -272,6 +272,9 @@ function reclaimPaneOf(
     // report this answers: a pane read for six minutes was overdue the instant it was
     // switched away from, and its card's first word about it was a red `closes 0:01`.
     lastFocus,
+    // A pane restored this run has never been focused - see `onTheClock` in
+    // shared/reclaim.ts for why its age matters as well as its `lastFocus`.
+    createdAt: s.createdAt,
     // Quiet means quiet: `lastKeyboard` alone calls a pane whose agent has been printing
     // for two hours "idle for two hours".
     lastOutput: s.lastOutput,
