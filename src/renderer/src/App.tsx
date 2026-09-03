@@ -866,6 +866,22 @@ export default function App(): JSX.Element {
       /* the width goes back to the default next launch, and nothing else breaks */
     }
   }, [sideW])
+  // Whether the sidebar is hidden. A view preference like sideW, so localStorage not
+  // config.json - a phone client has no sidebar to hide.
+  const [sideHidden, setSideHidden] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('pf.sideHidden') === '1'
+    } catch {
+      return false
+    }
+  })
+  useEffect(() => {
+    try {
+      localStorage.setItem('pf.sideHidden', sideHidden ? '1' : '0')
+    } catch {
+      /* comes back shown next launch, and nothing else breaks */
+    }
+  }, [sideHidden])
   const [sideDrag, setSideDrag] = useState(false)
   const startSideDrag = (e: React.PointerEvent<HTMLDivElement>): void => {
     e.preventDefault()
@@ -3165,6 +3181,11 @@ export default function App(): JSX.Element {
       } else if (hit('grid')) {
         e.preventDefault()
         patchConfig({ grid: !grid })
+      } else if (k === 'b' && !e.shiftKey) {
+        // Not in shared/keymap.ts: that file is another session's right now, so this
+        // one chord is spelled here rather than made reboundable.
+        e.preventDefault()
+        setSideHidden((v) => !v)
       } else if (hit('zoom')) {
         // Not a bare Ctrl+Z: that is SIGTSTP in a shell and undo in every agent's
         // prompt, and this app does not get to take either of them.
@@ -5175,7 +5196,7 @@ export default function App(): JSX.Element {
   return (
     <BlurbContext.Provider value={blurbs}>
     <AutoTick at={soonestAuto} tick={autoTick} />
-    <div className="app">
+    <div className={'app' + (sideHidden ? ' side-hidden' : '')}>
       <aside className={'sidebar' + (sideW < SIDE_NARROW ? ' narrow' : '')}>
         <LinkBanner />
         <div className="brand">
@@ -5184,6 +5205,13 @@ export default function App(): JSX.Element {
             <span className="brand-word">PaneForge</span>
           </span>
           <span className="icons">
+            <button
+              className="icon side-toggle"
+              title={keyLabel('Hide the list (Ctrl B)')}
+              onClick={() => setSideHidden(true)}
+            >
+              ◧
+            </button>
             <button className="icon" title={keyLabel('Settings (Ctrl ,)')} onClick={() => setSettings(true)}>
               ⚙
             </button>
@@ -5433,6 +5461,18 @@ export default function App(): JSX.Element {
         onDoubleClick={() => setSideW(SIDE_DEFAULT)}
         title="Drag to resize the sidebar. Double-click to put it back."
       />
+
+      {/* The list's own way back, over the corner it vacated. A phone has no sidebar to
+          hide in the first place. */}
+      {sideHidden && !handheld.handheld && (
+        <button
+          className="icon side-reveal"
+          title={keyLabel('Show the list (Ctrl B)')}
+          onClick={() => setSideHidden(false)}
+        >
+          ◨
+        </button>
+      )}
 
       <main
         ref={panesRef}

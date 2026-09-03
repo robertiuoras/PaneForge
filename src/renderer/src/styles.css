@@ -1645,6 +1645,23 @@ button.small { padding: 5px 9px; font-size: 11px; }
 .mac-chrome .panes:not(.grid) .pane { top: 28px; }
 .panes.grid { display: grid; grid-auto-rows: 1fr; gap: 6px; }
 .panes:not(.grid) .pane { position: absolute; inset: 6px; }
+/* ---- sidebar hidden ---- */
+/* The list is a view of the same desk, not a second copy of it: hiding it gives the
+   panes column back the width, `side-reveal` is its own way back. `padding-left` moves
+   the grid (normal flow); a focus-view pane is positioned off the padding box (`inset`
+   above), so it needs its own `left` past the button instead. Handheld has no sidebar to
+   hide, so the class only matters here. */
+.app.side-hidden { grid-template-columns: 0 1fr; }
+.app.side-hidden .sidebar,
+.app.side-hidden .side-grip { display: none; }
+.app.side-hidden .panes { padding-left: 36px; }
+.app.side-hidden .panes:not(.grid) .pane { left: 36px; }
+.side-reveal {
+  position: absolute; top: 6px; left: 6px; z-index: 5;
+  width: 24px; height: 24px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.mac-chrome .side-reveal { top: 32px; }
 .pane {
   display: flex;
   flex-direction: column;
