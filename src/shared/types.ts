@@ -337,6 +337,15 @@ export interface Session {
    */
   handoffQueuedAt?: number
   /**
+   * What the move is doing right now - `pushing the repo`, `sending to Roberts-MacBook-Pro`
+   * - while a transfer is in flight. A bare `moving` for a minute reads as a broken move;
+   * this is the sentence that says which half is slow. Absent while queued, and gone with
+   * `handingOff`.
+   */
+  handoffStage?: string
+  /** When the pane was first painted as on its way - the clock the chip counts from. */
+  handoffSince?: number
+  /**
    * The device that handed this pane here, when one did - see `StartSessionRequest`.
    * Read by the local-pane budget, which may not send it straight back where it came from.
    */

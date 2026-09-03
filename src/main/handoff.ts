@@ -126,6 +126,10 @@ async function readShareable(cwd: string, root: string): Promise<boolean> {
 
 export interface SendDeps {
   root(): string
+  /** say which half of the move is running, for the pane's chip */
+  stage?(id: string, stage: string | null): void
+  /** one line per step into handoff.log - the evidence "it says moving and never moves" needs */
+  log?(line: string): void
   list(): Session[]
   /** the same specs a desk restore uses - resumeId and scrollbackId included */
   snapshot(): StartSessionRequest[]
@@ -200,9 +204,17 @@ async function sendOne(deps: SendDeps, device: string, pane: Session, closeRecei
   const spec = deps.snapshot().find((r) => r.scrollbackId === pane.id)
   if (!spec) return { id: pane.id, title: pane.title, ok: false, error: 'Pane has already closed', notes: [] }
   const notes: string[] = []
+  const where = deps.deviceName(device)
+  const t0 = Date.now()
+  deps.log?.(`${pane.id} -> ${where}: pushing the repo (${pane.title})`)
+  deps.stage?.(pane.id, 'pushing the repo')
 
-  const repo = await pushRepo(pane.cwd, deps.root(), deps.deviceName(device))
-  if (typeof repo === 'string') return { id: pane.id, title: pane.title, ok: false, error: repo, notes }
+  const repo = await pushRepo(pane.cwd, deps.root(), where)
+  if (typeof repo === 'string') {
+    deps.log?.(`${pane.id} -> ${where}: refused after ${Date.now() - t0} ms - ${repo}`)
+    return { id: pane.id, title: pane.title, ok: false, error: repo, notes }
+  }
+  deps.log?.(`${pane.id} -> ${where}: repo ready in ${Date.now() - t0} ms`)
   if (!repo) notes.push('Not a git repo - only the pane moved, not code')
 
   // Read BEFORE the pane is killed: the tree is the only record of what it was running,
@@ -241,10 +253,17 @@ async function sendOne(deps: SendDeps, device: string, pane: Session, closeRecei
     notes.push('No conversation to move - agent starts fresh')
   }
 
-  const result = await deps.deliver(device, payload, file)
+  deps.stage?.(pane.id, `sending to ${where}`)
+  const t1 = Date.now()
+  const result = await deps.deliver(device, payload, file).catch((err: Error) => {
+    deps.log?.(`${pane.id} -> ${where}: send failed after ${Date.now() - t1} ms - ${err.message}`)
+    throw err
+  })
   if (!result.ok) {
+    deps.log?.(`${pane.id} -> ${where}: refused over there after ${Date.now() - t1} ms - ${result.error || 'no reason given'}`)
     return { id: pane.id, title: pane.title, ok: false, error: result.error || 'Refused over there', notes }
   }
+  deps.log?.(`${pane.id} -> ${where}: running there after ${Date.now() - t1} ms (${Date.now() - t0} ms in all)`)
   // The far end's pane is running; this one is now a second window onto old state.
   deps.kill(pane.id)
   return { id: pane.id, title: pane.title, ok: true, notes: [...notes, ...result.notes] }

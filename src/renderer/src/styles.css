@@ -3111,8 +3111,20 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
   box-shadow: var(--shadow); padding: 12px 13px; display: flex; flex-direction: column; gap: 8px;
 }
 .move-soon-say { color: var(--text); font-size: 13px; }
-.where-row { display: flex; align-items: center; gap: 10px; margin: 6px 0 2px; }
-.where-label { color: var(--muted); font-size: 12px; white-space: nowrap; }
+/* Where a new pane runs. A labelled box, not a muted row: this is the one start-time
+   route to the other machine, and as a 12px caption after the prompt nobody saw it
+   (Robert 2026-09-04). Surface ladder and hairline per design-vault/linear.app.md. */
+.where-row {
+  display: flex; flex-direction: column; gap: 8px; margin: 6px 0 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--line); border-radius: var(--r);
+  background: var(--surface);
+}
+.where-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.where-label { color: var(--text); font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+.where-hint { color: var(--muted); font-size: 11.5px; min-width: 0; text-align: right; }
+.where-picks { margin: 0; flex-wrap: wrap; }
+.where-picks button.chip.pick { font-size: 12px; padding: 5px 12px; min-height: 28px; }
 /* Tabular, or the sentence re-flows every second as the digit narrows. */
 .move-soon-count { font-variant-numeric: tabular-nums; color: var(--acc); }
 .move-soon-why { color: var(--muted); font-size: 12px; }
@@ -3830,7 +3842,10 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
 .ctx-back { position: fixed; inset: 0; z-index: 95; }
 .ctx-menu {
   position: fixed;
-  min-width: 216px; max-width: 320px;
+  min-width: 216px; max-width: 340px;
+  /* Never taller than the window: fourteen two-line rows are 617px, and a 560px window
+     drew the bottom four off-screen - the same cut-off, one storey up. Scrolls instead. */
+  max-height: calc(100vh - 16px); overflow-y: auto; overscroll-behavior: contain;
   padding: 5px;
   border: 1px solid var(--line-strong); border-radius: var(--r);
   background: var(--surface-2);
@@ -3843,9 +3858,12 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
   font: 600 11px/1.2 inherit;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* Label on one line, hint on the next. The hint used to sit to the RIGHT of the label
+   with an ellipsis, so "what the agent answered, without the terminal round it" was
+   "what the agent ans…" on every row (Robert 2026-09-04: "lots of things cut off"). */
 .ctx-row {
-  display: flex; align-items: baseline; gap: 8px;
-  width: 100%; padding: 6px 8px;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 0;
+  width: 100%; padding: 4px 8px;
   border: 0; border-radius: var(--r-sm);
   background: transparent; color: var(--text);
   font: 500 12.5px/1.3 inherit; text-align: left;
@@ -3855,9 +3873,9 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
 .ctx-row.danger { color: var(--danger); }
 .ctx-label { flex: none; }
 .ctx-hint {
-  flex: 1 1 auto; min-width: 0;
-  color: var(--muted); font-size: 11px; text-align: right;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  min-width: 0;
+  color: var(--muted); font-size: 11px; line-height: 1.3; text-align: left;
+  white-space: normal;
 }
 
 /* ------------------------------------------------------------------------ hand off

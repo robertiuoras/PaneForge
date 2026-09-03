@@ -367,29 +367,43 @@ export default function NewSessionDialog({
           </button>
         </div>
 
-        {peers.length > 0 && (
-          <div className="where-row" data-testid="where-row">
-            <span className="where-label">Start it on</span>
-            <div className="pickrow">
+        {/* Always drawn, even with nothing paired: the one way to start work on the
+            other machine is this row, and a row that only appears once a device is
+            online is a feature nobody finds. With no peer it says how to get one. */}
+        <div className="where-row" data-testid="where-row">
+          <div className="where-head">
+            <span className="where-label">Where it runs</span>
+            <span className="where-hint">
+              {peers.length === 0
+                ? 'Pair another computer in Devices and it can start work there.'
+                : where === 'remote'
+                  ? 'Runs over there; you watch it and type into it from here.'
+                  : where === 'auto'
+                    ? 'Stays here unless this machine is under pressure.'
+                    : 'Runs on this machine.'}
+            </span>
+          </div>
+            <div className="pickrow where-picks">
               {(
-                [
-                  ['local', 'This machine'],
-                  ['remote', peers.length === 1 ? peers[0].name : 'The other machine'],
-                  ['auto', 'Let the app decide']
-                ] as const
+                peers.length === 0
+                  ? ([['local', 'This machine']] as const)
+                  : ([
+                      ['local', 'This machine'],
+                      ['remote', peers.length === 1 ? peers[0].name : 'The other machine'],
+                      ['auto', 'Let the app decide']
+                    ] as const)
               ).map(([value, word]) => (
                 <button
                   key={value}
                   type="button"
-                  className={`chip pick${where === value ? ' on' : ''}`}
+                  className={`chip pick${where === value || (peers.length === 0 && value === 'local') ? ' on' : ''}`}
                   onClick={() => setWhere(value)}
                 >
                   {word}
                 </button>
               ))}
             </div>
-          </div>
-        )}
+        </div>
 
         {/*
          * What the message is about. A session opened in the wrong project is silent and

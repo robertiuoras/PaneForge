@@ -2306,8 +2306,14 @@ export class SessionManager extends EventEmitter {
     if (!s) return
     const was = !!s.meta.handingOff
     const wasAt = s.meta.handoffQueuedAt
-    if (on) s.meta.handingOff = true
-    else delete s.meta.handingOff
+    if (on) {
+      s.meta.handingOff = true
+      if (!s.meta.handoffSince) s.meta.handoffSince = Date.now()
+    } else {
+      delete s.meta.handingOff
+      delete s.meta.handoffSince
+      delete s.meta.handoffStage
+    }
     // A queued pane and one actually in transit are the same paint to `reclaim.ts` and two
     // different sentences to a person, so the moment it stops waiting and starts moving is
     // a change the card has to see.
@@ -2323,6 +2329,16 @@ export class SessionManager extends EventEmitter {
     if (!on || queuedAt === null) delete s.meta.handoffQueuedAt
     else if (queuedAt) s.meta.handoffQueuedAt = queuedAt
     if (was === on && wasAt === s.meta.handoffQueuedAt) return
+    this.emitSessions()
+  }
+
+  /** Which half of a move is running - see `Session.handoffStage`. Ignored off a move. */
+  setHandoffStage(id: string, stage: string | null): void {
+    const s = this.sessions.get(id)
+    if (!s || !s.meta.handingOff) return
+    if ((s.meta.handoffStage ?? null) === stage) return
+    if (stage) s.meta.handoffStage = stage
+    else delete s.meta.handoffStage
     this.emitSessions()
   }
 
