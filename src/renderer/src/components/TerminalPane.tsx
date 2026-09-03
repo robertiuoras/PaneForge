@@ -4251,8 +4251,8 @@ function TerminalPane({
       // A path is only true on one machine, same rule as the File branch above. This pane's
       // agent runs here when the id is a plain one, so the file is already where it can be
       // opened; a mirrored pane's runs on the other desk and this path means nothing there,
-      // and there is no File object to send its bytes instead - so it is said out loud
-      // rather than typed as a link that reads as a missing file.
+      // and there is no File object to send its bytes instead - so main reads the file off
+      // THIS disk and the bytes travel (`pty:attachPaths`), the way a pasted image does.
       if (!sessionId.startsWith('@')) {
         // Same rule as the File branch: an image goes to a clipboard-reading agent as the
         // image. These paths have no File object behind them, so the bytes are read in the
@@ -4262,10 +4262,13 @@ function TerminalPane({
         else typePaths(dropped)
       }
       else
-        toast.current?.(
-          "That file is on this machine and this pane's agent runs on the other device. " +
-            'Drag it from a window on that desk, or copy the image and paste it here.'
-        )
+        void api
+          .attachPaths(sessionId, dropped)
+          .then((res) => {
+            if (res.error) toast.current?.(res.error)
+            typePaths(res.paths)
+          })
+          .catch(() => toast.current?.('Could not send that file to the other device.'))
       if (!uris.length) return
     }
 

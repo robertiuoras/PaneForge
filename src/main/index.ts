@@ -32,7 +32,7 @@ import type { RouteResult } from '../shared/projectRoute'
 import { DEFAULT_PHONE_PORT, getConfig, projectsRoot, setConfig } from './config'
 import { whatsNew } from './whatsNew'
 import { addSound, pruneCustomSounds, removeSound, renameSound, soundData } from './sounds'
-import { writeAttachments } from './attach'
+import { writeAttachments, readAttachIns } from './attach'
 import { AskNotifier, askMessage, postAsk, telegramCreds } from './askNotify'
 import { askKeyOf } from '../shared/autoAnswer'
 import type { AttachIn, AttachResult } from '../shared/attach'
@@ -2737,6 +2737,20 @@ ipcMain.handle('pty:choose', (_e, id: string, n: number): boolean => {
 ipcMain.handle('pty:attach', (_e, id: string, files: AttachIn[]): Promise<AttachResult> => {
   if (remote.owns(id)) return remote.attachOn(id, files)
   return Promise.resolve(writeAttachments(files))
+})
+
+/**
+ * Paths on THIS machine, attached to a pane - the one on the other desk included.
+ *
+ * The renderer gets a `file://` URI and no bytes for a Finder drag or a screenshot
+ * dragged off its thumbnail; the disk is read here, where the path is true, and only the
+ * bytes travel (`readAttachIns`).
+ */
+ipcMain.handle('pty:attachPaths', (_e, id: string, paths: string[]): Promise<AttachResult> => {
+  const read = readAttachIns(paths)
+  if (read.error) return Promise.resolve({ paths: [], error: read.error })
+  if (remote.owns(id)) return remote.attachOn(id, read.files)
+  return Promise.resolve(writeAttachments(read.files))
 })
 
 /**

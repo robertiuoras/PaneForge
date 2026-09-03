@@ -200,6 +200,7 @@ const GATED_INVOKE = new Set([
   // only at the pane's own working folder rather than the project it belongs to.
   'shell:revealPane',
   'pty:attach',
+  'pty:attachPaths',
   'pty:attachClipboard',
   'agents:install',
   'agents:uninstall',

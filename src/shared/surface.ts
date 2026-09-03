@@ -89,6 +89,7 @@ export const SURFACE: Surface = {
   readClipboard: ['invoke', 'clipboard:read'],
   chooseOption: ['invoke', 'pty:choose'],
   attachFiles: ['invoke', 'pty:attach'],
+  attachPaths: ['invoke', 'pty:attachPaths'],
   attachClipboardImage: ['invoke', 'pty:attachClipboard'],
   putImageOnClipboard: ['invoke', 'clipboard:writeImage'],
   clipboardFixtureActive: ['invoke', 'clipboard:fixtureActive'],

@@ -2241,6 +2241,11 @@ export interface Api {
   chooseOption(sessionId: string, n: number): Promise<boolean>
   attachFiles(sessionId: string, files: AttachIn[]): Promise<AttachResult>
   /**
+   * The same for paths on the device the window is on, read there - a `file://` drop
+   * carries no bytes, and on a mirrored pane the path means nothing to the other desk.
+   */
+  attachPaths(sessionId: string, paths: string[]): Promise<AttachResult>
+  /**
    * The same, for whatever image is on the clipboard of the device the window is on.
    *
    * `readClipboard` answers '' for an image, and forwarding a raw ^V only works for an
