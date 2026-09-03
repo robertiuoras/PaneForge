@@ -2211,6 +2211,7 @@ export interface Api {
    * opened, or null when it is not there any more.
    */
   revealProject(cwd: string, title?: string): Promise<string | null>
+  revealPane(cwd: string): Promise<string | null>
   /**
    * Resolve a path an agent printed, relative to the pane it was printed in.
    *

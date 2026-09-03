@@ -178,6 +178,7 @@ const TESTS = [
   ['trust', 'trust-test.mjs'],
   ['slash', 'slash-test.mjs'],
   ['reveal', 'reveal-test.mjs'],
+  ['revealpane', 'reveal-pane-test.mjs'],
   ['gamemode', 'gamemode-test.mjs'],
   ['openurl', 'open-url-test.mjs'],
   ['spawnquiet', 'spawn-quiet-test.mjs'],

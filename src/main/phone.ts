@@ -196,6 +196,9 @@ const GATED_INVOKE = new Set([
   // Opens a file manager here, exactly as `shell:reveal` does on the send side - it only
   // reaches a different folder (the project a lane belongs to, rather than the lane).
   'shell:revealProject',
+  // Same reasoning as `shell:revealProject` just above - it opens a file manager here,
+  // only at the pane's own working folder rather than the project it belongs to.
+  'shell:revealPane',
   'pty:attach',
   'pty:attachClipboard',
   'agents:install',

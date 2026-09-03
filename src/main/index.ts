@@ -23,6 +23,7 @@ import { DiscordPresence } from './discordPresence'
 import { countPresence, type PresenceCounts } from '../shared/discordRpc'
 import { quitWhere } from '../shared/quitWords'
 import { revealTarget, within } from '../shared/reveal'
+import { revealTargetFor } from '../shared/revealPane'
 import { clientForText, rosterRoot } from './clients'
 import { createProject, listProjects } from './projects'
 import { routeCandidates } from './projectAliases'
@@ -2044,6 +2045,30 @@ ipcMain.handle('shell:revealProject', async (_e, cwd: string, title?: string) =>
     /* no roster, or a slug whose folder has gone: the title match above is the answer */
   }
   const target = revealTarget({ root, cwd: cwd ?? '', title, subdirs, clientDir, sep })
+  openLocal(target, 'open in file manager')
+  return target
+})
+/**
+ * "Open the folder" for a PANE's own folder button - always its cwd.
+ *
+ * `shell:revealProject` above deliberately climbs a lane to the trunk checkout, which is
+ * right for "where should I drop a file in" and wrong for "where are this pane's files".
+ * Robert, 2026-09-03: a pane running in a lane copy had written 141 untracked media files
+ * that exist only there, and the folder button opened the trunk - which has none of them.
+ * This button never climbs: it opens exactly the folder the pane runs in. See
+ * `shared/revealPane.ts` for the rule and why a missing cwd still falls back to the
+ * project rather than opening nothing.
+ *
+ * Returns the folder actually opened, so the caller can say which one that was.
+ */
+ipcMain.handle('shell:revealPane', async (_e, cwd: string) => {
+  const root = await projectRoot(cwd ?? '')
+  const target = revealTargetFor({ cwd, root })
+  try {
+    if (!statSync(target).isDirectory()) return null
+  } catch {
+    return null /* gone: pointing Explorer at it would just raise an error dialog */
+  }
   openLocal(target, 'open in file manager')
   return target
 })
