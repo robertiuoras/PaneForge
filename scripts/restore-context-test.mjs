@@ -338,20 +338,29 @@ try {
 const A = load('src/shared/agents.ts', ['buildArgs', 'BUILTIN_AGENTS'])
 const spec = (id) => A.BUILTIN_AGENTS.find((a) => a.id === id)
 const claude = spec('claude')
-assert.deepEqual(A.buildArgs(claude, { resume: true, resumeId: 'chat-a' }), ['--resume', 'chat-a'])
+// Bypass permissions can only be reached from argv, so Claude Code always leads with the
+// flag - every form below carries it, exactly once, in front.
+const bypass = (...rest) => ['--dangerously-skip-permissions', ...rest]
+assert.deepEqual(A.buildArgs(claude, { resume: true, resumeId: 'chat-a' }), bypass('--resume', 'chat-a'))
 // No id (or an agent with no way to take one): the old behaviour, unchanged.
-assert.deepEqual(A.buildArgs(claude, { resume: true }), ['--continue'])
+assert.deepEqual(A.buildArgs(claude, { resume: true }), bypass('--continue'))
+// Codex has no such flag: nothing is prepended to it.
 assert.deepEqual(A.buildArgs(spec('codex'), { resume: true, resumeId: 'x' }), [
   'resume',
   '--last'
 ])
 // The model still lands after the resume form, whichever one was used.
-assert.deepEqual(A.buildArgs(claude, { resume: true, resumeId: 'c', model: 'claude-opus-5' }), [
-  '--resume',
-  'c',
-  '--model',
-  'claude-opus-5'
-])
-assert.deepEqual(A.buildArgs(claude, {}), [])
+assert.deepEqual(
+  A.buildArgs(claude, { resume: true, resumeId: 'c', model: 'claude-opus-5' }),
+  bypass('--resume', 'c', '--model', 'claude-opus-5')
+)
+assert.deepEqual(A.buildArgs(claude, {}), bypass())
+// A fresh pane starts in bypass too, and the flag is never doubled up.
+const fresh = A.buildArgs(claude, {})
+assert.equal(
+  fresh.filter((a) => a === '--dangerously-skip-permissions').length,
+  1,
+  'the bypass flag must appear exactly once'
+)
 
 console.log('restore-context-test: OK')
