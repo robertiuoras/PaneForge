@@ -51,7 +51,7 @@ import { diffFiles, diffPatch } from './diff'
 import type { ClientNamed, DiffScope, PhoneState, ShelfEdge } from '../shared/types'
 import { detectLane, laneExtras, resolveLane } from './lanes'
 import { laneWork, mergeLaneBack, repoOf, returnToBase, sweepLanes, trackTyped } from './laneWork'
-import { attachLaneOwners, laneBoards, laneReclaim, laneRetry } from './laneBoard'
+import { attachLaneOwners, laneBoards, laneReclaim, laneRetry, markGone } from './laneBoard'
 import type { LanePane } from './laneBoard'
 import { resolveRevealTarget } from './revealPath'
 import { which } from './which'
@@ -2087,7 +2087,7 @@ const lanePanes = (): LanePane[] =>
 ipcMain.handle('lanes:board', () => {
   const panes = lanePanes()
   return laneBoards(panes)
-    .map((b) => attachLaneOwners(b, panes))
+    .map((b) => markGone(attachLaneOwners(b, panes)))
     .map((b) =>
       b
         ? {

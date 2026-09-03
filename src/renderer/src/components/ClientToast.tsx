@@ -34,6 +34,7 @@ export const CLIENT_TOAST_MS = 3000
 export function whyWords(e: ClientNamed): string {
   if (e.from === 'folder') return 'This pane is open in their folder.'
   if (e.from === 'prompt') return 'The first thing you asked named them.'
+  if (e.from === 'reply') return 'The agent found what you meant.'
   return 'Named after the first thing you asked.'
 }
 

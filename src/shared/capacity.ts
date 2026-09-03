@@ -565,74 +565,16 @@ export function projectOn(candidates: OffloadCandidate[], projectName: string): 
   return null
 }
 
-/** What a person answered when the launch asked where the pane should go. */
+/** Where a launch's pane ends up: local, or the peer `offloadTarget` found for it. */
 export type OffloadAnswer = 'remote' | 'local'
 
-/** ...and what the launch does: the two answers, or put the question on screen. */
-export type OffloadPlan = OffloadAnswer | 'ask'
-
-/** An answer kept for a while, so a busy stretch is not one dialog per pane. */
-export interface OffloadStick {
-  answer: OffloadAnswer
-  /**
-   * The device the answer was given ABOUT.
-   *
-   * "Yes, send it to the PC" is not "yes, send it anywhere". Two paired devices and two
-   * projects is enough for a remembered answer about one machine to move a pane onto a
-   * machine nobody was asked about - which is the silent move this whole feature exists
-   * to stop, wearing the user's own approval. A remembered "keep it here" carries no
-   * device: it is a statement about THIS desk and holds whoever was offering.
-   */
-  device: string
-  /** ms epoch after which the question is asked again */
-  until: number
-}
-
 /**
- * How long an answer holds. Ten minutes because the thing it is answering about is a
- * burst - a few panes opened in a row while the machine is already full - and not a
- * setting. Anything longer and a choice made once quietly becomes the policy; anything
- * shorter and opening three panes asks three times, which is the nag this replaces.
+ * Where the launch goes. Nobody is asked - `offloadTarget` already decided whether a peer
+ * COULD take the pane, and this just says so after the fact (the toast reading
+ * `offload.log`). A card nobody presses is a decision nobody made.
  */
-export const OFFLOAD_STICK_MS = 10 * 60_000
-
-export function stickFor(
-  answer: OffloadAnswer,
-  device: string,
-  now: number,
-  ms = OFFLOAD_STICK_MS
-): OffloadStick {
-  return { answer, device, until: now + ms }
-}
-
-/**
- * Where the launch goes, and whether the person is asked at all.
- *
- * `offloadTarget` decides whether a peer COULD take the pane. This decides who says so.
- * Until this existed the launch moved the pane on its own and printed a sentence after
- * the fact, which is right for a machine that is thrashing and wrong for the person who
- * wanted THIS pane on THIS desk - the files are here, the browser is here, and a pane
- * that landed on the other machine has to be handed back by hand.
- *
- * A stuck answer beats the question, and never beats "there is nowhere to send it": a
- * remembered `remote` with no online peer holding the project is still local.
- */
-export function offloadPlan(
-  target: Offload | null,
-  /** config: ask before moving, rather than moving and saying so */
-  ask: boolean,
-  stick: OffloadStick | null,
-  now: number
-): OffloadPlan {
-  if (!target) return 'local'
-  // A stuck answer is an answer to a QUESTION. With asking turned off no question was
-  // put, so the setting decides and a leftover answer from before the switch was flipped
-  // may not quietly outvote it.
-  if (ask && stick && stick.until > now) {
-    if (stick.answer === 'local') return 'local'
-    if (stick.device === target.device) return 'remote'
-  }
-  return ask ? 'ask' : 'remote'
+export function offloadPlan(target: Offload | null): OffloadAnswer {
+  return target ? 'remote' : 'local'
 }
 
 /** What a launch may bring back from the saved desk, and why it is fewer than all of it. */

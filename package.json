@@ -1,6 +1,6 @@
 {
   "name": "claude-orchestrator",
-  "version": "0.8.191",
+  "version": "0.8.192",
   "private": true,
   "description": "PaneForge",
   "author": "Robert",
@@ -61,6 +61,8 @@
     "test:voice": "node scripts/voice-test.mjs",
     "test:place": "node scripts/place-test.mjs",
     "test:clientname": "node scripts/client-name-test.mjs",
+    "test:resolvedname": "node scripts/resolved-name-test.mjs",
+    "test:peerchrome": "node scripts/peer-chrome-test.mjs",
     "test:projectname": "node scripts/project-name-test.mjs",
     "test:historysearch": "node scripts/history-search-test.mjs",
     "test:projectroot": "node scripts/projectroot-test.mjs",

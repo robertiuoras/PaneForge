@@ -108,12 +108,16 @@ const lane = (extra = {}) => ({
   ...extra
 })
 
+// The JOB leads the row. `taskdriver copy 4 "idea #675 ..."` put the one thing the reader
+// was looking for last, behind a number that means nothing to them (2026-09-03).
+is(words.laneHeadline(lane({ chatTitle: 'Set Up Meta Ads' })), 'Set Up Meta Ads', 'the row is headed by the name the chat was given')
 is(
-  words.laneWho(lane({ chatTitle: 'Set Up Meta Ads' })),
-  '"Set Up Meta Ads"',
-  'the row carries the name the chat was given'
+  words.laneUnder(lane({ chatTitle: 'Set Up Meta Ads' }), 'busy now'),
+  `${words.laneLabel(lane())} - busy now`,
+  'and the copy comes down to the state line, so the row still says which folder'
 )
-is(words.laneWho(lane()), '', 'and says nothing for a chat that left no name - never a guess')
+is(words.laneHeadline(lane()), words.laneLabel(lane()), 'a chat that left no name keeps the folder up top - never a guess')
+is(words.laneUnder(lane(), 'busy now'), 'busy now', 'and its state line does not repeat the folder')
 
 const tip = words.heldByTip(lane({ chatTitle: 'Set Up Meta Ads', chatAbout: 'write the ad copy' }))
 ok(tip.includes('Set Up Meta Ads'), 'the tooltip spells the name out')

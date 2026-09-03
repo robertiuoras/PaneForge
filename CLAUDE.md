@@ -387,6 +387,11 @@ disk, `ClientToast.tsx` card. `npm run test:clientname`.
   that names no project (`Desktop`, `Downloads`, the projects root); a real repo keeps its own name
   until three asks agree (`repeatedTopic`), which then names it off the EARLIEST of those asks.
 - Rename happens, THEN reports; `Cancel` restores folder name, sets `clientOff`.
+- An ask that POINTS at its subject (`$50 task`, `task from yesterday`, `that client`) is named
+  off the REPLY: `shared/resolvedName.ts` reads the handle off the ask (`handleOf`) and the first
+  reply line `<handle> = Name` / `is` / `:` / `->` (`resolvedName`); `sweepResolved` in
+  `main/sessions.ts` reads only output since that ask, once, and only while the card still wears
+  an app-given name. Toast says `The agent found what you meant.` `npm run test:resolvedname`.
 
 ## A pane says how long it has been open
 
@@ -964,7 +969,7 @@ moves exactly that many.
   (`--remote-debugging-port`/`-pipe`, `--headless`) plus a non-MCP driver binary. `AutoPane.shareable` —
   git repo under projects root with origin remote (`main/handoff.ts`, cached 5 min); `false` refuses,
   `undefined` = "nobody asked". `npm run test:panebound`.
-- `offloadAsk` defaults off (`offloadDefaultsV2`); off config.json/`config:set` (`keepLocalOf`).
+- The app never asks where a pane runs; `keepLocalOf` (config.json/`config:set`) is the only override.
 - Pressure card offers the move: `suggestMove` names dearest pane + destination; `.cap-pop` has
   `Move it` / `Keep it here` (adds PROJECT to `autoHandoff.keepHere`, every rung refuses it).
 - Never handed back where it came from: `senderDevice`/`arrivedFrom` in payload, `hostFor` skips it.

@@ -1467,16 +1467,6 @@ html.app-blurred .elapsed::after { animation: none; }
 .lane-row .row-sub { font-size: 10.5px; }
 /* The folder is what you act on and the chat's name is what tells you whether you want
    to: same line, second, dimmer, and the first thing to be cut when the row is short. */
-/* The title is the project and the chat's name, and only the NAME may be shortened. They
-   were one run of text under a single ellipsis, so a long chat name ate the project it
-   was in - the one fact on the row that says which folder this is about. Flex puts the
-   ellipsis on the name instead, and the project keeps its width. */
-.lane-row .row-title { display: flex; align-items: baseline; gap: 4px; }
-.lane-row .row-title > :first-child { flex: none; }
-.lane-row .row-who {
-  color: var(--muted); font-weight: 400;
-  flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
 .lane-row.done .row-sub { color: var(--ok); opacity: 0.85; }
 /* The strip only ever draws lanes held by a chat that is NOT a pane here, so "busy now"
    is the fact it exists to carry - and it was grey, identical to a lane last touched
