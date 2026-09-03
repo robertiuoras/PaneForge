@@ -305,6 +305,102 @@ export type LoginInput =
   | { kind: 'key'; type: 'keyDown' | 'keyUp'; k: KeyIn }
   | { kind: 'text'; text: string }
 
+/** Two Escapes inside this long hand the keyboard back to this desk. */
+export const ESC_RELEASE_MS = 700
+
+/** What a keystroke bound for the far machine is allowed to do. */
+export interface KeyDeck {
+  /** Send it to the other computer. */
+  send(input: LoginInput): void
+  /** A paste is one insert, not a keystroke per character. */
+  paste(): void
+  /** Give the keyboard back to this desk. */
+  release(): void
+}
+
+/**
+ * As much of a keyboard event as the decision needs, so the decision can be tested with
+ * no browser at all. A real `KeyboardEvent` already satisfies this.
+ */
+export interface KeyEventLike {
+  key: string
+  code: string
+  ctrlKey?: boolean
+  metaKey?: boolean
+  shiftKey?: boolean
+  altKey?: boolean
+  preventDefault(): void
+  stopPropagation(): void
+  stopImmediatePropagation?(): void
+}
+
+/**
+ * One keystroke, ONE destination.
+ *
+ * The bug this exists to stop: while the picture had the keyboard, every letter typed
+ * arrived on the far machine AND in the pane it was typed from, because the view only
+ * called `preventDefault`. That stops the BROWSER acting on a key; it does not stop
+ * another listener hearing it, and the terminal in the pane is exactly such a listener -
+ * xterm reads the key off its own hidden textarea and writes it to the pty itself
+ * (`TerminalPane.tsx`, `t.onData` -> `api.write`). So a password was typed into the
+ * login page and into the agent's prompt at the same time.
+ *
+ * The listener is on the WINDOW in the capture phase, the first place in the document an
+ * event is seen, so stopping propagation here stops it before anything deeper - the
+ * terminal, the composer, the app's own dialogs - is ever asked. Keys the far machine
+ * must NOT have (`forwarded`) are deliberately left alone and stay on this desk.
+ */
+export function loginKeys(
+  deck: KeyDeck,
+  now: () => number = () => Date.now()
+): { down(e: KeyEventLike): void; up(e: KeyEventLike): void } {
+  let escAt = 0
+  /** Take the key off this machine entirely: no default, and no second listener. */
+  const claim = (e: KeyEventLike): void => {
+    e.preventDefault()
+    e.stopPropagation()
+    e.stopImmediatePropagation?.()
+  }
+  const read = (e: KeyEventLike): KeyIn => ({
+    key: e.key,
+    code: e.code,
+    ctrl: Boolean(e.ctrlKey),
+    meta: Boolean(e.metaKey),
+    shift: Boolean(e.shiftKey),
+    alt: Boolean(e.altKey)
+  })
+  return {
+    down(e: KeyEventLike): void {
+      const k = read(e)
+      // Two Escapes hand the keyboard back. One Escape is a key the login page itself may
+      // want (closing a cookie banner), so it is forwarded as well.
+      if (k.key === 'Escape') {
+        const t = now()
+        if (t - escAt < ESC_RELEASE_MS) {
+          escAt = 0
+          claim(e)
+          deck.release()
+          return
+        }
+        escAt = t
+      }
+      if (!forwarded(k)) return
+      claim(e)
+      if ((k.meta || k.ctrl) && (k.key === 'v' || k.key === 'V')) {
+        deck.paste()
+        return
+      }
+      deck.send({ kind: 'key', type: 'keyDown', k })
+    },
+    up(e: KeyEventLike): void {
+      const k = read(e)
+      if (!forwarded(k)) return
+      claim(e)
+      deck.send({ kind: 'key', type: 'keyUp', k })
+    }
+  }
+}
+
 /** A request from a script that cannot type. */
 export interface LoginRequest {
   id: string

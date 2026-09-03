@@ -118,6 +118,7 @@ const TESTS = [
   ['resolvedname', 'resolved-name-test.mjs'],
   ['peerchrome', 'peer-chrome-test.mjs'],
   ['remotelogin', 'remote-login-test.mjs'],
+  ['loginkeys', 'login-keys-test.mjs'],
   ['projectname', 'project-name-test.mjs'],
   ['historysearch', 'history-search-test.mjs'],
   ['projectroot', 'projectroot-test.mjs'],

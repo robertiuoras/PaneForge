@@ -92,6 +92,7 @@
     "test:discord": "node scripts/discord-presence-test.mjs",
     "test:discordbrand": "node scripts/discord-brand-test.mjs",
     "test:remotelogin": "node scripts/remote-login-test.mjs",
+    "test:loginkeys": "node scripts/login-keys-test.mjs",
     "test:remote": "node scripts/remote-test.mjs",
     "test:remoteversion": "node scripts/remote-version-test.mjs",
     "test:deadlink": "node scripts/deadlink-test.mjs",

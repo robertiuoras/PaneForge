@@ -1001,7 +1001,10 @@ export default function App(): JSX.Element {
   const restoreFocus = useCallback(() => {
     const el = document.activeElement as HTMLElement | null
     if (el && (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable)) return
-    if (document.querySelector('.overlay, .select-menu')) return
+    // `.login-screen.typing` is the far machine's picture with the keyboard: a click on
+    // it must not hand the caret straight back to the pane, or every letter is typed twice
+    // - once on the other computer and once at the local prompt.
+    if (document.querySelector('.overlay, .select-menu, .login-screen.typing')) return
     const id = activeRef.current
     if (id) paneFocus.get(id)?.()
   }, [])
