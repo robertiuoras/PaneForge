@@ -219,15 +219,20 @@ test:handofffit`.
 
 `shared/offloadFirst.ts` decides BEFORE a pty exists, in `startOrSend` above `laneFor`
 (`main/index.ts`), for + button, `pf open`, split and phone alike. Every answer is a sentence in
-`offload.log`; a fallback says so in a toast. Nothing asks - `offloadAsk` is the pressure path's
-dialog, off by default. `npm run test:offloadfirst`.
+`offload.log`; a fallback says so in a toast. The New session dialog offers the pick while a
+peer is online (`StartSessionRequest.where`: `local` is final, `remote` beats every refusal
+about the PERSON, never one about reach). An APP-decided move is announced first:
+`OffloadSoon.tsx` counts `OFFLOAD_ASK_MS` (8s) with `Keep it here`; nobody pressing = it
+goes (`offload:answer`). `offloadAsk` is the pressure path's dialog. `npm run test:offloadfirst`.
 
 - Refusals first, above `always`: `never`, `keepHere`, `machineBound`; NO PROMPT (a person about
   to type - the Mac is the desk, a bare + never leaves it); `resumes`; `pinnedByPrompt` (a path
   outside the project, localhost/port/dev server, screenshot/browser, "on my mac"/"locally"/"here");
   a dev server already serving the project here; unmeasured or unshareable folder; no live peer;
   peer at `PEER_FULL_PANES` (8).
-- Then `auto`: remote past `REMOTE_FROM_PANES` (2) running here, or on battery.
+- Then `auto`: remote only when this machine is MEASURED under pressure (memory verdict or lag
+  band, `worstPressure`). Never a pane count, never the battery - both sent every briefed pane
+  off the Mac (2026-09-03).
 - Pinning local is the cheap mistake; a pane on the PC told to open a Mac-only file is the dear one.
 
 ## The phone is this window, served

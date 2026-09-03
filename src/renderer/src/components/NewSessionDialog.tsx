@@ -18,6 +18,8 @@ interface Props {
   onDefaultsChange: (agent: Agent, model: string) => void
   agents: AgentInfo[]
   onStart: (reqs: StartSessionRequest[]) => void
+  /** Paired machines online right now - the ones a new pane could start on. */
+  peers: { id: string; name: string }[]
   /** a project folder was made from this dialog, so the list behind it is stale */
   onProjectsChanged: () => void
   /** save the current tick-list as a named workspace without launching it */
@@ -36,6 +38,7 @@ export default function NewSessionDialog({
   onDefaultsChange,
   agents: probed,
   onStart,
+  peers,
   onProjectsChanged,
   onSaveWorkspace,
   onCancel
@@ -55,6 +58,9 @@ export default function NewSessionDialog({
   const [model, setModel] = useState(defaultModels[defaultAgent] ?? '')
   const [prompt, setPrompt] = useState('')
   const [promptCopied, setPromptCopied] = useState(false)
+  // Which machine. Offered only while a paired one is online; `auto` leaves it to the
+  // app, which then says what it decided before doing it.
+  const [where, setWhere] = useState<'auto' | 'local' | 'remote'>('auto')
   // What the first message says it is about. `routed` is the project this dialog ticked
   // on the message's behalf, kept apart from the user's own ticks so it can be swapped
   // when the message changes and dropped the moment the user disagrees with it.
@@ -214,7 +220,8 @@ export default function NewSessionDialog({
         agent,
         model: model || undefined,
         resume: resume && canResume,
-        prompt: prompt.trim() || undefined
+        prompt: prompt.trim() || undefined,
+        where: where === 'auto' || !peers.length ? undefined : where
       }
     })
   }
@@ -359,6 +366,30 @@ export default function NewSessionDialog({
             {promptCopied ? 'Copied' : 'Copy'}
           </button>
         </div>
+
+        {peers.length > 0 && (
+          <div className="where-row" data-testid="where-row">
+            <span className="where-label">Start it on</span>
+            <div className="pickrow">
+              {(
+                [
+                  ['local', 'This machine'],
+                  ['remote', peers.length === 1 ? peers[0].name : 'The other machine'],
+                  ['auto', 'Let the app decide']
+                ] as const
+              ).map(([value, word]) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={`chip pick${where === value ? ' on' : ''}`}
+                  onClick={() => setWhere(value)}
+                >
+                  {word}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/*
          * What the message is about. A session opened in the wrong project is silent and

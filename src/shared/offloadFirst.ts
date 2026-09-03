@@ -38,8 +38,16 @@
 //      machine does not have (`pinnedByPrompt`), and so is a project whose dev server is
 //      already serving from this desk.
 //
-// Then `auto` asks whether this desk should be collecting agents at all: past
-// `REMOTE_FROM_PANES` running here, or on battery at any count, the answer is no.
+// Then `auto` asks ONE thing: is this machine measured to be in trouble right now. The
+// reading is the same one every rung of the pressure ladder uses - the kernel's memory
+// verdict and the load per core (`shared/capacity.ts`), the worse of the two. Never a
+// pane count and never the battery. The first cut of this rule (2026-09-02) sent work over
+// past two panes running here, or on battery at any count, and both were guesses standing
+// in for a measurement: a MacBook that is the desk has more than two panes on it all day
+// and is off the charger half of it, so every pane opened with a brief left for the PC
+// and Robert was working in mirrors (2026-09-03: "i need to open in local mac"). A guess
+// at cost is not a reading of cost. `always` is the switch for somebody who wants the
+// work over there regardless; `auto` waits for the machine to say so.
 //
 // Pure. `npm run test:offloadfirst`.
 
@@ -50,21 +58,9 @@
  * not "send it regardless", because the refusals are the things that would lose the work
  * rather than merely move it.
  */
-export type PreferRemote = 'auto' | 'always' | 'never'
+import type { Pressure } from './capacity'
 
-/**
- * How many agents this machine runs before `auto` starts sending new work over.
- *
- * Two, the same number as `AutoHandoffConfig.keepLocal`, and deliberately the same: that
- * budget is already Robert's answer to "how many agents belong on the laptop", and having
- * a new pane start locally only to be moved by the budget sweep a minute later would be
- * the app doing the expensive thing first and then undoing it.
- *
- * The first two panes stay here on purpose. Opening a folder and having its agent appear
- * on another machine before this desk is under any load at all is the app being clever at
- * somebody, and the first pane of the day is nearly always the one being worked in.
- */
-export const REMOTE_FROM_PANES = 2
+export type PreferRemote = 'auto' | 'always' | 'never'
 
 /**
  * How many agents the OTHER machine is allowed to be running before it stops being a
@@ -75,6 +71,19 @@ export const PEER_FULL_PANES = 8
 
 /** How long the far end has to say it started the pane before this desk opens it here. */
 export const REMOTE_START_ACK_MS = 8000
+
+/**
+ * How long the corner card waits before an app-decided move goes ahead.
+ *
+ * A pane the APP decided to start on the other machine is announced first - "starting X
+ * on PC in 8s", with a button that keeps it here - because a pane appearing on another
+ * screen with nothing said is the app taking the desk away from the person at it
+ * (2026-09-03: "it should at least have popup saying it will move the session over to
+ * remote and allow me to stop it"). Doing nothing lets the decision stand, so a launch
+ * from the phone or a script with nobody at the screen is never held up by a card nobody
+ * will press. A pane the PERSON sent there (`where: 'remote'`) gets no card: they chose.
+ */
+export const OFFLOAD_ASK_MS = 8000
 
 export interface PlaceInput {
   /**
@@ -90,10 +99,12 @@ export interface PlaceInput {
   peerAlive: boolean
   /** How many agents that device is already running, when it said. */
   peerBusyPanes?: number
-  /** Agents running on THIS machine right now. Mirrors cost nothing and are not counted. */
-  localPanes: number
-  /** On battery, where an agent CLI and the build it starts are the expensive thing. */
-  onBattery?: boolean
+  /**
+   * What this machine says about itself right now: the memory verdict and the lag band,
+   * worse of the two (`worstPressure`). Absent reads as `normal` - an unmeasured desk is
+   * not a desk in trouble.
+   */
+  pressure?: Pressure
   /** This project is on the "never leaves this machine" list. */
   keepHere?: boolean
   /**
@@ -105,6 +116,13 @@ export interface PlaceInput {
   cwd?: string
   /** Continuing a conversation that lives on this disk (`resume`, `resumeId`, a restore). */
   resumes?: boolean
+  /**
+   * The person's own pick, from the New session dialog. `local` is final. `remote` beats
+   * every refusal that is about THEM (no brief, a switch, a kept project) but not one
+   * about whether the work can get there at all - a pane cannot be sent to a machine that
+   * does not have the folder, whoever asked.
+   */
+  where?: 'local' | 'remote'
   /** The script name of a dev server already serving this project from THIS machine. */
   devServer?: string
   mode: PreferRemote
@@ -172,17 +190,22 @@ export function pinnedByPrompt(prompt: string | undefined, cwd?: string): string
 export function placeNewPane(i: PlaceInput): Placement {
   const local = (reason: string): Placement => ({ where: 'local', reason })
 
-  if (i.mode === 'never') return local('set to always start work on this machine')
-  if (i.keepHere) return local('this project is kept on this machine')
-  if (i.machineBound) return local(`this work is driving ${i.machineBound} on this screen`)
-  // The person's own pane. No brief means somebody is about to type into it, and a pane
-  // that appears on another screen the moment + is pressed is the app taking the desk
-  // away from the one working at it. Above `always`: the switch is about WORK.
-  if (!i.prompt?.trim()) return local('you opened this pane to work in it yourself')
-  if (i.resumes) return local('it continues a conversation stored on this machine')
-  const pinned = pinnedByPrompt(i.prompt, i.cwd)
-  if (pinned) return local(pinned)
-  if (i.devServer) return local(`this project's dev server (${i.devServer}) is already serving from this machine`)
+  // A pick made by hand outranks every rule about the person, and nothing below may
+  // second-guess it: the dialog offered the choice, so the choice is the answer.
+  if (i.where === 'local') return local('you chose this machine')
+  if (i.where !== 'remote') {
+    if (i.mode === 'never') return local('set to always start work on this machine')
+    if (i.keepHere) return local('this project is kept on this machine')
+    if (i.machineBound) return local(`this work is driving ${i.machineBound} on this screen`)
+    // The person's own pane. No brief means somebody is about to type into it, and a pane
+    // that appears on another screen the moment + is pressed is the app taking the desk
+    // away from the one working at it. Above `always`: the switch is about WORK.
+    if (!i.prompt?.trim()) return local('you opened this pane to work in it yourself')
+    if (i.resumes) return local('it continues a conversation stored on this machine')
+    const pinned = pinnedByPrompt(i.prompt, i.cwd)
+    if (pinned) return local(pinned)
+    if (i.devServer) return local(`this project's dev server (${i.devServer}) is already serving from this machine`)
+  }
   // Not `!== true` written as a truthiness check on purpose: `undefined` and `false` are
   // both local, and they are different sentences. One is a folder nobody has measured, the
   // other is a folder that was measured and cannot be reached from the other machine.
@@ -193,10 +216,10 @@ export function placeNewPane(i: PlaceInput): Placement {
     return local(`the other machine is already running ${i.peerBusyPanes} panes`)
   }
 
+  if (i.where === 'remote') return { where: 'remote', reason: 'you chose the other machine' }
   if (i.mode === 'always') return { where: 'remote', reason: 'set to always start this work on the other machine' }
-  if (i.onBattery) return { where: 'remote', reason: 'this machine is on battery' }
-  if (i.localPanes >= REMOTE_FROM_PANES) {
-    return { where: 'remote', reason: `this machine is already running ${i.localPanes} panes` }
-  }
-  return local(`this machine is only running ${i.localPanes} pane${i.localPanes === 1 ? '' : 's'}`)
+  const pressure = i.pressure ?? 'normal'
+  if (pressure === 'critical') return { where: 'remote', reason: 'this machine is out of memory or struggling' }
+  if (pressure === 'warn') return { where: 'remote', reason: 'this machine is running low on memory or lagging' }
+  return local('this machine has room for it')
 }

@@ -177,7 +177,7 @@ import {
 } from './shelfWindow'
 import { ACTIVATION_SETTLE_MS, revealOnActivation } from '../shared/activation'
 import { logActivation, logOffload, logReclaim } from './activationLog'
-import { placeNewPane, preferRemoteOf, REMOTE_START_ACK_MS } from '../shared/offloadFirst'
+import { OFFLOAD_ASK_MS, placeNewPane, preferRemoteOf, REMOTE_START_ACK_MS } from '../shared/offloadFirst'
 import { projectNameOf, projectOn } from '../shared/capacity'
 import { staysHere } from '../shared/autoHandoff'
 import { listActivity, markActivitySeen, noteActivity, onActivityChange } from './activity'
@@ -203,7 +203,7 @@ import { readBoard, writeMemory, writeTasks } from './board'
 import * as voice from './voice'
 import { installCommand, uninstallCommand } from '../shared/agents'
 import { installLaneHooks } from './laneHooks'
-import { assess, restorePlan, type Pressure } from '../shared/capacity'
+import { assess, lagLevel, restorePlan, worstPressure, type Pressure } from '../shared/capacity'
 import { restoreAsleep } from '../shared/restoreTurn'
 import { DEFAULT_RECOVER } from '../shared/recover'
 import type { UsageReport } from '../shared/usage'
@@ -1401,6 +1401,34 @@ async function laneFor(
  * The decision itself is `shared/offloadFirst.ts`, testable without a paired machine. This
  * reads the desk, carries out the answer, and writes it down.
  */
+/**
+ * The card before an app-decided move: "starting X on PC in 8s - Keep it here". Resolves
+ * true when the move may go ahead - a press on the go button, the deadline passing, or no
+ * window at all to draw the card on. False only when somebody pressed Keep. Answered over
+ * `offload:answer` from the desk or the phone, whichever is looked at.
+ */
+const offloadAsks = new Map<string, (go: boolean) => void>()
+function askOffload(project: string, deviceName: string, reason: string): Promise<boolean> {
+  const windows = BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed())
+  // No window means nobody at this desk to press Keep; a phone gets the same card through
+  // `send`, but a script launching panes at night must not wait 8s per pane for it.
+  if (!windows.length) return Promise.resolve(true)
+  const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
+  return new Promise<boolean>((resolve) => {
+    const t = setTimeout(() => finish(true), OFFLOAD_ASK_MS)
+    const finish = (go: boolean): void => {
+      clearTimeout(t)
+      offloadAsks.delete(id)
+      resolve(go)
+    }
+    offloadAsks.set(id, finish)
+    send('offload:soon', { id, project, deviceName, reason, deadline: Date.now() + OFFLOAD_ASK_MS })
+  })
+}
+ipcMain.handle('offload:answer', (_e, id: string, go: boolean) => {
+  offloadAsks.get(String(id))?.(!!go)
+})
+
 async function startOrSend(req: StartSessionRequest, claimed?: string[]): Promise<Session> {
   // `claimed` is the batch's own list of folders already taken, and it holds the RESOLVED
   // lane rather than what was asked for: two panes launched together for one project must
@@ -1453,12 +1481,14 @@ async function startOrSend(req: StartSessionRequest, claimed?: string[]): Promis
     shareable: await shareable(req.cwd, projectsRoot()).catch(() => undefined),
     prompt: req.prompt,
     cwd: req.cwd,
+    where: req.where,
     resumes: !!(req.resume || req.resumeId || req.asleep || req.scrollbackId),
     devServer,
     peerAlive: !!target,
     peerBusyPanes: peerPanes,
-    localPanes: manager.list().filter((s) => !s.asleep).length,
-    onBattery: await onBatteryNow().catch(() => false),
+    // The same two readings the pressure card is built from, worse of the two. Not a pane
+    // count: a desk with eight panes and memory to spare is a desk with room.
+    pressure: worstPressure(lastPressure, lagLevel(loadPerCore())),
     keepHere: cfg.autoHandoff ? staysHere(cfg.autoHandoff, project) : false,
     mode
   })
@@ -1471,6 +1501,11 @@ async function startOrSend(req: StartSessionRequest, claimed?: string[]): Promis
     })
   if (place.where === 'local' || !target) {
     note()
+    return here()
+  }
+  // The app's own decision is announced and can be stopped; the person's is carried out.
+  if (req.where !== 'remote' && !(await askOffload(project, target.deviceName, place.reason))) {
+    note('kept here - you pressed Keep')
     return here()
   }
   try {

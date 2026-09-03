@@ -3106,6 +3106,8 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
   box-shadow: var(--shadow); padding: 12px 13px; display: flex; flex-direction: column; gap: 8px;
 }
 .move-soon-say { color: var(--text); font-size: 13px; }
+.where-row { display: flex; align-items: center; gap: 10px; margin: 6px 0 2px; }
+.where-label { color: var(--muted); font-size: 12px; white-space: nowrap; }
 /* Tabular, or the sentence re-flows every second as the digit narrows. */
 .move-soon-count { font-variant-numeric: tabular-nums; color: var(--acc); }
 .move-soon-why { color: var(--muted); font-size: 12px; }

@@ -32,7 +32,7 @@ buildSync({
   outfile: out
 })
 const require = createRequire(import.meta.url)
-const { placeNewPane, pinnedByPrompt, preferRemoteOf, REMOTE_FROM_PANES, PEER_FULL_PANES, REMOTE_START_ACK_MS } =
+const { placeNewPane, pinnedByPrompt, preferRemoteOf, PEER_FULL_PANES, REMOTE_START_ACK_MS } =
   require(out)
 
 let checks = 0
@@ -53,7 +53,7 @@ const at = (over) => ({
   cwd: '/Users/robert/Projects/taskdriver',
   peerAlive: true,
   peerBusyPanes: 0,
-  localPanes: 1,
+  pressure: 'normal',
   mode: 'auto',
   ...over
 })
@@ -62,7 +62,7 @@ const at = (over) => ({
 
 is(placeNewPane(at({ mode: 'never' })).where, 'local', 'never keeps every pane here')
 is(
-  placeNewPane(at({ mode: 'never', localPanes: 9, onBattery: true })).where,
+  placeNewPane(at({ mode: 'never', pressure: 'critical' })).where,
   'local',
   '...whatever the desk says'
 )
@@ -83,26 +83,26 @@ ok(
 // the PC. A pane with no brief is somebody about to type into it, and it stays under
 // their hands whatever the desk says and whatever the switch says.
 
-is(placeNewPane(at({ prompt: undefined, localPanes: 9 })).where, 'local', 'a bare + stays here')
-is(placeNewPane(at({ prompt: '   ', localPanes: 9 })).where, 'local', '...blank is bare')
+is(placeNewPane(at({ prompt: undefined, pressure: 'critical' })).where, 'local', 'a bare + stays here')
+is(placeNewPane(at({ prompt: '   ', pressure: 'critical' })).where, 'local', '...blank is bare')
 is(placeNewPane(at({ prompt: undefined, mode: 'always' })).where, 'local', '...even set to always')
 is(
-  placeNewPane(at({ prompt: undefined, onBattery: true, localPanes: 9 })).where,
+  placeNewPane(at({ prompt: undefined, pressure: 'critical', mode: 'always' })).where,
   'local',
-  '...even on battery, full'
+  '...even out of memory, set to always'
 )
 ok(/yourself/.test(placeNewPane(at({ prompt: undefined })).reason), '...and says whose pane it is')
-is(placeNewPane(at({ localPanes: 9 })).where, 'remote', 'the same desk with a brief still sends it')
+is(placeNewPane(at({ pressure: 'critical' })).where, 'remote', 'the same desk with a brief still sends it')
 
 is(
-  placeNewPane(at({ resumes: true, localPanes: 9 })).where,
+  placeNewPane(at({ resumes: true, pressure: 'critical' })).where,
   'local',
   'a resumed conversation stays with its transcript'
 )
 is(placeNewPane(at({ resumes: true, mode: 'always' })).where, 'local', '...even set to always')
 
 is(
-  placeNewPane(at({ devServer: 'dev', localPanes: 9 })).where,
+  placeNewPane(at({ devServer: 'dev', pressure: 'critical' })).where,
   'local',
   'a project already serving from here stays here'
 )
@@ -133,7 +133,7 @@ is(pinned('write a migration for the users table'), undefined, '...and this')
 is(pinned(''), undefined, 'an empty brief pins nothing - the bare rule owns it')
 is(pinned(undefined), undefined, '...and so does undefined')
 is(
-  placeNewPane(at({ prompt: 'compare with ~/Desktop/old.png', localPanes: 9 })).where,
+  placeNewPane(at({ prompt: 'compare with ~/Desktop/old.png', pressure: 'critical' })).where,
   'local',
   'a pinned brief stays here'
 )
@@ -150,7 +150,7 @@ is(
 // The control: an unmeasured folder is a folder nobody has asked about, and guessing
 // remote opens a pane in a directory the other machine does not have.
 is(
-  placeNewPane(at({ shareable: undefined, localPanes: 9 })).where,
+  placeNewPane(at({ shareable: undefined, pressure: 'critical' })).where,
   'local',
   'an unmeasured folder stays here'
 )
@@ -165,47 +165,52 @@ ok(
 )
 is(placeNewPane(at({ shareable: false, mode: 'always' })).where, 'local', 'a folder with nowhere to push stays here')
 
-is(placeNewPane(at({ peerAlive: false, localPanes: 9 })).where, 'local', 'no live peer, no move')
+is(placeNewPane(at({ peerAlive: false, pressure: 'critical' })).where, 'local', 'no live peer, no move')
 is(placeNewPane(at({ peerAlive: false, mode: 'always' })).where, 'local', '...even set to always')
 
 is(
-  placeNewPane(at({ peerBusyPanes: PEER_FULL_PANES, localPanes: 9 })).where,
+  placeNewPane(at({ peerBusyPanes: PEER_FULL_PANES, pressure: 'critical' })).where,
   'local',
   'a peer already full is not a destination'
 )
 is(
-  placeNewPane(at({ peerBusyPanes: PEER_FULL_PANES - 1, localPanes: 9 })).where,
+  placeNewPane(at({ peerBusyPanes: PEER_FULL_PANES - 1, pressure: 'critical' })).where,
   'remote',
   '...and one pane under it still is'
 )
 ok(
-  placeNewPane(at({ peerBusyPanes: PEER_FULL_PANES, localPanes: 9 })).reason.includes(String(PEER_FULL_PANES)),
+  placeNewPane(at({ peerBusyPanes: PEER_FULL_PANES, pressure: 'critical' })).reason.includes(String(PEER_FULL_PANES)),
   '...and the refusal carries the count'
 )
 
 // --- auto: what the desk says ------------------------------------------------------------
 
-is(placeNewPane(at({ localPanes: 0 })).where, 'local', 'the first pane of the day opens here')
-is(placeNewPane(at({ localPanes: REMOTE_FROM_PANES - 1 })).where, 'local', '...and so does the second')
-is(placeNewPane(at({ localPanes: REMOTE_FROM_PANES })).where, 'remote', 'past the budget, new work goes over')
-ok(
-  placeNewPane(at({ localPanes: REMOTE_FROM_PANES })).reason.includes(String(REMOTE_FROM_PANES)),
-  '...and says how many are running here'
-)
+is(placeNewPane(at({ pressure: 'normal' })).where, 'local', 'a desk with room keeps its new pane')
+is(placeNewPane(at({ pressure: undefined })).where, 'local', '...and an unmeasured desk is a desk with room')
+is(placeNewPane(at({ pressure: 'warn' })).where, 'remote', 'a desk the kernel is warning about sends it')
+is(placeNewPane(at({ pressure: 'critical' })).where, 'remote', '...and a struggling one does')
+ok(/memory|lagging/.test(placeNewPane(at({ pressure: 'warn' })).reason), '...and says which reading')
+// The 2026-09-02 rule, pinned dead: a MacBook that is the desk has many panes and is on
+// battery all day, and neither is a measurement of anything.
+is(placeNewPane(at({ pressure: 'normal', localPanes: 9 })).where, 'local', 'nine panes with room is not a reason')
+is(placeNewPane(at({ pressure: 'normal', onBattery: true })).where, 'local', 'battery is not a reason')
 
-is(
-  placeNewPane(at({ localPanes: 0, onBattery: true })).where,
-  'remote',
-  'on battery the count does not matter'
-)
-ok(
-  placeNewPane(at({ localPanes: 0, onBattery: true })).reason.includes('battery'),
-  '...and it says so'
-)
+// --- the person's own pick ---------------------------------------------------------------
+
+is(placeNewPane(at({ where: 'local', mode: 'always', pressure: 'critical' })).where, 'local', 'picked this machine: final')
+is(placeNewPane(at({ where: 'remote', prompt: undefined })).where, 'remote', 'picked the other machine: a bare pane still goes')
+is(placeNewPane(at({ where: 'remote', mode: 'never' })).where, 'remote', '...over the never switch')
+is(placeNewPane(at({ where: 'remote', keepHere: true })).where, 'remote', '...over a kept project')
+is(placeNewPane(at({ where: 'remote', resumes: true })).where, 'remote', '...over a resume')
+is(placeNewPane(at({ where: 'remote', shareable: false })).where, 'local', 'but not onto a machine without the folder')
+is(placeNewPane(at({ where: 'remote', peerAlive: false })).where, 'local', '...nor one that is offline')
+is(placeNewPane(at({ where: 'remote', peerBusyPanes: PEER_FULL_PANES })).where, 'local', '...nor one that is full')
+ok(/chose/.test(placeNewPane(at({ where: 'remote' })).reason), '...and the reason says who chose')
+ok(/chose/.test(placeNewPane(at({ where: 'local' })).reason), '...both ways')
 
 // --- always ------------------------------------------------------------------------------
 
-is(placeNewPane(at({ localPanes: 0, mode: 'always' })).where, 'remote', 'always sends the first pane too')
+is(placeNewPane(at({ pressure: 'normal', mode: 'always' })).where, 'remote', 'always sends it with room to spare')
 
 // --- every answer explains itself --------------------------------------------------------
 
@@ -218,14 +223,16 @@ const cases = [
   at({ peerAlive: false }),
   at({ keepHere: true }),
   at({ machineBound: 'Chrome' }),
-  at({ localPanes: 9 }),
-  at({ onBattery: true }),
+  at({ pressure: 'warn' }),
+  at({ pressure: 'critical' }),
   at({ peerBusyPanes: 99 }),
   at({ prompt: undefined }),
   at({ resumes: true }),
   at({ devServer: 'dev' }),
   at({ prompt: 'look at ~/Downloads/x.pdf' }),
-  at({ prompt: 'localhost:3000 is down' })
+  at({ prompt: 'localhost:3000 is down' }),
+  at({ where: 'local' }),
+  at({ where: 'remote' })
 ]
 for (const c of cases) {
   const p = placeNewPane(c)
