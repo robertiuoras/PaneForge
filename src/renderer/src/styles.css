@@ -3157,6 +3157,18 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
 .move-soon-why { color: var(--muted); font-size: 12px; }
 .move-soon-acts { display: flex; justify-content: flex-end; gap: 6px; }
 
+/* The dev-copy tour, same card shape and corner as `.move-soon` - it is the same kind
+   of thing, a card the app put up on its own that walks alongside the work rather than
+   blocking it. Only ever appears in a `npm run try` copy; see `src/shared/tour.ts`. */
+.tour-card {
+  position: fixed; right: 18px; bottom: 18px; z-index: 45; width: 300px;
+  background: var(--surface-3); border: 1px solid var(--line-strong); border-radius: var(--r);
+  box-shadow: var(--shadow); padding: 12px 13px; display: flex; flex-direction: column; gap: 8px;
+}
+.tour-count { color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.tour-text { color: var(--text); font-size: 13px; line-height: 1.4; }
+.tour-acts { display: flex; justify-content: flex-end; gap: 6px; }
+
 /* A pane that has just named itself, and the three seconds in which that can be undone.
    One step above the countdown cards: it is the shortest-lived thing in this corner and
    is gone before either of them arms. `beside-pet` steps it up off a sprite. */
@@ -4559,6 +4571,7 @@ html.handheld .link-down-retry { min-height: 44px; padding: 0 14px; }
 .corner-stack > .move-soon,
 .corner-stack > .client-toast,
 .corner-stack > .update-toast,
+.corner-stack > .tour-card,
 .corner-stack > .tip-toast {
   /* relative, not static: `.card-x` anchors to its own card, not the whole stack. */
   position: relative; right: auto; bottom: auto; z-index: auto;
@@ -4571,7 +4584,7 @@ html.handheld .link-down-retry { min-height: 44px; padding: 0 14px; }
 
 /* Room for the dismiss button in the top-right of every corner card, so it never
    overlaps the card's first line. */
-.autoclear-card, .move-soon, .client-toast, .update-toast, .tip-toast {
+.autoclear-card, .move-soon, .client-toast, .update-toast, .tour-card, .tip-toast {
   padding-right: 32px;
 }
 /* The one dismiss button every corner card draws first, top-right. Follows

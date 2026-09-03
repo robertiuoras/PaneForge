@@ -160,6 +160,7 @@ import AutoClearToast from './components/AutoClearToast'
 import ClientToast from './components/ClientToast'
 import UpdateToast from './components/UpdateToast'
 import WhatsNewCard from './components/WhatsNewCard'
+import TourCard from './components/TourCard'
 import Tips from './components/Tips'
 import { DEFAULT_TIPS } from '../../shared/tips'
 import { folderLabel } from '../../shared/revealPane'
@@ -6965,6 +6966,17 @@ export default function App(): JSX.Element {
       />
       <UpdateToast />
       <WhatsNewCard />
+      {/* Only ever drawn in a `npm run try` copy - walks through what this build has that
+          the installed app does not, one sentence at a time. `api.tour()` answers null
+          everywhere else, so this card asks once and draws nothing the rest of the time. */}
+      <TourCard
+        onOpen={(surface) => {
+          if (surface === 'newSession') setPicking(true)
+          else if (surface === 'settings') setSettings(true)
+          else if (surface === 'sidebarHidden') setSideHidden(true)
+          else if (surface === 'workspaces') setSideHidden(false)
+        }}
+      />
       {/* One quiet card in the corner, saying one thing this app can do. It is the only
           thing here that talks about the app rather than about the work, so every other
           card in this corner - and every dialog, and any pane holding a question - stands

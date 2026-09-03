@@ -1646,6 +1646,7 @@ ipcMain.handle('sessions:buffer', (_e, id: string) =>
  * be had, and "as much as exists here" is the honest answer to that.
  */
 ipcMain.handle('app:whatsNew', () => whatsNew())
+ipcMain.handle('app:tour', () => tour())
 ipcMain.handle('sessions:log', (_e, id: string, bytes?: number) =>
   remote.owns(id)
     ? remote.buffer(id)
