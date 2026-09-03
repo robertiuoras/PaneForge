@@ -23,6 +23,7 @@ import { DiscordPresence } from './discordPresence'
 import { countPresence, type PresenceCounts } from '../shared/discordRpc'
 import { quitWhere } from '../shared/quitWords'
 import { revealTarget, within } from '../shared/reveal'
+import { revealTargetFor } from '../shared/revealPane'
 import { clientForText, rosterRoot } from './clients'
 import { createProject, listProjects } from './projects'
 import { routeCandidates } from './projectAliases'
@@ -31,7 +32,7 @@ import type { RouteResult } from '../shared/projectRoute'
 import { DEFAULT_PHONE_PORT, getConfig, projectsRoot, setConfig } from './config'
 import { whatsNew } from './whatsNew'
 import { addSound, pruneCustomSounds, removeSound, renameSound, soundData } from './sounds'
-import { writeAttachments } from './attach'
+import { writeAttachments, readAttachIns } from './attach'
 import { AskNotifier, askMessage, postAsk, telegramCreds } from './askNotify'
 import { askKeyOf } from '../shared/autoAnswer'
 import type { AttachIn, AttachResult } from '../shared/attach'
@@ -211,6 +212,7 @@ import {
   updateLog,
   bootMs
 } from './updater'
+import { READY_HOLD_MS } from '../shared/updateStale'
 import * as history from './history'
 import { readBoard, writeMemory, writeTasks } from './board'
 import * as voice from './voice'
@@ -222,7 +224,7 @@ import { DEFAULT_RECOVER } from '../shared/recover'
 import type { UsageReport } from '../shared/usage'
 import { loadPerCore, readPressure, totalMb, watchPressure } from './memory'
 import { backJobOf, trackUsage } from './usage'
-import { agentsMidTurn, deskBusy, decideInstall } from '../shared/updateHold'
+import { agentsMidTurn, deskBusy, decideInstall, shouldLogHold } from '../shared/updateHold'
 import { STASH_CONFIG_KEYS } from '../shared/types'
 import type {
   Config,
@@ -2079,6 +2081,30 @@ ipcMain.handle('shell:revealProject', async (_e, cwd: string, title?: string) =>
   openLocal(target, 'open in file manager')
   return target
 })
+/**
+ * "Open the folder" for a PANE's own folder button - always its cwd.
+ *
+ * `shell:revealProject` above deliberately climbs a lane to the trunk checkout, which is
+ * right for "where should I drop a file in" and wrong for "where are this pane's files".
+ * Robert, 2026-09-03: a pane running in a lane copy had written 141 untracked media files
+ * that exist only there, and the folder button opened the trunk - which has none of them.
+ * This button never climbs: it opens exactly the folder the pane runs in. See
+ * `shared/revealPane.ts` for the rule and why a missing cwd still falls back to the
+ * project rather than opening nothing.
+ *
+ * Returns the folder actually opened, so the caller can say which one that was.
+ */
+ipcMain.handle('shell:revealPane', async (_e, cwd: string) => {
+  const root = await projectRoot(cwd ?? '')
+  const target = revealTargetFor({ cwd, root })
+  try {
+    if (!statSync(target).isDirectory()) return null
+  } catch {
+    return null /* gone: pointing Explorer at it would just raise an error dialog */
+  }
+  openLocal(target, 'open in file manager')
+  return target
+})
 ipcMain.handle('shell:editor', async (_e, path: string) => {
   // A pane in a copy of a project means the project. The copy is scratch the app made -
   // its branch is merged back and its untracked files are swept - so opening an editor on
@@ -2716,6 +2742,20 @@ ipcMain.handle('pty:choose', (_e, id: string, n: number): boolean => {
 ipcMain.handle('pty:attach', (_e, id: string, files: AttachIn[]): Promise<AttachResult> => {
   if (remote.owns(id)) return remote.attachOn(id, files)
   return Promise.resolve(writeAttachments(files))
+})
+
+/**
+ * Paths on THIS machine, attached to a pane - the one on the other desk included.
+ *
+ * The renderer gets a `file://` URI and no bytes for a Finder drag or a screenshot
+ * dragged off its thumbnail; the disk is read here, where the path is true, and only the
+ * bytes travel (`readAttachIns`).
+ */
+ipcMain.handle('pty:attachPaths', (_e, id: string, paths: string[]): Promise<AttachResult> => {
+  const read = readAttachIns(paths)
+  if (read.error) return Promise.resolve({ paths: [], error: read.error })
+  if (remote.owns(id)) return remote.attachOn(id, read.files)
+  return Promise.resolve(writeAttachments(read.files))
 })
 
 /**
@@ -3381,6 +3421,8 @@ let autoInstallTimer: NodeJS.Timeout | null = null
  * way. This path is the one nobody asked for, so it also keeps the 60s recheck rather
  * than reacting to every pane event.
  */
+/** When the busy hold last wrote its line - see `shouldLogHold` in shared/updateHold.ts. */
+let heldLogAt = 0
 function autoInstall(): void {
   if (autoInstallTimer) {
     clearTimeout(autoInstallTimer)
@@ -3392,13 +3434,56 @@ function autoInstall(): void {
   // panes away, it is the pause in the middle of their work. See DESK_QUIET_MS.
   const running = deskBusy(manager.list(), Date.now())
   if (running > 0) {
-    updateLog('install', `auto-restart held: ${running} pane(s) in use - looking again in 60s`)
+    // Once when the hold starts, then at most every 30 minutes - not every 60s recheck.
+    // A Mac busy all afternoon used to write the same line hundreds of times and bury the
+    // one that mattered: when the hold finally let go.
+    if (shouldLogHold(Date.now(), heldLogAt)) {
+      heldLogAt = Date.now()
+      updateLog('install', `auto-restart held: ${running} pane(s) in use - looking again in 60s`)
+    }
     autoInstallTimer = setTimeout(autoInstall, AUTO_INSTALL_RECHECK_MS)
     autoInstallTimer.unref?.()
     return
   }
+  // Clear, so the NEXT busy spell logs its own first line right away.
+  heldLogAt = 0
   whenClear('update-install', doInstall)
 }
+
+/**
+ * A build stops being merely offered and starts being taken - see shared/updateStale.ts.
+ *
+ * The card still lets somebody press Restart sooner; this is what happens when nobody
+ * does, on ANY desk, attended or not. It goes through `autoInstall` and its unchanged
+ * deskBusy hold, so a pane somebody is using is never interrupted - only the waiting to
+ * be asked stops, once the build has sat ready `READY_HOLD_MS`.
+ */
+let readyAt = 0
+let readyVersion = ''
+let readySaid = ''
+function noteReadyState(s: UpdateState): void {
+  if (s.phase !== 'ready') {
+    readyAt = 0
+    readyVersion = ''
+    return
+  }
+  if (s.version === readyVersion) return
+  readyVersion = s.version ?? ''
+  readyAt = Date.now()
+}
+function readyTick(): void {
+  if (installStarted || autoInstallTimer) return
+  const s = getUpdateState()
+  if (s.phase !== 'ready') return
+  const now = Date.now()
+  if (!readyAt || now - readyAt < READY_HOLD_MS) return
+  if (readySaid !== readyVersion) {
+    readySaid = readyVersion
+    updateLog('install', `v${readyVersion} has been ready ${Math.round((now - readyAt) / 60_000)}m - restarting as soon as no pane is in use`)
+  }
+  autoInstall()
+}
+setInterval(readyTick, AUTO_INSTALL_RECHECK_MS).unref?.()
 
 /**
  * A restart the user clicked while a pane was mid-turn, waiting for the panes to finish.
@@ -3867,14 +3952,26 @@ function offerRestore(): void {
   const legacy = cfg.restoreSessions ?? []
   if (legacy.length) setConfig({ restoreSessions: [] })
   const desk = readDesk() ?? (legacy.length ? { specs: legacy, at: Date.now(), clean: true, reason: 'update' as const } : null)
-  if (!desk?.specs.length) return
+  // Every branch below says what it did with the desk. 2026-09-03: eleven panes were lost
+  // across four self-restarts and nothing on the machine could say at which one, because
+  // this function wrote no line at all.
+  if (!desk?.specs.length) {
+    updateLog('desk', 'nothing to restore')
+    return
+  }
+  updateLog(
+    'desk',
+    `${desk.specs.length} pane(s) left ${desk.reason === 'live' ? 'by a crash or a kill' : desk.reason === 'quit' ? 'by a quit' : 'by an update'} ${Math.round((Date.now() - desk.at) / 60_000)} min ago`
+  )
   // Panes from last week are not the desk anyone remembers leaving.
   if (desk.at && Date.now() - desk.at > MAX_DESK_AGE_MS) {
+    updateLog('desk', 'forgotten: older than a week')
     clearDesk()
     return
   }
   if (desk.reason === 'update') {
     if (!cfg.restoreAfterUpdate) {
+      updateLog('desk', 'forgotten: restore after update is off')
       clearDesk()
       return
     }
@@ -3883,6 +3980,7 @@ function offerRestore(): void {
     // times a day, so asking every time costs more than the inconsistency it removes.
     // On, this falls through to the same offer a quit or a crash gets.
     if (!cfg.askAfterUpdate) {
+      updateLog('desk', `reopened ${desk.specs.length} pane(s) after the update without asking`)
       restorePanes(desk.specs)
       return
     }
@@ -3899,18 +3997,22 @@ function offerRestore(): void {
     .trim()
     .toLowerCase()
   if (forced === 'fresh') {
+    updateLog('desk', `forgotten: ${process.env.PANEFORGE_RESTORE ? 'PANEFORGE_RESTORE=fresh' : 'unpackaged run'}`)
     clearDesk()
     return
   }
   if (forced === 'always') {
+    updateLog('desk', `reopened ${desk.specs.length} pane(s): PANEFORGE_RESTORE=always`)
     restorePanes(desk.specs)
     return
   }
   if (cfg.restoreAfterRestart === 'never') {
+    updateLog('desk', 'forgotten: restore after restart is off')
     clearDesk()
     return
   }
   if (cfg.restoreAfterRestart === 'always') {
+    updateLog('desk', `reopened ${desk.specs.length} pane(s): restore after restart is always`)
     restorePanes(desk.specs)
     return
   }
@@ -3934,9 +4036,11 @@ function offerRestore(): void {
     memoryNote: plan.note
   }
   // Until the question is answered the desk stands, even though the app currently
-  // has no panes: an unanswered offer must survive a second restart, and a mis-click
-  // that closes the dialog must not delete the panes it was offering.
-  setDeskHold(true)
+  // has no panes: an unanswered offer must survive a second restart, a pane opened
+  // over it, and a mis-click that closes the dialog. `saveDesk` writes these panes in
+  // front of the live ones until `setDeskHold(null)`.
+  setDeskHold(desk)
+  updateLog('desk', `offered ${panes.length} pane(s)${all.length > panes.length ? ` (+${all.length - panes.length} more not offered)` : ''}`)
 }
 
 ipcMain.handle('restore:pending', () => offer)
@@ -3944,12 +4048,14 @@ ipcMain.handle('restore:pending', () => offer)
 ipcMain.on('restore:answer', (_e, answer: RestoreAnswer) => {
   const pending = offer
   offer = null
-  setDeskHold(false)
+  setDeskHold(null)
   if (answer?.always) setConfig({ restoreAfterRestart: 'always' })
   if (!pending) return
   if (!answer?.accept) {
-    // Turned down on purpose - the desk goes. Dismissing the dialog instead sends
-    // nothing at all, so those panes are offered again next launch.
+    // Turned down on purpose - the desk goes (kept one generation back as desk.prev.json).
+    // Dismissing the dialog instead sends nothing at all, so those panes are offered
+    // again next launch.
+    updateLog('desk', 'answer: start fresh')
     clearDesk()
     saveDesk(manager.snapshot(), 'live')
     return
@@ -4071,6 +4177,7 @@ app.whenReady().then(() => {
     // with the same build downloaded and ready again. Finish the user's click instead
     // of showing them the same toast - once; updater.ts stops the loop at two tries.
     if (s.phase === 'ready' && consumeInstallRetry(s.version)) autoInstall()
+    noteReadyState(s)
   }, cfg.autoUpdate)
   offerRestore()
   // Only the copy that owns the window: a launch that lost the lock is on its way out,

@@ -41,7 +41,7 @@ import {
 import { dropReplay, queueReplay } from '../replayQueue'
 import { keepScrollback, keptRows, mayClearScreen } from '../../../shared/keepScrollback'
 import { fileRows, lostRows, screenLost } from '../../../shared/screenLoss'
-import { anchorMark, type MarkerHost } from '../../../shared/markAnchor'
+import { anchorMark, echoKey, findEcho, onEchoRow, ECHO_SCAN_ROWS, type MarkerHost } from '../../../shared/markAnchor'
 import { chipSpot, type ChipBox } from '../../../shared/copyChip'
 import { composerAt, frameAt, inputEnd, inputStart, leadingBlanks, promptTop } from '../../../shared/promptBox'
 import { findPathTokens } from '../../../shared/pathToken'
@@ -740,6 +740,10 @@ interface Mark {
   pending?: boolean
   /** The rail's label: one line, flattened, capped at RAIL_LABEL_CHARS. */
   text: string
+  /** The start of the prompt as its echo row must show it; empty for a tag with no echo. */
+  key: string
+  /** Scans for the echo since the buffer last grew - capped, see `settleEchoes`. */
+  tries?: number
   /**
    * What was actually typed, whole - every line of it, at whatever length it was.
    *
@@ -2298,7 +2302,8 @@ function TerminalPane({
           line: marker.line,
           text: flatDraft(f.text, RAIL_LABEL_CHARS),
           full: f.text,
-          at: 0
+          at: 0,
+          key: echoKey(f.text)
         }
         anchor(entry, marker)
         list.push(entry)
@@ -2327,7 +2332,15 @@ function TerminalPane({
       // scrollback, neither of which a plain line number could do.
       const marker = t.registerMarker(-promptBoxTop(room))
       if (!marker) return
-      const entry: Mark = { id: marker.id, marker, line: marker.line, text, full, at: Date.now() }
+      const entry: Mark = {
+        id: marker.id,
+        marker,
+        line: marker.line,
+        text,
+        full,
+        at: Date.now(),
+        key: echoKey(text)
+      }
       if (/^\s*\/\S/.test(full)) entry.pending = true
       anchor(entry, marker)
       list.push(entry)
@@ -2458,8 +2471,54 @@ function TerminalPane({
     // Where each tag is, one frame behind. `anchor` needs it because xterm blanks a
     // marker's line before it says the marker is going, and eighty numbers a frame is
     // nothing next to the repaint that fires this.
+    /**
+     * Put each tag on the row that carries its prompt's echo. See shared/markAnchor.ts:
+     * Claude Code streams a reply inside the screen and writes it into scrollback on the
+     * NEXT submit, so the row a tag was registered on is refilled with the previous reply
+     * and the echo lands a reply-length further down. A tag whose row no longer shows its
+     * echo looks for it, newest first, between its neighbours, and moves.
+     *
+     * Cost: one row read per tag per frame while the row still matches. A scan is only
+     * spent while the buffer has grown since the last one (`tries` resets on growth), at
+     * most ECHO_TRIES per growth, over at most ECHO_SCAN_ROWS - a shell pane's tags never
+     * match and after five scans of a quiet buffer stop looking until it grows again.
+     */
+    const ECHO_TRIES = 5
+    let echoLen = -1
+    const settleEchoes = (): void => {
+      const b = t.buffer.active
+      if (b.length !== echoLen) {
+        echoLen = b.length
+        for (const m of list) m.tries = 0
+      }
+      const row = (i: number): string | undefined => b.getLine(i)?.translateToString(true)
+      for (let k = 0; k < list.length; k++) {
+        const m = list[k]
+        if (!m.key || m.pending || m.marker.line < 0) continue
+        if (onEchoRow(row(m.marker.line), m.key)) continue
+        if ((m.tries ?? 0) >= ECHO_TRIES) continue
+        m.tries = (m.tries ?? 0) + 1
+        const next = list[k + 1]
+        const to = next && next.marker.line > m.marker.line ? next.marker.line : b.length
+        const prev = k > 0 ? list[k - 1].marker.line : -1
+        const from = Math.max(prev, to - ECHO_SCAN_ROWS - 1)
+        const at = findEcho(row, from, to, m.key)
+        if (at < 0 || at === m.marker.line) continue
+        const fresh = t.registerMarker(at - (b.baseY + b.cursorY))
+        if (!fresh || fresh.line < 0) continue
+        const old = m.marker
+        // Rebinding first is what lets the old marker's disposal be ignored by the anchor.
+        anchor(m, fresh)
+        m.line = fresh.line
+        m.tries = 0
+        old.dispose()
+        publish()
+      }
+    }
+
     t.onRender(() => {
       for (const m of list) if (m.marker.line >= 0) m.line = m.marker.line
+      settleEchoes()
       settleSlashMarks()
       // The frame that has just been drawn is where the rows ARE, so the copy pairs are
       // placed off it rather than off a reading up to 250ms old. See `syncGeom`.
@@ -4192,8 +4251,8 @@ function TerminalPane({
       // A path is only true on one machine, same rule as the File branch above. This pane's
       // agent runs here when the id is a plain one, so the file is already where it can be
       // opened; a mirrored pane's runs on the other desk and this path means nothing there,
-      // and there is no File object to send its bytes instead - so it is said out loud
-      // rather than typed as a link that reads as a missing file.
+      // and there is no File object to send its bytes instead - so main reads the file off
+      // THIS disk and the bytes travel (`pty:attachPaths`), the way a pasted image does.
       if (!sessionId.startsWith('@')) {
         // Same rule as the File branch: an image goes to a clipboard-reading agent as the
         // image. These paths have no File object behind them, so the bytes are read in the
@@ -4203,10 +4262,13 @@ function TerminalPane({
         else typePaths(dropped)
       }
       else
-        toast.current?.(
-          "That file is on this machine and this pane's agent runs on the other device. " +
-            'Drag it from a window on that desk, or copy the image and paste it here.'
-        )
+        void api
+          .attachPaths(sessionId, dropped)
+          .then((res) => {
+            if (res.error) toast.current?.(res.error)
+            typePaths(res.paths)
+          })
+          .catch(() => toast.current?.('Could not send that file to the other device.'))
       if (!uris.length) return
     }
 

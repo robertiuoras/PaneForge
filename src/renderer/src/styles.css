@@ -1634,15 +1634,20 @@ button.small { padding: 5px 9px; font-size: 11px; }
 
    The panes have to move down by the same amount, and in TWO places: the grid flows in
    normal flow and takes the padding, but a focus-view pane is absolute and is placed off
-   the PADDING box, so `inset: 6px` ignores it and would have covered the strip. */
+   the PADDING box, so `inset: 6px` ignores it and would have covered the strip.
+
+   Only while the sidebar is HIDDEN. With the sidebar up, `.brand` is already a handle,
+   and the strip cost every pane 28px of empty black across the top of the window
+   ("fix that empty black space at the top", 2026-09-04). With it hidden nothing else
+   along the top edge can be grabbed, so the strip comes back. */
 .drag-top { display: none; }
-.mac-chrome .drag-top {
+.mac-chrome .side-hidden .drag-top {
   display: block;
   position: absolute; top: 0; left: 0; right: 0; height: 28px; z-index: 4;
   -webkit-app-region: drag;
 }
-.mac-chrome .panes { padding-top: 28px; }
-.mac-chrome .panes:not(.grid) .pane { top: 28px; }
+.mac-chrome .side-hidden .panes { padding-top: 28px; }
+.mac-chrome .side-hidden .panes:not(.grid) .pane { top: 28px; }
 .panes.grid { display: grid; grid-auto-rows: 1fr; gap: 6px; }
 .panes:not(.grid) .pane { position: absolute; inset: 6px; }
 /* ---- sidebar hidden ---- */

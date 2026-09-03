@@ -14,7 +14,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { forwarded, lagWord, STEPS, type LoginRequest } from '../../../shared/remoteLogin'
+import { lagWord, loginKeys, STEPS, type LoginRequest } from '../../../shared/remoteLogin'
 
 /** The pointer ring is drawn HERE the moment the mouse moves, so it never waits on a frame. */
 interface Spot {
@@ -38,7 +38,6 @@ export default function RemoteLoginView({
   const [spot, setSpot] = useState<Spot | null>(null)
   const [typing, setTyping] = useState(false)
   const [fps, setFps] = useState(0)
-  const escOnce = useRef(0)
   const painted = useRef(0)
   const buttons = useRef(0)
 
@@ -158,56 +157,29 @@ export default function RemoteLoginView({
   }, [req.id])
 
   // ---- keys ---------------------------------------------------------------------
+  // The picture owns the keyboard while it is on, and owning it means nothing else on
+  // this desk hears the key: `loginKeys` stops the event dead in the capture phase, and
+  // the caret is taken off whatever was holding it (the pane's terminal, normally) so the
+  // browser has nothing local to type into either. Both halves are needed - the app puts
+  // focus back on the active pane after any click, including the click on this picture.
   useEffect(() => {
     if (!typing) return
-    const down = (e: KeyboardEvent): void => {
-      // Two Escapes hand the keyboard back to the desk. One Escape is a key the login
-      // page itself may want (closing a cookie banner), so it is forwarded as well.
-      if (e.key === 'Escape') {
-        const now = Date.now()
-        if (now - escOnce.current < 700) {
-          escOnce.current = 0
-          setTyping(false)
-          onToast('Keyboard is back on this computer.')
-          e.preventDefault()
-          return
-        }
-        escOnce.current = now
-      }
-      const k = {
-        key: e.key,
-        code: e.code,
-        ctrl: e.ctrlKey,
-        meta: e.metaKey,
-        shift: e.shiftKey,
-        alt: e.altKey
-      }
-      if (!forwarded(k)) return
-      e.preventDefault()
-      // A paste is one insert, not a keystroke per character: the CLI's own paste
-      // handling is not in play here, and forty key events for a password manager's
-      // fill is forty round trips.
-      if ((e.metaKey || e.ctrlKey) && (e.key === 'v' || e.key === 'V')) {
+    const held = document.activeElement as HTMLElement | null
+    if (held && held !== document.body) held.blur()
+    const { down, up } = loginKeys({
+      send: (input) => window.api.loginInput(req.id, input),
+      // A paste is one insert, not a keystroke per character: forty key events for a
+      // password manager's fill is forty round trips.
+      paste: () => {
         void window.api.readClipboard().then((text) => {
           if (text) window.api.loginInput(req.id, { kind: 'text', text })
         })
-        return
+      },
+      release: () => {
+        setTyping(false)
+        onToast('Keyboard is back on this computer.')
       }
-      window.api.loginInput(req.id, { kind: 'key', type: 'keyDown', k })
-    }
-    const up = (e: KeyboardEvent): void => {
-      const k = {
-        key: e.key,
-        code: e.code,
-        ctrl: e.ctrlKey,
-        meta: e.metaKey,
-        shift: e.shiftKey,
-        alt: e.altKey
-      }
-      if (!forwarded(k)) return
-      e.preventDefault()
-      window.api.loginInput(req.id, { kind: 'key', type: 'keyUp', k })
-    }
+    })
     window.addEventListener('keydown', down, true)
     window.addEventListener('keyup', up, true)
     return () => {

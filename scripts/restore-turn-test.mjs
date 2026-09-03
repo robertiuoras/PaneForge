@@ -36,7 +36,7 @@ buildSync({
   platform: 'node',
   outfile
 })
-const { restoredClock, continueAfterRestore, restoreAsleep, emptyDeskStands } = createRequire(import.meta.url)(outfile)
+const { restoredClock, continueAfterRestore, restoreAsleep, deskToWrite } = createRequire(import.meta.url)(outfile)
 
 let n = 0
 const ok = (what, cond) => {
@@ -173,9 +173,15 @@ ok('"Open for" counts from when the pane opened, not from this process', /s\.ope
 // An empty desk is not written while the offer is up and nothing has been opened since -
 // and IS written once a pane has been used, because on the PC the offer stood unanswered
 // for hours, a pane opened over it was closed, and desk.json kept listing it (2026-09-03).
-ok('offer up, nothing opened yet: an empty desk is not written', emptyDeskStands(true, false))
-ok('offer up, but a pane has been open since: empty is the truth', !emptyDeskStands(true, true))
-ok('no offer: empty is always written', !emptyDeskStands(false, false))
+// The 2026-09-03 loss: eleven offered panes, a pane opened over the offer, one autosave.
+const offered = [{ cwd: '/a' }, { cwd: '/b' }]
+const opened = [{ cwd: '/c' }]
+ok('offer up, nothing opened yet: the file keeps the offered panes', deskToWrite(offered, []).length === 2)
+ok('offer up, a pane opened over it: offered panes first, then the live one',
+  JSON.stringify(deskToWrite(offered, opened)) === JSON.stringify([...offered, ...opened]))
+ok('offer up, that pane closed again: the offered panes still stand', deskToWrite(offered, []).length === 2)
+ok('no offer: the live desk is written as it is, empty included', deskToWrite(null, []).length === 0)
+ok('no offer: live panes pass through untouched', deskToWrite(null, opened) === opened)
 
 rmSync(work, { recursive: true, force: true })
 console.log(`restore-turn: ${n} checks passed`)

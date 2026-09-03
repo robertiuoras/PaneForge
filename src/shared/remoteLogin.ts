@@ -267,6 +267,28 @@ export function keyEvent(
 }
 
 /**
+ * Is this desk's own shortcut allowed to act right now?
+ *
+ * The picture owns the keyboard while it is on, and owning it has to mean the WHOLE
+ * keyboard. `loginKeys` stops a key in the capture phase, which silences everything
+ * deeper in the page - the terminal, the composer, the dialogs - but not another
+ * listener already sitting on `window` in the same phase, and the app's own shortcut
+ * list is exactly that. It is registered when the window opens, long before the picture
+ * exists, so it runs FIRST and `stopImmediatePropagation` never reaches it.
+ *
+ * Measured in a real window 2026-09-03, with the picture holding the keyboard: the
+ * letters of a password went only to the far machine (nothing reached the pane), but
+ * Cmd+F opened this app's own Find box at the same time as the F arrived over there.
+ *
+ * The line is the one `forwarded` already draws: a key the far machine must not have is
+ * a key this desk still owns, and everything else belongs to the picture.
+ */
+export function chordAllowed(pictureHasKeyboard: boolean, k: KeyIn): boolean {
+  if (!pictureHasKeyboard) return true
+  return !forwarded(k)
+}
+
+/**
  * Keys that stay on THIS machine.
  *
  * Cmd/Ctrl+W would close the remote tab, which is the session the whole feature exists
@@ -305,6 +327,102 @@ export type LoginInput =
   | { kind: 'key'; type: 'keyDown' | 'keyUp'; k: KeyIn }
   | { kind: 'text'; text: string }
 
+/** Two Escapes inside this long hand the keyboard back to this desk. */
+export const ESC_RELEASE_MS = 700
+
+/** What a keystroke bound for the far machine is allowed to do. */
+export interface KeyDeck {
+  /** Send it to the other computer. */
+  send(input: LoginInput): void
+  /** A paste is one insert, not a keystroke per character. */
+  paste(): void
+  /** Give the keyboard back to this desk. */
+  release(): void
+}
+
+/**
+ * As much of a keyboard event as the decision needs, so the decision can be tested with
+ * no browser at all. A real `KeyboardEvent` already satisfies this.
+ */
+export interface KeyEventLike {
+  key: string
+  code: string
+  ctrlKey?: boolean
+  metaKey?: boolean
+  shiftKey?: boolean
+  altKey?: boolean
+  preventDefault(): void
+  stopPropagation(): void
+  stopImmediatePropagation?(): void
+}
+
+/**
+ * One keystroke, ONE destination.
+ *
+ * The bug this exists to stop: while the picture had the keyboard, every letter typed
+ * arrived on the far machine AND in the pane it was typed from, because the view only
+ * called `preventDefault`. That stops the BROWSER acting on a key; it does not stop
+ * another listener hearing it, and the terminal in the pane is exactly such a listener -
+ * xterm reads the key off its own hidden textarea and writes it to the pty itself
+ * (`TerminalPane.tsx`, `t.onData` -> `api.write`). So a password was typed into the
+ * login page and into the agent's prompt at the same time.
+ *
+ * The listener is on the WINDOW in the capture phase, the first place in the document an
+ * event is seen, so stopping propagation here stops it before anything deeper - the
+ * terminal, the composer, the app's own dialogs - is ever asked. Keys the far machine
+ * must NOT have (`forwarded`) are deliberately left alone and stay on this desk.
+ */
+export function loginKeys(
+  deck: KeyDeck,
+  now: () => number = () => Date.now()
+): { down(e: KeyEventLike): void; up(e: KeyEventLike): void } {
+  let escAt = 0
+  /** Take the key off this machine entirely: no default, and no second listener. */
+  const claim = (e: KeyEventLike): void => {
+    e.preventDefault()
+    e.stopPropagation()
+    e.stopImmediatePropagation?.()
+  }
+  const read = (e: KeyEventLike): KeyIn => ({
+    key: e.key,
+    code: e.code,
+    ctrl: Boolean(e.ctrlKey),
+    meta: Boolean(e.metaKey),
+    shift: Boolean(e.shiftKey),
+    alt: Boolean(e.altKey)
+  })
+  return {
+    down(e: KeyEventLike): void {
+      const k = read(e)
+      // Two Escapes hand the keyboard back. One Escape is a key the login page itself may
+      // want (closing a cookie banner), so it is forwarded as well.
+      if (k.key === 'Escape') {
+        const t = now()
+        if (t - escAt < ESC_RELEASE_MS) {
+          escAt = 0
+          claim(e)
+          deck.release()
+          return
+        }
+        escAt = t
+      }
+      if (!forwarded(k)) return
+      claim(e)
+      if ((k.meta || k.ctrl) && (k.key === 'v' || k.key === 'V')) {
+        deck.paste()
+        return
+      }
+      deck.send({ kind: 'key', type: 'keyDown', k })
+    },
+    up(e: KeyEventLike): void {
+      const k = read(e)
+      if (!forwarded(k)) return
+      claim(e)
+      deck.send({ kind: 'key', type: 'keyUp', k })
+    }
+  }
+}
+
 /** A request from a script that cannot type. */
 export interface LoginRequest {
   id: string
@@ -326,6 +444,95 @@ export interface LoginRequest {
   rtt?: number
   /** Which rung of STEPS the picture is being sent at. */
   step?: number
+  /** The pane that asked wants this picture in front now, rather than a card to click. */
+  show?: boolean
+}
+
+/**
+ * What a pane asked for last time, so that asking again can be one word.
+ *
+ * Robert, 2026-09-03: "allow me to just ask, like that session who wanted it, to open
+ * again the login and it knows how to open it." The session that hit the sign-in wall
+ * already said which site, which computer and which page; repeating all of it to see the
+ * picture a second time is the app making the person do its remembering.
+ */
+export interface LoginAsk {
+  site: string
+  url: string
+  host?: string
+  port?: number
+  machine?: string
+}
+
+/**
+ * The word a person would use for a web address: `https://www.facebook.com/login` is
+ * `facebook`. The last label is the suffix (`com`), and a short one in front of it is
+ * part of the suffix too (`co.uk`), so the name is what is left after those. An address
+ * that is a number is its own name - nobody calls 127.0.0.1 anything else.
+ */
+export function siteFromUrl(url: string): string {
+  let host: string
+  try {
+    host = new URL(url).hostname
+  } catch {
+    return ''
+  }
+  host = host.replace(/^www\./i, '').toLowerCase()
+  if (!host) return ''
+  if (/^[\d.]+$/.test(host) || host.includes(':')) return host
+  const labels = host.split('.').filter(Boolean)
+  if (labels.length < 2) return host
+  const parts = [...labels]
+  parts.pop()
+  if (parts.length > 1 && parts[parts.length - 1].length <= 3) parts.pop()
+  return parts[parts.length - 1] ?? host
+}
+
+/**
+ * A pane asking again: whatever it says now wins, and everything it leaves out is what it
+ * said last time. A pane that has never asked and names no page is refused in a sentence
+ * that says what to type, because there is nothing to guess from.
+ */
+export function askAgain(
+  prev: LoginAsk | undefined,
+  input: Partial<LoginAsk>
+): { ok: true; ask: LoginAsk } | { ok: false; why: string } {
+  const url = (input.url ?? '').trim() || prev?.url || ''
+  if (!url)
+    return {
+      ok: false,
+      why: 'Say which page to sign in on, like: pf login https://www.facebook.com/login'
+    }
+  if (!/^https?:\/\//i.test(url))
+    return { ok: false, why: `A sign-in page starts with http:// or https:// - got "${url}"` }
+  const sameUrl = url === prev?.url
+  const site = (input.site ?? '').trim() || (sameUrl ? (prev?.site ?? '') : '') || siteFromUrl(url) || 'the website'
+  const host = input.host?.trim() || prev?.host
+  const sameHost = host === prev?.host
+  return {
+    ok: true,
+    ask: {
+      site,
+      url,
+      host,
+      port: input.port ?? (sameHost ? prev?.port : undefined),
+      machine: input.machine?.trim() || (sameHost ? prev?.machine : undefined)
+    }
+  }
+}
+
+/**
+ * Which sign-in the window should put in front, if any.
+ *
+ * A card waits for somebody to walk past it. When the session that hit the wall asks for
+ * the picture itself, waiting is wrong - it marks the request `show`, and the window
+ * opens it the moment it hears about it. Newest first, and never the one already open,
+ * so hearing the same list twice does not reopen anything.
+ */
+export function raiseLogin(reqs: readonly LoginRequest[], current: string | null): string | null {
+  const wanted = [...reqs].filter((r) => r.show).sort((a, b) => b.at - a.at)[0]
+  if (!wanted || wanted.id === current) return null
+  return wanted.id
 }
 
 /**

@@ -25,7 +25,8 @@ buildSync({
   format: 'esm',
   platform: 'node'
 })
-const { STALE_SUPERSEDES, ignoredHint, updateIgnored } = await import(pathToFileURL(outfile).href)
+const { STALE_SUPERSEDES, READY_HOLD_MS, ignoredHint, updateIgnored } =
+  await import(pathToFileURL(outfile).href)
 
 const fail = []
 const ok = (c, n) => {
@@ -48,11 +49,19 @@ ok(updateIgnored(0) === false, 'and an attempt puts it back to waiting')
 const hint = ignoredHint('0.8.185')
 ok(hint.includes('0.8.185'), 'the card names the version the user is stuck on')
 ok(hint.includes('restart into this one by itself'), 'and says the app will do it without being asked')
-ok(hint.includes('no pane is in use'), 'and when: once nothing is being used')
+ok(hint.includes('no pane has been used for 10 minutes'), 'and when: once nothing has been used for 10 minutes')
 // Every word on screen is read by somebody who has never used git.
 for (const word of ['superseded', 'staged', 'stale', 'feed', 'install attempt']) {
   ok(!hint.toLowerCase().includes(word), `the card does not say "${word}"`)
 }
+
+// --- a build that has sat ready --------------------------------------------------
+//
+// The first version of this rule only fired on a window nobody had focused for half an
+// hour. That distinction was dropped 2026-09-03 (Robert: "if we release we should
+// probably auto update both pc and mac right?"): `autoInstall`'s own deskBusy hold
+// already protects a pane in use, so every desk takes a ready build the same way now.
+ok(READY_HOLD_MS === 5 * 60_000, 'a build is taken once it has sat ready five minutes')
 
 // --- and the same rule, driven through the real updater ----------------------
 //

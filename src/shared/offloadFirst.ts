@@ -38,16 +38,14 @@
 //      machine does not have (`pinnedByPrompt`), and so is a project whose dev server is
 //      already serving from this desk.
 //
-// Then `auto` asks ONE thing: is this machine measured to be in trouble right now. The
-// reading is the same one every rung of the pressure ladder uses - the kernel's memory
-// verdict and the load per core (`shared/capacity.ts`), the worse of the two. Never a
-// pane count and never the battery. The first cut of this rule (2026-09-02) sent work over
-// past two panes running here, or on battery at any count, and both were guesses standing
-// in for a measurement: a MacBook that is the desk has more than two panes on it all day
-// and is off the charger half of it, so every pane opened with a brief left for the PC
-// and Robert was working in mirrors (2026-09-03: "i need to open in local mac"). A guess
-// at cost is not a reading of cost. `always` is the switch for somebody who wants the
-// work over there regardless; `auto` waits for the machine to say so.
+// Then `auto` answers LOCAL, always. It used to read the desk - a pane count and the
+// battery (2026-09-02), then the kernel's memory verdict (2026-09-03) - and every reading
+// sent a pane the person had just opened to the other screen, so they worked in mirrors
+// ("i need to open in local mac"; 2026-09-04: "i dont want them to start remote unless i
+// tell it to"). Starting is the one moment somebody is certainly at this desk. The pressure
+// reading still exists and is still used, on panes already running: shared/autoHandoff.ts
+// moves the dearest finished pane and shared/reclaim.ts pauses idle ones, each with a card.
+// `always` is the switch for somebody who wants new work over there regardless.
 //
 // Pure. `npm run test:offloadfirst`.
 
@@ -218,8 +216,17 @@ export function placeNewPane(i: PlaceInput): Placement {
 
   if (i.where === 'remote') return { where: 'remote', reason: 'you chose the other machine' }
   if (i.mode === 'always') return { where: 'remote', reason: 'set to always start this work on the other machine' }
+  // `auto` never moves a pane at START. Every earlier cut of this rule - pane count,
+  // battery (2026-09-02), then the memory verdict at 'warn' (2026-09-03), then only at
+  // 'critical' - put a pane the person had just asked for on the other screen, and each
+  // time the report was the same: "i dont want them to start remote unless i tell it to"
+  // (2026-09-04). The moment of starting is the one moment the person is certainly at
+  // this desk, so the pane opens here. Pressure is answered where it is measured, on a
+  // pane that is already running: the ladder in shared/autoHandoff.ts and shared/reclaim.ts
+  // pauses finished panes and moves the dearest one, mid-session, with its countdown card.
+  // Remote at start is only ever asked for: the dialog's pick, `always`, or `pf open`.
   const pressure = i.pressure ?? 'normal'
-  if (pressure === 'critical') return { where: 'remote', reason: 'this machine is out of memory or struggling' }
-  if (pressure === 'warn') return { where: 'remote', reason: 'this machine is running low on memory or lagging' }
+  if (pressure === 'critical') return local('this machine is short of memory, but a new pane still starts here; running panes are what get paused or moved')
+  if (pressure === 'warn') return local('this machine is getting low on memory, but idle panes are being paused to make room')
   return local('this machine has room for it')
 }

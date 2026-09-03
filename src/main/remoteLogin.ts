@@ -30,9 +30,11 @@ import {
   keyEvent,
   loginPaneTitle,
   looksSignedIn,
+  askAgain,
   machineWord,
   toRemotePoint,
   type FrameMeta,
+  type LoginAsk,
   type LoginInput,
   type LoginRequest
 } from '../shared/remoteLogin'
@@ -78,7 +80,7 @@ interface Live {
   localPort: number
   ws?: WebSocket
   nextId: number
-  waiting: Map<number, { ok: (v: Record<string, unknown>) => void; no: (e: Error) => void }>
+  waiting: Map<number, { ok: (v: Record<string, unknown>) => void; no: (e: Error) => void; method: string }>
   pacer: Pacer
   size: { w: number; h: number }
   step: number
@@ -105,20 +107,40 @@ export function listLogins(): LoginRequest[] {
   return [...live.values()].map((l) => ({ ...l.req })).sort((a, b) => b.at - a.at)
 }
 
+/**
+ * What each pane asked for last, so `pf login` on its own can ask again.
+ *
+ * Kept for as long as the app runs and not written to disk: it is a convenience for the
+ * session that is still sitting there, and a pane id from a previous run names nothing.
+ */
+const lastAsk = new Map<string, LoginAsk>()
+
 /** A script says it cannot get past a login. Nothing is opened yet - a person decides that. */
 export function requestLogin(input: {
-  site: string
-  url: string
+  site?: string
+  url?: string
   host?: string
   port?: number
   machine?: string
   from?: string
+  /** The asking pane wants the picture in front now, not a card to click. */
+  open?: boolean
 }): LoginRequest {
-  const site = String(input.site ?? '').trim()
-  const url = String(input.url ?? '').trim()
-  if (!site) throw new Error('needs-login needs a site name')
-  if (!/^https?:\/\//i.test(url)) throw new Error('needs-login needs --url with an http(s) address')
-  const host = input.host?.trim() || undefined
+  // Everything the pane leaves out is what that same pane said last time - see `askAgain`.
+  const from = input.from?.trim() || undefined
+  const resolved = askAgain(from ? lastAsk.get(from) : undefined, {
+    site: input.site,
+    url: input.url,
+    host: input.host,
+    port: input.port,
+    machine: input.machine
+  })
+  if (!resolved.ok) throw new Error(resolved.why)
+  const site = resolved.ask.site
+  const url = resolved.ask.url
+  const host = resolved.ask.host
+  input = { ...input, port: resolved.ask.port, machine: resolved.ask.machine }
+  if (from) lastAsk.set(from, resolved.ask)
   // The same site on the same machine asked twice is ONE card, not a pile of them: a
   // sweep that runs every ten minutes would otherwise paper the desk over a weekend.
   const already = [...live.values()].find(
@@ -126,6 +148,7 @@ export function requestLogin(input: {
   )
   if (already) {
     already.req.url = url
+    if (input.open) already.req.show = true
     publish()
     return { ...already.req }
   }
@@ -138,7 +161,8 @@ export function requestLogin(input: {
     machine: input.machine?.trim() || machineWord(host, process.platform),
     at: Date.now(),
     state: 'waiting',
-    from: input.from
+    from,
+    show: input.open === true
   }
   live.set(req.id, {
     req,
@@ -268,7 +292,7 @@ function send(l: Live, method: string, params: Record<string, unknown> = {}): Pr
   if (!ws) return Promise.reject(new Error('not connected'))
   const id = l.nextId++
   return new Promise((ok, no) => {
-    l.waiting.set(id, { ok, no })
+    l.waiting.set(id, { ok, no, method })
     try {
       ws.send(JSON.stringify({ id, method, params }))
     } catch (e) {
@@ -291,15 +315,37 @@ function tell(l: Live, method: string, params: Record<string, unknown> = {}): vo
   }
 }
 
+/**
+ * A tab that is still opening the page has no picture to send yet, and Chrome says so by
+ * refusing the screencast: `Page.startScreencast` answers "Not attached to an active
+ * page" for as long as the navigation is in flight. Measured 2026-09-03 on this Mac while
+ * proving the view in a real window - EVERY open failed within 60ms of the navigate, the
+ * card read "Not attached to an active page", and nothing in the app ever retried. So the
+ * ask is repeated for a few seconds, and only a refusal that is not that one, or one that
+ * outlives the wait, reaches the card.
+ */
+const CAST_WAIT_MS = 8000
+
 async function startCast(l: Live): Promise<void> {
   const s = STEPS[l.step]
-  await send(l, 'Page.startScreencast', {
+  const params = {
     format: 'jpeg',
     quality: s.quality,
     maxWidth: Math.min(s.maxWidth, Math.max(320, Math.round(l.size.w))),
     maxHeight: Math.min(s.maxHeight, Math.max(240, Math.round(l.size.h))),
     everyNthFrame: 1
-  })
+  }
+  const until = Date.now() + CAST_WAIT_MS
+  for (;;) {
+    try {
+      await send(l, 'Page.startScreencast', params)
+      return
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      if (l.closed || Date.now() >= until || !/not attached to an active page/i.test(message)) throw e
+      await new Promise((r) => setTimeout(r, 250))
+    }
+  }
 }
 
 const FAKE_LAG_MS = Number(process.env.PF_REMOTE_LOGIN_FAKE_LAG_MS ?? 0)
@@ -307,6 +353,8 @@ const FAKE_LAG_MS = Number(process.env.PF_REMOTE_LOGIN_FAKE_LAG_MS ?? 0)
 export async function openLogin(id: string): Promise<{ ok: boolean; error?: string }> {
   const l = live.get(id)
   if (!l) return { ok: false, error: 'that sign-in request is gone' }
+  // The window has it now, so nothing has to be raised again on the next list.
+  l.req.show = false
   if (l.req.state === 'open' || l.req.state === 'signed in') return { ok: true }
   l.req.state = 'opening'
   l.req.error = undefined
@@ -316,6 +364,9 @@ export async function openLogin(id: string): Promise<{ ok: boolean; error?: stri
     if (l.closed) return { ok: false, error: 'closed' }
     const url = await pageSocket(l)
     await connect(l, url)
+    // Which tab, in the log: the picture can fail on a target that is no longer a live
+    // page, and without this line nothing said which one had been picked.
+    log(`connected ${url}`)
     await send(l, 'Page.enable')
     await send(l, 'Runtime.enable')
     await applySize(l)
@@ -372,7 +423,10 @@ function onMessage(l: Live, raw: string): void {
     const w = l.waiting.get(msg.id)
     if (!w) return
     l.waiting.delete(msg.id)
-    if (msg.error) w.no(new Error(msg.error.message ?? 'CDP error'))
+    // The call's own name goes in the message. Without it the card read "Not attached to
+    // an active page" and nothing said WHICH request that answered, so proving the view in
+    // a real window on 2026-09-03 cost an hour of guessing between five calls in a row.
+    if (msg.error) w.no(new Error(`${w.method}: ${msg.error.message ?? 'CDP error'}`))
     else w.ok(msg.result ?? {})
     return
   }

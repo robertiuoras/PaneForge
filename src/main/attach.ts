@@ -5,8 +5,8 @@
 // person curates and every row of it is something they chose to keep, while these files
 // exist for as long as it takes an agent to open them.
 
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { basename, join } from 'node:path'
 import { app } from 'electron'
 import {
   ATTACH_KEEP,
@@ -53,6 +53,35 @@ export function writeAttachments(files: AttachIn[], now = Date.now()): AttachRes
   if (!paths.length) return { paths: [], error: 'Nothing to attach' }
   prune()
   return { paths }
+}
+
+/**
+ * Files on THIS machine's disk, read into the shape that travels.
+ *
+ * A macOS screenshot dragged off its floating thumbnail, or a file out of Finder, reaches
+ * the renderer as a `file://` URI with no File object behind it. On a pane whose agent
+ * runs here the path is typed as it is; on a MIRRORED pane the path is true only on this
+ * desk, so the bytes are read here and sent, exactly as a pasted image is. All or
+ * nothing: one unreadable path refuses the batch, because a drop that half-arrives reads
+ * as a missing file on the other end.
+ */
+export function readAttachIns(paths: string[]): { files: AttachIn[]; error?: string } {
+  const list = Array.isArray(paths) ? paths.filter((p) => typeof p === 'string' && p) : []
+  if (!list.length) return { files: [], error: 'Nothing to attach' }
+  const files: AttachIn[] = []
+  for (const path of list) {
+    try {
+      if (!statSync(path).isFile()) return { files: [], error: `Not a file: ${basename(path)}` }
+      const buf = readFileSync(path)
+      if (!buf.length) return { files: [], error: `Empty file: ${basename(path)}` }
+      files.push({ name: basename(path), data: buf.toString('base64') })
+    } catch {
+      return { files: [], error: `Could not read ${basename(path)} on this machine` }
+    }
+  }
+  const big = tooBig(files)
+  if (big) return { files: [], error: big }
+  return { files }
 }
 
 /** Delete everything this app wrote beyond the newest `ATTACH_KEEP`. Never throws. */

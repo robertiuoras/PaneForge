@@ -17,6 +17,7 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
+  rmSync,
   writeFileSync
 } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -188,6 +189,30 @@ const before = readdirSync(dir).length
 const refused = M.writeAttachments(big, AT)
 ok(refused.paths.length === 0 && Boolean(refused.error), 'an oversize batch is refused')
 ok(readdirSync(dir).length === before, 'and writes nothing on the way to refusing it')
+
+// ------------------------------------------------------- a path on THIS disk, read here
+// A macOS screenshot dragged off its thumbnail onto a MIRRORED pane is a file:// URI and
+// no bytes; main reads it where the path is true and only the bytes travel.
+{
+  const shotPath = join(dir, 'drag-from-finder.png')
+  writeFileSync(shotPath, PNG)
+  const read = M.readAttachIns([shotPath])
+  ok(!read.error && read.files.length === 1, 'a path on this disk is read into bytes', JSON.stringify(read.error))
+  ok(read.files[0].name === 'drag-from-finder.png', 'named by its basename', read.files[0].name)
+  ok(Buffer.from(read.files[0].data, 'base64').equals(PNG), 'the bytes are the file')
+  const missing = M.readAttachIns([join(dir, 'not-there.png')])
+  ok(missing.files.length === 0 && /Could not read not-there.png/.test(missing.error), 'a missing path refuses, by name', missing.error)
+  const mixed = M.readAttachIns([shotPath, join(dir, 'not-there.png')])
+  ok(mixed.files.length === 0 && Boolean(mixed.error), 'one bad path refuses the whole batch')
+  const folder = M.readAttachIns([dir])
+  ok(folder.files.length === 0 && /Not a file/.test(folder.error), 'a folder is refused', folder.error)
+  const hugePath = join(dir, 'huge.bin')
+  writeFileSync(hugePath, Buffer.alloc(6 * 1024 * 1024, 9))
+  const huge = M.readAttachIns([hugePath])
+  ok(huge.files.length === 0 && /6.0 MB/.test(huge.error), 'an oversize file is refused with the size', huge.error)
+  ok(M.readAttachIns([]).error === 'Nothing to attach', 'no paths is said, not thrown')
+  rmSync(shotPath, { force: true }); rmSync(hugePath, { force: true })
+}
 
 const empty = M.writeAttachments([], AT)
 ok(empty.paths.length === 0 && empty.error === 'Nothing to attach', 'an empty batch says so')

@@ -81,8 +81,16 @@ if (opened < 2) throw new Error(`only ${opened} live pane(s) - nothing to load t
 const CR = '\\r'
 const LOAD = JSON.stringify(ids.slice(1))
 const TYPED = JSON.stringify(ids[0])
+// The shell pane is PowerShell on Windows (shared/agents.ts), which has no `while
+// true; do`: the POSIX line sat unparsed and every profile here measured an idle
+// desk while claiming 8 printers (2026-09-04). Branch on the platform THIS SCRIPT
+// runs on, not the pane's, since the pane is always spawned by this same process.
+const loadLoop =
+  process.platform === 'win32'
+    ? 'while ($true) { "' + 'a'.repeat(60) + '" }\r'
+    : 'while true; do echo "' + 'a'.repeat(60) + '"; done\r'
 await evaluate(`(async () => {
-  const loop = 'while true; do echo "' + 'a'.repeat(60) + '"; done${CR}'
+  const loop = ${JSON.stringify(loadLoop)}
   for (const id of ${LOAD}) await window.api.write(id, loop)
   return true
 })()`)

@@ -35,7 +35,7 @@ import Mascot, { type CloseSoon } from './components/Mascot'
 import MoveSoon, { soonKey } from './components/MoveSoon'
 import OffloadSoon from './components/OffloadSoon'
 import StopServer from './components/StopServer'
-import type { LoginRequest } from '../../shared/remoteLogin'
+import { chordAllowed, raiseLogin, type LoginRequest } from '../../shared/remoteLogin'
 import LoginCard from './components/LoginCard'
 import RemoteLoginView from './components/RemoteLoginView'
 import type { StopSoon } from '../../shared/deadDev'
@@ -107,6 +107,7 @@ import {
   DEFAULT_RECLAIM,
   idleClosePlan,
   idleSleepPlan,
+  type SleepPressure,
   sameDeadline,
   idleCloseAt,
   quietSince,
@@ -161,6 +162,7 @@ import UpdateToast from './components/UpdateToast'
 import WhatsNewCard from './components/WhatsNewCard'
 import Tips from './components/Tips'
 import { DEFAULT_TIPS } from '../../shared/tips'
+import { folderLabel } from '../../shared/revealPane'
 
 /**
  * When this window opened.
@@ -272,6 +274,9 @@ function reclaimPaneOf(
     // report this answers: a pane read for six minutes was overdue the instant it was
     // switched away from, and its card's first word about it was a red `closes 0:01`.
     lastFocus,
+    // A pane restored this run has never been focused - see `onTheClock` in
+    // shared/reclaim.ts for why its age matters as well as its `lastFocus`.
+    createdAt: s.createdAt,
     // Quiet means quiet: `lastKeyboard` alone calls a pane whose agent has been printing
     // for two hours "idle for two hours".
     lastOutput: s.lastOutput,
@@ -1001,7 +1006,10 @@ export default function App(): JSX.Element {
   const restoreFocus = useCallback(() => {
     const el = document.activeElement as HTMLElement | null
     if (el && (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable)) return
-    if (document.querySelector('.overlay, .select-menu')) return
+    // `.login-screen.typing` is the far machine's picture with the keyboard: a click on
+    // it must not hand the caret straight back to the pane, or every letter is typed twice
+    // - once on the other computer and once at the local prompt.
+    if (document.querySelector('.overlay, .select-menu, .login-screen.typing')) return
     const id = activeRef.current
     if (id) paneFocus.get(id)?.()
   }, [])
@@ -1753,6 +1761,15 @@ export default function App(): JSX.Element {
      blank rectangle. */
   useEffect(() => {
     if (loginOpen && !logins.some((r) => r.id === loginOpen)) setLoginOpen(null)
+    // A pane that asked for the picture itself gets it without anybody clicking the card:
+    // `pf login` is the session saying "open the sign-in again", so the window opens it.
+    const raise = raiseLogin(logins, loginOpen)
+    if (raise) {
+      setLoginOpen(raise)
+      void api.openLogin(raise).then((r) => {
+        if (!r.ok && r.error) flash(r.error)
+      })
+    }
   }, [logins, loginOpen])
   useEffect(() => api.onCapacity(setCapacity), [])
   /* One class, so the CSS owns the geometry: the pane column is padded, not covered. */
@@ -2862,6 +2879,8 @@ export default function App(): JSX.Element {
    * different questions at different lengths and one loop doing both would have to agree
    * with `idleCloseAt` about a deadline this rung does not publish.
    */
+  const pressure: SleepPressure =
+    capacity?.level === 'over' ? 'over' : capacity?.level === 'tight' ? 'tight' : 'ok'
   useEffect(() => {
     const cfg = config?.reclaim ?? DEFAULT_RECLAIM
     if (!cfg.enabled) return
@@ -2883,13 +2902,19 @@ export default function App(): JSX.Element {
         deskNow(Date.now(), awayRef.current),
         // ...and whether `focused` means anything: on a desk nobody has touched the app
         // focused that pane by itself. See `keepable` in shared/reclaim.ts.
-        personRef.current
+        personRef.current,
+        // Short of memory, a finished pane is paused within a minute instead of five - the
+        // cheapest rung there is, and the one that makes room for the next pane to start
+        // HERE rather than on the other machine. See `pressureSleepMs`.
+        pressure
       )
       for (const p of plan) void api.sleepSession(p.id)
     }
-    const timer = window.setInterval(sweep, 60_000)
+    // A verdict turning tight is the moment to act, not up to a minute later.
+    if (pressure !== 'ok') sweep()
+    const timer = window.setInterval(sweep, pressure === 'ok' ? 60_000 : 15_000)
     return () => window.clearInterval(timer)
-  }, [config?.reclaim])
+  }, [config?.reclaim, pressure])
 
   /**
    * The same clock for the whole app: quit when nobody has used PaneForge for a while.
@@ -3046,6 +3071,22 @@ export default function App(): JSX.Element {
   // them as terminal input.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
+      // The other machine's picture has the keyboard: every key belongs to it except the
+      // ones it is never sent (see `chordAllowed`). This listener is on the window in the
+      // capture phase and was registered when the window opened, so it runs BEFORE the
+      // view's own listener and cannot be stopped by it - the view has to be asked about
+      // instead. Without this, Cmd+F while typing a password opened this app's Find box.
+      if (
+        !chordAllowed(Boolean(document.querySelector('.login-screen.typing')), {
+          key: e.key,
+          code: e.code,
+          ctrl: e.ctrlKey,
+          meta: e.metaKey,
+          shift: e.shiftKey,
+          alt: e.altKey
+        })
+      )
+        return
       const typing = /^(INPUT|TEXTAREA|SELECT)$/.test((e.target as HTMLElement)?.tagName ?? '')
       if (e.key === 'Escape') {
         // An open dropdown owns Escape: closing the dialog under it would be a
@@ -3562,9 +3603,8 @@ export default function App(): JSX.Element {
           id: 'reveal',
           group: 'This pane',
           title: 'Open folder in Explorer',
-          hint: 'the project folder - to reach the agent, drag files onto the pane',
-          run: () =>
-            void api.revealProject(active.cwd, active.title).then((p) => p || flash('That folder is gone.'))
+          hint: `this pane's own folder - ${folderLabel(active.cwd)}. To reach the agent, drag files onto the pane.`,
+          run: () => void api.revealPane(active.cwd).then((p) => p || flash('That folder is gone.'))
         },
         {
           id: 'board',
@@ -5551,7 +5591,8 @@ export default function App(): JSX.Element {
             of it and 28px tall - the traffic lights' own row - so the two halves of the
             window's top edge are one line you can pick the window up by. It draws
             nothing, and it is display:none off macOS, where there is still a real title
-            bar to grab. */}
+            bar to grab - and while the sidebar is up, where `.brand` is the handle and
+            the strip was 28px of empty black over every pane (styles.css, `.drag-top`). */}
         <div className="drag-top" aria-hidden="true" />
         {/* The way back to the list on a phone. Rendered rather than styled into
             existence because it has to sit above the pane's own overlays, and it is the
@@ -5887,14 +5928,12 @@ export default function App(): JSX.Element {
                   <button
                     className="icon desk-only pt-reveal"
                     title={
-                      /* A lane is a worktree and its untracked files are swept with it,
-                         so this opens the PROJECT. Dropping a file where the agent can
-                         read it is what dragging onto the pane is for. */
-                      `Open this project in Explorer - to reach the agent, drag files onto this pane`
+                      /* Always this pane's own folder, never the project it belongs to -
+                         see shared/revealPane.ts. The basename is on the tooltip so a
+                         mismatch is visible before the click, not after it. */
+                      `Open ${folderLabel(s.cwd)} in Explorer - to reach the agent, drag files onto this pane`
                     }
-                    onClick={() =>
-                      void api.revealProject(s.cwd, s.title).then((p) => p || flash('That folder is gone.'))
-                    }
+                    onClick={() => void api.revealPane(s.cwd).then((p) => p || flash('That folder is gone.'))}
                   >
                     📁
                   </button>
@@ -6653,7 +6692,13 @@ export default function App(): JSX.Element {
                     {
                       key: 'reveal',
                       label: 'Open folder',
-                      hint: 'reveal this project - drag files onto the pane to reach the agent',
+                      hint: `this pane's own folder, ${folderLabel(s.cwd)} - drag files onto the pane to reach the agent`,
+                      run: () => void api.revealPane(s.cwd).then((p) => p || flash('That folder is gone.'))
+                    },
+                    {
+                      key: 'reveal-project',
+                      label: 'Open the main copy of this project',
+                      hint: 'a different folder than this pane\'s own - use this to see the whole project, not just this session\'s work',
                       run: () => void api.revealProject(s.cwd, s.title).then((p) => p || flash('That folder is gone.'))
                     },
                     { key: 'folder', label: 'Open in editor', run: () => void api.openInEditor(s.cwd).then((err) => err && flash(err)) },

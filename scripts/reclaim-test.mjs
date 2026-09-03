@@ -30,7 +30,7 @@ buildSync({
   platform: 'node',
   outfile
 })
-const { reclaimPlan, idleClosePlan, idleSleepPlan, idleCloseAt, sameDeadline, unread, readStamp, reclaimedMb, DEFAULT_RECLAIM, IDLE_CLOSE_MINUTES, IDLE_SLEEP_MINUTES } = createRequire(import.meta.url)(outfile)
+const { reclaimPlan, idleClosePlan, idleSleepPlan, idleCloseAt, sameDeadline, unread, readStamp, reclaimedMb, pressureSleepMs, DEFAULT_RECLAIM, IDLE_CLOSE_MINUTES, IDLE_SLEEP_MINUTES } = createRequire(import.meta.url)(outfile)
 
 let checks = 0
 function check(what, ok, detail) {
@@ -217,6 +217,23 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
     eq('...while the focused pane on that desk is', ids(idleSleepPlan([pane({ id: 'f', focused: true, lastKeyboard: NOW - 9 * HOUR })], { ...DEFAULT_RECLAIM, idleSleepMinutes: 30 }, NOW, false)), 'f')
     eq('with a person here the focused pane is still never touched', idleClosePlan([pane({ id: 'f', focused: true, lastKeyboard: NOW - 9 * HOUR }), pane({ id: 'pad', lastKeyboard: NOW })], CLOCKED, NOW, true).length, 0)
   }
+  // The pause under pressure (2026-09-03): a finished pane nobody is reading gives its
+  // memory back within a minute once the desk is measured tight, within half a minute
+  // once it is over, and after the full wait when there is room. Never sooner than the
+  // person's own setting, and never at all when sleep is off.
+  {
+    const cfg = { ...DEFAULT_RECLAIM, idleSleepMinutes: 5 }
+    const quiet2m = () => [pane({ id: 'q', lastKeyboard: NOW - 120_000 })]
+    eq('two minutes quiet with room: not yet', idleSleepPlan(quiet2m(), cfg, NOW, true, 'ok').length, 0)
+    eq('...the same pane on a tight desk is paused', ids(idleSleepPlan(quiet2m(), cfg, NOW, true, 'tight')), 'q')
+    eq('40s quiet on a tight desk: not yet', idleSleepPlan([pane({ id: 'q', lastKeyboard: NOW - 40_000 })], cfg, NOW, true, 'tight').length, 0)
+    eq('...on a desk that is over, it is', ids(idleSleepPlan([pane({ id: 'q', lastKeyboard: NOW - 40_000 })], cfg, NOW, true, 'over')), 'q')
+    eq('10s quiet is somebody about to read the reply, even over', idleSleepPlan([pane({ id: 'q', lastKeyboard: NOW - 10_000 })], cfg, NOW, true, 'over').length, 0)
+    eq('a busy pane is never paused, whatever the pressure', idleSleepPlan([pane({ id: 'b', busy: true, lastKeyboard: NOW - HOUR })], cfg, NOW, true, 'over').length, 0)
+    eq('a pane holding a question is never paused', idleSleepPlan([pane({ id: 'a', asking: true, lastKeyboard: NOW - HOUR })], cfg, NOW, true, 'over').length, 0)
+    eq('sleep switched off stays off under pressure', idleSleepPlan(quiet2m(), { ...cfg, idleSleepMinutes: 0 }, NOW, true, 'over').length, 0)
+    eq('a setting shorter than the pressure wait wins', pressureSleepMs(0.25, 'tight'), 15_000)
+  }
   // A pane that fell asleep (or came back asleep after a restart) is on the close clock
   // like any other: 5 of 7 panes sat asleep for ten hours on 2026-09-02 because this
   // refused them. Robert: "id rather them to close than sleep".
@@ -228,6 +245,48 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
     check('...while a KEPT asleep pane stays', !idleClosePlan([pane({ ...slept, pinned: true }), pad], CLOCKED, NOW).length)
     eq('and the sleep clock never takes a pane already asleep', ids(idleSleepPlan([slept, pad], { ...DEFAULT_RECLAIM, idleSleepMinutes: 30 }, NOW)), '')
   }
+  // The restore-loses-the-desk bug, 2026-09-03: a pane restored this run comes back with
+  // `createdAt` equal to its own restore time, which is also its "quiet since" - so on a
+  // desk nobody has touched YET this run (`personHere` false until `Away` notices someone)
+  // it used to become eligible for the idle clock the exact instant its own window first
+  // applied. The PC's desk came back at 19:39 and `desk.json` read `{"specs":[],"reason":
+  // "live"}` by 19:44 - the restored panes never had a chance to be seen.
+  {
+    const fresh = pane({
+      id: 'fresh',
+      lastKeyboard: NOW - 130 * 60_000,
+      lastOutput: NOW - 130 * 60_000,
+      createdAt: NOW - 130 * 60_000
+    })
+    const pad = pane({ id: 'pad', lastKeyboard: NOW })
+    eq(
+      'a pane restored 130m ago, past its own idle window but never focused, is held',
+      ids(idleClosePlan([fresh, pad], CLOCKED, NOW, false)),
+      ''
+    )
+    const stale = pane({ ...fresh, id: 'stale', createdAt: NOW - 250 * 60_000, lastKeyboard: NOW - 250 * 60_000, lastOutput: NOW - 250 * 60_000 })
+    eq(
+      '...but a desk really left alone past double the window still reclaims it',
+      ids(idleClosePlan([stale, pad], CLOCKED, NOW, false)),
+      'stale'
+    )
+    // The grace is only for a pane nobody has had the CHANCE to read. One that WAS
+    // focused once and has since gone quiet again is an ordinary unread-or-not pane, and
+    // closes on the usual clock rather than waiting out the extra grace.
+    const readOnce = pane({
+      id: 'read',
+      lastKeyboard: NOW - 130 * 60_000,
+      lastOutput: NOW - 130 * 60_000,
+      lastFocus: NOW - 129 * 60_000,
+      createdAt: NOW - 130 * 60_000
+    })
+    eq(
+      'a pane that was read once does not get the fresh-restore grace',
+      ids(idleClosePlan([readOnce, pad], CLOCKED, NOW, false)),
+      'read'
+    )
+  }
+
   // NOT capped at maxPerSweep - that is the pressure sweep's rule, and it belongs to a
   // sweep that closes a pane in order to change a reading of the machine. Here it only
   // made the card lie: with one countdown on screen at a time, seven due panes went two at
