@@ -32,6 +32,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { devProfile } from './dev-profile.mjs'
 import { closeTestApps, waitTestAppsGone } from './test-app.mjs'
+import { report } from './try-diff.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const args = process.argv.slice(2)
@@ -172,6 +173,9 @@ Your live app is untouched: separate settings, separate workspaces, separate pan
 With a game running it opens no window at all - not even a taskbar button - and appears
 once the game closes, because showing one is enough to take a fullscreen game off screen.
 Close the test window when you are done - nothing to clean up.`)
+
+// A window with no list of what to look at is a window nobody knows how to test.
+console.log(`\n${report(root)}`)
 
 // Two copies on screen at once is a comparison, and Robert arranges that comparison the
 // same way every time: both on the external monitor, installed app on the left half, this

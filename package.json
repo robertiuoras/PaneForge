@@ -44,6 +44,7 @@
     "test:claim": "node scripts/transcript-claim-test.mjs",
     "test:quitwords": "node scripts/quit-words-test.mjs",
     "test:notes": "node scripts/release-notes-test.mjs",
+    "test:trydiff": "node scripts/try-diff-test.mjs",
     "test:promote": "node scripts/promote-test.mjs",
     "test:dropimage": "node scripts/drop-image-test.mjs",
     "test:favicon": "node scripts/favicon-test.mjs",
