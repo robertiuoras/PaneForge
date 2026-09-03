@@ -12,7 +12,7 @@
 
 import { buildSync } from 'esbuild'
 import { strict as assert } from 'node:assert'
-import { mkdirSync, rmSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -29,7 +29,7 @@ const bundle = (entry, name) => {
   return createRequire(import.meta.url)(outfile)
 }
 
-const { portOf, runningDevs, devReport, pickDevs, mentionsDev, devLine } = bundle(
+const { portOf, runningDevs, devReport, pickDevs, mentionsDev, devLine, UNPLACED } = bundle(
   'src/shared/devList.ts',
   'devlist.bundle.cjs'
 )
@@ -103,6 +103,51 @@ eq('...with the port it was told to serve on', devs[1].port, 3009)
 eq('an unowned server is listed', devs[2].pane, null)
 ok('...and says where it came from', devs[2].where.length > 0)
 
+// ---------------------------------------------------------------- naming a server no pane claims
+
+// The measured case, 2026-09-04: `next dev -p 3006` reparented onto pid 1, its pane long
+// closed, no pane left with taskdriver.ai open. Named from its OWN cwd, read separately by
+// main and handed in - the command line here carries no path at all, the shape `next-server`
+// leaves behind.
+{
+  const orphanProcs = [{ pid: 700, ppid: 1, cmd: 'next dev -p 3006' }]
+  const cwdOf = new Map([[700, '/Users/r/Projects/taskdriver.ai']])
+  const [d] = runningDevs(orphanProcs, [], cwdOf)
+  eq('named from its own cwd, not a guess off argv', d.where, 'taskdriver.ai')
+  eq('no pane has it open', d.hostedIn, null)
+  eq('the plain sentence', devLine(d), 'next on port 3006 - taskdriver.ai - no pane here is using this, pid 700')
+  ok('never the word "orphan"', !/orphan/i.test(devLine(d)))
+}
+
+// A pane that did NOT start the server, but has the same project open, is the actual
+// answer to "which PaneForge session needs this" - named plainly, never "owns" it.
+{
+  const orphanProcs = [{ pid: 701, ppid: 1, cmd: 'next dev -p 3006' }]
+  const cwdOf = new Map([[701, '/Users/r/Projects/taskdriver.ai']])
+  const openElsewhere = [
+    { id: 'z', pane: 4, name: 'taskdriver.ai', cwd: '/Users/r/Projects/taskdriver.ai', pid: 999 }
+  ]
+  const [d] = runningDevs(orphanProcs, openElsewhere, cwdOf)
+  eq('that pane is named, not made the owner', d.pane, null)
+  eq('...as the one with the project open', d.hostedIn, 4)
+  eq(
+    'the sentence names the pane',
+    devLine(d),
+    'next on port 3006 - taskdriver.ai - pane 4 has this project open, pid 701'
+  )
+}
+
+// A failed cwd reading must never be answered as "nobody owns it" - the row stays exactly
+// what it was, same as any pid missing from the map.
+{
+  const orphanProcs = [{ pid: 702, ppid: 1, cmd: 'next dev -p 3006' }]
+  const before = runningDevs(orphanProcs, [])[0]
+  const after = runningDevs(orphanProcs, [], new Map())[0]
+  eq('an empty map changes nothing', after, before)
+  eq('falls back to the old naming', after.where, UNPLACED)
+  eq('...and never claims a pane has it open', after.hostedIn, null)
+}
+
 // ---------------------------------------------------------------- picking one
 
 eq('by port', pickDevs('close the one on 3009', devs).map((d) => d.pid), [300])
@@ -166,6 +211,15 @@ ok('...about servers', none.say.toLowerCase().includes('dev server'))
 const pane = parse('close pane 1', mp, devs)
 eq('a pane close is still a pane close', pane.kind, 'close')
 eq('...of that pane', pane.ids, ['a'])
+
+// ---------------------------------------------------------------- the main side, read as source
+
+const mainSrc = readFileSync(join(root, 'src/main/devList.ts'), 'utf8')
+ok('reads cwd through lsof, the only reading the argv itself cannot lie about',
+  /lsof/.test(mainSrc) && /-d['", ]*cwd/.test(mainSrc))
+ok('a failed read resolves null, never a guess', /resolve\(null\)/.test(mainSrc))
+ok('refuses on Windows rather than pretend', /WIN.*resolve\(null\)|if \(WIN/.test(mainSrc))
+ok('one bad pid does not cost the others', /Promise\.all/.test(mainSrc))
 
 rmSync(work, { recursive: true, force: true })
 console.log(`devlist: ${n} checks passed`)

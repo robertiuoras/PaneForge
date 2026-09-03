@@ -10,6 +10,7 @@
 // child_process, no Electron - `npm run test:devlist`.
 
 import { devSignalOf, inRepo } from './devServers'
+import { projectOf } from './place'
 
 /** One dev server, as it is running. */
 export interface RunningDev {
@@ -26,6 +27,13 @@ export interface RunningDev {
   pane: number | null
   /** That pane's project name, or the folder the command line named. */
   where: string
+  /**
+   * When no pane started or is running this (`pane` is null): the sidebar number of a
+   * pane that has the SAME project open, even though it did not start this server. Null
+   * when no pane does, or when reading the server's own folder failed - a failed reading
+   * must never be answered as "nobody has it open".
+   */
+  hostedIn: number | null
 }
 
 /** A process, reduced to the three things attribution needs. */
@@ -112,8 +120,18 @@ function whereOf(cmdline: string): string {
  * A server no pane claims is still LISTED. It is somebody's - a shell outside the app, a
  * pane closed an hour ago - and the whole complaint this answers is "what dev servers are
  * running", not "what dev servers does PaneForge own".
+ *
+ * `cwdOf` is the server's own working directory, keyed by pid, for the pids main already
+ * went and read with `lsof` - the ONLY reading strong enough to name a server whose command
+ * line carries no path at all (`next-server`) and whose starting pane is gone. Optional and
+ * ordinarily empty: reading it is real IO, so main only spends it on pids this function
+ * could not otherwise attribute.
  */
-export function runningDevs(procs: ProcLine[], panes: DevPane[]): RunningDev[] {
+export function runningDevs(
+  procs: ProcLine[],
+  panes: DevPane[],
+  cwdOf: Map<number, string> = new Map()
+): RunningDev[] {
   const trees = new Map<string, Set<number>>()
   for (const p of panes) if (p.pid) trees.set(p.id, descendants(procs, p.pid))
 
@@ -139,7 +157,8 @@ export function runningDevs(procs: ProcLine[], panes: DevPane[]): RunningDev[] {
       port: portOf(p.cmd),
       paneId: owner?.id ?? null,
       pane: owner?.pane ?? null,
-      where: owner?.name ?? whereOf(p.cmd)
+      where: owner?.name ?? whereOf(p.cmd),
+      hostedIn: null
     })
   }
   // ONE server, not one process. Measured on this desk: `npm run dev -p 3100` and the
@@ -178,16 +197,39 @@ export function runningDevs(procs: ProcLine[], panes: DevPane[]): RunningDev[] {
     } else if (owner.where === UNPLACED && d.where !== UNPLACED) owner.where = d.where
   }
 
+  // A server no pane owns, named from where it is REALLY standing rather than a guess off
+  // its argv. `cwdOf` only ever has an entry when main went and read it, so a pid absent
+  // from the map changes nothing here - the row is exactly what it was before this ran.
+  for (const d of kept) {
+    if (d.pane !== null) continue
+    const cwd = cwdOf.get(d.pid)
+    if (!cwd) continue
+    const project = projectOf(cwd)
+    d.where = project
+    const host = panes.find((pane) => projectOf(pane.cwd) === project)
+    d.hostedIn = host?.pane ?? null
+  }
+
   // Stable, and in the order a person would count them: by pane, then by port, then pid.
   return kept.sort(
     (a, b) => (a.pane ?? 99) - (b.pane ?? 99) || (a.port ?? 99999) - (b.port ?? 99999) || a.pid - b.pid
   )
 }
 
-/** One dev server in a sentence. The port is what somebody is actually looking for. */
+/**
+ * One dev server in a sentence. The port is what somebody is actually looking for.
+ *
+ * A server no pane owns never says "orphan" - the reader has never used git. It says
+ * plainly that nobody is using it, or names the pane that has the same project open even
+ * though that pane did not start it, which is the actual question this answers.
+ */
 export function devLine(d: RunningDev, n?: number): string {
   const at = d.port ? ` on port ${d.port}` : ''
-  const who = d.pane ? `pane ${d.pane} (${d.where})` : d.where
+  const who = d.pane
+    ? `pane ${d.pane} (${d.where})`
+    : d.hostedIn
+      ? `${d.where} - pane ${d.hostedIn} has this project open`
+      : `${d.where} - no pane here is using this`
   return `${n ? `${n}. ` : ''}${d.label}${at} - ${who}, pid ${d.pid}`
 }
 
