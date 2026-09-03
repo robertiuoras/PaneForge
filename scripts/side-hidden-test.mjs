@@ -53,7 +53,12 @@ ok('the sidebar and its grip leave the grid rather than shrink inside it', gone)
 // The way back must survive the hide, and it is positioned, not a grid child.
 const reveal = rule('.side-reveal {')
 ok('the reveal button is taken out of flow', /position:\s*absolute/.test(reveal ?? ''))
-ok('the panes keep room for it', /padding-left:\s*36px/.test(rule('.app.side-hidden .panes {') ?? ''))
+// 6px in from the edge, a 30px button, 6px of gap. A padding that no longer clears the
+// button puts the first pane under the only way back to the list.
+const pad = /padding-left:\s*(\d+)px/.exec(rule('.app.side-hidden .panes {') ?? '')?.[1]
+const size = /min-width:\s*(\d+)px/.exec(reveal ?? '')?.[1]
+ok(`the reveal button is at least 30px (got ${size ?? 'none'})`, Number(size) >= 30)
+ok(`the panes clear it (padding ${pad ?? 'none'}, needs ${Number(size) + 12})`, Number(pad) >= Number(size) + 12)
 
 if (failed) {
   console.error(`\n${failed} failed`)

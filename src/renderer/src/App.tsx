@@ -5392,14 +5392,24 @@ export default function App(): JSX.Element {
             <div className="section">Workspaces</div>
             <div className="presets">
               {config.presets.map((p) => (
-                <div key={p.id} className="row preset" onClick={() => launchPreset(p)}>
+                <div
+                  key={p.id}
+                  className="row preset"
+                  title={`Open ${p.name} again - ${p.items.length} ${p.items.length === 1 ? 'project' : 'projects'}`}
+                  onClick={() => launchPreset(p)}
+                >
                   <div className="row-text">
                     <div className="row-title">{p.name}</div>
-                    <div className="row-sub">{p.items.length} projects</div>
+                    {/* The count said nothing about WHICH projects, and a workspace is kept
+                        for weeks. The names are the reading. */}
+                    <div className="row-sub">
+                      {p.items.map((i) => i.title || i.path.split(/[\\/]/).pop()).join(' \u00b7 ')}
+                    </div>
                   </div>
                   <button
-                    className="x"
-                    title="Delete workspace"
+                    className="x ws-x"
+                    aria-label={`Forget the workspace ${p.name}`}
+                    title={`Forget the workspace "${p.name}" - the projects themselves are untouched`}
                     onClick={(e) => {
                       e.stopPropagation()
                       patchConfig({ presets: config.presets.filter((x) => x.id !== p.id) })
@@ -5522,7 +5532,29 @@ export default function App(): JSX.Element {
               { value: 'grid', label: 'Grid', title: keyLabel('Every pane at once (Ctrl G)') }
             ]}
           />
-          <button className="ghost small" onClick={saveRunningAsWorkspace} disabled={!sessions.length}>
+          {/* The only way to keep a layout, and it read as a grey word: no mark, no border
+              worth the name, and nothing anywhere saying what a workspace IS. It now says
+              what pressing it would keep, and with nothing open it says that instead of
+              going quietly grey. */}
+          <button
+            className="ghost small save-ws"
+            onClick={saveRunningAsWorkspace}
+            disabled={!sessions.length}
+            title={
+              sessions.length
+                ? `Keep these ${sessions.length} panes as a workspace - one press reopens the same projects`
+                : 'Open some panes first, then this keeps them as a workspace you can reopen'
+            }
+          >
+            <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
+              <path
+                d="M4 2h8v12l-4-3-4 3z"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinejoin="round"
+              />
+            </svg>
             Save<span className="wide-word"> workspace</span>
           </button>
         </div>

@@ -685,6 +685,15 @@ button.chip.kept:hover { filter: brightness(1.3); }
   -webkit-overflow-scrolling: touch;
 }
 .presets { display: flex; flex-direction: column; gap: 3px; max-height: 22vh; overflow-y: auto; }
+/* Keeping a layout is a rare press with a lasting effect, and it was drawn as the quietest
+   thing in the sidebar - so it gets the mark the rows carry and a real edge. Still `ghost`:
+   the loud button in this list is New session, and two of those compete. */
+.save-ws { display: inline-flex; align-items: center; gap: 5px; border-color: var(--line-strong, var(--line)); }
+.save-ws:disabled { opacity: 0.55; }
+/* Forgetting a workspace is destructive and it was invisible until the row was hovered,
+   then a 12px glyph. Always drawn, always a target. */
+.ws-x { opacity: 0.5; min-width: 24px; min-height: 24px; display: inline-flex; align-items: center; justify-content: center; }
+.row:hover .ws-x, .row.active .ws-x { opacity: 1; }
 
 .row {
   display: flex;
@@ -1665,12 +1674,19 @@ button.small { padding: 5px 9px; font-size: 11px; }
 .app.side-hidden { grid-template-columns: 1fr; }
 .app.side-hidden .sidebar,
 .app.side-hidden .side-grip { display: none; }
-.app.side-hidden .panes { padding-left: 36px; }
-.app.side-hidden .panes:not(.grid) .pane { left: 36px; }
+.app.side-hidden .panes { padding-left: 42px; }
+.app.side-hidden .panes:not(.grid) .pane { left: 42px; }
+/* The one control on screen while the list is hidden, and it was 24x24 - WCAG 2.2 AA's
+   floor (2.5.8), reached with a mouse from anywhere in the window, with no sibling to widen
+   the target and nothing around it to aim by. It is now the size of the two brand-row
+   buttons it stands in for (30px, one step above Linear's dense-chrome button, measured in
+   design-vault/linear.app.md) and carries their border, so it reads as a control rather
+   than a mark on the background. */
 .side-reveal {
   position: absolute; top: 6px; left: 6px; z-index: 5;
-  width: 24px; height: 24px; padding: 0;
+  min-width: 30px; height: 30px; padding: 0;
   display: inline-flex; align-items: center; justify-content: center;
+  font-size: 16px;
 }
 .mac-chrome .side-reveal { top: 32px; }
 .pane {
