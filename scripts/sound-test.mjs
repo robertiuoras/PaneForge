@@ -55,7 +55,9 @@ const {
   soundFor,
   soundLabel,
   soundNameFrom,
-  soundOptions
+  soundOptions,
+  COUNTDOWN_GAIN,
+  COUNTDOWN_TICK_GAIN
 } = createRequire(import.meta.url)(out)
 
 let checks = 0
@@ -161,6 +163,56 @@ for (const s of SOUNDS) {
   const total = Math.max(...list.map(([, end]) => end))
   ok(total <= 2.6, `sound "${s.id}" is an alert, not a ringtone (${total.toFixed(2)}s)`)
 }
+
+// ---------------------------------------------------------------------------
+// The countdown is audible whatever it was pointed at
+//
+// The one alert that announces something happening TO a pane was landing on the two
+// quietest recipes in the catalogue - `bowl` 0.11 and `tick` 0.05 against `knock` 0.155 -
+// so at the saved volume of 0.49 the arrival played at 0.054 and each tick at 0.025.
+// Reported three times (2026-08-23, 2026-08-27, 2026-09-04). `COUNTDOWN_GAIN` is a FLOOR
+// applied by `playAction`/`playTick`, so what this test pins is that the floor is
+// actually above the sounds it exists to lift, still below clipping, and that the two
+// countdown calls in the renderer pass it.
+
+const bowl = builtinSound(DEFAULT_SOUNDS.move)
+const tickDef = builtinSound(DEFAULT_SOUNDS.tick)
+ok(COUNTDOWN_GAIN > bowl.gain, `the countdown floor lifts its own default (${bowl.gain} -> ${COUNTDOWN_GAIN})`)
+ok(
+  COUNTDOWN_TICK_GAIN > tickDef.gain,
+  `the tick floor lifts its own default (${tickDef.gain} -> ${COUNTDOWN_TICK_GAIN})`
+)
+ok(COUNTDOWN_TICK_GAIN < COUNTDOWN_GAIN, 'a tick stays under the arrival - it is a clock, not a second alert')
+ok(
+  COUNTDOWN_GAIN >= builtinSound('knock').gain,
+  'the countdown is at least as loud as an ordinary alert'
+)
+
+// A floor that clips is worse than a floor that is quiet: Web Audio answers a sum past
+// 1.0 with a crackle, and this one lands on a swarm of panes closing together.
+for (const s of SOUNDS) {
+  const lifted = { ...s, gain: Math.max(s.gain, COUNTDOWN_GAIN) }
+  const list = spans(lifted)
+  let peak = 0
+  for (const [start] of list) {
+    let sum = 0
+    for (const [a, b, level] of list) if (start >= a && start < b) sum += level
+    peak = Math.max(peak, sum)
+  }
+  ok(peak <= 1, `sound "${s.id}" cannot clip when a countdown lifts it (peak ${peak.toFixed(3)})`)
+}
+
+// The floor is worth nothing if the two calls that need it do not pass it. Source test,
+// because the renderer cannot be loaded here and a speaker cannot be read back.
+const chime = readFileSync(join(root, 'src/renderer/src/useChime.ts'), 'utf8')
+const actionBody = chime.slice(chime.indexOf('export function playAction'), chime.indexOf('export function playTick'))
+const tickBody = chime.slice(chime.indexOf('export function playTick'), chime.indexOf('export function previewSound'))
+ok(actionBody.includes('COUNTDOWN_GAIN'), 'the countdown arrival is played at the floor')
+ok(tickBody.includes('COUNTDOWN_TICK_GAIN'), 'each countdown tick is played at the floor')
+ok(
+  /function render\(ac: AudioContext, def: SoundDef, volume: number, floor = 0\)[\s\S]{0,120}Math\.max\(def\.gain, floor\)/.test(chime),
+  'the floor lifts a quiet recipe and never lowers a loud one'
+)
 
 // The three the app has always made must keep their exact character: an upgrade that
 // silently re-tunes the sound somebody has been hearing for months is a bug report.

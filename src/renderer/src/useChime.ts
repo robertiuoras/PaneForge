@@ -12,6 +12,8 @@
 // deciding whether to interrupt somebody.
 
 import {
+  COUNTDOWN_GAIN,
+  COUNTDOWN_TICK_GAIN,
   MAX_SOUND_BYTES,
   soundFor,
   clampVolume,
@@ -147,9 +149,15 @@ function voice(ac: AudioContext, v: SoundVoice, at: number, level: number): void
   }
 }
 
-/** Render a whole recipe, honouring each voice's own repeat. */
-function render(ac: AudioContext, def: SoundDef, volume: number): void {
-  const master = clampVolume(volume) * def.gain
+/**
+ * Render a whole recipe, honouring each voice's own repeat.
+ *
+ * `floor` lifts a recipe that is quieter than the caller needs it to be - see
+ * `COUNTDOWN_GAIN`. It never lowers one: a sound already above the floor keeps the level
+ * it was tuned at, so the picker's twenty-six entries still sound like themselves.
+ */
+function render(ac: AudioContext, def: SoundDef, volume: number, floor = 0): void {
+  const master = clampVolume(volume) * Math.max(def.gain, floor)
   if (!master) return
   const now = ac.currentTime + 0.02
   for (const v of def.voices) {
@@ -205,13 +213,13 @@ export function forgetSound(id: string): void {
   decoding.delete(id)
 }
 
-function playBuffer(buf: AudioBuffer, volume: number): void {
+function playBuffer(buf: AudioBuffer, volume: number, scale = 0.5): void {
   const ac = audio()
   if (!ac) return
   const g = ac.createGain()
   // Uploads are already normalised by whoever made them, and a recording at full scale
   // beside a synthesised bell at 0.13 is a jump-scare. 0.5 puts the two in the same room.
-  g.gain.value = clampVolume(volume) * 0.5
+  g.gain.value = clampVolume(volume) * scale
   const src = ac.createBufferSource()
   src.buffer = buf
   src.connect(g).connect(ac.destination)
@@ -234,9 +242,9 @@ function tooSoon(): boolean {
   return false
 }
 
-function playBuiltin(def: SoundDef, volume: number): void {
+function playBuiltin(def: SoundDef, volume: number, floor = 0): void {
   const ac = audio()
-  if (ac) render(ac, def, volume)
+  if (ac) render(ac, def, volume, floor)
 }
 
 /**
@@ -251,20 +259,25 @@ function playResolved(
   id: string,
   sounds: Partial<SoundConfig> | undefined,
   volume: number,
-  instead: SoundDef | null
+  instead: SoundDef | null,
+  floor = 0
 ): void {
   const r = resolveSound(id, sounds?.custom ?? [])
+  // An upload is played back at half scale so a recording at full scale does not jump
+  // out beside a synthesised bell. A countdown is the one place that halving is wrong,
+  // so a floored call lifts the file too, by the same ratio it lifts a recipe.
+  const scale = floor ? Math.min(1, 0.5 * (floor / 0.11)) : 0.5
   if (!r) {
-    if (instead) playBuiltin(instead, volume)
+    if (instead) playBuiltin(instead, volume, floor)
     return
   }
   if (r.kind === 'builtin') {
-    playBuiltin(r.def, volume)
+    playBuiltin(r.def, volume, floor)
     return
   }
   void customBuffer(r.sound.id).then((buf) => {
-    if (buf) playBuffer(buf, volume)
-    else if (instead) playBuiltin(instead, volume)
+    if (buf) playBuffer(buf, volume, scale)
+    else if (instead) playBuiltin(instead, volume, floor)
   })
 }
 
@@ -301,7 +314,9 @@ export function playAction(event: SoundEvent, sounds: Partial<SoundConfig> | und
   if (!volume) return
   const fallback = soundFor(undefined, event)
   const backup = fallback.kind === 'builtin' ? fallback.def : null
-  playResolved(sounds?.[event] ?? '', sounds, volume, backup)
+  // Floored: this is the countdown, and the default it lands on (`bowl`, 0.11) is one of
+  // the quietest recipes in the catalogue. See `COUNTDOWN_GAIN`.
+  playResolved(sounds?.[event] ?? '', sounds, volume, backup, COUNTDOWN_GAIN)
 }
 
 /**
@@ -322,7 +337,15 @@ export function playTick(sounds: Partial<SoundConfig> | undefined): void {
   const volume = clampVolume(sounds?.volume ?? 1)
   if (!volume) return
   const fallback = soundFor(undefined, 'tick')
-  playResolved(sounds?.tick ?? '', sounds, volume, fallback.kind === 'builtin' ? fallback.def : null)
+  // Floored the same way, one rung below the arrival - `tick` is 0.05, which at any
+  // ordinary volume is under the room.
+  playResolved(
+    sounds?.tick ?? '',
+    sounds,
+    volume,
+    fallback.kind === 'builtin' ? fallback.def : null,
+    COUNTDOWN_TICK_GAIN
+  )
 }
 
 /**
