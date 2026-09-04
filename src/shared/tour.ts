@@ -380,29 +380,54 @@ export function needsRestart(tryIt: string): boolean {
   return /\b(?:quit|restart|reopen|relaunch|reinstall|close)\b[^.]{0,40}\b(?:paneforge|the app|it)\b/i.test(tryIt)
 }
 
-export function howToCheck(step: Pick<TourStep, 'open' | 'checks' | 'tryIt'>): string {
-  // The author wrote the test for this change; nothing worked out from a file list beats it.
-  if (step.tryIt && !needsRestart(step.tryIt))
-    return `Do this: ${step.tryIt}`
-  if (step.tryIt)
-    return `Nothing to do here now: this one only shows across a restart, and the tour is running inside the window it would restart. Next time the app starts: ${step.tryIt.replace(/\s*$/, '').replace(/[.!]?$/, '.')}${step.checks.length ? ' The check below proves it without waiting.' : ''}`
+/**
+ * What the tour is DOING, in the moment it does it.
+ *
+ * Robert, 2026-09-04: "these do this: thing should be hidden instead realtime show doing...
+ * opening... typing... and it shows me realtime so i can see all those things". A card that
+ * hands out an errand ("start a long task in this pane, hand it off to the other machine")
+ * is a card asking a person to be the demonstration. The tour does the thing; the line says
+ * what it is doing while it happens.
+ */
+export function doingWords(step: Pick<TourStep, 'open'>): string {
   switch (step.open) {
     case 'newSession':
-      return 'Do this: look at the New session window the tour just opened - the ring is round what changed. Close it when you are done.'
+      return 'Opening the New session window\u2026'
     case 'settings':
-      return 'Do this: look at the Settings window the tour just opened - the ring is round what changed. Close it when you are done.'
+      return 'Opening Settings\u2026'
     case 'sidebarHidden':
-      return 'Do this: the list of sessions is hidden. Press the ringed button to bring it back.'
+      return 'Hiding the list of sessions\u2026'
     case 'workspaces':
-      return 'Do this: look at the list on the left, under your open panes.'
+      return 'Going to the list on the left\u2026'
     case 'history':
-      return 'Do this: History is open behind this card - every session this machine has had, newest first. The ring is round the button that puts one back on the desk. Close it when you are done.'
+      return 'Opening History, with a chat in it to look at\u2026'
     case 'pane':
-      return 'Do this: a session is open behind this card. The ring is round the part that changed - click it, type in it, see it behave.'
+      return 'Opening a session\u2026'
+    default:
+      return 'Getting this step ready\u2026'
+  }
+}
+
+/** What is on screen NOW that the tour has opened it - never an instruction, never a
+ * `Try:` errand off a commit body. See `doingWords`. */
+export function howToCheck(step: Pick<TourStep, 'open' | 'checks' | 'tryIt'>): string {
+  switch (step.open) {
+    case 'newSession':
+      return 'The New session window is open behind this card. The ring is round the part that changed.'
+    case 'settings':
+      return 'Settings is open behind this card. The ring is round the part that changed.'
+    case 'sidebarHidden':
+      return 'The list of sessions is hidden, and the ring is round the button that brings it back. The tour brings it back itself on its way to the next step.'
+    case 'workspaces':
+      return 'The list on the left, under your open sessions. The ring is round the part that changed.'
+    case 'history':
+      return 'History is open behind this card. The ring is round the button that puts a chat back on the desk.'
+    case 'pane':
+      return 'A session is open behind this card. The ring is round the part that changed.'
     default:
       return step.checks.length
-        ? 'Nothing here to press: this change is under the app, where no screen shows it - between two machines, or in what the app does when nobody is looking. The check below is how it is proved instead, and it just ran for real.'
-        : 'Nothing here to press: this change is under the app, where no screen shows it, and no check came with it. The sentence above is all this step has.'
+        ? 'This one is in the main window, already in front of you - nothing to open. The check below is how it is proved, and it just ran for real.'
+        : 'This one is in the main window, already in front of you - nothing to open.'
   }
 }
 
@@ -565,13 +590,44 @@ export function buildSteps(commits: TourCommit[]): TourStep[] {
     seen.add(subject)
     kept.push(c)
   }
-  return kept.map(stepFrom)
+  // A STEP WITH NOTHING TO OPEN IS NOT A STEP. `Nothing here to press: this change is
+  // under the app` was on a third of the cards, and it is the one Robert stopped at
+  // twice (2026-09-04: "i dont understand this at all way to complicated ... nothing
+  // here to press: what?"). A tour is a list of things to look at; a change with no
+  // screen is proved by `npm test`, which runs it anyway, not by a card that apologises.
+  // A STEP WITH NOTHING ON SCREEN IS NOT A STEP. `Nothing here to press: this change is
+  // under the app` was on a third of the cards, and it is the one Robert stopped at twice
+  // (2026-09-04: "i dont understand this at all way to complicated ... nothing here to
+  // press: what?"). A tour is a list of things to go and look at; a change with no screen
+  // is proved by `npm test`, which runs it anyway, not by a card that apologises for
+  // itself. A change with a screen but nothing to OPEN - the main window, the desk - is
+  // kept: it is in front of him already.
+  return kept.map(stepFrom).filter((s) => s.where !== NO_SCREEN && s.where !== 'no file this card knows')
 }
 
 /** `null` for an empty list - the caller draws no card at all, never an empty one. */
+/**
+ * A step the tour always carries, because it is the one thing Robert asked to WATCH
+ * rather than read about (2026-09-04: "step 31 for example putting pane to sleep etc,
+ * also need to test asleep to awake speed realtime that i can watch so you should make
+ * that a step"). It is not read off a commit - it is a demonstration the app can run on
+ * itself at any time, and it times both halves out loud.
+ */
+export const SLEEP_STEP: TourStep = {
+  title: 'A session - going to sleep and waking up',
+  text: 'A quiet session is put to sleep and woken again, timed',
+  open: 'pane',
+  where: 'a session',
+  see: ['The session goes quiet and says asleep, then comes back - the card says how long each half took.'],
+  checks: [],
+  byHand: [],
+  spot: '.pane-title'
+}
+
 export function makeTour(commits: TourCommit[], root = ''): TourState | null {
   const steps = buildSteps(commits)
-  return steps.length ? { steps, index: 0, root } : null
+  if (!steps.length) return null
+  return { steps: [...steps, SLEEP_STEP], index: 0, root }
 }
 
 export function currentStep(state: TourState): TourStep {
@@ -729,12 +785,19 @@ export function checkedAll(results: TourCheck[]): { ok: boolean; passed: number;
  * Only sounds so far, because a sound is the one demonstration that needs no surface, no
  * pane and no state: it cannot leave anything behind for the next step to trip over.
  */
-export type TourDemo = { kind: 'sound'; sound: string; says: string }
+export type TourDemo =
+  | { kind: 'sound'; sound: string; says: string }
+  /** The app puts a session to sleep and wakes it again, timing both halves. */
+  | { kind: 'sleepWake'; says: string }
 
 const SOUND_WORDS = /\b(sound|sounds|chime|note|bowl|knock|bell|beep|heard|audible|tick|ticks|plays?|playing)\b/i
 
+const SLEEP_WORDS = /\b(asleep|sleep|sleeping|sleeps|wake|waking|woken|wakes)\b/i
+
 export function demoFor(step: Pick<TourStep, 'text' | 'see'>): TourDemo | null {
   const words = [step.text, ...step.see].join(' ')
+  // Watchable, so the tour does it rather than describing it.
+  if (SLEEP_WORDS.test(words)) return { kind: 'sleepWake', says: 'a session going to sleep and waking up' }
   if (!SOUND_WORDS.test(words)) return null
   // The three the app actually uses, picked off what the change is about: the countdown
   // bowl, the question knock, the finished-turn chime.
@@ -776,3 +839,8 @@ export function checkName(script: string): string {
   const m = TEST_FILE.exec(script)
   return m ? `test:${m[1].replace(/-/g, '')}` : script
 }
+
+/** How long the tour leaves the sessions list hidden before putting it back itself. */
+export const TOUR_SIDE_BACK_MS = 4000
+/** How long a session is left asleep before the tour wakes it again. */
+export const TOUR_ASLEEP_MS = 2500

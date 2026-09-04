@@ -161,6 +161,7 @@ import ClientToast from './components/ClientToast'
 import UpdateToast from './components/UpdateToast'
 import WhatsNewCard from './components/WhatsNewCard'
 import TourCard from './components/TourCard'
+import { TOUR_ASLEEP_MS, TOUR_SIDE_BACK_MS } from '../../shared/tour'
 import Tips from './components/Tips'
 import { DEFAULT_TIPS } from '../../shared/tips'
 import { folderLabel } from '../../shared/revealPane'
@@ -865,7 +866,11 @@ export default function App(): JSX.Element {
   // not the person's: closing it by hand asks "shell is still running in ...", which is
   // the right question about a pane somebody started and the wrong one about a pane the
   // app put there to demonstrate a header (Robert, 2026-09-04: "i cant even close it").
+  // How long the tour leaves the sessions list hidden before putting it back itself, and
+  // how long a session is left asleep before the tour wakes it - both long enough to watch
+  // happen, short enough that nobody is waiting on a card.
   const tourPaneOpened = useRef(false)
+  const sideBackRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const tourPaneId = useRef<string | null>(null)
   const [sideHidden, setSideHidden] = useState<boolean>(() => {
     try {
@@ -6859,6 +6864,27 @@ export default function App(): JSX.Element {
           everywhere else, so this card asks once and draws nothing the rest of the time. */}
       <TourCard
         sounds={config?.sounds}
+        // A SESSION GOING TO SLEEP AND WAKING UP, watched rather than described (Robert
+        // 2026-09-04: "need to test asleep to awake speed realtime that i can watch").
+        // Both halves are timed off the app's own calls, and every line is said as it
+        // happens, so the card is a running commentary and not a summary afterwards.
+        onSleepWake={async (say) => {
+          const pane = sessions.find((x) => !x.remote && x.status !== 'exited' && !x.asleep)
+          if (!pane) {
+            say('No session is awake on this desk, so there is nothing to put to sleep.')
+            return
+          }
+          setActiveId(pane.id)
+          say('Putting this session to sleep\u2026')
+          const t0 = Date.now()
+          await api.sleepSession(pane.id)
+          say(`Asleep in ${((Date.now() - t0) / 1000).toFixed(1)}s - the card says asleep and the agent is gone.`)
+          await new Promise((r) => setTimeout(r, TOUR_ASLEEP_MS))
+          say('Waking it up again\u2026')
+          const t1 = Date.now()
+          await api.wakeSession(pane.id)
+          say(`Awake in ${((Date.now() - t1) / 1000).toFixed(1)}s.`)
+        }}
         // A pane step is only shown once a pane is really RUNNING. The card can see a
         // header; only this can see whether anything is behind it. See `LookReading.live`.
         paneAlive={() => sessions.some((s) => !s.remote && s.status !== 'exited' && !s.asleep)}
@@ -6870,6 +6896,14 @@ export default function App(): JSX.Element {
           // (Robert, 2026-09-04: "i cant even close it and also theres a glowing line on
           // the left of the pane window").
           setSideHidden(surface === 'sidebarHidden')
+          // ...AND PUTS IT BACK ITSELF. The step used to say "press the ringed button to
+          // bring it back", and the button was the one thing on that step Robert could not
+          // work (2026-09-04: "i also cant do step 30 since it hid sidebar but im unable to
+          // press the sidebar button"). A tour demonstrates; it does not set errands. The
+          // list goes away, is gone long enough to see, and comes back on its own.
+          if (sideBackRef.current) clearTimeout(sideBackRef.current)
+          if (surface === 'sidebarHidden')
+            sideBackRef.current = setTimeout(() => setSideHidden(false), TOUR_SIDE_BACK_MS)
           // A DIALOG THIS TOUR OPENED IS A DIALOG THIS TOUR CLOSES. Each of these used to
           // be `if (surface === x) setX(true)` and nothing ever set one back to false, so
           // History opened on its own step stayed up over every step after it - the next
