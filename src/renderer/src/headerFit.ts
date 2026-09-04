@@ -1,69 +1,30 @@
 // Measuring a pane header, so it drops a control only when there is really no room.
 //
-// The arithmetic is in `shared/headerFit.ts`; this is the half that needs a window. It
-// writes `data-tight` straight onto the header element and keeps NO React state: the
-// header re-measures on every window resize and every pane change, and a `setState` there
-// would re-render the pane (and, through the sessions list, every other one) for a number
-// that only a CSS attribute selector ever reads. Same reasoning as `quietState.ts`.
+// The ladder and the climb are in `shared/headerFit.ts`; this is the half that needs a
+// window. It writes `data-tight` straight onto the header element and keeps NO React
+// state: a `setState` here would re-render the pane (and, through the sessions list, every
+// other one) for a number only a CSS attribute selector ever reads. Same reasoning as
+// `quietState.ts`.
 //
-// Each part is measured once while it is VISIBLE and the widest reading is kept: an
-// element hidden at the current level measures 0, and believing that would free width
-// twice and flip the row in and out on every frame.
+// The row is ASKED, never calculated. A flex row that is too narrow has already shrunk its
+// own children, so every width read back is the squeezed one and the arithmetic says a
+// 196px header fits what wants 536px. Setting the attribute and reading the layout back
+// costs a synchronous reflow per rung, at most six per resize per header, and only while a
+// window is actually being dragged.
 
 import { useEffect, useRef } from 'react'
-import { fitLevel, MORE_FROM, TIGHT_GROUPS, type HeaderNeed } from '../../shared/headerFit'
+import { climbLevel, MORE_FROM, TIGHT_GROUPS } from '../../shared/headerFit'
 
-/** Widths remembered per header element, so a hidden part still counts what it costs. */
-type Naturals = Map<string, number>
-
-function widthOf(header: HTMLElement, selector: string, seen: Naturals): number {
-  let live = 0
-  for (const el of header.querySelectorAll<HTMLElement>(selector)) {
-    // `offsetWidth` is 0 for a `display: none` element, which is exactly the case this
-    // cache exists for. A visible one also carries the row's gap, added once below.
-    if (el.offsetWidth > 0) live += el.offsetWidth
-  }
-  const before = seen.get(selector) ?? 0
-  if (live > before) seen.set(selector, live)
-  return seen.get(selector) ?? 0
-}
-
-/**
- * The width of everything that is never dropped, read off the row itself.
- *
- * Taken as "the whole row minus the name and minus every droppable group", so a control
- * added to the header later is counted without being listed anywhere.
- */
-function needFor(header: HTMLElement, seen: Naturals, gap: number): HeaderNeed {
-  const groups = TIGHT_GROUPS.map((g) => {
-    let w = 0
-    for (const sel of g) {
-      const each = widthOf(header, sel, seen)
-      if (each > 0) w += each + gap
-    }
-    return w
-  })
-  let fixed = 0
-  for (const el of Array.from(header.children) as HTMLElement[]) {
-    if (el.classList.contains('pt-name')) continue
-    if (TIGHT_GROUPS.some((g) => g.some((sel) => el.matches(sel)))) continue
-    if (el.classList.contains('pt-actions')) {
-      // The actions row holds both kinds, so its own children are split the same way.
-      for (const a of Array.from(el.children) as HTMLElement[]) {
-        if (TIGHT_GROUPS.some((g) => g.some((sel) => a.matches(sel)))) continue
-        const key = `act:${a.className}`
-        const w = a.offsetWidth
-        if (w > (seen.get(key) ?? 0)) seen.set(key, w)
-        fixed += (seen.get(key) ?? 0) + gap
-      }
-      continue
-    }
-    const key = `own:${el.className}`
-    const w = el.offsetWidth
-    if (w > (seen.get(key) ?? 0)) seen.set(key, w)
-    fixed += (seen.get(key) ?? 0) + gap
-  }
-  return { fixed, groups }
+/** Does the row fit as it is drawn right now? */
+function fits(header: HTMLElement): boolean {
+  // One pixel of tolerance: sub-pixel layout makes an exact comparison flicker.
+  if (header.scrollWidth > header.clientWidth + 1) return false
+  const name = header.querySelector<HTMLElement>('.pt-name')
+  // A clipped name is the same failure as an overflowing row - the pane stops being able
+  // to say which pane it is - and it is the one the row hides by ellipsing instead.
+  if (name && name.scrollWidth > name.clientWidth + 1) return false
+  const actions = header.querySelector<HTMLElement>('.pt-actions')
+  return !actions || actions.scrollWidth <= actions.clientWidth + 1
 }
 
 /**
@@ -76,35 +37,42 @@ function needFor(header: HTMLElement, seen: Naturals, gap: number): HeaderNeed {
  * needs and none of them changes its width.
  */
 export function useHeaderFits(deps: unknown[]): void {
-  const seen = useRef<WeakMap<Element, Naturals>>(new WeakMap())
+  const frame = useRef(0)
   useEffect(() => {
     const measure = (header: HTMLElement): void => {
-      const style = getComputedStyle(header)
-      const gap = parseFloat(style.columnGap || style.gap || '0') || 0
-      const pad = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0)
-      const available = header.clientWidth - pad
-      if (available <= 0) return
-      let naturals = seen.current.get(header)
-      if (!naturals) {
-        naturals = new Map()
-        seen.current.set(header, naturals)
-      }
-      const level = fitLevel(available, needFor(header, naturals, gap))
+      if (header.clientWidth <= 0) return
+      const before = header.dataset.tight
+      const level = climbLevel((l) => {
+        header.dataset.tight = String(l)
+        return fits(header)
+      }, TIGHT_GROUPS.length)
       const now = String(level)
       if (header.dataset.tight !== now) header.dataset.tight = now
+      if (before !== now) header.dataset.tight = now
       // The ⋯ is a control the row GROWS, not one it drops, so it is not in the ladder:
       // it appears the moment something is behind it, and the CSS reads the same number.
       const more = level >= MORE_FROM ? 'on' : 'off'
       if (header.dataset.more !== more) header.dataset.more = more
     }
-    const ro = new ResizeObserver((entries) => {
-      for (const e of entries) measure(e.target as HTMLElement)
-    })
-    for (const header of document.querySelectorAll<HTMLElement>('.pane-title')) {
-      measure(header)
-      ro.observe(header)
+    const all = (): void => {
+      for (const header of document.querySelectorAll<HTMLElement>('.pane-title')) measure(header)
     }
-    return () => ro.disconnect()
+    // One pass per frame however many headers resized: the climb reads layout back, and
+    // doing that once per observer callback during a window drag is the expensive shape.
+    const ro = new ResizeObserver(() => {
+      if (frame.current) return
+      frame.current = requestAnimationFrame(() => {
+        frame.current = 0
+        all()
+      })
+    })
+    all()
+    for (const header of document.querySelectorAll<HTMLElement>('.pane-title')) ro.observe(header)
+    return () => {
+      ro.disconnect()
+      if (frame.current) cancelAnimationFrame(frame.current)
+      frame.current = 0
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps)
 }

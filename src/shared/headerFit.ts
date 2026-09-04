@@ -28,38 +28,23 @@ export const NAME_MIN = 110
  */
 export const SLACK = 8
 
-export interface HeaderNeed {
-  /**
-   * Everything that is never dropped: the dot, the agent mark, the clock, find, copy,
-   * close - plus the row's own padding and gaps.
-   */
-  fixed: number
-  /**
-   * What each rung of the ladder is worth, in order. `groups[0]` is freed at level 1,
-   * `groups[1]` at level 2, and so on - so level N has dropped every group before it.
-   */
-  groups: number[]
-}
-
-/** Width the row needs with the first `level` groups dropped. */
-export function needAt(need: HeaderNeed, level: number, nameMin = NAME_MIN): number {
-  let total = need.fixed + nameMin
-  for (let i = level; i < need.groups.length; i++) total += need.groups[i]
-  return total
-}
-
 /**
- * The lowest rung that fits, 0 meaning "draw everything".
+ * The lowest rung that FITS, asked of the row itself.
  *
- * The last rung is returned when nothing fits: a header too narrow for its own name still
- * draws the name, and drawing a control off the edge of the pane is worse than a menu -
- * it cannot be pressed and nothing says it is there.
+ * The first version of this measured each part and did the arithmetic. It cannot work: a
+ * header is a flex row, so once it is too narrow its own children are already shrunk, and
+ * every width read back is the squeezed one - the row measures as fitting at 196px while
+ * it wants 536px, which is exactly what `npm run test:cardfit` caught. So the question is
+ * asked of the layout instead, one rung at a time from the top, and `probe(level)` answers
+ * "does the row fit like this" after the browser has re-laid it out.
+ *
+ * `max` rungs is the end of the ladder: a header too narrow for its own name still draws
+ * the name, because a control drawn off the edge of a pane cannot be pressed and nothing
+ * says it is there.
  */
-export function fitLevel(available: number, need: HeaderNeed, nameMin = NAME_MIN): number {
-  for (let level = 0; level < need.groups.length; level++) {
-    if (needAt(need, level, nameMin) + SLACK <= available) return level
-  }
-  return need.groups.length
+export function climbLevel(probe: (level: number) => boolean, max: number): number {
+  for (let level = 0; level < max; level++) if (probe(level)) return level
+  return max
 }
 
 /**

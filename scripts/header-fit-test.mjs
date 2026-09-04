@@ -15,7 +15,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-const { fitLevel, needAt, NAME_MIN, SLACK, TIGHT_GROUPS, MORE_FROM } = await import(
+const { climbLevel, TIGHT_GROUPS, MORE_FROM } = await import(
   pathToFileURL(join(root, 'src/shared/headerFit.ts')).href
 )
 
@@ -25,35 +25,34 @@ const ok = (what, cond, extra = '') => {
   console.log(`${cond ? 'ok   ' : 'FAIL '} ${what}${extra ? ` - ${extra}` : ''}`)
 }
 
-// A header of a real shape: 240px that never goes, and five rungs worth 90, 150, 120, 70
-// and 20 - the same order the app drops them in.
-const need = { fixed: 240, groups: [90, 150, 120, 70, 20] }
-const whole = needAt(need, 0)
+// The climb is asked of the row, so here it is asked of a fake one: a header that fits
+// from rung `from` onwards.
+const rowFitting = (from) => (level) => level >= from
 
 console.log('the row is kept whole while it fits')
 {
-  ok('a wide header drops nothing', fitLevel(whole + 200, need) === 0)
-  ok('and exactly enough room still drops nothing', fitLevel(whole + SLACK, need) === 0)
-  ok('one pixel short drops the first rung', fitLevel(whole + SLACK - 1, need) === 1)
-  ok('the name is never squeezed below its floor', needAt(need, 5) === 240 + NAME_MIN)
-}
-
-console.log('a long name costs a control exactly as a narrow window does')
-{
-  // The whole point: same available width, and what changes is what the row NEEDS.
-  const short = fitLevel(700, need)
-  const long = fitLevel(700, { ...need, fixed: 240 + 180 })
-  ok('a header carrying more drops more', long > short, `${short} -> ${long}`)
-  ok('and the level is the same whichever way the space went', fitLevel(700 - 180, need) === long)
+  const seen = []
+  const level = climbLevel((l) => {
+    seen.push(l)
+    return rowFitting(0)(l)
+  }, TIGHT_GROUPS.length)
+  ok('a row that fits drops nothing', level === 0)
+  ok('and it is asked once, not walked down the ladder', seen.length === 1, String(seen.length))
 }
 
 console.log('it goes down the ladder in order, and stops at the end')
 {
-  const levels = []
-  for (let w = whole + 40; w > 0; w -= 10) levels.push(fitLevel(w, need))
-  ok('a level never goes back up as the row narrows', levels.every((l, i) => i === 0 || l >= levels[i - 1]))
-  ok('nothing that fits nothing goes past the last rung', fitLevel(1, need) === TIGHT_GROUPS.length)
-  ok('the last rung still leaves room for the name', needAt(need, TIGHT_GROUPS.length) < needAt(need, 0))
+  const seen = []
+  const level = climbLevel((l) => {
+    seen.push(l)
+    return rowFitting(3)(l)
+  }, TIGHT_GROUPS.length)
+  ok('it stops at the first rung that fits', level === 3)
+  ok('and asked every rung above it, in order', seen.join(',') === '0,1,2,3', seen.join(','))
+  ok(
+    'a row that never fits still draws its name at the last rung',
+    climbLevel(() => false, TIGHT_GROUPS.length) === TIGHT_GROUPS.length
+  )
 }
 
 console.log('the ladder is what a person reaches for')
@@ -94,8 +93,10 @@ console.log('the measuring half never renders')
 {
   const fit = readFileSync(join(root, 'src/renderer/src/headerFit.ts'), 'utf8')
   ok('it writes an attribute, not React state', /dataset\.tight/.test(fit) && !/useState/.test(fit))
-  ok('a hidden part still counts what it costs', /if \(live > before\)/.test(fit))
+  ok('it ASKS the row rather than adding widths up', /scrollWidth > .*clientWidth/.test(fit) && !/offsetWidth/.test(fit))
+  ok('a clipped name counts as not fitting', /pt-name/.test(fit))
   ok('it re-measures when the header resizes', /new ResizeObserver/.test(fit))
+  ok('and at most once a frame, because the climb reads layout back', /requestAnimationFrame/.test(fit))
   const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
   ok('and it is actually mounted', /useHeaderFits\(\[sessions\]\)/.test(app))
 }
