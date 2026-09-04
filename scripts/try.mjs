@@ -181,12 +181,15 @@ console.log(`\n${report(root)}`)
 // same way every time: both on the external monitor, installed app on the left half, this
 // copy on the right. `--show` is the only mode where somebody is doing that, and
 // `scripts/dev-layout.mjs` refuses on a single screen, so this costs nothing on the road.
-// After a beat, because a window that does not exist yet cannot be placed.
+// After a beat, because a window that does not exist yet cannot be placed. The timer is
+// NOT unref'd: this script has nothing else holding the loop open, so an unref'd timer let
+// node exit first and the placement never ran at all - the installed app kept whatever
+// size it had and only the test copy looked placed.
 if (!minimized) {
   setTimeout(() => {
     const r = spawnSync(process.execPath, [new URL('dev-layout.mjs', import.meta.url).pathname], {
       encoding: 'utf8'
     })
     if (r.stdout) process.stdout.write(r.stdout)
-  }, 2500).unref?.()
+  }, 2500)
 }
