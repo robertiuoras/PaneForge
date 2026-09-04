@@ -92,6 +92,8 @@ const TESTS = [
   ['hookdeny', 'hookdeny-test.mjs'],
   ['deaddev', 'deaddev-test.mjs'],
   ['sleep', 'sleep-test.mjs'],
+  ['wakeplan', 'wakeplan-test.mjs'],
+  ['deviceopen', 'device-open-test.mjs'],
   ['mascot', 'mascot-test.mjs'],
   ['petmood', 'petmood-test.mjs'],
   ['tips', 'tips-test.mjs'],
@@ -175,6 +177,7 @@ const TESTS = [
   // Cheap, and the pair covers the two halves that fail differently: the arithmetic of a
   // cross-device claim, and the git plumbing that carries it (2.4s, real repositories).
   ['lanepeers', 'lane-peers-test.mjs'],
+  ['lanesleep', 'lane-sleep-test.mjs'],
   ['lanedevice', 'lane-device-test.mjs'],
   ['laneensure', 'lane-ensure-test.mjs'],
   // The lane a folder already IS, for a pane the app did not move itself - with the
