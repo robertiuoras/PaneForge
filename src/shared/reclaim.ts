@@ -716,6 +716,16 @@ function keepable(p: ReclaimPane, personHere = true): boolean {
 }
 
 /**
+ * A lead long enough that no pane is early - a year.
+ *
+ * Only ever passed to `dueForIdleClose` to ask the question the card needs answered: not
+ * "is this pane due now" but "is this pane one the clock will EVER take". The two differ
+ * for exactly one pane, the one the last-pane rule holds back, and that is the pane whose
+ * card must stay blank.
+ */
+const EVER = 365 * 24 * 3_600_000
+
+/**
  * When this pane is due to be closed by the idle clock, or null when it is not on it.
  *
  * null is a REFUSAL and never "soon": the caller draws nothing for it. A pane that is
@@ -746,11 +756,19 @@ export function idleCloseAt(
   const minutes = Math.max(0, cfg.idleCloseMinutes ?? 0)
   if (!minutes) return null
   if (!onTheClock(pane, personHere, now, minutes * 60_000)) return null
-  if (all && !dueForIdleClose(all, cfg, now, personHere).some((p) => p.id === pane.id)) {
-    // Not "later": the last-pane rule does not lift while the desk stays as it is, and a
-    // pane that has not reached its own clock yet is caught by the arithmetic below.
-    if (now - quietSince(pane) >= minutes * 60_000) return null
-  }
+  // "Would this pane be taken at all, if its own clock had already run out?" - the lead
+  // makes every pane still on the clock eligible, so the only thing that can drop one here
+  // is the last-pane rule, which does not lift while the desk stays as it is.
+  //
+  // Asked with no lead, this refused the held-back pane only once it was already PAST its
+  // deadline, and a pane that had not got there yet was published a future number. Nothing
+  // ever revisited it: the publisher in App.tsx re-runs when the desk CHANGES, and a desk
+  // with one quiet shell pane on it never changes - so that number sat there, the real
+  // clock walked past it, and the card read `closes now` for the life of the window while
+  // the sweep refused to close it. Robert, 2026-09-04, one shell pane in a dev copy: "the
+  // test paneforge shell always shows closes now".
+  if (all && !dueForIdleClose(all, cfg, now, personHere, EVER).some((p) => p.id === pane.id))
+    return null
   const at = quietSince(pane) + minutes * 60_000
   // A pane already past its deadline is due NOW, not overdue by four minutes: the sweep
   // runs on a minute timer, so `now` is regularly a little past the moment it was due and

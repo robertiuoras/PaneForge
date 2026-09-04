@@ -307,6 +307,13 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   // no focused pane. Robert 2026-09-01: "shows closes now tag but it wasnt closing at all".
   const alone = [pane({ id: 'only', lastKeyboard: NOW - 9 * HOUR })]
   eq('the last pane has no countdown either', idleCloseAt(alone[0], CLOCKED, NOW, true, alone), null)
+  // ...and it has no countdown BEFORE its clock either, which is the shape that shipped:
+  // the publisher only re-runs when the desk changes, so a one-pane desk published this
+  // future number once and nothing ever revisited it. The real clock walked past it and
+  // the chip read `closes now` for the life of the window (Robert, 2026-09-04, a dev copy
+  // with one shell pane in it).
+  const aloneEarly = [pane({ id: 'only-early', lastKeyboard: NOW - 60_000 })]
+  eq('...and none before its clock, which is the number that used to stick', idleCloseAt(aloneEarly[0], CLOCKED, NOW, true, aloneEarly), null)
   const twoLeft = [pane({ id: 'old', lastKeyboard: NOW - 9 * HOUR }), pane({ id: 'newer', lastKeyboard: NOW - 8 * HOUR })]
   eq('...and with every pane due, the one held back is the newest quiet', ids(idleClosePlan(twoLeft, CLOCKED, NOW)), 'old')
   check('the held-back one draws nothing', idleCloseAt(twoLeft[1], CLOCKED, NOW, true, twoLeft) === null)
