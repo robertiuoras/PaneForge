@@ -85,8 +85,16 @@ said yesterday does not cover today. `npm run test:unreleased`.
 
 The dev window's tour (`shared/tour.ts`, `TourCard.tsx`) turns every `feat:`/`fix:`/`perf:`
 commit since the installed build into a step: a NAME in the words of the thing on screen
-(`A session's header`), the commit's own sentence under it, a ring around the control, and
-the commit's own `scripts/<x>-test.mjs` RUN on the card with the result. The name comes
+(`A session's header`), ONE short sentence saying where to look, a ring around the control,
+and the commit's own `scripts/<x>-test.mjs` RUN on the card with the result. The commit's
+own sentence, the `See:` bullets and a PASSING look reading are all off the card - eight
+blocks of text was a card nobody could test from (Robert 2026-09-04: "way to much things
+to read and confusing for me to test"). A failing look reading still speaks. The suite's
+live line sits at the very BOTTOM, under everything, because it is the fastest-moving
+thing on the card. The Done tick is a 16px `accent-color: #3d8bfd` box and ticking it
+stays where it is - it used to jump to the next unticked step in the same press, so the
+box being clicked was never drawn ticked; only a PLAYING tour carries on, `DONE_BEAT_MS`
+later. The name comes
 from the commit's SCOPE first (`fix(header):` -> `SCOPE_PLACES`) and only then off the
 files touched - a header fix editing nothing but `src/shared/headerFit.ts` read as
 `inside the app, nothing to click` (Robert 2026-09-04, step 4 of 30). A step about a pane
