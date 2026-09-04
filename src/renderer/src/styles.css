@@ -1728,6 +1728,20 @@ button.small { padding: 5px 9px; font-size: 11px; }
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-dim), inset 0 0 0 9999px #8b9dff0f;
 }
+/* A FOCUSED SESSION'S TOP BAR MOVES THE WINDOW. With one pane filling the window there
+   is no `.brand` row on the right of the sidebar to grab and nothing else along that
+   edge, so the whole top of the app was dead to a drag (Robert, 2026-09-04: "im unable to
+   grab and move the top bar/header of a session thats in focus"). Only while the panes
+   are NOT tiled: in a grid that same row is the handle that reorders the panes, and a
+   drag region would eat that press. Every control in the row opts back out - a drag
+   region swallows clicks, so a button left inside it stops working. */
+.mac-chrome .panes:not(.grid) .pane-title { -webkit-app-region: drag; }
+.mac-chrome .panes:not(.grid) .pane-title button,
+.mac-chrome .panes:not(.grid) .pane-title .icon,
+.mac-chrome .panes:not(.grid) .pane-title input,
+.mac-chrome .panes:not(.grid) .pane-title select,
+.mac-chrome .panes:not(.grid) .pane-title .pt-actions,
+.mac-chrome .panes:not(.grid) .pane-title .chip { -webkit-app-region: no-drag; }
 .pane-title.draggable { cursor: grab; }
 body.dragging .pane-title.draggable { cursor: grabbing; }
 /* The grab strip between two tracks. It sits over the 9px gap and is deliberately wider
@@ -3098,6 +3112,11 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
 .tour-text { color: var(--text); font-size: 13px; line-height: 1.4; font-weight: 400; }
 .tour-where { color: var(--muted); font-size: 12px; }
 .tour-how { color: var(--text); font-size: 12px; line-height: 1.4; }
+/* WHAT THE TOUR IS DOING, while it does it - one line per action, in the accent so it
+   reads as the app moving rather than as more to read. No motion: it appears, and the
+   thing it names is happening on screen behind the card. */
+.tour-acts-live { display: flex; flex-direction: column; gap: 2px; }
+.tour-act { color: var(--accent); font-size: 12px; line-height: 1.4; }
 /* The tour is holding on this step until a person moves it - see `waitsForYou`. Accent
    text on the card's own surface, no box and no motion: it is a line to be read once,
    not a second alert competing with the step it belongs to. */

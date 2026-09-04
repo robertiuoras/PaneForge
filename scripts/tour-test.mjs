@@ -12,7 +12,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const {
   buildSteps, makeTour, currentStep, next, previous, done, surfaceFor, tourAllowed,
   stepFrom, placesFor, trailersOf, firstParagraph, checkAllowed, readCheck, checkName, plainWords, plainSwap, howToCheck, needsRestart,
-  dwellFor, waitsForYou, DWELL_CHECKS_MS, DWELL_PLAIN_MS, NO_SCREEN,
+  dwellFor, waitsForYou, DWELL_CHECKS_MS, DWELL_PLAIN_MS, NO_SCREEN, doingWords, TOUR_SIDE_BACK_MS, TOUR_ASLEEP_MS,
   stepKey, nextUnchecked, stepName, whatChanged, checkWords, summaryCount, checkedWords, demoFor, titleFor, checkedAll
 } = await import(pathToFileURL(join(root, 'src/shared/tour.ts')).href)
 
@@ -26,7 +26,9 @@ const ok = (what, cond, extra = '') => {
 // A fixture is a change in the APP unless it says otherwise: `buildSteps` drops a commit
 // that touched nothing under `src/`, and every step-list test below is about something
 // else. The filter has its own section further down, with its own explicit files.
-const c = (subject, body = '', files = ['src/main/index.ts'], scope = '') => ({ subject, body, files, scope })
+// The default file is one with a SCREEN: `buildSteps` now also drops a change nobody can
+// go and look at (`NO_SCREEN`), which is what `src/main/index.ts` alone reads as.
+const c = (subject, body = '', files = ['src/renderer/src/components/TerminalPane.tsx'], scope = '') => ({ subject, body, files, scope })
 
 console.log('an empty list draws nothing')
 {
@@ -41,7 +43,7 @@ console.log('a tour only lists changes there is something to look at')
   // src/ - the test runner, the try script, the tour itself - and a step you cannot go and
   // look at is the whole reason the list read as too long to start.
   const kept = buildSteps([
-    c('A change in the app', '', ['src/main/sessions.ts']),
+    c('A change in the app', '', ['src/renderer/src/components/TerminalPane.tsx']),
     c('One test run, one temp folder', '', ['scripts/test-all.mjs']),
     c('A dev window says what is different', '', ['scripts/try.mjs', 'scripts/try-diff.mjs']),
     c('A note about the design', '', ['docs/design-notes.md'])
@@ -53,6 +55,28 @@ console.log('a tour only lists changes there is something to look at')
   // to check the same sentence twice is what makes thirty read as forty.
   const twice = buildSteps([c('The same change'), c('The same change'), c('A different one')])
   ok('the same subject is drawn once', twice.length === 2, twice.map((x) => x.text).join(' | '))
+}
+
+console.log('a step with nothing on screen is not a step')
+{
+  // Robert, 2026-09-04, twice, on the card that said `Nothing here to press: this change
+  // is under the app`: "i dont understand this at all way to complicated ... nothing here
+  // to press: what?". Those cards are gone; `npm test` proves those changes anyway.
+  const none = buildSteps([c('Two machines agree about a size', '', ['src/main/index.ts'])])
+  ok('a change with no screen is dropped', none.length === 0, String(none.length))
+  // ...but a change in the window itself is in front of him already, so it stays.
+  const win = buildSteps([c('The desk redraws less', '', ['src/renderer/src/App.tsx'])])
+  ok('a change in the main window is kept', win.length === 1, String(win.length))
+  ok('and it says so, with no errand on it', /main window/.test(howToCheck(win[0])) && !/Do this/.test(howToCheck(win[0])))
+}
+
+console.log('the tour always carries the one it can demonstrate itself')
+{
+  const t = makeTour([c('A change in the app')])
+  const last = t.steps[t.steps.length - 1]
+  ok('a session going to sleep and waking up is a step', /sleep/i.test(last.title), last.title)
+  ok('and the app does it, rather than asking', demoFor(last)?.kind === 'sleepWake')
+  ok('a sound step still plays its sound', demoFor({ text: 'the countdown note is heard', see: [] })?.kind === 'sound')
 }
 
 console.log('a card carries two points, never a wall of them')
@@ -79,13 +103,14 @@ console.log('the tour holds on a step long enough to read it')
 console.log('the index clamps at both ends')
 {
   const t = makeTour([c('First'), c('Second'), c('Third')], '/repo')
+  const end = t.steps.length - 1
   ok('starts at the first step', t.index === 0)
   ok('carries the checkout root the checks run in', t.root === '/repo')
   ok('previous at the first step stays put', previous(t).index === 0)
-  const atEnd = next(next(next(t)))
-  ok('next past the last step stops there, never wraps', atEnd.index === 2, String(atEnd.index))
+  const atEnd = next(next(next(next(t))))
+  ok('next past the last step stops there, never wraps', atEnd.index === end, String(atEnd.index))
   ok('done is true only at the last step', !done(t) && done(atEnd))
-  ok('currentStep tracks the clamped index', currentStep(atEnd).text === 'Third')
+  ok('currentStep tracks the clamped index', currentStep(next(next(t))).text === 'Third')
 }
 
 console.log('a sentence with no known surface gets none')
@@ -99,8 +124,10 @@ console.log('a sentence with no known surface gets none')
   // nothing to click` because nothing knew History was a place.
   ok('a conversation is History', surfaceFor('A conversation with no reply is not offered to the CLI') === 'history')
   ok('...and so is history itself', surfaceFor('History rows say what they were working on') === 'history')
-  const t = makeTour([c('Something nobody wrote a keyword for')])
-  ok('and it lands on the step as none, not a guess', currentStep(t).open === 'none')
+  ok(
+    'and a change whose files name no screen either is not a step at all',
+    buildSteps([c('Something nobody wrote a keyword for', '', ['src/main/index.ts'])]).length === 0
+  )
 }
 
 console.log('where a change lives comes off the files it touched, in words')
@@ -140,7 +167,7 @@ console.log('where a change lives comes off the files it touched, in words')
 }
   ok('a test script alone names no place', placesFor(['scripts/devlist-test.mjs']).where === '')
   ok('no file name ever reaches the screen', !/\.(tsx?|css|mjs)\b/.test(placesFor(['src/main/x.ts', 'src/renderer/src/components/Foo.tsx']).where))
-  ok('a sentence-matched surface still gets a ring', stepFrom(c('Hiding the list gives the panes the whole window')).spot === '.side-reveal')
+  ok('a sentence-matched surface still gets a ring', stepFrom(c('Hiding the list gives the panes the whole window', '', ['src/main/index.ts'])).spot === '.side-reveal')
   ok('the file table outranks the sentence', stepFrom(c('Settings words in the subject', '', ['src/renderer/src/components/NewSessionDialog.tsx'])).open === 'newSession')
 }
 
@@ -183,15 +210,23 @@ console.log('the card speaks to somebody who has never coded')
   ok('New session is the screen\'s own name and is left alone', plainSwap('the New session dialog') === 'the New session dialog')
   ok('and so is the plain word inside it', plainSwap('New session') === 'New session')
   // The author's own test wins over anything a file list can say.
-  ok('a Try: line becomes the step\'s instruction', howToCheck({ open: 'none', checks: [], tryIt: 'open a session and ask it for a folder path, then click the path' }) === 'Do this: open a session and ask it for a folder path, then click the path')
-  ok('and it beats the surface sentence', !/ring/.test(howToCheck({ open: 'newSession', checks: [], tryIt: 'press New session and read the machine box' })))
+  // NO ERRANDS ON A CARD. A `Try:` line off a commit body was printed as `Do this: start a
+  // long task in this pane, hand it off to the other machine mid-turn` - a card asking a
+  // person to be the demonstration (Robert, 2026-09-04: "these do this: thing should be
+  // hidden instead realtime show doing... opening... typing").
+  ok('no card ever hands out an errand', !/Do this/.test(howToCheck({ open: 'newSession', checks: [], tryIt: 'press New session and read the machine box' })))
+  ok('...and the Try: line is not on it', !/machine box/.test(howToCheck({ open: 'newSession', checks: [], tryIt: 'press New session and read the machine box' })))
+  ok('what it is doing is said in the moment', doingWords({ open: 'history' }) === 'Opening History, with a chat in it to look at\u2026')
+  ok('every surface has its own doing line', new Set(['newSession', 'settings', 'sidebarHidden', 'workspaces', 'pane', 'history'].map((o) => doingWords({ open: o }))).size === 6)
   ok('a body with a Try: line carries it onto the step', stepFrom({ subject: 'fix(header): x', body: 'Try: open a pane and look at its header\nSee: the icons line up', files: ['src/renderer/src/App.tsx'] }).tryIt === 'open a pane and look at its header')
   ok('one Try: only, never a list', trailersOf('Try: first thing\nTry: second thing').tryIt === 'first thing')
   ok('and no Try: line leaves the step without one', stepFrom({ subject: 'fix(header): x', body: 'See: the icons line up', files: ['src/renderer/src/App.tsx'] }).tryIt === undefined)
-  ok('every step opens with something to DO', /^Do this: /.test(howToCheck({ open: 'newSession', checks: [] })))
   ok('and names the window it just opened', /New session window/.test(howToCheck({ open: 'newSession', checks: [] })))
-  ok('a pane step says to click and type in it', /click it, type in it/.test(howToCheck({ open: 'pane', checks: [] })))
-  ok('a hidden list points at the ringed button', /ringed button/.test(howToCheck({ open: 'sidebarHidden', checks: [] })))
+  ok('a pane step names the ring, and asks for nothing', /ring is round/.test(howToCheck({ open: 'pane', checks: [] })) && !/Do this/.test(howToCheck({ open: 'pane', checks: [] })))
+  // The one step Robert could not finish: the list was hidden and the button that brings
+  // it back would not take his press (2026-09-04, step 30). The tour brings it back itself.
+  ok('a hidden list is brought back by the tour', /brings it back itself/.test(howToCheck({ open: 'sidebarHidden', checks: [] })))
+  ok('and the tour does not wait for ever to do it', TOUR_SIDE_BACK_MS > 1500 && TOUR_SIDE_BACK_MS <= 8000, String(TOUR_SIDE_BACK_MS))
   ok('a History step names the window it opened', /History is open behind this card/.test(howToCheck({ open: 'history', checks: [] })))
   // A `Try:` the tour cannot run from inside the window it is describing.
   const restartTry = 'open two panes in the same project folder, quit PaneForge, reopen it'
@@ -199,13 +234,10 @@ console.log('the card speaks to somebody who has never coded')
   ok('...and reopening it', needsRestart('restart the app and look at the list'))
   ok('but an ordinary hands-on test is not', !needsRestart('open a session, ask the agent for a folder path, click it'))
   const across = howToCheck({ open: 'pane', checks: ['scripts/x-test.mjs'], tryIt: restartTry })
-  ok('a restart step never hands over an errand', !/^Do this: /.test(across), across)
-  ok('...says it is only visible across a restart', /only shows across a restart/.test(across), across)
-  ok('...and still quotes what to look for next launch', across.includes(restartTry), across)
-  // `Nothing to click` said what the CARD could not do and never why. A step with no
-  // screen now says the reason it has none, and what stands in for the press.
+  ok('a restart errand never reaches the card either', !across.includes(restartTry), across)
+  // The only steps left with no surface to open are ones already in the window.
   const noScreen = howToCheck({ open: 'none', checks: ['scripts/x-test.mjs'] })
-  ok('a step with no screen says WHY there is nothing to press', /between two machines|no screen shows it/.test(noScreen), noScreen)
+  ok('a step with nothing to open says it is already in front of you', /main window/.test(noScreen), noScreen)
   ok('and names the check as what proves it instead', /check below is how it is proved/.test(noScreen), noScreen)
   ok('and never just says nothing to click', !/^Nothing to click/.test(noScreen), noScreen)
   ok('nothing ever tells anybody to open a pane', !/pane/i.test(howToCheck({ open: 'none', checks: [] })))
