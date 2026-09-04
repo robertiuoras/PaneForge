@@ -437,10 +437,11 @@ if (cmd === 'list') {
 } else if (cmd === 'open-many') {
   // Many panes, one call - 10s or 20+ at a time, "for any cli/model it chooses". Each row
   // is the same shape a single `open` builds; a `task` row is briefed the same way, one
-  // `backlog:task` lookup per row, BEFORE anything is sent. `sessions:startMany` (the app
-  // side) loops the array and swallows a row's own failure into a shorter result list, so a
-  // returned session is matched back to its row by POSITION - the app does not say which
-  // row a missing session belonged to, only that fewer came back than were asked for.
+  // `backlog:task` lookup per row, BEFORE anything is sent. `sessions:startMany` answers
+  // one row per request and in the same order, each carrying either the pane it opened or
+  // the words saying why that folder got none - so a refusal prints its own reason rather
+  // than `see the app for why`. Matched back by POSITION, never by folder: a pane that
+  // lands in a lane comes back with a different `cwd` (the worktree).
   const planPath = rest[0]
   if (!planPath) fail(1, 'open-many needs a plan file: pf-ctl open-many <plan.json>')
   let plan
@@ -459,17 +460,16 @@ if (cmd === 'list') {
     }
     reqs.push({ cwd: row.cwd, title: row.title, prompt, agent: row.agent, model: row.model, device: row.device })
   }
-  const started = (await call('sessions:startMany', [reqs])) ?? []
+  const rows = (await call('sessions:startMany', [reqs])) ?? []
   let refused = 0
   for (let n = 0; n < reqs.length; n++) {
-    const s = started[n]
-    if (s?.id) {
-      console.log(`opened ${s.id} in ${s.cwd ?? reqs[n].cwd}` + (reqs[n].device ? ` on ${reqs[n].device}` : ''))
+    const on = reqs[n].device ? ` on ${reqs[n].device}` : ''
+    const pane = rows[n]?.session
+    if (pane?.id) {
+      console.log(`opened ${pane.id} in ${pane.cwd ?? reqs[n].cwd}${on}`)
     } else {
       refused++
-      console.log(
-        `refused ${reqs[n].cwd}` + (reqs[n].device ? ` on ${reqs[n].device}` : '') + ' - see the app for why'
-      )
+      console.log(`refused ${reqs[n].cwd}${on} - ${rows[n]?.why ?? 'the app said nothing about why'}`)
     }
   }
   if (refused) fail(1, `${refused} of ${reqs.length} panes were not opened`)

@@ -474,6 +474,22 @@ export interface PipeInfo {
   dropped: number
 }
 
+/**
+ * One row of a batch launch, one per request and in the same order, so a row can always
+ * be paired with the folder that was asked for. A batch that simply came back SHORT left
+ * the window guessing which folder was missing and why - it said "it may not be on this
+ * machine any more" about a folder that was really refused for another reason entirely -
+ * and left `pf open-many` printing `refused <cwd>` with no reason at all.
+ */
+export interface StartedPane {
+  /** The folder that was asked for. Not where the pane landed - that is `session.cwd`. */
+  cwd: string
+  /** The pane, when one opened. */
+  session?: Session
+  /** Plain words for a person: why this folder got no pane. Only set when none opened. */
+  why?: string
+}
+
 export interface StartSessionRequest {
   cwd: string
   /**
@@ -1936,7 +1952,11 @@ export interface Api {
   listAgents(): Promise<AgentInfo[]>
   listSessions(): Promise<Session[]>
   startSession(req: StartSessionRequest): Promise<Session>
-  startSessions(reqs: StartSessionRequest[]): Promise<Session[]>
+  /**
+   * Launch several panes at once. One row back per request, in order: a row carries the
+   * pane it opened, or the words saying why that folder got none.
+   */
+  startSessions(reqs: StartSessionRequest[]): Promise<StartedPane[]>
   /** respawn the agent in place, keeping the pane and its id */
   restartSession(id: string): Promise<Session | null>
   /** swap a running pane to another CLI/model - same folder, same pane, fresh process */

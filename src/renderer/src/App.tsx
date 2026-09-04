@@ -1810,22 +1810,23 @@ export default function App(): JSX.Element {
         rememberModel(wanted[0]?.agent, wanted[0]?.model)
         return
       }
-      const started = await api.startSessions(reqs)
+      const rows = await api.startSessions(reqs)
+      const started = rows.map((r) => r.session).filter((s): s is Session => !!s)
       if (started.length) setActiveId(started[started.length - 1].id)
-      if (started.length < reqs.length) {
-        // Name it. "Some folders could not be opened" was true and unusable: the one thing
-        // somebody needs is WHICH, and on this desk the answer is nearly always a folder
-        // that has been deleted since - a temp folder from a test, or a swept lane.
-        // Counted, not matched: a launch that lands in a lane comes back with a DIFFERENT
-        // cwd (the worktree), so pairing requests to results by folder would report a pane
-        // that opened perfectly as a failure. With one request there is nothing to pair.
-        const missed = reqs.length - started.length
+      // Name it, and say why. "Some folders could not be opened" was true and unusable,
+      // and the sentence that replaced it - "it may not be on this machine any more" -
+      // was a GUESS printed over every cause alike, including an agent that refused to
+      // trust the folder. Every row now carries the folder that was asked for and the
+      // reason no pane opened for it, paired by POSITION: a launch that lands in a lane
+      // comes back with a different `session.cwd` (the worktree), so pairing by folder
+      // would report a pane that opened perfectly as a failure.
+      const failed = rows.filter((r) => r.why)
+      if (failed.length === 1) flash(`Could not open ${failed[0].cwd} - ${failed[0].why}`)
+      else if (failed.length > 1)
         flash(
-          reqs.length === 1
-            ? `Could not open ${reqs[0].cwd} - it may not be on this machine any more.`
-            : `${missed} of ${reqs.length} folders could not be opened.`
+          `${failed.length} of ${rows.length} folders could not be opened. ` +
+            failed.map((r) => `${r.cwd.split(/[\\/]/).pop()}: ${r.why}`).join('; ')
         )
-      }
       // A launch that quietly moved folder has to say so once - the pane header and
       // the sidebar chip show where it landed, but only if you go looking.
       const noted = started.filter((s) => s.laneNote)
@@ -6956,9 +6957,10 @@ export default function App(): JSX.Element {
             else if (root && !tourPaneOpened.current) {
               tourPaneOpened.current = true
               void api.startSessions([{ cwd: root, agent: 'shell' }]).then((st) => {
-                if (!st.length) return
-                tourPaneId.current = st[0].id
-                setActiveId(st[0].id)
+                const opened = st[0]?.session
+                if (!opened) return
+                tourPaneId.current = opened.id
+                setActiveId(opened.id)
               })
             }
           }
