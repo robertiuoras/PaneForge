@@ -7,7 +7,7 @@
 // the canonical file is not on this machine rather than passing on its absence.
 
 import assert from 'node:assert'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -177,3 +177,14 @@ if (!existsSync(canonical)) {
 // The reading off disk: newest wins, and a pane with no handoff is not a pane with none open.
 
 console.log(`\n${pass} cases passed`)
+
+// A cached reading is only the file it read: the clear hook rewrites the handoff and asks
+// for the clear inside the same second, and a 30s wall-clock cache refused a clear whose
+// steps were already on disk (2026-09-04, s10-mtm6ccmk at 206k tokens, `NOTHING_OPEN`).
+{
+  const main = readFileSync(join(process.cwd(), 'src/main/handoffSteps.ts'), 'utf8')
+  const served = /if \(hit && now - hit\.at < CACHE_MS\) \{[\s\S]*?statSync\(hit\.reading\.path\)\.mtimeMs === hit\.reading\.mtimeMs/.test(main)
+  assert.ok(served, 'handoffFor serves a cached reading only while the handoff on disk has the same mtime')
+  assert.ok(!/if \(hit && now - hit\.at < CACHE_MS\) return hit\.reading/.test(main), 'a wall-clock-only cache hit must not be served')
+  console.log('ok   a rewritten handoff is read again inside the cache window')
+}
