@@ -1172,17 +1172,28 @@ that sentence: evidence not a verdict — useful half is "did NOT come from this
 
 ## Checking a layout change without screenshots
 
+No window on any screen needed - `--headless` (`src/main/profile.ts` `headlessMode`) paints
+the renderer into an offscreen bitmap Chromium still composites, so a real screenshot comes
+back with nothing ever shown. `scripts/ui-lab.mjs` is the one shared CDP helper every window
+suite (`view-test`, `contrast-test`, `ask-render-test`, `ask-click-test`, `renderwatch-live`,
+`probe`) is built on:
+
 ```
-npm run build                    # skip w/ --keep or you measure the last build
-npm run try -- --keep --remote-debugging-port=9333
-npm run probe -- --height 560 "(() => { const r=document.querySelector('.dialog').getBoundingClientRect(); return { fits: r.bottom <= innerHeight } })()"
+npm run build                                             # skip w/ --keep or you measure the last build
+npm run try -- --headless --remote-debugging-port=9333
+node scripts/ui-lab.mjs eval "(() => { const r=document.querySelector('.dialog').getBoundingClientRect(); return { fits: r.bottom <= innerHeight } })()"
+node scripts/ui-lab.mjs shot --out /tmp/x.png --selector .dialog --width 1280 --height 560
 npm run try -- --close
 ```
 
-Same probe answer before/after = nothing rebuilt. Port per checkout: second lane uses `PF_PORT=9334` +
-launch flag. `--height`/`--width` drive Chromium's device metrics override, restore after. Evaluated with
-`awaitPromise`: async arrow clicking a dialog then measuring works as one argument.
-`window.__pf[sessionId]` gives a pane's live `term`/`fit`
+Same answer before/after = nothing rebuilt. Port per checkout: second lane uses `PF_PORT=9334` +
+launch flag. `ui-lab.mjs`'s `shot --width/--height` drives Chromium's device metrics override
+(same as `--minimized`'s old `probe.mjs --height/--width`), restores after. `eval` runs with
+`awaitPromise`: an async arrow clicking a dialog then measuring works as one argument.
+`window.__pf[sessionId]` gives a pane's live `term`/`fit`. `npm run test:uilab` proves the
+headless copy itself has nothing on screen (`window.api.appVisibleNow()` - NOT
+`document.visibilityState`, which reads `visible` for an offscreen window regardless) while
+still returning real composited pixels.
 
 ## An iPhone is not a Mac, and a phone control is 44px
 

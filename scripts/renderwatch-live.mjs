@@ -11,11 +11,8 @@
 //
 // It is out of the default suite for the same reason `test:view` is: it needs a window.
 
-import { dirname, join } from 'node:path'
-import { fileURLToPath, pathToFileURL } from 'node:url'
+import { page as findPage, SkipError } from './ui-lab.mjs'
 
-const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-const rootUrl = pathToFileURL(root).href.replace(/\/?$/, '/').toLowerCase()
 const port = process.env.PF_PORT ?? '9333'
 
 let failed = 0
@@ -24,23 +21,17 @@ const ok = (what, cond, extra = '') => {
   console.log(`${cond ? 'ok   ' : 'FAIL '} ${what}${extra ? ` - ${extra}` : ''}`)
 }
 
+// Wraps ui-lab's page-finder (this checkout only, never `shelf`) into the same "page or
+// null, never throws" shape this file's own polling loops need: the recovery loop below
+// calls this every second while the renderer may still be wedged, and a thrown SkipError
+// there would crash the run instead of trying again next tick.
 async function mainPage() {
-  for (let i = 0; i < 40; i++) {
-    try {
-      const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()
-      const p = list.find(
-        (e) =>
-          e.type === 'page' &&
-          (e.url ?? '').toLowerCase().startsWith(rootUrl) &&
-          !(e.url ?? '').includes('shelf')
-      )
-      if (p) return p
-    } catch {
-      /* the window may still be launching */
-    }
-    await new Promise((r) => setTimeout(r, 500))
+  try {
+    return await findPage(port)
+  } catch (e) {
+    if (e instanceof SkipError) return null
+    throw e
   }
-  return null
 }
 
 /** One evaluate, on its own short-lived socket, with a deadline. A wedged page never answers. */

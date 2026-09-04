@@ -22,50 +22,20 @@
 //   PF_PORT=9334 node scripts/ask-render-test.mjs
 // It skips out loud when there is none, the same as the other window tests.
 
-import { fileURLToPath } from 'node:url'
-import { dirname, resolve } from 'node:path'
+import { root as ROOT, connect, SkipError } from './ui-lab.mjs'
 
 const PORT = process.env.PF_PORT || '9333'
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
-let page
-for (let i = 0; i < 20; i++) {
-  const list = await fetch(`http://127.0.0.1:${PORT}/json/list`)
-    .then((r) => r.json())
-    .catch(() => [])
-  page = list.find((t) => t.type === 'page' && t.webSocketDebuggerUrl && !(t.url ?? '').includes('shelf'))
-  if (page) break
-  await new Promise((r) => setTimeout(r, 500))
-}
-if (!page) {
-  console.log(`SKIP: no debuggable window on port ${PORT}.`)
-  console.log('  npm run build && npm run try -- --keep --remote-debugging-port=9334')
-  console.log('  PF_PORT=9334 node scripts/ask-render-test.mjs')
+let link
+try {
+  link = await connect(PORT)
+} catch (e) {
+  if (!(e instanceof SkipError)) throw e
+  console.log(`SKIP: ${e.message}`)
   process.exit(0)
 }
-
-const ws = new WebSocket(page.webSocketDebuggerUrl)
-await new Promise((r) => ws.addEventListener('open', r, { once: true }))
-const pending = new Map()
-let seq = 0
-ws.addEventListener('message', (e) => {
-  const m = JSON.parse(e.data)
-  const p = pending.get(m.id)
-  if (!p) return
-  pending.delete(m.id)
-  m.error ? p.rej(new Error(JSON.stringify(m.error))) : p.res(m.result)
-})
-const send = (method, params) =>
-  new Promise((res, rej) => {
-    const id = ++seq
-    pending.set(id, { res, rej })
-    ws.send(JSON.stringify({ id, method, params }))
-  })
-const evalIn = async (expression) => {
-  const r = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true })
-  if (r.exceptionDetails) throw new Error(JSON.stringify(r.exceptionDetails))
-  return r.result.value
-}
+const ws = link.ws
+const evalIn = (expression) => link.evaluate(expression)
 const wait = (ms) => new Promise((r) => setTimeout(r, ms))
 
 let bad = 0
