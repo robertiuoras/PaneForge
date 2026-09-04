@@ -2600,7 +2600,10 @@ const handoffQueue = new HandoffQueue({
   // The queue finishes long after the dialog closed, and from the phone there was no
   // dialog at all - so its outcome goes to the window too, or a pane disappears with
   // no reason on screen and the desk it left reads as a frozen session.
-  notify: (line) => send('handoff:moved', line)
+  notify: (line) => send('handoff:moved', line),
+  // The countdown card, so a finished pane does not vanish onto another machine the
+  // instant its turn ends with nothing on screen to stop it. `at: null` clears it.
+  soon: (id, device, at) => send('remote:handoffSoon', { id, device, deviceName: remote.peerName(device), at })
 })
 
 ipcMain.handle(

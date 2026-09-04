@@ -290,6 +290,20 @@ export function stepFrom(c: TourCommit): TourStep {
   return step
 }
 
+/** A stable identity for a step, used to remember which ones have been ticked done. The
+ * commit's own subject - `try-diff.mjs` carries no sha into this file, and a subject is
+ * already unique within one tour's commit list. */
+export function stepKey(step: Pick<TourStep, 'text'>): string {
+  return step.text
+}
+
+/** The first step not yet ticked done, in the order the tour lists them - `-1` once every
+ * step is, so the caller can say so instead of landing back on the first. */
+export function nextUnchecked(steps: TourStep[], done: Record<string, boolean>): number {
+  for (let i = 0; i < steps.length; i++) if (!done[stepKey(steps[i])]) return i
+  return -1
+}
+
 /** Blank subjects dropped; nothing else about the commits is touched. */
 export function buildSteps(commits: TourCommit[]): TourStep[] {
   return commits.filter((c) => c.subject.trim().length > 0).map(stepFrom)

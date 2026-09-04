@@ -4039,6 +4039,39 @@ export default function App(): JSX.Element {
   const closeSoonsRef = useRef<CloseSoon[]>([])
   closeSoonsRef.current = closeSoons
   /**
+   * A queued mid-turn move's own countdown - the turn just ended over in handoffQueue.ts
+   * and it will run unless somebody stops it. Kept apart from `closeSoons`, whose plans
+   * live in `moveSoonRef` and whose Keep/Move actions mean something different (they run
+   * a fresh handoff the app decided on, not one already queued by a person's own button),
+   * but drawn by the SAME `MoveSoon` card - Robert, 2026-09-04: "it should still have
+   * countdown so i can stop it" - one clock, one face, whichever list named the pane.
+   */
+  const [queueSoons, setQueueSoons] = useState<CloseSoon[]>([])
+  const queueSoonsRef = useRef<CloseSoon[]>([])
+  queueSoonsRef.current = queueSoons
+  useEffect(() => {
+    return api.onHandoffSoon((soon) => {
+      if (soon.at == null) {
+        setQueueSoons((list) => list.filter((s) => s.ids[0] !== soon.id))
+        return
+      }
+      setQueueSoons((list) => {
+        const rest = list.filter((s) => s.ids[0] !== soon.id)
+        return [
+          ...rest,
+          {
+            key: `turn-${soon.id}`,
+            ids: [soon.id],
+            names: [paneWordRef.current(soon.id)],
+            deadline: soon.at as number,
+            why: 'turn',
+            move: { device: soon.device, deviceName: soon.deviceName }
+          }
+        ]
+      })
+    })
+  }, [])
+  /**
    * The panes a live countdown names. A Set because the sidebar asks this per row, and the
    * list is redrawn on every session broadcast.
    */
@@ -4513,6 +4546,39 @@ export default function App(): JSX.Element {
     // deadline. Without this the chip goes on counting down to a close an hour away.
     publishClosingRef.current()
   }, [])
+
+  /**
+   * The queued-move countdown's own Keep/Move, checked first because it is a different
+   * decision from everything else `MoveSoon` draws: the pane was queued by a person's own
+   * handoff button, not planned by a sweep, so "keep it here" is `cancelHandoff` (the same
+   * `remote:handoffCancel` the queue has always answered) and "move now" is that same
+   * cancel followed by an ordinary handoff - the wait is simply spent early.
+   */
+  const moveSoonKeep = useCallback(
+    (ids: string[]) => {
+      const soon = queueSoonsRef.current.find((c) => c.ids.some((id) => ids.includes(id)))
+      if (soon) {
+        setQueueSoons((list) => list.filter((c) => c !== soon))
+        for (const id of soon.ids) void api.cancelHandoff(id)
+        return
+      }
+      keepOpen(ids)
+    },
+    [keepOpen]
+  )
+  const moveSoonNow = useCallback(
+    (ids: string[]) => {
+      const soon = queueSoonsRef.current.find((c) => c.ids.some((id) => ids.includes(id)))
+      if (soon && soon.move) {
+        setQueueSoons((list) => list.filter((c) => c !== soon))
+        const { device } = soon.move
+        for (const id of soon.ids) void api.cancelHandoff(id).then(() => api.handoffToDevice(device, [id], false, true))
+        return
+      }
+      doSoonNow(ids)
+    },
+    [doSoonNow]
+  )
 
   /**
    * This pane was just used by a person - restart its idle clock and say so on the card.
@@ -6957,11 +7023,9 @@ export default function App(): JSX.Element {
         }}
       />
       <MoveSoon
-        soons={closeSoons}
-        onKeep={keepOpen}
-        onNow={(ids) =>
-          doSoonNow(ids)
-        }
+        soons={[...closeSoons, ...queueSoons]}
+        onKeep={moveSoonKeep}
+        onNow={moveSoonNow}
       />
       {/* A new pane the app decided to start on the other machine, before it does. */}
       <OffloadSoon />

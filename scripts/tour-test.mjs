@@ -12,7 +12,8 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const {
   buildSteps, makeTour, currentStep, next, previous, done, surfaceFor, tourAllowed,
   stepFrom, placesFor, trailersOf, firstParagraph, checkAllowed, readCheck, checkName, plainWords, howToCheck,
-  dwellFor, DWELL_CHECKS_MS, DWELL_LOOK_MS, DWELL_PLAIN_MS, NO_SCREEN
+  dwellFor, DWELL_CHECKS_MS, DWELL_LOOK_MS, DWELL_PLAIN_MS, NO_SCREEN,
+  stepKey, nextUnchecked
 } = await import(pathToFileURL(join(root, 'src/shared/tour.ts')).href)
 
 let failed = 0
@@ -183,6 +184,28 @@ console.log('it may never take the screen')
   ok('it is a static child of the corner stack, not its own fixed card', /corner-stack > \.tour-card/.test(css))
   ok('and it has no animation of its own', !/\.tour-card[^}]*animation:/.test(css) && !/\.tour-spot[^}]*animation:/.test(css))
   ok('the ring takes no clicks', /\.tour-spot\s*\{[^}]*pointer-events:\s*none/.test(css))
+}
+
+console.log('a ticked step is skipped, in order')
+{
+  const steps = buildSteps([c('First'), c('Second'), c('Third')])
+  ok('stepKey is the commit\'s own subject', stepKey(steps[0]) === 'First')
+  ok('nobody ticked: starts at the first', nextUnchecked(steps, {}) === 0)
+  ok('first ticked: lands on the second', nextUnchecked(steps, { First: true }) === 1)
+  ok('every one ticked: -1, never a guess', nextUnchecked(steps, { First: true, Second: true, Third: true }) === -1)
+}
+
+console.log('the card ticks steps off and remembers')
+{
+  const card = readFileSync(join(root, 'src/renderer/src/components/TourCard.tsx'), 'utf8')
+  ok('remembers ticked steps in localStorage', /localStorage/.test(card) && /tour\.done/.test(card))
+  ok('opens on the next unchecked step when the tour loads', /nextUnchecked/.test(card))
+  ok('a Done tick exists per step', /data-testid="tour-step-done"/.test(card) && /type="checkbox"/.test(card))
+  ok('the header counts what is checked', /of \{state\.steps\.length\} checked/.test(card))
+  ok('offers Close once every step is ticked', /Every step is checked off/.test(card))
+  // The tick is a record of what was looked at, not another way to make the app act: it
+  // must not resurrect the pane-opening helper Robert had removed.
+  ok('and ticking still opens no pane', !/startSessions/.test(card))
 }
 
 console.log(failed ? `\n${failed} failed` : '\ntour: all good')

@@ -2602,6 +2602,12 @@ export interface Api {
   /** Stop waiting on one. The pane stays here, unmarked. */
   cancelHandoff(id: string): Promise<boolean>
   /**
+   * A queued move's own countdown: the turn ended and it will run at `at` unless
+   * cancelled - `at: null` clears the card (busy again, cancelled, or the move ran).
+   * Fed into the same `MoveSoon.tsx` card the idle/pressure countdowns use.
+   */
+  onHandoffSoon(cb: (soon: { id: string; device: string; deviceName: string; at: number | null }) => void): () => void
+  /**
    * Whether each of these folders' code could reach another machine - a git checkout,
    * under the projects root, with an origin remote. Asked by the automatic sweeps before
    * they pick a pane, so a repo that cannot travel is never counted down at.

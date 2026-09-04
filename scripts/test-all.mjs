@@ -63,6 +63,7 @@ const TESTS = [
   ['interventions', 'interventions-test.mjs'],
   ['choices', 'choices-test.mjs'],
   ['handoffsteps', 'handoff-steps-test.mjs'],
+  ['panemodel', 'panemodel-test.mjs'],
   ['staleframe', 'stale-frame-test.mjs'],
   ['fixsign', 'fix-sign-test.mjs'],
   ['settingsearch', 'settings-search-test.mjs'],

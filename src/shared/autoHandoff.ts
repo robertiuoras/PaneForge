@@ -688,13 +688,26 @@ export interface Queued {
   /** epoch ms it was asked for */
   since: number
   closeReceiverWhenDone?: boolean
+  /**
+   * Set once the turn has ended and the move is counting down rather than happening
+   * outright - `undefined` while still working. Robert, 2026-09-04: "it shouldnt have
+   * moved this session to another device even if turn ended it should still have
+   * countdown so i can stop it". A pane that goes busy again before this expires clears
+   * it and goes back to plain waiting, same as it never finished.
+   */
+  goAt?: number
 }
+
+/** How long a finished pane counts down before a queued move actually runs. */
+export const QUEUE_COUNTDOWN_MS = 15_000
 
 /** What to do with a queued pane on this tick. */
 export type QueueVerdict =
-  /** its turn has ended and no question is on screen: move it now */
+  /** the countdown has run out: move it now */
   | 'go'
-  /** still working, or holding a question: leave it queued */
+  /** the turn just ended: start the countdown */
+  | 'soon'
+  /** still working, holding a question, or counting down: leave it queued */
   | 'wait'
   /** it waited longer than the budget: give up and say so, never kill it */
   | 'expired'
@@ -708,7 +721,10 @@ export function queueVerdict(
   now = 0
 ): QueueVerdict {
   if (!pane || pane.state === 'exited') return 'drop'
-  if (movable(pane)) return 'go'
+  if (movable(pane)) {
+    if (q.goAt == null) return 'soon'
+    return now >= q.goAt ? 'go' : 'wait'
+  }
   if (now - q.since >= Math.max(1, cfg.waitMinutes) * 60_000) return 'expired'
   return 'wait'
 }

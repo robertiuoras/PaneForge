@@ -134,7 +134,8 @@ export interface CloseSoon {
   /** `paneWord` strings, so the sentence names panes the way the rest of the app does. */
   names: string[]
   deadline: number
-  why: 'idle' | 'pressure'
+  /** `'turn'` is a queued mid-turn move whose turn just ended - see handoffQueue.ts. */
+  why: 'idle' | 'pressure' | 'turn'
   /**
    * Set when the countdown is a MOVE to another machine rather than a close.
    *

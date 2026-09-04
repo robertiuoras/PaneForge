@@ -69,7 +69,8 @@ export interface AutoClearArm {
   tokens?: number
 }
 import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from './pipe'
-import { forgetSession, noteSession, resumeIdFor } from './transcripts'
+import { forgetSession, noteSession, resumeIdFor, transcriptPath } from './transcripts'
+import { liveModelFor } from './paneModel'
 import { endHookDeny, feedHookDeny } from './hookDeny'
 import { continueAfterRestore, restoredClock } from '../shared/restoreTurn'
 
@@ -91,7 +92,7 @@ import {
 } from '../shared/slashTurn'
 import { feedDraft, newDraft, type DraftState } from '../shared/draft'
 import { OutBuffer } from './outBuffer'
-import { allAgents, buildArgs, hasAgent, resolveEnv } from '../shared/agents'
+import { allAgents, buildArgs, hasAgent, modelValue, resolveEnv } from '../shared/agents'
 import { homedir } from 'node:os'
 import { allowsCwd, scrubForeignKeys } from '../shared/paneTrust'
 import { anchoredStart, readsBusy, composerHeld, type BusyReason } from '../shared/busy'
@@ -480,6 +481,11 @@ interface Live {
  * `app` is this process (`queuePrompt`); `phone` is a browser client over `phone.ts`.
  */
 export type WriteOrigin = 'desk' | 'app' | 'phone'
+
+/** Every model value the Claude Code catalogue itself knows, for `liveModelFor`'s mapping. */
+function claudeModelValues(): string[] {
+  return (specFor('claude').models ?? []).map(modelValue)
+}
 
 export class SessionManager extends EventEmitter {
   private sessions = new Map<string, Live>()
@@ -3129,6 +3135,20 @@ export class SessionManager extends EventEmitter {
       if (open !== meta.handoffOpen) {
         meta.handoffOpen = open
         changed = true
+      }
+      // ...and what model the pane is REALLY running, which the launch flag stops being
+      // true about the moment somebody types `/model` inside the CLI - that changes
+      // nothing the app reads, only the transcript the CLI writes on every turn. Only a
+      // Claude Code pane has that transcript shape; every other agent keeps its launch
+      // value untouched. `liveModelFor` falls back to the launch value on its own when the
+      // transcript has nothing to say, so this never blanks the chip.
+      if (meta.agent === 'claude') {
+        const path = transcriptPath(meta.cwd, resumeIdFor(meta.id) ?? '')
+        const live2 = liveModelFor(path, meta.model, claudeModelValues(), now)
+        if (live2 !== meta.model) {
+          meta.model = live2
+          changed = true
+        }
       }
       const busyOnScreen = live.busyUntil > now || jobName !== null
       // A SHELL pane's turn is its foreground command and nothing else, so it ends the

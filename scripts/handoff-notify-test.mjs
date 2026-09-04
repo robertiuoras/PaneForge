@@ -48,6 +48,7 @@ function harness(overrides = {}) {
   const said = []
   const logged = []
   let panes = [{ id: 'p1', title: 'assistant - upwork pricing', status: 'running' }]
+  let clock = NOW
   const deps = {
     list: () => panes,
     busy: () => false,
@@ -57,17 +58,39 @@ function harness(overrides = {}) {
     config: () => CFG,
     log: (line) => logged.push(line),
     notify: (line) => said.push(line),
-    now: () => NOW,
+    now: () => clock,
     ...overrides
   }
-  return { deps, said, logged, queue: new HandoffQueue(deps), setPanes: (p) => (panes = p) }
+  return {
+    deps,
+    said,
+    logged,
+    queue: new HandoffQueue(deps),
+    setPanes: (p) => (panes = p),
+    advance: (ms) => (clock += ms)
+  }
+}
+
+/**
+ * Turn-ended -> countdown armed -> countdown elapsed -> moved.
+ *
+ * The queue no longer moves a finished pane the instant its turn ends (Robert,
+ * 2026-09-04: "it shouldnt have moved this session ... it should still have countdown so
+ * i can stop it") - the first tick only arms a 15s countdown, and a second tick past the
+ * deadline is what actually runs it. Every earlier test here wants the move to happen, so
+ * this is the two-tick shape that replaces the old single `tick()`.
+ */
+function runPastCountdown(h) {
+  h.queue.tick() // 'soon': arms the countdown, does not move
+  h.advance(15_000)
+  h.queue.tick() // 'go': the countdown has elapsed
 }
 
 // 1. The success case - the one that killed the pane and said nothing.
 {
   const h = harness()
   h.queue.add('p1', 'dev-pc')
-  h.queue.tick()
+  runPastCountdown(h)
   await new Promise((r) => setTimeout(r, 20))
   ok('a completed move is said on screen', h.said.length === 1, JSON.stringify(h.said))
   ok('the message names the pane', (h.said[0] ?? '').includes('assistant - upwork pricing'), h.said[0])
@@ -84,7 +107,7 @@ function harness(overrides = {}) {
     }
   })
   h.queue.add('p1', 'dev-pc')
-  h.queue.tick()
+  runPastCountdown(h)
   await new Promise((r) => setTimeout(r, 20))
   ok('the title survives the pane being killed', (h.said[0] ?? '').includes('assistant - upwork pricing'), h.said[0])
 }
@@ -93,7 +116,7 @@ function harness(overrides = {}) {
 {
   const h = harness({ send: async () => [{ id: 'p1', ok: false, error: 'Receiver has uncommitted work', notes: [] }] })
   h.queue.add('p1', 'dev-pc')
-  h.queue.tick()
+  runPastCountdown(h)
   await new Promise((r) => setTimeout(r, 20))
   ok('a refused move is said on screen', h.said.length === 1, JSON.stringify(h.said))
   ok('it carries the reason', (h.said[0] ?? '').includes('uncommitted work'), h.said[0])
@@ -107,7 +130,7 @@ function harness(overrides = {}) {
     }
   })
   h.queue.add('p1', 'dev-pc')
-  h.queue.tick()
+  runPastCountdown(h)
   await new Promise((r) => setTimeout(r, 20))
   ok('a thrown move failure is said on screen', (h.said[0] ?? '').includes('Push failed'), h.said[0])
 }
@@ -128,7 +151,7 @@ function harness(overrides = {}) {
 {
   const h = harness({ notify: undefined })
   h.queue.add('p1', 'dev-pc')
-  h.queue.tick()
+  runPastCountdown(h)
   await new Promise((r) => setTimeout(r, 20))
   ok('a queue with no notify still logs and does not throw', h.logged.length >= 1)
 }
@@ -150,7 +173,7 @@ function harness(overrides = {}) {
   const going = []
   const g = harness({ mark: (id, on, queuedAt) => going.push({ id, on, queuedAt }) })
   g.queue.add('p1', 'dev-pc')
-  g.queue.tick()
+  runPastCountdown(g)
   await new Promise((r) => setTimeout(r, 20))
   // `null`, and never `undefined` - that is the whole of the "it says moving and it is not
   // moving" bug. Every OTHER entry into a handoff paints the pane before it knows whether
@@ -189,6 +212,107 @@ function harness(overrides = {}) {
   ok('the context menu and the phone sheet both offer it', (app.match(/'stop-move'/g) ?? []).length >= 2)
   const main = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
   ok('the channel returns the queue answer rather than a bare true', /handoffCancel'[^\n]*handoffQueue\.drop\(String\(id\)\)\)/.test(main), 'remote:handoffCancel')
+}
+
+// 10. A finished pane counts down before it moves, so a person watching the desk gets the
+//     same chance to stop it a manual handoff does - Robert, 2026-09-04: "it shouldnt have
+//     moved this session to another device even if turn ended it should still have
+//     countdown so i can stop it". `send()` must not fire until the countdown itself does.
+{
+  let clock = NOW
+  let busy = false
+  const soons = []
+  const sent = []
+  const h = harness({
+    busy: () => busy,
+    now: () => clock,
+    soon: (id, device, at) => soons.push({ id, device, at }),
+    send: async (id, device, closeAfter) => {
+      sent.push({ id, device, closeAfter })
+      return [{ id, ok: true, notes: [] }]
+    }
+  })
+  h.queue.add('p1', 'dev-pc')
+  h.queue.tick() // the turn has already ended (busy: () => false)
+  ok('the turn ending starts a countdown, not a move', soons.length === 1 && soons[0].at === clock + 15_000, JSON.stringify(soons))
+  ok('nothing is sent while the countdown runs', sent.length === 0)
+
+  clock += 5_000
+  h.queue.tick()
+  ok('still counting down: no second soon(), still nothing sent', soons.length === 1 && sent.length === 0, JSON.stringify({ soons, sent }))
+
+  clock += 10_000 // 15s total
+  h.queue.tick()
+  await new Promise((r) => setTimeout(r, 20))
+  ok('the countdown elapsing runs the move', sent.length === 1 && sent[0].id === 'p1', JSON.stringify(sent))
+  ok('the card is cleared once the move actually starts', soons.at(-1)?.at === null, JSON.stringify(soons.at(-1)))
+}
+
+// 11. Cancelling during the countdown drops it - never sent, and the card comes down.
+{
+  let clock = NOW
+  const soons = []
+  const sent = []
+  const h = harness({
+    busy: () => false,
+    now: () => clock,
+    soon: (id, device, at) => soons.push({ id, device, at }),
+    send: async (id) => {
+      sent.push(id)
+      return [{ id, ok: true, notes: [] }]
+    }
+  })
+  h.queue.add('p1', 'dev-pc')
+  h.queue.tick()
+  ok('countdown armed', soons.length === 1 && soons[0].at !== null)
+  ok('cancel says it took something off', h.queue.drop('p1') === true)
+  ok('the card is cleared by the cancel', soons.at(-1)?.at === null, JSON.stringify(soons.at(-1)))
+
+  clock += 20_000
+  h.queue.tick()
+  ok('cancelled during the countdown is never sent, however long the clock runs', sent.length === 0, JSON.stringify(sent))
+}
+
+// 12. The pane going busy again during the countdown returns it to plain waiting - the
+//     countdown card comes down, but the queue entry itself is untouched, so it counts down
+//     again once the pane finishes for real.
+{
+  let clock = NOW
+  let busy = false
+  const soons = []
+  const sent = []
+  const h = harness({
+    busy: () => busy,
+    now: () => clock,
+    soon: (id, device, at) => soons.push({ id, device, at }),
+    send: async (id) => {
+      sent.push(id)
+      return [{ id, ok: true, notes: [] }]
+    }
+  })
+  h.queue.add('p1', 'dev-pc')
+  h.queue.tick()
+  ok('countdown armed once the turn first ends', soons.length === 1 && soons[0].at !== null)
+
+  busy = true // typed into again mid-countdown
+  clock += 5_000
+  h.queue.tick()
+  ok('busy again drops the countdown card', soons.at(-1)?.at === null, JSON.stringify(soons.at(-1)))
+  ok('...but the pane is still queued, not dropped from the desk', h.queue.pending().some((q) => q.id === 'p1'))
+
+  clock += 20_000 // long past where the FIRST countdown would have fired
+  h.queue.tick()
+  ok('still busy: nothing sent, no matter how long the old countdown would have run', sent.length === 0, JSON.stringify(sent))
+
+  busy = false // finishes for real
+  h.queue.tick()
+  ok('finishing for real arms a fresh countdown rather than moving straight away', soons.length === 3 && soons.at(-1).at === clock + 15_000, JSON.stringify(soons))
+  ok('still nothing sent until that countdown elapses too', sent.length === 0)
+
+  clock += 15_000
+  h.queue.tick()
+  await new Promise((r) => setTimeout(r, 20))
+  ok('the second countdown elapsing moves it', sent.length === 1 && sent[0] === 'p1', JSON.stringify(sent))
 }
 
 rmSync(out, { recursive: true, force: true })

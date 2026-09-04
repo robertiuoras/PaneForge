@@ -22,10 +22,32 @@
 
 import { useEffect, useState } from 'react'
 import type { TourCheck, TourState, TourSurface } from '../../../shared/tour'
-import { checkName, currentStep, done, dwellFor, howToCheck, next, previous } from '../../../shared/tour'
+import { checkName, currentStep, done, dwellFor, howToCheck, next, nextUnchecked, previous, stepKey } from '../../../shared/tour'
 import CardX from './CardX'
 
 const api = window.api
+
+// Which steps have been ticked done - kept across a reopen of the same dev copy. Keyed by
+// the commit's own subject (`stepKey`), never a slot number, so a rebuilt tour with the
+// same commits still remembers what was already looked at.
+const DONE_KEY = 'tour.done'
+
+function loadMap(key: string): Record<string, boolean> {
+  try {
+    const raw = localStorage.getItem(key)
+    return raw ? (JSON.parse(raw) as Record<string, boolean>) : {}
+  } catch {
+    return {}
+  }
+}
+
+function saveMap(key: string, map: Record<string, boolean>): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(map))
+  } catch {
+    // Private window or full storage - the tour still works, it just forgets between opens.
+  }
+}
 
 export interface TourCardProps {
   /** Set the same state the button for that surface sets - `setPicking(true)` for New
@@ -73,16 +95,26 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
   // for each new feature to test". So the card waits on `Start`, and each step's checks
   // wait on their own press.
   const [playing, setPlaying] = useState(false)
+  const [doneMap, setDoneMap] = useState<Record<string, boolean>>(() => loadMap(DONE_KEY))
 
   useEffect(() => {
     let live = true
     void api
       .tour()
-      .then((t) => live && setState(t))
+      .then((t) => {
+        if (!live || !t) return
+        // A step already ticked done is skipped - the tour opens on the first one that is
+        // not, never back at the first step just because it exists.
+        const start = nextUnchecked(t.steps, doneMap)
+        setState(start === -1 ? t : { ...t, index: start })
+      })
       .catch(() => undefined)
     return () => {
       live = false
     }
+    // Only runs once, at mount - `doneMap` here is whatever loaded from storage before this
+    // fired, which is all a start position needs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const index = state?.index ?? -1
@@ -137,13 +169,45 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
   const step = currentStep(state)
   const isLast = done(state)
   const check = checks[index]
+  const key = stepKey(step)
+  const doneCount = state.steps.filter((s) => doneMap[stepKey(s)]).length
+  const allDone = doneCount === state.steps.length
+
+  // Ticking a step off moves to the next one still unticked, so the card is always sitting
+  // on something that has not been looked at yet.
+  const markDone = (): void => {
+    if (doneMap[key]) return
+    const nextDone = { ...doneMap, [key]: true }
+    setDoneMap(nextDone)
+    saveMap(DONE_KEY, nextDone)
+    const upcoming = nextUnchecked(state.steps, nextDone)
+    if (upcoming !== -1) setState((s) => (s ? { ...s, index: upcoming } : s))
+  }
+
+  if (allDone)
+    return (
+      <div className="tour-card" role="status" data-testid="tour-card">
+        <CardX onDismiss={() => setGone(true)} />
+        <div className="tour-count">
+          {doneCount} of {state.steps.length} checked
+        </div>
+        <div className="tour-body">
+          <div className="tour-text">Every step is checked off.</div>
+        </div>
+        <div className="tour-acts">
+          <button type="button" className="primary small" data-testid="tour-done" onClick={() => setGone(true)}>
+            Close
+          </button>
+        </div>
+      </div>
+    )
 
   return (
     <>
       <div className="tour-card" role="status" data-testid="tour-card">
         <CardX onDismiss={() => setGone(true)} />
         <div className="tour-count">
-          {state.index + 1} of {state.steps.length}
+          {doneCount} of {state.steps.length} checked
           {playing && !isLast ? ' · playing' : ''}
         </div>
         <div className="tour-body">
@@ -217,8 +281,12 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
               Next
             </button>
           )}
-          <button type="button" className="primary small" data-testid="tour-done" onClick={() => setGone(true)}>
+          <label className="tour-step-done">
+            <input type="checkbox" data-testid="tour-step-done" checked={!!doneMap[key]} disabled={!!doneMap[key]} onChange={markDone} />
             Done
+          </label>
+          <button type="button" className="primary small" data-testid="tour-dismiss" onClick={() => setGone(true)}>
+            Close
           </button>
         </div>
       </div>
