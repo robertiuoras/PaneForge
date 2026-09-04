@@ -13,8 +13,10 @@ const {
   buildSteps, makeTour, currentStep, next, previous, done, surfaceFor, tourAllowed,
   stepFrom, placesFor, trailersOf, firstParagraph, checkAllowed, readCheck, checkName, plainWords, howToCheck,
   dwellFor, waitsForYou, DWELL_CHECKS_MS, DWELL_PLAIN_MS, NO_SCREEN,
-  stepKey, nextUnchecked, checkWords, summaryCount, checkedWords, demoFor, titleFor, checkedAll, spotFits
+  stepKey, nextUnchecked, checkWords, summaryCount, checkedWords, demoFor, titleFor, checkedAll
 } = await import(pathToFileURL(join(root, 'src/shared/tour.ts')).href)
+
+const { spotFits } = await import(pathToFileURL(join(root, 'src/shared/lookCheck.ts')).href)
 
 let failed = 0
 const ok = (what, cond, extra = '') => {
@@ -114,7 +116,7 @@ console.log('where a change lives comes off the files it touched, in words')
   ok('five places are read as the two nearest', many.where === 'the New session dialog and this card', many.where)
   ok('and a screen never shares the line with "nothing to click"', !/nothing to click/.test(many.where))
   ok('a change with no screen at all still says so', placesFor(['src/main/tour.ts', 'src/shared/tour.ts']).where === 'inside the app, nothing to click')
-  ok('and ringed', p.spot === '.dialog')
+  ok('and ringed on a control, not the whole box', p.spot === '.dialog .dialog-head')
   ok('a component nobody listed is still named off its own name', placesFor(['src/renderer/src/components/HandoffDialog.tsx']).where === 'the Handoff dialog')
   ok('main-process files say there is nothing to click', placesFor(['src/main/devServers.ts']).where === 'inside the app, nothing to click')
   ok('the try command is not this window', /npm run try/.test(placesFor(['scripts/try.mjs']).where))
@@ -310,7 +312,9 @@ console.log('the installed app never gets a tour')
 console.log('it may never take the screen')
 {
   const card = readFileSync(join(root, 'src/renderer/src/components/TourCard.tsx'), 'utf8')
-  ok('drawn in the renderer, never a dialog', !/showMessageBox|dialog\./.test(card))
+  // Electron's own dialog API, which is what may never be used here - not the CSS class
+  // `.dialog.settings`, which is a selector this card reads to check a surface opened.
+  ok('drawn in the renderer, never a dialog', !/showMessageBox|\bdialog\.show/.test(card))
   ok('never focuses or raises anything', !/focus\(|setAlwaysOnTop|moveTop/.test(card))
   ok('and it opens no pane and types no prompt of its own', !/startSessions/.test(card))
   const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
@@ -381,7 +385,11 @@ console.log('a step is named after the thing on screen, not the commit subject')
   ok('a ring over most of the window is not drawn', !spotFits({ width: 618, height: 1050 }, { width: 960, height: 1080 }))
   ok('a header row still gets its ring', spotFits({ width: 600, height: 34 }, { width: 960, height: 1080 }))
   ok('nothing measured is never ringed', !spotFits({ width: 0, height: 0 }, { width: 960, height: 1080 }))
-  ok('no step rings the whole pane', !/spot: '\.pane'/.test(readFileSync(join(root, 'src/shared/tour.ts'), 'utf8')))
+  const tourSrc = readFileSync(join(root, 'src/shared/tour.ts'), 'utf8')
+  ok('no step rings the whole pane', !/spot: '\.pane'/.test(tourSrc))
+  // A dialog box is 636x900 of a 960x1080 window - 61%. The ring goes round its head.
+  ok('no step rings a whole dialog', !/spot: '\.dialog'/.test(tourSrc) && !/'\.dialog\.settings'/.test(tourSrc))
+  ok('the New session step rings its head', /'\.dialog \.dialog-head'/.test(tourSrc))
 }
 
 console.log('every suite a step ran is ONE line')

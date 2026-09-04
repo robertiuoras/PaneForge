@@ -67,21 +67,6 @@ export interface TourStep {
   spot?: string
 }
 
-/**
- * Is this box small enough to be a RING rather than a wash over the window?
- *
- * A ring around something that fills the screen says nothing and looks like a fault; the
- * `.pane` ring was 618x1050 of a 960x1080 window - 62% of it - and read as a glowing line
- * down the left. Anything over `SPOT_MAX_FRAC` of the window is not drawn at all.
- */
-export const SPOT_MAX_FRAC = 0.45
-
-export function spotFits(box: { width: number; height: number }, win: { width: number; height: number }): boolean {
-  if (box.width <= 0 || box.height <= 0) return false
-  if (win.width <= 0 || win.height <= 0) return false
-  return (box.width * box.height) / (win.width * win.height) <= SPOT_MAX_FRAC
-}
-
 export interface TourState {
   steps: TourStep[]
   index: number
@@ -131,8 +116,8 @@ interface Place {
 export const NO_SCREEN = 'inside the app, nothing to click'
 
 const PLACES: ReadonlyArray<readonly [RegExp, Place]> = [
-  [/components\/NewSessionDialog\.tsx$/, { where: 'the New session dialog', open: 'newSession', spot: '.dialog' }],
-  [/components\/SettingsDialog\.tsx$/, { where: 'Settings', open: 'settings', spot: '.dialog.settings' }],
+  [/components\/NewSessionDialog\.tsx$/, { where: 'the New session dialog', open: 'newSession', spot: '.dialog .dialog-head' }],
+  [/components\/SettingsDialog\.tsx$/, { where: 'Settings', open: 'settings', spot: '.dialog.settings .dialog-head' }],
   [/components\/TourCard\.tsx$/, { where: 'this card' }],
   [/components\/TerminalPane\.tsx$/, { where: 'a pane', open: 'pane', spot: '.pane-title' }],
   [/(?:renderer\/src|shared)\/headerFit\.ts$/, { where: "a session's header", open: 'pane', spot: '.pt-actions' }],
@@ -321,10 +306,13 @@ export function firstParagraph(body: string, cap = 320): string {
 }
 
 /** What to ring when only the SENTENCE said which surface a change is about. */
+/* A ring goes round a CONTROL, never a container: `.dialog` measured 636x900 - 61% of
+   the window - and drew a rectangle round the whole screen (found by the look check,
+   2026-09-04, steps 22 and 30). The dialog's own head names it and fits. */
 const SURFACE_SPOT: Record<TourSurface, string | undefined> = {
   pane: '.pane-title',
-  newSession: '.dialog',
-  settings: '.dialog.settings',
+  newSession: '.dialog .dialog-head',
+  settings: '.dialog.settings .dialog-head',
   sidebarHidden: '.side-reveal',
   workspaces: '.sidebar',
   none: undefined

@@ -14,8 +14,6 @@
  * `scripts/look-check-test.mjs` runs it with no window at all.
  */
 
-import { spotFits } from './tour'
-
 /** What the renderer measured for one step. `null` = nothing on screen matched. */
 export interface LookReading {
   /** the ringed control, as the window measures it */
@@ -29,6 +27,21 @@ export interface LookVerdict {
   ok: boolean
   /** One line, in the words of somebody looking at the screen. */
   says: string
+}
+
+/**
+ * Is this box small enough to be a RING rather than a wash over the window?
+ *
+ * A ring around something that fills the screen says nothing and looks like a fault; the
+ * `.pane` ring was 618x1050 of a 960x1080 window - 62% of it - and read as a glowing line
+ * down the left. Anything over `SPOT_MAX_FRAC` of the window is not drawn at all.
+ */
+export const SPOT_MAX_FRAC = 0.45
+
+export function spotFits(box: { width: number; height: number }, win: { width: number; height: number }): boolean {
+  if (box.width <= 0 || box.height <= 0) return false
+  if (win.width <= 0 || win.height <= 0) return false
+  return (box.width * box.height) / (win.width * win.height) <= SPOT_MAX_FRAC
 }
 
 /** A control this small is not something a person can be pointed at. */

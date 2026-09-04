@@ -46,6 +46,7 @@ const TESTS = [
   ['unwrapcopy', 'unwrap-copy-test.mjs'],
   ['whatsnew', 'whatsnew-test.mjs'],
   ['tour', 'tour-test.mjs'],
+  ['look', 'look-check-test.mjs'],
   ['cardidle', 'card-idle-test.mjs'],
   ['devkeep', 'devkeep-test.mjs'],
   ['headerfit', 'header-fit-test.mjs'],

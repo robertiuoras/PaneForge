@@ -25,8 +25,8 @@
 import { useEffect, useState } from 'react'
 import type { TourCheck, TourProgress, TourState, TourStep, TourSurface } from '../../../shared/tour'
 import type { SoundConfig } from '../../../shared/sounds'
-import { NO_SCREEN, checkWords, checkedAll, spotFits, checkedWords, currentStep, demoFor, done, dwellFor, howToCheck, next, nextUnchecked, previous, stepKey, waitsForYou } from '../../../shared/tour'
-import { lookVerdict, type LookVerdict } from '../../../shared/lookCheck'
+import { NO_SCREEN, checkWords, checkedAll, checkedWords, currentStep, demoFor, done, dwellFor, howToCheck, next, nextUnchecked, previous, stepKey, waitsForYou } from '../../../shared/tour'
+import { lookVerdict, spotFits, type LookVerdict } from '../../../shared/lookCheck'
 import { previewSound } from '../useChime'
 import CardX from './CardX'
 
