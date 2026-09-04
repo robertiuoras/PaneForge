@@ -53,6 +53,7 @@ export const SURFACE: Surface = {
   getBuffer: ['invoke', 'sessions:buffer'],
   whatsNew: ['invoke', 'app:whatsNew'],
   tour: ['invoke', 'app:tour'],
+  tourCheck: ['invoke', 'app:tourCheck'],
   paneLog: ['invoke', 'sessions:log'],
   pipePane: ['invoke', 'sessions:pipe'],
   reorderSessions: ['send', 'sessions:reorder'],

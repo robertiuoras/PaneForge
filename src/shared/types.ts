@@ -2178,6 +2178,11 @@ export interface Api {
    * `shared/tour.ts`.
    */
   tour(): Promise<import('./tour').TourState | null>
+  /**
+   * Runs one of the checkout's own `scripts/<name>-test.mjs` for a tour step and reads
+   * its answer. Refused outside a dev copy and for any other path. See `shared/tour.ts`.
+   */
+  tourCheck(script: string): Promise<import('./tour').TourCheck>
   /** replay of everything the pty printed so far, for re-attaching a pane */
   getBuffer(id: string): Promise<string>
   /**

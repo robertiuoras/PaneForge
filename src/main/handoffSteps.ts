@@ -44,7 +44,19 @@ const cache = new Map<string, { at: number; reading: HandoffReading }>()
 export function handoffFor(cwd: string, paneId: string, now = Date.now()): HandoffReading {
   const key = `${paneId} ${cwd}`
   const hit = cache.get(key)
-  if (hit && now - hit.at < CACHE_MS) return hit.reading
+  // A cached reading is served only while the file it read is the file on disk. The
+  // clear hook rewrites the handoff and asks for the clear inside the same second, and a
+  // reading the chip took moments earlier - of a handoff that then said None - refused a
+  // clear whose steps were already written (2026-09-04, s10-mtm6ccmk, 206k tokens). The
+  // stat is the cheap half; the absent-file case still costs nothing for CACHE_MS.
+  if (hit && now - hit.at < CACHE_MS) {
+    if (!hit.reading.path) return hit.reading
+    try {
+      if (statSync(hit.reading.path).mtimeMs === hit.reading.mtimeMs) return hit.reading
+    } catch {
+      /* gone - read again */
+    }
+  }
   let best: HandoffReading = NONE
   for (const p of handoffCandidates(cwd, paneId, homedir(), symlinked)) {
     try {

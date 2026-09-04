@@ -644,6 +644,10 @@ ok(!server.running, 'the gate test server stopped cleanly')
     // Read-only, and only ever answers non-null in a dev copy (`tourAllowed`) - the
     // installed app's own git history said back to it, same shape as `app:whatsNew`.
     'app:tour',
+    // Runs one of the checkout's OWN test scripts (`checkAllowed` refuses any other path)
+    // and only in a dev copy; types nothing, reaches no pty, and the installed app
+    // answers a refusal.
+    'app:tourCheck',
     'app:quitIdle', 'sessions:buffer', 'sessions:log', 'drive:stop', 'drive:list',
     'drive:clear', 'goal:list', 'goal:cancel', 'goal:remove', 'goal:clear', 'config:get',
     'config:pickRoot', 'sounds:add', 'sounds:data', 'sounds:remove', 'sounds:rename',
