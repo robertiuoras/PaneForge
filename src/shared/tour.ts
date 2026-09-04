@@ -372,24 +372,43 @@ export function next(state: TourState): TourState {
  * Three lengths, and the reason for each:
  *  - a step whose checks are RUNNING holds (`null`). They only run because somebody
  *    pressed Run, so moving off the result they asked for is the one unforgivable step.
- *  - a step with something on screen - a surface it opened, a control it ringed - gets the
- *    long one: that is the only kind read by looking rather than by reading a line.
+ *  - a step with something on screen - a surface it opened, a control it ringed - holds
+ *    too (`waitsForYou`), for as long as it takes: that is the kind you read by looking at
+ *    the app rather than at the card, and the card cannot know when you have finished.
  *  - everything else gets the short one, being one sentence and a tick already drawn.
  *
- * They were 3.5s/7s/4s and every one of them was too short to read the card, let alone go
- * and look at the thing it names: Robert, 2026-09-04, "start the tour doesnt work and goes
- * by too quick ... it keeps going next thing". Doubled, and the long one is fourteen
- * seconds because it is the only kind that asks somebody to move their eyes off the card.
+ * They were 3.5s/7s/4s and every one was too short to read the card: Robert, 2026-09-04,
+ * "start the tour doesnt work and goes by too quick ... it keeps going next thing". The
+ * two that are left are nine seconds, and the third was not made longer - it was replaced
+ * by waiting for a person, which is the only honest length for a step with something to
+ * do on it.
  */
 export const DWELL_CHECKS_MS = 9000
-export const DWELL_LOOK_MS = 14_000
 export const DWELL_PLAIN_MS = 9000
+
+/**
+ * A step nothing may move off until a PERSON says so.
+ *
+ * Anything with a surface opened or a control ringed is a step whose whole content is on
+ * the screen behind the card - a dialog to open, a box to type in, a button to press. No
+ * number of seconds is the right number for that, because the answer depends on how long
+ * somebody wants to poke at it: Robert, 2026-09-04, "it should wait if theres any test
+ * like new session and has to type in there and also i can just mark myself if theres more
+ * time to properly check". So the clock does not run there at all. The card says it is
+ * waiting, and Done or Next is what moves it.
+ *
+ * The steps that DO move on their own are the ones with nothing to do: one sentence, and a
+ * result the app fetched itself.
+ */
+export function waitsForYou(step: Pick<TourStep, 'open' | 'spot'>): boolean {
+  return step.open !== 'none' || !!step.spot
+}
 
 export function dwellFor(step: TourStep, checksRunning: boolean): number | null {
   // A check only runs because somebody pressed it, and moving off a result nobody has
   // seen is the same defect as having no result: while one is in flight, the tour holds.
   if (checksRunning) return null
-  if (step.open !== 'none' || step.spot) return DWELL_LOOK_MS
+  if (waitsForYou(step)) return null
   return step.checks.length ? DWELL_CHECKS_MS : DWELL_PLAIN_MS
 }
 

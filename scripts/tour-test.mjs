@@ -12,7 +12,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const {
   buildSteps, makeTour, currentStep, next, previous, done, surfaceFor, tourAllowed,
   stepFrom, placesFor, trailersOf, firstParagraph, checkAllowed, readCheck, checkName, plainWords, howToCheck,
-  dwellFor, DWELL_CHECKS_MS, DWELL_LOOK_MS, DWELL_PLAIN_MS, NO_SCREEN,
+  dwellFor, waitsForYou, DWELL_CHECKS_MS, DWELL_PLAIN_MS, NO_SCREEN,
   stepKey, nextUnchecked
 } = await import(pathToFileURL(join(root, 'src/shared/tour.ts')).href)
 
@@ -65,10 +65,13 @@ console.log('the tour holds on a step long enough to read it')
 {
   // 3.5s/7s/4s was too short to read the card, let alone look at what it names - Robert,
   // 2026-09-04: "start the tour doesnt work and goes by too quick".
-  ok('a step with something on screen gets the longest hold', DWELL_LOOK_MS >= 12_000, String(DWELL_LOOK_MS))
   ok('a plain step is held long enough to read', DWELL_PLAIN_MS >= 8000, String(DWELL_PLAIN_MS))
   ok('a checked step too', DWELL_CHECKS_MS >= 8000, String(DWELL_CHECKS_MS))
-  ok('looking takes longer than reading', DWELL_LOOK_MS > DWELL_PLAIN_MS)
+  // A step with something to DO on it has no right length at all - it waits.
+  ok('a step that opens a surface waits for a person', waitsForYou({ open: 'newSession' }))
+  ok('a ringed control waits too', waitsForYou({ open: 'none', spot: '.pane' }))
+  ok('a sentence with nothing to do does not', !waitsForYou({ open: 'none' }))
+  ok('and the clock does not run on one that waits', dwellFor({ open: 'newSession', checks: [], spot: '.dialog' }, false) === null)
 }
 
 console.log('the index clamps at both ends')
@@ -190,10 +193,12 @@ console.log('the tour plays itself')
   const plain = { text: 'x', open: 'none', where: NO_SCREEN, see: [], checks: [], byHand: [] }
   ok('a check in flight holds the tour where it is', dwellFor(checked, true) === null)
   ok('and it moves on once the result is on the card', dwellFor(checked, false) === DWELL_CHECKS_MS)
-  ok('something on screen is given longer to be looked at', dwellFor(looking, false) === DWELL_LOOK_MS)
-  ok('a ring alone counts as something to look at', dwellFor({ ...plain, spot: '.pane' }, false) === DWELL_LOOK_MS)
-  ok('a sentence with nothing to see gets the short one', dwellFor(plain, false) === DWELL_PLAIN_MS)
-  ok('looking always beats reading', DWELL_LOOK_MS > DWELL_PLAIN_MS && DWELL_LOOK_MS > DWELL_CHECKS_MS)
+  // A step with something on screen has something to DO on it - a dialog to open, a box to
+  // type in - so the clock does not run there at all: it waits for a person.
+  ok('something on screen waits, never counts down', dwellFor(looking, false) === null)
+  ok('a ring alone waits too', dwellFor({ ...plain, spot: '.pane' }, false) === null)
+  ok('a sentence with nothing to do moves on by itself', dwellFor(plain, false) === DWELL_PLAIN_MS)
+  ok('the card says so while it waits', /data-testid="tour-wait"/.test(readFileSync(join(root, 'src/renderer/src/components/TourCard.tsx'), 'utf8')))
   const card = readFileSync(join(root, 'src/renderer/src/components/TourCard.tsx'), 'utf8')
   ok('the card waits to be started, and takes no turn nobody asked for', /const \[playing, setPlaying\] = useState\(false\)/.test(card))
   ok('a suite runs only when it is pressed', /data-testid="tour-run"/.test(card) && !/tourCheck[\s\S]{0,400}useEffect/.test(card))

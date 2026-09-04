@@ -22,7 +22,7 @@
 
 import { useEffect, useState } from 'react'
 import type { TourCheck, TourState, TourStep, TourSurface } from '../../../shared/tour'
-import { NO_SCREEN, checkName, currentStep, done, dwellFor, howToCheck, next, nextUnchecked, previous, stepKey } from '../../../shared/tour'
+import { NO_SCREEN, checkName, currentStep, done, dwellFor, howToCheck, next, nextUnchecked, previous, stepKey, waitsForYou } from '../../../shared/tour'
 import CardX from './CardX'
 
 const api = window.api
@@ -230,12 +230,17 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
         <CardX onDismiss={() => setGone(true)} />
         <div className="tour-count">
           {doneCount} of {state.steps.length} checked
-          {playing && !isLast ? ' · playing' : ''}
+          {playing && !isLast ? (waitsForYou(step) ? ' · waiting for you' : ' · playing') : ''}
         </div>
         <div className="tour-body">
           <div className="tour-text">{step.text}</div>
           {step.where !== NO_SCREEN && <div className="tour-where">Where to look: {step.where}</div>}
           <div className="tour-how">{howToCheck(step)}</div>
+          {playing && waitsForYou(step) && (
+            <div className="tour-wait" data-testid="tour-wait">
+              Take as long as you want here - tick Done or press Next to carry on.
+            </div>
+          )}
         {step.see.length > 0 && (
           <ul className="tour-see">
             {step.see.map((s, i) => (

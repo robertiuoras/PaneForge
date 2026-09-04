@@ -3215,6 +3215,10 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
 .tour-text { color: var(--text); font-size: 13px; line-height: 1.4; font-weight: 600; }
 .tour-where { color: var(--muted); font-size: 12px; }
 .tour-how { color: var(--text); font-size: 12px; line-height: 1.4; }
+/* The tour is holding on this step until a person moves it - see `waitsForYou`. Accent
+   text on the card's own surface, no box and no motion: it is a line to be read once,
+   not a second alert competing with the step it belongs to. */
+.tour-wait { color: var(--accent); font-size: 12px; line-height: 1.4; }
 .tour-derived { color: var(--muted); font-size: 11.5px; font-style: italic; }
 .tour-step-done { display: flex; align-items: center; gap: 5px; color: var(--text); font-size: 12px; margin-right: auto; }
 /* Done or dismissed: the tour folds to a pill in the same corner, never gone. */
