@@ -200,12 +200,20 @@ import type {
 } from '../shared/types'
 import type { BusyReason } from '../shared/busy'
 import type { AgentSpec } from '../shared/agents'
+import { ledgerTakenFolders } from './laneLedger'
+import { startWakeQueue } from './wakeQueue'
+import { headlessMode } from './profile'
 
 // Before a single handler registers: the phone client calls the same ipcMain bodies the
 // window does, and the tap can only record registrations it was in place for.
 tapIpc()
 
 const manager = new SessionManager()
+startWakeQueue({
+  list: () => manager.list(),
+  wake: (id) => void manager.wake(id),
+  pressure: () => 'normal'
+})
 /** Keeps userData/desk.json in step with the panes on screen. See restore.ts. */
 const noteDesk = startDeskAutosave(() => manager.snapshot())
 let win: BrowserWindow | null = null
@@ -439,6 +447,7 @@ function createWindow(): void {
       ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 14, y: 15 } }
       : {}),
     webPreferences: {
+      offscreen: headlessMode(),
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
       contextIsolation: true,
@@ -1467,7 +1476,14 @@ async function startOrSend(req: StartSessionRequest, claimed?: string[]): Promis
         projects: await remote.projectsOn(p.id).catch(() => [] as { name: string; path: string }[])
       }))
     )
-    target = projectOn(candidates, project)
+    // A NAMED device (`req.device`, contract stub - the "open on a device" workstream
+    // fills in the path lookup and the refusal when it is offline) beats the project match.
+    target = req.device
+      ? projectOn(
+          candidates.filter((c) => c.device === req.device || c.deviceName === req.device),
+          project
+        )
+      : projectOn(candidates, project)
     peerPanes = peers.find((p) => p.id === target?.device)?.panes.length
   } catch {
     // A peer that cannot be asked is a peer that cannot be used. `placeNewPane` says so
@@ -1579,7 +1595,7 @@ ipcMain.handle('sessions:wake', async (_e, id: string) => {
   if (remote.owns(id)) return null
   // A sleeping pane is placed again before it wakes: the folder it slept in may now be
   // another pane's (two client chats restored asleep into one checkout, 2026-09-04).
-  await manager.rehome(id, (req) => laneFor(req, [], id))
+  await manager.rehome(id, (req) => laneFor(req, ledgerTakenFolders(id), id))
   return manager.wake(id)
 })
 ipcMain.handle('sessions:switchAgent', (_e, id: string, agent: string, model?: string) => {
