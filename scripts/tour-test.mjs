@@ -13,7 +13,7 @@ const {
   buildSteps, makeTour, currentStep, next, previous, done, surfaceFor, tourAllowed,
   stepFrom, placesFor, trailersOf, firstParagraph, checkAllowed, readCheck, checkName, plainWords, howToCheck,
   dwellFor, waitsForYou, DWELL_CHECKS_MS, DWELL_PLAIN_MS, NO_SCREEN,
-  stepKey, nextUnchecked, checkWords
+  stepKey, nextUnchecked, checkWords, summaryCount, checkedWords, demoFor
 } = await import(pathToFileURL(join(root, 'src/shared/tour.ts')).href)
 
 let failed = 0
@@ -244,6 +244,43 @@ console.log('the tour plays itself')
   // The only moving thing on the card, and the only sign a suite is alive between lines.
   ok('a running check has a live pulse', /tour-check-dots/.test(card) && /@keyframes tourDot/.test(readFileSync(join(root, 'src/renderer/src/styles.css'), 'utf8')))
   ok('and it is discrete, so it composites on the step not the frame', /animation: tourDot 1\.2s steps\(1, end\) infinite/.test(readFileSync(join(root, 'src/renderer/src/styles.css'), 'utf8')))
+  // "Checked - 0 things proved" over a suite that had just proved 829 things (Robert,
+  // 2026-09-04, screenshot). `scripts/sound-test.mjs` prints ONE sentence about itself and
+  // no line per assertion, so counting `ok` lines answered nothing.
+  ok('a suite that prints one summary line still has a count', summaryCount('sounds: 829 checks passed (26 sounds in the catalogue)') === 829)
+  ok('and the npm-test shape too', summaryCount('176 tests passed in 40.9s') === 176)
+  ok('the LAST number wins, never a heading', summaryCount('3 checks passed\n\n829 checks passed') === 829)
+  ok('nothing to count is 0, never NaN', summaryCount('all good') === 0)
+  ok('a per-assertion suite is read from its ok lines', readCheck('scripts/x-test.mjs', 0, 'ok one\nok two\n').passed === 2)
+  ok('and a summary-only suite from its sentence', readCheck('scripts/x-test.mjs', 0, 'sounds: 829 checks passed').passed === 829)
+  // A number nobody measured is worse than no number.
+  ok('a checked step with no count says just Checked', checkedWords({ ok: true, passed: 0, failed: 0 }) === 'Checked')
+  ok('and with one says how many', /829 things proved/.test(checkedWords({ ok: true, passed: 829, failed: 0 })))
+  ok('a failure still counts both sides', /2 of 5 failed/.test(checkedWords({ ok: false, passed: 3, failed: 2 })))
+  ok('the card asks for those words rather than writing its own', /checkedWords\(r\)/.test(card))
+
+  // THE TOUR DOES THE THING. A step about a sound plays the sound.
+  const heard = (t) => demoFor({ text: t, see: [] })
+  ok('a step about a sound plays one', heard('The countdown is heard whatever sound it was pointed at')?.kind === 'sound')
+  ok('a countdown gets the bowl', heard('the close countdown is heard')?.sound === 'bowl')
+  ok('a question gets the knock', heard('a question a pane asks now makes a sound')?.sound === 'knock')
+  ok('anything else that makes a noise gets the chime', heard('the finished turn plays a note')?.sound === 'chime')
+  // The refusal is the load-bearing half: a card that played a sound on every step would
+  // be noise, not a demonstration.
+  ok('a step about nothing audible plays nothing', heard('The sessions list groups both machines') === null)
+  ok('and neither does a silent layout change', heard('The dialog fits on a short window') === null)
+  ok('the card plays it on arrival, on the same one press as the checks', /if \(!state \|\| gone \|\| !started \|\| !demo \|\| played\[index\]\) return/.test(card))
+  ok('and offers it again by hand', /data-testid="tour-demo-again"/.test(card))
+
+  // One segment per step, lit as it is ticked off.
+  ok('the bar is a segment per step', /state\.steps\.map\(\(s, i\) => \(\s*<span/.test(card))
+  ok('a ticked segment is lit', /doneMap\[stepKey\(s\)\] \? 'lit' : ''/.test(card))
+  ok('and the one you are on is marked', /i === state\.index \? ' here' : ''/.test(card))
+  {
+    const css = readFileSync(join(root, 'src/renderer/src/styles.css'), 'utf8')
+    ok('the bar is drawn as segments, not one filled strip', /\.tour-bar \{ display: flex;/.test(css) && /\.tour-bar > span\.lit \{ background: var\(--accent\)/.test(css))
+  }
+
   ok('and the last step is where it stops', /if \(done\(state\)\) \{[\s\S]*?setPlaying\(false\)/.test(card))
 }
 

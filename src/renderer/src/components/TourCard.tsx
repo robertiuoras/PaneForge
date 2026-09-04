@@ -24,7 +24,9 @@
 
 import { useEffect, useState } from 'react'
 import type { TourCheck, TourProgress, TourState, TourStep, TourSurface } from '../../../shared/tour'
-import { NO_SCREEN, checkWords, currentStep, done, dwellFor, howToCheck, next, nextUnchecked, previous, stepKey, waitsForYou } from '../../../shared/tour'
+import type { SoundConfig } from '../../../shared/sounds'
+import { NO_SCREEN, checkWords, checkedWords, currentStep, demoFor, done, dwellFor, howToCheck, next, nextUnchecked, previous, stepKey, waitsForYou } from '../../../shared/tour'
+import { previewSound } from '../useChime'
 import CardX from './CardX'
 
 const api = window.api
@@ -52,6 +54,9 @@ function saveMap(key: string, map: Record<string, boolean>): void {
 }
 
 export interface TourCardProps {
+  /** The desk's own sound settings, so a step about a sound is HEARD at the volume the
+   * app would really use (`previewSound` ignores only a zero floor). */
+  sounds?: Partial<SoundConfig>
   /** Set the same state the button for that surface sets - `setPicking(true)` for New
    * session, and so on. Called whenever the step now on screen changes. */
   onOpen: (surface: TourSurface) => void
@@ -87,7 +92,7 @@ function TourSpot({ selector }: { selector: string }): JSX.Element | null {
   )
 }
 
-export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null {
+export default function TourCard({ onOpen, sounds }: TourCardProps): JSX.Element | null {
   const [state, setState] = useState<TourState | null>(null)
   const [gone, setGone] = useState(false)
   const [checks, setChecks] = useState<Record<number, Checking>>({})
@@ -172,6 +177,23 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
     runChecks()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [index, gone, started])
+
+  // THE TOUR DOES THE THING. A step about a sound was a sentence about a sound; now the
+  // sound plays as the step arrives (Robert 2026-09-04: "i actually meant for it to play
+  // the sound etc ... just actual things i can see as i watch the tour"). Same gate as the
+  // checks - `started`, once, no per-step press - and the same silence before it.
+  const demo = state && !gone ? demoFor(currentStep(state)) : null
+  const [played, setPlayed] = useState<Record<number, boolean>>({})
+  const playDemo = (): void => {
+    if (!demo) return
+    previewSound(demo.sound, sounds)
+    setPlayed((p) => ({ ...p, [index]: true }))
+  }
+  useEffect(() => {
+    if (!state || gone || !started || !demo || played[index]) return
+    playDemo()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [index, gone, started, demo])
 
   // Playing: hold on this step for as long as it needs to be looked at, then move on.
   // The timer is rebuilt whenever the step, the play state or this step's checks change,
@@ -288,8 +310,17 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
             </div>
           )}
         </div>
-        <div className="tour-bar" aria-hidden="true">
-          <span style={{ width: `${(doneCount / state.steps.length) * 100}%` }} />
+        {/* ONE SEGMENT PER STEP, lit as it is ticked off - a single filled strip could not
+            say which step you were on, only roughly how far along (Robert 2026-09-04:
+            "segment into each step and if its checked then it would highlight that bar").
+            The one you are on is outlined even before it is ticked. */}
+        <div className="tour-bar" data-testid="tour-bar" aria-hidden="true">
+          {state.steps.map((s, i) => (
+            <span
+              key={stepKey(s)}
+              className={(doneMap[stepKey(s)] ? 'lit' : '') + (i === state.index ? ' here' : '')}
+            />
+          ))}
         </div>
         <div className="tour-body">
           <div className="tour-text">{step.text}</div>
@@ -306,6 +337,14 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
               <li key={i}>{s}</li>
             ))}
           </ul>
+        )}
+        {demo && (
+          <div className="tour-demo" data-testid="tour-demo">
+            <span>{played[index] ? `That was ${demo.says}.` : `${demo.says} plays when the tour reaches this step.`}</span>
+            <button type="button" className="ghost small" data-testid="tour-demo-again" onClick={playDemo}>
+              {played[index] ? 'Play it again' : 'Play it'}
+            </button>
+          </div>
         )}
         {step.checks.length > 0 && (
           <div className="tour-checks" data-testid="tour-checks">
@@ -344,11 +383,7 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
               check.results.map((r) => (
                 <div key={r.script} className={'tour-check ' + (r.ok ? 'ok' : 'bad')}>
                   <span className="tour-check-mark">{r.ok ? '✓' : '✗'}</span>
-                  <span>
-                    {r.ok
-                      ? `Checked - ${r.passed} things proved`
-                      : `Something is wrong here - ${r.failed} of ${r.passed + r.failed} failed`}
-                  </span>
+                  <span>{checkedWords(r)}</span>
                   {!r.ok && <pre className="tour-check-tail">{r.tail}</pre>}
                 </div>
               ))

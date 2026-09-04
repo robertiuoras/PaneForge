@@ -439,10 +439,59 @@ export function checkAllowed(script: string): boolean {
  * exit code decides. */
 export function readCheck(script: string, code: number | null, output: string): TourCheck {
   const lines = output.split('\n')
-  const passed = lines.filter((l) => /^ok\b/i.test(l.trim())).length
   const failed = lines.filter((l) => /^FAIL\b/.test(l.trim())).length
+  let passed = lines.filter((l) => /^ok\b/i.test(l.trim())).length
+  // NOT EVERY SUITE PRINTS A LINE PER ASSERTION. `scripts/sound-test.mjs` prints one
+  // sentence - `sounds: 829 checks passed` - so counting `ok` lines answered 0 and the
+  // card said "Checked - 0 things proved" over a suite that had just proved 829 things
+  // (Robert, 2026-09-04, with the screenshot). The summary line is the count when there
+  // are no per-assertion lines to count.
+  if (!passed && !failed) passed = summaryCount(output)
   const tail = lines.filter((l) => l.trim()).slice(-8).join('\n')
   return { script, ok: code === 0 && failed === 0, passed, failed, tail }
+}
+
+/** `sounds: 829 checks passed`, `176 tests passed in 40.9s` - the number a suite prints
+ * about itself when it prints nothing per assertion. The LAST one wins: a suite that
+ * counts sections would otherwise be read off its first heading. */
+export function summaryCount(output: string): number {
+  let n = 0
+  for (const m of output.matchAll(/(\d+)\s+(?:checks?|tests?|assertions?)\s+passed/gi)) n = Number(m[1])
+  return n
+}
+
+/** What the card says once a check has answered. A number nobody measured is worse than
+ * no number: `0 things proved` reads as a suite that did nothing. */
+export function checkedWords(c: Pick<TourCheck, 'ok' | 'passed' | 'failed'>): string {
+  if (!c.ok) return `Something is wrong here - ${c.failed} of ${c.passed + c.failed} failed`
+  return c.passed > 0 ? `Checked - ${c.passed} things proved` : 'Checked'
+}
+
+/**
+ * SOMETHING TO SEE OR HEAR, done by the tour itself.
+ *
+ * A step about a sound used to be a sentence about a sound (Robert, 2026-09-04: "i
+ * actually meant for it to play the sound etc ... just actual things i can see as i watch
+ * the tour"). If the change is about something the app can simply DO on the spot, the
+ * tour does it as the step arrives.
+ *
+ * Only sounds so far, because a sound is the one demonstration that needs no surface, no
+ * pane and no state: it cannot leave anything behind for the next step to trip over.
+ */
+export type TourDemo = { kind: 'sound'; sound: string; says: string }
+
+const SOUND_WORDS = /\b(sound|sounds|chime|note|bowl|knock|bell|beep|heard|audible|tick|ticks|plays?|playing)\b/i
+
+export function demoFor(step: Pick<TourStep, 'text' | 'see'>): TourDemo | null {
+  const words = [step.text, ...step.see].join(' ')
+  if (!SOUND_WORDS.test(words)) return null
+  // The three the app actually uses, picked off what the change is about: the countdown
+  // bowl, the question knock, the finished-turn chime.
+  if (/\b(countdown|counting|close|closing|move|moving|idle)\b/i.test(words))
+    return { kind: 'sound', sound: 'bowl', says: 'the countdown note' }
+  if (/\b(question|ask|asking|answer|choice)\b/i.test(words))
+    return { kind: 'sound', sound: 'knock', says: 'the question knock' }
+  return { kind: 'sound', sound: 'chime', says: 'the finished-turn chime' }
 }
 
 /**

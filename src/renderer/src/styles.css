@@ -3219,8 +3219,19 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
 .tour-count { color: var(--text); font-size: 11.5px; font-variant-numeric: tabular-nums; }
 .tour-count-done { color: var(--muted); }
 .tour-state { color: var(--accent); font-size: 11.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.tour-bar { height: 2px; border-radius: 2px; background: var(--line); overflow: hidden; }
-.tour-bar > span { display: block; height: 100%; background: var(--accent); }
+/* One segment per step, lit as it is ticked off - the step you are on is outlined even
+   before it is. A single filled strip said roughly how far along and nothing about which
+   step (Robert, 2026-09-04). */
+.tour-bar { display: flex; gap: 2px; height: 3px; }
+.tour-bar > span { flex: 1 1 0; min-width: 2px; border-radius: 2px; background: var(--line); }
+.tour-bar > span.lit { background: var(--accent); }
+.tour-bar > span.here { background: color-mix(in oklab, var(--accent) 55%, var(--line)); }
+.tour-bar > span.lit.here { background: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+/* What the tour DID on this step - the sound it just played, and a way to hear it again. */
+.tour-demo {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  font-size: 12px; line-height: 1.4; color: var(--text);
+}
 .tour-text { color: var(--text); font-size: 13px; line-height: 1.4; font-weight: 600; }
 .tour-where { color: var(--muted); font-size: 12px; }
 .tour-how { color: var(--text); font-size: 12px; line-height: 1.4; }

@@ -7045,6 +7045,7 @@ export default function App(): JSX.Element {
           the installed app does not, one sentence at a time. `api.tour()` answers null
           everywhere else, so this card asks once and draws nothing the rest of the time. */}
       <TourCard
+        sounds={config?.sounds}
         onOpen={(surface) => {
           if (surface === 'newSession') setPicking(true)
           else if (surface === 'settings') setSettings(true)
