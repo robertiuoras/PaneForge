@@ -11,7 +11,9 @@
  *   node scripts/pf-ctl.mjs list
  *   node scripts/pf-ctl.mjs open <cwd> [--title T] [--prompt P | --task BACKLOG_ID] [--model M] [--agent A]
  *                                       [--close-when-done] [--report-to <pane>]
- *                                       [--resume <chat-id> | --continue] [--here]
+ *                                       [--resume <chat-id> | --continue] [--here | --on <device>]
+ *   node scripts/pf-ctl.mjs open-many <plan.json>
+ *   node scripts/pf-ctl.mjs devices
  *   node scripts/pf-ctl.mjs needs-login <site> --url <url> [--host user@ip] [--port N] [--machine WORDS]
  *   node scripts/pf-ctl.mjs login [url] [--site NAME] [--host user@ip] [--port N] [--machine WORDS]
  *   node scripts/pf-ctl.mjs close <title-or-id>
@@ -138,7 +140,42 @@ function flag(argv, name) {
   return v
 }
 
-const [cmd, ...rest] = process.argv.slice(2)
+/**
+ * `pf open-many <plan.json>` - many panes, one call. The file is `[{cwd, prompt|task,
+ * agent?, model?, on?}]`; `on` is the same name `--on`/the Devices dialog would take and
+ * maps straight onto `StartSessionRequest.device`. Pure and exported so a caller (or this
+ * suite) can check the parsing without a running app - a plan that is not an array, or a
+ * row with no `cwd`, is a mistake in the file and is refused HERE, before anything is sent.
+ */
+export function readOpenManyPlan(path) {
+  let rows
+  try {
+    rows = JSON.parse(readFileSync(path, 'utf8'))
+  } catch (e) {
+    throw new Error(`could not read plan ${path} - ${e instanceof Error ? e.message : e}`)
+  }
+  if (!Array.isArray(rows)) throw new Error(`${path} must be a JSON array of {cwd, prompt|task, ...}`)
+  return rows.map((row, n) => {
+    if (!row || typeof row !== 'object' || !row.cwd)
+      throw new Error(`row ${n} in ${path} has no "cwd"`)
+    if (row.prompt && row.task) throw new Error(`row ${n} in ${path} has both "prompt" and "task"`)
+    return {
+      cwd: row.cwd,
+      title: row.title,
+      prompt: row.prompt,
+      task: row.task,
+      agent: row.agent,
+      model: row.model,
+      device: row.on
+    }
+  })
+}
+
+const isMain = import.meta.url === pathToFileURL(process.argv[1] ?? '').href
+const [cmd, ...rest] = isMain ? process.argv.slice(2) : []
+if (isMain) await main()
+
+async function main() {
 
 /*
  * A sign-in request is checked BEFORE the app is asked for anything.
@@ -366,6 +403,11 @@ if (cmd === 'list') {
   // particular cannot follow - the conversation is not on that disk. Measured 2026-09-04:
   // three `pf-ctl open --resume` calls opened three empty panes on the PC.
   const here = rest.includes('--here') || Boolean(resumeId)
+  // `--on <device>` names a paired device by its id or its Devices name - the same field
+  // `StartSessionRequest.device` carries. It beats `--here` and `where`: a device asked for
+  // by name is refused by name, never silently opened here instead (see offloadFirst.ts).
+  const device = flag(rest, '--on')
+  if (device && here) fail(1, 'open takes --here or --on <device>, not both')
   const cwd = rest[0]
   if (!cwd) fail(1, 'open needs a cwd: pf-ctl open <cwd> [--title T] [--prompt P]')
   const s = await call('sessions:start', [
@@ -378,6 +420,7 @@ if (cmd === 'list') {
       closeWhenDone,
       reportTo: closeWhenDone ? reportTo : undefined,
       where: here ? 'local' : undefined,
+      device: device || undefined,
       resume: Boolean(resumeId) || continueLast || undefined,
       resumeId: resumeId || undefined
     }
@@ -391,6 +434,53 @@ if (cmd === 'list') {
     await call('sessions:restart', [s.id])
     console.log(`copied conversation ${resumeId} into ${landed} and restarted the pane`)
   }
+} else if (cmd === 'open-many') {
+  // Many panes, one call - 10s or 20+ at a time, "for any cli/model it chooses". Each row
+  // is the same shape a single `open` builds; a `task` row is briefed the same way, one
+  // `backlog:task` lookup per row, BEFORE anything is sent. `sessions:startMany` (the app
+  // side) loops the array and swallows a row's own failure into a shorter result list, so a
+  // returned session is matched back to its row by POSITION - the app does not say which
+  // row a missing session belonged to, only that fewer came back than were asked for.
+  const planPath = rest[0]
+  if (!planPath) fail(1, 'open-many needs a plan file: pf-ctl open-many <plan.json>')
+  let plan
+  try {
+    plan = readOpenManyPlan(planPath)
+  } catch (e) {
+    fail(1, e instanceof Error ? e.message : String(e))
+  }
+  const reqs = []
+  for (const row of plan) {
+    let prompt = row.prompt
+    if (row.task) {
+      const brief = await call('backlog:task', [row.task])
+      if (!brief || brief.error) fail(1, `${row.cwd}: ${brief?.error ?? 'the app could not read the backlog'}`)
+      prompt = brief.prompt
+    }
+    reqs.push({ cwd: row.cwd, title: row.title, prompt, agent: row.agent, model: row.model, device: row.device })
+  }
+  const started = (await call('sessions:startMany', [reqs])) ?? []
+  let refused = 0
+  for (let n = 0; n < reqs.length; n++) {
+    const s = started[n]
+    if (s?.id) {
+      console.log(`opened ${s.id} in ${s.cwd ?? reqs[n].cwd}` + (reqs[n].device ? ` on ${reqs[n].device}` : ''))
+    } else {
+      refused++
+      console.log(
+        `refused ${reqs[n].cwd}` + (reqs[n].device ? ` on ${reqs[n].device}` : '') + ' - see the app for why'
+      )
+    }
+  }
+  if (refused) fail(1, `${refused} of ${reqs.length} panes were not opened`)
+} else if (cmd === 'devices') {
+  // What a plan could target: every paired device, whether it is online right now, and how
+  // many panes it is already running - the numbers `--on <device>` and a plan's `on` field
+  // are checked against.
+  const state = await call('remote:state', [])
+  console.log([state?.self?.id ?? '?', state?.self?.name ?? 'this machine', 'self', '-'].join('\t'))
+  for (const p of state?.peers ?? [])
+    console.log([p.id, p.name, p.status, String(p.panes?.length ?? p.sessions ?? 0)].join('\t'))
 } else if (cmd === 'close') {
   const ref = rest[0]
   if (!ref) fail(1, 'close needs a pane: pf-ctl close <title-or-id>')
@@ -464,5 +554,9 @@ if (cmd === 'list') {
   await send(channel, args)
   console.log('sent')
 } else {
-  fail(1, `unknown command "${cmd ?? ''}" - use: list | open | needs-login | login | close | rename | type | hold | call | send`)
+  fail(
+    1,
+    `unknown command "${cmd ?? ''}" - use: list | open | open-many | devices | needs-login | login | close | rename | type | hold | call | send`
+  )
+}
 }

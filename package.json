@@ -274,7 +274,11 @@
     "test:unreleased": "node scripts/unreleased-test.mjs",
     "test:promptforge": "node scripts/prompt-forge-test.mjs",
     "test:taskbrief": "node scripts/task-brief-test.mjs",
-    "test:interventions": "node scripts/interventions-test.mjs"
+    "test:interventions": "node scripts/interventions-test.mjs",
+    "test:lanesleep": "node scripts/lane-sleep-test.mjs",
+    "test:wakeplan": "node scripts/wakeplan-test.mjs",
+    "test:deviceopen": "node scripts/device-open-test.mjs",
+    "test:uilab": "node scripts/ui-lab-test.mjs"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",

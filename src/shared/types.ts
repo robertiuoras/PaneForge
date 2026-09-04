@@ -448,7 +448,16 @@ export interface Session {
    * is a pane somebody is keeping. See `shared/sleep.ts`.
    */
   asleep?: number
+  /**
+   * Why the pane is asleep. `manual` is a press on its own menu; `idle` the idle sleep
+   * clock; `pressure` the app giving memory back while the desk was full; `queued` a
+   * pane created past capacity that has never run yet (its launch prompt is KEPT). Only
+   * `pressure` and `queued` are woken again by the app on its own (`shared/wakePlan.ts`).
+   */
+  asleepReason?: SleepReason
 }
+
+export type SleepReason = 'manual' | 'idle' | 'pressure' | 'queued'
 
 /**
  * A live tee of one pane's output. Rides on the session list rather than an event of
@@ -481,6 +490,11 @@ export interface StartSessionRequest {
    * online to pick. Absent = let `shared/offloadFirst.ts` decide.
    */
   where?: 'local' | 'remote'
+  /**
+   * A NAMED paired device to start on (its id or its name as shown in Devices). Beats
+   * `where`; a device that is not online refuses the pane by name, never falls back.
+   */
+  device?: string
   /** resume the most recent session in that directory (`claude --continue`) */
   resume?: boolean
   /**
