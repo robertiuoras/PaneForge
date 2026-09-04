@@ -31,6 +31,7 @@
     "test:handoffsteps": "node scripts/handoff-steps-test.mjs",
     "test:panemodel": "node scripts/panemodel-test.mjs",
     "test:staleframe": "node scripts/stale-frame-test.mjs",
+    "test:cloudwork": "node scripts/cloud-work-test.mjs",
     "test:copymode": "node scripts/copymode-test.mjs",
     "test:focus": "node scripts/focus-test.mjs",
     "test:desksnap": "node scripts/desk-snap-test.mjs",

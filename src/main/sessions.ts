@@ -96,6 +96,7 @@ import { allAgents, buildArgs, hasAgent, modelValue, resolveEnv } from '../share
 import { homedir } from 'node:os'
 import { allowsCwd, scrubForeignKeys } from '../shared/paneTrust'
 import { anchoredStart, readsBusy, composerHeld, type BusyReason } from '../shared/busy'
+import { readsCloudWork, cloudHeld } from '../shared/cloudWork'
 import { outputIsWork } from '../shared/fleet'
 import { nextCwdGone, reapForMissingCwd } from '../shared/cwdGone'
 import { askKeyOf, autoAnswerAt, DEFAULT_AUTO_ANSWER, dueForAuto, pickAnswer } from '../shared/autoAnswer'
@@ -348,6 +349,15 @@ interface Live {
    * busy, so a pane that is torn down mid-turn cannot leave a session muted forever.
    */
   busyUntil: number
+  /**
+   * What this pane left running somewhere that is not this machine, and when its own
+   * footer last said so - see `shared/cloudWork.ts`. Nothing in the process table can
+   * answer for a `/code-review ultra`, so this is the only reading there is, and it is a
+   * bounded hold rather than a fact because the line it comes off is printed once and
+   * never repainted.
+   */
+  cloudWork?: string
+  cloudSince?: number
   /**
    * When the user last acknowledged this pane. Attention is only raised for output
    * newer than that, which is what makes it once per quiet stretch: the focused pane
@@ -1927,6 +1937,19 @@ export class SessionManager extends EventEmitter {
     // turn boundaries are knowable, and the bell stops trusting the quiet clock alone.
     if (busy) s.sawFooter = true
     else if (tail) s.lastTail = tail
+    // ...and whether the agent said, on its way back to the composer, that it left work
+    // running off this machine. Only on a `false`: that is the frame the finished footer
+    // is drawn in, and it is the only one this process is sent. A sighting REFRESHES the
+    // stamp rather than only setting it, so a pane that keeps reprinting the line keeps
+    // its hold; the absence of the line clears nothing, because the CLI never rewrites
+    // that footer when the cloud session ends. `cloudHeld` is what expires it.
+    if (!busy && tail) {
+      const cloud = readsCloudWork(tail)
+      if (cloud) {
+        s.cloudWork = cloud
+        s.cloudSince = now
+      }
+    }
     // A question and a running agent are never on screen together - ASK_PROMPT outranks
     // every busy footer in `readsBusy` - so a busy pane has no question by construction
     // and clearing it here is the whole of "the question went away". The frame arrives
@@ -3108,7 +3131,17 @@ export class SessionManager extends EventEmitter {
       // its floor), so it deliberately does NOT reach `busyOnScreen` below: a false job
       // there is a pane the idle sweep never closes and a budget that never moves. It
       // reaches the sessions list and nothing else, where being wrong costs a heading.
-      const back = meta.status === 'exited' ? null : backJobInfo(meta.id)
+      // ...and, when the table has nothing, what the pane's own footer said it left
+      // running somewhere else. A cloud session has no local process at all, so this is
+      // the only evidence there is; it rides the same field because the refusals that
+      // field feeds - never close, never sleep, never hand off - are exactly the ones a
+      // review still in flight needs. It never OVERRIDES a real local job: that one is
+      // measured, this one is a held reading with a deadline on it.
+      const cloud =
+        meta.status !== 'exited' && live.cloudWork && cloudHeld(live.cloudSince, now)
+          ? { label: live.cloudWork, since: live.cloudSince as number }
+          : null
+      const back = (meta.status === 'exited' ? null : backJobInfo(meta.id)) ?? cloud
       if ((back?.label ?? null) !== (meta.backJob ?? null)) {
         meta.backJob = back?.label
         meta.backJobSince = back?.since
