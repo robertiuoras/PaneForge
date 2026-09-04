@@ -205,3 +205,12 @@ function seed(from: string, to: string): void {
     /* first run just starts from defaults */
   }
 }
+
+/**
+ * A copy launched for a MACHINE to look at: no window on any screen, the renderer painting
+ * into an offscreen bitmap so CDP `Page.captureScreenshot` returns real pixels. `--headless`
+ * on `npm run try`. Contract stub - the ui-lab workstream fills it in.
+ */
+export function headlessMode(): boolean {
+  return false
+}
