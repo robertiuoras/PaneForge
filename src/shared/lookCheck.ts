@@ -20,6 +20,18 @@ export interface LookReading {
   spot: { width: number; height: number; x: number; y: number } | null
   /** the surface the step said it would open - `null` when the step opens none */
   surfaceOnScreen: boolean | null
+  /**
+   * A pane step opened a pane - is there a LIVE process in it?
+   *
+   * A pane card can be on screen wearing a dead pty: the shell failed to spawn, or the
+   * session came back from disk asleep. Both draw a `.pane-title` for the ring to land
+   * on, so every reading above says the step is fine while the thing the step is about
+   * is not running. Robert, 2026-09-04: "paneforge also should verify that session spawn
+   * shell as well cant trust just visually".
+   *
+   * `null` on any step that opens no pane.
+   */
+  live?: boolean | null
   win: { width: number; height: number }
 }
 
@@ -56,6 +68,8 @@ export const MIN_SPOT = 8
 export function lookVerdict(step: { spot?: string; open: string }, r: LookReading): LookVerdict {
   if (r.surfaceOnScreen === false)
     return { ok: false, says: 'The screen this step is about did not open.' }
+  // ...and a pane on screen with nothing running in it is not a pane this step can show.
+  if (r.live === false) return { ok: false, says: 'A pane is on screen, but nothing is running in it.' }
   if (!step.spot) {
     return r.surfaceOnScreen === true
       ? { ok: true, says: 'Looked at it - the screen it names is open.' }
@@ -71,5 +85,6 @@ export function lookVerdict(step: { spot?: string; open: string }, r: LookReadin
   }
   if (r.spot.x + width < 0 || r.spot.y + height < 0 || r.spot.x > r.win.width || r.spot.y > r.win.height)
     return { ok: false, says: 'What it points at is off the edge of the window.' }
-  return { ok: true, says: `Looked at it - the ring is on a ${Math.round(width)}x${Math.round(height)} control.` }
+  const ran = r.live === true ? ', with a live pane behind it' : ''
+  return { ok: true, says: `Looked at it - the ring is on a ${Math.round(width)}x${Math.round(height)} control${ran}.` }
 }

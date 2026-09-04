@@ -3207,15 +3207,25 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
   /* A long step must never push the buttons off the bottom of the window: the card is
      capped, its middle scrolls, and Previous/Next/Done stay drawn (Robert, 2026-09-04:
      "theres no press done button anywhere"). */
-  max-height: calc(100vh - 96px);
+  /* ...and the card is ONE SIZE on every step. It was `max-height` alone, so it grew and
+     shrank with whatever the step had to say - a long check tail, a `Where to look` line,
+     the waiting sentence - and because it is anchored to the BOTTOM corner, every change
+     moved its top edge and every word on it (Robert, 2026-09-04: "keeps moving around too
+     much"). A fixed height moves nothing: the middle scrolls instead. */
+  height: min(520px, calc(100vh - 96px));
 }
 /* Everything between the counter and the buttons - the part allowed to scroll. */
-.tour-body { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; min-height: 0; }
+/* `flex: 1` so the middle FILLS the card and the buttons sit on its bottom edge. Without
+   it the body sized to its content and the button row floated up and down by 200px
+   between steps inside a card that was not moving at all. */
+.tour-body { flex: 1 1 auto; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; min-height: 0; }
 /* The header: where you are on the left, what the tour is doing on the right, and a
    hairline bar under both. Following design-vault/linear.app.md - the state word is the
    only accent on the card, the bar is 2px and never animates, and nothing here moves
    except the number, which is why it is tabular. */
-.tour-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+/* `min-height` because the state word on the right is only there while the tour plays,
+   and without it the whole card stepped up and down by a line as it came and went. */
+.tour-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-height: 15px; }
 .tour-count { color: var(--text); font-size: 11.5px; font-variant-numeric: tabular-nums; }
 .tour-count-done { color: var(--muted); }
 .tour-state { color: var(--accent); font-size: 11.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -3243,7 +3253,8 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
    not a second alert competing with the step it belongs to. */
 .tour-wait { color: var(--accent); font-size: 12px; line-height: 1.4; }
 .tour-derived { color: var(--muted); font-size: 11.5px; font-style: italic; }
-.tour-step-done { display: flex; align-items: center; gap: 5px; color: var(--text); font-size: 12px; margin-right: auto; }
+/* Its own line above the buttons, never in among them. */
+.tour-step-done { display: flex; align-items: center; gap: 6px; color: var(--text); font-size: 12px; flex-shrink: 0; }
 /* Done or dismissed: the tour folds to a pill in the same corner, never gone. */
 .tour-pill {
   background: var(--surface-3); color: var(--text); border: 1px solid var(--line-strong);
@@ -3283,7 +3294,18 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
   color: var(--text); background: var(--surface-1); border: 1px solid var(--line); border-radius: 4px;
   white-space: pre-wrap; max-height: 140px; overflow: auto;
 }
-.tour-acts { flex-shrink: 0; display: flex; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
+/* Two by two, equal widths, one hairline above - button metrics from
+   design-vault/linear.app.md (`--button-height` 24px, 12px text, 0 10px padding, 4-6px
+   gap). A wrapping flex row of four gave three on one line and one on the next, each a
+   different width, re-flowing on every step. */
+.tour-acts {
+  flex-shrink: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+  border-top: 1px solid var(--line); padding-top: 10px;
+}
+.tour-acts > button {
+  height: 26px; padding: 0 10px; font-size: 12px; width: 100%;
+  display: inline-flex; align-items: center; justify-content: center; white-space: nowrap;
+}
 /* The ring around the control a step is about: a static accent outline over the whole
    window, under every card, taking no clicks. Nothing animates - see test:anim. */
 .tour-spot {

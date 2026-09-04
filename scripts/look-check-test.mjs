@@ -47,5 +47,21 @@ console.log('a step with nothing to point at is not a failure')
   ok('a surface with no ring still reports the screen', open.ok && /is open/.test(open.says))
 }
 
+console.log('a pane step also proves the pane is RUNNING, not just drawn')
+{
+  const dead = lookVerdict(
+    { spot: '.pane-title', open: 'pane' },
+    { spot: at(616, 47), surfaceOnScreen: true, live: false, win }
+  )
+  ok('a pane with nothing running fails', !dead.ok && /nothing is running in it/.test(dead.says))
+  const alive = lookVerdict(
+    { spot: '.pane-title', open: 'pane' },
+    { spot: at(616, 47), surfaceOnScreen: true, live: true, win }
+  )
+  ok('a live pane passes and says so', alive.ok && /live pane behind it/.test(alive.says))
+  const other = lookVerdict({ spot: '.dialog-head', open: 'settings' }, { spot: at(300, 40), surfaceOnScreen: true, win })
+  ok('a step that opens no pane says nothing about one', other.ok && !/pane/.test(other.says))
+}
+
 console.log(failed ? `\n${failed} failed` : '\nlook: all good')
 process.exit(failed ? 1 : 0)

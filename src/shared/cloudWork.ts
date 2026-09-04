@@ -45,15 +45,30 @@ export const CLOUD_HOLD_MS = 45 * 60_000
  * conversation about infrastructure, and a pane discussing cloud sessions must not become
  * a pane that cannot be closed.
  */
-const CLOUD_LINE = /\b(\d+)\s+cloud\s+sessions?\s+(?:still\s+)?running\b/i
+const CLOUD_LINE = /\b(\d+)\s+(cloud\s+session|shell)s?\s+(?:still\s+)?running\b/i
 
-/** `1 cloud session`, `3 cloud sessions` - what the card says, in the reader's words. */
+/**
+ * ...and the SHELL half of that same footer, which was left out of this reader on the day
+ * it was written on the grounds that a local shell is in the local process table where
+ * `shared/paneBackJobs.ts` walks for it. It is not always: Robert, 2026-09-04, showed a
+ * pane wearing `✻ Cogitated for 2m 56s · done 5:12 PM · 1 shell still running` AND a red
+ * `closes 5min` chip at the same time - the render was going, the tree walk had not
+ * attributed it, and the app was counting down on the pane that was doing the work.
+ *
+ * Nothing about the hold changes for it: a sighting buys `CLOUD_HOLD_MS` and expires, so
+ * a stale footer cannot switch the idle clock off for good.
+ */
+const NOUNS: Record<string, string> = { 'cloud session': 'cloud session', shell: 'shell' }
+
+/** `1 shell`, `3 cloud sessions` - what the card says, in the reader's words. */
 export function readsCloudWork(text: string): string | null {
   const m = CLOUD_LINE.exec(text)
   if (!m) return null
   const n = Number(m[1])
   if (!(n > 0)) return null
-  return `${n} cloud session${n === 1 ? '' : 's'}`
+  const noun = NOUNS[m[2].replace(/\s+/g, ' ').toLowerCase()]
+  if (!noun) return null
+  return `${n} ${noun}${n === 1 ? '' : 's'}`
 }
 
 /**
