@@ -499,11 +499,22 @@ export function transcriptFor(id: string): string | null {
   return pick.file
 }
 
-/** When a file was created, or its last write if the platform will not say. */
+/**
+ * When a file was created, or its last write if the platform will not say.
+ *
+ * The EARLIER of the two, never the creation stamp alone. A real transcript is written
+ * after it is created, so on every live file this is the creation stamp and nothing
+ * changes. It matters where the two disagree: macOS pulls a file's creation stamp back to
+ * a modification stamp older than it, and Windows leaves it at the real creation moment,
+ * so one backdated file read as ten minutes old on this Mac and newborn on the PC - the
+ * whole of `test:restore` failing on one machine and passing on the other.
+ */
 function birth(file: string): number {
   try {
     const st = statSync(file)
-    return st.birthtimeMs || st.mtimeMs
+    if (!st.birthtimeMs) return st.mtimeMs
+    if (!st.mtimeMs) return st.birthtimeMs
+    return Math.min(st.birthtimeMs, st.mtimeMs)
   } catch {
     return 0
   }
