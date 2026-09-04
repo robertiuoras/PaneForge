@@ -67,6 +67,14 @@ export type PreferRemote = 'auto' | 'always' | 'never'
  */
 export const PEER_FULL_PANES = 8
 
+/**
+ * How many agents a NAMED device may run before an explicit `pf open ... --on <device>` (or
+ * the dialog's own device pick) stops adding more. Robert asking for a machine by name is a
+ * decision, not a suggestion `auto` can second-guess at `PEER_FULL_PANES` - the whole point
+ * of "10s, 20+ at a time" is a batch past the soft cap that still stops somewhere.
+ */
+export const PEER_HARD_PANES = 24
+
 /** How long the far end has to say it started the pane before this desk opens it here. */
 export const REMOTE_START_ACK_MS = 8000
 
@@ -97,6 +105,19 @@ export interface PlaceInput {
   peerAlive: boolean
   /** How many agents that device is already running, when it said. */
   peerBusyPanes?: number
+  /**
+   * A NAMED device asked for (id or Devices name) - `pf open --on <device>` or the New
+   * session dialog's own pick. Beats `where`: it is checked before every other rule below,
+   * and it never falls back to this machine. See `deviceOnline`/`deviceHasProject`.
+   */
+  device?: string
+  /** Whether the named `device` is online right now. */
+  deviceOnline?: boolean
+  /**
+   * Whether the named `device` holds this project. `undefined` reads as no - nobody has
+   * confirmed it, and a device asked for by name is refused rather than guessed onto.
+   */
+  deviceHasProject?: boolean
   /**
    * What this machine says about itself right now: the memory verdict and the lag band,
    * worse of the two (`worstPressure`). Absent reads as `normal` - an unmeasured desk is
@@ -130,6 +151,13 @@ export interface Placement {
   where: 'remote' | 'local'
   /** Plain words, written to `offload.log` and shown in a toast when a start falls back. */
   reason: string
+  /**
+   * Set only when a NAMED device (`PlaceInput.device`) could not be used. `where` still
+   * reads `'local'` for callers that only check that field, but a device asked for by name
+   * never falls back to this machine - a caller seeing `refused` opens no pane at all and
+   * says why, by name, instead of silently landing here.
+   */
+  refused?: string
 }
 
 /**
@@ -187,6 +215,26 @@ export function pinnedByPrompt(prompt: string | undefined, cwd?: string): string
 
 export function placeNewPane(i: PlaceInput): Placement {
   const local = (reason: string): Placement => ({ where: 'local', reason })
+
+  // A device asked for BY NAME beats everything, including `where` - see the field's own
+  // doc comment on `StartSessionRequest`. It never falls back to this machine: a refusal
+  // here means no pane opens anywhere, decided by the caller reading `refused`.
+  if (i.device) {
+    const name = i.device
+    if (!i.deviceOnline) {
+      const why = `${name} is not online`
+      return { where: 'local', reason: why, refused: why }
+    }
+    if (i.deviceHasProject !== true) {
+      const why = `${name} does not have this project`
+      return { where: 'local', reason: why, refused: why }
+    }
+    if ((i.peerBusyPanes ?? 0) >= PEER_HARD_PANES) {
+      const why = `${name} is already running ${i.peerBusyPanes} panes`
+      return { where: 'local', reason: why, refused: why }
+    }
+    return { where: 'remote', reason: `asked for ${name}` }
+  }
 
   // A pick made by hand outranks every rule about the person, and nothing below may
   // second-guess it: the dialog offered the choice, so the choice is the answer.

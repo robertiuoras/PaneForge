@@ -4668,3 +4668,43 @@ step and not a formality. `ws` was added for it.
 **What stays behind.** Closing the view stops the screencast and kills the ssh child.
 Chrome and the tab stay up on the far machine: the signed-in session is the entire
 deliverable, and tidying it away would undo the work the person just did.
+
+## A pane opened on a named device
+
+"Open on the PC" and "open here" used to be the same lever - `where: 'local' | 'remote'` -
+which is right for a person picking between two machines and wrong for a script naming a
+machine by name, or a batch of ten going to ten folders on whichever paired device holds
+each one. `StartSessionRequest.device` already existed as a contract stub (its own doc
+comment: "Beats `where`; a device that is not online refuses the pane by name, never falls
+back"); this fills that stub in.
+
+**Why a refusal, never a fallback.** `where: 'remote'` with no device names is a preference:
+this desk is fine too, so `offloadFirst.ts` picks whichever paired machine has room. A
+named device is not a preference - Robert (or a script) is saying WHICH machine, and a pane
+that silently opens somewhere else answers a different question than the one asked. So
+`placeNewPane`'s device branch is checked FIRST, ahead of `where` and every other rule, and
+every exit from it either starts the pane on that exact device or opens nothing at all
+(`Placement.refused`). `where` still reads `'local'` on a refusal, for the callers - toasts,
+`offload.log` - that only ever checked that one field; `refused` is what a caller has to
+check to tell "started here on purpose" from "asked for a machine, got nothing."
+
+**The two caps.** `PEER_FULL_PANES` (8) is `auto`'s own good-manners number: past it, a
+peer stops looking like a destination with room. An explicit device pick is not `auto`
+guessing - it is the thing Robert asked for ("make 10s, 20+ at a time") - so it is allowed
+straight past that number up to `PEER_HARD_PANES` (24), which exists only so a typo'd loop
+cannot open an unbounded number of panes on one machine before anyone notices.
+
+**`pf-ctl.mjs`.** `--on <device>` on `open` is the one-pane form; `open-many <plan.json>`
+takes `[{cwd, prompt|task, agent?, model?, on?}]` and sends it as one `sessions:startMany`
+call rather than one HTTP round trip per pane. `sessions:startMany` (already wired in
+`main/index.ts` from the same contract commit) loops the array server-side and swallows a
+row's own failure into a shorter result list - it does not say WHICH row failed, only that
+fewer sessions came back than were asked for - so `open-many` matches a returned session
+back to its row by position and prints `refused <cwd>` for anything missing, without a
+reason beyond "see the app". Fixing that is a change to `main/index.ts`, which this lane
+does not own. `pf devices` reads `remote:state` (the same channel the Devices dialog
+already renders from) rather than adding a new IPC channel, since `surface.ts` is held and
+that channel already carries id/name/status/panes for every paired peer.
+
+Pure logic in `src/shared/offloadFirst.ts`, proved without a window:
+`npm run test:deviceopen` (`scripts/device-open-test.mjs`).
