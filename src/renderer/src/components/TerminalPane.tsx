@@ -1242,6 +1242,8 @@ function TerminalPane({
    * on this desk get. The pane now presses Fix for itself, once.
    */
   const needRestoreFix = useRef(false)
+  /** One deeper redraw for a restored pane whose rail came back empty - see `replayBuffer`. */
+  const deepSeeded = useRef(false)
   /** When this pane last had a byte printed at it. See `restoreFixLag`. */
   const lastByteAt = useRef(0)
   /**
@@ -3303,6 +3305,30 @@ function TerminalPane({
         // The replay IS the conversation this pane is being reopened into, so its
         // prompts get their tags back. See seedMarks.
         seedMarks()
+        // ...and when it got NONE, the replay is the reason, not the reader. Main holds a
+        // pane's live replay in memory for every pane, so it is capped at 400 KB - and an
+        // agent CLI's output is almost all repaint frames, so those 400 KB are worth very
+        // little conversation. Measured 2026-09-04 over this desk's own 301 history logs
+        // above 50 KB, rendered through a headless xterm at each log's own width and read
+        // by `seedPrompts`:
+        //
+        //     last 0.4 MB  ->    351 tags,  103 of 237 panes with NO tag at all
+        //     last 1.0 MB  ->    693 tags,   53 with none
+        //     last 2.0 MB  -> 1,062 tags,   33 with none
+        //     last 4.0 MB  -> 1,320 tags,   27 with none
+        //
+        // So a restored pane came back with 30.8% of its own prompts tagged, and a third
+        // of them came back with none: "the tag to scroll to my prompt does nothing" is
+        // most of the time "the prompt was never replayed". `redrawHistory` already reads
+        // the LOG at `REDRAW_BYTES` (4 MB) and re-seeds off it - 118 ms once, measured -
+        // so a pane whose rail came back empty is given that one deeper draw. Only then:
+        // a rail with tags on it has what it needs, and this must not cost every pane.
+        if (!mirrorRef.current && !list.length && !deepSeeded.current) {
+          deepSeeded.current = true
+          // A hidden pane cannot be measured and is not being read; it gets the deeper
+          // draw the moment somebody presses Fix, or reopens it.
+          if (host.current?.offsetParent) void paneRedraw.get(sessionId)?.()
+        }
       }
       // Its real shape before a byte lands. xterm opens at 80x24 and the fit otherwise
       // arrives a frame or two later, which is the first half of "after the update
@@ -3678,6 +3704,13 @@ function TerminalPane({
       noteFix('redraw')
       const back = t.cols
       const wide = Math.max(back, replayColsRef.current ?? 0, START_COLS)
+      // Every tag is anchored INTO the buffer the reset below throws away: a marker whose
+      // line is gone reports -1 and stops moving, so the rail keeps drawing tags that
+      // scroll nowhere - "the tags do nothing" after a Fix. They are dropped here rather
+      // than left, which is also what lets `seedMarks` run at the end: it refuses a rail
+      // that is not empty, so without this the deeper draw re-seeded nothing.
+      for (const m of list.splice(0)) m.marker.dispose()
+      publish()
       try {
         replaying.current = true
         t.reset()
