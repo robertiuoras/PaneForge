@@ -102,7 +102,7 @@ export class Remote extends EventEmitter {
     // A copy opened to check a build tests ITS OWN panes; pairing is still there to be
     // switched on by hand in Devices if a link is what is being tested.
     if (profileName()) {
-      log('remote: test copy - not connecting to paired devices')
+      console.info('remote: test copy - not connecting to paired devices')
       return
     }
     // First launch after upgrading generates this device's id and code in memory;

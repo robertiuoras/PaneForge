@@ -724,6 +724,6 @@ export function queuedNote(deviceName: string): string {
  * straight back, which is the shape that gets a feature switched off. A move is answered
  * by the card's own buttons and by nothing else.
  */
-export function endsOnArrival(soon: { move?: boolean }): boolean {
+export function endsOnArrival(soon: { move?: unknown }): boolean {
   return !soon.move
 }

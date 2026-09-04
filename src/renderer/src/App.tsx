@@ -125,6 +125,7 @@ import {
   movable as handoffMovable,
   queueable as handoffQueueable,
   DEFAULT_AUTO_HANDOFF,
+  endsOnArrival,
   staysHere,
   suggestMove,
   type AutoHandoff,
