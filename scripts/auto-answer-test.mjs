@@ -510,9 +510,11 @@ ok('a person arriving at a pane takes its close countdown with them', () => {
   // leaves every other card counting.
   assert.match(touch, /find\(\(c\) => c\.ids\.includes\(id\)\)/, 'and only the one that NAMED it')
   assert.match(touch, /setCloseSoons\(\(list\) => list\.filter/)
-  // A move countdown holds the sweep lock. Dropping the count without giving it back is
-  // how `stopMove` shipped as a control that worked once and then moved nothing ever.
-  assert.match(touch, /if \(soon\.move\) handoffSweeping\.current = false/)
+  // ...and only a countdown that ARRIVING answers. Since 2026-09-04 a move is answered by
+  // the card's own buttons and by nothing else (`endsOnArrival`), so the sweep lock stays
+  // held here - it goes back in the keep path, which is the one that calls the move off.
+  assert.match(touch, /endsOnArrival\(soon\)/, 'a move countdown is not answered by arriving')
+  assert.doesNotMatch(touch, /handoffSweeping/, 'and the move sweep keeps its lock')
 })
 
 ok('two decisions are two cards, and answering one leaves the other counting', () => {

@@ -157,8 +157,15 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
     movable({ state: 'ready', asking: false }) === true
   )
   check(
-    'control - and queueable',
-    queueable({ state: 'working', asking: false }) === true
+    'control - a FINISHED pane with nothing running is queueable',
+    queueable({ state: 'ready', asking: false }) === true
+  )
+  // Since 2026-09-04 a pane mid-turn is not queued at all: the queue is for a pane that
+  // goes quiet between the decision and the move, and arming on a chat with a prompt
+  // running is what moved one out from under its own turn.
+  check(
+    '...and a pane mid-turn is not, whatever else is true of it',
+    queueable({ state: 'working', asking: false }) === false
   )
   const panes = [pane({ id: 'a', state: 'needsYou', asking: false, lastKeyboard: NOW - 30 * MIN }), pane({ id: 'keep' })]
   eq('and autoHandoffPlan really moves it', ids(autoHandoffPlan(panes, over, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'a')
@@ -352,9 +359,10 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
   )
   eq('at the budget it moves nothing', autoHandoffPlan(three(), { ...ok, over: 0 }, peers, DEFAULT_AUTO_HANDOFF, {}, NOW).length, 0)
 
-  // On screen and mid-turn are the two gates it drops, and they are dropped in an ORDER:
-  // the quiet off-screen pane goes first, then the quiet visible one, and a pane with a
-  // turn in flight is picked last of all.
+  // On screen is the gate it drops, and the picks are ORDERED: the quiet off-screen pane
+  // goes first, then the quiet visible one. A pane with a turn in flight is not picked at
+  // all any more (2026-09-04) - it used to be picked last, and arming a countdown on a
+  // chat with a prompt running is what that cost.
   {
     const panes = [
       big({ id: 'busy', busy: true, state: 'working' }),
@@ -364,7 +372,7 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
       // eligible panes and an overshoot of three is what makes the ORDER the assertion.
       big({ id: 'me', focused: true })
     ]
-    eq('quiet and off-screen first, then on-screen, then mid-turn', ids(autoHandoffPlan(panes, budget, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'quiet,seen,busy')
+    eq('quiet and off-screen first, then on-screen, and never the one mid-turn', ids(autoHandoffPlan(panes, budget, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'quiet,seen')
   }
 
   // ...and a pane that has only just been typed into is still eligible. The budget is not
@@ -537,7 +545,7 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
     eq('...and so does the idle clock', ids(idleOffloadPlan(cheap, peers, { ...DEFAULT_AUTO_HANDOFF, offloadIdleMinutes: 10 }, {}, NOW)), 'a')
   }
 
-  check('a busy pane is queueable but not movable', queueable({ state: 'working', asking: false }) && !movable({ state: 'working', asking: false }))
+  check('a busy pane is neither queueable nor movable', !queueable({ state: 'working', asking: false }) && !movable({ state: 'working', asking: false }))
   check('and a question is neither', !queueable({ state: 'needsYou', asking: true }) && !movable({ state: 'needsYou', asking: true }))
   check('the default keeps a couple here', DEFAULT_AUTO_HANDOFF.keepLocal === 2)
 }
@@ -567,10 +575,14 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
     check(`the card never offers ${label}`, got?.id !== 'x', got)
   }
 
-  // A busy pane IS offered - it is queued by main and travels when its turn ends, never
-  // killed - which is the one place this is wider than `movable`.
+  // A busy pane is NOT offered either, since 2026-09-04: the queue used to make this
+  // wider than `movable`, and a card naming a pane with a prompt running is the same
+  // mistake one step earlier.
   const busy = [pane({ id: 'busy', state: 'working', memMb: 4000 }), pane({ id: 'keep' })]
-  eq('a mid-turn pane is offered, and queued', suggestMove(busy, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)?.id, 'busy')
+  check(
+    'the card never offers a pane mid-turn',
+    suggestMove(busy, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)?.id !== 'busy'
+  )
 
   // The window is never emptied here either.
   eq('one pane on the desk is never offered', suggestMove([pane({ id: 'only' })], peers, DEFAULT_AUTO_HANDOFF, {}, NOW), null)
