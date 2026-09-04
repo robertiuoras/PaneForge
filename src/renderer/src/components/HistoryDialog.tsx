@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AgentInfo } from '@shared/agents'
 import { summaryFull, summaryOf } from '@shared/gist'
+import { copyNumber, copySuffixOf, folderName } from '@shared/place'
 import type { HistoryEntry, HistoryHit } from '@shared/types'
 import { whenWords } from '@shared/elapsed'
 import { rankBy } from '@shared/historySearch'
@@ -10,6 +11,20 @@ import Blurb from './Blurb'
 import Elapsed, { useNow } from './Elapsed'
 
 const api = window.api
+
+/**
+ * Which copy of the project a row's folder is, in the words `place.ts` already uses on
+ * every pane: `clients-a` reads `clients · copy 2`, and a project's own folder reads just
+ * its own name. Never lane/worktree/slot - `copySuffixOf` is the same test the sidebar
+ * chip uses, so a row here and a card on screen never disagree about what a folder is.
+ */
+function placeOf(cwd: string): string {
+  const name = folderName(cwd)
+  const project = copySuffixOf(name)
+  if (!project) return name
+  const n = copyNumber(name.slice(project.length + 1))
+  return n ? `${project} · copy ${n}` : name
+}
 
 /**
  * How much of a session's transcript to read back. The per-session log is capped at 8 MB
@@ -44,6 +59,12 @@ export default function HistoryDialog({ agents, onResume, onClose }: Props): JSX
    * show - the chapters are already on the entry.
    */
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  /**
+   * Rows showing every ask the session made, not just the one that opened each chapter -
+   * `chapters` drops every follow-up, and a session worth reopening is often one where the
+   * follow-ups are the useful half.
+   */
+  const [showAsks, setShowAsks] = useState<Set<string>>(new Set())
   // The rows say how long AGO, so they go stale sitting on screen. One clock for the whole
   // list, on the minute - the same subscription every other clock in the app shares, and
   // the only unit `whenWords` moves in inside a day.
@@ -182,7 +203,9 @@ export default function HistoryDialog({ agents, onResume, onClose }: Props): JSX
                 <div className="hist-head" onClick={() => setOpen(e)}>
                   <AgentLogo id={e.agent} spec={agents.find((a) => a.id === e.agent)} size={13} />
                   <strong>{e.title}</strong>
-                  <span className="hint">{e.cwd}</span>
+                  <span className="hint" title={e.cwd}>
+                    {placeOf(e.cwd)}
+                  </span>
                   {/* The time the list is SORTED by, so the order can be read off the
                       rows: newest closed at the top. A session still open has no closing
                       time and says when it started instead.
@@ -227,6 +250,14 @@ export default function HistoryDialog({ agents, onResume, onClose }: Props): JSX
                       {summaryOf(e)}
                     </div>
                   ))}
+                {/* Every ask, not just the one that opened each chapter - a follow-up
+                    ("now the other file") is dropped from the chapters above, and it is
+                    often the useful half of what a session was for. */}
+                {showAsks.has(e.id) && (e.askLines?.length ?? 0) > 0 && (
+                  <div className="hist-chapters">
+                    {e.askLines!.map((a, i) => `${i + 1}. ${a}`).join('\n')}
+                  </div>
+                )}
                 {/* The lines this session PRINTED that the query matched, when the query
                     did not simply name it. Four of them, which is enough to recognise
                     which session this is without turning the row into a transcript. */}
@@ -258,6 +289,22 @@ export default function HistoryDialog({ agents, onResume, onClose }: Props): JSX
                       }
                     >
                       {expanded.has(e.id) ? 'Show less' : 'View all'}
+                    </button>
+                  )}
+                  {/* Only where there is something `View all` did not already print - a
+                      session with one chapter and one ask has nothing more to list. */}
+                  {(e.askLines?.length ?? 0) > (e.chapters?.length ?? 0) && (
+                    <button
+                      className="ghost small"
+                      onClick={() =>
+                        setShowAsks((s) => {
+                          const next = new Set(s)
+                          if (!next.delete(e.id)) next.add(e.id)
+                          return next
+                        })
+                      }
+                    >
+                      {showAsks.has(e.id) ? 'Hide asks' : 'Show all asks'}
                     </button>
                   )}
                   {/* A folder that is not there any more cannot be reopened, and pressing

@@ -1375,7 +1375,8 @@ ipcMain.handle('sessions:list', () => allSessions())
  */
 async function laneFor(
   req: StartSessionRequest,
-  extraTaken: string[] = []
+  extraTaken: string[] = [],
+  except?: string
 ): Promise<StartSessionRequest> {
   // A pane opened by hand in a lane folder - the lane hook, a terminal, a restored desk -
   // never went through resolveLane, so it carried no lane id and its card printed the raw
@@ -1389,7 +1390,7 @@ async function laneFor(
   // that folder again. Two client chats were restored asleep into `clients` and a
   // third opened from History landed there too, because neither counted (2026-09-04):
   // all three woke into one checkout. A folder with a sleeping pane in it is taken.
-  const taken = [...takenFolders(manager.list()), ...extraTaken]
+  const taken = [...takenFolders(manager.list(), except), ...extraTaken]
 
   // Reopening a pane that was in a lane, when the lane turned out to hold nothing and
   // the project folder is free again: the lane was only ever there to keep two agents
@@ -1604,8 +1605,11 @@ ipcMain.handle('sessions:sleep', (_e, id: string) => {
   if (remote.owns(id)) return null
   return manager.sleep(id)
 })
-ipcMain.handle('sessions:wake', (_e, id: string) => {
+ipcMain.handle('sessions:wake', async (_e, id: string) => {
   if (remote.owns(id)) return null
+  // A sleeping pane is placed again before it wakes: the folder it slept in may now be
+  // another pane's (two client chats restored asleep into one checkout, 2026-09-04).
+  await manager.rehome(id, (req) => laneFor(req, [], id))
   return manager.wake(id)
 })
 ipcMain.handle('sessions:switchAgent', (_e, id: string, agent: string, model?: string) => {

@@ -96,6 +96,18 @@ const ROW_CHAPTERS = 3
 /** A chapter's share of a row when it is sharing that row with others. */
 const SHORT = 70
 
+/**
+ * Every ask a session made, kept for `Show all asks` - chapters only keep the FIRST ask of
+ * each subject, and a session worth reopening is often one where the follow-ups are the
+ * useful half ("now the other file", "and the tests"). Past this the list stops growing
+ * rather than paying to keep counting what did not make it in - `chapters` already carries
+ * the honest count for the row, and this is a convenience list, not a ledger.
+ */
+export const MAX_ASK_LINES = 80
+
+/** An ask line's own cap - longer than a row ever shows, so the list reads whole. */
+const ASK_LINE_CAP = 200
+
 /** What History remembers about what a session was asked. */
 export interface SessionNotes {
   /** the first thing typed at the agent, kept for every row that has one */
@@ -113,6 +125,13 @@ export interface SessionNotes {
   dropped?: number
   /** a clear threw the context away, so the next real ask opens a chapter */
   fresh?: boolean
+  /**
+   * Every submitted ask, oldest first - `chapters` only keeps the first ask of each
+   * subject, this keeps all of them for `Show all asks`. A bare slash command
+   * (`/clear`, `/model`) never appears here for the same reason it never opens a chapter:
+   * it is something done TO the pane, not work asked of it.
+   */
+  askLines?: string[]
 }
 
 /** A slash command says what was DONE to the pane, never what it was working on. */
@@ -140,6 +159,11 @@ export function noteAskInto(notes: SessionNotes, prompt: string): SessionNotes {
   if (!line) return notes
   const out: SessionNotes = { ...notes }
   if (!out.gist) out.gist = line
+  if (!isCommand(line)) {
+    const askLines = out.askLines ? [...out.askLines] : []
+    if (askLines.length < MAX_ASK_LINES) askLines.push(clip(line, ASK_LINE_CAP))
+    out.askLines = askLines
+  }
   if (mayClearScreen(prompt)) {
     out.fresh = true
     return out

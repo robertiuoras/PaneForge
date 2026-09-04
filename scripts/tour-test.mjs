@@ -72,6 +72,20 @@ console.log('where a change lives comes off the files it touched, in words')
   ok('a component nobody listed is still named off its own name', placesFor(['src/renderer/src/components/HandoffDialog.tsx']).where === 'the Handoff dialog')
   ok('main-process files say there is nothing to click', placesFor(['src/main/devServers.ts']).where === 'inside the app, nothing to click')
   ok('the try command is not this window', /npm run try/.test(placesFor(['scripts/try.mjs']).where))
+
+// The dev copy exists to be COMPARED with the installed app, and `npm run try -- --show`
+// places the pair itself. It lives here because this is the only suite that already knows
+// about `try.mjs`, and because the failure is invisible: the placement was on a timer that
+// was `unref`'d, nothing else held the loop open, so node exited first and the two windows
+// were never placed at all - the copy appeared on screen and looked fine.
+{
+  const src = readFileSync(join(root, 'scripts/try.mjs'), 'utf8')
+  // Only the placement block: the DETACHED electron spawn above it is unref'd on purpose,
+  // and `.unref` with the dot so the prose explaining the trap does not match itself.
+  const placing = src.slice(src.indexOf('if (!minimized) {'))
+  ok('the side-by-side placement is spawned at all', /dev-layout\.mjs/.test(placing))
+  ok('and its timer is not unref\'d, or node exits before it fires', !/\.unref/.test(placing))
+}
   ok('a test script alone names no place', placesFor(['scripts/devlist-test.mjs']).where === '')
   ok('no file name ever reaches the screen', !/\.(tsx?|css|mjs)\b/.test(placesFor(['src/main/x.ts', 'src/renderer/src/components/Foo.tsx']).where))
   ok('a sentence-matched surface still gets a ring', stepFrom(c('Hiding the list gives the panes the whole window')).spot === '.side-reveal')
@@ -107,7 +121,8 @@ console.log('the card speaks to somebody who has never coded')
   ok('a Try prompt says to press it', /Try it in a pane/.test(howToCheck({ open: 'none', checks: [], try: 'do x' })))
   const card = readFileSync(join(root, 'src/renderer/src/components/TourCard.tsx'), 'utf8')
   ok('Done or dismiss folds to a pill, never to nothing', /tour-pill/.test(card) && /setGone\(false\)/.test(card))
-  const dlg = readFileSync(join(root, 'src/renderer/src/components/NewSessionDialog.tsx'), 'utf8')
+  // CRLF on a Windows checkout: the assertion below looks for a literal newline.
+  const dlg = readFileSync(join(root, 'src/renderer/src/components/NewSessionDialog.tsx'), 'utf8').replace(/\r\n/g, '\n')
   ok('Let the app decide is the first pick and the default', dlg.indexOf("['auto', 'Let the app decide']") < dlg.indexOf("['local', 'This machine'],\n") && /useState<'auto' \| 'local' \| 'remote'>\('auto'\)/.test(dlg))
 }
 
