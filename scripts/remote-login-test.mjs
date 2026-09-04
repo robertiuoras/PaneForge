@@ -311,10 +311,15 @@ function pf(args) {
 }
 const ctl = readFileSync(join(root, 'scripts/pf-ctl.mjs'), 'utf8')
 ok(/needs-login/.test(ctl), 'the command exists')
-ok(
-  /use: list \| open \| needs-login/.test(ctl),
-  'and the usage line lists it, so it is findable without this file'
-)
+// Each command is looked for on its own, never as a fixed run of three: pinning the
+// ADJACENCY meant `open-many` and `devices` being inserted between `open` and
+// `needs-login` failed a test about whether needs-login is findable at all.
+const usage = /unknown command[^\n]*use: ([^`\n]+)/.exec(ctl)?.[1] ?? ''
+for (const word of ['list', 'open', 'needs-login'])
+  ok(
+    usage.split('|').some((w) => w.trim() === word),
+    `and the usage line lists ${word}, so it is findable without this file`
+  )
 ok(/login:need/.test(ctl), 'and goes through the declared channel, not a second door')
 ok(/--host/.test(ctl) && /--port/.test(ctl) && /--machine/.test(ctl), 'with the flags the spec named')
 ok(/'list'/.test(ctl) && /login:list/.test(ctl), '`pf list` shows the sign-in requests as well as the panes')
