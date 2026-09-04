@@ -11,6 +11,7 @@
  *   node scripts/pf-ctl.mjs list
  *   node scripts/pf-ctl.mjs open <cwd> [--title T] [--prompt P | --task BACKLOG_ID] [--model M] [--agent A]
  *                                       [--close-when-done] [--report-to <pane>]
+ *                                       [--resume <chat-id> | --continue]
  *   node scripts/pf-ctl.mjs needs-login <site> --url <url> [--host user@ip] [--port N] [--machine WORDS]
  *   node scripts/pf-ctl.mjs login [url] [--site NAME] [--host user@ip] [--port N] [--machine WORDS]
  *   node scripts/pf-ctl.mjs close <title-or-id>
@@ -36,7 +37,7 @@
  *
  * Exit codes: 0 ok · 1 target not found / call failed · 2 phone server unreachable/off.
  */
-import { readFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -272,6 +273,44 @@ if (process.env.PF_CTL_NO_APP === '1') process.exit(0)
 
 await pair()
 
+/**
+ * Where Claude Code keeps a folder's conversations. It spells the path with every
+ * character that is not a letter or a digit turned into a dash, so `taskdriver.ai-a`
+ * under `/Users/x/Projects` is `-Users-x-Projects-taskdriver-ai-a`.
+ */
+function projectDirFor(cwd) {
+  return join(homedir(), '.claude', 'projects', cwd.replace(/[^A-Za-z0-9]/g, '-'))
+}
+
+/** The transcript file for a chat id, wherever on this machine it was recorded. */
+function transcriptAnywhere(id) {
+  const root = join(homedir(), '.claude', 'projects')
+  if (!existsSync(root)) return null
+  for (const dir of readdirSync(root)) {
+    const file = join(root, dir, `${id}.jsonl`)
+    if (existsSync(file)) return file
+  }
+  return null
+}
+
+/**
+ * `claude --resume <id>` reads the transcript out of the folder it is RUN IN, and the
+ * app may open the pane in a lane copy (`taskdriver.ai-a`) because the project's own
+ * folder is taken. The conversation is then simply not there and the resume falls back
+ * to an empty chat - no error, which is how this went unnoticed. So the transcript is
+ * copied next to the pane that is going to read it. Returns true when it had to.
+ */
+function placeTranscript(cwd, id) {
+  const want = join(projectDirFor(cwd), `${id}.jsonl`)
+  if (existsSync(want)) return false
+  const found = transcriptAnywhere(id)
+  if (!found) fail(1, `no conversation ${id} on this machine - check the id with pf-ctl list`)
+  mkdirSync(projectDirFor(cwd), { recursive: true })
+  copyFileSync(found, want)
+  return true
+}
+
+
 if (cmd === 'list') {
   const list = await sessions()
   for (const s of list) console.log([s.id, s.status, s.title, s.cwd].join('\t'))
@@ -312,12 +351,39 @@ if (cmd === 'list') {
   // session opening a helper pane needs to name nothing.
   const closeWhenDone = rest.includes('--close-when-done')
   const reportTo = flag(rest, '--report-to') ?? process.env.PF_PANE
+  // Reopening a conversation rather than starting one. `--resume <id>` names the chat -
+  // the transcript's filename, which `pf-ctl list` and the history file both carry -
+  // and `--continue` takes whichever is newest in the folder.
+  //
+  // BOTH halves go to the app: `buildArgs` only spells `--resume <id>` when `resume` is
+  // true AS WELL, so a request carrying resumeId alone opens a silent fresh chat.
+  const resumeId = flag(rest, '--resume')
+  const continueLast = rest.includes('--continue')
+  if (resumeId && continueLast) fail(1, 'open takes --resume <id> or --continue, not both')
   const cwd = rest[0]
   if (!cwd) fail(1, 'open needs a cwd: pf-ctl open <cwd> [--title T] [--prompt P]')
   const s = await call('sessions:start', [
-    { cwd, title, prompt, model, agent, closeWhenDone, reportTo: closeWhenDone ? reportTo : undefined }
+    {
+      cwd,
+      title,
+      prompt,
+      model,
+      agent,
+      closeWhenDone,
+      reportTo: closeWhenDone ? reportTo : undefined,
+      resume: Boolean(resumeId) || continueLast || undefined,
+      resumeId: resumeId || undefined
+    }
   ])
-  console.log(`opened ${s?.id ?? '?'} in ${cwd}`)
+  const landed = s?.cwd ?? cwd
+  console.log(`opened ${s?.id ?? '?'} in ${landed}`)
+  // The pane may have been placed in a lane copy, which is a different folder and so a
+  // different set of conversations. Put the transcript there and start the agent again -
+  // a pane seconds old has nothing to lose, and this is the only moment the id is known.
+  if (resumeId && s?.id && placeTranscript(landed, resumeId)) {
+    await call('sessions:restart', [s.id])
+    console.log(`copied conversation ${resumeId} into ${landed} and restarted the pane`)
+  }
 } else if (cmd === 'close') {
   const ref = rest[0]
   if (!ref) fail(1, 'close needs a pane: pf-ctl close <title-or-id>')
