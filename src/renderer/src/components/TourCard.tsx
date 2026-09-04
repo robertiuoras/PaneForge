@@ -15,7 +15,7 @@
 
 import { useEffect, useState } from 'react'
 import type { TourCheck, TourState, TourSurface } from '../../../shared/tour'
-import { checkName, currentStep, done, next, previous } from '../../../shared/tour'
+import { checkName, currentStep, done, howToCheck, next, previous } from '../../../shared/tour'
 import CardX from './CardX'
 
 const api = window.api
@@ -90,7 +90,15 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [index, gone])
 
-  if (!state || gone) return null
+  if (!state) return null
+  // Dismissed or Done: a pill stays in the corner so the steps can always be found
+  // again (Robert 2026-09-04: "all times in dev window show that test steps").
+  if (gone)
+    return (
+      <button type="button" className="tour-pill" data-testid="tour-pill" onClick={() => setGone(false)}>
+        Test steps · {state.index + 1} of {state.steps.length}
+      </button>
+    )
 
   const step = currentStep(state)
   const isLast = done(state)
@@ -114,6 +122,7 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
         </div>
         <div className="tour-text">{step.text}</div>
         <div className="tour-where">Where: {step.where}</div>
+        <div className="tour-how">{howToCheck(step)}</div>
         {step.see.length > 0 && (
           <ul className="tour-see">
             {step.see.map((s, i) => (

@@ -388,9 +388,11 @@ export default function NewSessionDialog({
                 peers.length === 0
                   ? ([['local', 'This machine']] as const)
                   : ([
+                      // The default leads (Robert 2026-09-04): the app's own pick is what
+                      // most starts use, so it is the first thing read and the one lit.
+                      ['auto', 'Let the app decide'],
                       ['local', 'This machine'],
-                      ['remote', peers.length === 1 ? peers[0].name : 'The other machine'],
-                      ['auto', 'Let the app decide']
+                      ['remote', peers.length === 1 ? peers[0].name : 'The other machine']
                     ] as const)
               ).map(([value, word]) => (
                 <button

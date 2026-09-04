@@ -178,6 +178,54 @@ export function trailersOf(body: string): { see: string[]; try?: string } {
   return { see, try: tryLine }
 }
 
+/**
+ * Words a person who has never coded can read: code spans, file paths, identifiers with
+ * dots or camelCase, and every parenthetical go, then the first sentence or two, capped.
+ * Robert, reading the card 2026-09-04: "much too technical most things and hard to
+ * understand".
+ */
+export function plainWords(text: string, cap = 160): string {
+  let s = text
+    .replace(/`[^`]*`/g, '')
+    .replace(/\([^)]*\)/g, '')
+    .replace(/\b[\w-]+\/[\w./-]+\b/g, '')
+    .replace(/\b\w+\.\w+(?:\.\w+)*\b/g, '')
+    .replace(/\b[a-z]+[A-Z]\w*\b/g, '')
+    .replace(/\s+([,.;:])/g, '$1')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/^\s*-\s*/, '')
+    .trim()
+  const m = /^(.+?[.!?])(\s|$)/.exec(s)
+  if (m && m[1].length >= 30) s = m[1]
+  // A sentence that was mostly code reads as holes once the code is gone
+  // ("Pane chip: / with a clock, instead of a bare;") - better nothing than that.
+  const before = text.replace(/\s+/g, ' ').trim()
+  if (s.length < before.length * 0.75 && !m) return ''
+  if (m && m[1].length < (/^(.+?[.!?])(\s|$)/.exec(before)?.[1].length ?? 0) * 0.75) return ''
+  if (s.length > cap) s = s.slice(0, cap - 1).replace(/\s+\S*$/, '') + '…'
+  return s
+}
+
+/** One line saying how to look at this step - in words, for the surface the card has
+ * just opened. A step with nothing on screen says the app checked it below. */
+export function howToCheck(step: Pick<TourStep, 'open' | 'checks' | 'try'>): string {
+  switch (step.open) {
+    case 'newSession':
+      return 'The New session window is open now - look there.'
+    case 'settings':
+      return 'Settings is open now - look there.'
+    case 'sidebarHidden':
+      return 'The list is hidden now - the ringed button brings it back.'
+    case 'workspaces':
+      return 'Look at the list on the left.'
+    default:
+      if (step.try) return 'Press Try it in a pane and watch what the pane does.'
+      return step.checks.length
+        ? 'Nothing to click for this one - the app checked it for you below.'
+        : 'Nothing to click for this one, and no automatic check came with it.'
+  }
+}
+
 /** The first paragraph of a body, with its git trailers and `See:`/`Try:` lines left out,
  * capped so the card stays a card. */
 export function firstParagraph(body: string, cap = 320): string {
@@ -219,7 +267,7 @@ export function stepFrom(c: TourCommit): TourStep {
     text,
     open,
     where: where || (checks.length ? 'inside the app, nothing to click' : 'no file this card knows'),
-    see: see.length ? see : firstParagraph(c.body) ? [firstParagraph(c.body)] : [],
+    see: see.length ? see : plainWords(firstParagraph(c.body)) ? [plainWords(firstParagraph(c.body))] : [],
     checks,
     byHand
   }

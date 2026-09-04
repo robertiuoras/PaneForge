@@ -11,7 +11,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const {
   buildSteps, makeTour, currentStep, next, previous, done, surfaceFor, tourAllowed,
-  stepFrom, placesFor, trailersOf, firstParagraph, checkAllowed, readCheck, checkName
+  stepFrom, placesFor, trailersOf, firstParagraph, checkAllowed, readCheck, checkName, plainWords, howToCheck
 } = await import(pathToFileURL(join(root, 'src/shared/tour.ts')).href)
 
 let failed = 0
@@ -79,6 +79,23 @@ console.log('what to look for and what to type come from the commit, never inven
   ok('an empty body gives an empty list, not a guess', stepFrom(c('Subject')).see.length === 0)
   ok('a first paragraph is capped on a word', firstParagraph('word '.repeat(200)).length <= 320 && /…$/.test(firstParagraph('word '.repeat(200))))
   ok('trailers are not the paragraph', firstParagraph('See: a\nCo-Authored-By: b') === '')
+}
+
+console.log('the card speaks to somebody who has never coded')
+{
+  const p = plainWords('Pane chip: `pushing the repo 0:12` with a clock, instead of a bare `moving` (Session.handoffStage/handoffSince); every step lands in handoff.log under userData, where before it went to console.info and was lost.')
+  ok('a sentence that was mostly code says nothing rather than holes', p === '', p)
+  ok('code spans and parentheses are gone from a mostly-plain sentence', plainWords('The list is hidden now and the `reveal` button (30px) brings it back to the same place it was.') === 'The list is hidden now and the button brings it back to the same place it was.', plainWords('The list is hidden now and the `reveal` button (30px) brings it back to the same place it was.'))
+  ok('camelCase identifiers are gone', !/[a-z][A-Z]/.test(plainWords('the askRef refuses a bare click')))
+  ok('a first sentence stands alone', plainWords('Short one here that is long enough. Second sentence.') === 'Short one here that is long enough.')
+  ok('New session says the window is open', /New session window is open/.test(howToCheck({ open: 'newSession', checks: [], try: undefined })))
+  ok('a hidden list points at the ringed button', /ringed button/.test(howToCheck({ open: 'sidebarHidden', checks: [], try: undefined })))
+  ok('nothing to click says the app checked it', /checked it for you/.test(howToCheck({ open: 'none', checks: ['scripts/x-test.mjs'], try: undefined })))
+  ok('a Try prompt says to press it', /Try it in a pane/.test(howToCheck({ open: 'none', checks: [], try: 'do x' })))
+  const card = readFileSync(join(root, 'src/renderer/src/components/TourCard.tsx'), 'utf8')
+  ok('Done or dismiss folds to a pill, never to nothing', /tour-pill/.test(card) && /setGone\(false\)/.test(card))
+  const dlg = readFileSync(join(root, 'src/renderer/src/components/NewSessionDialog.tsx'), 'utf8')
+  ok('Let the app decide is the first pick and the default', dlg.indexOf("['auto', 'Let the app decide']") < dlg.indexOf("['local', 'This machine'],\n") && /useState<'auto' \| 'local' \| 'remote'>\('auto'\)/.test(dlg))
 }
 
 console.log('a change with nothing on screen is still checked')
