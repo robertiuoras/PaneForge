@@ -74,6 +74,20 @@ export interface HandoffPayload {
    * as it did before.
    */
   tailCols?: number
+  /**
+   * When this pane first appeared on a desk - ANY desk. The clock keeps running.
+   *
+   * A handed-off pane is a new session on the receiving machine, so its `Open for`
+   * clock started again from zero and a pane four hours old read as one minute old.
+   * Robert, 2026-09-04: "when session moved over to pc its running timer all time was
+   * reset is it possible to keep it across any device". The restore path already had
+   * the field for exactly this reason (`StartSessionRequest.openedAt`); a move is the
+   * same question with a machine in the middle. The TURN clock is not carried and
+   * should not be: the turn ended when the pane moved.
+   *
+   * Optional - a sender older than this says nothing and the receiver starts its own.
+   */
+  openedAt?: number
   /** close the receiver only after this transferred pane ends and nothing else runs there */
   closeReceiverWhenDone?: boolean
   /**

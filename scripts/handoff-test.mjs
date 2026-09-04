@@ -191,7 +191,7 @@ const killed = []
 const sender = {
   root: () => senderRoot,
   list: () => [
-    { id: 's1', title: 'proj', cwd: repo, agent: 'claude', status: 'idle', lastOutput: 0, createdAt: 0 },
+    { id: 's1', title: 'proj', cwd: repo, agent: 'claude', status: 'idle', lastOutput: 0, createdAt: 0, openedAt: 1_700_000_000_000 },
     { id: 's2', title: 'leave here', cwd: repo, agent: 'claude', status: 'idle', lastOutput: 0, createdAt: 0 }
   ],
   snapshot: () => [
@@ -239,6 +239,12 @@ ok('the screen tail seeds the far scrollback', Boolean(req?.scrollbackId) && rea
 // wreckage is in the scrollback and Fix only redraws the screen. Measured PC -> Mac,
 // 2026-08-23: a 157-column frame in this Mac pane, unreadable.
 ok('the width the tail was painted at travels', received[0]?.tailCols === 157, String(received[0]?.tailCols))
+
+// A pane's clock does not start again because the pane changed machines. Robert,
+// 2026-09-04: "when session moved over to pc its running timer all time was reset". The
+// TURN clock is not carried and should not be - the turn ended when the pane moved.
+ok('how long the pane has been open travels with it', received[0]?.openedAt === 1_700_000_000_000, String(received[0]?.openedAt))
+ok('...and the receiver starts the new pane wearing it', started.at(-1)?.openedAt === 1_700_000_000_000, String(started.at(-1)?.openedAt))
 ok(
   'and is recorded against the id the tail was written under, so colsOf can answer',
   notedCols.length === 1 && notedCols[0][0] === req?.scrollbackId && notedCols[0][1] === 157,

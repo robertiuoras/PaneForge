@@ -226,6 +226,8 @@ async function sendOne(deps: SendDeps, device: string, pane: Session, closeRecei
     repo: repo ?? undefined,
     tail: deps.tailOf(pane.id, TAIL_BYTES) || undefined,
     tailCols: deps.tailColsOf?.(pane.id) || undefined,
+    // The pane's own age, which is not this process's age. See `HandoffPayload.openedAt`.
+    openedAt: pane.openedAt ?? pane.createdAt,
     closeReceiverWhenDone: closeReceiverWhenDone || undefined,
     dev: dev.length ? dev : undefined
   }
@@ -377,6 +379,10 @@ export async function receiveHandoff(
   // Where it came from, kept on the pane. The budget rule over here is the same rule that
   // sent it, so without this the two desks pass one pane between them for ever.
   if (payload.senderDevice) req.arrivedFrom = payload.senderDevice
+
+  // ...and how long the pane has been open, which does not start again because it
+  // changed machines. See `HandoffPayload.openedAt`.
+  if (payload.openedAt && payload.openedAt > 0) req.openedAt = payload.openedAt
 
   // After placement, never before: a lane split moves the cwd, and the CLI reads
   // transcripts from a folder named after the cwd it actually starts in.
