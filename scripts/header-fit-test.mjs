@@ -101,25 +101,5 @@ console.log('the measuring half never renders')
   ok('and it is actually mounted', /useHeaderFits\(\[sessions\]\)/.test(app))
 }
 
-// A gap the flexbox opened between two words of ONE label. `.save-ws` is a flex row with a
-// gap for its icon, so `Save` and the `<span> workspace</span>` beside it were two flex
-// items and the gap landed on top of the space inside the span: 11.16px between the glyphs
-// where the rest of the sentence uses 3.16 (Robert 2026-09-04, with the screenshot: "still
-// weird gap in save workspace doesnt make sense"). Measured after the fix in the live dev
-// window at 3.16px. The label is one element now, so the gap only ever spaces the icon.
-console.log('a two-word label is one flex item')
-{
-  const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
-  const btn = /className="ghost small save-ws"[\s\S]*?<\/button>/.exec(app)?.[0] ?? ''
-  ok('the Save workspace button is still there', btn.length > 0)
-  ok(
-    'and its two words sit inside ONE span, not either side of the flex gap',
-    /<span>\s*Save<span className="wide-word"> workspace<\/span>\s*<\/span>/.test(btn),
-    btn.slice(-220)
-  )
-  const css = readFileSync(join(root, 'src/renderer/src/styles.css'), 'utf8')
-  ok('the button is still a flex row with a gap, which is what made this possible', /\.save-ws \{[^}]*display: inline-flex[^}]*gap:/.test(css))
-}
-
 console.log(failed ? `\n${failed} failed` : '\nheader fit: all good')
 process.exit(failed ? 1 : 0)

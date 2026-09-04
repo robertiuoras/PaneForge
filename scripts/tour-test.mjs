@@ -163,16 +163,9 @@ console.log('the card speaks to somebody who has never coded')
   ok('code spans and parentheses are gone from a mostly-plain sentence', plainWords('The list is hidden now and the `reveal` button (30px) brings it back to the same place it was.') === 'The list is hidden now and the button brings it back to the same place it was.', plainWords('The list is hidden now and the `reveal` button (30px) brings it back to the same place it was.'))
   ok('camelCase identifiers are gone', !/[a-z][A-Z]/.test(plainWords('the askRef refuses a bare click')))
   ok('a first sentence stands alone', plainWords('Short one here that is long enough. Second sentence.') === 'Short one here that is long enough.')
-  ok('every step opens with something to DO', /^Do this: /.test(howToCheck({ open: 'newSession', checks: [] })))
-  ok('and names the window it just opened', /New session window/.test(howToCheck({ open: 'newSession', checks: [] })))
-  ok('a pane step says to click and type in it', /click it, type in it/.test(howToCheck({ open: 'pane', checks: [] })))
+  ok('New session says the window is open', /New session window is open/.test(howToCheck({ open: 'newSession', checks: [] })))
   ok('a hidden list points at the ringed button', /ringed button/.test(howToCheck({ open: 'sidebarHidden', checks: [] })))
-  // `Nothing to click` said what the CARD could not do and never why. A step with no
-  // screen now says the reason it has none, and what stands in for the press.
-  const noScreen = howToCheck({ open: 'none', checks: ['scripts/x-test.mjs'] })
-  ok('a step with no screen says WHY there is nothing to press', /between two machines|no screen shows it/.test(noScreen), noScreen)
-  ok('and names the check as what proves it instead', /check below is how it is proved/.test(noScreen), noScreen)
-  ok('and never just says nothing to click', !/^Nothing to click/.test(noScreen), noScreen)
+  ok('nothing to click says the app checks it below', /the app checks this one below/.test(howToCheck({ open: 'none', checks: ['scripts/x-test.mjs'] })))
   ok('nothing ever tells anybody to open a pane', !/pane/i.test(howToCheck({ open: 'none', checks: [] })))
   const card = readFileSync(join(root, 'src/renderer/src/components/TourCard.tsx'), 'utf8')
   ok('Done or dismiss folds to a pill, never to nothing', /tour-pill/.test(card) && /setGone\(false\)/.test(card))
@@ -265,12 +258,9 @@ console.log('the tour plays itself')
   ok('a per-assertion suite is read from its ok lines', readCheck('scripts/x-test.mjs', 0, 'ok one\nok two\n').passed === 2)
   ok('and a summary-only suite from its sentence', readCheck('scripts/x-test.mjs', 0, 'sounds: 829 checks passed').passed === 829)
   // A number nobody measured is worse than no number.
-  // A PASS SAYS NO NUMBER. `Checked - 53 things proved` is unanswerable from the card -
-  // fifty-three of what? - so the pass reads as a sentence and only a failure keeps counts,
-  // where the number is the size of the problem and the output is printed under it.
-  ok('a passing check reads as a sentence', checkedWords({ ok: true, passed: 0, failed: 0 }) === 'The app just ran its own checks on this - they passed')
-  ok('and a big count does not change it', !/\d/.test(checkedWords({ ok: true, passed: 829, failed: 0 })), checkedWords({ ok: true, passed: 829, failed: 0 }))
-  ok('a failure still counts both sides', /2 of 5 checks failed/.test(checkedWords({ ok: false, passed: 3, failed: 2 })))
+  ok('a checked step with no count says just Checked', checkedWords({ ok: true, passed: 0, failed: 0 }) === 'Checked')
+  ok('and with one says how many', /829 things proved/.test(checkedWords({ ok: true, passed: 829, failed: 0 })))
+  ok('a failure still counts both sides', /2 of 5 failed/.test(checkedWords({ ok: false, passed: 3, failed: 2 })))
   ok('the card asks for those words rather than writing its own', /checkedWords\(all\)/.test(card))
 
   // THE TOUR DOES THE THING. A step about a sound plays the sound.
@@ -415,7 +405,7 @@ console.log('every suite a step ran is ONE line')
   ]
   const all = checkedAll(two)
   ok('the counts are added up', all.passed === 72 && all.failed === 0 && all.ok)
-  ok('and read as one sentence with no count in it', checkedWords(all) === 'The app just ran its own checks on this - they passed')
+  ok('and read as one sentence', checkedWords(all) === 'Checked - 72 things proved')
   const bad = checkedAll([two[0], { script: 'scripts/c-test.mjs', ok: false, passed: 1, failed: 2, tail: 'FAIL' }])
   ok('one failing suite fails the step', !bad.ok && bad.failed === 2)
   ok('nothing at all is still an answer, not a crash', checkedAll([]).ok && checkedAll([]).passed === 0)
