@@ -403,6 +403,12 @@ const IDLE_EMPTY_MS = 60 * 60 * 1000
 // `main` for half an hour on 2026-08-09 with nothing in it, three minutes of work done,
 // committed and pushed, while every real taskdriver chat was sent to a letter lane.
 const PARK_STEAL_MS = 10 * 60 * 1000
+// A hold whose pane put itself to sleep (`sleep`, run by the app before it kills the CLI)
+// is not given up on any clock this file already has - it is not idle, it is paused, and
+// waking it must land in the same checkout it fell asleep in. Seven days is long enough
+// that nobody plausibly meant to come back to it; past that it is treated as an ordinary
+// stale hold, same as any other.
+const ASLEEP_MAX_MS = 7 * 24 * 60 * 60 * 1000
 // A chat that only MENTIONED PaneForge gets a lane on approval, not on the word. Saying
 // "why does PaneForge show X" from a Jarvis chat used to claim a real lane: the pane then
 // wore a "PF lane main" chip for a chat that never opened the repo, and a chat that did
@@ -835,6 +841,10 @@ let reaped = false
  * still check dirty/ready/conflict themselves - this only answers the liveness half.
  */
 function holdGivenUp(c) {
+  // A sleeping pane has not gone anywhere - its chat is paused, not idle - so within
+  // ASLEEP_MAX_MS neither the silence sweep nor a park steal may take its lane. Past
+  // that it falls through to the same reading everything else gets.
+  if (c.asleep && now() - c.asleep <= ASLEEP_MAX_MS) return false
   if (now() - (c.seen ?? c.claimed ?? 0) > IDLE_EMPTY_MS) return true
   if (!c.parked) return false
   if (c.visitor) return true
@@ -919,6 +929,9 @@ function reap(state) {
       reaped = true
       continue
     }
+    // A sleeping hold is not stale by silence - see holdGivenUp - until ASLEEP_MAX_MS says
+    // otherwise, at which point it falls straight into the ordinary STALE_MS reading below.
+    if (c.asleep && now() - c.asleep <= ASLEEP_MAX_MS) continue
     if (now() - (c.seen ?? c.claimed ?? 0) > STALE_MS) {
       // A chat that died without a SessionEnd hook never released its lane, and never
       // closed the `npm run try` window it left running either. Both go here - but its
@@ -1502,6 +1515,9 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
   if (PANE)
     for (const [id, c] of Object.entries(state.lanes)) {
       if (c.pane !== PANE || c.session === session) continue
+      // A sleeping hold is not given up just because it also reads parked/tentative -
+      // it is kept for the press that wakes it, not for the tidy ledger.
+      if (c.asleep) continue
       if (!c.parked && !c.tentative) continue
       const w = laneWork(id)
       if (w.dirty || w.ahead > 0) continue
@@ -2726,6 +2742,14 @@ function releaseClaim(session) {
   let marked = null
   for (const [id, c] of Object.entries(state.lanes)) {
     if (c.session === session) {
+      // The chat's agent was stopped on purpose (sleep), not ended - the lane is still
+      // its own and may hold half a feature. Park it exactly as the Stop hook would:
+      // no markReady, no catchUp, nothing merged out from under a pane that is resting.
+      // It expires like any other stale hold once ASLEEP_MAX_MS passes (see `reap`).
+      if (c.asleep) {
+        c.parked = now()
+        continue
+      }
       // A chat that ends with committed, clean work meant that work to go out - it just
       // never said so. Uncommitted work is the opposite: nobody released half an edit.
       const w = laneWork(id)
@@ -2753,6 +2777,48 @@ function releaseClaim(session) {
   if (state.release?.session === session) state.release = null
   write(state)
   return { freed, marked, release: autoship('auto', session) }
+}
+
+/**
+ * The app, before it kills a pane's agent: mark every hold that pane has in this repo
+ * asleep, so `releaseClaim` parks it instead of giving it away and the idle sweeps leave
+ * it alone (see `holdGivenUp`, `reap`).
+ *
+ * Matched by SESSION when the caller has one (a chat typing `sleep` itself); by PANE
+ * otherwise, because the app only ever knows the pane id (`PF_PANE`) at the moment it is
+ * about to end the process - the CLI's own session id belongs to the hook, not to it.
+ */
+function sleepLane(session, pane) {
+  if (!session && !pane) throw new Error('sleep needs --session or --pane')
+  const state = reap(read())
+  const asleep = []
+  for (const [id, c] of Object.entries(state.lanes)) {
+    if (session ? c.session !== session : c.pane !== pane) continue
+    c.asleep = now()
+    asleep.push(id)
+  }
+  write(state)
+  return { asleep }
+}
+
+/**
+ * The app, once a sleeping pane's agent is spawned again: clear the mark so the hold reads
+ * exactly as an ordinary one again - `claim` (the CLI's own hook, next) then behaves as it
+ * always has, because by the time it runs `asleep` is already gone.
+ */
+function wakeLane(session, pane) {
+  if (!session && !pane) throw new Error('wake needs --session or --pane')
+  const state = reap(read())
+  const woken = []
+  for (const [id, c] of Object.entries(state.lanes)) {
+    if (session ? c.session !== session : c.pane !== pane) continue
+    if (!c.asleep) continue
+    delete c.asleep
+    c.seen = now()
+    woken.push(id)
+  }
+  write(state)
+  return { woken }
 }
 
 /**
@@ -3473,6 +3539,9 @@ function status(session) {
         parked: state.lanes[id]?.parked ?? null,
         // Claimed by a chat whose own project is a different repo - it stood here.
         visitor: Boolean(state.lanes[id]?.visitor),
+        // The pane holding this lane put its own agent to sleep - the hold survives on
+        // purpose (see holdGivenUp, reap), a press away from being what it was.
+        asleep: state.lanes[id]?.asleep ?? null,
         from: state.lanes[id]?.cwd ?? null,
         // When the HOLD was last refreshed - a heartbeat bumped by that chat's turns
         // ending, so it says how long ago the chat was last alive rather than anything
@@ -3561,7 +3630,9 @@ function doctor() {
     const what = []
     if (l.heldBy)
       what.push(
-        (l.tentative
+        (l.asleep
+          ? 'held by a chat whose pane is asleep - kept for it, not handed out'
+          : l.tentative
           ? 'reserved by a chat that has not written here'
           : l.parked
             ? `held by a chat whose turn ended ${Math.round((now() - l.parked) / 60000)}m ago - taken over the moment anyone needs it`
@@ -3872,6 +3943,10 @@ try {
     const r = releaseClaim(session)
     if (r.marked) console.log(`Lane ${r.marked.lane} had finished work - marked done on the way out.`)
     sayRelease(r.release)
+  } else if (cmd === 'sleep') {
+    console.log(JSON.stringify(sleepLane(session, arg('pane') ?? PANE)))
+  } else if (cmd === 'wake') {
+    console.log(JSON.stringify(wakeLane(session, arg('pane') ?? PANE)))
   } else if (cmd === 'park') {
     // The Stop hook: this chat's turn ended. Holds on clean lanes are marked parked so a
     // chat that needs one takes it in minutes; the mark clears itself on the next claim.

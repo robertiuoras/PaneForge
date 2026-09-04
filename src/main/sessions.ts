@@ -48,6 +48,9 @@ import { START_COLS, START_ROWS } from '../shared/paneGrid'
 import { RESTORE_MARK_TEXT } from '../shared/replayWidth'
 import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, SUBMIT_GAP_MS, armDecision, clearChunks, resumeOf, dropFor, dropWords, expiryDecision, queuedPromptDecision, quietEnoughToArm, type DropReason, type QueuedPromptVerdict } from '../shared/autoclear'
 import { acLog } from './autoclearLog'
+import { logReclaim } from './activationLog'
+import { ledgerSleep, ledgerWake } from './laneLedger'
+import type { SleepReason } from '../shared/types'
 
 /**
  * One request to clear a pane: what the Stop hook asks for, and what the watcher asks for.
@@ -993,8 +996,12 @@ export class SessionManager extends EventEmitter {
     }
     // A sleeping pane can be restarted rather than woken - it is an `exited` pane and the
     // menu offers both. Restarting is the louder of the two (a full RESET below), so the
-    // sleep ends here as well, and the request stops asking to arrive asleep.
+    // sleep ends here as well, and the request stops asking to arrive asleep. This bypasses
+    // `wake()`, so the ledger mark has to come off here too, or the lane would read asleep
+    // for a pane that is now running.
+    if (live.meta.asleep) ledgerWake(live.meta.cwd, id)
     live.meta.asleep = undefined
+    live.meta.asleepReason = undefined
     live.req = { ...live.req, asleep: undefined }
     recordEnd(id, resumeIdFor(id))
     // A restart is a new conversation unless the CLI is being asked to resume one, and
@@ -1050,7 +1057,7 @@ export class SessionManager extends EventEmitter {
    * `status` goes to `exited` alongside `asleep` on purpose: every guard in this app that
    * asks whether a pane has a live process already reads that word.
    */
-  sleep(id: string): Session | null {
+  sleep(id: string, reason: SleepReason = 'manual'): Session | null {
     const live = this.sessions.get(id)
     if (!live) return null
     if (
@@ -1063,6 +1070,11 @@ export class SessionManager extends EventEmitter {
       })
     )
       return null
+    // Before the CLI dies, so the SessionEnd hook it fires on the way out reads the lane
+    // ledger already marked - the whole point being that it PARKS this hold instead of
+    // releasing it (see scripts/lane.mjs `releaseClaim`). Never blocks: worst case the
+    // hold is released as usual and the next claim rebuilds it, same as any dead chat.
+    ledgerSleep(live.meta.cwd, id)
     // Before the pty dies, while its pid still names a group and a tree - the same order
     // `kill()` uses, and for the same reason: what the pane started detached is reachable
     // from neither afterwards.
@@ -1076,14 +1088,16 @@ export class SessionManager extends EventEmitter {
     live.meta.piping = undefined
     recordEnd(id, resumeIdFor(id))
     // What waking spawns from. The conversation it was in is read NOW, while the
-    // transcript still names this session - and the launch prompt is dropped, or waking
-    // would re-run the work the pane was opened to do.
-    live.req = { ...live.req, resume: true, resumeId: resumeIdFor(id), prompt: undefined }
+    // transcript still names this session. The launch prompt is dropped for every other
+    // reason - waking would otherwise re-run the work the pane was opened to do - except
+    // `queued`: a pane put to sleep before it ever ran is woken to do exactly that.
+    live.req = { ...live.req, resume: true, resumeId: resumeIdFor(id), prompt: reason === 'queued' ? live.req.prompt : undefined }
     this.endRun(live)
     live.jobName = null
     live.meta.job = undefined
     live.meta.status = 'exited'
     live.meta.asleep = Date.now()
+    live.meta.asleepReason = reason
     live.meta.attention = false
     live.meta.bell = false
     live.meta.stalledSince = undefined
@@ -1091,6 +1105,7 @@ export class SessionManager extends EventEmitter {
     this.emit('data', id, SLEEP_MARK)
     live.buffer.push(SLEEP_MARK)
     this.emitSessions()
+    logReclaim({ at: Date.now(), action: 'sleep', pane: id, reason, folder: basename(live.meta.cwd) })
     return live.meta
   }
 
@@ -1129,6 +1144,7 @@ export class SessionManager extends EventEmitter {
   wake(id: string): Session | null {
     const live = this.sessions.get(id)
     if (!live || !live.meta.asleep) return null
+    const reason = live.meta.asleepReason
     noteSession(id, live.meta.cwd, live.meta.agent, live.req.resume ? live.req.resumeId : undefined)
     // Cleared before anything else reads the request: it is what made this pane arrive
     // asleep, and a later restart of a pane somebody has woken must not send it back.
@@ -1136,6 +1152,12 @@ export class SessionManager extends EventEmitter {
     live.proc = this.spawn(live.req, live.meta.agent, live.cols, live.rows, live.meta.id)
     live.runner = specFor(live.meta.agent).bin
     live.meta.asleep = undefined
+    live.meta.asleepReason = undefined
+    // After the CLI is spawned - and so after the hook that resumes it has whatever
+    // conversation state it needs - so the ledger reads asleep for the whole gap between
+    // "the app decided to wake this pane" and "the CLI is actually running again".
+    ledgerWake(live.meta.cwd, id)
+    logReclaim({ at: Date.now(), action: 'wake', pane: id, reason: reason ?? 'manual', folder: basename(live.meta.cwd) })
     live.meta.status = 'starting'
     live.meta.printed = undefined
     live.meta.exitCode = undefined
