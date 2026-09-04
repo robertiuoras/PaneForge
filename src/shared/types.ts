@@ -66,6 +66,18 @@ export interface Project {
    * is a project, and stays one.
    */
   checkoutOf?: string
+  /**
+   * This row is a CLIENT, not a project: a folder under the projects root's own `clients`
+   * roster, whose `name` reads `Alison | clients` so the list says who it is and where it
+   * lives in one line. The value is the client's own name.
+   *
+   * They are rows in the same list on purpose. Everything the launcher already does -
+   * type to filter, tick several, Enter, a message that picks the folder - then works on
+   * a client with no second list to learn (Robert, 2026-09-04: "i can make a clients
+   * session called alison and then when i click new session alison | clients would popup
+   * so i know that its part of clients").
+   */
+  client?: string
 }
 
 /**
@@ -477,6 +489,16 @@ export interface StartSessionRequest {
    * transcript is gone by the time the panes are offered back.
    */
   resumeId?: string
+  /**
+   * If a pane is already open in this folder, go to that one instead of opening a second.
+   *
+   * Off everywhere by default, because opening two panes on one project is an ordinary
+   * thing to want. A CLIENT row is the exception: the whole reason it is in the list is to
+   * be the one place that client's work happens, and picking Alison twice in a morning
+   * should land in the same chat both times - "if theres already existing lane it would
+   * just open that again just like with history" (Robert, 2026-09-04).
+   */
+  reuse?: boolean
   /** text typed into the agent once it is ready */
   prompt?: string
   /** extra ms before the prompt is typed, used to stagger a swarm launch */

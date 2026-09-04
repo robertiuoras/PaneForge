@@ -12,7 +12,7 @@
 // find at all, with nothing on screen to say why.
 
 import { buildSync } from 'esbuild'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -114,6 +114,82 @@ ok('a suffix on its own proves nothing', alone.size === 0, [...alone.keys()].joi
     Boolean(m && /\bpicking\b/.test(m[1])),
     m ? `deps: [${m[1]}]` : 'no match'
   )
+}
+
+// A client is a row of its own, a level deeper than every other row in the list.
+//
+// `clients` is one folder under the projects root, so the launcher offered ONE row for
+// the whole roster and picking it opened a pane in the parent of everybody's work.
+// Robert, 2026-09-04: "i can make a clients session called alison and then when i click
+// new session alison | clients would popup so i know that its part of clients".
+{
+  const stub = join(out, 'electron-stub.mjs')
+  writeFileSync(stub, 'export const app = { getPath: () => "/tmp", isPackaged: false }\nexport default { app }\n', 'utf8')
+  const file = join(out, 'projects.mjs')
+  let built = true
+  try {
+    buildSync({
+      absWorkingDir: root,
+      entryPoints: [join(root, 'src/main/projects.ts')],
+      bundle: true,
+      platform: 'node',
+      format: 'esm',
+      alias: { electron: stub },
+      outfile: file
+    })
+  } catch (e) {
+    built = false
+    ok('the project list builds without a window', false, String(e).slice(0, 200))
+  }
+  if (built) {
+    const { listProjects } = await import(pathToFileURL(file).href)
+    const desk = mkdtempSync(join(tmpdir(), 'pf-desk-'))
+    mkdirSync(join(desk, 'PaneForge'), { recursive: true })
+    mkdirSync(join(desk, 'clients', 'alison'), { recursive: true })
+    mkdirSync(join(desk, 'clients', 'pia-team'), { recursive: true })
+    writeFileSync(join(desk, 'clients', 'alison', 'README.md'), '# A4 Advocate (Adie Bradley)\n', 'utf8')
+    writeFileSync(join(desk, 'clients', 'pia-team', 'README.md'), '# PIA Team\n', 'utf8')
+    const rows = listProjects(desk)
+    const alison = rows.find((r) => r.path === join(desk, 'clients', 'alison'))
+    ok('a client on the roster is its own row', Boolean(alison), rows.map((r) => r.name).join(', '))
+    ok('...named so the list says who it is AND where it lives', alison?.name === 'Adie Bradley | clients', alison?.name)
+    ok('...and marked a client, so the launcher can go back to their pane', alison?.client === 'Adie Bradley', String(alison?.client))
+    ok('every client gets a row, not just the first', rows.filter((r) => r.client).length === 2, String(rows.filter((r) => r.client).length))
+    ok('an ordinary project is untouched', rows.some((r) => r.name === 'PaneForge' && !r.client))
+    // The real shape on this desk: the client work is a repository of its own, and the
+    // roster is the `clients` folder inside it - `Projects/clients/clients/<who>`.
+    const nested = mkdtempSync(join(tmpdir(), 'pf-nested-'))
+    mkdirSync(join(nested, 'clients', 'clients', 'a4-advocate'), { recursive: true })
+    writeFileSync(join(nested, 'clients', 'clients', 'a4-advocate', 'README.md'), '# A4 Advocate\n', 'utf8')
+    const deep = listProjects(nested).find((r) => r.client)
+    ok('a roster one folder further in is found too', deep?.name === 'A4 Advocate | clients', deep?.name)
+    // ...but a lane worktree of that repository carries the same roster, and listing it
+    // too offered every client four times, all four rows reading the same words. 68 rows
+    // for 17 people, in a real window, 2026-09-04.
+    for (const lane of ['clients-a', 'clients-b']) {
+      mkdirSync(join(nested, lane, 'clients', 'a4-advocate'), { recursive: true })
+      writeFileSync(join(nested, lane, '.git'), 'gitdir: ../clients/.git/worktrees/' + lane, 'utf8')
+      writeFileSync(join(nested, lane, 'clients', 'a4-advocate', 'README.md'), '# A4 Advocate\n', 'utf8')
+    }
+    mkdirSync(join(nested, 'clients', '.git'), { recursive: true })
+    ok('a copy of that repository lists nobody twice', listProjects(nested).filter((r) => r.client).length === 1, String(listProjects(nested).filter((r) => r.client).length))
+    rmSync(nested, { recursive: true, force: true })
+    // A desk that does no client work must look exactly as it did.
+    const plain = mkdtempSync(join(tmpdir(), 'pf-plain-'))
+    mkdirSync(join(plain, 'Toolstash'), { recursive: true })
+    ok('a root with no roster grows no rows', listProjects(plain).every((r) => !r.client))
+    rmSync(desk, { recursive: true, force: true })
+    rmSync(plain, { recursive: true, force: true })
+  }
+}
+
+// ...and picking that row goes BACK to the pane already open in that folder, rather than
+// opening a second one beside it.
+{
+  const dialog = readFileSync(join(root, 'src/renderer/src/components/NewSessionDialog.tsx'), 'utf8')
+  ok('a client row asks to reuse the pane that is open', /reuse: proj\?\.client \? true : undefined/.test(dialog))
+  const main = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
+  ok('...and main answers with the live pane in that folder', /if \(req\.reuse\)/.test(main) && /status !== 'exited'/.test(main))
 }
 
 rmSync(out, { recursive: true, force: true })

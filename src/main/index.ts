@@ -1416,6 +1416,14 @@ async function startOrSend(req: StartSessionRequest, claimed?: string[]): Promis
   if (req.resume && req.resumeId && !resumableTranscript(req.cwd, req.resumeId)) {
     req = { ...req, resume: false, resumeId: undefined }
   }
+  // A row that says "this is where this work happens" - a client - goes back to the pane
+  // that is already open there rather than opening a second one beside it. Live panes
+  // only: a session that has exited is a row in History, and History is where somebody
+  // asks for that one back. Never a mirror, whose pty belongs to the other desk.
+  if (req.reuse) {
+    const open = manager.list().find((s) => s.cwd === req.cwd && s.status !== 'exited')
+    if (open) return open
+  }
   // `claimed` is the batch's own list of folders already taken, and it holds the RESOLVED
   // lane rather than what was asked for: two panes launched together for one project must
   // land in different lanes, and it is `laneFor` that decides which. A pane that goes to

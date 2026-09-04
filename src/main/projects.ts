@@ -9,6 +9,8 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { projectsRoot } from './config'
+import { looksLikeRoster, readRoster } from './clients'
+import { CLIENTS_DIR, clientLabel } from '../shared/clientName'
 import { checkoutOwners, type FolderFacts } from '../shared/checkout'
 import { folderNameFor } from '../shared/projectName'
 import type { Project } from '../shared/types'
@@ -81,7 +83,60 @@ export function listProjects(root = projectsRoot()): Project[] {
     const parent = owners.get(p.name)
     if (parent) p.checkoutOf = parent
   }
+  // Copies are skipped: `clients-a`, `clients-b` and `clients-c` are lane worktrees of
+  // `clients`, each carrying the whole roster, so the launcher offered every client FOUR
+  // times over - 68 rows for 17 people, all four reading `Adie Bradley | clients` and
+  // nothing on any of them saying which was which (measured in a dev window, 2026-09-04).
+  // A client is a person, not a checkout: the roster is read from the project's own
+  // folder, and the lane a pane lands in is `laneFor`'s decision as it is everywhere else.
+  projects.push(...clientRows(root, used, owners))
   return projects.sort((a, b) => b.lastUsed - a.lastUsed || a.name.localeCompare(b.name))
+}
+
+/**
+ * One row per client on the roster, a level DEEPER than every other row in this list.
+ *
+ * `clients` is one folder under the projects root, so the loop above offered exactly one
+ * row for the whole roster and picking it opened a pane in the parent of everybody's
+ * work. A client is what the session is actually for, and the launcher is where a person
+ * says so: each one is its own row now, reading `Alison | clients`, which filters on the
+ * client's name and opens straight into their folder - where their README and whatever
+ * else is theirs already is, so nothing has to be typed to load it.
+ *
+ * `readRoster` is the same reading a pane already uses to rename itself in a client tree
+ * (`main/clients.ts`), cached there, so this costs one map over an answer the app has. A
+ * root with no roster - or one whose children carry no README - returns nothing at all,
+ * which is every machine that does no client work.
+ */
+function clientRows(root: string, used: Map<string, number>, copies: Map<string, string>): Project[] {
+  // The roster is not always `<root>/clients`. On this desk the client work lives in a
+  // repository OF its own - `Projects/clients` - and the roster is the `clients` folder
+  // INSIDE it, which is why `rosterRoot` walks up from a pane rather than guessing from
+  // the top. From up here the same fact is one level down, so both are looked at and
+  // whichever carries README-bearing children is the one read. Anything else - a `clients`
+  // folder that is a build output, an empty one - fails `looksLikeRoster` and is skipped.
+  const rosters = [join(root, CLIENTS_DIR)]
+  for (const name of readdirSync(root)) {
+    if (SKIP.has(name) || name.startsWith('.') || copies.has(name)) continue
+    rosters.push(join(root, name, CLIENTS_DIR))
+  }
+  const rows: Project[] = []
+  const seen = new Set<string>()
+  for (const dir of rosters) {
+    if (seen.has(dir) || !looksLikeRoster(dir)) continue
+    seen.add(dir)
+    for (const entry of readRoster(dir)) {
+      const path = join(dir, entry.slug)
+      rows.push({
+        name: clientLabel(entry),
+        client: entry.name,
+        path,
+        lastUsed: used.get(slug(path)) ?? 0,
+        isGit: existsSync(join(path, '.git'))
+      })
+    }
+  }
+  return rows
 }
 
 /** What `.git` is here: a repository's own directory, or a linked worktree's pointer. */

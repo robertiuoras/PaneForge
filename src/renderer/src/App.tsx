@@ -6872,6 +6872,10 @@ export default function App(): JSX.Element {
           setSideHidden(surface === 'sidebarHidden')
           if (surface === 'newSession') setPicking(true)
           else if (surface === 'settings') setSettings(true)
+          // A change to what History offers - which rows carry `Open again`, what a row
+          // says it was working on - is looked at in History, and it used to be filed
+          // under `inside the app, nothing to click` with only a test to show for it.
+          else if (surface === 'history') setHistory(true)
           else if (surface === 'pane') {
             // A change to a pane - its header, its icons, its name - can only be looked at
             // when a pane is on screen, and a dev copy often opens with none. The existing

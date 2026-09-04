@@ -34,6 +34,7 @@ const {
   clientFromPath,
   clientFromText,
   clientTitle,
+  clientLabel,
   mayRename,
   nameFromHeading,
   repeatedClient,
@@ -264,6 +265,10 @@ ok(mayRename('clients', '/Users/r/Projects/clients'), 'a pane still wearing the 
 ok(!mayRename('Angie C.', '/Users/r/Projects/clients'), 'a pane that has already been named')
 ok(!mayRename('clients', '/Users/r/Projects/clients', true), 'a pane that said no')
 is(clientTitle({ slug: 'x', name: 'y'.repeat(80), aliases: [] }).length, 60, 'capped like rename')
+// The card says who it is AND that it is client work - a person's name on its own gives a
+// desk of six panes no clue which of them is a client's (Robert, 2026-09-04).
+is(clientLabel({ slug: 'alison', name: 'Alison', aliases: [] }), 'Alison | clients', 'the card says who and where')
+is(clientLabel({ slug: 'x', name: 'y'.repeat(80), aliases: [] }).length, 60, 'and is capped the same')
 
 // ------------------------------------------------- a subject several asks agree on
 

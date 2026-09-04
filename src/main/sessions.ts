@@ -21,7 +21,7 @@ import { forgetHandoff, handoffFor } from './handoffSteps'
 import { clientForCwd, clientForTexts } from './clients'
 import { trustAgyWorkspace } from './agyTrust'
 import {
-  clientTitle,
+  clientLabel,
   mayRename,
   TOPIC_WINDOW,
   topicReading,
@@ -871,7 +871,7 @@ export class SessionManager extends EventEmitter {
     // of the last four asks agreeing - so one sentence cannot re-name a pane, and a
     // title a person typed is still never touched.
     if (!found && !untitled && !(upgradable && topic.strong)) return
-    const title = found ? clientTitle(found) : topic.title
+    const title = found ? clientLabel(found) : topic.title
     if (!title || title === s.title) return
     const was = s.title
     s.title = title

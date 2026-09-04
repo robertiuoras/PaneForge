@@ -217,6 +217,10 @@ export default function NewSessionDialog({
       return {
         cwd: path,
         title: proj?.name,
+        // A client is one place, not one of several copies: picking Alison twice lands
+        // in the chat that is already open for her. Every other row keeps the old
+        // behaviour, because two panes on one project is an ordinary thing to want.
+        reuse: proj?.client ? true : undefined,
         agent,
         model: model || undefined,
         resume: resume && canResume,

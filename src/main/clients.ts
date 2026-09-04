@@ -54,7 +54,7 @@ function isDir(p: string): boolean {
  * call `tools` a client. Requiring at least one child that carries a README is what makes
  * this evidence: an empty folder, a build output and a node_modules all fail it.
  */
-function looksLikeRoster(dir: string): boolean {
+export function looksLikeRoster(dir: string): boolean {
   if (!isDir(dir)) return false
   try {
     return readdirSync(dir, { withFileTypes: true }).some(

@@ -523,6 +523,19 @@ export function clientTitle(entry: ClientEntry): string {
 }
 
 /**
+ * The client's name AND the fact that they are a client - `Alison | clients`.
+ *
+ * `clientTitle` on its own is a person's name on a card, and a desk with six panes on it
+ * gives no clue which of them is client work: Robert, 2026-09-04, "alison | clients would
+ * popup so i know that its part of clients ... and auto renames the session from client to
+ * that alison | clients". The second half is the roster folder's own name, so it says
+ * where the work lives as well as who it is for.
+ */
+export function clientLabel(entry: ClientEntry): string {
+  return `${clientTitle(entry)} | ${CLIENTS_DIR}`.slice(0, MAX_TITLE)
+}
+
+/**
  * The subject a pane keeps coming back to, when several asks in a row agree on it.
  *
  * Naming a pane off the FIRST sentence typed is a guess made from one reading, and it is
