@@ -138,6 +138,29 @@ export function copySuffixOf(name: string): string | null {
   return copyNumber(m[2]) === null ? null : m[1]
 }
 
+/**
+ * The word a card wears for a project when it is named beside a SUBJECT rather than as
+ * itself - `Dev Window Testing · PF`, `Chasing Invoices · Cars`.
+ *
+ * A subject already says what a pane is doing; without this it never said WHERE, and two
+ * panes doing similar-sounding work in different repos read as the same card. Short
+ * enough to say whole (`Cars`, `Momin`) is shown whole - anything longer is read as
+ * initials, the way a person already shortens `PaneForge` to `PF` out loud. The caller
+ * decides whether to print it at all: never beside an empty subject, and never beside a
+ * card that is already wearing this project's own name.
+ */
+export function projectTag(project: string): string {
+  const name = project.trim()
+  if (!name) return ''
+  if (name.length <= 8) return name
+  const parts = name
+    .replace(/(?!^)[A-Z]/g, (m) => ' ' + m)
+    .split(/[.\-_\s ]+/)
+    .filter(Boolean)
+  if (parts.length > 1) return parts.map((p) => p[0].toUpperCase()).join('')
+  return name.slice(0, 8)
+}
+
 export interface PlaceInput {
   /** the folder the pane is open in */
   cwd: string

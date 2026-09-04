@@ -36,6 +36,7 @@ const {
   clientTitle,
   mayRename,
   nameFromHeading,
+  repeatedClient,
   slugFromPath,
   topicTitle,
   mayTopicName,
@@ -232,6 +233,31 @@ is(topicTitle('ok'), '', 'too short to identify a pane')
 is(topicTitle(''), '', 'nothing typed')
 ok(topicTitle('rewrite the onboarding email sequence for new leads').length <= 26, 'capped')
 
+// ------------------------------------------------ the opener may not eat the whole budget
+//
+// docs/brief-session-naming-2026-09-04.md, four cards read off this session's own asks.
+
+is(
+  topicTitle('whenever you open the dev window it will say whats different'),
+  'Open Dev Window',
+  'a runway opener (whenever you) may not spend the four-word budget'
+)
+is(
+  topicTitle('can you measure right now why im lagging?'),
+  'Measure Right Now',
+  'a name may not end on a dangling why'
+)
+is(
+  topicTitle('we need to tune the naming of session as well, broken like this'),
+  'Tune Naming',
+  '"of as" is not words - both trailing fillers come off'
+)
+is(
+  topicTitle('when pressing on sidebar icon everything breaks'),
+  'Fixing Sidebar Icon',
+  'two verbs is one too many - the second gerund is the trigger, not the subject'
+)
+
 // ------------------------------------------------------------------------- who may rename
 
 ok(mayRename('clients', '/Users/r/Projects/clients'), 'a pane still wearing the folder name')
@@ -354,6 +380,43 @@ is(
   const settled = topicReading(tree, asks, asks[2])
   is(settled.title, 'Sort Out Invoice Reminders', 'a repeated subject wins inside the tree too')
   is(settled.strong, true, '...as evidence')
+}
+
+// ------------------------------------------- a rename needs more than one ask (client alias)
+//
+// "it renamed way too early / too confident, now this session is called name like `Cars`
+// which is wrong because we only said 1 prompt, needs multiple at least" - the word `Cars`
+// appeared once, inside a sentence ABOUT naming rules, and the card took it. A client name
+// lifted from PROMPT TEXT needs the same three-agreeing-asks bar `repeatedTopic` already
+// holds a real project's pane to; the folder is exempt, because it is a fact rather than a
+// guess (see `clientFromPath` above).
+{
+  const carsRoster = withAliases([{ slug: 'carsworld', name: 'Carsworld' }])
+  const oneOfThree = [
+    'we need to tune the naming of session as well, broken like Carsworld showing up wrongly',
+    'lets fix the trailing filler word rule',
+    'the second verb rule needs a test too'
+  ]
+  is(
+    repeatedClient(oneOfThree, carsRoster),
+    undefined,
+    'three asks in a PaneForge checkout, only one naming a client, names nobody'
+  )
+  const threeOfThree = [
+    'draft the carsworld campaign brief',
+    'carsworld wants the creatives resized',
+    'send carsworld the august report'
+  ]
+  is(
+    repeatedClient(threeOfThree, carsRoster)?.slug,
+    'carsworld',
+    'three asks agreeing on the same client is evidence'
+  )
+  is(
+    repeatedClient(['carsworld needs a report'], carsRoster),
+    undefined,
+    'one ask is never evidence'
+  )
 }
 
 console.log(`client-name: ${checks} checks passed`)

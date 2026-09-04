@@ -18,7 +18,7 @@ import { colsOf, endAll, gistFor, noteCols, recordData, recordEnd, recordStart, 
 import { jobTable } from './backJobs'
 import { backJobInfo } from './usage'
 import { forgetHandoff, handoffFor } from './handoffSteps'
-import { clientForCwd, clientForText } from './clients'
+import { clientForCwd, clientForTexts } from './clients'
 import { trustAgyWorkspace } from './agyTrust'
 import {
   clientTitle,
@@ -816,8 +816,16 @@ export class SessionManager extends EventEmitter {
     const upgradable = s.autoTitled === 'topic'
     if (!untitled && !upgradable) return
 
+    // Every ask is remembered here, on its way to the pty - both for the topic reading
+    // below and for `found`, so a client lifted out of the words somebody typed needs the
+    // same repetition a topic does: see `repeatedClient`.
+    const asks = from === 'prompt' && text ? this.trackAsk(live, text) : undefined
     const found =
-      from === 'folder' ? clientForCwd(s.cwd) : text ? clientForText(s.cwd, text) : undefined
+      from === 'folder'
+        ? clientForCwd(s.cwd)
+        : asks
+          ? clientForTexts(s.cwd, asks)
+          : undefined
     if (found && found.slug === s.clientSlug) return
     // A pane in a client tree doing something else entirely is still a pane nobody can
     // tell apart, so it gets the subject of what was asked instead. Never on the folder
@@ -829,7 +837,7 @@ export class SessionManager extends EventEmitter {
     // apart, so the first ask still names them.
     const topic: TopicReading =
       !found && from === 'prompt' && text
-        ? this.topicFor(live, text)
+        ? topicReading(live.meta.cwd, asks ?? [], text)
         : { title: '', strong: false }
     // An ask that points at its subject rather than naming it (`$50 task from
     // yesterday`) is a question the reply answers; the sweep reads the answer off the
@@ -864,18 +872,19 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
-   * The subject this pane may be named for, given what has been asked of it.
+   * Every ask this pane has taken, most recent last, capped to the window both the topic
+   * and client readings agree on.
    *
-   * The asks are kept here rather than read back out of the transcript because they are
-   * already passing through this process on their way to the pty - the same feed the
-   * prompt archive and the rail run off - so remembering four of them costs nothing and
-   * needs no CLI to cooperate.
+   * Kept here rather than read back out of the transcript because they are already
+   * passing through this process on their way to the pty - the same feed the prompt
+   * archive and the rail run off - so remembering four of them costs nothing and needs no
+   * CLI to cooperate.
    */
-  private topicFor(live: Live, text: string): TopicReading {
+  private trackAsk(live: Live, text: string): string[] {
     const asks = (live.topicAsks ??= [])
     asks.push(text)
     if (asks.length > TOPIC_WINDOW) asks.splice(0, asks.length - TOPIC_WINDOW)
-    return topicReading(live.meta.cwd, asks, text)
+    return asks
   }
 
   /** Cancel on the card: put the name back, and stop reading this pane for a client. */

@@ -262,6 +262,32 @@ export function clientFromText(text: string, roster: ClientEntry[]): ClientEntry
 }
 
 /**
+ * The client several asks agree a pane is for, when the evidence is words somebody TYPED
+ * rather than the folder the pane is in.
+ *
+ * A name lifted out of a sentence is inference, the same way a repeated topic is - one
+ * mention of a word that happens to match a client's alias is not evidence about what a
+ * pane is FOR. "we need to tune the naming of session as well, broken like Cars" named a
+ * PaneForge pane `Cars` off a single prompt, because the word appeared once inside a
+ * sentence ABOUT naming rules. `repeatedTopic` already refuses to rename a real project's
+ * pane until the desk has said the same thing three times; this is the same bar, held
+ * against the client roster instead of a keyword. The FOLDER is exempt - `clientFromPath`
+ * is a fact about where the pane runs, never a guess about what somebody typed - so this
+ * only ever gates `clientFromText`.
+ */
+export function repeatedClient(asks: string[], roster: ClientEntry[]): ClientEntry | undefined {
+  const recent = asks.slice(-TOPIC_WINDOW)
+  if (recent.length < TOPIC_MIN_ASKS) return undefined
+  const seen = new Map<string, number>()
+  for (const a of recent) {
+    const c = clientFromText(a, roster)
+    if (c) seen.set(c.slug, (seen.get(c.slug) ?? 0) + 1)
+  }
+  const slug = [...seen].find(([, n]) => n >= TOPIC_MIN_ASKS)?.[0]
+  return slug ? roster.find((c) => c.slug === slug) : undefined
+}
+
+/**
  * Whether this pane may be renamed for a client at all.
  *
  * A title somebody typed is the one fact here that came from a person, and it outranks
@@ -295,7 +321,7 @@ export function mayRename(title: string, cwd: string, dismissed?: boolean): bool
  * to end a title on ("Deploy Check"), and `and`/`with`/`to` never are.
  */
 const DANGLING_WORDS =
-  'and|or|but|so|then|with|without|for|from|to|of|in|on|at|by|into|onto|about|that|this|these|those|is|are|was|were|be|its|it|my|our|your|their|his|her|has|have|had|do|does|did|can|could|would|should|will'
+  'and|or|but|so|then|with|without|for|from|to|of|in|on|at|by|into|onto|about|that|this|these|those|is|are|was|were|be|its|it|my|our|your|their|his|her|has|have|had|do|does|did|can|could|would|should|will|as|why|what|how|the|a|an'
 const DANGLING = new RegExp(`^(?:${DANGLING_WORDS})$`)
 
 /**
@@ -388,7 +414,7 @@ const BROKEN =
  * used to stop the stripping dead and name a card `R Is It Okay`.
  */
 const RUNWAY =
-  /^(?:hi|hey|ok|okay|so|also|and|but|please|pls|can|could|would|you|we|i|it|lets|let|us|need|needs|needed|want|wanna|think|maybe|just|help|me|to|for|the|a|an|do|does|did|is|are|should|now|were|was|able|been|have|has|had|will|gonna|going|thats|its|im|ive|weve|youre|still|already|yes|yeah|no|not|that|this|quickly|quick|[a-z0-9])\s+/
+  /^(?:hi|hey|ok|okay|so|also|and|but|please|pls|can|could|would|you|we|i|it|lets|let|us|need|needs|needed|want|wanna|think|maybe|just|help|me|to|for|the|a|an|do|does|did|is|are|should|now|were|was|able|been|have|has|had|will|gonna|going|thats|its|im|ive|weve|youre|still|already|yes|yeah|no|not|that|this|quickly|quick|whenever|[a-z0-9])\s+/
 
 export function topicTitle(prompt: string, anchor?: ReadonlySet<string>): string {
   const line = prompt.split(/\r?\n/).map((l) => l.trim()).find(Boolean) ?? ''
@@ -427,6 +453,13 @@ export function topicTitle(prompt: string, anchor?: ReadonlySet<string>): string
       if (m.trim() === 'up' && /^(?:Setting|Speeding|Cleaning)$/.test(doing)) doing += ' Up'
       return ''
     })
+    // Two verbs is one too many: "when pressing on sidebar icon everything breaks" became
+    // "fix pressing on sidebar icon everything", and "pressing" is the trigger the bug
+    // happens under, not a second subject - "Fixing Pressing On Sidebar" spent the whole
+    // budget on the shape of the ask and pushed "sidebar" out of it. A gerund followed by
+    // a particle is a verb phrase, not a noun ("loading spinner" has no particle after it
+    // and survives); the particle itself is mopped up by the hollow-word loop below.
+    s = s.replace(/^[a-z]+ing\s+(?=(?:on|at|in|for|about|with|into|onto|around|regarding)\s)/, '')
     // ...and a hollow word after the verb is the shape of the ask, not what it is about:
     // `fix issue with this remote screen` is about the remote screen.
     for (;;) {
