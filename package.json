@@ -225,6 +225,7 @@
     "test:linkstate": "node scripts/link-state-test.mjs",
     "test:whatsnew": "node scripts/whatsnew-test.mjs",
     "test:tour": "node scripts/tour-test.mjs",
+    "test:cardidle": "node scripts/card-idle-test.mjs",
     "test:devkeep": "node scripts/devkeep-test.mjs",
     "test:headerfit": "node scripts/header-fit-test.mjs",
     "test:promptseed": "node scripts/promptseed-test.mjs",

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { WhatsNew } from '@shared/whatsNew'
 import CardX from './CardX'
+import { useIdleDismiss } from '../idleDismiss'
 
 const api = window.api
 
@@ -15,6 +16,10 @@ const api = window.api
  * `api.whatsNew()` is asked exactly once and answers null for every launch that is not
  * the first one on a newer build - including one that could not reach GitHub - so the
  * common case costs one IPC round trip that returns null.
+ *
+ * It also goes away on its own once nobody has touched it for five minutes
+ * (`shared/cardIdle.ts`): it says something and wants nothing back, so a press was never
+ * the only way it could end, and until this it held a slot in the corner stack all day.
  */
 export default function WhatsNewCard(): JSX.Element | null {
   const [news, setNews] = useState<WhatsNew | null>(null)
@@ -37,10 +42,13 @@ export default function WhatsNewCard(): JSX.Element | null {
     }
   }, [])
 
-  if (!news || gone || !news.bullets.length) return null
+  const shown = !!news && !gone && news.bullets.length > 0
+  const idle = useIdleDismiss(shown, () => setGone(true))
+
+  if (!shown || !news) return null
 
   return (
-    <div className="update-toast whatsnew">
+    <div className="update-toast whatsnew" {...idle.handlers}>
       <CardX onDismiss={() => setGone(true)} />
       <div className="ut-text">
         <strong>What changed in {news.version}</strong>
