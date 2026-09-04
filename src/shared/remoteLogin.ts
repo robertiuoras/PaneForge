@@ -395,6 +395,83 @@ export type LoginInput =
     }
   | { kind: 'key'; type: 'keyDown' | 'keyUp'; k: KeyIn }
   | { kind: 'text'; text: string }
+  // A paste is decided in MAIN, because only main can see this machine's clipboard as
+  // anything but text: a copied screenshot is a picture, and sending its file path is
+  // sending a name that means nothing on the other computer.
+  | { kind: 'paste' }
+
+
+/* ------------------------------------------------------------------ pasting a picture
+
+   A clipboard holding a screenshot is not text, and the far machine cannot be handed a
+   path: `/Users/robert/Desktop/shot.png` names nothing on the PC. So the bytes travel,
+   and the page is given a real `paste` event carrying a real `File` - which is what
+   every upload box, comment field and rich editor is already listening for.
+
+   Robert, 2026-09-04: pasting an image "doesnt put the image instead the local url". */
+
+/** What a copied file has to be named for its bytes to be treated as a picture. */
+export const IMAGE_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.heic'] as const
+
+export function mimeForImage(path: string): string | null {
+  const dot = path.lastIndexOf('.')
+  if (dot < 0) return null
+  const ext = path.slice(dot).toLowerCase()
+  if (!(IMAGE_EXTS as readonly string[]).includes(ext)) return null
+  if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg'
+  if (ext === '.heic') return 'image/heic'
+  return `image/${ext.slice(1)}`
+}
+
+/**
+ * The picture a clipboard's TEXT is pointing at, if it is pointing at one.
+ *
+ * macOS puts a copied Finder file on the clipboard as a `file://` line and nothing else,
+ * so the text half is the only place the picture is named. Only an absolute path is
+ * taken - a relative one is relative to a folder this app is not standing in.
+ */
+export function imagePathFromText(text: string): string | null {
+  const one = text.trim().split(/\r?\n/)[0]?.trim() ?? ''
+  if (!one) return null
+  let path = one
+  if (/^file:\/\//i.test(path)) {
+    try {
+      path = decodeURIComponent(path.replace(/^file:\/\//i, ''))
+    } catch {
+      return null
+    }
+  }
+  if (!path.startsWith('/') && !/^[a-z]:[\\/]/i.test(path)) return null
+  return mimeForImage(path) ? path : null
+}
+
+/**
+ * The page's own paste, built in the page.
+ *
+ * `Input.insertText` can only carry text and a synthetic Cmd+V would paste the FAR
+ * machine's clipboard, which is not the one the picture is on. Dispatching the event is
+ * the only path that hands a page the bytes; a page that ignores `paste` (a plain
+ * `<input type=file>` with no drop handler) gets nothing, and says so by not changing.
+ */
+export function pasteImageScript(base64: string, mime: string, name: string): string {
+  const safe = JSON.stringify({ base64, mime, name })
+  return `(() => {
+  const a = ${safe};
+  const bin = atob(a.base64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const file = new File([bytes], a.name, { type: a.mime });
+  const dt = new DataTransfer();
+  dt.items.add(file);
+  const el = document.activeElement && document.activeElement !== document.body
+    ? document.activeElement
+    : (document.querySelector('[contenteditable="true"], textarea, input[type="file"]') || document.body);
+  const ev = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true });
+  const took = el.dispatchEvent(ev);
+  if (el.tagName === 'INPUT' && el.type === 'file') { el.files = dt.files; el.dispatchEvent(new Event('change', { bubbles: true })); }
+  return took;
+})()`
+}
 
 /** Two Escapes inside this long hand the keyboard back to this desk. */
 export const ESC_RELEASE_MS = 700

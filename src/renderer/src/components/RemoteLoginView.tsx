@@ -236,11 +236,9 @@ export default function RemoteLoginView({
       send: (input) => window.api.loginInput(req.id, input),
       // A paste is one insert, not a keystroke per character: forty key events for a
       // password manager's fill is forty round trips.
-      paste: () => {
-        void window.api.readClipboard().then((text) => {
-          if (text) window.api.loginInput(req.id, { kind: 'text', text })
-        })
-      },
+      // Main decides what a paste IS: the renderer's clipboard is text-only, so a copied
+      // screenshot reached the far page as its own file path until 2026-09-04.
+      paste: () => window.api.loginInput(req.id, { kind: 'paste' }),
       release: () => {
         setTyping(false)
         onToast('Keyboard is back on this computer.')

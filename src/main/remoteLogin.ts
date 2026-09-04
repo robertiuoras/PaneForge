@@ -16,11 +16,11 @@
  */
 
 import { spawn, type ChildProcess } from 'node:child_process'
-import { appendFileSync, mkdirSync, renameSync, statSync } from 'node:fs'
+import { appendFileSync, mkdirSync, readFileSync, renameSync, statSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { app } from 'electron'
+import { app, clipboard } from 'electron'
 // Electron 33's main process is Node 20, which has no global WebSocket - the picture is
 // a CDP stream and CDP is a socket, so this is the one dependency the feature added.
 import WebSocket from 'ws'
@@ -28,7 +28,10 @@ import {
   Pacer,
   STEPS,
   keyEvent,
+  imagePathFromText,
   loginPaneTitle,
+  mimeForImage,
+  pasteImageScript,
   looksSignedIn,
   askAgain,
   machineWord,
@@ -515,11 +518,74 @@ export function resizeLogin(id: string, w: number, h: number, boxW?: number, box
     })
 }
 
+
+/** A picture bigger than this is not a screenshot, and a CDP call is not a file upload. */
+const MAX_PASTE_BYTES = 12 * 1024 * 1024
+
+/**
+ * What is on THIS machine's clipboard, put into the far page.
+ *
+ * Text was all that ever travelled, so a copied screenshot arrived as
+ * `file:///Users/.../shot.png` - a name that means nothing on the other computer, typed
+ * into a comment box (Robert, 2026-09-04). A picture now travels as bytes and is
+ * delivered as the page's own `paste` event; only when there is no picture is the text
+ * sent, which is the old behaviour unchanged.
+ */
+function pasteClipboard(l: Live): void {
+  let found: { base64: string; mime: string; name: string } | null = null
+  const text = clipboard.readText()
+  const path = text ? imagePathFromText(text) : null
+  if (path) {
+    // A file copied in Finder is a PATH on the clipboard and nothing else, so the bytes
+    // are read here rather than asked of `readImage`, which returns nothing for it.
+    try {
+      if (statSync(path).size <= MAX_PASTE_BYTES) {
+        found = {
+          base64: readFileSync(path).toString('base64'),
+          mime: mimeForImage(path) ?? 'image/png',
+          name: path.split(/[\\/]/).pop() || 'pasted.png'
+        }
+      }
+    } catch {
+      /* an unreadable path is not a picture; the text below is still true */
+    }
+  }
+  if (!found) {
+    const img = clipboard.readImage()
+    if (!img.isEmpty()) {
+      const png = img.toPNG()
+      if (png.length <= MAX_PASTE_BYTES) {
+        found = { base64: png.toString('base64'), mime: 'image/png', name: 'pasted.png' }
+      }
+    }
+  }
+  if (!found) {
+    if (text) tell(l, 'Input.insertText', { text })
+    return
+  }
+  const bytes = found.base64.length
+  log(`paste picture ${found.mime} ${bytes}b64 id=${l.req.id}`)
+  void send(l, 'Runtime.evaluate', {
+    expression: pasteImageScript(found.base64, found.mime, found.name),
+    awaitPromise: false,
+    userGesture: true,
+    returnByValue: true
+  }).catch(() => {
+    // A page that will not take the event is not an error worth a card; the text is the
+    // honest fallback, and it is what used to happen every time.
+    if (text) tell(l, 'Input.insertText', { text })
+  })
+}
+
 export function loginInput(id: string, ev: LoginInput): void {
   const l = live.get(id)
   if (!l || !l.ws || l.req.state === 'failed') return
   if (ev.kind === 'text') {
     tell(l, 'Input.insertText', { text: ev.text })
+    return
+  }
+  if (ev.kind === 'paste') {
+    pasteClipboard(l)
     return
   }
   if (ev.kind === 'key') {

@@ -404,4 +404,22 @@ ok(/'list'/.test(ctl) && /login:list/.test(ctl), '`pf list` shows the sign-in re
   ok(M.clampSplit(50, 500) >= M.MIN_SPLIT, 'a window too narrow for both still leaves a usable column')
 }
 
+// ------------------------------------------------------------- pasting a picture in
+{
+  eq(M.imagePathFromText('file:///Users/robert/Desktop/Screenshot%202026.png'), '/Users/robert/Desktop/Screenshot 2026.png',
+    'a screenshot copied in Finder arrives as a file:// line and is read as a path')
+  eq(M.imagePathFromText('/Users/robert/shot.jpeg'), '/Users/robert/shot.jpeg', 'a bare absolute path counts too')
+  eq(M.imagePathFromText('hello there'), null, 'ordinary text is still ordinary text')
+  eq(M.imagePathFromText('/Users/robert/notes.txt'), null, 'and a file that is not a picture is not pasted as one')
+  eq(M.imagePathFromText('shot.png'), null, 'a relative path names nothing this app is standing beside')
+  eq(M.mimeForImage('/a/b.JPG'), 'image/jpeg', 'jpg and jpeg are one type, whatever the case')
+
+  const js = M.pasteImageScript('AAAA', 'image/png', 'shot.png')
+  ok(js.includes('ClipboardEvent'), 'the page is given its own paste event, not a keystroke')
+  ok(js.includes('DataTransfer') && js.includes('new File('), 'carrying a real file, which is what an upload box listens for')
+  ok(!js.includes('file://'), 'and never a path, which would mean nothing on the other computer')
+  ok(js.includes(JSON.stringify({ base64: 'AAAA', mime: 'image/png', name: 'shot.png' })),
+    'the bytes are a JSON string literal, so a name with a quote in it cannot break the script')
+}
+
 console.log(`remote-login: ${n} checks passed`)
