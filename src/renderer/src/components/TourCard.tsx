@@ -25,7 +25,7 @@
 import { useEffect, useState } from 'react'
 import type { TourCheck, TourProgress, TourState, TourStep, TourSurface } from '../../../shared/tour'
 import type { SoundConfig } from '../../../shared/sounds'
-import { checkWords, checkedAll, checkedWords, currentStep, demoFor, done, dwellFor, howToCheck, next, nextUnchecked, previous, stepKey, waitsForYou } from '../../../shared/tour'
+import { checkWords, checkedAll, checkedWords, currentStep, demoFor, doingWords, done, dwellFor, howToCheck, next, nextUnchecked, previous, stepKey, waitsForYou } from '../../../shared/tour'
 import { lookVerdict, spotFits, type LookVerdict } from '../../../shared/lookCheck'
 import { previewSound } from '../useChime'
 import CardX from './CardX'
@@ -85,6 +85,9 @@ export interface TourCardProps {
   /** The tour is over or has been put away - anything it opened for its own sake goes
    * with it, so nobody is left closing a pane they did not ask for. */
   onFinish?: () => void
+  /** Put a session to sleep and wake it again, saying what it is doing as it does it.
+   * The card cannot reach a pane; the app can. */
+  onSleepWake?: (say: (line: string) => void) => Promise<void>
   /** Is there a pane on this desk with something actually RUNNING in it? Only the app
    * knows; the card can only see a header. See `LookReading.live`. */
   paneAlive?: () => boolean
@@ -145,7 +148,7 @@ function TourSpot({ selector }: { selector: string }): JSX.Element | null {
   )
 }
 
-export default function TourCard({ onOpen, onFinish, sounds, paneAlive }: TourCardProps): JSX.Element | null {
+export default function TourCard({ onOpen, onFinish, sounds, paneAlive, onSleepWake }: TourCardProps): JSX.Element | null {
   const [state, setState] = useState<TourState | null>(null)
   const [gone, setGone] = useState(false)
   const [checks, setChecks] = useState<Record<number, Checking>>({})
@@ -175,6 +178,12 @@ export default function TourCard({ onOpen, onFinish, sounds, paneAlive }: TourCa
   // outright (2026-09-04, "add a coutndown when starting the tour").
   const [left, setLeft] = useState<number | null>(null)
 
+  // WHAT THE TOUR IS DOING, as it does it. One line per action, oldest first, cleared on
+  // every step: Robert 2026-09-04 - "realtime show doing... opening... typing... and it
+  // shows me realtime so i can see all those things".
+  const [acts, setActs] = useState<string[]>([])
+  const say = (line: string): void => setActs((a) => (a[a.length - 1] === line ? a : [...a, line]))
+
   useEffect(() => api.onTourCheckLine((p: TourProgress) => setLive(p)), [])
 
   useEffect(() => {
@@ -201,6 +210,7 @@ export default function TourCard({ onOpen, onFinish, sounds, paneAlive }: TourCa
   useEffect(() => {
     if (!state || gone) return
     const step = currentStep(state)
+    setActs([doingWords(step)])
     onOpen(step.open, state.root)
     // Only the step actually on screen should open anything - not `onOpen` itself, which
     // is a fresh closure every render.
@@ -257,8 +267,17 @@ export default function TourCard({ onOpen, onFinish, sounds, paneAlive }: TourCa
   const [played, setPlayed] = useState<Record<number, boolean>>({})
   const playDemo = (): void => {
     if (!demo) return
-    previewSound(demo.sound, sounds)
     setPlayed((p) => ({ ...p, [index]: true }))
+    if (demo.kind === 'sound') {
+      previewSound(demo.sound, sounds)
+      return
+    }
+    // The app does it, out loud. Nothing here waits on a person.
+    if (!onSleepWake) {
+      say('This copy cannot run that on its own.')
+      return
+    }
+    void onSleepWake(say)
   }
   useEffect(() => {
     if (!state || gone || !started || !demo || played[index]) return
@@ -454,6 +473,14 @@ export default function TourCard({ onOpen, onFinish, sounds, paneAlive }: TourCa
               (Robert 2026-09-04: "sitill way to much things to read and confusing for me
               to test"). What is left is the NAME, where to look, what to look for, and one
               verdict. */}
+          {/* What it is doing, live, then what is on screen now that it has. */}
+          <div className="tour-acts-live" data-testid="tour-doing">
+            {acts.map((a, i) => (
+              <div key={a + i} className="tour-act">
+                {a}
+              </div>
+            ))}
+          </div>
           <div className="tour-how">{howToCheck(step)}</div>
           {playing && waitsForYou(step) && (
             <div className="tour-wait" data-testid="tour-wait">
@@ -462,9 +489,15 @@ export default function TourCard({ onOpen, onFinish, sounds, paneAlive }: TourCa
           )}
         {demo && (
           <div className="tour-demo" data-testid="tour-demo">
-            <span>{played[index] ? `That was ${demo.says}.` : `${demo.says} plays when the tour reaches this step.`}</span>
+            <span>
+              {played[index]
+                ? demo.kind === 'sound'
+                  ? `That was ${demo.says}.`
+                  : `The app just did that for you - ${demo.says}.`
+                : `The tour does this itself when it reaches this step: ${demo.says}.`}
+            </span>
             <button type="button" className="ghost small" data-testid="tour-demo-again" onClick={playDemo}>
-              {played[index] ? 'Play it again' : 'Play it'}
+              {played[index] ? 'Do it again' : 'Do it now'}
             </button>
           </div>
         )}

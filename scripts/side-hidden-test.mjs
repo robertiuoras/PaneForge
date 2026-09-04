@@ -60,6 +60,18 @@ const size = /min-width:\s*(\d+)px/.exec(reveal ?? '')?.[1]
 ok(`the reveal button is at least 30px (got ${size ?? 'none'})`, Number(size) >= 30)
 ok(`the panes clear it (padding ${pad ?? 'none'}, needs ${Number(size) + 12})`, Number(pad) >= Number(size) + 12)
 
+// A FOCUSED SESSION'S TOP BAR MOVES THE WINDOW. With one pane filling the window nothing
+// along the top edge was a handle at all (Robert, 2026-09-04: "im unable to grab and move
+// the top bar/header of a session thats in focus"). A drag region SWALLOWS clicks, so this
+// is only true while the panes are not tiled - the tiled header is the pane-reorder handle
+// - and every control in the row has to opt back out or it stops working.
+ok(
+  'a focused pane header drags the window',
+  css.includes('.mac-chrome .panes:not(.grid) .pane-title { -webkit-app-region: drag; }')
+)
+for (const child of ['button', '.icon', 'input', 'select', '.pt-actions', '.chip'])
+  ok(`...and its ${child} still takes a press`, css.includes(`.mac-chrome .panes:not(.grid) .pane-title ${child}`))
+
 if (failed) {
   console.error(`\n${failed} failed`)
   process.exit(1)
