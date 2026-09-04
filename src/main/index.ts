@@ -1853,6 +1853,21 @@ ipcMain.on('pty:visible', (_e, client: string, ids: string[], viewer?: string) =
   // backgrounds or walks out of range without ever saying `pty:return`.
   manager.touchBorrows(typeof viewer === 'string' && viewer ? viewer : 'window', ids)
 })
+/**
+ * The owner takes one pane's size back - the other half of `pty:return`, and the only
+ * way out of a borrow that holds no lease.
+ *
+ * A paired device's borrow has `at: 0` (see `Borrow.at`, shared/paneSize.ts): it ends
+ * with the connection or a `detach`, never on a clock, so a mirror that is attached and
+ * silent clamps this desk's pty for as long as the link is up - and `resize` refuses
+ * every desk resize while `borrowed` is set, so dragging the window and pressing Fix
+ * both did nothing. Refused for a pane this desk does not own: a mirror may not take a
+ * size away from the machine the pty is actually on.
+ */
+ipcMain.on('pty:take', (_e, id: string) => {
+  if (typeof id !== 'string' || !id || remote.owns(id)) return
+  manager.returnSize(id)
+})
 ipcMain.on('pty:redraw', (_e, id: string) =>
   remote.owns(id) ? remote.send(id, { t: 'redraw' }) : manager.redraw(id)
 )

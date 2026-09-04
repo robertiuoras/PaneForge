@@ -15,7 +15,7 @@
 //
 //   node scripts/pane-size-test.mjs
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { buildSync } from 'esbuild'
 import { tmpdir } from 'node:os'
@@ -263,6 +263,47 @@ manager.resize(id, 100, 40, true, 'phone')
 manager.resize(id, 90, 40, true, 'guest:1/window', true, false)
 ok(watchedBorrow(live.borrows.values()) === true, 'and one screen with a person is enough')
 manager.returnSizes()
+
+// ---- 6b. the owner takes a mirror's borrow back --------------------------------------
+//
+// A borrow from a paired device holds no lease: `at` is 0, so `dropStale` can never
+// expire it and it ends only with the connection or a `detach`. That is right while
+// somebody is drawing the pane and wrong for ever afterwards - measured 2026-09-04 on
+// this desk's own s43-mtmmi8yy, a taskdriver pane sitting at 107x40 with `borrowed: true`
+// because the PC was still attached to it after the pane had been handed back to the Mac.
+// Every desk resize was swallowed by the "a phone is still drawing this" branch, so
+// dragging the window and pressing Fix both did nothing and the pane painted 107 columns
+// wide with a black margin down the right of it until an ssh to the other machine
+// detached the mirror.
+manager.resize(id, 157, 57)
+manager.resize(id, 107, 40, true, 'guest:1/window')
+ok(live.cols === 107 && live.borrowed === true, 'a mirror borrows the pane', `${live.cols}x${live.rows}`)
+manager.resize(id, 157, 57)
+ok(live.cols === 107, 'and a desk resize under it is remembered, not obeyed', String(live.cols))
+manager.returnSize(id)
+ok(
+  live.cols === 157 && live.rows === 57 && live.borrowed === false,
+  'until the owner takes it back - what Fix now asks for',
+  `${live.cols}x${live.rows} borrowed=${live.borrowed}`
+)
+
+// ---- 6c. and that is what is wired to the Fix button ---------------------------------
+const src = (f) => readFileSync(join(root, f), 'utf8')
+ok(/takePaneSize: \['send', 'pty:take'\]/.test(src('src/shared/surface.ts')), 'pty:take is on the surface')
+ok(
+  /ipcMain\.on\('pty:take'[\s\S]{0,400}?manager\.returnSize\(id\)/.test(src('src/main/index.ts')),
+  'main answers it by taking the pane back'
+)
+ok(
+  /remote\.owns\(id\)\) return[\s\S]{0,80}?manager\.returnSize\(id\)/.test(src('src/main/index.ts')),
+  'and refuses it for a pane this desk does not own'
+)
+ok(
+  /noteFix\('redraw'\)[\s\S]{0,600}?api\.takePaneSize\(sessionId\)/.test(
+    src('src/renderer/src/components/TerminalPane.tsx')
+  ),
+  'Fix asks for the size back before it re-renders'
+)
 
 // ---- 7. an exited pane is not resized ---------------------------------------------
 const before = sizes.length

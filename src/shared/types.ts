@@ -1980,6 +1980,25 @@ export interface Api {
    */
   returnSize(viewer?: string): void
   /**
+   * This desk takes ONE pane's size back from every screen borrowing it.
+   *
+   * `returnSize` is a borrower letting go; this is the owner taking. It exists because a
+   * borrow from a paired device holds no lease - a mirror has no tick of ours to renew
+   * with, so `at` is 0 and `dropStale` can never expire it (see `Borrow.at` in
+   * shared/paneSize.ts). That is right while somebody is drawing the pane and wrong for
+   * ever afterwards: an attached-but-idle mirror kept a Mac pane at the PC window's 107
+   * columns with `borrowed: true`, and every desk resize - dragging the window, showing
+   * the pane, Fix - was swallowed by the "a phone is still drawing this" branch in
+   * `resize`. The pane was 107 wide inside a 89-column pane with a black margin down the
+   * right, and it took an ssh to the other machine to give it back (measured 2026-09-04,
+   * s43-mtmmi8yy).
+   *
+   * So Fix asks for it. USER-INITIATED ONLY, and never from a mirror: a person at the
+   * machine that owns the pty outranks a screen somewhere else that has gone quiet, and
+   * a mirror that is really being watched re-borrows on its next repaint.
+   */
+  takePaneSize(id: string): void
+  /**
    * Which panes this client currently has on screen, and who this client is.
    *
    * A hint, and only ever a performance one: output for a pane nobody is looking

@@ -3702,6 +3702,13 @@ function TerminalPane({
       const b = (await api.paneLog(sessionId, REDRAW_BYTES)) || (await api.getBuffer(sessionId))
       if (!b) return false
       noteFix('redraw')
+      // Fix is a person at the machine that owns this pty, so it takes the pane's size
+      // back before it re-renders. A borrow from a paired device never expires on a clock
+      // (`Borrow.at` is 0 for a mirror), and while one is held every desk resize below -
+      // `reshape` included - is swallowed by `resize` in sessions.ts. So a pane clamped to
+      // a mirror's grid redrew at that grid for ever, which is the black margin down the
+      // right-hand side of an otherwise healthy pane.
+      api.takePaneSize(sessionId)
       const back = t.cols
       const wide = Math.max(back, replayColsRef.current ?? 0, START_COLS)
       // Every tag is anchored INTO the buffer the reset below throws away: a marker whose

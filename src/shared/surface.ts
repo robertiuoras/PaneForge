@@ -68,6 +68,7 @@ export const SURFACE: Surface = {
   sendPrompt: ['send', 'pty:prompt'],
   resize: ['send', 'pty:resize'],
   returnSize: ['send', 'pty:return'],
+  takePaneSize: ['send', 'pty:take'],
   paneVisibility: ['send', 'pty:visible'],
   redraw: ['send', 'pty:redraw'],
   setBusy: ['send', 'sessions:busy'],
