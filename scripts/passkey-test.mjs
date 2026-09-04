@@ -707,7 +707,7 @@ ok(!server.running, 'the gate test server stopped cleanly')
     // Writes ONE number - when the list was last looked at, so a badge stops counting.
     // Nothing it touches can start, stop, type into or close anything.
     'activity:seen',
-    'sessions:reorder', 'sessions:attention-clear', 'pty:resize', 'pty:return', 'pty:visible',
+    'sessions:reorder', 'sessions:attention-clear', 'pty:resize', 'pty:return', 'pty:take', 'pty:visible',
     'pty:redraw', 'sessions:busy', 'clipboard:write', 'recents:edit', 'recents:copy',
     
     'prompt:used', 'improve:cancel', 'research:cancel', 'improve:record', 'sessions:bell',
