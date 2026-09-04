@@ -94,7 +94,7 @@ import { OutBuffer } from './outBuffer'
 import { allAgents, buildArgs, hasAgent, resolveEnv } from '../shared/agents'
 import { homedir } from 'node:os'
 import { allowsCwd, scrubForeignKeys } from '../shared/paneTrust'
-import { anchoredStart, readsBusy, type BusyReason } from '../shared/busy'
+import { anchoredStart, readsBusy, composerHeld, type BusyReason } from '../shared/busy'
 import { outputIsWork } from '../shared/fleet'
 import { nextCwdGone, reapForMissingCwd } from '../shared/cwdGone'
 import { askKeyOf, autoAnswerAt, DEFAULT_AUTO_ANSWER, dueForAuto, pickAnswer } from '../shared/autoAnswer'
@@ -2694,7 +2694,7 @@ export class SessionManager extends EventEmitter {
         painted = text.slice(seen).slice(-PROMPT_TAIL_CHARS)
         seen = text.length
       }
-      return Date.now() - live.meta.lastOutput >= PROMPT_QUIET_MS && !readsBusy(painted)
+      return Date.now() - live.meta.lastOutput >= PROMPT_QUIET_MS && !readsBusy(painted) && !composerHeld(painted)
     }
 
     // THE WAIT'S DEADLINE MAY NOT ALSO BE THE CONFIRM'S. `deadline` caps how long we
