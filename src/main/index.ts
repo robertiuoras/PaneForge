@@ -859,6 +859,12 @@ const presence = new DiscordPresence({
 function presenceCounts(): PresenceCounts {
   return countPresence(allSessions(), appStartedAt)
 }
+// A card that goes on its own is a row in the list, never a pane that just vanished:
+// `shared/exitClose.ts` decides, and this is the one place that says it happened.
+manager.on('exit-closed', (_id: string, why: string) => {
+  const [what, ...rest] = why.split(' closed - ')
+  noteActivity(activityEntry('closed', what, rest.join(' closed - ') || undefined))
+})
 manager.on('attention', (s: Session) => raiseAttention(s))
 manager.on('stalled', (s: Session) => raiseStalled(s))
 manager.on('bell', (s: Session) => raiseBell(s))
@@ -1414,8 +1420,17 @@ async function startOrSend(req: StartSessionRequest, claimed?: string[]): Promis
   // A conversation the CLI would refuse is not resumed by name: History's `Open again`
   // on a session that never got an answer put `No conversation found with session ID`
   // on the pane instead of a composer (2026-09-04). The pane opens fresh in its folder.
+  //
+  // ...and it SAYS SO. Dropping the resume silently meant `Open again` opened an empty
+  // pane in the right folder with no explanation, which reads as the button being broken
+  // (Robert 2026-09-04: "from history its buggy when i open session"). The pane still
+  // opens - that is the useful half - and the toast names the one thing that is different
+  // about it.
   if (req.resume && req.resumeId && !resumableTranscript(req.cwd, req.resumeId)) {
     req = { ...req, resume: false, resumeId: undefined }
+    noteActivity(
+      activityEntry('cleared', req.title || req.cwd, 'that chat had no answers in it to come back to, so this pane is a fresh one in the same folder')
+    )
   }
   // A row that says "this is where this work happens" - a client - goes back to the pane
   // that is already open there rather than opening a second one beside it. Live panes

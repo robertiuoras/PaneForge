@@ -18,16 +18,7 @@
 // typed. A folder name and an agent logo do not tell you what a pane was for; the prompt
 // does, which is why the restore dialog shows it.
 
-import {
-  existsSync,
-  openSync,
-  readFileSync,
-  readSync,
-  closeSync,
-  readdirSync,
-  realpathSync,
-  statSync
-} from 'node:fs'
+import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 
@@ -667,6 +658,20 @@ export function transcriptPath(cwd: string, resumeId: string): string | null {
  * is the file's own rows; cached on size+mtime because a restore asks about every pane.
  */
 const replies = new Map<string, { size: number; mtimeMs: number; yes: boolean }>()
+
+/**
+ * How much of the file is read to answer it.
+ *
+ * The answer is "did this conversation ever get a reply", and a conversation that got one
+ * got it in its SECOND row. Reading the whole file to learn that is the reason `Open
+ * again` felt slow: a long chat is tens of megabytes of JSON, and a restore asks this
+ * about every pane on the desk (Robert 2026-09-04: "from history its buggy when i open
+ * session due to like the --resume thing ... fix so its less buggy and opens quicker").
+ * A file with no assistant row inside the first chunk and more to read still gets the
+ * full pass, so the answer never changes - only what it costs in the ordinary case.
+ */
+const REPLY_SCAN_BYTES = 256 * 1024
+
 export function hasReply(file: string): boolean {
   let st: { size: number; mtimeMs: number }
   try {
@@ -678,7 +683,17 @@ export function hasReply(file: string): boolean {
   if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs) return hit.yes
   let yes = false
   try {
-    yes = /"type":"assistant"/.test(readFileSync(file, 'utf8'))
+    const head = Buffer.alloc(Math.min(REPLY_SCAN_BYTES, st.size))
+    const fd = openSync(file, 'r')
+    try {
+      readSync(fd, head, 0, head.length, 0)
+    } finally {
+      closeSync(fd)
+    }
+    yes = /"type":"assistant"/.test(head.toString('utf8'))
+    // Only a file bigger than the chunk can still be hiding one, and only then is the
+    // whole read worth making.
+    if (!yes && st.size > head.length) yes = /"type":"assistant"/.test(readFileSync(file, 'utf8'))
   } catch {
     yes = false
   }
