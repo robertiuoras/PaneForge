@@ -65,9 +65,6 @@ export interface TourStep {
   byHand: string[]
   /** Something on screen to ring, once `open` has been opened. */
   spot?: string
-  /** The author's own hands-on test, off a `Try:` line in the commit body. Shown in place
-   * of the generic instruction, which can only ever name the surface. */
-  tryIt?: string
 }
 
 export interface TourState {
@@ -233,20 +230,9 @@ export function whereWords(places: string[]): string {
  */
 export const MAX_SEE = 2
 
-export function trailersOf(body: string): { see: string[]; tryIt: string } {
+export function trailersOf(body: string): { see: string[] } {
   const see: string[] = []
-  // `Try:` is the AUTHOR'S OWN hands-on test for this change - "open a session, ask the
-  // agent for a folder path, click it". It outranks every sentence this file can work out
-  // on its own, because the person who made the change knows what proves it and a surface
-  // table can only ever say "a ring is showing what changed" (Robert 2026-09-04: "tell me
-  // how to check if it works ... e.g. if fixed folder not linking to folder ... you would
-  // open a new session and ask prompt for the path etc then test if it works").
-  //
-  // ONE, and it is the first: a step with a list of things to do is a step nobody does.
-  let tryIt = ''
   for (const raw of body.split('\n')) {
-    const t = /^Try:\s*(.+)$/i.exec(raw.trim())
-    if (t && !tryIt) tryIt = t[1].trim()
     const m = /^See:\s*(.+)$/i.exec(raw.trim())
     if (m && !see.includes(m[1].trim())) see.push(m[1].trim())
   }
@@ -254,7 +240,7 @@ export function trailersOf(body: string): { see: string[]; tryIt: string } {
   // to the end - Robert, 2026-09-04, looking at a three-bullet step: "too much fluff just
   // 1 or 2 points to check". The bullets are written most-important-first, so the tail is
   // what goes.
-  return { see: see.slice(0, MAX_SEE), tryIt }
+  return { see: see.slice(0, MAX_SEE) }
 }
 
 /**
@@ -298,9 +284,7 @@ export function plainWords(text: string, cap = 160): string {
  * So every step now opens with a verb, and the no-screen one names the reason it has no
  * verb and what stands in for one.
  */
-export function howToCheck(step: Pick<TourStep, 'open' | 'checks' | 'tryIt'>): string {
-  // The author wrote the test for this change; nothing worked out from a file list beats it.
-  if (step.tryIt) return `Do this: ${step.tryIt}`
+export function howToCheck(step: Pick<TourStep, 'open' | 'checks'>): string {
   switch (step.open) {
     case 'newSession':
       return 'Do this: look at the New session window the tour just opened - the ring is round what changed. Close it when you are done.'
@@ -404,7 +388,7 @@ export function stepFrom(c: TourCommit): TourStep {
   const { where, open: fileOpen, spot: fileSpot } = placesFor(c.files, c.scope ?? '')
   const open = fileOpen !== 'none' ? fileOpen : surfaceFor(text)
   const spot = fileSpot ?? SURFACE_SPOT[open]
-  const { see, tryIt } = trailersOf(c.body)
+  const { see } = trailersOf(c.body)
   const checks: string[] = []
   const byHand: string[] = []
   for (const f of c.files) {
@@ -425,7 +409,6 @@ export function stepFrom(c: TourCommit): TourStep {
     byHand
   }
   if (spot) step.spot = spot
-  if (tryIt) step.tryIt = tryIt
   return step
 }
 
