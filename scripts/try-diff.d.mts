@@ -8,6 +8,8 @@ export interface TryDiff {
 }
 export interface TryCommit {
   subject: string
+  /** the Conventional Commit scope, lower-cased - `header` from `fix(header): ...` */
+  scope: string
   body: string
   files: string[]
 }

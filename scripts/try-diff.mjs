@@ -37,6 +37,14 @@ export function installedVersion() {
 
 // A subject is written for the next person to READ, and the machine half after the last
 // " - " is scaffolding for the commit log. Same trim the What's new card makes.
+// The scope a Conventional Commit already carries - `fix(header): ...` - lower-cased, or
+// `''`. It is the one word the author wrote about WHERE the change lives, so the tour
+// names a step off it rather than guessing from the file list (`src/shared/tour.ts`).
+const scopeOf = (subject) => {
+  const m = /^(?:feat|fix|perf|chore|docs|refactor|test)\(([^)]*)\)!?:/i.exec(subject)
+  return m ? m[1].trim().toLowerCase() : ''
+}
+
 const words = (subject) => {
   const s = subject.replace(/^(feat|fix|perf|chore|docs|refactor|test)(\([^)]*\))?!?:\s*/i, '')
   return s.charAt(0).toUpperCase() + s.slice(1)
@@ -71,7 +79,7 @@ export function diffCommits(root) {
     const [subject, body, tail] = rec.split('\x1f')
     if (!subject || !/^(feat|fix|perf)(\([^)]*\))?!?:/i.test(subject.trim())) continue
     const files = (tail || '').split('\n').map((f) => f.trim()).filter(Boolean)
-    commits.push({ subject: words(subject.trim()), body: (body || '').trim(), files })
+    commits.push({ subject: words(subject.trim()), scope: scopeOf(subject.trim()), body: (body || '').trim(), files })
   }
   return { base, installed, guessed, commits }
 }

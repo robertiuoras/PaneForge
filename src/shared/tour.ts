@@ -32,16 +32,26 @@
 
 /** A surface this app can open to show a step, or `'none'` when a change names nothing
  * recognisable - never a guess that opens the wrong thing. */
-export type TourSurface = 'newSession' | 'settings' | 'sidebarHidden' | 'workspaces' | 'none'
+export type TourSurface = 'newSession' | 'settings' | 'sidebarHidden' | 'workspaces' | 'pane' | 'none'
 
 /** One change, as `try-diff.mjs` reads it off git. */
 export interface TourCommit {
   subject: string
+  /** The Conventional Commit scope, lower-cased - `header` out of `fix(header): ...`.
+   * The author's own word for where the change lives, and the best name a step has. */
+  scope?: string
   body: string
   files: string[]
 }
 
 export interface TourStep {
+  /** The step's NAME, in the words of the thing on screen - `A session's header`, `The
+   * New session window`. Never the commit subject, which is written in the metaphor the
+   * person who made the change was using: `ask the row whether it fits, instead of adding
+   * its widths up` is a true sentence about a header nobody can find from it (Robert,
+   * 2026-09-04, on step 4 of 30: "i think you can name these better ... like positioning
+   * of icons in header would be easier to understand"). The subject stays, under it. */
+  title: string
   /** Plain words, already stripped of `feat:`/`fix:`/`perf:` by `try-diff.mjs`. */
   text: string
   open: TourSurface
@@ -109,7 +119,8 @@ const PLACES: ReadonlyArray<readonly [RegExp, Place]> = [
   [/components\/NewSessionDialog\.tsx$/, { where: 'the New session dialog', open: 'newSession', spot: '.dialog' }],
   [/components\/SettingsDialog\.tsx$/, { where: 'Settings', open: 'settings', spot: '.dialog.settings' }],
   [/components\/TourCard\.tsx$/, { where: 'this card' }],
-  [/components\/TerminalPane\.tsx$/, { where: 'a pane', spot: '.pane' }],
+  [/components\/TerminalPane\.tsx$/, { where: 'a pane', open: 'pane', spot: '.pane-title' }],
+  [/(?:renderer\/src|shared)\/headerFit\.ts$/, { where: "a session's header", open: 'pane', spot: '.pt-actions' }],
   [/components\/([A-Z][A-Za-z]+)\.tsx$/, { where: '' }],
   [/renderer\/src\/App\.tsx$/, { where: 'the main window' }],
   [/renderer\/src\/styles\.css$/, { where: "the window's look" }],
@@ -120,6 +131,27 @@ const PLACES: ReadonlyArray<readonly [RegExp, Place]> = [
   [/^src\/shared\/devList\.ts$/, { where: 'the dev server list the pet answers' }],
   [/^src\/shared\//, { where: NO_SCREEN }]
 ]
+
+/**
+ * The scope the author already wrote, turned into where a person looks.
+ *
+ * Read BEFORE the file table, because it is the one word somebody chose deliberately to
+ * say where the change lives, while the file list is whatever the change happened to
+ * touch - and a header fix that only edits `src/shared/headerFit.ts` reads off the file
+ * table as `inside the app, nothing to click`, which is how a change to the icons in
+ * every pane header ended up with nothing to look at.
+ *
+ * Only scopes this app can actually SHOW. A scope with no row here falls through to the
+ * files, exactly as before.
+ */
+const SCOPE_PLACES: ReadonlyMap<string, Place> = new Map<string, Place>([
+  ['header', { where: "a session's header", open: 'pane', spot: '.pt-actions' }],
+  ['pane', { where: 'a pane', open: 'pane', spot: '.pane-title' }],
+  ['panes', { where: 'the panes', open: 'pane', spot: '.pane' }],
+  ['rail', { where: "a pane's prompt marks", open: 'pane', spot: '.pane' }],
+  ['tour', { where: 'this card' }],
+  ['cards', { where: 'the cards in the corner' }]
+])
 
 /** `NewSessionDialog` -> `the New session dialog`; a component's own name, spaced. */
 function componentWords(name: string): string {
@@ -141,11 +173,18 @@ const TEST_FILE = /^scripts\/([a-z0-9-]+)-test\.mjs$/
 
 /** Where a change shows, from the files it touched. Rows in the order the table lists them,
  * deduplicated, never a file name. */
-export function placesFor(files: string[]): { where: string; open: TourSurface; spot?: string } {
+export function placesFor(files: string[], scope = ''): { where: string; open: TourSurface; spot?: string } {
   const seen = new Set<string>()
   const words: string[] = []
   let open: TourSurface = 'none'
   let spot: string | undefined
+  const byScope = SCOPE_PLACES.get(scope.trim().toLowerCase())
+  if (byScope) {
+    seen.add(byScope.where)
+    words.push(byScope.where)
+    if (byScope.open) open = byScope.open
+    if (byScope.spot) spot = byScope.spot
+  }
   for (const f of files) {
     for (const [re, place] of PLACES) {
       const m = re.exec(f)
@@ -240,6 +279,8 @@ export function howToCheck(step: Pick<TourStep, 'open' | 'checks'>): string {
       return 'The list is hidden now - the ringed button brings it back.'
     case 'workspaces':
       return 'Look at the list on the left.'
+    case 'pane':
+      return 'A session is open now - the ring is around what changed.'
     default:
       return step.checks.length
         ? 'Nothing to click - the app checks this one below.'
@@ -262,6 +303,7 @@ export function firstParagraph(body: string, cap = 320): string {
 
 /** What to ring when only the SENTENCE said which surface a change is about. */
 const SURFACE_SPOT: Record<TourSurface, string | undefined> = {
+  pane: '.pane-title',
   newSession: '.dialog',
   settings: '.dialog.settings',
   sidebarHidden: '.side-reveal',
@@ -269,9 +311,19 @@ const SURFACE_SPOT: Record<TourSurface, string | undefined> = {
   none: undefined
 }
 
+/**
+ * The step's NAME, off the place it lives - `A session's header`, `The New session
+ * dialog`. A change with nothing on screen says so plainly rather than borrowing a
+ * heading it has not earned.
+ */
+export function titleFor(where: string): string {
+  if (!where || where === NO_SCREEN || where === 'no file this card knows') return 'Inside the app'
+  return where.charAt(0).toUpperCase() + where.slice(1)
+}
+
 export function stepFrom(c: TourCommit): TourStep {
   const text = c.subject.trim()
-  const { where, open: fileOpen, spot: fileSpot } = placesFor(c.files)
+  const { where, open: fileOpen, spot: fileSpot } = placesFor(c.files, c.scope ?? '')
   const open = fileOpen !== 'none' ? fileOpen : surfaceFor(text)
   const spot = fileSpot ?? SURFACE_SPOT[open]
   const { see } = trailersOf(c.body)
@@ -284,10 +336,12 @@ export function stepFrom(c: TourCommit): TourStep {
     if (hand) byHand.push(`npm run ${hand}`)
     else checks.push(f)
   }
+  const placeWords = where || (checks.length ? NO_SCREEN : 'no file this card knows')
   const step: TourStep = {
+    title: titleFor(placeWords),
     text,
     open,
-    where: where || (checks.length ? NO_SCREEN : 'no file this card knows'),
+    where: placeWords,
     see: see.length ? see : plainWords(firstParagraph(c.body)) ? [plainWords(firstParagraph(c.body))] : [],
     checks,
     byHand
@@ -465,6 +519,28 @@ export function summaryCount(output: string): number {
 export function checkedWords(c: Pick<TourCheck, 'ok' | 'passed' | 'failed'>): string {
   if (!c.ok) return `Something is wrong here - ${c.failed} of ${c.passed + c.failed} failed`
   return c.passed > 0 ? `Checked - ${c.passed} things proved` : 'Checked'
+}
+
+/**
+ * EVERY suite a step ran, as ONE sentence.
+ *
+ * A step with two suites drew two rows, and both rows say the same words with a different
+ * number in them - `Checked - 34 things proved` over `Checked - 38 things proved` - which
+ * reads as the card saying the same thing twice and disagreeing with itself (Robert,
+ * 2026-09-04: "bug i think checked - 34 things proved, 38 things proved"). The suite names
+ * are deliberately not on the card (`checkWords`), so there is nothing to tell the rows
+ * apart: one line, one total, is the honest shape.
+ */
+export function checkedAll(results: TourCheck[]): { ok: boolean; passed: number; failed: number } {
+  let passed = 0
+  let failed = 0
+  let ok = true
+  for (const r of results) {
+    passed += r.passed
+    failed += r.failed
+    if (!r.ok) ok = false
+  }
+  return { ok, passed, failed }
 }
 
 /**
