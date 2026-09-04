@@ -120,9 +120,10 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
         <div className="tour-count">
           {state.index + 1} of {state.steps.length}
         </div>
-        <div className="tour-text">{step.text}</div>
-        <div className="tour-where">Where: {step.where}</div>
-        <div className="tour-how">{howToCheck(step)}</div>
+        <div className="tour-body">
+          <div className="tour-text">{step.text}</div>
+          <div className="tour-where">Where to look: {step.where}</div>
+          <div className="tour-how">{howToCheck(step)}</div>
         {step.see.length > 0 && (
           <ul className="tour-see">
             {step.see.map((s, i) => (
@@ -153,6 +154,7 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
         {step.checks.length === 0 && step.byHand.length === 0 && (
           <div className="tour-check none">No automatic check came with this change.</div>
         )}
+        </div>
         <div className="tour-acts">
           {step.try && (
             <button type="button" className="ghost small" disabled={!!tried[index]} onClick={tryIt}>
@@ -167,12 +169,13 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
           >
             Previous
           </button>
-          <button
-            type="button"
-            className="primary small"
-            onClick={() => (isLast ? setGone(true) : setState((s) => (s ? next(s) : s)))}
-          >
-            {isLast ? 'Done' : 'Next'}
+          {!isLast && (
+            <button type="button" className="ghost small" onClick={() => setState((s) => (s ? next(s) : s))}>
+              Next
+            </button>
+          )}
+          <button type="button" className="primary small" data-testid="tour-done" onClick={() => setGone(true)}>
+            Done
           </button>
         </div>
       </div>

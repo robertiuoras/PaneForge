@@ -106,6 +106,9 @@ interface Place {
   open?: TourSurface
   spot?: string
 }
+/** The words for a change that has nothing on screen at all. */
+export const NO_SCREEN = 'inside the app, nothing to click'
+
 const PLACES: ReadonlyArray<readonly [RegExp, Place]> = [
   [/components\/NewSessionDialog\.tsx$/, { where: 'the New session dialog', open: 'newSession', spot: '.dialog' }],
   [/components\/SettingsDialog\.tsx$/, { where: 'Settings', open: 'settings', spot: '.dialog.settings' }],
@@ -114,12 +117,12 @@ const PLACES: ReadonlyArray<readonly [RegExp, Place]> = [
   [/components\/([A-Z][A-Za-z]+)\.tsx$/, { where: '' }],
   [/renderer\/src\/App\.tsx$/, { where: 'the main window' }],
   [/renderer\/src\/styles\.css$/, { where: "the window's look" }],
-  [/^src\/main\//, { where: 'inside the app, nothing to click' }],
+  [/^src\/main\//, { where: NO_SCREEN }],
   [/^scripts\/try(?:-diff)?\.mjs$/, { where: 'the npm run try command, not this window' }],
   [/^src\/shared\/(choices|autoAnswer)\.ts$/, { where: "a pane's question buttons" }],
   [/^src\/shared\/(clientName|place)\.ts$/, { where: "a pane's name" }],
   [/^src\/shared\/devList\.ts$/, { where: 'the dev server list the pet answers' }],
-  [/^src\/shared\//, { where: 'inside the app, nothing to click' }]
+  [/^src\/shared\//, { where: NO_SCREEN }]
 ]
 
 /** `NewSessionDialog` -> `the New session dialog`; a component's own name, spaced. */
@@ -161,7 +164,19 @@ export function placesFor(files: string[]): { where: string; open: TourSurface; 
       break
     }
   }
-  return { where: words.join(', '), open, spot }
+  return { where: whereWords(words), open, spot }
+}
+
+/** A change touching five files listed five places, one of them the words for a change
+ * with no screen at all - so the card read `the New session dialog, this card, the
+ * window's look, inside the app, nothing to click`, which contradicts itself and is too
+ * long to read (Robert, 2026-09-04, looking at that exact line). A person only needs to
+ * be told where to look: the two nearest places, and `NO_SCREEN` only when it is the
+ * whole answer. */
+export function whereWords(places: string[]): string {
+  const real = places.filter((w) => w !== NO_SCREEN)
+  const kept = (real.length ? real : places.slice(0, 1)).slice(0, 2)
+  return kept.length === 2 ? kept[0] + ' and ' + kept[1] : kept.join('')
 }
 
 /** `See:` and `Try:` lines out of a commit body. `See:` may repeat; `Try:` keeps the first. */
@@ -266,7 +281,7 @@ export function stepFrom(c: TourCommit): TourStep {
   const step: TourStep = {
     text,
     open,
-    where: where || (checks.length ? 'inside the app, nothing to click' : 'no file this card knows'),
+    where: where || (checks.length ? NO_SCREEN : 'no file this card knows'),
     see: see.length ? see : plainWords(firstParagraph(c.body)) ? [plainWords(firstParagraph(c.body))] : [],
     checks,
     byHand
