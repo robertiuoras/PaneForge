@@ -35,7 +35,7 @@ buildSync({
   platform: 'node',
   outfile: out
 })
-const { readsBusy, readsElapsedMs, anchoredStart, busyReason } = createRequire(import.meta.url)(out)
+const { readsBusy, readsElapsedMs, anchoredStart, busyReason, composerHeld } = createRequire(import.meta.url)(out)
 
 /** The statusline and input box that sit BELOW the working line on this machine. */
 const CHROME = [
@@ -306,4 +306,11 @@ if (bad) {
   console.error('agent working freezes the turn clock and rings the bell mid-turn.')
   process.exit(1)
 }
+// Remote Control re-bridging after /clear: the composer is up, nothing runs, and a
+// return goes nowhere. Real footer from s14-mtm9ecfi, 2026-09-04.
+const rc = '❯ \n───────\n⏵⏵ bypass permissions on (shift+tab to cycle) · ⏎ for agents\n/rc connecting…'
+if (readsBusy(rc)) { console.error('rc connecting must not read as busy'); process.exit(1) }
+if (!composerHeld(rc)) { console.error('rc connecting must hold the composer'); process.exit(1) }
+if (composerHeld('❯ \n5h 42% · wk 38% · Fable 41%/rc\n⏵⏵ bypass permissions on')) { console.error('a connected /rc badge is not a hold'); process.exit(1) }
+console.log('composer hold: 3 ok')
 console.log(`\nall ${total} frames read correctly`)

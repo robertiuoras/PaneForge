@@ -145,6 +145,21 @@ export function readsBusy(text: string): boolean {
 }
 
 /**
+ * The composer is drawn but is not taking a submit yet.
+ *
+ * Claude Code re-bridges Remote Control by itself after `/clear`, and while its footer
+ * says `/rc connecting…` the return key does nothing: no turn, no busy footer, a frame
+ * every few hundred milliseconds. Not a busy reading - nothing is running and the
+ * sidebar must not say so - but a prompt queued into that window was typed at +34s
+ * and +91s and then had all six of its returns eaten (s10-mtm6ccmk, s14-mtm9ecfi,
+ * 2026-09-04). `queuePrompt` waits this out the way it waits out a running turn.
+ */
+const CONNECTING = /\/rc\s+connecting(?:…|\.\.\.)/
+export function composerHeld(text: string): boolean {
+  return CONNECTING.test(text)
+}
+
+/**
  * How long the AGENT says this turn has been running.
  *
  * The app's own run clock is a guess at when the turn began - it starts at whichever of

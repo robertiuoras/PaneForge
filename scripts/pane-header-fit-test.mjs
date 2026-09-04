@@ -84,7 +84,29 @@ function page(width, undo = '') {
       </div>
       <div style="height:40px"></div>
     </div>
-  </div></div>`
+  </div></div>
+  <script>
+  // The climb the app runs (src/renderer/src/headerFit.ts), inline: what a header drops is
+  // decided by ASKING the laid-out row, so this page has to do the same thing before it is
+  // measured. Kept to the same three questions - the row overflows, the name is clipped,
+  // the actions overflow - and the same ladder length.
+  const fits = (h) => {
+    if (h.scrollWidth > h.clientWidth + 1) return false
+    const name = h.querySelector('.pt-name')
+    if (name && name.scrollWidth > name.clientWidth + 1) return false
+    const acts = h.querySelector('.pt-actions')
+    return !acts || acts.scrollWidth <= acts.clientWidth + 1
+  }
+  for (const h of document.querySelectorAll('.pane-title')) {
+    let level = 5
+    for (let l = 0; l < 5; l++) {
+      h.dataset.tight = String(l)
+      if (fits(h)) { level = l; break }
+    }
+    h.dataset.tight = String(level)
+    h.dataset.more = level >= 2 ? 'on' : 'off'
+  }
+  </script>`
 }
 
 // Every width a pane really gets on this desk. 198px is seven panes in a 900px window,
@@ -101,8 +123,19 @@ const CASES = [
     name: 'CONTROL - the header as it was',
     width: 198,
     control: true,
-    undo: `@container pane (max-width: 380px) { .pane-title .agent-pick { display: flex } }
-           @container pane (max-width: 300px) { .pane-title .agent-logo { display: inline-flex } }
+    // Everything the climb would drop, put back at every rung, plus a name that refuses
+    // to give any width up - the header exactly as it was reported. It must NOT fit.
+    undo: `.pane-title[data-tight] .agent-pick,
+           .pane-title[data-tight] .agent-logo,
+           .pane-title[data-tight] .pt-path,
+           .pane-title[data-tight] .git-badge,
+           .pane-title[data-tight] .pt-handoff,
+           .pane-title[data-tight] .pt-zoom,
+           .pane-title[data-tight] .icon.fix,
+           .pane-title[data-tight] .pt-restart,
+           .pane-title[data-tight] .pt-clear,
+           .pane-title[data-tight] .pt-reveal,
+           .pane-title[data-tight] .pt-open { display: inline-flex }
            .pt-name { flex: none; overflow: visible; text-overflow: clip; min-width: auto }`
   }
 ]
@@ -320,9 +353,15 @@ try {
   // pane's 1px border mean the container query (which measures the content box) sees
   // 2px less than that - so the boundary is dialled in at style width + 2.
   const above560 = await thresholdCase(563, false)
-  ok(above560.agentPick, '561px content (563px style): the agent picker still fits', JSON.stringify(above560))
+  ok(above560.agentPick, '561px content: the agent picker still fits', JSON.stringify(above560))
+  // There is no 560px step any more: the picker stays while the ROW has room for it, which
+  // is the whole point of measuring instead of reading the pane's width (Robert 2026-09-04,
+  // on a narrow window with an empty header). It goes when the row really cannot hold it.
   const at560 = await thresholdCase(562, false)
-  ok(!at560.agentPick, '560px content (562px style): the agent picker goes too (max-width is inclusive)', JSON.stringify(at560))
+  ok(at560.agentPick, '560px content: no width step takes it while it still fits', JSON.stringify(at560))
+  const tight = await thresholdCase(320, false)
+  ok(!tight.agentPick, '320px content: the picker goes when the row cannot hold it', JSON.stringify(tight))
+  ok(tight.more, 'and the ⋯ carries it instead', JSON.stringify(tight))
 } finally {
   try {
     ws?.close()

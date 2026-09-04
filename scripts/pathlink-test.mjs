@@ -39,7 +39,8 @@ mkdirSync(deliver, { recursive: true })
 writeFileSync(join(deliver, 'Jacob - phone clips full frame comparison.mp4'), '')
 const front = `${root}/Work/Client Files/Jacob P/_deliverables/Jacob - phone`
 const hit = resolveRevealTarget(root, front)
-assert.equal(hit?.abs, deliver, 'the front of a wrapped path reveals its folder')
+// resolve() on both: the reveal joins with '/', a Windows temp root carries '\\'.
+assert.equal(resolve(hit?.abs ?? ''), resolve(deliver), 'the front of a wrapped path reveals its folder')
 assert.equal(hit?.kind, 'dir')
 const whole = resolveRevealTarget(root, `${front} clips full frame comparison.mp4`)
 assert.equal(whole?.kind, 'file', 'the whole path is the file')

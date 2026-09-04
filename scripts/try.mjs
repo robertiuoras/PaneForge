@@ -31,7 +31,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { devProfile } from './dev-profile.mjs'
-import { closeTestApps, waitTestAppsGone } from './test-app.mjs'
+import { closeTestApps, dropTestAppKeep, keepTestApp, waitTestAppsGone } from './test-app.mjs'
 import { report } from './try-diff.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -46,7 +46,7 @@ const pull = args.includes('--pull')
 // `npm run try -- --close` shuts the test copy without touching the live app. Lane
 // release calls the same thing, so this is only for closing one by hand mid-session.
 if (close) {
-  closeTestApps(root)
+  closeTestApps(root, { force: true })
   console.log('Test copy closed. Your live app is untouched.')
   process.exit(0)
 }
@@ -139,7 +139,8 @@ console.log(`== Launching the ${profile} copy`)
 // A copy left over from an earlier run holds this profile's single-instance lock, so the
 // new launch would raise the OLD window - running OLD code - and exit. That reads as "my
 // change did not apply". Close it first; only this checkout's Electron is matched.
-closeTestApps(root)
+// `force`: this launch IS somebody asking for the old window to go, kept or not.
+closeTestApps(root, { force: true })
 // And wait for it to be gone rather than only asked to go: the lock outlives the ask by a
 // moment, and a launch into that moment exits silently with no window and no message.
 if (!(await waitTestAppsGone(root)))
@@ -152,12 +153,19 @@ if (!(await waitTestAppsGone(root)))
 // the app starts, loads, calls win.show(), and stays invisible forever. Verified:
 // the window existed with the right title and IsWindowVisible was false. electron.exe
 // is a GUI-subsystem binary, so there is no console to hide anyway.
-spawn(electron, ['.', ...(minimized ? ['--minimized'] : []), ...passThrough], {
+const child = spawn(electron, ['.', ...(minimized ? ['--minimized'] : []), ...passThrough], {
   cwd: root,
   detached: true,
   stdio: 'ignore',
   env: { ...process.env, ...clipboardEnv, PANEFORGE_PROFILE: profile }
-}).unref()
+})
+child.unref()
+
+// A window ON SCREEN is one a person opened to look at, and nothing else may close it -
+// not another chat's `npm test`, not a lane release. A minimized one is an agent's own
+// probe and stays disposable. `--close` and the next launch still take it.
+if (minimized) dropTestAppKeep()
+else if (child.pid) keepTestApp(child.pid)
 
 const dockOrTaskbar = process.platform === 'darwin' ? 'Dock' : 'taskbar'
 console.log(`A second PaneForge is opening, marked "${profile}" next to the version number.
@@ -181,12 +189,15 @@ console.log(`\n${report(root)}`)
 // same way every time: both on the external monitor, installed app on the left half, this
 // copy on the right. `--show` is the only mode where somebody is doing that, and
 // `scripts/dev-layout.mjs` refuses on a single screen, so this costs nothing on the road.
-// After a beat, because a window that does not exist yet cannot be placed.
+// After a beat, because a window that does not exist yet cannot be placed. The timer is
+// NOT unref'd: this script has nothing else holding the loop open, so an unref'd timer let
+// node exit first and the placement never ran at all - the installed app kept whatever
+// size it had and only the test copy looked placed.
 if (!minimized) {
   setTimeout(() => {
     const r = spawnSync(process.execPath, [new URL('dev-layout.mjs', import.meta.url).pathname], {
       encoding: 'utf8'
     })
     if (r.stdout) process.stdout.write(r.stdout)
-  }, 2500).unref?.()
+  }, 2500)
 }

@@ -112,7 +112,11 @@ const pane = (over) => ({ state: 'ready', asking: false, ...over })
 is(movable(pane()), true, 'an ordinary finished pane moves')
 is(movable(pane({ machineBound: 'a browser it is driving' })), false, '...and a bound one does not')
 is(queueable(pane({ machineBound: 'a browser it is driving' })), false, 'nor is it queued for later')
-is(queueable(pane({ state: 'working' })), true, 'while a busy pane is still queueable')
+// A pane MID-TURN is not queued either, since 2026-09-04: the queue is for a pane that
+// goes quiet between the decision and the move, and arming on one with a prompt running
+// is what moved a chat out from under a live turn.
+is(queueable(pane({ state: 'working' })), false, 'a busy pane is not queued either')
+is(queueable(pane({ state: 'ready' })), true, '...while a finished one is')
 
 // `shareable` is the OTHER leg, and only an explicit false refuses: undefined is "nobody
 // asked", and refusing on that would switch the ladder off wherever the reading is slow.

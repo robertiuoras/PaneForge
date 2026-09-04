@@ -21,7 +21,64 @@
 // is never matched.
 
 import { spawnSync } from 'node:child_process'
+import { readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { checkoutFamily } from './dev-profile.mjs'
+
+// A DEV WINDOW SOMEBODY IS LOOKING AT IS NOT A LEFTOVER.
+//
+// The match above is deliberately wide - every checkout of this repo - and the kill was
+// unconditional, so a window opened with `npm run try -- --show` to try a change was shot
+// by any OTHER chat that ran `npm test` (three window suites close test copies before
+// launching their own), `lane.mjs ready`, or its own `npm run try`. Measured 2026-09-04 in
+// the dev profile's updater.log: three quits in 26 minutes, each logged as `nothing in the
+// app asked ... something asked from outside`, one of them with a pane open. That reads
+// exactly like the app crashing.
+//
+// So a launch that puts the window ON SCREEN writes its pid here, and every close that is
+// not that window's own launch leaves that process and its children alone. `--close` and
+// the next `npm run try` still take it: those are somebody asking for this window to go.
+const KEEP_FILE = join(tmpdir(), 'paneforge-dev-keep.json')
+
+function alive(pid) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Remember the dev window a person is watching, so no other lane's close touches it. */
+export function keepTestApp(pid) {
+  try {
+    writeFileSync(KEEP_FILE, JSON.stringify({ pid, at: Date.now() }))
+  } catch {
+    /* the marker is an optimisation, never a requirement */
+  }
+}
+
+/** Forget it - the window was closed, or a launch is replacing it. */
+export function dropTestAppKeep() {
+  try {
+    rmSync(KEEP_FILE, { force: true })
+  } catch {
+    /* nothing to forget */
+  }
+}
+
+/** The pid of the window being watched, or 0 - a dead pid answers 0 and clears itself. */
+export function keptTestApp() {
+  try {
+    const pid = JSON.parse(readFileSync(KEEP_FILE, 'utf8')).pid
+    if (typeof pid === 'number' && pid > 0 && alive(pid)) return pid
+  } catch {
+    return 0
+  }
+  dropTestAppKeep()
+  return 0
+}
 
 /** `pgrep -f` takes an extended regex, so a path's own metacharacters must be quoted. */
 function rxEscape(s) {
@@ -38,6 +95,25 @@ function markers(root) {
 }
 
 /**
+ * "Is this pid the kept window, or one of its helpers?" - reading the process table once.
+ * Answers `false` for everything when nothing is kept, so both callers can be written as
+ * if a kept window always existed.
+ */
+function keptSubtree(kept) {
+  if (!kept || process.platform === 'win32') return () => false
+  const ppids = new Map()
+  const ps = spawnSync('ps', ['-Ao', 'pid=,ppid='], { encoding: 'utf8', timeout: 15000 })
+  for (const line of (ps.stdout ?? '').split('\n')) {
+    const m = /^\s*(\d+)\s+(\d+)/.exec(line)
+    if (m) ppids.set(Number(m[1]), Number(m[2]))
+  }
+  return (pid) => {
+    for (let p = pid, hops = 0; p > 1 && hops < 12; p = ppids.get(p) ?? 0, hops++) if (p === kept) return true
+    return false
+  }
+}
+
+/**
  * Wait until the copy that was just told to close has actually gone.
  *
  * `pkill` only asks. The dying process still holds its profile's single-instance lock for
@@ -49,6 +125,10 @@ function markers(root) {
  */
 export async function waitTestAppsGone(root, ms = 8000) {
   const { rx, like } = markers(root)
+  // A window somebody is watching is never what this is waiting for: it was not asked to
+  // close, so waiting for it to go is waiting for the whole 8s and then launching anyway.
+  const kept = keptTestApp()
+  const ofKept = keptSubtree(kept)
   const deadline = Date.now() + ms
   while (Date.now() < deadline) {
     let running = false
@@ -61,14 +141,19 @@ export async function waitTestAppsGone(root, ms = 8000) {
             '-NonInteractive',
             '-Command',
             `@(Get-CimInstance Win32_Process -Filter "Name='electron.exe'" | ` +
-              `Where-Object { $_.CommandLine -like '${like}' -or $_.CommandLine -like '"${like}' }).Count`
+              `Where-Object { $_.CommandLine -like '${like}' -or $_.CommandLine -like '"${like}' }` +
+              (kept ? ` | Where-Object { $_.ProcessId -ne ${kept} -and $_.ParentProcessId -ne ${kept} }` : '') +
+              `).Count`
           ],
           { encoding: 'utf8', timeout: 15000 }
         )
         running = Number((r.stdout ?? '').trim()) > 0
       } else {
         const r = spawnSync('pgrep', ['-f', rx], { encoding: 'utf8', timeout: 15000 })
-        running = !!(r.stdout ?? '').trim()
+        running = (r.stdout ?? '')
+          .split('\n')
+          .map((l) => Number(l.trim()))
+          .some((pid) => pid && !ofKept(pid))
       }
     } catch {
       return true /* cannot tell - launching anyway beats not launching */
@@ -79,10 +164,25 @@ export async function waitTestAppsGone(root, ms = 8000) {
   return false
 }
 
-export function closeTestApps(root) {
+/**
+ * Close the test copy.
+ *
+ * `force` is "somebody asked for THIS window to go" - `npm run try -- --close`, and the
+ * launch that is about to replace it. Everything else (a lane release, a window suite
+ * making room for its own copy) is housekeeping and must not take a window a person is
+ * watching: see `KEEP_FILE` above.
+ */
+export function closeTestApps(root, { force = false } = {}) {
   const { rx, like } = markers(root)
+  const kept = force ? 0 : keptTestApp()
+  if (force) dropTestAppKeep()
   try {
     if (process.platform === 'win32') {
+      // The kept window's helper processes are its own children, so both are spared by
+      // one filter - Electron does not nest them any deeper.
+      const spare = kept
+        ? ` | Where-Object { $_.ProcessId -ne ${kept} -and $_.ParentProcessId -ne ${kept} }`
+        : ''
       spawnSync(
         'powershell',
         [
@@ -90,13 +190,27 @@ export function closeTestApps(root) {
           '-NonInteractive',
           '-Command',
           `Get-CimInstance Win32_Process -Filter "Name='electron.exe'" | ` +
-            `Where-Object { $_.CommandLine -like '${like}' -or $_.CommandLine -like '"${like}' } | ` +
+            `Where-Object { $_.CommandLine -like '${like}' -or $_.CommandLine -like '"${like}' }${spare} | ` +
             `ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`
         ],
         { stdio: 'ignore', timeout: 15000 }
       )
-    } else {
+    } else if (!kept) {
       spawnSync('pkill', ['-f', rx], { stdio: 'ignore', timeout: 15000 })
+    } else {
+      // One kept window means the kill stops being a pattern and becomes a list: every
+      // matching pid except that process and the helpers it owns.
+      const found = spawnSync('pgrep', ['-f', rx], { encoding: 'utf8', timeout: 15000 })
+      const ofKept = keptSubtree(kept)
+      for (const raw of (found.stdout ?? '').split('\n')) {
+        const pid = Number(raw.trim())
+        if (!pid || ofKept(pid)) continue
+        try {
+          process.kill(pid, 'SIGTERM')
+        } catch {
+          /* already gone */
+        }
+      }
     }
   } catch {
     /* best effort - a lane release must never fail because a window would not close */

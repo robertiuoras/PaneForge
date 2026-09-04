@@ -4,9 +4,16 @@
 // this card at all.
 //
 // Each step: the change in plain words, WHERE it lives, what to look for, a ring drawn
-// around the control it is about (`TourSpot`), `Try it` to open a pane and type the
-// change's own prompt, and the change's own test suites run right here with the result on
-// the card - so a change with nothing to click still gets checked in front of you.
+// around the control it is about (`TourSpot`), and the change's own test suites run right
+// here with the result on the card - so a change with nothing to click still gets checked
+// in front of you.
+//
+// AND IT PLAYS ITSELF. The card opens each step's surface, waits long enough for the thing
+// to be looked at (`dwellFor` - longer when there is something on screen, and never while
+// a check is still running), then moves on by itself. Pause stops it where it is and the
+// arrows still work; pressing either one pauses, because somebody steering is somebody who
+// does not want it moving under them. The button that opened a pane and typed the change's
+// own prompt is gone (Robert 2026-09-04: "i dont want the try in pane testing helper").
 //
 // Same shape as every other corner card (`MoveSoon.tsx`, `WhatsNewCard.tsx`): a static
 // child of `.corner-stack`, never its own `position: fixed`, no animation, no focus taken.
@@ -14,16 +21,15 @@
 // motion beyond the two hover durations.
 
 import { useEffect, useState } from 'react'
-import type { TourCheck, TourState, TourStep, TourSurface } from '../../../shared/tour'
-import { checkName, currentStep, done, howToCheck, next, nextUnchecked, previous, shouldAutoTry, stepKey } from '../../../shared/tour'
+import type { TourCheck, TourState, TourSurface } from '../../../shared/tour'
+import { checkName, currentStep, done, dwellFor, howToCheck, next, nextUnchecked, previous, stepKey } from '../../../shared/tour'
 import CardX from './CardX'
 
 const api = window.api
 
-// Which steps already opened a pane, and which are ticked done - kept across a reopen of
-// the same dev copy. Keyed by the commit's own subject (`stepKey`), never a slot number,
-// so a rebuilt tour with the same commits still remembers.
-const SEEN_KEY = 'tour.seen'
+// Which steps have been ticked done - kept across a reopen of the same dev copy. Keyed by
+// the commit's own subject (`stepKey`), never a slot number, so a rebuilt tour with the
+// same commits still remembers what was already looked at.
 const DONE_KEY = 'tour.done'
 
 function loadMap(key: string): Record<string, boolean> {
@@ -83,26 +89,13 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
   const [state, setState] = useState<TourState | null>(null)
   const [gone, setGone] = useState(false)
   const [checks, setChecks] = useState<Record<number, Checking>>({})
-  const [tried, setTried] = useState<Record<number, string>>({})
-  const [seen, setSeen] = useState<Record<string, boolean>>(() => loadMap(SEEN_KEY))
+  // NOT playing until it is asked to. The tour opens surfaces and runs test suites, and
+  // doing either the moment a window appears is the app taking a turn nobody asked for:
+  // Robert 2026-09-04, watching a suite start on its own - "it should wait for my approval
+  // for each new feature to test". So the card waits on `Start`, and each step's checks
+  // wait on their own press.
+  const [playing, setPlaying] = useState(false)
   const [doneMap, setDoneMap] = useState<Record<string, boolean>>(() => loadMap(DONE_KEY))
-
-  // Opens a step's pane - pressed by hand, or run automatically the moment a step with a
-  // Try (written or derived from See) is first shown. `idx`/`root` are passed explicitly
-  // so this works from the auto-try effect, which runs before `state` is known non-null.
-  const tryIt = (idx: number, step: TourStep, root: string): void => {
-    if (!step.try || tried[idx] === 'opening') return
-    setTried((t) => ({ ...t, [idx]: 'opening' }))
-    setSeen((s) => {
-      const next = { ...s, [stepKey(step)]: true }
-      saveMap(SEEN_KEY, next)
-      return next
-    })
-    void api
-      .startSessions([{ cwd: root, prompt: step.try, title: `Try: ${step.text.slice(0, 40)}` }])
-      .then(() => setTried((t) => ({ ...t, [idx]: 'opened' })))
-      .catch(() => setTried((t) => ({ ...t, [idx]: 'failed' })))
-  }
 
   useEffect(() => {
     let live = true
@@ -110,8 +103,8 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
       .tour()
       .then((t) => {
         if (!live || !t) return
-        // A step already ticked done is skipped - the tour opens on the first one that
-        // is not, never back at the first step just because it exists.
+        // A step already ticked done is skipped - the tour opens on the first one that is
+        // not, never back at the first step just because it exists.
         const start = nextUnchecked(t.steps, doneMap)
         setState(start === -1 ? t : { ...t, index: start })
       })
@@ -119,8 +112,8 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
     return () => {
       live = false
     }
-    // Only runs once, at mount - `doneMap` here is whatever loaded from storage before
-    // this fired, which is all a start position needs.
+    // Only runs once, at mount - `doneMap` here is whatever loaded from storage before this
+    // fired, which is all a start position needs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -129,20 +122,39 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
     if (!state || gone) return
     const step = currentStep(state)
     onOpen(step.open)
-    // The change's own suites run the moment its step is on screen, once per step.
-    if (step.checks.length && !checks[index]) {
-      setChecks((c) => ({ ...c, [index]: { state: 'running' } }))
-      void Promise.all(step.checks.map((s) => api.tourCheck(s))).then((results) =>
-        setChecks((c) => ({ ...c, [index]: { state: 'done', results } }))
-      )
-    }
-    // And its pane opens the moment it is shown, once per step ever (Robert 2026-09-04:
-    // "it should just automatically do it for the step").
-    if (shouldAutoTry(step, seen)) tryIt(index, step, state.root)
     // Only the step actually on screen should open anything - not `onOpen` itself, which
     // is a fresh closure every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [index, gone])
+
+  const runChecks = (): void => {
+    if (!state) return
+    const step = currentStep(state)
+    if (!step.checks.length || checks[index]) return
+    setChecks((c) => ({ ...c, [index]: { state: 'running' } }))
+    void Promise.all(step.checks.map((s) => api.tourCheck(s))).then((results) =>
+      setChecks((c) => ({ ...c, [index]: { state: 'done', results } }))
+    )
+  }
+
+  // Playing: hold on this step for as long as it needs to be looked at, then move on.
+  // The timer is rebuilt whenever the step, the play state or this step's checks change,
+  // so a step that was holding for a check starts its dwell the moment the result lands.
+  const checkRunning = checks[index]?.state === 'running'
+  useEffect(() => {
+    if (!state || gone || !playing) return
+    if (done(state)) {
+      // The last step is where it stops: nothing wraps, and the card stays on the change
+      // most recently made rather than starting the list again under somebody reading it.
+      setPlaying(false)
+      return
+    }
+    const wait = dwellFor(currentStep(state), checkRunning)
+    if (wait === null) return
+    const t = setTimeout(() => setState((s) => (s ? next(s) : s)), wait)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [index, gone, playing, checkRunning])
 
   if (!state) return null
   // Dismissed or Done: a pill stays in the corner so the steps can always be found
@@ -161,6 +173,8 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
   const doneCount = state.steps.filter((s) => doneMap[stepKey(s)]).length
   const allDone = doneCount === state.steps.length
 
+  // Ticking a step off moves to the next one still unticked, so the card is always sitting
+  // on something that has not been looked at yet.
   const markDone = (): void => {
     if (doneMap[key]) return
     const nextDone = { ...doneMap, [key]: true }
@@ -194,14 +208,12 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
         <CardX onDismiss={() => setGone(true)} />
         <div className="tour-count">
           {doneCount} of {state.steps.length} checked
+          {playing && !isLast ? ' · playing' : ''}
         </div>
         <div className="tour-body">
           <div className="tour-text">{step.text}</div>
           <div className="tour-where">Where to look: {step.where}</div>
           <div className="tour-how">{howToCheck(step)}</div>
-          {step.try && step.tryDerived && (
-            <div className="tour-derived">Trying it from what to look for - this change wrote no Try line.</div>
-          )}
         {step.see.length > 0 && (
           <ul className="tour-see">
             {step.see.map((s, i) => (
@@ -211,7 +223,11 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
         )}
         {step.checks.length > 0 && (
           <div className="tour-checks" data-testid="tour-checks">
-            {!check || check.state === 'running' ? (
+            {!check ? (
+              <button type="button" className="ghost small tour-run" data-testid="tour-run" onClick={runChecks}>
+                Run {step.checks.map(checkName).join(', ')}
+              </button>
+            ) : check.state === 'running' ? (
               <div className="tour-check running">Checking {step.checks.map(checkName).join(', ')}…</div>
             ) : (
               check.results.map((r) => (
@@ -234,32 +250,34 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
         )}
         </div>
         <div className="tour-acts">
-          {step.try && (
-            <button
-              type="button"
-              className="ghost small"
-              disabled={tried[index] === 'opening'}
-              onClick={() => tryIt(index, step, state.root)}
-            >
-              {tried[index] === 'opening'
-                ? 'Opening…'
-                : tried[index] === 'failed'
-                  ? 'Could not open'
-                  : tried[index]
-                    ? 'Try again'
-                    : 'Try it in a pane'}
-            </button>
-          )}
+          <button
+            type="button"
+            className="ghost small"
+            data-testid="tour-play"
+            onClick={() => setPlaying((p) => !p)}
+          >
+            {playing ? 'Pause' : isLast ? 'Play again' : 'Start the tour'}
+          </button>
           <button
             type="button"
             className="ghost small"
             disabled={state.index === 0}
-            onClick={() => setState((s) => (s ? previous(s) : s))}
+            onClick={() => {
+              setPlaying(false)
+              setState((s) => (s ? previous(s) : s))
+            }}
           >
             Previous
           </button>
           {!isLast && (
-            <button type="button" className="ghost small" onClick={() => setState((s) => (s ? next(s) : s))}>
+            <button
+              type="button"
+              className="ghost small"
+              onClick={() => {
+                setPlaying(false)
+                setState((s) => (s ? next(s) : s))
+              }}
+            >
               Next
             </button>
           )}

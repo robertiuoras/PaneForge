@@ -359,15 +359,22 @@ export function movable(p: Pick<AutoPane, 'state' | 'asking' | 'backJob' | 'mach
 }
 
 /**
- * States a pane may be QUEUED out of, which is a wider set than `movable`.
+ * States a pane may be QUEUED out of.
  *
- * The difference is what happens next. `movable` is asked by the two rules that move a
- * pane on the spot, so a turn in flight has to be refused: the kill that ends a handoff
- * would throw the unfinished answer away. The budget rule hands the pane to the queue
- * instead, and the queue's whole job is to wait for that turn to end - so `working` and
- * `stalled` are eligible here and the answer is never at risk.
+ * A PANE MID-TURN IS NEVER PICKED. The queue was built to hold a working pane until its
+ * turn ended, and the answer was safe - but the pane is not the only thing in flight. A
+ * chat with a prompt typed and waiting, or a command halfway through, is a person's
+ * attention as much as an agent's, and the first they hear of it is a countdown offering
+ * to move the thing they are in the middle of. Robert 2026-09-04, watching it arm on this
+ * chat: "why was it right now just trying to handoff to the remote pc it shouldn't have
+ * because we even have message queued and it was mid running command".
  *
- * Still refused: a live question (drawn on a screen, in no transcript, so it arrives over
+ * So `working` and `stalled` are refused here as they are in `movable`, and this stays a
+ * separate function because the two differ in `state` only by intent: the queue exists for
+ * a pane that goes quiet BETWEEN the decision and the move, not for one that is busy when
+ * the decision is made.
+ *
+ * Also refused: a live question (drawn on a screen, in no transcript, so it arrives over
  * there with nobody asked), a pane that has exited (nothing to move), and one that has
  * not printed yet - `starting` has no transcript to resume from and no screen to carry.
  */
@@ -376,7 +383,7 @@ export function queueable(p: Pick<AutoPane, 'state' | 'asking' | 'backJob' | 'ma
   if (p.backJob) return false
   if (p.machineBound) return false
   if (p.shareable === false) return false
-  return p.state === 'ready' || p.state === 'needsYou' || p.state === 'working' || p.state === 'stalled'
+  return p.state === 'ready' || p.state === 'needsYou'
 }
 
 /** The peer that can take this project, or null. Same rules as `offloadTarget`. */
@@ -725,4 +732,21 @@ export function queueVerdict(
 /** The line the pane's report prints while it is waiting. */
 export function queuedNote(deviceName: string): string {
   return `Working - moving to ${deviceName} as soon as this turn ends`
+}
+
+/**
+ * Does somebody arriving at this pane answer its countdown?
+ *
+ * For a CLOSE countdown, yes: a pane being read is not a pane to close, and dropping the
+ * count on arrival is what stops the app closing something under the person's hands.
+ *
+ * For a MOVE, no. Robert, 2026-09-04: "it stops the countdown when i click on the session
+ * which shouldnt happen we just go off the button". A click was also the one cancel that
+ * wrote no hold at all - `keepOpen` blocks the pane for `KEEP_MINUTES`, arrival blocked
+ * nothing - so the 60s sweep armed the identical countdown again and the card came
+ * straight back, which is the shape that gets a feature switched off. A move is answered
+ * by the card's own buttons and by nothing else.
+ */
+export function endsOnArrival(soon: { move?: unknown }): boolean {
+  return !soon.move
 }

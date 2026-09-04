@@ -16,11 +16,11 @@
  */
 
 import { spawn, type ChildProcess } from 'node:child_process'
-import { appendFileSync, mkdirSync, renameSync, statSync } from 'node:fs'
+import { appendFileSync, mkdirSync, readFileSync, renameSync, statSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { app } from 'electron'
+import { app, clipboard } from 'electron'
 // Electron 33's main process is Node 20, which has no global WebSocket - the picture is
 // a CDP stream and CDP is a socket, so this is the one dependency the feature added.
 import WebSocket from 'ws'
@@ -28,7 +28,10 @@ import {
   Pacer,
   STEPS,
   keyEvent,
+  imagePathFromText,
   loginPaneTitle,
+  mimeForImage,
+  pasteImageScript,
   looksSignedIn,
   askAgain,
   machineWord,
@@ -83,6 +86,8 @@ interface Live {
   waiting: Map<number, { ok: (v: Record<string, unknown>) => void; no: (e: Error) => void; method: string }>
   pacer: Pacer
   size: { w: number; h: number }
+  /** The box on THIS screen, in its own pixels - what the picture is drawn into. */
+  box: { w: number; h: number }
   step: number
   lastMeta: FrameMeta | null
   /** The frame that arrived while one was being painted - the newest, never a queue. */
@@ -172,6 +177,7 @@ export function requestLogin(input: {
     waiting: new Map(),
     pacer: new Pacer(),
     size: { w: 1280, h: 800 },
+    box: { w: 1280, h: 800 },
     step: 0,
     lastMeta: null,
     pendingData: null,
@@ -331,8 +337,11 @@ async function startCast(l: Live): Promise<void> {
   const params = {
     format: 'jpeg',
     quality: s.quality,
-    maxWidth: Math.min(s.maxWidth, Math.max(320, Math.round(l.size.w))),
-    maxHeight: Math.min(s.maxHeight, Math.max(240, Math.round(l.size.h))),
+    // Capped at the BOX, never the viewport: zoomed out, the far page is laid out at
+    // twice the column's width, and sending twice the pixels the column can draw buys
+    // nothing but bytes on the link this whole file exists to economise.
+    maxWidth: Math.min(s.maxWidth, Math.max(320, Math.round(l.box.w))),
+    maxHeight: Math.min(s.maxHeight, Math.max(240, Math.round(l.box.h))),
     everyNthFrame: 1
   }
   const until = Date.now() + CAST_WAIT_MS
@@ -487,10 +496,14 @@ export function paintedFrame(id: string, ack: number): void {
   else finish()
 }
 
-export function resizeLogin(id: string, w: number, h: number): void {
+export function resizeLogin(id: string, w: number, h: number, boxW?: number, boxH?: number): void {
   const l = live.get(id)
   if (!l || !(w > 0) || !(h > 0)) return
-  if (Math.abs(l.size.w - w) < 8 && Math.abs(l.size.h - h) < 8) return
+  const box = { w: boxW && boxW > 0 ? boxW : w, h: boxH && boxH > 0 ? boxH : h }
+  const same = Math.abs(l.size.w - w) < 8 && Math.abs(l.size.h - h) < 8
+  const sameBox = Math.abs(l.box.w - box.w) < 8 && Math.abs(l.box.h - box.h) < 8
+  l.box = box
+  if (same && sameBox) return
   // Recorded whatever the state is. The view mounts and reports its size while `openLogin`
   // is still opening the tunnel, and a size DROPPED there is never asked for again - a
   // ResizeObserver only speaks when the box changes - so the page stayed at the default
@@ -505,11 +518,74 @@ export function resizeLogin(id: string, w: number, h: number): void {
     })
 }
 
+
+/** A picture bigger than this is not a screenshot, and a CDP call is not a file upload. */
+const MAX_PASTE_BYTES = 12 * 1024 * 1024
+
+/**
+ * What is on THIS machine's clipboard, put into the far page.
+ *
+ * Text was all that ever travelled, so a copied screenshot arrived as
+ * `file:///Users/.../shot.png` - a name that means nothing on the other computer, typed
+ * into a comment box (Robert, 2026-09-04). A picture now travels as bytes and is
+ * delivered as the page's own `paste` event; only when there is no picture is the text
+ * sent, which is the old behaviour unchanged.
+ */
+function pasteClipboard(l: Live): void {
+  let found: { base64: string; mime: string; name: string } | null = null
+  const text = clipboard.readText()
+  const path = text ? imagePathFromText(text) : null
+  if (path) {
+    // A file copied in Finder is a PATH on the clipboard and nothing else, so the bytes
+    // are read here rather than asked of `readImage`, which returns nothing for it.
+    try {
+      if (statSync(path).size <= MAX_PASTE_BYTES) {
+        found = {
+          base64: readFileSync(path).toString('base64'),
+          mime: mimeForImage(path) ?? 'image/png',
+          name: path.split(/[\\/]/).pop() || 'pasted.png'
+        }
+      }
+    } catch {
+      /* an unreadable path is not a picture; the text below is still true */
+    }
+  }
+  if (!found) {
+    const img = clipboard.readImage()
+    if (!img.isEmpty()) {
+      const png = img.toPNG()
+      if (png.length <= MAX_PASTE_BYTES) {
+        found = { base64: png.toString('base64'), mime: 'image/png', name: 'pasted.png' }
+      }
+    }
+  }
+  if (!found) {
+    if (text) tell(l, 'Input.insertText', { text })
+    return
+  }
+  const bytes = found.base64.length
+  log(`paste picture ${found.mime} ${bytes}b64 id=${l.req.id}`)
+  void send(l, 'Runtime.evaluate', {
+    expression: pasteImageScript(found.base64, found.mime, found.name),
+    awaitPromise: false,
+    userGesture: true,
+    returnByValue: true
+  }).catch(() => {
+    // A page that will not take the event is not an error worth a card; the text is the
+    // honest fallback, and it is what used to happen every time.
+    if (text) tell(l, 'Input.insertText', { text })
+  })
+}
+
 export function loginInput(id: string, ev: LoginInput): void {
   const l = live.get(id)
   if (!l || !l.ws || l.req.state === 'failed') return
   if (ev.kind === 'text') {
     tell(l, 'Input.insertText', { text: ev.text })
+    return
+  }
+  if (ev.kind === 'paste') {
+    pasteClipboard(l)
     return
   }
   if (ev.kind === 'key') {

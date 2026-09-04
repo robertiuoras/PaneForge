@@ -945,6 +945,12 @@ export interface HistoryEntry {
   chapters?: string[]
   /** chapters past the cap: the count is kept when the text is not */
   dropped?: number
+  /**
+   * Every ask this session made, oldest first - `chapters` only keeps the first ask of
+   * each subject, this is the whole list `Show all asks` reads. Never a bare slash
+   * command; see `shared/gist.ts`.
+   */
+  askLines?: string[]
   /** internal: a clear happened, so the next real ask opens a chapter */
   fresh?: boolean
   /**
@@ -2360,7 +2366,8 @@ export interface Api {
   /** This frame is on screen - send the next one. */
   loginPainted(id: string, ack: number): void
   /** The view's size in CSS pixels; the remote page is made this shape. */
-  loginSize(id: string, w: number, h: number): void
+  /** The far page's viewport, and the box it is drawn into on this screen. */
+  loginSize(id: string, w: number, h: number, boxW?: number, boxH?: number): void
   onLoginFrame(cb: (f: { id: string; data: string; meta: FrameMeta; ack: number }) => void): () => void
   onLogins(cb: (reqs: LoginRequest[]) => void): () => void
   askAutoClear(req: AutoClearAsk): Promise<{ ok: boolean; reason?: string; dueAt?: number }>

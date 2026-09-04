@@ -64,8 +64,21 @@ buildSync({
   logLevel: 'silent'
 })
 
+// The one piece of arithmetic this suite reads directly: whether any borrow is a screen
+// with a person at it. Compiled the same way, so the test holds the shipped file.
+buildSync({
+  absWorkingDir: root,
+  entryPoints: ['src/shared/paneSize.ts'],
+  bundle: true,
+  format: 'cjs',
+  platform: 'node',
+  outfile: join(work, 'paneSize.bundle.cjs'),
+  logLevel: 'silent'
+})
+
 const req = createRequire(join(work, 'x.cjs'))
 const { SessionManager } = req('./sessions.bundle.cjs')
+const { watchedBorrow } = req('./paneSize.bundle.cjs')
 
 const fail = []
 const ok = (c, n, detail) => {
@@ -227,6 +240,28 @@ ok(shape() === '90x40', 'a mirror borrows too', shape())
 ok(live.borrows.get('guest:1/window').at === 0, 'a mirror is filed with no lease', String(live.borrows.get('guest:1/window').at))
 manager.touchBorrows('window', [id])
 ok(shape() === '90x40', 'and no clock can take it away - only the link dropping', shape())
+manager.returnSizes()
+
+// ---- 6b. a screen with nobody at it is not somebody looking -----------------------
+//
+// `watched` is what a headless desk reads as "a person is looking at this pane", and it
+// refuses both the idle close clock and the sleep clock. A mirror's borrow never expires
+// (see the lease above), so one glance from the other desk used to hold a pane open for
+// as long as the link was up: measured 2026-09-04, three panes idle on the PC against a
+// 5-minute clock with no close, no countdown, and nothing in reclaim.log for hours.
+manager.resize(id, 90, 40, true, 'guest:1/window', true, false)
+ok(live.borrows.get('guest:1/window').person === false, 'a borrow records that nobody is there')
+ok(watchedBorrow(live.borrows.values()) === false, 'and an empty desk is not watching')
+manager.resize(id, 90, 40, true, 'guest:1/window')
+ok(
+  live.borrows.get('guest:1/window').person === false,
+  'a repaint that says nothing about a person leaves the answer alone'
+)
+manager.resize(id, 90, 40, true, 'guest:1/window', true, true)
+ok(watchedBorrow(live.borrows.values()) === true, 'somebody arriving is watching again')
+manager.resize(id, 100, 40, true, 'phone')
+manager.resize(id, 90, 40, true, 'guest:1/window', true, false)
+ok(watchedBorrow(live.borrows.values()) === true, 'and one screen with a person is enough')
 manager.returnSizes()
 
 // ---- 7. an exited pane is not resized ---------------------------------------------

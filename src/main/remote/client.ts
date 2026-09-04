@@ -88,6 +88,14 @@ export class RemoteClient extends EventEmitter {
   private available: Session[] = []
   /** The panes this device chose to mirror, by their id ON that device. */
   private watching = new Set<string>()
+  /**
+   * The last grid each screen here borrowed on the far end, keyed by pane and screen.
+   *
+   * Only so the borrow can be RE-STATED when the answer to "is anybody at this desk"
+   * changes: an idle mirrored pane repaints never, so without a stored frame the owner
+   * would keep whatever presence it was told the first time - see `restatePresence`.
+   */
+  private lent = new Map<string, { localId: string; cols: number; rows: number; viewer?: string }>()
 
   private conn: Conn | null = null
   private socket: Socket | null = null
@@ -223,9 +231,26 @@ export class RemoteClient extends EventEmitter {
    * on the other machine's own screen, so it may not be sent about a pane this device
    * is not even drawing.
    */
-  resizeOn(localId: string, cols: number, rows: number, viewer?: string): void {
+  resizeOn(localId: string, cols: number, rows: number, viewer?: string, person?: boolean): void {
     if (!this.watching.has(localId)) return
-    this.conn?.send({ t: 'resize', id: localId, cols, rows, borrowed: true, viewer })
+    this.lent.set(`${localId} ${viewer ?? ''}`, { localId, cols, rows, viewer })
+    this.conn?.send({ t: 'resize', id: localId, cols, rows, borrowed: true, viewer, person })
+  }
+
+  /**
+   * Nobody is at this desk any more, or somebody is again.
+   *
+   * A borrow the far end holds for us is what stops IT closing that pane on its own idle
+   * clock, and a mirror's borrow has no heartbeat to carry the news - it is re-stated only
+   * when the pane repaints, which an idle pane never does. So the same frame goes out
+   * again with the answer changed, and the owner's clock starts or stops within one tick.
+   * An older host ignores the extra field, which leaves exactly what shipped before it.
+   */
+  restatePresence(person: boolean): void {
+    for (const l of this.lent.values()) {
+      if (!this.watching.has(l.localId)) continue
+      this.conn?.send({ t: 'resize', id: l.localId, cols: l.cols, rows: l.rows, borrowed: true, viewer: l.viewer, person })
+    }
   }
 
   /**

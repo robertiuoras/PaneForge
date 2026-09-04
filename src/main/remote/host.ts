@@ -29,7 +29,15 @@ export interface HostBackend {
   list(): Session[]
   buffer(id: string): string
   write(id: string, data: string): void
-  resize(id: string, cols: number, rows: number, borrowed?: boolean, viewer?: string): void
+  resize(
+    id: string,
+    cols: number,
+    rows: number,
+    borrowed?: boolean,
+    viewer?: string,
+    record?: boolean,
+    person?: boolean
+  ): void
   /** Give a pane whose size a guest borrowed back to this desk. */
   returnSize?(id: string, viewer?: string): void
   redraw(id: string): void
@@ -409,7 +417,11 @@ export class RemoteHost extends EventEmitter {
             Number(m.cols ?? 80),
             Number(m.rows ?? 24),
             m.borrowed === true,
-            guest.viewerKey(m.viewer)
+            guest.viewerKey(m.viewer),
+            true,
+            // Whether a person is at the screen that is drawing this pane. Only `false` is
+            // news: an older build sends nothing, and nothing means somebody is there.
+            m.person === false ? false : undefined
           )
           return
         case 'redraw':

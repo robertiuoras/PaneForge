@@ -24,9 +24,8 @@ buildSync({
   platform: 'node',
   outfile: file
 })
-const { gistOf, gistLine, noteAskInto, summaryOf, summaryFull, MAX_CHAPTERS } = await import(
-  pathToFileURL(file).href
-)
+const { gistOf, gistLine, noteAskInto, summaryOf, summaryFull, MAX_CHAPTERS, MAX_ASK_LINES } =
+  await import(pathToFileURL(file).href)
 
 let failed = 0
 const ok = (name, fn) => {
@@ -150,6 +149,39 @@ ok('past the cap the text stops and the COUNT does not', () => {
 })
 ok('an empty prompt is not an ask', () => {
   assert.deepEqual(fold('   \n '), {})
+})
+
+console.log('noteAskInto askLines')
+ok('every ask is kept, oldest first', () => {
+  const n = fold('fix the tunnel', 'now the other file', 'and the tests')
+  assert.deepEqual(n.askLines, ['fix the tunnel', 'now the other file', 'and the tests'])
+})
+ok('a bare slash command is dropped, not recorded as an ask', () => {
+  const n = fold('fix the tunnel', '/clear', '/model opus', 'write the notes')
+  assert.deepEqual(n.askLines, ['fix the tunnel', 'write the notes'])
+})
+ok('an empty prompt leaves the list untouched', () => {
+  assert.deepEqual(fold('   \n '), {})
+})
+ok('a clear (a chapter boundary) does not drop what came before it', () => {
+  const n = fold('fix the tunnel', '/clear', 'write the release notes')
+  assert.deepEqual(n.askLines, ['fix the tunnel', 'write the release notes'])
+  // The chapter list only kept the two openings; askLines kept both asks too, so nothing
+  // said between them would be lost either.
+  assert.deepEqual(n.chapters, ['fix the tunnel', 'write the release notes'])
+})
+ok('past the cap the list stops growing', () => {
+  const prompts = []
+  for (let i = 0; i < MAX_ASK_LINES + 5; i++) prompts.push(`ask number ${i}`)
+  const n = fold(...prompts)
+  assert.equal(n.askLines.length, MAX_ASK_LINES)
+  assert.equal(n.askLines[0], 'ask number 0')
+})
+ok('a very long ask is clipped rather than kept whole forever', () => {
+  const long = 'please ' + 'refactor the entire renderer '.repeat(20)
+  const n = fold(long)
+  assert.ok(n.askLines[0].length <= 200, `${n.askLines[0].length} chars`)
+  assert.ok(n.askLines[0].endsWith('…'))
 })
 
 console.log('summaryOf')

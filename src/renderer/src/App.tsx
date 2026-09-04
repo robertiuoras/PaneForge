@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useHeaderFits } from './headerFit'
 import { agentModelLabel, type AgentInfo } from '@shared/agents'
 import { chordOf, resolveKeymap, sameChord } from '@shared/keymap'
 import { stripAnsi } from '@shared/ansi'
@@ -125,6 +126,7 @@ import {
   movable as handoffMovable,
   queueable as handoffQueueable,
   DEFAULT_AUTO_HANDOFF,
+  endsOnArrival,
   staysHere,
   suggestMove,
   type AutoHandoff,
@@ -596,6 +598,11 @@ export default function App(): JSX.Element {
       (a, b) => (rank.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.id) ?? Number.MAX_SAFE_INTEGER)
     )
   }, [rawSessions, order])
+  // What each pane header can fit is MEASURED, not guessed from the pane's width - so a
+  // narrow window with an empty row keeps its clear and folder buttons. One observer for
+  // the whole desk; it writes an attribute and no state. See `shared/headerFit.ts`.
+  useHeaderFits([sessions])
+
   const shownSessions = useMemo(
     () =>
       sessions.filter(
@@ -4605,13 +4612,13 @@ export default function App(): JSX.Element {
     // keeps it from being picked again (`quietSince` reads `lastFocus`). Any OTHER pane in
     // the same plan is re-decided by the next sweep rather than closed on a count that is
     // no longer on screen - that is the honest half, because nobody arrived at those.
+    //
+    // ...for a CLOSE. A MOVE is answered by the card's buttons and by nothing else - see
+    // `endsOnArrival`. The lock the move sweep holds stays held, because its countdown is
+    // still on screen.
     const soon = closeSoonsRef.current.find((c) => c.ids.includes(id))
-    if (soon) {
+    if (soon && endsOnArrival(soon)) {
       console.info(`reclaim: countdown dropped - somebody came to ${id}`)
-      // The move sweep holds a lock for as long as its countdown is up. Dropping the
-      // countdown without giving it back is how `stopMove` shipped as a control that
-      // appeared to work and then let nothing move ever again.
-      if (soon.move) handoffSweeping.current = false
       setCloseSoons((list) => list.filter((c) => soonKey(c) !== soonKey(soon)))
     }
     publishClosingRef.current()
@@ -5083,6 +5090,10 @@ export default function App(): JSX.Element {
                           // takes. Drawn as a clock rather than as the word `moving`: a
                           // ten-minute build under a chip that says moving reads as a broken
                           // handoff, which is exactly how three of these were reported.
+                          // The word on it is `moves when done`, not `waiting`: on its
+                          // own `waiting` named nothing it was waiting FOR and read as a
+                          // stuck pane (Robert, 2026-09-04, on a card that had said it
+                          // for seven minutes).
                           // ...and it is the control that undoes it. The wait is minutes
                           // long by construction, so the chip that reports it is the one
                           // place somebody is already looking when they change their mind.
@@ -5095,7 +5106,7 @@ export default function App(): JSX.Element {
                               stopMove(s)
                             }}
                           >
-                            waiting <Elapsed since={s.handoffQueuedAt} title="Queued for a move" />
+                            moves when done <Elapsed since={s.handoffQueuedAt} title="Queued for a move" />
                           </button>
                         ) : (
                           // Which half is running and for how long: a move is a repo push

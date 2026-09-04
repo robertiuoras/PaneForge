@@ -11,11 +11,14 @@
  *   node scripts/pf-ctl.mjs list
  *   node scripts/pf-ctl.mjs open <cwd> [--title T] [--prompt P | --task BACKLOG_ID] [--model M] [--agent A]
  *                                       [--close-when-done] [--report-to <pane>]
+ *                                       [--resume <chat-id> | --continue] [--here]
  *   node scripts/pf-ctl.mjs needs-login <site> --url <url> [--host user@ip] [--port N] [--machine WORDS]
  *   node scripts/pf-ctl.mjs login [url] [--site NAME] [--host user@ip] [--port N] [--machine WORDS]
  *   node scripts/pf-ctl.mjs close <title-or-id>
  *   node scripts/pf-ctl.mjs rename <title-or-id> <name...>
  *   node scripts/pf-ctl.mjs type <title-or-id> <text...>
+ *   node scripts/pf-ctl.mjs hold [--bundle ID|--name APP|--pid N] [--reason R] [--ttl MIN] [--this]
+ *   node scripts/pf-ctl.mjs hold list | hold release <id>
  *
  * Auth is self-serve: the pairing code lives in the app's own config.json, so a local
  * process that can read it is already inside the trust boundary. Pairs fresh each run -
@@ -34,9 +37,10 @@
  *
  * Exit codes: 0 ok · 1 target not found / call failed · 2 phone server unreachable/off.
  */
-import { readFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 /*
  * `PF_USER_DATA` points this at ONE app's settings folder.
@@ -188,11 +192,124 @@ if (cmd === 'login') {
   }
 }
 
+/**
+ * `pf hold` - tell GuardDeck's reapers to leave something alone while this session is
+ * still using it.
+ *
+ * 2026-09-04: the Idle App Reaper quit a PaneForge dev build mid-review - "Electron:
+ * idle 61m, holding 276 MB, 0.2% cpu". Every signal it has said abandoned, and a build
+ * put on screen for review is looked at rather than clicked, so no amount of tuning
+ * those signals fixes it. The session that produced the build is the only thing on the
+ * machine that knows, so it says so.
+ *
+ * Deliberately handled BEFORE pairing: a hold is a local file, and a session wants one
+ * whether or not the app is up. On a machine with no GuardDeck it is a no-op rather than
+ * an error - a hold can only ever spare something, so failing to take one is never the
+ * dangerous direction.
+ *
+ * The hold dies on its own two ways: a TTL, and (with --this) the pid of whatever
+ * invoked pf. That second one is what makes "while my session is running" true instead
+ * of hopeful - close the pane and the hold goes with it.
+ */
+if (cmd === 'hold') {
+  const holdsPath =
+    process.env.GUARDDECK_HOLDS_MODULE ||
+    join(homedir(), 'Projects', 'claude-memory', 'claude-config', 'guarddeck-holds.mjs')
+  let H
+  try {
+    H = await import(pathToFileURL(holdsPath).href)
+  } catch {
+    console.log('no GuardDeck on this machine - nothing needs holding')
+    process.exit(0)
+  }
+  const sub = rest[0] === 'list' || rest[0] === 'release' ? rest.shift() : 'add'
+  if (sub === 'list') {
+    const holds = H.readHolds()
+    if (!holds.length) console.log('nothing held')
+    for (const h of holds)
+      console.log(
+        [h.id, [...h.bundleIDs, ...h.names, ...h.pids.map((n) => `pid ${n}`)].join(','), H.describe(h)].join('\t')
+      )
+    process.exit(0)
+  }
+  if (sub === 'release') {
+    const id = rest.shift()
+    if (!id) fail(1, 'release needs a hold id - see `pf hold list`')
+    console.log(H.releaseHold(id) ? 'released' : 'no such hold')
+    process.exit(0)
+  }
+  const many = (name) => rest.filter((a, i) => rest[i - 1] === `--${name}`)
+  const bundleIDs = many('bundle')
+  const names = many('name')
+  const pids = many('pid')
+  // The common case by a mile: this pane just built the app it is looking at.
+  if (!bundleIDs.length && !names.length && !pids.length) bundleIDs.push('com.github.Electron')
+  const thisSession = rest.includes('--this')
+  try {
+    const hold = H.addHold({
+      bundleIDs,
+      names,
+      pids,
+      reason: flag(rest, '--reason') ?? 'in use by a PaneForge session',
+      owner: flag(rest, '--owner') ?? (process.env.PF_PANE ? `pane ${process.env.PF_PANE}` : 'a local session'),
+      // `--this` binds the hold to the process that ran pf, which inside a pane is that
+      // pane's shell. Without it the TTL is the only expiry.
+      ownerPid: thisSession ? process.ppid : undefined,
+      ttlMin: flag(rest, '--ttl')
+    })
+    console.log(
+      `held ${hold.id} until ${new Date(hold.expiresAt).toLocaleTimeString()}` +
+        (hold.ownerPid ? ` or until this session exits` : '')
+    )
+  } catch (e) {
+    fail(1, e instanceof Error ? e.message : String(e))
+  }
+  process.exit(0)
+}
+
 // The suite drives the refusals above without an app on the machine; everything past this
 // line needs one.
 if (process.env.PF_CTL_NO_APP === '1') process.exit(0)
 
 await pair()
+
+/**
+ * Where Claude Code keeps a folder's conversations. It spells the path with every
+ * character that is not a letter or a digit turned into a dash, so `taskdriver.ai-a`
+ * under `/Users/x/Projects` is `-Users-x-Projects-taskdriver-ai-a`.
+ */
+function projectDirFor(cwd) {
+  return join(homedir(), '.claude', 'projects', cwd.replace(/[^A-Za-z0-9]/g, '-'))
+}
+
+/** The transcript file for a chat id, wherever on this machine it was recorded. */
+function transcriptAnywhere(id) {
+  const root = join(homedir(), '.claude', 'projects')
+  if (!existsSync(root)) return null
+  for (const dir of readdirSync(root)) {
+    const file = join(root, dir, `${id}.jsonl`)
+    if (existsSync(file)) return file
+  }
+  return null
+}
+
+/**
+ * `claude --resume <id>` reads the transcript out of the folder it is RUN IN, and the
+ * app may open the pane in a lane copy (`taskdriver.ai-a`) because the project's own
+ * folder is taken. The conversation is then simply not there and the resume falls back
+ * to an empty chat - no error, which is how this went unnoticed. So the transcript is
+ * copied next to the pane that is going to read it. Returns true when it had to.
+ */
+function placeTranscript(cwd, id) {
+  const want = join(projectDirFor(cwd), `${id}.jsonl`)
+  if (existsSync(want)) return false
+  const found = transcriptAnywhere(id)
+  if (!found) fail(1, `no conversation ${id} on this machine - check the id with pf-ctl list`)
+  mkdirSync(projectDirFor(cwd), { recursive: true })
+  copyFileSync(found, want)
+  return true
+}
+
 
 if (cmd === 'list') {
   const list = await sessions()
@@ -234,12 +351,46 @@ if (cmd === 'list') {
   // session opening a helper pane needs to name nothing.
   const closeWhenDone = rest.includes('--close-when-done')
   const reportTo = flag(rest, '--report-to') ?? process.env.PF_PANE
+  // Reopening a conversation rather than starting one. `--resume <id>` names the chat -
+  // the transcript's filename, which `pf-ctl list` and the history file both carry -
+  // and `--continue` takes whichever is newest in the folder.
+  //
+  // BOTH halves go to the app: `buildArgs` only spells `--resume <id>` when `resume` is
+  // true AS WELL, so a request carrying resumeId alone opens a silent fresh chat.
+  const resumeId = flag(rest, '--resume')
+  const continueLast = rest.includes('--continue')
+  if (resumeId && continueLast) fail(1, 'open takes --resume <id> or --continue, not both')
+  // Keep the pane on THIS desk. Without it `startOrSend` may hand the launch to the paired
+  // machine, which is right for a person opening a pane and wrong for automation: the
+  // caller is holding files, a lane and a transcript that exist only here, and a resume in
+  // particular cannot follow - the conversation is not on that disk. Measured 2026-09-04:
+  // three `pf-ctl open --resume` calls opened three empty panes on the PC.
+  const here = rest.includes('--here') || Boolean(resumeId)
   const cwd = rest[0]
   if (!cwd) fail(1, 'open needs a cwd: pf-ctl open <cwd> [--title T] [--prompt P]')
   const s = await call('sessions:start', [
-    { cwd, title, prompt, model, agent, closeWhenDone, reportTo: closeWhenDone ? reportTo : undefined }
+    {
+      cwd,
+      title,
+      prompt,
+      model,
+      agent,
+      closeWhenDone,
+      reportTo: closeWhenDone ? reportTo : undefined,
+      where: here ? 'local' : undefined,
+      resume: Boolean(resumeId) || continueLast || undefined,
+      resumeId: resumeId || undefined
+    }
   ])
-  console.log(`opened ${s?.id ?? '?'} in ${cwd}`)
+  const landed = s?.cwd ?? cwd
+  console.log(`opened ${s?.id ?? '?'} in ${landed}`)
+  // The pane may have been placed in a lane copy, which is a different folder and so a
+  // different set of conversations. Put the transcript there and start the agent again -
+  // a pane seconds old has nothing to lose, and this is the only moment the id is known.
+  if (resumeId && s?.id && placeTranscript(landed, resumeId)) {
+    await call('sessions:restart', [s.id])
+    console.log(`copied conversation ${resumeId} into ${landed} and restarted the pane`)
+  }
 } else if (cmd === 'close') {
   const ref = rest[0]
   if (!ref) fail(1, 'close needs a pane: pf-ctl close <title-or-id>')
@@ -313,5 +464,5 @@ if (cmd === 'list') {
   await send(channel, args)
   console.log('sent')
 } else {
-  fail(1, `unknown command "${cmd ?? ''}" - use: list | open | needs-login | login | close | rename | type | call | send`)
+  fail(1, `unknown command "${cmd ?? ''}" - use: list | open | needs-login | login | close | rename | type | hold | call | send`)
 }

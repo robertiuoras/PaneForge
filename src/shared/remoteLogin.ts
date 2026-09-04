@@ -41,6 +41,75 @@ export const GOOD_MS = 150
 /** The median is over the recent past, not the whole session - a stall an hour ago is not now. */
 export const RTT_WINDOW = 20
 
+/**
+ * How much of the far page fits in the picture.
+ *
+ * The remote page is made the shape of the box it is drawn into, so a half-window column
+ * gave a 700px-wide browser and every desktop site rendered at its most cramped - "way
+ * too zoomed in", 2026-09-04. Zoom is that box divided: at 50% the far browser is given
+ * a viewport twice as wide as the column, so a whole desktop page is on screen, drawn
+ * smaller. Nothing is scaled on this end - the page really is laid out at that width, so
+ * text stays sharp and a click still lands where it was aimed.
+ */
+export const ZOOMS: readonly number[] = [0.33, 0.4, 0.5, 0.67, 0.8, 1, 1.25, 1.5]
+
+/** The width a desktop site expects before it starts folding itself into a phone layout. */
+export const PAGE_WIDTH = 1280
+/** No remote viewport smaller than this, whatever the column does. */
+export const MIN_VIEW = { w: 640, h: 400 }
+/** Nor bigger: a viewport nobody can read costs frames for nothing. */
+export const MAX_VIEW = { w: 3840, h: 2400 }
+
+/** The viewport to give the far browser, for a box this size at this zoom. */
+export function viewportFor(box: { w: number; h: number }, zoom: number): { w: number; h: number } {
+  const z = zoom > 0 ? zoom : 1
+  return {
+    w: Math.max(MIN_VIEW.w, Math.min(MAX_VIEW.w, Math.round(box.w / z))),
+    h: Math.max(MIN_VIEW.h, Math.min(MAX_VIEW.h, Math.round(box.h / z)))
+  }
+}
+
+/**
+ * The zoom that shows a whole desktop page in this box: the biggest rung whose viewport
+ * is still at least `PAGE_WIDTH` wide. A box already wider than that gets 100%, because
+ * shrinking a page that already fits only makes it harder to read.
+ */
+export function fitZoom(box: { w: number; h: number }): number {
+  if (!(box.w > 0)) return 1
+  const want = box.w / PAGE_WIDTH
+  if (want >= 1) return 1
+  let best = ZOOMS[0]
+  for (const z of ZOOMS) if (z <= want && z > best) best = z
+  return best
+}
+
+/** One rung in or out, never off the end of the ladder. */
+export function zoomStep(zoom: number, dir: 1 | -1): number {
+  const i = ZOOMS.indexOf(zoom)
+  if (i < 0) {
+    // A zoom that is not on the ladder (a fit) steps to its nearest neighbour in that
+    // direction, so pressing + after a fit always makes the page bigger.
+    const up = ZOOMS.find((z) => z > zoom)
+    const down = [...ZOOMS].reverse().find((z) => z < zoom)
+    return (dir === 1 ? up : down) ?? zoom
+  }
+  return ZOOMS[Math.max(0, Math.min(ZOOMS.length - 1, i + dir))] ?? zoom
+}
+
+/** What the button says. */
+export function zoomWords(zoom: number): string {
+  return `${Math.round(zoom * 100)}%`
+}
+
+/** How wide the sign-in column may be dragged, in this window. */
+export const MIN_SPLIT = 380
+/** A pane narrower than this is not a pane any more, so the column stops here. */
+export const KEEP_PANE = 300
+export function clampSplit(px: number, windowWidth: number): number {
+  const most = Math.max(MIN_SPLIT, windowWidth - KEEP_PANE)
+  return Math.round(Math.max(MIN_SPLIT, Math.min(most, px)))
+}
+
 export function median(xs: readonly number[]): number {
   if (xs.length === 0) return 0
   const s = [...xs].sort((a, b) => a - b)
@@ -326,6 +395,83 @@ export type LoginInput =
     }
   | { kind: 'key'; type: 'keyDown' | 'keyUp'; k: KeyIn }
   | { kind: 'text'; text: string }
+  // A paste is decided in MAIN, because only main can see this machine's clipboard as
+  // anything but text: a copied screenshot is a picture, and sending its file path is
+  // sending a name that means nothing on the other computer.
+  | { kind: 'paste' }
+
+
+/* ------------------------------------------------------------------ pasting a picture
+
+   A clipboard holding a screenshot is not text, and the far machine cannot be handed a
+   path: `/Users/robert/Desktop/shot.png` names nothing on the PC. So the bytes travel,
+   and the page is given a real `paste` event carrying a real `File` - which is what
+   every upload box, comment field and rich editor is already listening for.
+
+   Robert, 2026-09-04: pasting an image "doesnt put the image instead the local url". */
+
+/** What a copied file has to be named for its bytes to be treated as a picture. */
+export const IMAGE_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.heic'] as const
+
+export function mimeForImage(path: string): string | null {
+  const dot = path.lastIndexOf('.')
+  if (dot < 0) return null
+  const ext = path.slice(dot).toLowerCase()
+  if (!(IMAGE_EXTS as readonly string[]).includes(ext)) return null
+  if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg'
+  if (ext === '.heic') return 'image/heic'
+  return `image/${ext.slice(1)}`
+}
+
+/**
+ * The picture a clipboard's TEXT is pointing at, if it is pointing at one.
+ *
+ * macOS puts a copied Finder file on the clipboard as a `file://` line and nothing else,
+ * so the text half is the only place the picture is named. Only an absolute path is
+ * taken - a relative one is relative to a folder this app is not standing in.
+ */
+export function imagePathFromText(text: string): string | null {
+  const one = text.trim().split(/\r?\n/)[0]?.trim() ?? ''
+  if (!one) return null
+  let path = one
+  if (/^file:\/\//i.test(path)) {
+    try {
+      path = decodeURIComponent(path.replace(/^file:\/\//i, ''))
+    } catch {
+      return null
+    }
+  }
+  if (!path.startsWith('/') && !/^[a-z]:[\\/]/i.test(path)) return null
+  return mimeForImage(path) ? path : null
+}
+
+/**
+ * The page's own paste, built in the page.
+ *
+ * `Input.insertText` can only carry text and a synthetic Cmd+V would paste the FAR
+ * machine's clipboard, which is not the one the picture is on. Dispatching the event is
+ * the only path that hands a page the bytes; a page that ignores `paste` (a plain
+ * `<input type=file>` with no drop handler) gets nothing, and says so by not changing.
+ */
+export function pasteImageScript(base64: string, mime: string, name: string): string {
+  const safe = JSON.stringify({ base64, mime, name })
+  return `(() => {
+  const a = ${safe};
+  const bin = atob(a.base64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const file = new File([bytes], a.name, { type: a.mime });
+  const dt = new DataTransfer();
+  dt.items.add(file);
+  const el = document.activeElement && document.activeElement !== document.body
+    ? document.activeElement
+    : (document.querySelector('[contenteditable="true"], textarea, input[type="file"]') || document.body);
+  const ev = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true });
+  const took = el.dispatchEvent(ev);
+  if (el.tagName === 'INPUT' && el.type === 'file') { el.files = dt.files; el.dispatchEvent(new Event('change', { bubbles: true })); }
+  return took;
+})()`
+}
 
 /** Two Escapes inside this long hand the keyboard back to this desk. */
 export const ESC_RELEASE_MS = 700

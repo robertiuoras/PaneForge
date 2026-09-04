@@ -19,8 +19,6 @@
  *              as `See:` lines in the commit body; a commit without them gets the first
  *              paragraph of its body instead, which is at least what the author was
  *              thinking, and one with neither gets nothing rather than a guess
- *   - `try`    a prompt the card can type into a fresh pane so the change can be watched
- *              happening - a `Try:` line in the commit body. Never invented.
  *   - `checks` the test scripts the change touched, which the card RUNS and reports on -
  *              this is how a change with no screen still gets checked. A suite that needs
  *              a window is named rather than run.
@@ -51,11 +49,6 @@ export interface TourStep {
   where: string
   /** What to look for. Empty when nobody wrote it down. */
   see: string[]
-  /** A prompt to type into a fresh pane, or nothing. */
-  try?: string
-  /** `try` was never written as a `Try:` line - it was built from `see` instead, so the
-   * card can say so rather than claiming the commit asked for this exact prompt. */
-  tryDerived?: boolean
   /** `scripts/<name>-test.mjs` paths, relative to the repo root, that prove the change. */
   checks: string[]
   /** Suites the change touched that cannot run without a window - named, not run. */
@@ -182,18 +175,23 @@ export function whereWords(places: string[]): string {
   return kept.length === 2 ? kept[0] + ' and ' + kept[1] : kept.join('')
 }
 
-/** `See:` and `Try:` lines out of a commit body. `See:` may repeat; `Try:` keeps the first. */
-export function trailersOf(body: string): { see: string[]; try?: string } {
+/**
+ * The `See:` lines out of a commit body - what the person who made the change said to
+ * look for. They may repeat; each is one line on the card.
+ *
+ * A `Try:` line is read no more. It used to become a button that opened a pane and typed
+ * that prompt, and Robert 2026-09-04: "i dont want the try in pane testing helper it
+ * should automatically go through each thing and show exactly whats done". A card that
+ * hands you an errand is not a card that shows you the change, so the tour plays itself
+ * instead - see `dwellFor`. Commits may keep writing `Try:`; nothing reads it.
+ */
+export function trailersOf(body: string): { see: string[] } {
   const see: string[] = []
-  let tryLine: string | undefined
   for (const raw of body.split('\n')) {
-    const line = raw.trim()
-    const m = /^(See|Try):\s*(.+)$/i.exec(line)
-    if (!m) continue
-    if (m[1].toLowerCase() === 'see') see.push(m[2].trim())
-    else if (!tryLine) tryLine = m[2].trim()
+    const m = /^See:\s*(.+)$/i.exec(raw.trim())
+    if (m) see.push(m[1].trim())
   }
-  return { see, try: tryLine }
+  return { see }
 }
 
 /**
@@ -226,7 +224,7 @@ export function plainWords(text: string, cap = 160): string {
 
 /** One line saying how to look at this step - in words, for the surface the card has
  * just opened. A step with nothing on screen says the app checked it below. */
-export function howToCheck(step: Pick<TourStep, 'open' | 'checks' | 'try'>): string {
+export function howToCheck(step: Pick<TourStep, 'open' | 'checks'>): string {
   switch (step.open) {
     case 'newSession':
       return 'The New session window is open now - look there.'
@@ -237,7 +235,6 @@ export function howToCheck(step: Pick<TourStep, 'open' | 'checks' | 'try'>): str
     case 'workspaces':
       return 'Look at the list on the left.'
     default:
-      if (step.try) return 'Press Try it in a pane and watch what the pane does.'
       return step.checks.length
         ? 'Nothing to click for this one - the app checked it for you below.'
         : 'Nothing to click for this one, and no automatic check came with it.'
@@ -271,7 +268,7 @@ export function stepFrom(c: TourCommit): TourStep {
   const { where, open: fileOpen, spot: fileSpot } = placesFor(c.files)
   const open = fileOpen !== 'none' ? fileOpen : surfaceFor(text)
   const spot = fileSpot ?? SURFACE_SPOT[open]
-  const { see, try: tryLine } = trailersOf(c.body)
+  const { see } = trailersOf(c.body)
   const checks: string[] = []
   const byHand: string[] = []
   for (const f of c.files) {
@@ -289,38 +286,15 @@ export function stepFrom(c: TourCommit): TourStep {
     checks,
     byHand
   }
-  if (tryLine) step.try = tryLine
-  else {
-    const derived = derivedTry({ see: step.see })
-    if (derived) {
-      step.try = derived
-      step.tryDerived = true
-    }
-  }
   if (spot) step.spot = spot
   return step
 }
 
-/** A `Try:` prompt for a commit that wrote none - built from the first `See:` line, since
- * that is the only thing the author actually said to look for. `undefined` when there is
- * nothing to look for either - a step with no See lines gets no invented Try either. */
-export function derivedTry(step: Pick<TourStep, 'see'>): string | undefined {
-  if (!step.see.length) return undefined
-  const line = step.see[0].trim().replace(/[.!?]+$/, '')
-  return `Show me: ${line}. Open the place named and say what you see.`
-}
-
-/** A stable identity for a step, used to remember which ones already opened a pane or got
- * ticked done. The commit's own subject - `try-diff.mjs` carries no sha into this file, and
- * a subject is already unique within one tour's commit list. */
+/** A stable identity for a step, used to remember which ones have been ticked done. The
+ * commit's own subject - `try-diff.mjs` carries no sha into this file, and a subject is
+ * already unique within one tour's commit list. */
 export function stepKey(step: Pick<TourStep, 'text'>): string {
   return step.text
-}
-
-/** Whether a step should open its pane the moment it is shown - only the first time, never
- * a second pane for a step already seen. */
-export function shouldAutoTry(step: Pick<TourStep, 'text' | 'try'>, seen: Record<string, boolean>): boolean {
-  return !!step.try && !seen[stepKey(step)]
 }
 
 /** The first step not yet ticked done, in the order the tour lists them - `-1` once every
@@ -348,6 +322,34 @@ export function currentStep(state: TourState): TourStep {
 /** Clamped at the last step - pressing Next again does nothing, never wraps or throws. */
 export function next(state: TourState): TourState {
   return { ...state, index: Math.min(state.index + 1, state.steps.length - 1) }
+}
+
+/**
+ * How long the tour stays on a step before it moves itself on, ms - or `null`, meaning
+ * hold here, because this step has not finished showing what it did.
+ *
+ * The card plays itself. Robert opens the dev window to see what changed, and pressing
+ * Next twelve times while working out what each step was for is the errand this replaces:
+ * "it should automatically go through each thing and show exactly whats done if visual"
+ * (2026-09-04, dropping the button that opened a pane and typed a prompt).
+ *
+ * Three lengths, and the reason for each:
+ *  - a step whose checks are RUNNING holds (`null`). They only run because somebody
+ *    pressed Run, so moving off the result they asked for is the one unforgivable step.
+ *  - a step with something on screen - a surface it opened, a control it ringed - gets the
+ *    long one: that is the only kind read by looking rather than by reading a line.
+ *  - everything else gets the short one, being one sentence and a tick already drawn.
+ */
+export const DWELL_CHECKS_MS = 3500
+export const DWELL_LOOK_MS = 7000
+export const DWELL_PLAIN_MS = 4000
+
+export function dwellFor(step: TourStep, checksRunning: boolean): number | null {
+  // A check only runs because somebody pressed it, and moving off a result nobody has
+  // seen is the same defect as having no result: while one is in flight, the tour holds.
+  if (checksRunning) return null
+  if (step.open !== 'none' || step.spot) return DWELL_LOOK_MS
+  return step.checks.length ? DWELL_CHECKS_MS : DWELL_PLAIN_MS
 }
 
 /** Clamped at the first step. */

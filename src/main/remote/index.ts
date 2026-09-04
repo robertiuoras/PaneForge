@@ -28,6 +28,7 @@ import type { AttachIn, AttachResult } from '../../shared/attach'
 import type { BackJob } from '../../shared/backJobs'
 import type { HandoffItem, HandoffPayload, HandoffResult } from '../../shared/handoff'
 import { DEFAULT_REMOTE_PORT, getConfig, setConfig } from '../config'
+import { profileName } from '../profile'
 import { Discovery, localAddresses } from './discover'
 import { RemoteHost, type HostBackend } from './host'
 import { RemoteClient, joinId, splitId } from './client'
@@ -93,6 +94,17 @@ export class Remote extends EventEmitter {
   start(): void {
     if (this.started) return
     this.started = true
+    // A TEST COPY does not join the desk. `npm run try` inherits the real app's saved
+    // pairing, so a second window came up mirroring the same paired panes as the installed
+    // one: two viewers of one pty negotiating a grid (`shared/paneSize.ts`), and whichever
+    // window was narrower decided how the pane was drawn in the other. Robert, 2026-09-04,
+    // looking at exactly that: "the grid looks terrible layout both are remote sessions".
+    // A copy opened to check a build tests ITS OWN panes; pairing is still there to be
+    // switched on by hand in Devices if a link is what is being tested.
+    if (profileName()) {
+      console.info('remote: test copy - not connecting to paired devices')
+      return
+    }
     // First launch after upgrading generates this device's id and code in memory;
     // writing them now is what stops them being different on the next launch, which
     // would quietly break every pairing the other device had just made.
@@ -178,10 +190,22 @@ export class Remote extends EventEmitter {
    * one pty and the far end must file them apart, or the smaller one silently replaces the
    * larger and the pane is drawn at a phone's width in a 157-column window.
    */
-  resizeOn(id: string, cols: number, rows: number, viewer?: string): void {
+  resizeOn(id: string, cols: number, rows: number, viewer?: string, person?: boolean): void {
     const cut = splitId(id)
     if (!cut) return
-    this.clients.get(cut.peer)?.resizeOn(cut.local, cols, rows, viewer)
+    this.clients.get(cut.peer)?.resizeOn(cut.local, cols, rows, viewer, person)
+  }
+
+  /**
+   * Somebody arrived at this desk, or left it.
+   *
+   * Every pane this device is mirroring is a pane the OTHER machine is holding open for
+   * us, and its idle clock is refused for as long as it believes a screen is drawing it
+   * with somebody in front of it. Nothing else re-states that: an idle mirrored pane never
+   * repaints. See `Borrow.person` in `shared/paneSize.ts`.
+   */
+  presenceChanged(person: boolean): void {
+    for (const c of this.clients.values()) c.restatePresence(person)
   }
 
   /** One screen here has stopped drawing a mirrored pane: give that one borrow back. */

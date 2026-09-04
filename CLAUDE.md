@@ -40,6 +40,10 @@ scripts/lane.mjs status --repo <dir>` shows who holds what.
 - No-remote repos, `claude-memory`: no lanes. Never leave one conflicted.
 - Shipped only once `landedOnOrigin` proves it; failed lane stays out of `lastShip.lanes`.
 - `state.passed[id]` logs a passed lane. Empty kept a day (`SWEEP_GRACE_MS` 24h).
+- ONE PANE HOLDS ONE LANE. A claim drops every other hold wearing the same `PF_PANE`, so a
+  chat that cleared itself (new session id, same pane) stops being drawn as a second chat
+  in a second copy. A hold with no pane id - claimed by hand, or from outside the app - is
+  left alone.
 - `npm run test:lanes`.
 - Your first edit of a file another lane has already changed is told so, with that lane's
   line ranges (`guard` exits 0 with text). Same region: message that chat before editing.
@@ -81,11 +85,23 @@ said yesterday does not cover today. `npm run test:unreleased`.
 
 The dev window's tour (`shared/tour.ts`, `TourCard.tsx`) turns every `feat:`/`fix:`/`perf:`
 commit since the installed build into a step: where it lives (off the files touched),
-what to look for, a ring around the control, `Try it in a pane`, and the commit's own
-`scripts/<x>-test.mjs` RUN on the card with the result. So every such commit body carries
-`See: <what Robert should see on screen>` lines (one per thing) and, when a pane can show
-it, one `Try: <prompt to type into a fresh pane in this repo>` line. Without them the card
-shows the body's first paragraph and no Try button. `npm run test:tour`.
+what to look for, a ring around the control, and the commit's own `scripts/<x>-test.mjs`
+RUN on the card with the result. It WAITS to be started and then plays itself - opens each
+step's surface, waits `dwellFor` (longer when there is something on screen) and moves on;
+Pause, Previous and Next stop it where it is. A step's suites run only when its Run button
+is pressed, never on their own (Robert 2026-09-04: "it should wait for my approval for each
+new feature to test"), and a check in flight holds the tour where it is. No pane is opened and no prompt is
+typed (Robert 2026-09-04: "i dont want the try in pane testing helper"), so a `Try:` line
+in a commit body is read by nothing. Every such commit body carries `See: <what Robert
+should see on screen>` lines, one per thing; without them the card shows the body's first
+paragraph. `npm run test:tour`.
+
+A dev window opened with `--show` is one a person is watching, so nothing else closes it:
+`npm run try -- --show` records its pid and `closeTestApps` spares that process and its
+children. Only `--close` and the next `npm run try` take it (`force`). Before this, any
+other chat's `npm test`, any window suite and every `lane.mjs ready` shot it - three quits
+in 26 minutes on 2026-09-04, each logged as "something asked from outside".
+`npm run test:devkeep`.
 
 A change is tested in a DEV WINDOW before anyone asks for a release, on both machines:
 `npm run try -- --pull --show` fast-forwards that checkout to origin, builds, and opens
@@ -206,6 +222,14 @@ hotkey earns the foreground.
   pane back through `remote:handoff` when a call needs the Mac. `npm run test:peerchrome`.
 - Pty never moves: agent, checkout, transcript, worktree stay put. Session id `@<device>/<id>`;
   `remote.owns(id)` routes every message.
+- A borrow says whether a PERSON is at the screen holding it (`Borrow.person`,
+  `shared/paneSize.ts`). `watched` - the one "somebody is looking" reading a headless desk
+  has - counts only borrows with somebody there, so a mirror on an empty desk no longer
+  holds the owner's pane off its idle clock for the life of the link (2026-09-04: three PC
+  panes idle against a 5-minute clock, no close, no countdown). Absent means yes; the
+  borrowing desk re-states it on every `away` change (`Remote.presenceChanged`). The
+  deadline itself is still published by the OWNER (`closingAt`), so both machines draw the
+  same countdown.
 - Mirror borrows terminal size, never owns it (`resize(borrowed)`, `main/sessions.ts`);
   `returnSize(id)` per-pane, never `returnSizes()`. Smallest grid wins across borrowers
   (`shared/paneSize.ts`, per axis); borrow = lease, `at` renewed by 30s `pty:visible`, expires
@@ -1022,7 +1046,7 @@ moves exactly that many.
 - Pressure card offers the move: `suggestMove` names dearest pane + destination; `.cap-pop` has
   `Move it` / `Keep it here` (adds PROJECT to `autoHandoff.keepHere`, every rung refuses it).
 - Never handed back where it came from: `senderDevice`/`arrivedFrom` in payload, `hostFor` skips it.
-- Mid-turn pane queued, never killed. `main/handoffQueue.ts` moves it when the turn ends; one that never
+- A pane MID-TURN is never picked at all: `queueable` refuses `working`/`stalled` like `movable` does (2026-09-04, it armed on a chat with a prompt queued and a command running). The queue is for a pane that goes quiet between the decision and the move. `main/handoffQueue.ts` moves it when the turn ends; one that never
   goes quiet expires after `waitMinutes`, said out loud (`remote:handoffCancel` chip ends it); a move
   already in flight has left the queue. `undefined` keeps the stamp, only `null` clears it —
   `handoffQueuedAt` makes chip say `waiting 12m` not `moving`. `TICK_MS` (5s) is expiry backstop.

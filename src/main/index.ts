@@ -74,7 +74,7 @@ import {
   startGameWatch,
   whenClear
 } from './gameMode'
-import { startAway, stopAway } from './away'
+import { away, startAway, stopAway } from './away'
 import { onBatteryNow, watchPower } from './power'
 import {
   initProfile,
@@ -215,7 +215,8 @@ import {
 } from './updater'
 import { READY_HOLD_MS } from '../shared/updateStale'
 import * as history from './history'
-import { takenFolders } from '../shared/laneTaken'
+import { clashingRestores, takenFolders } from '../shared/laneTaken'
+import { copyNumber } from '../shared/place'
 import { readBoard, writeMemory, writeTasks } from './board'
 import * as voice from './voice'
 import { installCommand, uninstallCommand } from '../shared/agents'
@@ -1270,8 +1271,8 @@ ipcMain.on('login:close', (_e, id: string) => closeLogin(String(id)))
 ipcMain.on('login:dismiss', (_e, id: string) => dismissLogin(String(id)))
 ipcMain.on('login:input', (_e, id: string, ev: LoginInput) => loginInput(String(id), ev))
 ipcMain.on('login:ack', (_e, id: string, ack: number) => paintedFrame(String(id), Number(ack)))
-ipcMain.on('login:size', (_e, id: string, w: number, h: number) =>
-  resizeLogin(String(id), Number(w), Number(h))
+ipcMain.on('login:size', (_e, id: string, w: number, h: number, boxW?: number, boxH?: number) =>
+  resizeLogin(String(id), Number(w), Number(h), Number(boxW) || 0, Number(boxH) || 0)
 )
 
 ipcMain.handle('devs:list', async (_e, panes: Array<{ id: string; pane: number; name: string }>) => {
@@ -1358,7 +1359,13 @@ manager.on('sessions', () => publishCapacity())
 // Whether anybody is at this machine. The renderer's idle clock freezes while nobody is,
 // so a pane is never closed during minutes a person had no chance to stop it in. Pushed on
 // a CHANGE only - two messages per absence. See src/shared/away.ts.
-startAway((a) => send('system:away', a))
+startAway((a) => {
+  send('system:away', a)
+  // ...and the other desk is told too. A pane of theirs that this machine is mirroring is
+  // held off their idle clock while they believe somebody here is looking at it, and this
+  // is the only thing that ever says otherwise - see `Borrow.person`.
+  remote.presenceChanged(a.sawPerson)
+})
 
 ipcMain.handle('projects:list', () => listProjects())
 ipcMain.handle('projects:create', (_e, name: string) => createProject(name))
@@ -1375,7 +1382,8 @@ ipcMain.handle('sessions:list', () => allSessions())
  */
 async function laneFor(
   req: StartSessionRequest,
-  extraTaken: string[] = []
+  extraTaken: string[] = [],
+  except?: string
 ): Promise<StartSessionRequest> {
   // A pane opened by hand in a lane folder - the lane hook, a terminal, a restored desk -
   // never went through resolveLane, so it carried no lane id and its card printed the raw
@@ -1389,7 +1397,7 @@ async function laneFor(
   // that folder again. Two client chats were restored asleep into `clients` and a
   // third opened from History landed there too, because neither counted (2026-09-04):
   // all three woke into one checkout. A folder with a sleeping pane in it is taken.
-  const taken = [...takenFolders(manager.list()), ...extraTaken]
+  const taken = [...takenFolders(manager.list(), except), ...extraTaken]
 
   // Reopening a pane that was in a lane, when the lane turned out to hold nothing and
   // the project folder is free again: the lane was only ever there to keep two agents
@@ -1402,7 +1410,7 @@ async function laneFor(
       cwd: home,
       lane: undefined,
       laneEnv: undefined,
-      laneNote: `Lane was empty - back in ${basename(home)}`
+      laneNote: `Nobody else is in ${basename(home)} - back in the project's own folder`
     }
   }
 
@@ -1420,7 +1428,9 @@ async function laneFor(
     cwd: lane.cwd,
     lane: lane.lane,
     laneEnv: lane.env,
-    laneNote: `Opened lane ${lane.lane} on ${lane.branch} - PORT=${lane.port}${memory}`
+    // The card is read by somebody who has never used git: a copy NUMBER, never the slot
+    // letter, never the branch. See `shared/place.ts` and `npm run test:laneplain`.
+    laneNote: `Opened copy ${(lane.lane && copyNumber(lane.lane)) ?? lane.lane} of ${basename(req.cwd)} - PORT=${lane.port}${memory}`
   }
 }
 
@@ -1604,8 +1614,11 @@ ipcMain.handle('sessions:sleep', (_e, id: string) => {
   if (remote.owns(id)) return null
   return manager.sleep(id)
 })
-ipcMain.handle('sessions:wake', (_e, id: string) => {
+ipcMain.handle('sessions:wake', async (_e, id: string) => {
   if (remote.owns(id)) return null
+  // A sleeping pane is placed again before it wakes: the folder it slept in may now be
+  // another pane's (two client chats restored asleep into one checkout, 2026-09-04).
+  await manager.rehome(id, (req) => laneFor(req, [], id))
   return manager.wake(id)
 })
 ipcMain.handle('sessions:switchAgent', (_e, id: string, agent: string, model?: string) => {
@@ -1852,7 +1865,7 @@ ipcMain.on(
     // window's and nothing ever put it back.
     if (remote.owns(id)) {
       if (borrowed === true) borrowedRemote(who).add(id)
-      remote.resizeOn(id, cols, rows, who)
+      remote.resizeOn(id, cols, rows, who, away().sawPerson)
     }
     // A borrowed resize over this channel is a PHONE drawing the pane - the desk window
     // never borrows, it owns. Named so a mirror watching the same pane is a separate
@@ -2595,12 +2608,19 @@ const handoffQueue = new HandoffQueue({
 
 ipcMain.handle(
   'remote:handoff',
-  (_e, device: string, ids?: string[], closeReceiverWhenDone?: boolean, waitForTurn?: boolean) =>
-    runHandoff(String(device), {
+  (_e, device: string, ids?: string[], closeReceiverWhenDone?: boolean, waitForTurn?: boolean) => {
+    // A script that packs every argument into one array reaches here with `device` as
+    // that array. `String()` turned it into "id,pane,false,true", which queued a pane for
+    // a machine that does not exist and tried every other pane on the desk (ids undefined
+    // means all) - 2026-09-04, the wrong-machine hook. A refusal has to be loud and now.
+    if (typeof device !== 'string' || !device)
+      throw new Error(`remote:handoff: device must be a device id, got ${JSON.stringify(device)}`)
+    return runHandoff(device, {
       ids: Array.isArray(ids) && ids.length ? ids.map(String) : undefined,
       closeReceiverWhenDone: closeReceiverWhenDone === true,
       waitForTurn: waitForTurn !== false
     })
+  }
 )
 // One press on a mirrored pane's own card. The answer is the far end's report, so a
 // refusal ("dirty checkout over there") arrives as a sentence naming the pane.
@@ -3863,7 +3883,14 @@ function restorePanes(specs: StartSessionRequest[]): void {
   // list is rewritten from what actually restored, so it cannot grow stale entries.
   const wasPinned = new Set(getConfig().pinnedPanes ?? [])
   const nowPinned: string[] = []
-  specs.slice(0, MAX_RESTORE).forEach((req, i) => {
+  const opening = specs.slice(0, MAX_RESTORE)
+  // Two cards can be saved pointing at ONE folder - the desk is written per pane and
+  // nothing in it notices - and restore starts each pane where it was saved, so both
+  // agents came up in one working tree (Alison and Jacob in `clients`, 2026-09-04). The
+  // first pane keeps the folder; a later one comes back asleep and is placed on the way
+  // out of sleep by `sessions:wake`. See `shared/laneTaken.ts`.
+  const clash = clashingRestores(opening)
+  opening.forEach((req, i) => {
     const open = (): void => {
       try {
         // Reopen the conversation this pane was in BY NAME, or open nothing.
@@ -3891,7 +3918,10 @@ function restorePanes(specs: StartSessionRequest[]): void {
           // Everything but the pane being looked at comes back with no agent in it. The
           // card, its place and its screen are all there; a press starts the CLI in the
           // conversation it was in. See `shared/restoreTurn.ts` for the measurement.
-          asleep: req.asleep || restoreAsleep(req, i, recoverOn)
+          asleep: req.asleep || clash[i] || restoreAsleep(req, i, recoverOn),
+          laneNote: clash[i]
+            ? `Another chat is already in ${basename(req.cwd)} - opening this one gives it its own copy`
+            : req.laneNote
         })
         if (req.scrollbackId && wasPinned.has(req.scrollbackId)) nowPinned.push(meta.id)
       } catch {
