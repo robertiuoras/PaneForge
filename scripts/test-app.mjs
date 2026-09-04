@@ -39,7 +39,13 @@ import { checkoutFamily } from './dev-profile.mjs'
 // So a launch that puts the window ON SCREEN writes its pid here, and every close that is
 // not that window's own launch leaves that process and its children alone. `--close` and
 // the next `npm run try` still take it: those are somebody asking for this window to go.
-const KEEP_FILE = join(tmpdir(), 'paneforge-dev-keep.json')
+// `PF_KEEP_FILE` is for the suite that tests this file and nothing else. `devkeep-test`
+// drops and rewrites the marker as part of what it proves, and it was doing that to the
+// REAL one: a dev window Robert had open was unmarked mid-suite and then shot by the very
+// next `closeTestApps` in the same test - the suite that pins "a watched window survives
+// every close" was the thing killing it (dev profile updater.log, 2026-09-04 11:32:55, 40
+// seconds after launch, four times in a session).
+const KEEP_FILE = process.env.PF_KEEP_FILE || join(tmpdir(), 'paneforge-dev-keep.json')
 
 function alive(pid) {
   try {

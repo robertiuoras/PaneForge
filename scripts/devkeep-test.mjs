@@ -13,11 +13,25 @@
 // real test copy is.
 
 import { spawn } from 'node:child_process'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { closeTestApps, dropTestAppKeep, keepTestApp, keptTestApp } from './test-app.mjs'
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
-const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+// THIS SUITE MAY NOT TOUCH THE REAL DEV WINDOW, and it used to kill it: it dropped the
+// shared keep-marker as its first act and then called `closeTestApps` against the real
+// checkout, which with no marker is an unconditional pkill over every PaneForge checkout
+// on the machine. Robert's open dev copy died 40 seconds into `npm test`, logged as `quit
+// nothing in the app asked` - the app looking like it crashed (2026-09-04).
+//
+// So it runs against its OWN pretend checkout under a temp folder and its OWN marker file.
+// `closeTestApps` matches `<parent>/PaneForge*/node_modules/electron`, so a fake root
+// named that way is matched by exactly the same regex and nothing real is.
+const box = mkdtempSync(join(tmpdir(), 'pf-devkeep-'))
+const root = join(box, 'PaneForge-fake')
+mkdirSync(join(root, 'node_modules', 'electron', 'dist'), { recursive: true })
+process.env.PF_KEEP_FILE = join(box, 'keep.json')
+
+const { closeTestApps, dropTestAppKeep, keepTestApp, keptTestApp } = await import('./test-app.mjs')
 let failed = 0
 function ok(what, cond) {
   console.log(`${cond ? 'ok' : 'FAIL'}  ${what}`)
@@ -87,6 +101,7 @@ for (const pid of [watched, leftover, dead]) {
   }
 }
 dropTestAppKeep()
+rmSync(box, { recursive: true, force: true })
 
 console.log(failed ? `\n${failed} failed` : '\nall good')
 process.exit(failed ? 1 : 0)

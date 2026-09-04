@@ -96,6 +96,7 @@ import { allAgents, buildArgs, hasAgent, modelValue, resolveEnv } from '../share
 import { homedir } from 'node:os'
 import { allowsCwd, scrubForeignKeys } from '../shared/paneTrust'
 import { anchoredStart, readsBusy, composerHeld, type BusyReason } from '../shared/busy'
+import { exitPlan, exitWords } from '../shared/exitClose'
 import { readsCloudWork, cloudHeld } from '../shared/cloudWork'
 import { outputIsWork } from '../shared/fleet'
 import { nextCwdGone, reapForMissingCwd } from '../shared/cwdGone'
@@ -2620,6 +2621,30 @@ export class SessionManager extends EventEmitter {
       // reading at all.
       endHookDeny(id)
       this.emitSessions()
+      // ...AND THE CARD GOES. A pane whose program has ended is a card wearing `exited`
+      // and a number nobody can explain; the History row for it is already written, with
+      // the conversation id, so `Open again` brings the same chat back. `shared/exitClose`
+      // holds the refusals - asleep, mid-handoff, app quitting, and one that never
+      // started, where the card is the only evidence there is.
+      const plan = exitPlan({
+        asleep: !!meta.asleep,
+        handingOff: !!meta.handingOff,
+        quitting: this.down,
+        printed: !!meta.printed,
+        exitCode
+      })
+      if (!plan.close) return
+      const say = exitWords(meta.title || meta.cwd || 'A pane', plan)
+      const go = (): void => {
+        // Re-read: the pane may have been woken, moved or closed by hand in the meantime,
+        // and a pane with a LIVE process again is not the one this plan was made for.
+        const now = this.sessions.get(id)
+        if (!now || now.proc || now.meta.status !== 'exited') return
+        this.emit('exit-closed', id, say)
+        this.kill(id)
+      }
+      if (plan.after) setTimeout(go, plan.after).unref?.()
+      else go()
     })
   }
 
