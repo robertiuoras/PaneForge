@@ -192,6 +192,7 @@ import type {
   RestoreOffer,
   RestorePane,
   Session,
+  StartedPane,
   StartSessionRequest,
   SwarmRequest,
   TaskItem,
@@ -212,7 +213,10 @@ const manager = new SessionManager()
 startWakeQueue({
   list: () => manager.list(),
   wake: (id) => void manager.wake(id),
-  pressure: () => 'normal'
+  // The same reading the budget rung takes (`autoHandoff` below): the memory verdict OR
+  // the lag band, whichever is worse. A machine that is not lagging and not short of
+  // memory is a machine with room, and that is when a queued pane may start.
+  pressure: () => worstPressure(lastPressure, lagLevel(loadPerCore()))
 })
 /** Keeps userData/desk.json in step with the panes on screen. See restore.ts. */
 const noteDesk = startDeskAutosave(() => manager.snapshot())
@@ -1567,16 +1571,23 @@ async function startOrSend(req: StartSessionRequest, claimed?: string[]): Promis
 ipcMain.handle('backlog:task', (_e, ref: string) => briefForTask(String(ref ?? '')))
 ipcMain.handle('sessions:start', (_e, req: StartSessionRequest) => startOrSend(req))
 ipcMain.handle('sessions:startMany', async (_e, reqs: StartSessionRequest[]) => {
-  const out: Session[] = []
+  const out: StartedPane[] = []
   // Folders claimed earlier in this same batch count as taken: two panes launched
   // together for one project must land in different lanes, and the session list
   // has not caught up mid-loop.
   const claimed: string[] = []
   for (const r of reqs) {
     try {
-      out.push(await startOrSend(r, claimed))
-    } catch {
-      // One missing folder should not abort the rest of a workspace launch.
+      out.push({ cwd: r.cwd, session: await startOrSend(r, claimed) })
+    } catch (e) {
+      // One folder that cannot be opened must not abort the rest of a workspace launch -
+      // and it must SAY which folder, and why. Swallowing the error meant the batch came
+      // back SHORT and nothing downstream could tell a deleted folder from a folder the
+      // agent refused to trust: the window guessed one sentence for every cause, and
+      // `pf open-many` printed `refused <cwd>` with no reason at all. The row is kept in
+      // place, so a caller pairs answers to requests by position.
+      const why = String((e as Error)?.message ?? '').replace(/^Error:\s*/, '')
+      out.push({ cwd: r.cwd, why: why || 'it would not open' })
     }
   }
   return out
