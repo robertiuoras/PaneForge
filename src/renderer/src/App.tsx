@@ -260,7 +260,9 @@ function reclaimPaneOf(
   lastFocus?: number,
   pinned?: boolean,
   /** what the sampler saw this pane still running, when it has an answer */
-  backJob?: string | null
+  backJob?: string | null,
+  /** what the sampler measured the pane's whole tree using, when it has an answer */
+  cpuPct?: number | null
 ): ReclaimPane {
   return {
     id: s.id,
@@ -295,6 +297,9 @@ function reclaimPaneOf(
     handingOff: !!s.handingOff,
     // "Keep this pane open" from the card's right-click. See `ReclaimPane.pinned`.
     pinned,
+    // ...and what its whole tree is USING, which is the only reading of "this agent is
+    // working" that does not come off the pane's own screen. See `ReclaimPane.cpuPct`.
+    cpuPct,
     // A sleeping pane has already given its agent back and the card is the thing being
     // kept - closing it buys nothing and loses the pane. See `shared/sleep.ts`.
     asleep: s.asleep
@@ -2852,7 +2857,8 @@ export default function App(): JSX.Element {
             activeRef.current,
             focusLeftAt.current[s.id],
             pinnedRef.current[s.id],
-            usageRef.current?.panes[s.id]?.jobs?.[0]?.label
+            usageRef.current?.panes[s.id]?.jobs?.[0]?.label,
+            usageRef.current?.panes[s.id]?.cpuPct
           )
         ),
         cfg,
@@ -2903,7 +2909,8 @@ export default function App(): JSX.Element {
             activeRef.current,
             focusLeftAt.current[s.id],
             pinnedRef.current[s.id],
-            usageRef.current?.panes[s.id]?.jobs?.[0]?.label
+            usageRef.current?.panes[s.id]?.jobs?.[0]?.label,
+            usageRef.current?.panes[s.id]?.cpuPct
           )
         ),
         cfg,
@@ -2915,7 +2922,26 @@ export default function App(): JSX.Element {
         // focused that pane by itself. See `keepable` in shared/reclaim.ts.
         personRef.current
       )
-      for (const p of plan) void api.sleepSession(p.id)
+      for (const p of plan) {
+        // A close writes two lines - the file a week-old one is reconstructed from, and
+        // the list somebody reads ten minutes later - and a sleep wrote NEITHER, so
+        // "PaneForge slept my session mid-turn" could not be checked against anything
+        // (measured 2026-09-04: not one `slept` line in reclaim.log, ever). The readings
+        // that allowed it go in the line, because the question is never "did it sleep" but
+        // "what did it think was idle".
+        const pane = sessionsRef.current.find((x) => x.id === p.id)
+        api.logReclaim({
+          event: 'slept',
+          id: p.id,
+          name: paneWordRef.current(p.id),
+          idleMin: Math.round(p.idleMs / 60000),
+          state: pane ? fleetState(pane) : 'gone',
+          runClock: pane?.runSince !== undefined,
+          cpuPct: usageRef.current?.panes[p.id]?.cpuPct ?? null,
+          log: 'idle-sleep'
+        })
+        void api.sleepSession(p.id)
+      }
     }
     const timer = window.setInterval(sweep, 60_000)
     return () => window.clearInterval(timer)
@@ -4381,7 +4407,8 @@ export default function App(): JSX.Element {
             activeId,
             focusLeftAt.current[s.id],
             pinned[s.id],
-            usage?.panes[s.id]?.jobs?.[0]?.label
+            usage?.panes[s.id]?.jobs?.[0]?.label,
+            usage?.panes[s.id]?.cpuPct
           )
         )
       for (const s of sessions) {

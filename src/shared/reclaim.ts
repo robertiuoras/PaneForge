@@ -50,6 +50,14 @@ import type { FleetState } from './fleet'
  * therefore never closed anything in its life. The refusal that was actually meant is the
  * one below, and it reads the pane's own live question rather than the word for its state.
  */
+/**
+ * Share of one core above which a pane's tree is doing something, for the sleep clock.
+ *
+ * An agent CLI sitting at its composer is under 1% here; one running a tool holds a core
+ * or more. Five is a floor with room under it for a spinner repainting.
+ */
+export const BUSY_CPU_PCT = 5
+
 const CLOSEABLE: ReadonlySet<FleetState> = new Set<FleetState>(['ready', 'exited', 'needsYou'])
 
 export interface ReclaimConfig {
@@ -230,6 +238,20 @@ export interface ReclaimPane {
    * reclaim.log). The person who might be reading it is on the other machine, and this is
    * how the other machine says so.
    */
+  /**
+   * Share of one core this pane's whole process tree used over the last sample, when
+   * the machine has measured it (`shared/usage.ts`). Null is "nobody measured", not 0.
+   *
+   * It is here because the SLEEP clock's only other reading of "is this agent working"
+   * is `busy`, which is the run clock, which is fed by the busy footer at the bottom of
+   * the pane's own screen. A frame whose bottom rows are a tool's output rather than the
+   * CLI's spinner reads as finished, `endRun` fires, and a pane whose agent is thirty
+   * minutes into one tool call then looks quiet: nothing typed, nothing printed, no run
+   * clock. That is a pane MID-TURN, and the sleep clock took it. A tree burning a core
+   * is not idle whatever the screen says, and that reading comes from the process table
+   * rather than from anything the CLI drew. Robert, 2026-09-04: "it should never sleep".
+   */
+  cpuPct?: number | null
   watched?: boolean
   /**
    * The agent has a question on screen that nobody has answered.
@@ -631,6 +653,10 @@ function onTheClock(p: ReclaimPane, personHere = true): boolean {
 function sleepable(p: ReclaimPane, personHere = true): boolean {
   // A sleeping pane is the OUTCOME of this clock, never a candidate for it. `keepable`
   // no longer refuses one - the close clock takes it - so the refusal lives here.
+  // A tree using a core is working, whatever the pane's screen says - see
+  // `ReclaimPane.cpuPct`. Null is "nobody measured" and never refuses, or this clock
+  // would switch itself off on a desk whose sampler is asleep.
+  if ((p.cpuPct ?? 0) > BUSY_CPU_PCT) return false
   return !p.asleep && keepable({ ...p, pinned: false }, personHere)
 }
 

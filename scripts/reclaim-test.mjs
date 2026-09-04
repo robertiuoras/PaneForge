@@ -228,6 +228,25 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
     check('...while a KEPT asleep pane stays', !idleClosePlan([pane({ ...slept, pinned: true }), pad], CLOCKED, NOW).length)
     eq('and the sleep clock never takes a pane already asleep', ids(idleSleepPlan([slept, pad], { ...DEFAULT_RECLAIM, idleSleepMinutes: 30 }, NOW)), '')
   }
+  // A pane MID-TURN, read off the process table rather than off its own screen.
+  //
+  // The run clock is fed by the busy footer at the bottom of the pane, and a frame whose
+  // bottom rows are a tool's output rather than the CLI's spinner reads as finished. A
+  // pane thirty minutes into one tool call then has nothing typed, nothing printed and no
+  // run clock - and the sleep clock took it (Robert, 2026-09-04: "it should never sleep").
+  // A tree holding a core is not idle whatever the screen says.
+  {
+    const SLEEPS = { ...DEFAULT_RECLAIM, idleSleepMinutes: 30 }
+    const quiet = { id: 'q', lastKeyboard: NOW - 9 * HOUR, lastOutput: NOW - 9 * HOUR }
+    eq('a quiet pane with nothing measured still sleeps', ids(idleSleepPlan([pane(quiet)], SLEEPS, NOW)), 'q')
+    eq('...and one measured idle sleeps too', ids(idleSleepPlan([pane({ ...quiet, cpuPct: 0.4 })], SLEEPS, NOW)), 'q')
+    eq('but one whose tree is holding a core does not', ids(idleSleepPlan([pane({ ...quiet, cpuPct: 140 })], SLEEPS, NOW)), '')
+    eq('...nor one just over the floor', ids(idleSleepPlan([pane({ ...quiet, cpuPct: 6 })], SLEEPS, NOW)), '')
+    eq('a null reading is "nobody measured", never "idle"', ids(idleSleepPlan([pane({ ...quiet, cpuPct: null })], SLEEPS, NOW)), 'q')
+    // The CLOSE clock is not touched by this: it already refuses a pane with a run clock,
+    // a live job or a background job, and it is the rung that answers a full machine.
+    eq('the close clock is unchanged by the reading', ids(idleClosePlan([pane({ ...quiet, lastFocus: NOW - 8 * HOUR, cpuPct: 140 }), pane({ id: 'pad', lastKeyboard: NOW })], CLOCKED, NOW)), 'q')
+  }
   // NOT capped at maxPerSweep - that is the pressure sweep's rule, and it belongs to a
   // sweep that closes a pane in order to change a reading of the machine. Here it only
   // made the card lie: with one countdown on screen at a time, seven due panes went two at
@@ -702,7 +721,17 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
 {
   const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
   check('the desk runs the sleep sweep', /idleSleepPlan\(/.test(app), '')
-  check('...and it really sleeps the panes it names', /for \(const p of plan\) void api\.sleepSession\(p\.id\)/.test(app), '')
+  check('...and it really sleeps the panes it names', app.includes(String.raw`void api.sleepSession(p.id)`), '')
+  // A close writes a line to reclaim.log and a row to the activity list; a sleep wrote
+  // neither, so "it slept my session mid-turn" could be checked against nothing (measured
+  // 2026-09-04: not one `slept` line in that file, ever). The readings that ALLOWED it go
+  // in the line, because the question is never "did it sleep" but "what did it call idle".
+  const sleepLine = app.slice(app.indexOf("event: 'slept'"), app.indexOf("event: 'slept'") + 700)
+  check('...and says so in the log and the activity list', app.includes("event: 'slept'"), '')
+  for (const field of ['idleMin', 'state', 'runClock', 'cpuPct'])
+    check('the sleep line carries ' + field, sleepLine.includes(field + ':'), '')
+  // ...and the reading that stops it happening at all reaches the pane from the sampler.
+  check('the sweep hands the pane its measured cpu', /cpuPct,/.test(app), '')
   check(
     'and "Sleep this pane" is gone from the card menu - the clock does it',
     !/key: 'sleep'/.test(app),
