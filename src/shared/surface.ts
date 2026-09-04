@@ -54,6 +54,7 @@ export const SURFACE: Surface = {
   whatsNew: ['invoke', 'app:whatsNew'],
   tour: ['invoke', 'app:tour'],
   tourCheck: ['invoke', 'app:tourCheck'],
+  onTourCheckLine: ['on', 'app:tourCheckLine'],
   paneLog: ['invoke', 'sessions:log'],
   pipePane: ['invoke', 'sessions:pipe'],
   reorderSessions: ['send', 'sessions:reorder'],

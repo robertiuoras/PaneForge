@@ -21,8 +21,8 @@
 // motion beyond the two hover durations.
 
 import { useEffect, useState } from 'react'
-import type { TourCheck, TourState, TourStep, TourSurface } from '../../../shared/tour'
-import { NO_SCREEN, checkName, currentStep, done, dwellFor, howToCheck, next, nextUnchecked, previous, stepKey, waitsForYou } from '../../../shared/tour'
+import type { TourCheck, TourProgress, TourState, TourStep, TourSurface } from '../../../shared/tour'
+import { NO_SCREEN, checkWords, currentStep, done, dwellFor, howToCheck, next, nextUnchecked, previous, stepKey, waitsForYou } from '../../../shared/tour'
 import CardX from './CardX'
 
 const api = window.api
@@ -96,6 +96,15 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
   // wait on their own press.
   const [playing, setPlaying] = useState(false)
   const [doneMap, setDoneMap] = useState<Record<string, boolean>>(() => loadMap(DONE_KEY))
+  // The last line the running check printed, and its tally so far - see `main/tour.ts`,
+  // which sends one of these per counted line rather than a buffer at the end.
+  const [live, setLive] = useState<TourProgress | null>(null)
+  // Milliseconds left before the tour moves itself on, or null when nothing is counting.
+  // A number nobody can see is a tour that looks stuck; Robert asked for the countdown
+  // outright (2026-09-04, "add a coutndown when starting the tour").
+  const [left, setLeft] = useState<number | null>(null)
+
+  useEffect(() => api.onTourCheckLine((p: TourProgress) => setLive(p)), [])
 
   useEffect(() => {
     let live = true
@@ -131,11 +140,26 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
     if (!state) return
     const step = currentStep(state)
     if (!step.checks.length || checks[index]) return
+    setLive(null)
     setChecks((c) => ({ ...c, [index]: { state: 'running' } }))
     void Promise.all(step.checks.map((s) => api.tourCheck(s))).then((results) =>
       setChecks((c) => ({ ...c, [index]: { state: 'done', results } }))
     )
   }
+
+  // A TOUR RUNS ITS OWN CHECKS. The card used to wait to be told, one button press per
+  // step - which was right while the card was something you clicked through, and became
+  // the thing standing between Robert and a tour that plays itself: "if we doing tour then
+  // it should do everything itself so we wont need the run test:cloudwork" (2026-09-04,
+  // reversing his own 2026-09-04 "it should wait for my approval for each new feature to
+  // test"). It still never runs anything until the tour is STARTED - that press is the
+  // approval, once, for the whole run - and a step reached by hand still has its button.
+  useEffect(() => {
+    if (!state || gone || !playing) return
+    if (!currentStep(state).checks.length || checks[index]) return
+    runChecks()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [index, gone, playing])
 
   // Playing: hold on this step for as long as it needs to be looked at, then move on.
   // The timer is rebuilt whenever the step, the play state or this step's checks change,
@@ -150,7 +174,17 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
       return
     }
     const wait = dwellFor(currentStep(state), checkRunning)
-    if (wait === null) return
+    if (wait === null) {
+      setLeft(null)
+      return
+    }
+    // One second at a time, so the card can show the number going down. The move itself
+    // still happens on its own timer below - a countdown that DECIDED when to move would
+    // drift against it, and the two disagreeing is the bug this app has already had once
+    // (`MoveSoon`, 2026-08-30).
+    const until = Date.now() + wait
+    setLeft(wait)
+    const tick = setInterval(() => setLeft(Math.max(0, until - Date.now())), 500)
     const t = setTimeout(() => {
       // A step the tour has SHOWN is a step that has been checked off. Without this the
       // counter sat at `0 of 44` however long it ran, so the one number on the card that
@@ -161,7 +195,10 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
       tickDone(currentStep(state))
       setState((s) => (s ? next(s) : s))
     }, wait)
-    return () => clearTimeout(t)
+    return () => {
+      clearTimeout(t)
+      clearInterval(tick)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [index, gone, playing, checkRunning])
 
@@ -228,9 +265,19 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
     <>
       <div className="tour-card" role="status" data-testid="tour-card">
         <CardX onDismiss={() => setGone(true)} />
-        <div className="tour-count">
-          {doneCount} of {state.steps.length} checked
-          {playing && !isLast ? (waitsForYou(step) ? ' · waiting for you' : ' · playing') : ''}
+        <div className="tour-head">
+          <div className="tour-count">
+            Step {state.index + 1} of {state.steps.length}
+            <span className="tour-count-done"> · {doneCount} checked</span>
+          </div>
+          {playing && !isLast && (
+            <div className="tour-state" data-testid="tour-state">
+              {waitsForYou(step) ? 'waiting for you' : left !== null ? `next in ${Math.ceil(left / 1000)}s` : 'playing'}
+            </div>
+          )}
+        </div>
+        <div className="tour-bar" aria-hidden="true">
+          <span style={{ width: `${(doneCount / state.steps.length) * 100}%` }} />
         </div>
         <div className="tour-body">
           <div className="tour-text">{step.text}</div>
@@ -252,16 +299,26 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
           <div className="tour-checks" data-testid="tour-checks">
             {!check ? (
               <button type="button" className="ghost small tour-run" data-testid="tour-run" onClick={runChecks}>
-                Run {step.checks.map(checkName).join(', ')}
+                {checkWords(step.checks.length)}
               </button>
             ) : check.state === 'running' ? (
-              <div className="tour-check running">Checking {step.checks.map(checkName).join(', ')}…</div>
+              <div className="tour-check running">
+                <span className="tour-check-mark">⋯</span>
+                <span>
+                  {checkWords(step.checks.length)}…
+                  {live && <span className="tour-check-count"> {live.passed} so far</span>}
+                </span>
+                {/* What it is doing THIS second, straight off the suite's own output. */}
+                {live && <div className="tour-check-live" data-testid="tour-check-live">{live.line}</div>}
+              </div>
             ) : (
               check.results.map((r) => (
                 <div key={r.script} className={'tour-check ' + (r.ok ? 'ok' : 'bad')}>
                   <span className="tour-check-mark">{r.ok ? '✓' : '✗'}</span>
                   <span>
-                    {checkName(r.script)}: {r.ok ? `${r.passed} checks passed` : `failed (${r.failed} of ${r.passed + r.failed})`}
+                    {r.ok
+                      ? `Checked - ${r.passed} things proved`
+                      : `Something is wrong here - ${r.failed} of ${r.passed + r.failed} failed`}
                   </span>
                   {!r.ok && <pre className="tour-check-tail">{r.tail}</pre>}
                 </div>

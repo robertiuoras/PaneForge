@@ -445,6 +445,32 @@ export function readCheck(script: string, code: number | null, output: string): 
   return { script, ok: code === 0 && failed === 0, passed, failed, tail }
 }
 
+/**
+ * One line out of a check while it is still running - see `main/tour.ts`.
+ *
+ * The counts are cumulative, so the card can say `12 checked` before the run is over
+ * without keeping a tally of its own.
+ */
+export interface TourProgress {
+  script: string
+  passed: number
+  failed: number
+  /** the line itself, as the suite printed it */
+  line: string
+}
+
+/**
+ * What the card says about a step's automatic checks, in words.
+ *
+ * NEVER `test:cloudwork`. That is the name of a file in this repository, it is on screen
+ * because the card had nothing else to put there, and it is exactly the machinery word
+ * CLAUDE.md says never reaches a screen - Robert, 2026-09-04: "why is there another
+ * button calld run test:cloudwork? its wrong".
+ */
+export function checkWords(count: number): string {
+  return count === 1 ? 'Checking this change' : `Checking this change (${count} checks)`
+}
+
 /** `test:devlist`, off `scripts/devlist-test.mjs` - the name in package.json. */
 export function checkName(script: string): string {
   const m = TEST_FILE.exec(script)

@@ -1659,7 +1659,9 @@ ipcMain.handle('sessions:buffer', (_e, id: string) =>
  */
 ipcMain.handle('app:whatsNew', () => whatsNew())
 ipcMain.handle('app:tour', () => tour())
-ipcMain.handle('app:tourCheck', (_e, script: string) => tourCheck(script))
+ipcMain.handle('app:tourCheck', (_e, script: string) =>
+  tourCheck(script, (p) => send('app:tourCheckLine', p))
+)
 ipcMain.handle('sessions:log', (_e, id: string, bytes?: number) =>
   remote.owns(id)
     ? remote.buffer(id)
