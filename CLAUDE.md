@@ -87,10 +87,16 @@ The dev window's tour (`shared/tour.ts`, `TourCard.tsx`) turns every `feat:`/`fi
 commit since the installed build into a step: where it lives (off the files touched),
 what to look for, a ring around the control, and the commit's own `scripts/<x>-test.mjs`
 RUN on the card with the result. It WAITS to be started and then plays itself - opens each
-step's surface, waits `dwellFor` (longer when there is something on screen) and moves on;
-Pause, Previous and Next stop it where it is. A step's suites run only when its Run button
-is pressed, never on their own (Robert 2026-09-04: "it should wait for my approval for each
-new feature to test"), and a check in flight holds the tour where it is. No pane is opened and no prompt is
+step's surface, counts down visibly (`dwellFor`) and ticks the step off on its way out;
+Pause, Previous and Next stop it where it is. A step with something to DO on it - a surface
+opened, a control ringed - has NO clock (`waitsForYou`) and holds until Done or Next.
+STARTING IS THE APPROVAL: from that press each step's suites run as it arrives, streaming
+their counted lines onto the card (`TourProgress`, `app:tourCheckLine`), and a check in
+flight holds the tour where it is (Robert 2026-09-04: "if we doing tour then it should do
+everything itself", reversing his own earlier per-step approval). Nothing runs before that
+press; a step reached by hand keeps its button. The list holds only commits that touched
+`src/`, deduplicated by subject, two `See:` lines each, and no npm script name reaches the
+card (`checkWords`, never `checkName`). No pane is opened and no prompt is
 typed (Robert 2026-09-04: "i dont want the try in pane testing helper"), so a `Try:` line
 in a commit body is read by nothing. Every such commit body carries `See: <what Robert
 should see on screen>` lines, one per thing; without them the card shows the body's first
