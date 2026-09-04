@@ -5467,7 +5467,15 @@ export default function App(): JSX.Element {
                 strokeLinejoin="round"
               />
             </svg>
-            Save<span className="wide-word"> workspace</span>
+            {/* ONE flex item, not two. `.save-ws` is an inline-flex with `gap: 5px`, so
+                `Save` and the `<span>` were separate flex items and the gap landed between
+                them ON TOP OF the space inside the span - a word space of about 8.5px where
+                the rest of the sentence uses 3.5 (Robert 2026-09-04: "still weird gap in save
+                workspace doesnt make sense"). Wrapped, the gap applies to the icon only and
+                the two words are separated by a real space. */}
+            <span>
+              Save<span className="wide-word"> workspace</span>
+            </span>
           </button>
         </div>
         <VersionBadge />

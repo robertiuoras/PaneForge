@@ -271,24 +271,35 @@ export function plainWords(text: string, cap = 160): string {
   return s
 }
 
-/** One line saying how to look at this step - in words, for the surface the card has
- * just opened. A step with nothing on screen says the app checked it below. */
+/**
+ * WHAT TO DO on this step, as an instruction - then what you should see.
+ *
+ * `Nothing to click - the app checks this one below.` was the line on a third of the
+ * steps, and it is the one Robert stopped at (2026-09-04: "what do you mean nothing to
+ * click? tell me how to check if it works"). Two things were wrong with it. It described
+ * the card's own situation instead of telling him to do anything, and where there really
+ * is nothing to press it never said WHY - a change to what two machines say to each other
+ * has no button anywhere, and that is a fact about the change, not an apology.
+ *
+ * So every step now opens with a verb, and the no-screen one names the reason it has no
+ * verb and what stands in for one.
+ */
 export function howToCheck(step: Pick<TourStep, 'open' | 'checks'>): string {
   switch (step.open) {
     case 'newSession':
-      return 'The New session window is open - a ring is showing what changed.'
+      return 'Do this: look at the New session window the tour just opened - the ring is round what changed. Close it when you are done.'
     case 'settings':
-      return 'Settings is open - a ring is showing what changed.'
+      return 'Do this: look at the Settings window the tour just opened - the ring is round what changed. Close it when you are done.'
     case 'sidebarHidden':
-      return 'The list is hidden - the ringed button brings it back.'
+      return 'Do this: the list of sessions is hidden. Press the ringed button to bring it back.'
     case 'workspaces':
-      return 'Look at the list on the left.'
+      return 'Do this: look at the list on the left, under your open panes.'
     case 'pane':
-      return 'A ring is showing the changed area.'
+      return 'Do this: a session is open behind this card. The ring is round the part that changed - click it, type in it, see it behave.'
     default:
       return step.checks.length
-        ? 'Nothing to click - the app checks this one below.'
-        : 'Nothing to click, and no check came with this one.'
+        ? 'Nothing here to press: this change is under the app, where no screen shows it - between two machines, or in what the app does when nobody is looking. The check below is how it is proved instead, and it just ran for real.'
+        : 'Nothing here to press: this change is under the app, where no screen shows it, and no check came with it. The sentence above is all this step has.'
   }
 }
 
@@ -339,7 +350,18 @@ export function titleFor(where: string): string {
  * stripped of code the way every other sentence on the card is (`plainWords`), because
  * the whole subject printed as its own paragraph is what read as too much to take in.
  */
-export const WHAT_CAP = 52
+/*
+ * The whole first clause, never an ellipsis.
+ *
+ * At 52 the name ended `A test copy draws a mirrored pane but does not…` and the sentence
+ * it was cutting off was the whole point of the step (Robert 2026-09-04: "it doesnt fully
+ * explain or finish i must see the whole thing"). The clause split above already bounds
+ * this - it takes the FIRST clause of a subject, which the author wrote as one readable
+ * phrase - so the cap is only a backstop against a pathological subject with no
+ * punctuation in it at all. The card's name wraps to two lines; that is cheaper than a
+ * sentence nobody can finish reading.
+ */
+export const WHAT_CAP = 120
 export function whatChanged(subject: string): string {
   // The first clause only. A subject here is routinely three joined sentences ("a move
   // says which half is running, a starting pane is not called mid-turn, menu hints stop
@@ -557,8 +579,14 @@ export function summaryCount(output: string): number {
 /** What the card says once a check has answered. A number nobody measured is worse than
  * no number: `0 things proved` reads as a suite that did nothing. */
 export function checkedWords(c: Pick<TourCheck, 'ok' | 'passed' | 'failed'>): string {
-  if (!c.ok) return `Something is wrong here - ${c.failed} of ${c.passed + c.failed} failed`
-  return c.passed > 0 ? `Checked - ${c.passed} things proved` : 'Checked'
+  if (!c.ok) return `Something is wrong here - ${c.failed} of ${c.passed + c.failed} checks failed`
+  // NOT A COUNT. `Checked - 53 things proved` was the headline, and the number is the part
+  // that meant nothing to the person reading it (Robert 2026-09-04: "53 things proved means
+  // nothing i dont understand that"). Fifty-three of what, proving what, is unanswerable
+  // from the card, and a number nobody can interpret reads as the card showing off rather
+  // than as an answer. A failure keeps its numbers, because there the count is the size of
+  // the problem and it is about to be read next to the output itself.
+  return 'The app just ran its own checks on this - they passed'
 }
 
 /**
