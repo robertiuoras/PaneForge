@@ -3244,6 +3244,17 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
 .tour-check.bad { color: var(--danger, var(--text)); }
 .tour-check-mark { font-weight: 700; }
 .tour-check-count { color: var(--muted); font-variant-numeric: tabular-nums; }
+/* The one moving thing on the card, and the only sign a suite is alive between two
+   printed lines. `steps(1, end)` makes it discrete - it composites on the step, three
+   times a cycle, and nothing in between, which is why anim-cost-test exempts it. */
+.tour-check-dots { display: inline-flex; align-items: center; gap: 3px; }
+.tour-check-dots i {
+  width: 4px; height: 4px; border-radius: 50%; background: var(--accent); opacity: .22;
+  animation: tourDot 1.2s steps(1, end) infinite;
+}
+.tour-check-dots i:nth-child(2) { animation-delay: .4s; }
+.tour-check-dots i:nth-child(3) { animation-delay: .8s; }
+@keyframes tourDot { 0% { opacity: 1 } 34% { opacity: .22 } 100% { opacity: .22 } }
 /* The line the suite printed a moment ago. Monospace because it IS the suite's own
    output, dimmed and clipped to one line because it is a sign of life, not a report -
    the report is the tick that replaces it. */

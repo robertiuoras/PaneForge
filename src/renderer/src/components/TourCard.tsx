@@ -10,10 +10,12 @@
 //
 // AND IT PLAYS ITSELF. The card opens each step's surface, waits long enough for the thing
 // to be looked at (`dwellFor` - longer when there is something on screen, and never while
-// a check is still running), then moves on by itself. Pause stops it where it is and the
-// arrows still work; pressing either one pauses, because somebody steering is somebody who
-// does not want it moving under them. The button that opened a pane and typed the change's
-// own prompt is gone (Robert 2026-09-04: "i dont want the try in pane testing helper").
+// a check is still running), then moves on by itself. Pause is the ONLY thing that stops
+// it: Next and Previous are steering, not stopping - they move to that step and the tour
+// carries on from there (Robert 2026-09-04: "it should still continue with tour if i press
+// next, its just to go to the next thing"). The button that opened a pane and typed the
+// change's own prompt is gone (Robert 2026-09-04: "i dont want the try in pane testing
+// helper"), and so is the one that asked before running a step's checks.
 //
 // Same shape as every other corner card (`MoveSoon.tsx`, `WhatsNewCard.tsx`): a static
 // child of `.corner-stack`, never its own `position: fixed`, no animation, no focus taken.
@@ -95,6 +97,13 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
   // for each new feature to test". So the card waits on `Start`, and each step's checks
   // wait on their own press.
   const [playing, setPlaying] = useState(false)
+  // Started once, for the whole run. Pressing Next or Previous STEERS the tour, it does
+  // not stop it (Robert 2026-09-04: "when i start tour on dev window it should still
+  // continue with tour if i press next, its just to go to the next thing") - so the two
+  // arrows change `index` and nothing else, and only Pause clears `playing`. `started`
+  // outlives a pause, which is what keeps each step's checks running by themselves after
+  // one: the button that used to ask per step is gone.
+  const [started, setStarted] = useState(false)
   const [doneMap, setDoneMap] = useState<Record<string, boolean>>(() => loadMap(DONE_KEY))
   // The last line the running check printed, and its tally so far - see `main/tour.ts`,
   // which sends one of these per counted line rather than a buffer at the end.
@@ -153,13 +162,16 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
   // it should do everything itself so we wont need the run test:cloudwork" (2026-09-04,
   // reversing his own 2026-09-04 "it should wait for my approval for each new feature to
   // test"). It still never runs anything until the tour is STARTED - that press is the
-  // approval, once, for the whole run - and a step reached by hand still has its button.
+  // approval, once, for the whole run. It is keyed on `started`, not `playing`: a step
+  // arrived at by pressing Next, or sat on while paused, is still a step in a tour that
+  // was started, and Robert asking "why is there button checking this change? is it even
+  // needed" is that button's answer - it is gone, nothing on the card asks twice.
   useEffect(() => {
-    if (!state || gone || !playing) return
+    if (!state || gone || !started) return
     if (!currentStep(state).checks.length || checks[index]) return
     runChecks()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [index, gone, playing])
+  }, [index, gone, started])
 
   // Playing: hold on this step for as long as it needs to be looked at, then move on.
   // The timer is rebuilt whenever the step, the play state or this step's checks change,
@@ -298,15 +310,32 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
         {step.checks.length > 0 && (
           <div className="tour-checks" data-testid="tour-checks">
             {!check ? (
-              <button type="button" className="ghost small tour-run" data-testid="tour-run" onClick={runChecks}>
-                {checkWords(step.checks.length)}
-              </button>
+              // No button. Before the tour is started this says what WILL happen; after it,
+              // the check is already on its way and this is the half-second before the
+              // running row replaces it.
+              <div className="tour-check waiting" data-testid="tour-check-waiting">
+                <span className="tour-check-mark">·</span>
+                <span>{started ? `${checkWords(step.checks.length)}…` : `${checkWords(step.checks.length)} when you start the tour`}</span>
+              </div>
             ) : check.state === 'running' ? (
               <div className="tour-check running">
-                <span className="tour-check-mark">⋯</span>
+                {/* Three dots on a `steps()` loop - discrete, so it composites on the step
+                    and not on the frame (see scripts/anim-cost-test.mjs). It is the one
+                    thing on the card that says the suite is alive between two lines. */}
+                <span className="tour-check-dots" aria-hidden="true">
+                  <i />
+                  <i />
+                  <i />
+                </span>
                 <span>
                   {checkWords(step.checks.length)}…
-                  {live && <span className="tour-check-count"> {live.passed} so far</span>}
+                  {live && (
+                    <span className="tour-check-count">
+                      {' '}
+                      {live.passed} proved
+                      {live.failed > 0 ? `, ${live.failed} failed` : ''}
+                    </span>
+                  )}
                 </span>
                 {/* What it is doing THIS second, straight off the suite's own output. */}
                 {live && <div className="tour-check-live" data-testid="tour-check-live">{live.line}</div>}
@@ -335,18 +364,18 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
             type="button"
             className="ghost small"
             data-testid="tour-play"
-            onClick={() => setPlaying((p) => !p)}
+            onClick={() => {
+              setStarted(true)
+              setPlaying((p) => !p)
+            }}
           >
-            {playing ? 'Pause' : isLast ? 'Play again' : 'Start the tour'}
+            {playing ? 'Pause' : isLast ? 'Play again' : started ? 'Carry on' : 'Start the tour'}
           </button>
           <button
             type="button"
             className="ghost small"
             disabled={state.index === 0}
-            onClick={() => {
-              setPlaying(false)
-              setState((s) => (s ? previous(s) : s))
-            }}
+            onClick={() => setState((s) => (s ? previous(s) : s))}
           >
             Previous
           </button>
@@ -354,10 +383,7 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
             <button
               type="button"
               className="ghost small"
-              onClick={() => {
-                setPlaying(false)
-                setState((s) => (s ? next(s) : s))
-              }}
+              onClick={() => setState((s) => (s ? next(s) : s))}
             >
               Next
             </button>

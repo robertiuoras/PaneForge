@@ -205,9 +205,15 @@ console.log('the tour plays itself')
   // everything itself so we wont need the run test:cloudwork"), reversing the earlier
   // per-step approval. Starting the tour IS the approval - the card still runs nothing on
   // its own before that press, and a step reached by hand still has a button.
-  ok('starting the tour runs each step\'s checks', /if \(!state \|\| gone \|\| !playing\) return\s+if \(!currentStep\(state\)\.checks\.length \|\| checks\[index\]\) return\s+runChecks\(\)/.test(card))
-  ok('and a step reached by hand still has its own button', /data-testid="tour-run"/.test(card))
+  ok('starting the tour runs each step\'s checks', /if \(!state \|\| gone \|\| !started\) return\s+if \(!currentStep\(state\)\.checks\.length \|\| checks\[index\]\) return\s+runChecks\(\)/.test(card))
+  // "why is there button checking this change? is it even needed" (Robert, 2026-09-04).
+  // It is not: once the tour is started nothing on the card asks a second time.
+  ok('no button asks to run a check', !/data-testid="tour-run"/.test(card))
+  // Keyed on `started`, not `playing` - a step reached by Next, or sat on while paused, is
+  // still a step in a tour that was started, and its checks run there too.
+  ok('a paused or hand-steered step still runs its checks', /const \[started, setStarted\] = useState\(false\)/.test(card) && /\[index, gone, started\]/.test(card))
   ok('nothing runs before the tour is started', /const \[playing, setPlaying\] = useState\(false\)/.test(card))
+  ok('and the card says so instead of offering a button', /when you start the tour/.test(card))
   // `test:cloudwork` is the name of a file in this repository and has no business on a
   // card - Robert, 2026-09-04: "why is there another button calld run test:cloudwork? its
   // wrong". The card asks `checkWords`; `checkName` stays for logs and nothing else.
@@ -229,7 +235,15 @@ console.log('the tour plays itself')
   ok('the automatic tick moves nothing by itself', /const tickDone = \(s: TourStep\): void => \{[\s\S]{0,400}?saveMap/.test(card))
   ok('and it never re-writes a step already ticked', /if \(was\[k\]\) return was/.test(card))
   ok('a hold draws no timer at all', /if \(wait === null\) \{\s+setLeft\(null\)\s+return\s+\}/.test(card))
-  ok('steering it by hand stops it moving underneath', (card.match(/setPlaying\(false\)/g) ?? []).length >= 3)
+  // Next and Previous are STEERING, not stopping (Robert, 2026-09-04: "it should still
+  // continue with tour if i press next, its just to go to the next thing"). Only Pause and
+  // the end of the list clear `playing`; the two arrows write nothing but the index.
+  ok('the arrows only move, they do not stop the tour', (card.match(/setPlaying\(false\)/g) ?? []).length === 1)
+  ok('Previous just moves', /disabled=\{state\.index === 0\}\s+onClick=\{\(\) => setState\(\(s\) => \(s \? previous\(s\) : s\)\)\}/.test(card))
+  ok('Next just moves', /onClick=\{\(\) => setState\(\(s\) => \(s \? next\(s\) : s\)\)\}/.test(card))
+  // The only moving thing on the card, and the only sign a suite is alive between lines.
+  ok('a running check has a live pulse', /tour-check-dots/.test(card) && /@keyframes tourDot/.test(readFileSync(join(root, 'src/renderer/src/styles.css'), 'utf8')))
+  ok('and it is discrete, so it composites on the step not the frame', /animation: tourDot 1\.2s steps\(1, end\) infinite/.test(readFileSync(join(root, 'src/renderer/src/styles.css'), 'utf8')))
   ok('and the last step is where it stops', /if \(done\(state\)\) \{[\s\S]*?setPlaying\(false\)/.test(card))
 }
 
