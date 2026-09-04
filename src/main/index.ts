@@ -215,6 +215,7 @@ import {
 } from './updater'
 import { READY_HOLD_MS } from '../shared/updateStale'
 import * as history from './history'
+import { takenFolders } from '../shared/laneTaken'
 import { readBoard, writeMemory, writeTasks } from './board'
 import * as voice from './voice'
 import { installCommand, uninstallCommand } from '../shared/agents'
@@ -1384,13 +1385,11 @@ async function laneFor(
   const known = async (r: StartSessionRequest): Promise<StartSessionRequest> =>
     r.lane ? r : { ...r, lane: await detectLane(r.cwd) }
   if (!getConfig().autoLane) return known(req)
-  const taken = [
-    ...manager
-      .list()
-      .filter((s) => s.status !== 'exited')
-      .map((s) => s.cwd),
-    ...extraTaken
-  ]
+  // An asleep pane wears `status: 'exited'` but is one press from being an agent in
+  // that folder again. Two client chats were restored asleep into `clients` and a
+  // third opened from History landed there too, because neither counted (2026-09-04):
+  // all three woke into one checkout. A folder with a sleeping pane in it is taken.
+  const taken = [...takenFolders(manager.list()), ...extraTaken]
 
   // Reopening a pane that was in a lane, when the lane turned out to hold nothing and
   // the project folder is free again: the lane was only ever there to keep two agents
