@@ -151,7 +151,8 @@ export function isQuietRelaunch(): boolean {
  * until it is clicked. The installed app still opens normally - you launched it,
  * unless it restarted itself to finish an update.
  */
-export function startMode(): 'normal' | 'inactive' | 'minimized' {
+export function startMode(): 'normal' | 'inactive' | 'minimized' | 'headless' {
+  if (headlessMode()) return 'headless'
   const flag = process.argv.includes('--minimized') || process.env.PANEFORGE_START === 'minimized'
   if (flag) return 'minimized'
   if (process.env.PANEFORGE_START === 'normal') return 'normal'
@@ -178,11 +179,14 @@ export function startMode(): 'normal' | 'inactive' | 'minimized' {
  * index.ts). So on darwin a quiet launch shows nothing at all.
  */
 export function revealPlan(
-  mode: 'normal' | 'inactive' | 'minimized',
+  mode: 'normal' | 'inactive' | 'minimized' | 'headless',
   platform: NodeJS.Platform = process.platform
 ): 'active' | 'inactive' | 'minimized' | 'hidden' {
   if (mode === 'normal') return 'active'
   if (mode === 'inactive') return 'inactive'
+  // A headless copy is looked at only through CDP - nothing may ever show or flash,
+  // on either desktop, unlike --minimized which still surfaces on Windows.
+  if (mode === 'headless') return 'hidden'
   return platform === 'darwin' ? 'hidden' : 'minimized'
 }
 
@@ -212,5 +216,5 @@ function seed(from: string, to: string): void {
  * on `npm run try`. Contract stub - the ui-lab workstream fills it in.
  */
 export function headlessMode(): boolean {
-  return false
+  return process.argv.includes('--headless') || process.env.PANEFORGE_HEADLESS === '1'
 }

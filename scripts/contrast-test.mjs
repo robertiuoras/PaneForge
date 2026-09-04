@@ -36,124 +36,32 @@
 // It needs a window, so it is not in `npm test`. It skips out loud, like the other
 // window tests.
 
-import { inflateSync } from 'node:zlib'
-import { dirname, join } from 'node:path'
-import { fileURLToPath, pathToFileURL } from 'node:url'
+import { connect, SkipError, decodePng } from './ui-lab.mjs'
 
-const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-const rootUrl = pathToFileURL(root).href.replace(/\/?$/, '/').toLowerCase()
 const PORT = process.env.PF_PORT ?? '9333'
 
 /* ---------------------------------------------------------------- the link */
 
-let page
-for (let i = 0; i < 20; i++) {
-  const list = await fetch(`http://127.0.0.1:${PORT}/json/list`)
-    .then((r) => r.json())
-    .catch(() => [])
-  page = list.find((t) => t.type === 'page' && t.webSocketDebuggerUrl && !(t.url ?? '').includes('shelf'))
-  if (page) break
-  await new Promise((r) => setTimeout(r, 500))
-}
-if (!page) {
-  console.log(`SKIP: no debuggable window on port ${PORT}.`)
-  console.log('  npm run build && npm run try -- --keep --minimized --remote-debugging-port=9333')
-  process.exit(0)
-}
 // Every lane is told to use 9333, so whichever copy started first owns it - and a probe
 // that answers from another checkout's build is a fix "verified" against code that was
-// never loaded. The renderer's URL is the file it was loaded from, so it says which.
-if (!(page.url ?? '').toLowerCase().startsWith(rootUrl)) {
-  console.log(`SKIP: port ${PORT} belongs to another checkout's test copy:`)
-  console.log(`  ${page.url}`)
-  console.log(`  expected a window loaded from ${root}`)
-  console.log(`  npm run try -- --keep --minimized --remote-debugging-port=${Number(PORT) + 1}`)
+// never loaded. The renderer's URL is the file it was loaded from, so it says which -
+// `ui-lab.mjs`'s `page()` refuses a mismatch with the same message this file used to
+// print by hand.
+let link
+try {
+  link = await connect(PORT)
+} catch (e) {
+  if (!(e instanceof SkipError)) throw e
+  console.log(`SKIP: ${e.message}`)
   process.exit(0)
 }
-
-const ws = new WebSocket(page.webSocketDebuggerUrl)
-await new Promise((r) => ws.addEventListener('open', r, { once: true }))
-const pending = new Map()
-let seq = 0
-ws.addEventListener('message', (e) => {
-  const m = JSON.parse(e.data)
-  const p = pending.get(m.id)
-  if (!p) return
-  pending.delete(m.id)
-  m.error ? p.rej(new Error(JSON.stringify(m.error))) : p.res(m.result)
-})
-const send = (method, params = {}) =>
-  new Promise((res, rej) => {
-    const id = ++seq
-    pending.set(id, { res, rej })
-    ws.send(JSON.stringify({ id, method, params }))
-  })
-const evalIn = async (expression) => {
-  const r = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true })
-  if (r.exceptionDetails) throw new Error(JSON.stringify(r.exceptionDetails))
-  return r.result.value
-}
+const ws = link.ws
+const evalIn = (expression) => link.evaluate(expression)
 
 let bad = 0
 const check = (ok, what, detail = '') => {
   console.log(`${ok ? 'ok  ' : 'FAIL'}  ${what}${detail ? ' - ' + detail : ''}`)
   if (!ok) bad++
-}
-
-/* ------------------------------------------------------------ png, by hand */
-
-// No dependency: a CDP screenshot is a PNG and node already carries the only hard part.
-function decodePng(buf) {
-  if (buf.readUInt32BE(0) !== 0x89504e47) throw new Error('not a png')
-  let off = 8
-  let w = 0
-  let h = 0
-  let depth = 0
-  let color = 0
-  const idat = []
-  while (off < buf.length) {
-    const len = buf.readUInt32BE(off)
-    const type = buf.toString('ascii', off + 4, off + 8)
-    const data = buf.subarray(off + 8, off + 8 + len)
-    if (type === 'IHDR') {
-      w = data.readUInt32BE(0)
-      h = data.readUInt32BE(4)
-      depth = data[8]
-      color = data[9]
-      if (depth !== 8 || (color !== 2 && color !== 6)) throw new Error(`png ${depth}bit type ${color} unsupported`)
-    } else if (type === 'IDAT') idat.push(data)
-    else if (type === 'IEND') break
-    off += 12 + len
-  }
-  const bpp = color === 6 ? 4 : 3
-  const raw = inflateSync(Buffer.concat(idat))
-  const stride = w * bpp
-  const out = Buffer.alloc(h * stride)
-  let p = 0
-  for (let y = 0; y < h; y++) {
-    const filter = raw[p++]
-    const line = raw.subarray(p, p + stride)
-    p += stride
-    const cur = out.subarray(y * stride, (y + 1) * stride)
-    const prev = y ? out.subarray((y - 1) * stride, y * stride) : null
-    for (let x = 0; x < stride; x++) {
-      const a = x >= bpp ? cur[x - bpp] : 0
-      const b = prev ? prev[x] : 0
-      const c = prev && x >= bpp ? prev[x - bpp] : 0
-      let v = line[x]
-      if (filter === 1) v += a
-      else if (filter === 2) v += b
-      else if (filter === 3) v += (a + b) >> 1
-      else if (filter === 4) {
-        const pa = Math.abs(b - c)
-        const pb = Math.abs(a - c)
-        const pc = Math.abs(a + b - 2 * c)
-        v += pa <= pb && pa <= pc ? a : pb <= pc ? b : c
-      } else if (filter !== 0) throw new Error(`png filter ${filter}`)
-      cur[x] = v & 0xff
-    }
-  }
-  return { w, h, bpp, px: out }
 }
 
 const chan = (v) => {
@@ -308,13 +216,11 @@ async function backdrop() {
   await new Promise((r) => setTimeout(r, 120))
   // A minimized window composites lazily, so the FIRST frame back after a repaint is
   // routinely the one before it - which put the dark theme's own pixels underneath the
-  // light theme's text and reported black-on-black rows that nobody has ever seen. The
-  // throwaway capture forces the frame; the second one is the one that is read.
-  await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false })
-  await new Promise((r) => setTimeout(r, 200))
-  const shot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false })
+  // light theme's text and reported black-on-black rows that nobody has ever seen.
+  // `link.screenshot()` already does the fire-twice-keep-second dance this needs.
+  const shot = await link.screenshot()
   await evalIn(SHOW_TEXT)
-  const img = decodePng(Buffer.from(shot.data, 'base64'))
+  const img = decodePng(shot)
   const vw = await evalIn('innerWidth')
   return { img, scale: img.w / vw }
 }

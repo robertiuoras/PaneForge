@@ -16,10 +16,9 @@
 // OS window, so a short-window check needs no window manager and restores itself.
 
 import { readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { fileURLToPath, pathToFileURL } from 'node:url'
+import { pathToFileURL } from 'node:url'
+import { root, Link } from './ui-lab.mjs'
 
-const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 // A renderer page is loaded straight off disk, so its URL names the checkout it came from.
 const rootUrl = pathToFileURL(root).href.replace(/\/?$/, '/').toLowerCase()
 const inThisCheckout = (p) => (p.url ?? '').toLowerCase().startsWith(rootUrl)
@@ -94,21 +93,9 @@ async function findPage() {
 
 const page = await findPage()
 const ws = new WebSocket(page.webSocketDebuggerUrl)
-const pending = new Map()
-let seq = 0
-ws.addEventListener('message', (e) => {
-  const m = JSON.parse(e.data)
-  const p = pending.get(m.id)
-  if (!p) return
-  pending.delete(m.id)
-  m.error ? p.rej(new Error(JSON.stringify(m.error))) : p.res(m.result)
-})
-function send(method, params) {
-  const id = ++seq
-  ws.send(JSON.stringify({ id, method, params }))
-  return new Promise((res, rej) => pending.set(id, { res, rej }))
-}
 await new Promise((res) => ws.addEventListener('open', res, { once: true }))
+const link = new Link(ws)
+const send = (method, params) => link.send(method, params)
 
 if (touch) {
   await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 })

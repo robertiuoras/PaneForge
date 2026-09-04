@@ -36,64 +36,18 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { connect } from './ui-lab.mjs'
 
-/** The checkout itself, as a path a pane can be opened in (root below is a URL). */
+/** The checkout itself, as a path a pane can be opened in. */
 const repoDir = fileURLToPath(new URL('..', import.meta.url))
 
 const port = process.env.PF_PORT ?? '9333'
-const root = new URL('..', import.meta.url).href.replace(/\/?$/, '/').toLowerCase()
 
-async function findPage() {
-  for (let i = 0; i < 40; i++) {
-    try {
-      const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()
-      const page = list.find(
-        (t) => t.type === 'page' && t.webSocketDebuggerUrl && !(t.url ?? '').includes('shelf')
-      )
-      // Same trap probe.mjs guards: every lane's test copy is told to use this port, so the
-      // first one up owns it, and a "verified" fix can be measured against another
-      // checkout's build entirely.
-      if (page && !(page.url ?? '').toLowerCase().startsWith(root))
-        throw new Error(`port ${port} belongs to another checkout: ${page.url}`)
-      if (page) return page
-    } catch (e) {
-      if (e instanceof Error && e.message.startsWith(`port ${port} belongs`)) throw e
-    }
-    await new Promise((r) => setTimeout(r, 500))
-  }
-  throw new Error(`no debuggable window on port ${port}. Start one with:
-  npm run build && npm run try -- --keep --show --remote-debugging-port=${port}`)
-}
-
-const page = await findPage()
-const ws = new WebSocket(page.webSocketDebuggerUrl)
-const pending = new Map()
-let seq = 0
-ws.addEventListener('message', (e) => {
-  const m = JSON.parse(e.data)
-  const p = pending.get(m.id)
-  if (!p) return
-  pending.delete(m.id)
-  m.error ? p.rej(new Error(JSON.stringify(m.error))) : p.res(m.result)
-})
-const send = (method, params) => {
-  const id = ++seq
-  ws.send(JSON.stringify({ id, method, params }))
-  return new Promise((res, rej) => pending.set(id, { res, rej }))
-}
-await new Promise((res) => ws.addEventListener('open', res, { once: true }))
+const link = await connect(port)
+const ws = link.ws
 
 /** Evaluate in the renderer and return the value. Promises are awaited over there. */
-async function evaluate(expression) {
-  const r = await send('Runtime.evaluate', {
-    expression,
-    awaitPromise: true,
-    returnByValue: true
-  })
-  if (r.exceptionDetails)
-    throw new Error(r.exceptionDetails.exception?.description ?? JSON.stringify(r.exceptionDetails))
-  return r.result.value
-}
+const evaluate = (expression) => link.evaluate(expression)
 
 let failed = 0
 const ok = (name, cond, detail) => {

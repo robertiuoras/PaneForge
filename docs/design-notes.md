@@ -4828,3 +4828,59 @@ currently holds - but plugging it into `laneFor` at the wake call site in
 `main/index.ts` is out of this workstream's ownership; it belongs to whichever session
 integrates the lane-split. Until that wiring lands, a woken pane can still be sent into a
 folder another chat has since taken - the ledger has the answer, nothing asks it yet.
+
+## ui-lab
+
+**The trap the five suites shared.** `view-test.mjs`, `contrast-test.mjs`,
+`ask-render-test.mjs`, `ask-click-test.mjs`, `renderwatch-live.mjs` and `probe.mjs` each
+carried their own ~25-line raw-WebSocket CDP block - find the debuggable page on
+`/json/list`, skip the `shelf` page, assert the URL is this checkout's own build, open the
+socket, evaluate by id with a pending-request map. Six copies of the same plumbing, drifting
+independently every time one of them fixed a bug the other five still had. `scripts/ui-lab.mjs`
+is that block written once (`page`, `connect`, the `Link` class), plus the pieces that had
+also been re-derived more than once: `contrast-test.mjs`'s hand-written PNG decoder (no
+dependency, since a CDP screenshot is a PNG and node already carries `zlib.inflateSync`), and
+the fire-twice-keep-second screenshot dance every suite needed for the same reason.
+
+**Why headless, not minimized.** `--minimized` (`src/main/profile.ts` `revealPlan`) is
+"do not put this on my screen" - on darwin that means the window is never shown at all, which
+is exactly right for not stealing Robert's screen, and exactly wrong for a CDP screenshot:
+Chromium only composites frames for a window it has actually painted, so `Page.
+captureScreenshot` against a never-shown window is unreliable at best and a single flat
+colour at worst (the trap `contrast-test.mjs`'s own comments already documented). `offscreen:
+true` on the `BrowserWindow` (already wired into `src/main/index.ts` from the contract commit,
+`webPreferences: { offscreen: headlessMode() }`) tells Chromium to keep compositing into a
+bitmap regardless of whether the window is shown, so a `--headless` copy gets both: nothing on
+any screen, AND real pixels back from CDP.
+
+**The measurement that mattered.** The obvious way to prove "nothing is shown" from inside the
+page is `document.visibilityState` / `document.hidden` - and it is wrong for an offscreen
+window. Measured directly: `{ state: 'visible', hidden: false }` for a `--headless` copy that
+never called `win.show()` and was constructed with `show: false`. Chromium's Page Visibility
+API tracks whether the renderer is being shown to a user in the ordinary sense, not whether an
+offscreen-composited window happens to also be mapped to a screen - the two are different
+questions for this one build flag. The real answer already existed: `app:visibleNow`
+(`win.isVisible()` in main, wired at `src/main/index.ts:3282` for the focus/idle logic, exposed
+as `window.api.appVisibleNow()`). `ui-lab-test.mjs` asserts that one, not the DOM API, and says
+why in its own comment so the next person doesn't rediscover this by hand.
+
+**The control that didn't reproduce.** The obvious way to prove the pixel test is
+red-capable is to run the identical screenshot assertion against a plain `--minimized` launch
+and confirm it comes back blank - on darwin, `revealPlan('minimized')` is `'hidden'` too, the
+same as headless, just without `offscreen: true`. Measured on this machine: it did NOT come
+back blank (3922 distinct colours, same order of magnitude as the headless shot's 3565).
+Rather than gate on a number that isn't reliably reproducing the bug it is meant to catch, the
+control is logged as `info` with the reasoning in the comment, not asserted - a desk that has
+already forced a paint on that window once (another app raising it, a previous `--show` launch,
+anything that gave Chromium a reason to composite before the minimize) may simply not exhibit
+the blank-frame trap today. Tightening this back into a hard assertion needs a fresh
+measurement on a genuinely idle desk first, not a restored assumption.
+
+**What the refactor found, not broke.** Running the refactored `contrast-test.mjs` for real
+against a headless copy surfaced five genuine, pre-existing contrast failures (a "Save" label
+and a `.wide-word` span at 2.80:1 and 2.33:1 against their panel in both themes, needing 3:1;
+a tour-card sentence at 4.48:1 in the light theme, needing 4.5:1) - not a regression from
+moving its CDP plumbing onto `ui-lab.mjs`, but the sweep actually running against real,
+reliably-composited pixels for the first time rather than a `--minimized` capture whose
+reliability was already in question. Those failures belong to whoever owns `paletteFor` and
+the components in question, not to this workstream.

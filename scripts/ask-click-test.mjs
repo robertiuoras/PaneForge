@@ -25,64 +25,30 @@
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { connect } from './ui-lab.mjs'
 
 const port = process.env.PF_PORT ?? '9333'
-const root = new URL('..', import.meta.url).href.replace(/\/?$/, '/').toLowerCase()
 
-async function findPage() {
-  for (let i = 0; i < 40; i++) {
-    try {
-      const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()
-      const page = list.find(
-        (t) => t.type === 'page' && t.webSocketDebuggerUrl && !(t.url ?? '').includes('shelf')
-      )
-      if (page && !(page.url ?? '').toLowerCase().startsWith(root)) {
-        throw new Error(`port ${port} belongs to another checkout: ${page.url}`)
-      }
-      if (page) return page
-    } catch (e) {
-      if (e instanceof Error && e.message.startsWith(`port ${port} belongs`)) throw e
-    }
-    await new Promise((r) => setTimeout(r, 500))
-  }
-  throw new Error(`no debuggable window on port ${port}. Start one with:
-  npm run try -- --keep --minimized --remote-debugging-port=${port}`)
-}
-
-const page = await findPage()
-const ws = new WebSocket(page.webSocketDebuggerUrl)
-const pending = new Map()
-let seq = 0
+const link = await connect(port)
+const ws = link.ws
+// CDP acks a screencast frame on its own message, not a response to a request this side
+// sent - so it needs a listener beside the one ui-lab's Link already owns, not instead of
+// it. `link.send` still fires the ack (untracked, nobody awaits it); Link's own listener
+// ignores it since no pending request carries its id.
 ws.addEventListener('message', (e) => {
   const m = JSON.parse(e.data)
   if (m.method === 'Page.screencastFrame') {
-    ws.send(
-      JSON.stringify({ id: ++seq, method: 'Page.screencastFrameAck', params: { sessionId: m.params.sessionId } })
-    )
-    return
+    link.send('Page.screencastFrameAck', { sessionId: m.params.sessionId })
   }
-  const p = pending.get(m.id)
-  if (!p) return
-  pending.delete(m.id)
-  m.error ? p.rej(new Error(JSON.stringify(m.error))) : p.res(m.result)
 })
-const send = (method, params) => {
-  const id = ++seq
-  ws.send(JSON.stringify({ id, method, params }))
-  return new Promise((res, rej) => pending.set(id, { res, rej }))
-}
-await new Promise((res) => ws.addEventListener('open', res, { once: true }))
+const send = (method, params) => link.send(method, params)
 
 // A minimized window renders no frames, and deferred mouse input is delivered where the
 // frames are. The 64px screencast is what makes a press land on a schedule.
 await send('Page.enable')
 await send('Page.startScreencast', { format: 'jpeg', quality: 1, maxWidth: 64, maxHeight: 64, everyNthFrame: 1 })
 
-async function evaluate(expression) {
-  const r = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true })
-  if (r.exceptionDetails) throw new Error(JSON.stringify(r.exceptionDetails))
-  return r.result.value
-}
+const evaluate = (expression) => link.evaluate(expression)
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 async function mouse(type, x, y) {
   const params = { type, x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1, pointerType: 'mouse' }
