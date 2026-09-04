@@ -837,6 +837,16 @@ Mic on every pane, Ctrl/Cmd Shift Space into focused one. `shared/voicePick.ts` 
 - Layer never takes a click: `z-index: 40`, over panes, under every dialog, `pointer-events: none` except sprite/bubble.
 - Mute by default; never picks machine — `hand off pane 2` opens box with panes chosen.
 
+## ...and a card nobody touched goes away by itself
+
+`shared/cardIdle.ts` (`CARD_IDLE_MS` 5 min), bound by `renderer/src/idleDismiss.ts`.
+A pointer resting on it, or focus inside it, HOLDS it - `idleLeft` answers `null`, never a
+paused number - and letting go restarts the clock. One timeout, no tick: nothing is drawn
+from it. Only for a card that SAYS something and wants nothing back (`WhatsNewCard`);
+a card asking or counting down to an action - `MoveSoon`, `OffloadSoon`, `AutoClearToast`,
+`StopServer`, `LoginCard`, `UpdateToast`, `TourCard` - ends at its own deadline by doing
+the thing, and `npm run test:cardidle` names each one.
+
 ## Every card the app puts in the corner is in ONE column
 
 `.corner-stack` in `App.tsx`/`styles.css`. `.move-soon`, `.client-toast`, `.update-toast`
