@@ -101,6 +101,17 @@ export interface AgentSpec {
   uninstall?: string
   uninstallWin?: string
   uninstallMac?: string
+  /**
+   * How to move it to the newest release, same per-platform shape as `install`.
+   *
+   * Separate from `install` because for most of this catalogue they are NOT the same
+   * line: `npm i -g` does update an npm package, but Codex ships its own `codex update`
+   * that knows which of the four ways it might have been installed was used here, and
+   * re-running an installer script instead would be this app guessing.
+   */
+  update?: string
+  updateWin?: string
+  updateMac?: string
   /** usable with no paid subscription (free tier, own API key, or fully local) */
   free?: boolean
   /** one line shown under the name in Settings: what it costs, what it needs */
@@ -131,6 +142,18 @@ export interface AgentInfo extends AgentSpec {
   available: boolean
   /** resolved absolute path, empty when not found */
   path: string
+  /** the release on this machine, when the CLI was asked and answered */
+  version?: string
+  /**
+   * The CLI says a newer release exists.
+   *
+   * Absent means nobody asked or nobody could tell - never "it is current". The only
+   * thing built on this is offering an Update button, and a button offered on a guess
+   * is worse than no button.
+   */
+  outdated?: boolean
+  /** what `outdated` is measured against, so the button can say the number */
+  latest?: string
 }
 
 // Claude model ids are real ones read off the CLI, not guesses: the picker has to
@@ -387,12 +410,22 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
     // These are display names as well as picker choices. Leaving them as bare ids made
     // a Sol pane look like it had no model identity on a crowded card, while Terra was
     // only recognisable to somebody who knew the raw CLI spelling.
+    // These are the FALLBACK, not the list. Codex keeps its own catalogue on disk and
+    // `main/codexModels.ts` reads it, so a model published after this build was cut -
+    // `gpt-6-astra` was, on a build whose list held only the two below - arrives at the
+    // top of the picker with no edit here. What is left here is what to offer on a
+    // machine whose Codex has never run and so has written no cache.
     models: [
+      { value: 'gpt-6-astra', label: 'GPT-6 Astra', hint: 'newest, most capable' },
       { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra', hint: 'balanced' },
       { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', hint: 'deep reasoning' }
     ],
     color: '#10a37f',
     install: 'npm i -g @openai/codex',
+    // Its own updater, not `npm i -g`: Codex can be installed four ways (npm, brew, the
+    // shell script, the Desktop app) and this command is the one that knows which was
+    // used here. Running the npm line over a brew install leaves two of them on PATH.
+    update: 'codex update',
     uninstall: 'npm rm -g @openai/codex',
     note: 'ChatGPT plan or OpenAI API key',
     docs: 'https://developers.openai.com/codex/cli'
@@ -662,6 +695,18 @@ export function uninstallCommand(spec: AgentSpec, platform: string = PLATFORM): 
   if (platform === 'win32') return spec.uninstallWin ?? spec.uninstall ?? ''
   if (platform === 'darwin') return spec.uninstallMac ?? spec.uninstall ?? ''
   return spec.uninstall ?? ''
+}
+
+/**
+ * The update command for this machine, or '' when the agent has no scripted update.
+ *
+ * Falls back to the INSTALL line, which is right for every `npm i -g` in this catalogue:
+ * re-running it is how npm moves a global package forward. It is NOT right for the two
+ * shell-script installers here, which is why both of those name their own `update`.
+ */
+export function updateCommand(spec: AgentSpec, platform: string = PLATFORM): string {
+  const own = platform === 'win32' ? spec.updateWin : platform === 'darwin' ? spec.updateMac : undefined
+  return own ?? spec.update ?? installCommand(spec, platform)
 }
 
 /**

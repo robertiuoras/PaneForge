@@ -278,7 +278,8 @@
     "test:lanesleep": "node scripts/lane-sleep-test.mjs",
     "test:wakeplan": "node scripts/wakeplan-test.mjs",
     "test:deviceopen": "node scripts/device-open-test.mjs",
-    "test:uilab": "node scripts/ui-lab-test.mjs"
+    "test:uilab": "node scripts/ui-lab-test.mjs",
+    "test:codexmodels": "node scripts/codex-models-test.mjs"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",

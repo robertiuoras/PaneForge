@@ -101,6 +101,7 @@ const TESTS = [
   ['devlist', 'devlist-test.mjs'],
   ['backjobs', 'backjobs-test.mjs'],
   ['orcatalogue', 'or-catalogue-test.mjs'],
+  ['codexmodels', 'codex-models-test.mjs'],
   ['autohandoff', 'autohandoff-test.mjs'],
   ['offloadfirst', 'offloadfirst-test.mjs'],
   ['idlequit', 'idlequit-test.mjs'],

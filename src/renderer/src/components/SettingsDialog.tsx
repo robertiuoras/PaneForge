@@ -20,7 +20,8 @@ import {
   modelLabel,
   modelValue,
   supportsModel,
-  uninstallCommand
+  uninstallCommand,
+  updateCommand
 } from '@shared/agents'
 import type {
   Agent,
@@ -174,7 +175,7 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
   })
   // Which agent the console below is for, and whether it is being put on or taken off.
   const [installing, setInstalling] = useState('')
-  const [mode, setMode] = useState<'install' | 'uninstall'>('install')
+  const [mode, setMode] = useState<'install' | 'uninstall' | 'update'>('install')
   // Removing a CLI is one click away from being an accident, so the button asks once.
   // In-renderer rather than a message box: nothing here may pop a window.
   const [confirmOff, setConfirmOff] = useState('')
@@ -202,6 +203,10 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
       setRescan((n) => n + 1)
       if (mode === 'uninstall') {
         setMsg(ok ? 'Removed. It is gone from the picker.' : 'Uninstall did not finish - see the log above.')
+        return
+      }
+      if (mode === 'update') {
+        setMsg(ok ? 'Updated. New models it added show in the picker.' : 'Update did not finish - see the log above.')
         return
       }
       setMsg(ok ? 'Installed. It is available in the picker now.' : 'Install did not finish - see the log above.')
@@ -958,7 +963,11 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                       */}
                       <span className="hint">
                         {missingKeyFor(a, config) ||
-                          (a.available ? a.path : a.note || `${a.bin} not on PATH`)}
+                          (a.available
+                            ? a.outdated
+                              ? `${a.version} installed - ${a.latest} is out`
+                              : a.path
+                            : a.note || `${a.bin} not on PATH`)}
                       </span>
                       <div className="agent-actions">
                         {!a.available && installCommand(a) && (
@@ -973,6 +982,24 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                             }}
                           >
                             Install
+                          </button>
+                        )}
+                        {/* Offered ONLY when the CLI itself said a newer release exists
+                            (AgentInfo.outdated), never on a schedule and never on a guess:
+                            an Update button beside a current install is one more thing to
+                            press that does nothing, and this row already has three. */}
+                        {a.available && a.outdated && updateCommand(a) && (
+                          <button
+                            className="ghost small accent"
+                            title={updateCommand(a)}
+                            onClick={() => {
+                              setMode('update')
+                              setConfirmOff('')
+                              setMsg('')
+                              setInstalling(a.id)
+                            }}
+                          >
+                            {a.latest ? `Update to ${a.latest}` : 'Update'}
                           </button>
                         )}
                         {a.available && uninstallCommand(a) && (
@@ -1695,11 +1722,12 @@ function DiscordPreview({
   )
 }
 
-/** Kicks the install (or removal) off exactly once per agent id the console opens for. */
-function Installer({ id, mode }: { id: string; mode: 'install' | 'uninstall' }): null {
+/** Kicks the install (or removal, or update) off once per agent id the console opens for. */
+function Installer({ id, mode }: { id: string; mode: 'install' | 'uninstall' | 'update' }): null {
   useEffect(() => {
     if (!id || id === '__voice__') return
     if (mode === 'uninstall') void api.uninstallAgent(id)
+    else if (mode === 'update') void api.updateAgent(id)
     else void api.installAgent(id)
   }, [id, mode])
   return null

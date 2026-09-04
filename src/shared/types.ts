@@ -2259,6 +2259,8 @@ export interface Api {
   installAgent(id: string): Promise<void>
   /** run an agent's uninstall command, streaming to the same console */
   uninstallAgent(id: string): Promise<void>
+  /** Move an agent CLI to its newest release; reports on the install console. */
+  updateAgent(id: string): Promise<void>
   /** file picker that wires an existing binary up as an agent override */
   locateAgent(id: string): Promise<string | null>
 

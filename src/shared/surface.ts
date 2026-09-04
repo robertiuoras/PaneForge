@@ -116,6 +116,7 @@ export const SURFACE: Surface = {
   profile: ['invoke', 'app:profile'],
   installAgent: ['invoke', 'agents:install'],
   uninstallAgent: ['invoke', 'agents:uninstall'],
+  updateAgent: ['invoke', 'agents:update'],
   locateAgent: ['invoke', 'agents:locate'],
   updateState: ['invoke', 'update:state'],
   checkForUpdates: ['invoke', 'update:check'],

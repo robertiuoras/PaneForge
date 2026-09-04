@@ -204,6 +204,8 @@ const GATED_INVOKE = new Set([
   'pty:attachClipboard',
   'agents:install',
   'agents:uninstall',
+  // Same class as the two above: it runs an installer on this machine.
+  'agents:update',
   'update:install',
   'voice:install',
   'lanes:merge',

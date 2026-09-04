@@ -2,6 +2,7 @@
 // and where. The renderer uses the result to grey out CLIs that are not installed
 // instead of letting you launch a pane that dies in a second.
 
+import { codexCatalogue, codexInstalledVersion, codexLatest } from './codexModels'
 import { getConfig } from './config'
 import { orCatalogue, orStale, refreshOrModels } from './orModels'
 import { which } from './which'
@@ -14,6 +15,7 @@ import {
   type AgentInfo,
   type AgentSpec
 } from '../shared/agents'
+import { codexChoices, isOutdated, mergeCodexModels } from '../shared/codexCatalogue'
 import { mergeOrModels, orChoices } from '../shared/orCatalogue'
 
 /** PATH scans are cheap but not free, and this is called on every dialog open. */
@@ -46,6 +48,20 @@ function withLiveModels(spec: AgentSpec): AgentSpec {
   return { ...spec, models: mergeOrModels(curated, live) }
 }
 
+/**
+ * Codex's hand-written shortcuts, replaced by the list Codex itself keeps on disk.
+ *
+ * No fetch and no key: the CLI refreshes `~/.codex/models_cache.json` on its own, so the
+ * app only has to look. An empty answer is a FAILED answer - Codex never ran here, or the
+ * file is mid-write - and leaves the built-in list exactly as it was.
+ */
+function withCodexModels(spec: AgentSpec): AgentSpec {
+  if (spec.id !== 'codex') return spec
+  const live = codexChoices(codexCatalogue())
+  if (!live.length) return spec
+  return { ...spec, models: mergeCodexModels(spec.models ?? [], live) }
+}
+
 export function listAgents(force = false): AgentInfo[] {
   // Never awaited. The catalogue below is read from memory, so a list that arrives
   // after this call simply reaches the next dialog open - nothing here waits on a
@@ -58,14 +74,26 @@ export function listAgents(force = false): AgentInfo[] {
   // Enriched FIRST, so a sibling's list carries the live OpenRouter catalogue too: a
   // key pasted today must reach the models published this week, not only the eight
   // hand-written shortcuts.
-  const specs = allAgents(cfg.customAgents).map(withLiveModels)
+  const specs = allAgents(cfg.customAgents).map(withLiveModels).map(withCodexModels)
   const list = specs.map((spec) => {
     const path = which(spec.bin)
     // which() returns the input unchanged when it finds nothing.
     const available = path !== spec.bin
     const siblings = siblingModels(spec, specs, hasKey)
     const models = siblings.length ? [...(spec.models ?? []), ...siblings] : spec.models
-    return { ...spec, models, available, path: available ? path : '' }
+    // Only Codex publishes both halves of this reading, so only Codex carries it. The
+    // ask is a spawn and never awaited: the first list says nothing, the answer lands a
+    // moment later and `invalidateAgents` brings the next dialog open the number.
+    const version = available && spec.id === 'codex' ? codexInstalledVersion(spec.bin, invalidateAgents) : ''
+    const latest = version ? codexLatest() : ''
+    return {
+      ...spec,
+      models,
+      available,
+      path: available ? path : '',
+      ...(version ? { version } : {}),
+      ...(version && latest ? { latest, outdated: isOutdated(version, latest) } : {})
+    }
   })
   cache = { at: Date.now(), list }
   return list

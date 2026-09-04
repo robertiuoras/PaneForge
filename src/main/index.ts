@@ -48,6 +48,7 @@ import { surfaceChannels } from '../shared/surface'
 import { startDisplayAwake } from './awake'
 import { attachGlass, glassSupported } from './glass'
 import { invalidateAgents, listAgents, specFor } from './agents'
+import { codexInstalledVersion, forgetCodexVersion } from './codexModels'
 import { gitInfo } from './git'
 import { projectRoot } from './projectRoot'
 import { diffFiles, diffPatch } from './diff'
@@ -173,7 +174,7 @@ import { clashingRestores, takenFolders } from '../shared/laneTaken'
 import { copyNumber } from '../shared/place'
 import { readBoard, writeMemory, writeTasks } from './board'
 import * as voice from './voice'
-import { installCommand, uninstallCommand } from '../shared/agents'
+import { installCommand, uninstallCommand, updateCommand } from '../shared/agents'
 import { installLaneHooks } from './laneHooks'
 import { assess, lagLevel, restorePlan, worstPressure, type Pressure } from '../shared/capacity'
 import { restoreAsleep } from '../shared/restoreTurn'
@@ -2964,6 +2965,53 @@ ipcMain.handle('agents:install', async (_e, id: string) => {
       chunk: found
         ? `\r\n${spec.label} is ready.\r\n`
         : `\r\nInstaller exited with code ${code} and ${spec.bin} is still not on PATH.\r\n`,
+      done: true,
+      ok: found
+    })
+  } finally {
+    installing.delete(id)
+  }
+})
+
+/**
+ * Move an agent to its newest release. Same console and same one-at-a-time guard as the
+ * install, because for most of this catalogue it IS the install line run again.
+ *
+ * Success is the binary still being on PATH and the version having MOVED, not the
+ * updater's exit code: `codex update` exits 0 when there was nothing to do, and an
+ * updater that prints an error and exits 0 is the failure that reads as success.
+ */
+ipcMain.handle('agents:update', async (_e, id: string) => {
+  if (installing.has(id)) return
+  const spec = specFor(id)
+  const command = updateCommand(spec)
+  const say = (chunk: string): void => send('agents:install-event', { agentId: id, chunk })
+  if (!command) {
+    send('agents:install-event', {
+      agentId: id,
+      chunk: `${spec.label} has no scripted update - update it the way you installed it.\r\n`,
+      done: true,
+      ok: false
+    })
+    return
+  }
+  installing.add(id)
+  const before = spec.id === 'codex' ? codexInstalledVersion(spec.bin) : ''
+  try {
+    say(`> ${command}\r\n\r\n`)
+    const code = await runOnce(command, say)
+    refreshPath()
+    forgetCodexVersion()
+    invalidateAgents()
+    const found = onPath(spec.bin)
+    // Asking again is a spawn, so the number arrives after this message. Say what
+    // happened rather than a version this call cannot yet know.
+    if (spec.id === 'codex') codexInstalledVersion(spec.bin, invalidateAgents)
+    send('agents:install-event', {
+      agentId: id,
+      chunk: found
+        ? `\r\n${spec.label} is up to date${before ? ` (was ${before})` : ''}.\r\n`
+        : `\r\nUpdater exited with code ${code} and ${spec.bin} is no longer on PATH.\r\n`,
       done: true,
       ok: found
     })
