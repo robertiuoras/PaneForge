@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AgentInfo } from '@shared/agents'
 import { summaryFull, summaryOf } from '@shared/gist'
+import { copyNumber, copySuffixOf, folderName } from '@shared/place'
 import type { HistoryEntry, HistoryHit } from '@shared/types'
 import { whenWords } from '@shared/elapsed'
 import { rankBy } from '@shared/historySearch'
@@ -10,6 +11,20 @@ import Blurb from './Blurb'
 import Elapsed, { useNow } from './Elapsed'
 
 const api = window.api
+
+/**
+ * Which copy of the project a row's folder is, in the words `place.ts` already uses on
+ * every pane: `clients-a` reads `clients · copy 2`, and a project's own folder reads just
+ * its own name. Never lane/worktree/slot - `copySuffixOf` is the same test the sidebar
+ * chip uses, so a row here and a card on screen never disagree about what a folder is.
+ */
+function placeOf(cwd: string): string {
+  const name = folderName(cwd)
+  const project = copySuffixOf(name)
+  if (!project) return name
+  const n = copyNumber(name.slice(project.length + 1))
+  return n ? `${project} · copy ${n}` : name
+}
 
 /**
  * How much of a session's transcript to read back. The per-session log is capped at 8 MB
@@ -182,7 +197,9 @@ export default function HistoryDialog({ agents, onResume, onClose }: Props): JSX
                 <div className="hist-head" onClick={() => setOpen(e)}>
                   <AgentLogo id={e.agent} spec={agents.find((a) => a.id === e.agent)} size={13} />
                   <strong>{e.title}</strong>
-                  <span className="hint">{e.cwd}</span>
+                  <span className="hint" title={e.cwd}>
+                    {placeOf(e.cwd)}
+                  </span>
                   {/* The time the list is SORTED by, so the order can be read off the
                       rows: newest closed at the top. A session still open has no closing
                       time and says when it started instead.
