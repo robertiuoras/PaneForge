@@ -162,6 +162,12 @@ import UpdateToast from './components/UpdateToast'
 import WhatsNewCard from './components/WhatsNewCard'
 import TourCard from './components/TourCard'
 import { TOUR_ASLEEP_MS, TOUR_SIDE_BACK_MS } from '../../shared/tour'
+
+/** How long something took, in words. Measured 17ms and 34ms for sleep and wake, which
+ * `0.0s` reports as nothing having happened. */
+function sayMs(ms: number): string {
+  return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`
+}
 import Tips from './components/Tips'
 import { DEFAULT_TIPS } from '../../shared/tips'
 import { folderLabel } from '../../shared/revealPane'
@@ -6878,12 +6884,12 @@ export default function App(): JSX.Element {
           say('Putting this session to sleep\u2026')
           const t0 = Date.now()
           await api.sleepSession(pane.id)
-          say(`Asleep in ${((Date.now() - t0) / 1000).toFixed(1)}s - the card says asleep and the agent is gone.`)
+          say(`Asleep in ${sayMs(Date.now() - t0)} - the card says asleep and the agent is gone.`)
           await new Promise((r) => setTimeout(r, TOUR_ASLEEP_MS))
           say('Waking it up again\u2026')
           const t1 = Date.now()
           await api.wakeSession(pane.id)
-          say(`Awake in ${((Date.now() - t1) / 1000).toFixed(1)}s.`)
+          say(`Awake in ${sayMs(Date.now() - t1)}.`)
         }}
         // A pane step is only shown once a pane is really RUNNING. The card can see a
         // header; only this can see whether anything is behind it. See `LookReading.live`.
