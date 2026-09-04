@@ -66,7 +66,8 @@ function isNoise(line: string): boolean {
 export function gistLine(gist: string | undefined, asks: number | undefined): string {
   if (!gist) return ''
   const more = (asks ?? 1) - 1
-  return more > 0 ? `${gist}  ·  +${more} more ${more === 1 ? 'ask' : 'asks'}` : gist
+  // PROMPT, never `ask` - see `summaryOf` below for why.
+  return more > 0 ? `${gist}  ·  +${more} more ${more === 1 ? 'prompt' : 'prompts'}` : gist
 }
 
 // ---------------------------------------------------------------------------
@@ -197,7 +198,11 @@ export function summaryOf(notes: SessionNotes): string {
   const extra = Math.max(0, topics.length - ROW_CHAPTERS) + (notes.dropped ?? 0)
   if (extra > 0) bits.push(`+${extra} more ${extra === 1 ? 'topic' : 'topics'}`)
   const more = (notes.asks ?? 1) - 1
-  if (more > 0) bits.push(`+${more} more ${more === 1 ? 'ask' : 'asks'}`)
+  // PROMPT, not `ask`. An ask is this codebase's word for one thing typed at an agent, and
+  // it reached the row as `+2 more asks` - a count of something the reader has no name for
+  // (Robert 2026-09-04, reading History from the tour). The button under it says the same
+  // word: `Show every prompt`.
+  if (more > 0) bits.push(`+${more} more ${more === 1 ? 'prompt' : 'prompts'}`)
   return bits.join('  ·  ')
 }
 

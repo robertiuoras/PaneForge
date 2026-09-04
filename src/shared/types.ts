@@ -2072,6 +2072,12 @@ export interface Api {
    * its answer. Refused outside a dev copy and for any other path. See `shared/tour.ts`.
    */
   tourCheck(script: string): Promise<import('./tour').TourCheck>
+  /**
+   * Put the tour's example chats in History, or take them away - `on` adds them only when
+   * nothing already there would show the step what it is about. Dev copy only; answers
+   * how many rows changed. See `shared/tourSample.ts`.
+   */
+  tourSample(on: boolean): Promise<number>
   /** One counted line out of a check that is still running - see `main/tour.ts`. */
   onTourCheckLine(cb: (p: import('./tour').TourProgress) => void): () => void
   /** replay of everything the pty printed so far, for re-attaching a pane */

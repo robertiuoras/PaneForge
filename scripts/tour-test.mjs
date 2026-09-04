@@ -468,5 +468,42 @@ console.log('a started tour ticks its own steps off')
   ok('Previous ticks nothing', !/tickDone/.test(prev))
 }
 
+console.log('a History step has a chat to look at')
+{
+  const { needsSample, sampleRows, sampleIds, sampleLog, SAMPLE_CHATS, SAMPLE_ID } = await import('../src/shared/tourSample.ts')
+  // The dev copy Robert was testing in: no chats at all, so the step pointed at nothing.
+  ok('an empty History gets the example', needsSample([]))
+  // The button the step is about is only drawn where a row has more prompts than lines it
+  // already prints - a row without that shows the step nothing either.
+  ok('and so does one with nothing to show', needsSample([{ id: 'a', chapters: ['x'], askLines: ['x'] }]))
+  ok('a real chat with a prompt list is left alone', !needsSample([{ id: 'a', chapters: ['x'], askLines: ['x', 'y'], endedAt: 9 }]))
+  // The dev copy as Robert found it: 272 rows, every one on screen a bare shell pane, one
+  // real chat buried far down the list. The step still had nothing to point at.
+  {
+    const junk = Array.from({ length: 272 }, (_, i) => ({ id: `j${i}`, chapters: [], askLines: [], endedAt: 1000 - i }))
+    const buried = { id: 'real', chapters: ['x'], askLines: ['x', 'y', 'z'], endedAt: 1 }
+    ok('one real chat buried under the shell panes is not enough', needsSample([...junk, buried]))
+    ok('...but a recent one is', !needsSample([...junk, { ...buried, endedAt: 2000 }]))
+  }
+  ok('and the example is never added twice', !needsSample([{ id: SAMPLE_ID + 'orders', chapters: [], askLines: [] }]))
+
+  const rows = sampleRows(1_000_000_000_000)
+  ok('every example row is marked as one', rows.every((r) => r.id.startsWith(SAMPLE_ID)))
+  ok('and every one would draw the button', rows.every((r) => r.askLines.length > r.chapters.length))
+  ok('a row ends before it is read', rows.every((r) => r.endedAt < 1_000_000_000_000))
+  ok('and starts before it ends', rows.every((r) => r.startedAt < r.endedAt))
+  ok('the row says what the chat was about', rows[0].gist === rows[0].askLines[0])
+  // Only the tour's own rows come back out, so a real chat is never removed with them.
+  ok(
+    'only the example rows are taken away',
+    JSON.stringify(sampleIds([{ id: 'real-one' }, ...rows])) === JSON.stringify(rows.map((r) => r.id))
+  )
+  ok('the transcript says it is an example', /example/i.test(sampleLog(SAMPLE_CHATS[0])))
+  ok('and carries every prompt', SAMPLE_CHATS[0].asks.every((a) => sampleLog(SAMPLE_CHATS[0]).includes(a)))
+  // Plain words: these are the sentences Robert reads in the list.
+  const words = SAMPLE_CHATS.flatMap((c) => c.asks).join(' ')
+  ok('no jargon in the example prompts', !/\b(lane|worktree|trunk|commit-ish|idempotent|hydrate|pty)\b/i.test(words), words)
+}
+
 console.log(failed ? `\n${failed} failed` : '\ntour: all good')
 process.exit(failed ? 1 : 0)

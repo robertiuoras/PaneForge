@@ -32,6 +32,7 @@ import type { RouteResult } from '../shared/projectRoute'
 import { DEFAULT_PHONE_PORT, getConfig, projectsRoot, setConfig } from './config'
 import { whatsNew } from './whatsNew'
 import { tour, tourCheck } from './tour'
+import { addSample, dropSample } from './tourSample'
 import { addSound, pruneCustomSounds, removeSound, renameSound, soundData } from './sounds'
 import { writeAttachments, readAttachIns } from './attach'
 import { AskNotifier, askMessage, postAsk, telegramCreds } from './askNotify'
@@ -1604,6 +1605,7 @@ ipcMain.handle('sessions:buffer', (_e, id: string) =>
  */
 ipcMain.handle('app:whatsNew', () => whatsNew())
 ipcMain.handle('app:tour', () => tour())
+ipcMain.handle('app:tourSample', (_e, on: boolean) => (on ? addSample() : dropSample()))
 ipcMain.handle('app:tourCheck', (_e, script: string) =>
   tourCheck(script, (p) => send('app:tourCheckLine', p))
 )

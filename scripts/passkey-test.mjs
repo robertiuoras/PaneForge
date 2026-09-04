@@ -648,6 +648,10 @@ ok(!server.running, 'the gate test server stopped cleanly')
     // and only in a dev copy; types nothing, reaches no pty, and the installed app
     // answers a refusal.
     'app:tourCheck',
+    // Writes two made-up History rows under this profile and deletes them again, dev copy
+    // only (`tourAllowed`). It touches no real chat: every id it writes or removes carries
+    // the `tour-example-` prefix.
+    'app:tourSample',
     'app:quitIdle', 'sessions:buffer', 'sessions:log', 'drive:stop', 'drive:list',
     'drive:clear', 'goal:list', 'goal:cancel', 'goal:remove', 'goal:clear', 'config:get',
     'config:pickRoot', 'sounds:add', 'sounds:data', 'sounds:remove', 'sounds:rename',

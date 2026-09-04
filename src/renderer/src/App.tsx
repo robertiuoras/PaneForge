@@ -6880,7 +6880,14 @@ export default function App(): JSX.Element {
           // one surface", and a branch can only ever add to what is already on screen.
           setPicking(surface === 'newSession')
           setSettings(surface === 'settings')
-          setHistory(surface === 'history')
+          // A HISTORY STEP NEEDS A CHAT TO LOOK AT. This copy has its own profile, so its
+          // History is nobody's: the step about `Show every prompt` opened an empty list
+          // and pointed at a button that was not drawn (Robert 2026-09-04, step 20 of 39:
+          // "the dev version doesnt have any prompts in a session in history"). The tour
+          // puts two made-up chats there - only when nothing real would show the step what
+          // it is about - and takes them away when it ends.
+          if (surface === 'history') void api.tourSample(true).then(() => setHistory(true))
+          else setHistory(false)
           // A change to what History offers - which rows carry `Open again`, what a row
           // says it was working on - is looked at in History, and it used to be filed
           // under `inside the app, nothing to click` with only a test to show for it.
@@ -6912,6 +6919,8 @@ export default function App(): JSX.Element {
           const id = tourPaneId.current
           tourPaneId.current = null
           if (id) void api.killSession(id)
+          // ...and its example chats, for the same reason: nobody asked for them.
+          void api.tourSample(false)
         }}
       />
       {/* One quiet card in the corner, saying one thing this app can do. It is the only

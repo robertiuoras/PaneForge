@@ -84,10 +84,10 @@ ok('one ask reads as itself', () => {
   assert.equal(gistLine('fix devices', 1), 'fix devices')
 })
 ok('a session with forty asks says so - it is a different session to return to', () => {
-  assert.equal(gistLine('fix devices', 40), 'fix devices  ·  +39 more asks')
+  assert.equal(gistLine('fix devices', 40), 'fix devices  ·  +39 more prompts')
 })
-ok('one more ask is singular', () => {
-  assert.equal(gistLine('fix devices', 2), 'fix devices  ·  +1 more ask')
+ok('one more prompt is singular', () => {
+  assert.equal(gistLine('fix devices', 2), 'fix devices  ·  +1 more prompt')
 })
 ok('no note means no line at all, not a bare counter', () => {
   assert.equal(gistLine(undefined, 12), '')
@@ -190,7 +190,7 @@ ok('one chapter reads as the ask itself', () => {
 })
 ok('several chapters share the row', () => {
   const n = fold('fix the tunnel', '/clear', 'write the notes')
-  assert.equal(summaryOf(n), 'fix the tunnel  ·  write the notes  ·  +1 more ask')
+  assert.equal(summaryOf(n), 'fix the tunnel  ·  write the notes  ·  +1 more prompt')
   assert.equal(n.asks, 2)
 })
 ok('past three the rest are counted, not shown', () => {
