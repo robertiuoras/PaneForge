@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-const css = readFileSync(join(root, 'src/renderer/src/styles.css'), 'utf8')
+const css = readFileSync(join(root, 'src/renderer/src/styles.css'), 'utf8').replace(/\r\n/g, '\n')
 
 let failed = 0
 const ok = (what, cond) => {
