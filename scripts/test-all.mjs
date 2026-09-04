@@ -66,6 +66,7 @@ const TESTS = [
   ['handoffsteps', 'handoff-steps-test.mjs'],
   ['panemodel', 'panemodel-test.mjs'],
   ['staleframe', 'stale-frame-test.mjs'],
+  ['cloudwork', 'cloud-work-test.mjs'],
   ['fixsign', 'fix-sign-test.mjs'],
   ['settingsearch', 'settings-search-test.mjs'],
   ['autoanswer', 'auto-answer-test.mjs'],
