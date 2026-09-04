@@ -129,7 +129,9 @@ export default function MoveSoon({ soons, onKeep, onNow }: MoveSoonProps): React
           <div className="move-soon-why">
             {soon.why === 'idle'
               ? 'It has been quiet a long time.'
-              : 'This machine is running out of memory.'}
+              : soon.why === 'turn'
+                ? 'Its turn just ended.'
+                : 'This machine is running out of memory.'}
           </div>
           <div className="move-soon-acts">
             <button type="button" onClick={() => onKeep(soon.ids)}>

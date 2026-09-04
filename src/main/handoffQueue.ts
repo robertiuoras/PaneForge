@@ -18,7 +18,7 @@
 //     pane out from under a move in flight, so every exit from this file clears it -
 //     including the expiry and the pane simply disappearing.
 
-import { queueVerdict, type AutoHandoffConfig, type Queued } from '../shared/autoHandoff'
+import { queueVerdict, QUEUE_COUNTDOWN_MS, type AutoHandoffConfig, type Queued } from '../shared/autoHandoff'
 import type { HandoffItem } from '../shared/handoff'
 import type { Session } from '../shared/types'
 
@@ -50,6 +50,13 @@ export interface QueueDeps {
    * from the desk with no reason on screen. That reads as a frozen session, not a move.
    */
   notify?(line: string): void
+  /**
+   * The turn ended and a move is now counting down (`at` an epoch ms deadline), or the
+   * countdown just went away - the pane went busy again, was cancelled, or the move ran.
+   * `at: null` is the clear; a caller that never wires this loses the countdown card,
+   * never correctness - `run()` and expiry still happen on the tick's own clock.
+   */
+  soon?(id: string, device: string, at: number | null): void
   now?(): number
 }
 
@@ -94,8 +101,10 @@ export class HandoffQueue {
    * their pane was staying while it left. A refusal may not share a shape with a success.
    */
   drop(id: string): boolean {
-    if (!this.entries.delete(id)) return false
+    const had = this.entries.get(id)
+    if (!had || !this.entries.delete(id)) return false
     this.deps.mark(id, false)
+    this.deps.soon?.(id, had.device, null)
     this.deps.log(`handoff: ${id} taken off the queue - it stays here`)
     return true
   }
@@ -144,14 +153,35 @@ export class HandoffQueue {
           }
         : undefined
       const verdict = queueVerdict(q, pane ? state : undefined, cfg, now)
-      if (verdict === 'wait') continue
+      if (verdict === 'soon') {
+        // The turn just ended: start the countdown rather than moving outright, so a
+        // person watching the desk gets the same chance to stop it a manual handoff does.
+        const goAt = now + QUEUE_COUNTDOWN_MS
+        this.entries.set(q.id, { ...q, goAt })
+        this.deps.soon?.(q.id, q.device, goAt)
+        continue
+      }
+      if (verdict === 'wait') {
+        // `wait` covers two different things here and only one of them clears the
+        // countdown: a normal mid-countdown tick (still idle, deadline not reached yet)
+        // must leave `goAt` alone, or the countdown would never survive its own second
+        // tick. Only a pane that went BUSY AGAIN clears it, same as if the turn had never
+        // ended - read straight off `busy()` rather than inferred from the verdict.
+        if (q.goAt != null && pane && this.deps.busy(pane)) {
+          this.entries.set(q.id, { ...q, goAt: undefined })
+          this.deps.soon?.(q.id, q.device, null)
+        }
+        continue
+      }
       this.entries.delete(q.id)
       if (verdict === 'drop') {
         this.deps.mark(q.id, false)
+        this.deps.soon?.(q.id, q.device, null)
         continue
       }
       if (verdict === 'expired') {
         this.deps.mark(q.id, false)
+        this.deps.soon?.(q.id, q.device, null)
         const mins = Math.round((now - q.since) / 60000)
         this.deps.log(`handoff: ${q.id} gave up waiting after ${mins} min - still working, so it stays here`)
         this.deps.notify?.(
@@ -159,6 +189,7 @@ export class HandoffQueue {
         )
         continue
       }
+      this.deps.soon?.(q.id, q.device, null)
       this.run(q)
     }
     if (!this.entries.size) this.stop()

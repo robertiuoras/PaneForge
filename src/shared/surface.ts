@@ -182,6 +182,9 @@ export const SURFACE: Surface = {
   handoffPending: ['invoke', 'remote:handoffPending'],
   handoffReady: ['invoke', 'remote:handoffReady'],
   cancelHandoff: ['invoke', 'remote:handoffCancel'],
+  // A queued move's own countdown - it started once the turn ended, separate from the
+  // idle/pressure countdowns `MoveSoon.tsx` already draws. See handoffQueue.ts `soon`.
+  onHandoffSoon: ['on', 'remote:handoffSoon'],
   // Signing in to a browser on another machine - see shared/remoteLogin.ts. The frames
   // are an `on`, so a phone watching the same desk gets the picture for free; the ack
   // that asks for the NEXT one is a send, and ordered with respect to the input, which

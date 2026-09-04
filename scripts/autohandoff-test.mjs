@@ -192,16 +192,27 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
 }
 
 {
-  // The queue: a pane asked for mid-turn, moved the instant its turn ends.
+  // The queue: a pane asked for mid-turn, moved once its turn has ended AND a countdown
+  // has run out - Robert, 2026-09-04: "it shouldnt have moved this session to another
+  // device even if turn ended it should still have countdown so i can stop it".
   const q = { id: 'x', device: 'pc', since: NOW }
   eq('still working: wait', queueVerdict(q, { state: 'working', asking: false }, DEFAULT_AUTO_HANDOFF, NOW), 'wait')
   eq('holding a live question: wait, not go', queueVerdict(q, { state: 'needsYou', asking: true }, DEFAULT_AUTO_HANDOFF, NOW), 'wait')
-  eq('turn ended: go', queueVerdict(q, { state: 'needsYou', asking: false }, DEFAULT_AUTO_HANDOFF, NOW), 'go')
+  eq('turn ended with no countdown yet: soon, never straight to go', queueVerdict(q, { state: 'needsYou', asking: false }, DEFAULT_AUTO_HANDOFF, NOW), 'soon')
+
+  const counting = { ...q, goAt: NOW + 15_000 }
+  eq('counting down, deadline not reached: wait', queueVerdict(counting, { state: 'needsYou', asking: false }, DEFAULT_AUTO_HANDOFF, NOW), 'wait')
+  eq('counting down, deadline reached: go', queueVerdict(counting, { state: 'needsYou', asking: false }, DEFAULT_AUTO_HANDOFF, NOW + 15_000), 'go')
+  eq('counting down, deadline past: go', queueVerdict(counting, { state: 'needsYou', asking: false }, DEFAULT_AUTO_HANDOFF, NOW + 20_000), 'go')
 
   const pastBudget = NOW + (DEFAULT_AUTO_HANDOFF.waitMinutes + 1) * MIN
   const expired = queueVerdict(q, { state: 'working', asking: false }, DEFAULT_AUTO_HANDOFF, pastBudget)
   eq('past the wait budget while still busy: expired', expired, 'expired')
   check('expiry is never treated as "move it anyway"', expired !== 'go')
+  // Busy again during a countdown that was already running has no `goAt` to read from
+  // `pane.state` - `queueVerdict` only sees `wait`; the caller (handoffQueue.ts `tick`)
+  // is what notices the entry still carries a `goAt` and clears it. Covered below by the
+  // HandoffQueue-level test rather than here, since that is where the clearing happens.
 
   eq('the pane closed while queued: drop', queueVerdict(q, undefined, DEFAULT_AUTO_HANDOFF, NOW), 'drop')
   eq('the pane exited on its own while queued: drop', queueVerdict(q, { state: 'exited', asking: false }, DEFAULT_AUTO_HANDOFF, NOW), 'drop')
