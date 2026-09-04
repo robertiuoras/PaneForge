@@ -655,9 +655,46 @@ export function transcriptPath(cwd: string, resumeId: string): string | null {
   return null
 }
 
+/**
+ * A transcript the CLI will agree to resume: one holding at least one assistant turn.
+ *
+ * `claude --resume <id>` answers `No conversation found with session ID` for a file
+ * that exists but has no reply in it - a session whose first prompt was typed and never
+ * sent. Measured 2026-09-04 (pane `Step Tick Doesnt Show`): an auto-clear typed `/clear`,
+ * the resume prompt's six returns were swallowed while Remote Control re-bridged, and the
+ * fresh conversation was written to disk as 5 user rows and 0 assistant rows. History's
+ * `Open again` then handed that id to the CLI, which refused it on screen. The reading
+ * is the file's own rows; cached on size+mtime because a restore asks about every pane.
+ */
+const replies = new Map<string, { size: number; mtimeMs: number; yes: boolean }>()
+export function hasReply(file: string): boolean {
+  let st: { size: number; mtimeMs: number }
+  try {
+    st = statSync(file)
+  } catch {
+    return false
+  }
+  const hit = replies.get(file)
+  if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs) return hit.yes
+  let yes = false
+  try {
+    yes = /"type":"assistant"/.test(readFileSync(file, 'utf8'))
+  } catch {
+    yes = false
+  }
+  replies.set(file, { size: st.size, mtimeMs: st.mtimeMs, yes })
+  return yes
+}
+
+/** Where a conversation the CLI can resume lives - on disk AND answered at least once. */
+export function resumableTranscript(cwd: string, resumeId: string): string | null {
+  const file = transcriptPath(cwd, resumeId)
+  return file && hasReply(file) ? file : null
+}
+
 /** True while a remembered conversation can still be resumed. */
 export function resumable(cwd: string, resumeId?: string): boolean {
-  return Boolean(resumeId && transcriptPath(cwd, resumeId))
+  return Boolean(resumeId && resumableTranscript(cwd, resumeId))
 }
 
 /**

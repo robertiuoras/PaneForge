@@ -166,7 +166,7 @@ try {
   assert.equal(T.transcriptFor('pane1'), null, 'claimed a transcript written before it started')
 
   // Once it writes one, that is the pane's, by name.
-  transcript('chat-a', [user('pane one prompt')])
+  transcript('chat-a', [user('pane one prompt'), assistant('pane one reply')])
   assert.equal(T.resumeIdFor('pane1'), 'chat-a')
 
   // Two panes in one folder must not both resume the same conversation.
@@ -280,6 +280,12 @@ try {
   // must not be passed to the CLI as if it could.
   assert.equal(T.resumable(cwd, 'chat-a'), true)
   assert.equal(T.resumable(cwd, 'gone'), false)
+  // On disk but never answered: the CLI says `No conversation found with session ID`
+  // to exactly this file, so it is not resumable either (2026-09-04).
+  transcript('chat-unanswered', [user('typed but never sent'), user('typed again')])
+  assert.equal(T.resumable(cwd, 'chat-unanswered'), false, 'a transcript with no reply is not resumable')
+  transcript('chat-answered', [user('hello'), assistant('hi')])
+  assert.equal(T.resumable(cwd, 'chat-answered'), true)
   assert.equal(T.resumable(cwd, undefined), false)
   assert.equal(T.lastPrompt(cwd, 'gone'), undefined)
   // A path, not an id: never allowed to escape the project folder.
