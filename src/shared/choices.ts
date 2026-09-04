@@ -33,6 +33,19 @@ export interface PaneAsk {
   options: Choice[]
   /** The option `❯` is currently on. */
   selected: number
+  /**
+   * True when this is a PERMISSION prompt - the CLI asking to run a command it will not
+   * run unattended, `Do you want to proceed?` over `1. Yes / 2. Yes, and don't ask again
+   * ... / 3. No`.
+   *
+   * It is a question like any other for everything that DRAWS one: buttons, the red glow,
+   * the Telegram message, and every clock that refuses a pane holding a question. It is
+   * not a question anything may ANSWER on somebody's behalf, which is why the flag exists
+   * rather than the reading simply being shared - `pickAnswer` refuses it outright. The
+   * command behind it is the one the person running with permissions bypassed still gets
+   * asked about, so it is by construction the one press this app may never make.
+   */
+  permission?: boolean
 }
 
 /**
@@ -69,6 +82,39 @@ const FOOTER = /^\s*(?:.*·\s*)?Enter to (?:select|confirm|choose)\b/im
  * `reviewTail` additionally refuses one that is not the last thing on the screen.
  */
 const REVIEW = /^\s*Ready to submit your answers\?/i
+
+/**
+ * A PERMISSION prompt, which prints no `Enter to select` footer at all.
+ *
+ * Claude Code asks before running a destructive command EVEN WITH PERMISSIONS BYPASSED,
+ * and its permission widget is not the AskUserQuestion widget: the legend it draws under
+ * the list is `↑/↓ Navigate · tab Amend · ctrl+g edit/expand command`, which says how to
+ * move and never says which key commits. So `FOOTER` - the load-bearing signal everywhere
+ * else in this file - does not match, the frame read as NO question at all, and the pane
+ * went into the sidebar's Ready group with no glow, no bell and no Telegram message.
+ * Robert, 2026-09-04: a pane sitting on `rm` permission was then put to SLEEP by the
+ * 30-minute idle clock, which refuses a pane holding a question and had none to refuse.
+ * Measured off a real frame in this machine's own pane log (`s5-mta1hyqm.log:3752`).
+ *
+ * So this screen gets an anchor of its own, the sentence ABOVE the list, exactly as
+ * `REVIEW` does and for the same reason: that sentence is drawn by the permission widget
+ * and by nothing else. It cannot open the door to a false question - the list under it
+ * must still be 1..N with exactly one arrow, and `readPermission` additionally refuses one
+ * that has been answered.
+ */
+const PERMISSION = /^\s*Do you want to proceed\?\s*$/i
+
+/**
+ * The key legend a chooser draws under its list, and the proof this one is still live.
+ *
+ * `readReview` proves the same thing by demanding blank rows below the list. That cannot
+ * be reused here: the permission widget draws its own legend under the options, and on a
+ * build that keeps a statusline pinned to the bottom there are painted rows below that
+ * again. A legend is the bottom edge of the widget itself, so reaching one is the proof -
+ * and an ANSWERED prompt has the tool's output and the composer under it instead, never a
+ * legend, which is what keeps a return from landing in somebody's draft.
+ */
+const KEY_LEGEND = /^\s*(?:[↑↓←→⏎·]|(?:esc|enter|tab|space|ctrl|shift|alt|cmd|option)\b)/i
 
 /** `❯ 1. Label`, `  2. Label`. The arrow is optional; exactly one line carries it. */
 const OPTION = /^(\s*)(❯\s*|>\s*)?(\d{1,2})\.\s*(\S.*)$/
@@ -175,6 +221,75 @@ function readReview(lines: string[], lead: number): PaneAsk | null {
 }
 
 /**
+ * A permission prompt, read DOWN from its own sentence.
+ *
+ * Down rather than up, because this widget prints no footer that says which key commits -
+ * the sentence above the list is the anchor. Everything else is the same reading as the
+ * main walk: 1..N with no gaps, exactly one arrow, descriptions indented under their
+ * option.
+ */
+function readPermission(lines: string[], lead: number): PaneAsk | null {
+  const found = new Map<number, { label: string; arrow: boolean }>()
+  let last = -1
+  for (let i = lead + 1; i < lines.length && i - lead < 20; i++) {
+    const line = lines[i]
+    const m = OPTION.exec(line)
+    if (m) {
+      const n = Number(m[3])
+      if (!found.has(n)) found.set(n, { label: stripPreview(m[4]), arrow: Boolean(m[2]) })
+      last = i
+      continue
+    }
+    if (!line.trim() || RULE.test(line)) {
+      if (found.has(1)) break
+      continue
+    }
+    if (found.size && /^\s{4,}\S/.test(line)) continue
+    break
+  }
+  if (last < 0) return null
+
+  const ns = [...found.keys()].sort((a, b) => a - b)
+  if (ns.length < 2 || ns[0] !== 1 || ns[ns.length - 1] !== ns.length) return null
+  const arrows = ns.filter((n) => found.get(n)!.arrow)
+  if (arrows.length !== 1) return null
+
+  // Still live: the widget's own legend under the list, or nothing painted at all.
+  //
+  // An answered prompt has the command's output and the composer drawn over these rows,
+  // and prose there is the tell. Reaching a legend ends the check successfully whatever
+  // is under it - the legend is the bottom edge of the widget, and a statusline pinned
+  // below that belongs to the CLI's chrome rather than to this question.
+  for (let i = last + 1; i < lines.length; i++) {
+    const line = lines[i]
+    if (!line.trim() || RULE.test(line)) continue
+    if (KEY_LEGEND.test(line)) break
+    return null
+  }
+
+  // The question is the prompt sentence, with whatever the widget printed above it - the
+  // command it is asking about - in front, so the buttons, the card and the Telegram
+  // message all say WHAT is being allowed rather than only that something is.
+  const above: string[] = []
+  for (let i = lead - 1; i >= 0 && above.length < QUESTION_LINES; i--) {
+    const line = lines[i]
+    if (!line.trim()) {
+      if (above.length) break
+      continue
+    }
+    if (RULE.test(line)) break
+    above.unshift(stripPreview(line.replace(/^\s*[│|]\s?/, '')))
+  }
+
+  return {
+    question: [...above, lines[lead].trim()].join(' ').trim(),
+    options: ns.map((n) => ({ n, label: found.get(n)!.label })),
+    selected: arrows[0],
+    permission: true
+  }
+}
+
+/**
  * The question on this pane's screen, or null.
  *
  * `text` is ANSI-stripped output - the same painted tail the busy read uses, not the
@@ -206,6 +321,17 @@ export function readAsk(text: string): PaneAsk | null {
       break
     }
   }
+  // A permission prompt, read the same way and for the same reason: it prints no footer,
+  // so the newest of the three anchors on the screen is the one still live.
+  let perm = -1
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (PERMISSION.test(lines[i])) {
+      perm = i
+      break
+    }
+  }
+
+  if (perm > foot && perm > lead) return readPermission(lines, perm)
   if (lead > foot) return readReview(lines, lead)
 
   if (foot < 0) return null

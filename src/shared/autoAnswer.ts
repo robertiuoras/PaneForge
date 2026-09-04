@@ -312,6 +312,20 @@ export function pickAnswer(ask: PaneAsk, cfg: AutoAnswerConfig): AutoPick | null
   if (!cfg.enabled) return null
   if (!ask.options.length) return null
 
+  // A PERMISSION prompt is never answered here, whatever the options say.
+  //
+  // It is the one question this app may not take on somebody's behalf: the CLI is asking
+  // before it runs a command it judged destructive, and it asks even when the pane is
+  // running with permissions bypassed - so the ask itself IS the person's decision. The
+  // `WIDENS` guard is not enough on its own. `1. Yes / 2. Yes, and don't ask again for rm
+  // commands in <dir> / 3. No` leaves exactly one usable option once the widening and the
+  // stopping ones are refused, and that option is `Yes` - a single yes-shaped survivor,
+  // which is the very shape `good.length === 1` presses. Reading the prompt as a question
+  // (2026-09-04) would therefore have turned a pane that merely sat unanswered into one
+  // that ran the `rm` by itself thirty seconds later. Drawing a question and answering it
+  // are two decisions, and only the first of them is this app's.
+  if (ask.permission) return null
+
   // The two refusals come first and apply to every rule below. Nothing a later rule finds
   // may reach an option that widens permission or that stops and asks for a sentence.
   const usable = ask.options.filter((o) => !WIDENS.test(o.label) && !STOPS.test(o.label))
