@@ -11,7 +11,7 @@
  *   node scripts/pf-ctl.mjs list
  *   node scripts/pf-ctl.mjs open <cwd> [--title T] [--prompt P | --task BACKLOG_ID] [--model M] [--agent A]
  *                                       [--close-when-done] [--report-to <pane>]
- *                                       [--resume <chat-id> | --continue]
+ *                                       [--resume <chat-id> | --continue] [--here]
  *   node scripts/pf-ctl.mjs needs-login <site> --url <url> [--host user@ip] [--port N] [--machine WORDS]
  *   node scripts/pf-ctl.mjs login [url] [--site NAME] [--host user@ip] [--port N] [--machine WORDS]
  *   node scripts/pf-ctl.mjs close <title-or-id>
@@ -360,6 +360,12 @@ if (cmd === 'list') {
   const resumeId = flag(rest, '--resume')
   const continueLast = rest.includes('--continue')
   if (resumeId && continueLast) fail(1, 'open takes --resume <id> or --continue, not both')
+  // Keep the pane on THIS desk. Without it `startOrSend` may hand the launch to the paired
+  // machine, which is right for a person opening a pane and wrong for automation: the
+  // caller is holding files, a lane and a transcript that exist only here, and a resume in
+  // particular cannot follow - the conversation is not on that disk. Measured 2026-09-04:
+  // three `pf-ctl open --resume` calls opened three empty panes on the PC.
+  const here = rest.includes('--here') || Boolean(resumeId)
   const cwd = rest[0]
   if (!cwd) fail(1, 'open needs a cwd: pf-ctl open <cwd> [--title T] [--prompt P]')
   const s = await call('sessions:start', [
@@ -371,6 +377,7 @@ if (cmd === 'list') {
       agent,
       closeWhenDone,
       reportTo: closeWhenDone ? reportTo : undefined,
+      where: here ? 'local' : undefined,
       resume: Boolean(resumeId) || continueLast || undefined,
       resumeId: resumeId || undefined
     }
