@@ -379,8 +379,15 @@ export default function TourCard({ onOpen, onFinish, sounds, paneAlive }: TourCa
   // this step tick doesnt show when i click". The card now stays where it is and the box
   // stays ticked; only a tour that is PLAYING carries on, and it waits `DONE_BEAT_MS` so
   // the tick is on screen before the step changes.
-  const markDone = (): void => {
-    if (doneMap[key]) return
+  const toggleDone = (): void => {
+    // Untick: put the step back and go nowhere. The tick is a note to yourself about what
+    // you have looked at, and a note you cannot rub out is a worse note.
+    if (doneMap[key]) {
+      const undone = { ...doneMap, [key]: false }
+      setDoneMap(undone)
+      saveMap(DONE_KEY, undone)
+      return
+    }
     const nextDone = { ...doneMap, [key]: true }
     setDoneMap(nextDone)
     saveMap(DONE_KEY, nextDone)
@@ -548,7 +555,12 @@ export default function TourCard({ onOpen, onFinish, sounds, paneAlive }: TourCa
           <div className="tour-check-live" data-testid="tour-check-live">{live.line}</div>
         )}
         <label className="tour-step-done">
-          <input type="checkbox" data-testid="tour-step-done" checked={!!doneMap[key]} disabled={!!doneMap[key]} onChange={markDone} />
+          {/* NOT `disabled` once ticked. A disabled checkbox is painted in the platform's
+              grey whatever `accent-color` says, which is why a ticked box read as "a white
+              tick on a grey box" and could barely be seen - and it also meant a step
+              ticked by mistake could never be put back (Robert 2026-09-04: "allow me to
+              untick done with this step if i want to"). */}
+          <input type="checkbox" data-testid="tour-step-done" checked={!!doneMap[key]} onChange={toggleDone} />
           Done with this step
         </label>
         {/* FOUR BUTTONS, TWO BY TWO, THE SAME FOUR ON EVERY STEP. Next is DISABLED on the

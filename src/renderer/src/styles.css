@@ -3099,12 +3099,11 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
    purpose: the accent is the ring, the countdown and the pane borders, and a tick that
    wore it would be one more orange thing. */
 .tour-step-done input[type='checkbox'] {
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   accent-color: #3d8bfd;
   cursor: pointer;
 }
-.tour-step-done input[type='checkbox']:disabled { cursor: default; opacity: 1; }
 /* Done or dismissed: the tour folds to a pill in the same corner, never gone. */
 .tour-pill {
   background: var(--surface-3); color: var(--text); border: 1px solid var(--line-strong);

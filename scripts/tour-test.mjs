@@ -13,7 +13,7 @@ const {
   buildSteps, makeTour, currentStep, next, previous, done, surfaceFor, tourAllowed,
   stepFrom, placesFor, trailersOf, firstParagraph, checkAllowed, readCheck, checkName, plainWords, howToCheck,
   dwellFor, waitsForYou, DWELL_CHECKS_MS, DWELL_PLAIN_MS, NO_SCREEN,
-  stepKey, nextUnchecked, checkWords, summaryCount, checkedWords, demoFor, titleFor, checkedAll
+  stepKey, nextUnchecked, stepName, whatChanged, checkWords, summaryCount, checkedWords, demoFor, titleFor, checkedAll
 } = await import(pathToFileURL(join(root, 'src/shared/tour.ts')).href)
 
 const { spotFits } = await import(pathToFileURL(join(root, 'src/shared/lookCheck.ts')).href)
@@ -357,7 +357,12 @@ console.log('a step is named after the thing on screen, not the commit subject')
     c('Ask the row whether it fits, instead of adding its widths up', '', ['src/shared/headerFit.ts', 'src/renderer/src/headerFit.ts'], 'header')
   )
   ok('the scope names the place', header.where === "a session's header")
-  ok('the title is the place, not the subject', header.title === "A session's header")
+  // The name is WHERE, then WHAT - a name that was only the place said nothing about the
+  // change (Robert 2026-09-04, looking at a card headed `Inside the app`).
+  ok('the title is the place AND what changed', header.title === "A session's header - ask the row whether it fits")
+  ok('...and it stops at the first clause', !/adding its widths/.test(header.title))
+  ok('a change with nowhere to look still names itself', stepName(NO_SCREEN, 'Aligned the icons').startsWith('Inside the app - '))
+  ok('a subject that is all code leaves the place alone', stepName(NO_SCREEN, '`foo.ts` -> `bar.ts`') === 'Inside the app')
   ok('and it opens a session to show it', header.open === 'pane')
   ok('ringing the icons, not the whole pane', header.spot === '.pt-actions')
   ok('the subject is still carried, under the name', header.text.startsWith('Ask the row'))

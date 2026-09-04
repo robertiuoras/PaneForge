@@ -328,6 +328,39 @@ export function titleFor(where: string): string {
   return where.charAt(0).toUpperCase() + where.slice(1)
 }
 
+/**
+ * WHAT the change actually was, in a handful of words, for the end of the step's name.
+ *
+ * A name that is only the PLACE says nothing: `Inside the app` was a heading over a card
+ * with no statement of the change on it at all (Robert 2026-09-04: "its not clear enough
+ * ... at least one thing of what the change is, inside the app - changed the pet icon
+ * etc, or like in the header - aligned the icons"). The commit's own subject is that
+ * statement, so it comes back - but as the tail of the name, cut to its FIRST clause and
+ * stripped of code the way every other sentence on the card is (`plainWords`), because
+ * the whole subject printed as its own paragraph is what read as too much to take in.
+ */
+export const WHAT_CAP = 52
+export function whatChanged(subject: string): string {
+  // The first clause only. A subject here is routinely three joined sentences ("a move
+  // says which half is running, a starting pane is not called mid-turn, menu hints stop
+  // being cut off, and ..."), and all of it in a heading is a paragraph again.
+  let s = plainWords(subject.split(/\s+[-\u2013]\s+|[,;]\s+| and (?=[a-z])/)[0] ?? '', WHAT_CAP)
+  if (!s) return ''
+  s = s.replace(/[.!?]+$/, '').trim()
+  if (!s) return ''
+  // Lower case unless the first word is a name the app itself capitalises.
+  return /^[A-Z][a-z]/.test(s) && !/^(New session|Settings|Devices|History|Stash)/.test(s)
+    ? s.charAt(0).toLowerCase() + s.slice(1)
+    : s
+}
+
+/** The step's name on the card: WHERE it is, then WHAT changed there. */
+export function stepName(where: string, subject: string): string {
+  const place = titleFor(where)
+  const what = whatChanged(subject)
+  return what ? `${place} - ${what}` : place
+}
+
 export function stepFrom(c: TourCommit): TourStep {
   const text = c.subject.trim()
   const { where, open: fileOpen, spot: fileSpot } = placesFor(c.files, c.scope ?? '')
@@ -345,7 +378,7 @@ export function stepFrom(c: TourCommit): TourStep {
   }
   const placeWords = where || (checks.length ? NO_SCREEN : 'no file this card knows')
   const step: TourStep = {
-    title: titleFor(placeWords),
+    title: stepName(placeWords, text),
     text,
     open,
     where: placeWords,
