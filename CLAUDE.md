@@ -91,13 +91,21 @@ step's surface, counts down visibly (`dwellFor`) and ticks the step off on its w
 only Pause stops it, Previous and Next steer and it carries on from where they left it
 (Robert 2026-09-04: "its just to go to the next thing"). A step with something to DO on it - a surface
 opened, a control ringed - has NO clock (`waitsForYou`) and holds until Done or Next.
-STARTING IS THE APPROVAL: from that press each step's suites run as it arrives, streaming
+A step about something AUDIBLE plays it as the step arrives (`demoFor`, `previewSound` -
+countdown gets the bowl, a question the knock, anything else the chime; a step about
+nothing audible plays nothing). The bar under the header is one SEGMENT per step, lit as
+it is ticked. STARTING IS THE APPROVAL: from that press each step's suites run as it arrives, streaming
 their counted lines onto the card (`TourProgress`, `app:tourCheckLine`), and a check in
 flight holds the tour where it is (Robert 2026-09-04: "if we doing tour then it should do
 everything itself", reversing his own earlier per-step approval). Nothing runs before that
 press, and after it NO button asks again - a step reached by Next, or sat on while paused,
 runs its own checks too (`started`, never `playing`); a running suite shows a discrete
-`steps()` pulse, its tally and its last printed line. The list holds only commits that touched
+`steps()` pulse, its tally and its last printed line. Progress SURVIVES a reopen: ticks in `tour.done` and every verdict in `tour.checks`, both
+localStorage on the dev profile, written the moment a check lands - a step that already
+answered arrives wearing `kept from an earlier run` and is not re-run, with `Check again`
+for when the thing it proved has just changed. A suite that prints one summary line
+(`sounds: 829 checks passed`) is counted from that sentence (`summaryCount`), and a check
+with no number says `Checked`, never `0 things proved`. The list holds only commits that touched
 `src/`, deduplicated by subject, two `See:` lines each, and no npm script name reaches the
 card (`checkWords`, never `checkName`). No pane is opened and no prompt is
 typed (Robert 2026-09-04: "i dont want the try in pane testing helper"), so a `Try:` line
