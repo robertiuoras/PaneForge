@@ -37,8 +37,10 @@ import { report } from './try-diff.mjs'
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const args = process.argv.slice(2)
 const keep = args.includes('--keep')
+const headless = args.includes('--headless')
 // --minimized/-m still accepted, and now redundant: --show is the way to see the window.
-const minimized = !args.includes('--show')
+// --headless overrides --show: a machine-only copy is never shown, not even for a moment.
+const minimized = headless || !args.includes('--show')
 const close = args.includes('--close')
 const clipboardTest = args.includes('--clipboard-test')
 const pull = args.includes('--pull')
@@ -67,8 +69,14 @@ const profile = (args.find((a) => a.startsWith('--profile='))?.split('=')[1] ?? 
 // --remote-debugging-port=<n>: with it, a change to how a pane handles the mouse or lays
 // itself out can be checked against the real window instead of a screenshot of it.
 const passThrough = args.filter(
-  (a) => !['--keep', '--minimized', '-m', '--show', '--close', '--clipboard-test', '--pull'].includes(a) && !a.startsWith('--profile=')
+  (a) =>
+    !['--keep', '--minimized', '-m', '--show', '--close', '--clipboard-test', '--pull', '--headless'].includes(a) &&
+    !a.startsWith('--profile=')
 )
+// A headless copy is only reachable over CDP, so it needs a port even when nobody typed one -
+// PF_PORT (the same variable a lane's own launch already uses) or 9333, Chrome's usual one.
+if (headless && !passThrough.some((a) => a.startsWith('--remote-debugging-port=')))
+  passThrough.push(`--remote-debugging-port=${process.env.PF_PORT ?? '9333'}`)
 
 // A UI copy test must never replace the user's real clipboard, including non-text
 // formats. Make one owner-only fixture and hand it only to this detached test copy.
@@ -153,7 +161,7 @@ if (!(await waitTestAppsGone(root)))
 // the app starts, loads, calls win.show(), and stays invisible forever. Verified:
 // the window existed with the right title and IsWindowVisible was false. electron.exe
 // is a GUI-subsystem binary, so there is no console to hide anyway.
-const child = spawn(electron, ['.', ...(minimized ? ['--minimized'] : []), ...passThrough], {
+const child = spawn(electron, ['.', ...(minimized ? ['--minimized'] : []), ...(headless ? ['--headless'] : []), ...passThrough], {
   cwd: root,
   detached: true,
   stdio: 'ignore',
