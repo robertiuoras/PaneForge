@@ -25,7 +25,7 @@
 import { useEffect, useState } from 'react'
 import type { TourCheck, TourProgress, TourState, TourStep, TourSurface } from '../../../shared/tour'
 import type { SoundConfig } from '../../../shared/sounds'
-import { NO_SCREEN, checkWords, checkedAll, checkedWords, currentStep, demoFor, done, dwellFor, howToCheck, next, nextUnchecked, previous, stepKey, waitsForYou } from '../../../shared/tour'
+import { checkWords, checkedAll, checkedWords, currentStep, demoFor, done, dwellFor, howToCheck, next, nextUnchecked, previous, stepKey, waitsForYou } from '../../../shared/tour'
 import { lookVerdict, spotFits, type LookVerdict } from '../../../shared/lookCheck'
 import { previewSound } from '../useChime'
 import CardX from './CardX'
@@ -42,6 +42,9 @@ const DONE_KEY = 'tour.done'
 // broken thing in the middle then i need to come here and tell you then you have to reopen
 // the dev window so that i can test again etc. its annoying if progress isnt saved").
 const CHECKS_KEY = 'tour.checks'
+// How long a hand-ticked step stays on screen wearing its tick before a PLAYING tour moves
+// on. Long enough to see, short enough not to feel stuck.
+const DONE_BEAT_MS = 700
 
 function loadChecks(): Record<string, TourCheck[]> {
   try {
@@ -105,12 +108,23 @@ const SURFACE_SEL: Record<string, string | null> = {
 function TourSpot({ selector }: { selector: string }): JSX.Element | null {
   const [box, setBox] = useState<DOMRect | null>(null)
   useEffect(() => {
+    // A NEW RECT EVERY TICK IS A RE-RENDER EVERY TICK. `getBoundingClientRect` hands back a
+    // fresh object whether or not the control moved, so setting it unconditionally
+    // re-rendered the whole card - and forced a layout - twice a second for the life of the
+    // tour, on a desk that already has panes painting (Robert 2026-09-04: "its pretty laggy
+    // as well"). The reading is compared by VALUE, and only a control that actually moved
+    // costs a render.
     const read = (): void => {
       const el = document.querySelector(selector)
-      setBox(el ? el.getBoundingClientRect() : null)
+      const r = el ? el.getBoundingClientRect() : null
+      setBox((was) => {
+        if (!r || !was) return r === was ? was : r
+        const same = was.left === r.left && was.top === r.top && was.width === r.width && was.height === r.height
+        return same ? was : r
+      })
     }
     read()
-    const t = setInterval(read, 400)
+    const t = setInterval(read, 800)
     window.addEventListener('resize', read)
     return () => {
       clearInterval(t)
@@ -302,7 +316,7 @@ export default function TourCard({ onOpen, onFinish, sounds, paneAlive }: TourCa
     // (`MoveSoon`, 2026-08-30).
     const until = Date.now() + wait
     setLeft(wait)
-    const tick = setInterval(() => setLeft(Math.max(0, until - Date.now())), 500)
+    const tick = setInterval(() => setLeft(Math.max(0, until - Date.now())), 1000)
     const t = setTimeout(() => {
       // A step the tour has SHOWN is a step that has been checked off. Without this the
       // counter sat at `0 of 44` however long it ran, so the one number on the card that
@@ -359,13 +373,21 @@ export default function TourCard({ onOpen, onFinish, sounds, paneAlive }: TourCa
 
   // Ticking a step off moves to the next one still unticked, so the card is always sitting
   // on something that has not been looked at yet.
+  // TICKING A STEP OFF IS FIRST OF ALL A TICK YOU CAN SEE. It used to jump to the next
+  // unticked step inside the same press, so the box being clicked was replaced by a fresh
+  // unticked one before it had ever been drawn ticked - Robert, 2026-09-04: "the done with
+  // this step tick doesnt show when i click". The card now stays where it is and the box
+  // stays ticked; only a tour that is PLAYING carries on, and it waits `DONE_BEAT_MS` so
+  // the tick is on screen before the step changes.
   const markDone = (): void => {
     if (doneMap[key]) return
     const nextDone = { ...doneMap, [key]: true }
     setDoneMap(nextDone)
     saveMap(DONE_KEY, nextDone)
+    if (!playing) return
     const upcoming = nextUnchecked(state.steps, nextDone)
-    if (upcoming !== -1) setState((s) => (s ? { ...s, index: upcoming } : s))
+    if (upcoming === -1) return
+    setTimeout(() => setState((s) => (s ? { ...s, index: upcoming } : s)), DONE_BEAT_MS)
   }
 
   if (allDone)
@@ -418,29 +440,17 @@ export default function TourCard({ onOpen, onFinish, sounds, paneAlive }: TourCa
               it is the detail, not the heading: `ask the row whether it fits` is a true
               sentence nobody can find a screen from (Robert 2026-09-04). */}
           <div className="tour-title" data-testid="tour-title">{step.title}</div>
-          <div className="tour-text">{step.text}</div>
-          {step.where !== NO_SCREEN && step.where !== step.title.charAt(0).toLowerCase() + step.title.slice(1) && (
-            <div className="tour-where">Where to look: {step.where}</div>
-          )}
+          {/* The commit's own sentence is written for whoever wrote the commit - `ask the
+              row whether it fits, instead of adding its widths up` is true and unreadable
+              (Robert 2026-09-04: "sitill way to much things to read and confusing for me
+              to test"). What is left is the NAME, where to look, what to look for, and one
+              verdict. */}
           <div className="tour-how">{howToCheck(step)}</div>
-          {look && (
-            <div className={'tour-look ' + (look.ok ? 'ok' : 'bad')} data-testid="tour-look">
-              <span className="tour-check-mark">{look.ok ? '👁' : '✗'}</span>
-              <span>{look.says}</span>
-            </div>
-          )}
           {playing && waitsForYou(step) && (
             <div className="tour-wait" data-testid="tour-wait">
               Take as long as you want here - tick Done or press Next to carry on.
             </div>
           )}
-        {step.see.length > 0 && (
-          <ul className="tour-see">
-            {step.see.map((s, i) => (
-              <li key={i}>{s}</li>
-            ))}
-          </ul>
-        )}
         {demo && (
           <div className="tour-demo" data-testid="tour-demo">
             <span>{played[index] ? `That was ${demo.says}.` : `${demo.says} plays when the tour reaches this step.`}</span>
@@ -479,8 +489,6 @@ export default function TourCard({ onOpen, onFinish, sounds, paneAlive }: TourCa
                     </span>
                   )}
                 </span>
-                {/* What it is doing THIS second, straight off the suite's own output. */}
-                {live && <div className="tour-check-live" data-testid="tour-check-live">{live.line}</div>}
               </div>
             ) : (
               // ONE row for every suite this step ran - see `checkedAll`. Two rows saying
@@ -521,6 +529,24 @@ export default function TourCard({ onOpen, onFinish, sounds, paneAlive }: TourCa
             `margin-right: auto`, which pushed the four buttons into a wrapped, uneven
             two-line block whose shape changed with every step (Robert, 2026-09-04:
             "buttons squished not aligned"). */}
+        {/* A look reading only ever speaks when it FAILS. A passing one - `the ring is on
+            a 351x28 control, with a live pane behind it` - is the card reporting its own
+            measurements to the person it is measuring for (Robert 2026-09-04: "dont need
+            looked at it..."), so it is silent, and the guard still fires when the ring
+            lands on nothing. */}
+        {look && !look.ok && (
+          <div className="tour-look bad" data-testid="tour-look">
+            <span className="tour-check-mark">✗</span>
+            <span>{look.says}</span>
+          </div>
+        )}
+        {/* WHAT THE SUITE IS DOING THIS SECOND, at the very bottom. It is the fastest
+            moving thing on the card and it was sitting in the middle, moving every word
+            under it (Robert 2026-09-04: "the realtime info move it below everything
+            else in the card"). */}
+        {check?.state === 'running' && live && (
+          <div className="tour-check-live" data-testid="tour-check-live">{live.line}</div>
+        )}
         <label className="tour-step-done">
           <input type="checkbox" data-testid="tour-step-done" checked={!!doneMap[key]} disabled={!!doneMap[key]} onChange={markDone} />
           Done with this step

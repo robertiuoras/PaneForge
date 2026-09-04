@@ -2250,170 +2250,6 @@ body.sizing * { user-select: none !important; }
 }
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
 
-/* ---- clipboard shelf (bottom-left, see RecentsFlyout) ---- */
-.shelf {
-  position: fixed; bottom: 14px; left: 14px; z-index: 35;
-  width: 320px; max-height: 62vh; display: flex; flex-direction: column;
-  background: var(--surface-3); border: 1px solid var(--line-strong);
-  border-radius: var(--r-lg); box-shadow: var(--shadow);
-  animation: rise var(--fast);
-  /* Peeking over a pane, not part of it: dim until the mouse arrives, so a shelf that
-     opened by itself while you were reading is not the brightest thing on screen. */
-  opacity: 0.93;
-}
-.shelf:hover, .shelf.pinned { opacity: 1; }
-/* Dragging must not leave a trail of selected text behind it, and the shelf should not
-   animate its own arrival on every pointer move. */
-.shelf.dragging { opacity: 1; user-select: none; animation: none; cursor: grabbing; }
-.shelf-head {
-  display: flex; align-items: center; gap: 8px;
-  padding: 7px 8px 7px 9px; border-bottom: 1px solid var(--line);
-  font-size: 11.5px; cursor: grab; touch-action: none;
-}
-.shelf.dragging .shelf-head { cursor: grabbing; }
-.shelf-grip { color: var(--muted); font-size: 12px; line-height: 1; letter-spacing: -1px; }
-.shelf-empty { padding: 12px 11px; color: var(--muted); font-size: 11px; line-height: 1.45; }
-.shelf-head .hint { margin-left: auto; font-size: 10px; }
-.shelf-head .spacer { flex: 1; }
-/* How many things are saved, always on the head - the one number the old strip never
-   said. tabular-nums so it does not wobble as copies land. */
-.shelf-count {
-  padding: 0 7px; border-radius: 999px; background: var(--accent-dim);
-  border: 1px solid var(--line); color: var(--text);
-  font-size: 10px; line-height: 16px; font-variant-numeric: tabular-nums;
-}
-/* One tab per kind of thing, counts on each - the same split the floating overlay draws. */
-.shelf-tabs { display: flex; gap: 4px; padding: 7px 8px 0; flex-wrap: wrap; }
-.shelf-tab {
-  display: inline-flex; align-items: center; gap: 4px;
-  padding: 2px 8px; border-radius: 999px; cursor: pointer;
-  background: transparent; border: 1px solid var(--line); color: var(--muted);
-  font-size: 10.5px;
-}
-.shelf-tab:hover { border-color: var(--line-strong); color: var(--text); }
-.shelf-tab.on { border-color: var(--accent); background: var(--accent-dim); color: var(--text); }
-.shelf-tab:disabled { opacity: 0.4; cursor: default; }
-.shelf-tab-n { font-size: 9.5px; font-variant-numeric: tabular-nums; }
-.shelf-search {
-  display: flex; align-items: center; gap: 7px;
-  padding: 7px 8px 0;
-}
-.shelf-search .search { flex: 1; min-width: 0; font-size: 11.5px; padding: 5px 7px; }
-.shelf-search .hint { font-size: 10px; white-space: nowrap; }
-.shelf-edit { padding: 7px 8px 0; display: flex; flex-direction: column; gap: 6px; }
-.shelf-edit textarea { width: 100%; font-size: 11.5px; line-height: 1.45; }
-.shelf-edit-row { display: flex; align-items: center; gap: 7px; }
-.shelf-edit-row .hint { margin-right: auto; font-size: 10px; }
-.shelf-items { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 6px; display: flex; flex-direction: column; gap: 5px; }
-/* A row plus, sometimes, its unfolded body. */
-.shelf-row { display: flex; flex-direction: column; gap: 4px; }
-/* The unfold chevron: always drawn, because "there is more of this" is the fact the
-   two-line clamp hides. */
-.shelf-expand {
-  flex: none; align-self: center; padding: 1px 4px; border-radius: 4px;
-  color: var(--muted); font-size: 10px; line-height: 1.3;
-}
-.shelf-expand:hover { color: var(--text); background: #ffffff12; }
-/* The whole clip: full text in a scrollable block, the full-size image or the playable
-   clip via stash:// - never the 76px thumb the row draws. */
-.shelf-full {
-  margin: 0 2px; padding: 6px; border: 1px solid var(--line); border-radius: var(--r);
-  background: #00000026;
-}
-.shelf-full pre {
-  margin: 0; max-height: 220px; overflow: auto;
-  font-family: var(--mono, ui-monospace, monospace); font-size: 11px; line-height: 1.4;
-  white-space: pre-wrap; word-break: break-word; color: var(--text);
-}
-.shelf-full img, .shelf-full video {
-  display: block; max-width: 100%; max-height: 260px; margin: 0 auto; border-radius: 4px;
-}
-/* The resize grip - drawn on the corner that can actually move: top-right while the
-   shelf is anchored to its default bottom-left corner, bottom-right once it has been
-   dragged somewhere (top-left anchored). */
-.shelf-resize {
-  position: absolute; width: 16px; height: 16px; z-index: 2; opacity: 0.55; touch-action: none;
-}
-.shelf-resize:hover { opacity: 1; }
-.shelf-resize.tr {
-  top: 0; right: 0; cursor: nesw-resize;
-  background: linear-gradient(45deg, transparent 50%, var(--line-strong) 50%, var(--line-strong) 60%, transparent 60%, transparent 75%, var(--line-strong) 75%, var(--line-strong) 85%, transparent 85%);
-  border-top-right-radius: var(--r-lg);
-}
-.shelf-resize.br {
-  bottom: 0; right: 0; cursor: nwse-resize;
-  background: linear-gradient(-45deg, transparent 50%, var(--line-strong) 50%, var(--line-strong) 60%, transparent 60%, transparent 75%, var(--line-strong) 75%, var(--line-strong) 85%, transparent 85%);
-  border-bottom-right-radius: var(--r-lg);
-}
-/* The row Enter would take. An outline rather than a fill: the row under the pointer is
-   already lit, and two rows lit the same way is worse than none. */
-.shelf-item.on { border-color: var(--accent); background: var(--accent-dim); }
-.shelf-item {
-  position: relative; display: flex; align-items: center; gap: 9px;
-  width: 100%; padding: 7px 8px; cursor: pointer; text-align: left;
-  background: #ffffff07; border: 1px solid var(--line); border-radius: var(--r);
-  color: var(--text); font-size: 11.5px;
-  transition: background var(--fast), border-color var(--fast);
-}
-.shelf-item:hover { background: #ffffff12; border-color: var(--line-strong); }
-.shelf-item.image { align-items: flex-start; }
-.shelf-item img {
-  width: 76px; height: 48px; object-fit: cover; flex: none;
-  border-radius: 4px; border: 1px solid var(--line);
-  /* The tile is the drag handle, and a drag that starts on an image must not be the
-     browser's own image drag. */
-  -webkit-user-drag: none;
-}
-/* A stashed file: a glyph plate the drag starts from, then the name. No thumbnail here -
-   the in-window shelf is the one you use with the app in front of you, where the name is
-   what you are looking for. The floating overlay draws a video's own frame instead. */
-.shelf-item.file { align-items: center; }
-.shelf-file { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
-.shelf-file-glyph {
-  display: grid; place-items: center; width: 34px; height: 30px; flex: none;
-  border-radius: 4px; border: 1px solid var(--line); background: #ffffff0a;
-  color: var(--muted); font-size: 13px;
-}
-/* A file drag is hovering: the shelf takes drops, which is not otherwise guessable. */
-.shelf.over {
-  opacity: 1;
-  border-color: var(--accent, #6ab7ff);
-  box-shadow: 0 0 0 1px var(--accent-dim, #6ab7ff40), 0 14px 40px #00000059;
-}
-.shelf-text {
-  flex: 1; min-width: 0; color: var(--text);
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-  font-family: var(--mono, ui-monospace, monospace); font-size: 11px; line-height: 1.35;
-  word-break: break-word; white-space: pre-wrap;
-}
-.shelf-meta {
-  display: flex; flex-direction: column; align-items: flex-end; gap: 2px;
-  margin-left: auto; flex: none; color: var(--muted); font-size: 9.5px;
-  font-variant-numeric: tabular-nums;
-}
-.shelf-copy {
-  position: absolute; right: 7px; bottom: 5px; opacity: 0;
-  padding: 1px 5px; border-radius: 4px; background: var(--surface-3);
-  border: 1px solid var(--line-strong); color: var(--muted); font-size: 9.5px;
-  transition: opacity var(--fast);
-}
-.shelf-item:hover .shelf-copy { opacity: 1; }
-.shelf-copy:hover { color: var(--text); }
-/* Forget one line. Sits above the copy button, in the same hidden-until-hover strip:
-   a password pasted by accident has to be removable without clearing the lot. */
-.shelf-forget {
-  position: absolute; right: 7px; top: 5px; opacity: 0;
-  padding: 0 4px; border-radius: 4px; background: var(--surface-3);
-  border: 1px solid var(--line-strong); color: var(--muted); font-size: 9.5px;
-  transition: opacity var(--fast);
-}
-.shelf-item:hover .shelf-forget { opacity: 1; }
-.shelf-forget:hover { color: var(--danger, #ff6b6b); }
-.shelf-foot {
-  display: flex; align-items: center; gap: 8px; justify-content: space-between;
-  padding: 6px 8px 7px 11px; border-top: 1px solid var(--line);
-}
-
 /* ---- agent logos ---- */
 .agent-logo { display: inline-flex; align-items: center; justify-content: center; flex: none; }
 .agent-logo.tile { border-radius: 7px; padding: 4px; box-sizing: content-box; }
@@ -3254,7 +3090,21 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
 .tour-wait { color: var(--accent); font-size: 12px; line-height: 1.4; }
 .tour-derived { color: var(--muted); font-size: 11.5px; font-style: italic; }
 /* Its own line above the buttons, never in among them. */
-.tour-step-done { display: flex; align-items: center; gap: 6px; color: var(--text); font-size: 12px; flex-shrink: 0; }
+.tour-step-done { display: flex; align-items: center; gap: 8px; color: var(--text); font-size: 12px; flex-shrink: 0; }
+/* A TICK YOU CAN SEE FROM ACROSS THE DESK. The browser default is a 13px box in the
+   window's own grey, and on this card it was impossible to tell ticked from unticked
+   (Robert 2026-09-04: "make the tick box easier to see maybe blue i cant see if ticked or
+   not"). `accent-color` paints the checked box in one property and leaves the native
+   control - and its keyboard behaviour - alone. Blue rather than the theme accent on
+   purpose: the accent is the ring, the countdown and the pane borders, and a tick that
+   wore it would be one more orange thing. */
+.tour-step-done input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  accent-color: #3d8bfd;
+  cursor: pointer;
+}
+.tour-step-done input[type='checkbox']:disabled { cursor: default; opacity: 1; }
 /* Done or dismissed: the tour folds to a pill in the same corner, never gone. */
 .tour-pill {
   background: var(--surface-3); color: var(--text); border: 1px solid var(--line-strong);

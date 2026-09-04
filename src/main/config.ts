@@ -193,21 +193,6 @@ function defaults(): Config {
     hiddenBlurbs: [],
     discordPresence: true,
     discordStyle: { ...DEFAULT_DISCORD_STYLE },
-    clipboardShelf: true,
-    clipboardOverlay: true,
-    stashSummon: true,
-    // 0: a copy lands on the Stash silently. The panel popping open for every copy was
-    // the single most repeated complaint about it - "still really annoying" - and the
-    // panel can be left open (pinned) by anyone who wants to watch copies arrive.
-    stashPeekMs: 0,
-    stashAutoCloseMs: 5000,
-    stashMaxItems: 200,
-    stashMaxImages: 24,
-    stashFileHours: 24,
-    stashMaxFileMb: 512,
-    stashDeny: '',
-    stashPos: null,
-    stashSize: null,
     grid: false,
     gridSizes: {},
     gridLayout: 'tiled',

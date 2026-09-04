@@ -656,7 +656,7 @@ ok(!server.running, 'the gate test server stopped cleanly')
     'app:profile', 'agents:locate', 'update:state', 'update:check', 'game:status',
     'app:visibleNow', 'game:manual', 'restore:pending', 'board:get', 'board:tasks',
     'board:memory', 'history:list', 'history:search', 'history:read', 'recents:list',
-    'recents:search', 'recents:text', 'stash:add', 'stash:pick', 'phone:state',
+    'phone:state',
     'remote:state', 'remote:rename', 'remote:ask', 'remote:cancelAsk', 'remote:scan',
     'remote:watch', 'remote:projects', 'remote:agents', 'remote:handoffPending',
     'prompt:prior', 'improve:status',
@@ -709,7 +709,7 @@ ok(!server.running, 'the gate test server stopped cleanly')
     'activity:seen',
     'sessions:reorder', 'sessions:attention-clear', 'pty:resize', 'pty:return', 'pty:visible',
     'pty:redraw', 'sessions:busy', 'clipboard:write', 'recents:edit', 'recents:copy',
-    'recents:drag', 'recents:remove', 'recents:clear', 'recents:inWindow', 'shelf:toggle',
+    
     'prompt:used', 'improve:cancel', 'research:cancel', 'improve:record', 'sessions:bell',
     // Reviewed 2026-08-25: one line in this desk's own reclaim log saying why a pane was
     // or was not closed. It starts nothing and answers nothing - the worst a phone reaches

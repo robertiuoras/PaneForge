@@ -10,7 +10,6 @@ import type {
   HistoryEntry,
   Preset,
   Project,
-  RecentItem,
   PhoneState,
   RemotePaneInfo,
   RemoteState,
@@ -143,7 +142,6 @@ import { applyTheme, terminalTheme } from './theme'
 import { keyLabel, modKey, isMac } from './platform'
 import MicIcon from './components/MicIcon'
 import NewSessionDialog from './components/NewSessionDialog'
-import RecentsFlyout from './components/RecentsFlyout'
 import RestoreDialog from './components/RestoreDialog'
 import { measureRefreshRate } from './refreshRate'
 import SettingsDialog from './components/SettingsDialog'
@@ -701,9 +699,6 @@ export default function App(): JSX.Element {
   }, [config])
   const [picking, setPicking] = useState(false)
   const [settings, setSettings] = useState(false)
-  // Which page Settings should open on, when a button somewhere IS about one page - the
-  // Stash panel's gear. null is "wherever it opens by default".
-  const [settingsFrom, setSettingsFrom] = useState<'stash' | null>(null)
   const [help, setHelp] = useState(false)
   const [palette, setPalette] = useState(false)
   /** the folder whose changes are being read, and how it was opened */
@@ -839,29 +834,6 @@ export default function App(): JSX.Element {
   // draw Chromium's system box, which looks nothing like the app and blocks the
   // renderer while it is open.
   const [ask, setAsk] = useState<AskState | null>(null)
-  // The clipboard shelf: what you last copied, and whether its corner panel is open
-  // because you asked (pinned) or because something just landed (peek).
-  const [recents, setRecents] = useState<RecentItem[]>([])
-  // The overlay hands back an id, and the handler that resolves it must not be rebuilt
-  // (and re-subscribed) every time something new is copied.
-  const recentsRef = useRef<RecentItem[]>([])
-  recentsRef.current = recents
-  // Remembered across restarts: "leave the Stash on screen" is a state somebody chose,
-  // and an app restart (most often the updater's) must not quietly undo it.
-  const [shelfPinned, setShelfPinned] = useState(() => {
-    try {
-      return localStorage.getItem('pf.shelfPinned') === '1'
-    } catch {
-      return false
-    }
-  })
-  useEffect(() => {
-    try {
-      localStorage.setItem('pf.shelfPinned', shelfPinned ? '1' : '0')
-    } catch {
-      /* the shelf just forgets it was open */
-    }
-  }, [shelfPinned])
   /**
    * How wide the sidebar is, in pixels, dragged by the grip on its right edge.
    *
@@ -929,11 +901,6 @@ export default function App(): JSX.Element {
   }
   /** Every rebindable chord, defaults with the saved overrides on top. */
   const keymap = useMemo(() => resolveKeymap(config?.keys), [config?.keys])
-  const [shelfPeek, setShelfPeek] = useState(false)
-  // The in-window Stash open for a search, which is the one thing the floating overlay
-  // cannot do for itself: it is unfocusable by design, so there is no keyboard in it.
-  const [shelfSearching, setShelfSearching] = useState(false)
-  const peekTimer = useRef<number>()
   const activeRef = useRef<string | null>(null)
   activeRef.current = activeId
   // Read from inside listeners that outlive a render - the draft watcher below fires on
@@ -980,7 +947,7 @@ export default function App(): JSX.Element {
   sessionsRef.current = sessions
   /**
    * Last input anywhere in the app that did NOT go into a pane's pty - a click, a drag,
-   * the shelf, a settings toggle. Only the idle-quit clock reads it; without it, reading
+   * a settings toggle. Only the idle-quit clock reads it; without it, reading
    * the fleet board or watching a build scroll past looks identical to being out.
    */
   const lastAppInputRef = useRef<number>(Date.now())
@@ -1574,101 +1541,6 @@ export default function App(): JSX.Element {
   // were typing. It says so in the corner now; the stack is in paneforge-errors.log.
   useEffect(() => api.onAppError((message) => flash(`Something went wrong: ${message}`)), [flash])
 
-  /**
-   * The Stash. Anything copied - in this app or any other - shows itself in the bottom-left
-   * corner for as long as Settings says, and stays on the Stash for later. A peek of 0 is
-   * "never open by itself": the list is still filling, it just stops interrupting.
-   */
-  const peekMs = config?.stashPeekMs ?? 0
-  /**
-   * There is one Stash, not two. While the floating window is on it owns all of this -
-   * the same copy showing up both there and in an in-window panel was the app talking
-   * over itself. The in-window shelf is what you get when the floating one is turned off.
-   */
-  const shelfInWindow = !!config?.clipboardShelf && !config?.clipboardOverlay
-  useEffect(() => {
-    if (config?.clipboardShelf === false) {
-      setRecents([])
-      setShelfPinned(false)
-      return
-    }
-    api.listRecents().then(setRecents)
-    return api.onRecents((items) => {
-      setRecents(items)
-      if (!items.length || peekMs <= 0 || !shelfInWindow) return
-      // A copy this app made itself is not an event worth interrupting for. Selecting
-      // text in a pane copies it (copy-on-select is the terminal's whole contract), so
-      // reading a log used to make the Stash announce itself every few seconds - the
-      // "it keeps popping up randomly" this fixes. It is on the Stash either way; the
-      // list simply does not open for it. See `own` in main/recents.ts.
-      if (items[0]?.own) return
-      setShelfPeek(true)
-      window.clearTimeout(peekTimer.current)
-      peekTimer.current = window.setTimeout(() => setShelfPeek(false), peekMs)
-    })
-  }, [config?.clipboardShelf, peekMs, shelfInWindow])
-
-  /**
-   * The other half of "one Stash": the overlay floats above this window, so while a list
-   * is open HERE the overlay has to stay a pill. Main is told rather than asked, because
-   * the overlay is a second BrowserWindow and cannot see this one's state.
-   *
-   * The peek is deliberately not counted - it is a strip that shows itself for a few
-   * seconds and puts itself away, and gagging the overlay every time something is copied
-   * would be the opposite of the point.
-   */
-  const stashOpenHere = shelfPinned || shelfSearching
-  useEffect(() => {
-    api.stashInWindow(stashOpenHere)
-  }, [stashOpenHere])
-
-  /**
-   * Put a shelf item into the focused pane. Text goes in as text; an image goes in as the
-   * path of the PNG the app saved, because a path is the only form of an image a CLI agent
-   * can read. Nothing is sent - it lands at the prompt so it can be described first.
-   */
-  const sendRecent = useCallback(
-    (it: RecentItem) => {
-      const id = activeRef.current
-      if (!id) return flash('Nothing focused - open a pane first.')
-      if (it.kind === 'image' || it.kind === 'file') {
-        const path = it.path ?? ''
-        if (!path) return
-        api.write(id, (/[\s"']/.test(path) ? `"${path}"` : path) + ' ')
-        flash(it.kind === 'file' ? 'File path typed into the pane.' : 'Image path typed into the pane.')
-      } else {
-        // The list arrives without the clip bodies (383KB of a full history, none of it
-        // ever drawn), so the one entry being typed is fetched here. `it.text` is still
-        // honoured for anything that already has it.
-        void Promise.resolve(it.text || api.recentText(it.id)).then((text) => {
-          if (!text) return
-          // As a paste, not as typing. Every agent here runs a TUI with bracketed paste on,
-          // and a stash entry is usually several lines: written to the pty they arrive as
-          // Enter after Enter and the first line is submitted on its own. The same route
-          // dictation takes, for the same reason.
-          const insert = paneInsert.get(id)
-          if (insert) insert(text)
-          else api.write(id, text)
-        })
-      }
-      setShelfPeek(false)
-    },
-    [flash]
-  )
-
-  // The floating overlay can only ask by id: it is a separate window with no idea which
-  // pane is focused, and the focused pane is a fact only this one has.
-  useEffect(() => {
-    return api.onRecentToPane((id) => {
-      const it = recentsRef.current.find((r) => r.id === id)
-      if (it) sendRecent(it)
-    })
-  }, [sendRecent])
-
-  // The overlay's magnifier. Main has already raised this window by the time this lands -
-  // a press on that button is a person asking for the app, which is the one kind of
-  // reason allowed to take the screen.
-  useEffect(() => api.onStashSearch(() => setShelfSearching(true)), [])
 
   /**
    * Dictation goes into the pane whose mic was clicked - the hotkey means the focused one -
@@ -3116,23 +2988,6 @@ export default function App(): JSX.Element {
           setPalette(false)
           return
         }
-        // The shelf is the lightest layer on screen, so Escape closes it before it
-        // starts closing dialogs underneath.
-        if (shelfPinned || shelfSearching) {
-          // A search in progress owns the first Escape - it empties the box, and the
-          // second one closes the shelf. This test is HERE rather than a stopPropagation
-          // in the input, because this listener is a capture-phase one on the window and
-          // so runs before the field ever sees the key: measured against a real window,
-          // the shelf closed and the query survived, which is both halves backwards.
-          const el = document.activeElement as HTMLInputElement | null
-          if (el?.closest('.shelf-search') && el.value) return
-          // Same reason, for the editor: Escape there throws the correction away and
-          // leaves the shelf up, which is what somebody who mistyped one line meant.
-          if (el?.closest('.shelf-edit')) return
-          setShelfPinned(false)
-          setShelfSearching(false)
-          return
-        }
         // Changes opened FROM the fleet list sit on top of it, so Escape closes the diff
         // and leaves you in the list you picked that pane out of.
         if (diff) {
@@ -3216,22 +3071,6 @@ export default function App(): JSX.Element {
         const s = sessions.find((x) => x.id === activeId)
         if (s) setBoard(s.cwd)
         else flash('Open a pane first - the board belongs to its folder.')
-      } else if (hit('stash')) {
-        // Claimed here, and stopped from going any further: the pane's own handler
-        // treats every Ctrl+V as a paste, so without stopPropagation this would open
-        // the shelf and paste the clipboard into the agent at the same time.
-        e.preventDefault()
-        e.stopPropagation()
-        // One Stash: while the floating one is on, this key opens that, not a second
-        // list drawn inside the window.
-        if (shelfInWindow) {
-          // Open by ANY hold - pinned or a search - and the key means hide. Flipping
-          // only the pin left a searching shelf on screen, which read as a dead key.
-          if (shelfPinned || shelfSearching) {
-            setShelfPinned(false)
-            setShelfSearching(false)
-          } else setShelfPinned(true)
-        } else api.toggleStash()
       } else if (hit('devices')) {
         e.preventDefault()
         setDevices(true)
@@ -3360,9 +3199,6 @@ export default function App(): JSX.Element {
     // handler reads it and must be rebuilt when it changes.
     diff,
     fixUi,
-    shelfPinned,
-    shelfSearching,
-    shelfInWindow,
     cycleLayout,
     toggleZoom,
     movePane,
@@ -3538,14 +3374,6 @@ export default function App(): JSX.Element {
           : 'every keystroke, including Ctrl+C and arrows, goes to all of them',
         keys: 'Ctrl Shift Y',
         run: () => toggleSyncTyping()
-      },
-      {
-        id: 'shelf',
-        group: 'Actions',
-        title: 'Stash: copied text, screenshots and dropped files',
-        hint: 'click one into the focused pane',
-        keys: 'Ctrl Shift V',
-        run: () => (shelfInWindow ? setShelfPinned((p) => !p) : api.toggleStash())
       },
       {
         id: 'swarm',
@@ -6351,11 +6179,9 @@ export default function App(): JSX.Element {
         <SettingsDialog
           config={config}
           agents={agents}
-          initial={settingsFrom ?? undefined}
           onChange={patchConfig}
           onClose={() => {
             setSettings(false)
-            setSettingsFrom(null)
           }}
         />
       )}
@@ -6857,33 +6683,6 @@ export default function App(): JSX.Element {
           onCancel={(checked) => {
             setAsk(null)
             ask.onCancel?.(checked)
-          }}
-        />
-      )}
-      {(shelfInWindow || shelfSearching) && (
-        <RecentsFlyout
-          // Only drawn when the floating Stash is off, so a copy never appears in two
-          // places at once. The whole lean list - the panel has tabs, search and a
-          // scrollbar now, and "the last 12" was why it could never show everything.
-          //
-          // The exception is a search: the overlay is `focusable: false` and cannot be
-          // typed into at all, so its magnifier hands the job here. That is a deliberate
-          // press, not a peek, and it closes with the search it opened for.
-          items={recents}
-          pinned={shelfPinned || shelfSearching}
-          searching={shelfSearching}
-          peek={shelfPeek}
-          onClose={() => {
-            setShelfPinned(false)
-            setShelfSearching(false)
-          }}
-          onSend={(it) => {
-            sendRecent(it)
-            setShelfSearching(false)
-          }}
-          onSettings={() => {
-            setSettingsFrom('stash')
-            setSettings(true)
           }}
         />
       )}

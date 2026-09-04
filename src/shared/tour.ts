@@ -168,7 +168,7 @@ function componentWords(name: string): string {
 /** Suites that open a real window - listed in CLAUDE.md under "Needs a window" - keyed by
  * the script's stem, valued by the npm name a person types. */
 export const NEEDS_WINDOW: ReadonlyMap<string, string> = new Map([
-  ['view', 'test:view'], ['stash-drag', 'test:stashdrag'], ['stash-activate', 'test:activate'],
+  ['view', 'test:view'],
   ['restore-fix', 'test:restorefix'], ['ask-click', 'test:askclick'], ['ask-render', 'test:askrender'],
   ['devices-fit', 'test:devicesfit'], ['phone-view', 'test:phoneview'], ['contrast', 'test:contrast']
 ])
@@ -276,15 +276,15 @@ export function plainWords(text: string, cap = 160): string {
 export function howToCheck(step: Pick<TourStep, 'open' | 'checks'>): string {
   switch (step.open) {
     case 'newSession':
-      return 'The New session window is open now - look there.'
+      return 'The New session window is open - a ring is showing what changed.'
     case 'settings':
-      return 'Settings is open now - look there.'
+      return 'Settings is open - a ring is showing what changed.'
     case 'sidebarHidden':
-      return 'The list is hidden now - the ringed button brings it back.'
+      return 'The list is hidden - the ringed button brings it back.'
     case 'workspaces':
       return 'Look at the list on the left.'
     case 'pane':
-      return 'A session is open now - the ring is around what changed.'
+      return 'A ring is showing the changed area.'
     default:
       return step.checks.length
         ? 'Nothing to click - the app checks this one below.'

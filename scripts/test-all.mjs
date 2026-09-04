@@ -15,7 +15,7 @@
 //   test:caffeinate (SIGKILLs real parent processes to prove caffeinate -w cleans up),
 //   test:strays (~25s of real orphan processes), test:lanes,
 //   test:remote, test:updater   - slow, or they spawn real processes and repositories
-//   test:view, test:stashdrag, test:activate                   - need a real window
+//   test:view                                                  - needs a real window
 //   test:discordbrand, mac-update-test --live                   - need the network
 //
 //   node scripts/test-all.mjs             every test below
@@ -110,9 +110,7 @@ const TESTS = [
   ['glass', 'glass-test.mjs'],
   ['phonetouch', 'phone-touch-test.mjs'],
   ['phonetop', 'phone-top-test.mjs'],
-  ['stashsummon', 'stash-summon-test.mjs'],
   ['theme', 'theme-test.mjs'],
-  ['stashtheme', 'stash-theme-test.mjs'],
   ['conceal', 'conceal-test.mjs'],
   ['place', 'place-test.mjs'],
   // Was on disk and in no list, so it went red at two renames and nobody heard: it still
@@ -210,8 +208,6 @@ const TESTS = [
   ['sidehidden', 'side-hidden-test.mjs'],
   ['pickrelease', 'pickrelease-test.mjs'],
   ['promote', 'promote-test.mjs'],
-  ['stash', 'stash-test.mjs'],
-  ['onestash', 'one-stash-test.mjs'],
   ['phone', 'phone-test.mjs'],
   ['passkey', 'passkey-test.mjs'],
   ['panesize', 'pane-size-test.mjs'],

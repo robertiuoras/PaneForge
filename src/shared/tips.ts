@@ -70,7 +70,6 @@ export const TIPS: Tip[] = [
   { id: 'restore', say: 'Closing a pane keeps its conversation AND what was on its screen. History reopens it exactly where it was.' },
   { id: 'attach', say: 'Drop a screenshot on a pane, or paste one - it goes to the agent as a picture, not as a file path.' },
   { id: 'voice', say: 'Ctrl/Cmd Shift Space dictates into the focused pane. Nothing to install.' },
-  { id: 'stash', say: 'The Stash keeps everything you copy. It floats over any app and pastes straight back into a pane.' },
   { id: 'settings-search', say: 'Type what a setting DOES into the Settings search - "close a pane nobody touched" finds the switch, not just the page.' },
   { id: 'lanes', say: 'Two chats on one repo get their own checkouts. The lane chip on a card says which copy it is and what that copy is doing.' },
   { id: 'grid', say: 'The grid shows several panes at once. Ctrl and a number jumps straight to a pane wherever you are.' },

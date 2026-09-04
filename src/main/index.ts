@@ -50,7 +50,7 @@ import { invalidateAgents, listAgents, specFor } from './agents'
 import { gitInfo } from './git'
 import { projectRoot } from './projectRoot'
 import { diffFiles, diffPatch } from './diff'
-import type { ClientNamed, DiffScope, PhoneState, ShelfEdge } from '../shared/types'
+import type { ClientNamed, DiffScope, PhoneState } from '../shared/types'
 import { detectLane, laneExtras, resolveLane } from './lanes'
 import { laneWork, mergeLaneBack, repoOf, returnToBase, sweepLanes, trackTyped } from './laneWork'
 import { attachLaneOwners, laneBoards, laneReclaim, laneRetry, markGone } from './laneBoard'
@@ -142,54 +142,6 @@ import {
   setDeskHold,
   startDeskAutosave
 } from './restore'
-import {
-  addRecentFiles,
-  clearRecents,
-  configureRecents,
-  copyRecent,
-  editRecent,
-  flushRecents,
-  getRecent,
-  listRecents,
-  noteOwnCopy,
-  pinRecent,
-  recentPath,
-  recentText,
-  recentsDir,
-  refreshRecents,
-  removeRecent,
-  searchRecents,
-  startRecents,
-  stopRecents
-} from './recents'
-import {
-  beginShelfDrag,
-  beginShelfResize,
-  closeShelfWindow,
-  dropShelfDrag,
-  endShelfDrag,
-  endShelfResize,
-  liftShelfDrag,
-  moveShelfDrag,
-  moveShelfResize,
-  openShelfWindow,
-  refreshShelfSummon,
-  shownShelfDrag,
-  setShelfHidden,
-  setShelfQuiet,
-  placeShelf,
-  setShelfExpanded,
-  setStashInWindow,
-  setShelfTall,
-  noteShelfTouch,
-  shelfDraggedAt,
-  shelfDragging,
-  shelfTouchedAt,
-  shelfWindowOpen,
-  toggleShelf,
-  updateShelfConfig,
-  updateShelfItems
-} from './shelfWindow'
 import { ACTIVATION_SETTLE_MS, revealOnActivation } from '../shared/activation'
 import { OFFLOAD_ASK_MS, placeNewPane, preferRemoteOf, REMOTE_START_ACK_MS } from '../shared/offloadFirst'
 import { logActivation, logOffload, logReclaim, logFix, logHandoff } from './activationLog'
@@ -228,7 +180,6 @@ import type { UsageReport } from '../shared/usage'
 import { loadPerCore, readPressure, totalMb, watchPressure } from './memory'
 import { backJobOf, trackUsage } from './usage'
 import { agentsMidTurn, deskBusy, decideInstall, shouldLogHold } from '../shared/updateHold'
-import { STASH_CONFIG_KEYS } from '../shared/types'
 import type {
   Config,
   GameModeStatus,
@@ -240,7 +191,6 @@ import type {
   RestorePane,
   Session,
   StartSessionRequest,
-  StashConfig,
   SwarmRequest,
   TaskItem,
   TurnClock,
@@ -420,10 +370,6 @@ function createWindow(): void {
   )
   const cfg = getConfig()
   const mode = startMode()
-  // A copy that opens minimized keeps its clipboard overlay off the screen too. The
-  // main window has always been careful here; the Stash was the one part of the app a
-  // test launch still painted over your work. See setShelfQuiet.
-  setShelfQuiet(mode === 'minimized')
   // maximize() shows the window as a side effect, and on Windows that show *activates* it:
   // it ends up as a ShowWindow(SW_MAXIMIZE), the exact focus steal showInactive exists to
   // avoid. So a launch that must not take the keyboard (the test copy an agent starts, an
@@ -586,12 +532,8 @@ function createWindow(): void {
         }
       })
   })
-  // Coming back to the window is when the image you copied in another app matters, and
-  // reading the clipboard on focus is what keeps the shelf's polling cheap the rest of
-  // the time. See recents.ts.
   win.on('focus', () => {
     win?.flashFrame(false)
-    refreshRecents()
     // A borrow that was never handed back is invisible until somebody drags the window,
     // because the desk only sends a resize when ITS OWN measurement moves - and it never
     // does: xterm still holds 157x57 while the pty sits at the phone's 120x30, so `fit()`
@@ -608,10 +550,6 @@ function createWindow(): void {
     void checkGameNow().catch(() => undefined)
   })
   win.on('blur', () => void checkGameNow().catch(() => undefined))
-  // The clipboard overlay lives in the corner of the display this window is on, so it
-  // moves with it - to the second monitor, or back.
-  win.on('move', placeShelf)
-  win.on('restore', placeShelf)
 
   /**
    * Tell the page whether anyone can see it.
@@ -690,11 +628,6 @@ function createWindow(): void {
     win.once('focus', keepAlive)
     win.once('restore', keepAlive)
   }
-  // Same signal, for the overlay: once a human has the window on screen, this is an
-  // app they are using and the Stash belongs on top again.
-  const wanted = (): void => setShelfQuiet(false)
-  win.once('focus', wanted)
-  win.once('restore', wanted)
   win.on('close', rememberBounds)
   // Without this the module keeps a destroyed BrowserWindow, and every later
   // `win?.` call throws "Object has been destroyed" instead of no-opping.
@@ -705,9 +638,6 @@ function createWindow(): void {
     // already no-ops on a dead window; this stops the pump holding the string and
     // waking a timer to deliver it to nobody.
     pump.discard()
-    // The overlay is a window too, so leaving it open would make `window-all-closed`
-    // never fire and the app would stay alive with nothing on screen but a pill.
-    closeShelfWindow()
   })
   // A renderer that wedges or dies used to be the end of the app: the main process, every
   // pty and the whole desk stayed healthy behind a window that could not be drawn in, and
@@ -1973,23 +1903,7 @@ ipcMain.handle('config:set', (_e, patch: Partial<Config>) => {
   }
   if (patch.voice !== undefined) applyVoiceHotkey(next)
   if (patch.gameMode !== undefined) refreshGameWatch(next)
-  if (patch.clipboardShelf !== undefined) applyClipboardShelf(next)
-  else if (patch.clipboardOverlay !== undefined) applyShelfOverlay(next)
-  if (patch.stashSummon !== undefined) refreshShelfSummon()
-  // The Stash caps apply to what is already on it, not only to the next thing added, so
-  // they go through even when the watcher itself was not touched.
-  if (
-    patch.stashMaxItems !== undefined ||
-    patch.stashMaxImages !== undefined ||
-    patch.stashFileHours !== undefined ||
-    patch.stashMaxFileMb !== undefined ||
-    patch.stashDeny !== undefined
-  ) {
-    applyStashCaps(next)
-  }
   send('config:changed', next)
-  // The overlay draws the same settings behind its gear, so it hears about them too.
-  updateShelfConfig(stashConfig(next))
   return next
 })
 /**
@@ -2712,10 +2626,6 @@ ipcMain.on('clipboard:write', (_e, text: string) => {
       if (clipboardFixtureActive()) writeFileSync(testClipboardFile!, text, 'utf8')
       return
     }
-    // Every copy that starts inside this app comes through here - copy-on-select in a
-    // pane most of all, which fires on a drag across two words. It is still stashed; it
-    // is only marked as ours so the Stash does not announce it. See `noteOwnCopy`.
-    noteOwnCopy(text)
     clipboard.writeText(text)
   }
 })
@@ -2822,7 +2732,7 @@ ipcMain.handle('pty:attachClipboard', (_e, id: string): Promise<AttachResult> =>
  * The text fixture beside it exists so a disposable dev copy can prove its clipboard path
  * without replacing the real user's clipboard, and an image write needs the same door for
  * the same reason - a test that hands a picture to an agent would otherwise throw away
- * whatever the person at the desk had copied, and land its own test image on their Stash.
+ * whatever the person at the desk had copied, and land its own test image on their clipboard.
  * A PNG beside the text file: same directory, same permission checks.
  */
 function testClipboardImageFile(): string | null {
@@ -2892,274 +2802,6 @@ function removeTestClipboard(): void {
     rmSync(testClipboardDir, { recursive: true, force: true })
   } catch {
     /* a test fixture that is already gone is clean enough */
-  }
-}
-
-// The clipboard shelf: the last things copied, one click from the focused pane.
-ipcMain.handle('recents:list', () => listRecents())
-// The clip bodies never ride along with the list (see `lean` in recents.ts): the window
-// asks for the one it is about to type.
-ipcMain.handle('recents:text', (_e, id: string) => recentText(id))
-// Searching happens here because the bodies are here: `lean()` strips the text out of
-// every list a window is handed, so a filter in a renderer could only ever match the
-// first 140 characters of a clip.
-ipcMain.handle('recents:search', (_e, q: string) => searchRecents(String(q ?? '')))
-ipcMain.on('recents:edit', (_e, id: string, text: string) => editRecent(id, String(text ?? '')))
-// The overlay cannot be typed into - it is `focusable: false`, which is the whole reason
-// clicking a row leaves your keyboard where it was - so its magnifier hands the job to
-// the window that CAN take a keyboard. `asked` is true because a click on that button is
-// a person asking for the app, which is the one thing allowed to take the screen.
-ipcMain.on('recents:openSearch', () => {
-  // And it puts the overlay away as it goes. Without this there are two Stashes on the
-  // screen at once - the overlay sits at the screen-saver level, one step above a normal
-  // topmost window, so the list it is still showing covers the searchable one it just
-  // asked the main window to open. One Stash, wherever it is being read from.
-  setShelfExpanded(false)
-  focusWindow(true)
-  send('recents:openSearch')
-})
-ipcMain.on('recents:copy', (_e, id: string) => copyRecent(id))
-ipcMain.on('recents:clear', () => clearRecents())
-ipcMain.on('recents:inWindow', (_e, open: boolean) => setStashInWindow(!!open))
-ipcMain.on('recents:remove', (_e, id: string) => removeRecent(id))
-ipcMain.on('recents:pin', (_e, id: string, on: boolean) => pinRecent(id, !!on))
-// The overlay floats over other apps and has no idea which pane is focused, so "send it
-// to the pane" is asked of the window that does know.
-//
-// Raising the window is opt-in. The overlay is deliberately unfocusable so a click can
-// leave the keyboard exactly where it was - clicking a line and then pressing Ctrl+V in
-// whatever you were already typing in is the reason it exists. Now that a plain click
-// sends to the pane, doing that AND dragging PaneForge to the front would take the
-// overlay's own point away from it. The pty does not care whether its window is in
-// front: the text lands either way.
-ipcMain.on('recents:toPane', (_e, id: string, focus = false) => {
-  if (!getRecent(id)) return
-  if (focus) focusWindow()
-  send('recents:toPane', id)
-})
-ipcMain.on('shelf:focusApp', () => focusWindow())
-ipcMain.on('shelf:touch', () => noteShelfTouch())
-ipcMain.on('shelf:setExpanded', (_e, open: boolean) => setShelfExpanded(!!open))
-ipcMain.on('shelf:setTall', (_e, tall: boolean) => setShelfTall(!!tall))
-// Dragged by its own header. The overlay cannot move its window itself, and a pointer
-// that leaves the window mid-drag stops sending it events, so it sends the screen point
-// and main does the arithmetic against where the drag started.
-ipcMain.on('shelf:dragStart', () => beginShelfDrag())
-ipcMain.handle('shelf:dragLift', () => liftShelfDrag())
-ipcMain.on('shelf:dragMove', (_e, dx: number, dy: number) => moveShelfDrag(dx, dy))
-ipcMain.on('shelf:dragShown', () => shownShelfDrag())
-ipcMain.handle('shelf:dragDrop', (_e, dx: number, dy: number) => dropShelfDrag(dx, dy))
-ipcMain.on('shelf:dragEnd', () => endShelfDrag())
-// Resized by its own edges, the same way it is moved: the page reports pointer travel,
-// main owns the bounds. Only the eight edges the renderer names are ever accepted.
-ipcMain.on('shelf:resizeStart', (_e, edge: string) => {
-  if (['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'].includes(edge))
-    beginShelfResize(edge as ShelfEdge)
-})
-ipcMain.on('shelf:resizeMove', (_e, dx: number, dy: number) =>
-  moveShelfResize(Number(dx) || 0, Number(dy) || 0)
-)
-ipcMain.on('shelf:resizeEnd', () => endShelfResize())
-
-/** Just the Stash's own knobs, which is all of the config the overlay ever sees. */
-function stashConfig(cfg: Config): StashConfig {
-  return {
-    stashSummon: cfg.stashSummon,
-    stashPeekMs: cfg.stashPeekMs,
-    stashAutoCloseMs: cfg.stashAutoCloseMs,
-    stashMaxItems: cfg.stashMaxItems,
-    stashMaxImages: cfg.stashMaxImages,
-    stashFileHours: cfg.stashFileHours,
-    stashMaxFileMb: cfg.stashMaxFileMb,
-    stashDeny: cfg.stashDeny,
-    clipboardOverlay: cfg.clipboardOverlay,
-    // The overlay derives its own colours from this, the same way every other surface
-    // does. It arrives on the same push as the knobs, so moving the accent slider
-    // recolours the floating Stash on the same frame as the window behind it.
-    theme: cfg.theme
-  }
-}
-
-ipcMain.handle('shelf:config', () => stashConfig(getConfig()))
-/**
- * The overlay's own settings panel. This window floats over every other app, so its
- * bridge writes through an allowlist rather than the whole config: a key that is not one
- * of the Stash's own is dropped here, not merged.
- */
-ipcMain.handle('shelf:setConfig', (_e, patch: Partial<StashConfig>) => {
-  const clean: Record<string, unknown> = {}
-  const raw = (patch ?? {}) as Record<string, unknown>
-  for (const k of STASH_CONFIG_KEYS) {
-    const v = raw[k]
-    if (k === 'clipboardOverlay' || k === 'stashSummon') {
-      if (typeof v === 'boolean') clean[k] = v
-    } else if (typeof v === 'number' && Number.isFinite(v) && v >= 0) {
-      clean[k] = v
-    }
-  }
-  const next = setConfig(clean as Partial<Config>)
-  applyStashCaps(next)
-  if (clean.clipboardOverlay !== undefined) applyShelfOverlay(next)
-  if (clean.stashSummon !== undefined) refreshShelfSummon()
-  // Settings is a different window looking at the same numbers; it must not go stale.
-  send('config:changed', next)
-  const out = stashConfig(next)
-  updateShelfConfig(out)
-  return out
-})
-// Files dropped on the Stash, or chosen in its picker. The renderer only ever sees paths
-// (webUtils in the preloads); the copying is main's, because it owns the folder.
-ipcMain.handle('stash:add', (_e, paths: string[]) =>
-  Array.isArray(paths) ? addRecentFiles(paths) : 0
-)
-/**
- * A drop that arrived as bytes rather than a path - an image dragged out of a browser
- * page, a file from an app that never touches the disk. The bytes are parked as a real
- * file (name sanitised, never trusted as a path) and stashed through the same door as
- * every other file, so the size cap and the file clock apply to it too.
- */
-ipcMain.handle('stash:addData', (_e, name: string, data: unknown) => {
-  const buf = data instanceof ArrayBuffer ? Buffer.from(data) : Buffer.isBuffer(data) ? data : null
-  if (!buf || !buf.length) return 0
-  const safe =
-    String(name ?? '')
-      .replace(/[\\/:*?"<>|]/g, '_')
-      .trim()
-      .slice(0, 120) || `dropped-${Date.now()}`
-  // Its own scratch directory, so the file inside keeps the name it arrived with - that
-  // basename is what the row shows and what a drag back out is called.
-  const dir = mkdtempSync(join(tmpdir(), 'pf-stash-'))
-  const tmp = join(dir, safe)
-  try {
-    writeFileSync(tmp, buf)
-    return addRecentFiles([tmp])
-  } catch {
-    return 0
-  } finally {
-    // addRecentFiles copies into the Stash's own folder; the parked original is litter.
-    try {
-      rmSync(dir, { recursive: true, force: true })
-    } catch {
-      /* a temp file left behind is only a temp file */
-    }
-  }
-})
-ipcMain.handle('stash:pick', async () => {
-  // A picker is a foreground dialog, which the app is not allowed to raise on its own -
-  // this one only ever runs from a click, so it is the user asking for it.
-  const r = await dialog.showOpenDialog({
-    title: 'Add to the Stash',
-    properties: ['openFile', 'multiSelections'],
-    buttonLabel: 'Add'
-  })
-  return r.canceled ? 0 : addRecentFiles(r.filePaths)
-})
-ipcMain.on('stash:reveal', () => openLocal(recentsDir(), 'stash:reveal'))
-// Ctrl+Shift+V from inside the app. There is one Stash, so this opens the floating one
-// rather than a second list in the window.
-ipcMain.on('shelf:toggle', () => toggleShelf())
-// Dragging a shelf item into another app entirely. The renderer cannot start an OS drag
-// with a real file in it - only the main process can, and only with a path it owns.
-ipcMain.on('recents:drag', async (e, id: string) => {
-  const file = recentPath(id)
-  if (!file) return
-  // A video or a zip has no bitmap to shrink, and startDrag with an empty icon throws,
-  // which would leave the row looking broken rather than undraggable. Ask the OS for the
-  // file's own shell icon and fall back to the app's.
-  let icon = nativeImage.createFromPath(file)
-  if (icon.isEmpty()) {
-    try {
-      icon = await app.getFileIcon(file, { size: 'normal' })
-    } catch {
-      /* handled by the emptiness check below */
-    }
-  }
-  try {
-    e.sender.startDrag({ file, icon: icon.isEmpty() ? appIcon() : icon.resize({ width: 96 }) })
-  } catch {
-    /* the file was cleared between the click and the drag */
-  }
-})
-
-/**
- * A last-resort drag icon. Windows refuses a drag with no image at all, so a 1x1 is still
- * better than the drag never starting.
- */
-function appIcon(): Electron.NativeImage {
-  return nativeImage.createFromBuffer(
-    Buffer.from(
-      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
-      'base64'
-    )
-  )
-}
-
-/** How much the Stash keeps, and for how long. Settings owns these. */
-function applyStashCaps(cfg: Config): void {
-  configureRecents({
-    maxItems: Math.max(1, cfg.stashMaxItems),
-    maxImages: Math.max(0, cfg.stashMaxImages),
-    fileHours: Math.max(0, cfg.stashFileHours),
-    maxFileMb: Math.max(0, cfg.stashMaxFileMb),
-    deny: cfg.stashDeny ?? ''
-  })
-}
-
-/** Watch the clipboard, or stop watching, to match the setting. */
-function applyClipboardShelf(cfg: Config): void {
-  applyStashCaps(cfg)
-  if (cfg.clipboardShelf) {
-    startRecents((items) => {
-      send('recents:changed', items)
-      updateShelfItems(items)
-    })
-  } else {
-    stopRecents()
-  }
-  applyShelfOverlay(cfg)
-}
-
-/**
- * The floating overlay follows the shelf setting: watching the clipboard is what fills
- * it, so an overlay with the watcher off would be a permanently empty window on top of
- * everything.
- */
-function applyShelfOverlay(cfg: Config): void {
-  const wanted = cfg.clipboardShelf && cfg.clipboardOverlay
-  if (wanted && !shelfWindowOpen()) {
-    openShelfWindow(() => win)
-    updateShelfItems(listRecents())
-  } else if (!wanted && shelfWindowOpen()) {
-    closeShelfWindow()
-  }
-  applyShelfHotkey(cfg)
-}
-
-/**
- * Ctrl+Alt+V opens the overlay from inside any application. Not Ctrl+Shift+V, which is
- * paste in every terminal on the machine (including PaneForge's own panes) and would be
- * taken away from all of them by a global registration - that combo stays as the
- * in-window shelf's key, where it only applies while the app has focus.
- */
-function applyShelfHotkey(cfg: Config): void {
-  const accel = 'CommandOrControl+Alt+V'
-  globalShortcut.unregister(accel)
-  // Registered whenever the clipboard is being watched at all, not only while the overlay
-  // is showing: the overlay has a "hide" button on it, and a hidden window with no taskbar
-  // entry and no tray icon would otherwise have no way back.
-  if (!cfg.clipboardShelf) return
-  try {
-    globalShortcut.register(accel, () => {
-      if (shelfWindowOpen()) return toggleShelf()
-      // Hidden: bring it back, on the list rather than as a pill, since asking for it is
-      // asking to look at it.
-      const next = setConfig({ clipboardOverlay: true })
-      applyShelfOverlay(next)
-      send('config:changed', next)
-      setShelfExpanded(true)
-    })
-  } catch {
-    /* another app owns the combo - the pill in the corner still opens on hover */
   }
 }
 
@@ -4116,29 +3758,7 @@ ipcMain.on('restore:answer', (_e, answer: RestoreAnswer) => {
   restorePanes(specs)
 })
 
-/**
- * `stash://<id>` serves one Stash file to the two windows that draw it, and nothing else
- * on the machine. It exists so a dropped video can show its own first frame in the tile
- * instead of a generic film icon: a `<video>` needs a URL, and both windows load over
- * `file://` in a packaged build, where a second `file://` is blocked.
- *
- * The only thing it will hand over is a path already on the Stash list, looked up by id -
- * never a path from the URL. A renderer that asked for `stash://../../id_rsa` gets a 404,
- * because the id does not resolve.
- */
-protocol.registerSchemesAsPrivileged([
-  // `stream` is what lets the video element seek; without it Chromium has to download the
-  // whole clip before it will draw a frame.
-  { scheme: 'stash', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } }
-])
-
 app.whenReady().then(() => {
-  protocol.handle('stash', (req) => {
-    const id = decodeURIComponent(new URL(req.url).hostname || new URL(req.url).pathname.slice(1))
-    const file = id ? recentPath(id) : ''
-    if (!file) return new Response('', { status: 404 })
-    return net.fetch(pathToFileURL(file).toString(), { headers: req.headers, method: req.method })
-  })
   // The app is open again, so the "closed on purpose" marker is stale: clear it, or the
   // keep-alive task would refuse to restart this copy after a genuine crash.
   try {
@@ -4179,7 +3799,6 @@ app.whenReady().then(() => {
   // and a launch that happens to land mid-game should be quiet on the way in rather
   // than one poll later.
   onGameState((s) => {
-    setShelfHidden(s.active)
     send('game:changed', gameStatus())
   })
   // "A game is running" is not "a game is on screen": with our own window focused the
@@ -4193,7 +3812,6 @@ app.whenReady().then(() => {
   startAutoClearWatch(manager)
   createWindow()
   applyVoiceHotkey(cfg)
-  applyClipboardShelf(cfg)
   crashTestHook()
   // After the window exists: a device that reconnects immediately would otherwise
   // push its session list at a renderer that is not listening yet.
@@ -4226,35 +3844,14 @@ app.whenReady().then(() => {
       model: process.env['PANEFORGE_MODEL'] || undefined,
       title: process.env['PANEFORGE_TITLE'] || undefined
     })
-  // An activation is not acted on the moment it lands. It and the press that caused it
-  // reach main by different routes - AppKit's notification, and the browser routing the
-  // input to whichever window was clicked - and nothing promises which arrives first, so
-  // the decision waits one settle for the other half of the gesture. An eighth of a
-  // second before a window appears is not a wait; a window appearing when the Stash was
-  // clicked is the bug (see shared/activation.ts).
+  // An activation is not acted on the moment it lands: macOS emits one for the launch
+  // itself, and a copy that started hidden must not answer that by showing itself. An
+  // eighth of a second before a window appears is not a wait (see shared/activation.ts).
   const onActivated = (reveal: () => void, from = '?'): void => {
     const activatedAt = Date.now()
     setTimeout(() => {
-      const touched = shelfTouchedAt()
-      const dragged = shelfDraggedAt()
-      const dragging = shelfDragging()
-      const result = revealOnActivation({
-        activatedAt,
-        quietUntil,
-        shelfTouchedAt: touched,
-        shelfDraggedAt: dragged,
-        shelfDragging: dragging
-      })
-      // The deltas, not just the verdict: they are the only thing that distinguished a
-      // click from a drag when this was finally measured, and they are what the next
-      // report of it should be read against. See main/activationLog.ts.
-      logActivation({
-        from,
-        result,
-        sinceTouch: touched > 0 ? activatedAt - touched : null,
-        sinceDrag: dragged > 0 ? activatedAt - dragged : null,
-        dragging
-      })
+      const result = revealOnActivation({ activatedAt, quietUntil })
+      logActivation({ from, result, sinceTouch: null, sinceDrag: null, dragging: false })
       if (result) reveal()
     }, ACTIVATION_SETTLE_MS)
   }
@@ -4269,15 +3866,12 @@ app.whenReady().then(() => {
     //
     // Except at launch: macOS also emits `activate` for the launch itself, and a copy an
     // agent started must not answer that by showing itself. Anything this close to
-    // startup is the launch, not a click. And except when the Stash was what was
-    // clicked - the overlay is a window of this app too.
+    // startup is the launch, not a click.
     onActivated(() => focusWindow(true), 'activate')
   })
   // Cmd-Tab into an app whose windows are all hidden does not always reach `activate`,
   // and an app you switched to that shows you nothing looks broken. Same guards: the
-  // activation that comes with the launch itself is still ignored, and so is the one a
-  // press on the Stash caused - which on macOS is every press on the Stash, because
-  // clicking any window of an app activates the app.
+  // activation that comes with the launch itself is still ignored.
   if (process.platform === 'darwin')
     app.on('did-become-active', () => {
       onActivated(() => {
@@ -4403,8 +3997,5 @@ app.on('will-quit', () => {
   stopAway()
   stopAutoClearWatch()
   stopUsage()
-  // The history is saved on a debounce now that the write is async; a copy made in the
-  // last second of the app's life would otherwise never reach disk.
-  flushRecents()
   removeTestClipboard()
 })

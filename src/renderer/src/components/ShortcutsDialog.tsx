@@ -151,24 +151,6 @@ const KEYS: Key[] = [
   ['Ctrl + / Ctrl -', 'Terminal font bigger / smaller'],
   ['Ctrl C', 'Copy the selection; with nothing selected it interrupts the agent as usual'],
   ['Ctrl V', 'Paste (images go to the agent untouched)'],
-  // Called out: "how do I open the Stash" is the question this dialog gets asked for
-  // most, and there are two answers depending on which window you are in.
-  [
-    'Ctrl Shift V',
-    'Open the Stash inside the app: click text, a screenshot or a stashed file into the focused pane',
-    true
-  ],
-  [
-    'Ctrl Alt V',
-    'Open the floating Stash from ANY app: click a line to copy it back, → sends it to the pane, ✕ forgets it',
-    true
-  ],
-  [
-    'Hover the Stash pill',
-    'Also opens the list; it closes itself a few seconds after the pointer leaves (Stash ⚙ sets how long)'
-  ],
-  ['Drop a file on the Stash', 'Parks a copy you can drag straight back out into any other app'],
-  ['Drag the Stash title', 'Move the Stash anywhere; double-click it to put it back'],
   ['Right-click', 'Copy the selection, or paste when nothing is selected'],
   ['Drag files onto a pane', 'Types their paths at the prompt, ready to describe'],
   ['Drag a pane by its title', 'In the grid: moves it, and the gap it will drop into lights up'],
@@ -329,24 +311,6 @@ const TOPICS: Topic[] = [
         <p>
           Clicking a <b>tag</b> in the scrollback jumps to that point in the run. Pressing a
           key always returns to the bottom first, so you never type into history.
-        </p>
-      </>
-    )
-  },
-  {
-    title: 'The Stash',
-    find: 'stash clipboard paste screenshot file drop shelf ctrl shift v',
-    body: (
-      <>
-        <p>
-          A shelf for things you want to hand to an agent. {MOD} Shift V opens it over the
-          window; {keyLabel('Ctrl Alt V')} opens the floating one, which works from any other app. Click a
-          line to put it back on the clipboard, → to send it straight into the focused pane, ✕
-          to forget it.
-        </p>
-        <p>
-          Drop a file on it to park a copy you can drag back out anywhere later. Screenshots
-          and images go to the agent as images, not as file paths.
         </p>
       </>
     )

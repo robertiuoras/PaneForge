@@ -49,7 +49,6 @@ export const KEY_ACTIONS: KeyAction[] = [
   // what Ctrl/Cmd Shift C has always done inside a terminal.
   { id: 'copyReply', label: 'Copy the last reply', chord: { key: 'c', shift: true } },
   { id: 'history', label: 'History of closed sessions', chord: { key: 'h' } },
-  { id: 'stash', label: 'The Stash', chord: { key: 'v', shift: true } },
   { id: 'board', label: "This project's board", chord: { key: 'k', shift: true } },
   { id: 'devices', label: 'Devices - pair another machine or a phone', chord: { key: 'd', shift: true } },
   { id: 'swarm', label: 'Split a long ask into panes', chord: { key: 's', shift: true } }

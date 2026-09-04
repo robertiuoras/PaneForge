@@ -69,11 +69,6 @@ export const BLURBS: Blurb[] = [
     text: 'The left box is the program that runs in this pane; the right one is the model it talks to. Most models are not programs of their own, so picking one under a provider\u2019s heading - OpenRouter, DeepSeek, GLM - switches the program to the one that can reach it.'
   },
   {
-    id: 'stash',
-    title: 'Stash',
-    text: 'Everything you copy, kept in a list you can float over any window. Click an entry to put it back on the clipboard, pin the ones you keep needing, and drag files or images straight out of it.'
-  },
-  {
     id: 'shortcuts',
     title: 'Help',
     text: 'Every key this app answers to, and what each pane’s marks and colours mean. Nothing here changes anything - it is the map.'
