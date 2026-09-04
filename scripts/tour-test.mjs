@@ -11,7 +11,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const {
   buildSteps, makeTour, currentStep, next, previous, done, surfaceFor, tourAllowed,
-  stepFrom, placesFor, trailersOf, firstParagraph, checkAllowed, readCheck, checkName, plainWords, howToCheck, needsRestart,
+  stepFrom, placesFor, trailersOf, firstParagraph, checkAllowed, readCheck, checkName, plainWords, plainSwap, howToCheck, needsRestart,
   dwellFor, waitsForYou, DWELL_CHECKS_MS, DWELL_PLAIN_MS, NO_SCREEN,
   stepKey, nextUnchecked, stepName, whatChanged, checkWords, summaryCount, checkedWords, demoFor, titleFor, checkedAll
 } = await import(pathToFileURL(join(root, 'src/shared/tour.ts')).href)
@@ -167,6 +167,21 @@ console.log('the card speaks to somebody who has never coded')
   ok('code spans and parentheses are gone from a mostly-plain sentence', plainWords('The list is hidden now and the `reveal` button (30px) brings it back to the same place it was.') === 'The list is hidden now and the button brings it back to the same place it was.', plainWords('The list is hidden now and the `reveal` button (30px) brings it back to the same place it was.'))
   ok('camelCase identifiers are gone', !/[a-z][A-Z]/.test(plainWords('the askRef refuses a bare click')))
   ok('a first sentence stands alone', plainWords('Short one here that is long enough. Second sentence.') === 'Short one here that is long enough.')
+
+  // The step Robert could not read: the commit's own subject, printed word for word.
+  // `feat(history): Show all asks lists every ask a session made` (84ad8d7a).
+  ok(
+    'this repo\'s words for a thing on screen are swapped for the screen\'s',
+    plainWords('Show all asks lists every ask a session made') ===
+      'Show every prompt lists every prompt a chat made',
+    plainWords('Show all asks lists every ask a session made')
+  )
+  ok('plural too', plainSwap('every ask and all asks') === 'every prompt and all prompts')
+  ok('a capital keeps its capital', plainSwap('Sessions end') === 'Chats end')
+  ok('a conversation is a chat', plainSwap('the conversation is resumed') === 'the chat is resumed')
+  // The dialog's own heading. Renaming the control the card points at is worse than jargon.
+  ok('New session is the screen\'s own name and is left alone', plainSwap('the New session dialog') === 'the New session dialog')
+  ok('and so is the plain word inside it', plainSwap('New session') === 'New session')
   // The author's own test wins over anything a file list can say.
   ok('a Try: line becomes the step\'s instruction', howToCheck({ open: 'none', checks: [], tryIt: 'open a session and ask it for a folder path, then click the path' }) === 'Do this: open a session and ask it for a folder path, then click the path')
   ok('and it beats the surface sentence', !/ring/.test(howToCheck({ open: 'newSession', checks: [], tryIt: 'press New session and read the machine box' })))

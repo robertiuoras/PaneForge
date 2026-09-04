@@ -292,7 +292,13 @@ export default function HistoryDialog({ agents, onResume, onClose }: Props): JSX
                     </button>
                   )}
                   {/* Only where there is something `View all` did not already print - a
-                      session with one chapter and one ask has nothing more to list. */}
+                      chat with one chapter and one prompt has nothing more to list.
+
+                      The label says PROMPT, not "ask": `Show all asks` was a heading
+                      Robert stopped at and could not read (2026-09-04, tour step 20 of
+                      39: "whats an ask and what session made"). An ask is this codebase's
+                      word for one thing typed at an agent; the word on the screen is the
+                      one he uses himself. */}
                   {(e.askLines?.length ?? 0) > (e.chapters?.length ?? 0) && (
                     <button
                       className="ghost small"
@@ -304,7 +310,7 @@ export default function HistoryDialog({ agents, onResume, onClose }: Props): JSX
                         })
                       }
                     >
-                      {showAsks.has(e.id) ? 'Hide asks' : 'Show all asks'}
+                      {showAsks.has(e.id) ? 'Hide the prompts' : 'Show every prompt'}
                     </button>
                   )}
                   {/* A folder that is not there any more cannot be reopened, and pressing

@@ -279,6 +279,54 @@ export function trailersOf(body: string): { see: string[]; tryIt: string } {
  * Robert, reading the card 2026-09-04: "much too technical most things and hard to
  * understand".
  */
+/**
+ * THE WORDS ON THE CARD ARE NOT THE WORDS IN THE COMMIT.
+ *
+ * A step's name and its sentence are the author's own commit subject, and an author
+ * writes for the codebase: `Show all asks lists every ask a session made` reached the
+ * card verbatim and stopped the tour dead (Robert 2026-09-04, step 20 of 39: "the english
+ * is pretty hard to understand ... whats an ask and what session made"). Both words are
+ * real jargon here - an `ask` is one thing typed at an agent, a `session` is one chat -
+ * and neither is a word anybody outside this repo would guess.
+ *
+ * Narrow on purpose: only the words that name a THING on screen, and only where the
+ * screen itself does not already use them. `New session` is the dialog's own heading, so
+ * it is left exactly as it is - a card that renamed the button it is pointing at would be
+ * worse than one that used the jargon.
+ */
+export const PLAIN_SWAPS: [RegExp, string][] = [
+  // A control the card points at is quoted EXACTLY as the screen writes it, so a label
+  // that was renamed for the same reason is renamed here in one move.
+  [/\bShow all asks\b/gi, 'Show every prompt'],
+  [/\bHide asks\b/gi, 'Hide the prompts'],
+  // Only the NOUN. `ask` is this repo's word for one thing typed at an agent, but it is
+  // also an ordinary English verb, and a blind swap turned the commit `ask the row whether
+  // it fits` into `prompt the row whether it fits` - a sentence that means something else.
+  // A determiner in front is what tells them apart: nobody writes `every ask` as a verb.
+  [/\b(an?|the|every|each|all|its|their|our|your|my|more|some|no|first|last|latest|next|other|two|three|four|five|many|few|\d+)(\s+)asks\b/gi, '$1$2prompts'],
+  [/\b(an?|the|every|each|all|its|their|our|your|my|more|some|no|first|last|latest|next|other|two|three|four|five|many|few|\d+)(\s+)ask\b/gi, '$1$2prompt'],
+  [/\bsessions\b/gi, 'chats'],
+  [/(?<!New )\bsession's\b/gi, "chat's"],
+  [/(?<!New )\bsession\b/gi, 'chat'],
+  [/\bconversations\b/gi, 'chats'],
+  [/\bconversation\b/gi, 'chat']
+]
+
+/** Swap this codebase's words for the ones on the screen. Case of the first letter kept. */
+export function plainSwap(text: string): string {
+  let s = text
+  for (const [re, to] of PLAIN_SWAPS)
+    s = s.replace(re, (m: string, ...rest: unknown[]) => {
+      const groups = rest.filter((g) => typeof g === 'string' || g === undefined) as (string | undefined)[]
+      const out = to.replace(/\$(\d)/g, (_, i: string) => groups[Number(i) - 1] ?? '')
+      // A swap that keeps the words in front of it - `every ask` - is already cased by
+      // them; only one that replaces the whole match can need its capital back.
+      if (to.startsWith('$')) return out
+      return /^[A-Z]/.test(m) ? out.charAt(0).toUpperCase() + out.slice(1) : out
+    })
+  return s
+}
+
 export function plainWords(text: string, cap = 160): string {
   let s = text
     .replace(/`[^`]*`/g, '')
@@ -290,6 +338,7 @@ export function plainWords(text: string, cap = 160): string {
     .replace(/\s{2,}/g, ' ')
     .replace(/^\s*-\s*/, '')
     .trim()
+  s = plainSwap(s)
   const m = /^(.+?[.!?])(\s|$)/.exec(s)
   if (m && m[1].length >= 30) s = m[1]
   // A sentence that was mostly code reads as holes once the code is gone

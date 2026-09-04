@@ -6870,13 +6870,21 @@ export default function App(): JSX.Element {
           // (Robert, 2026-09-04: "i cant even close it and also theres a glowing line on
           // the left of the pane window").
           setSideHidden(surface === 'sidebarHidden')
-          if (surface === 'newSession') setPicking(true)
-          else if (surface === 'settings') setSettings(true)
+          // A DIALOG THIS TOUR OPENED IS A DIALOG THIS TOUR CLOSES. Each of these used to
+          // be `if (surface === x) setX(true)` and nothing ever set one back to false, so
+          // History opened on its own step stayed up over every step after it - the next
+          // step's ring lit up BEHIND the dialog, which is a glow around something you
+          // cannot see or reach (Robert 2026-09-04, step 20 of 39: "its not closing the
+          // popup for next step"). Written as an assignment, not a branch, for the same
+          // reason `setSideHidden` above is: the truth is "this step wants exactly this
+          // one surface", and a branch can only ever add to what is already on screen.
+          setPicking(surface === 'newSession')
+          setSettings(surface === 'settings')
+          setHistory(surface === 'history')
           // A change to what History offers - which rows carry `Open again`, what a row
           // says it was working on - is looked at in History, and it used to be filed
           // under `inside the app, nothing to click` with only a test to show for it.
-          else if (surface === 'history') setHistory(true)
-          else if (surface === 'pane') {
+          if (surface === 'pane') {
             // A change to a pane - its header, its icons, its name - can only be looked at
             // when a pane is on screen, and a dev copy often opens with none. The existing
             // one is brought to the front; with none, ONE plain shell pane is opened in the
