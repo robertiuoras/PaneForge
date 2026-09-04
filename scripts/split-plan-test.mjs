@@ -25,9 +25,8 @@ buildSync({
   platform: 'node',
   outfile: file
 })
-const { parseSplit, splitInstruction, splitWords, paneBrief, liftDone, MAX_TASKS } = await import(
-  pathToFileURL(file).href
-)
+const { parseSplit, splitInstruction, splitWords, paneBrief, liftDone, MAX_TASKS, maxTasks } =
+  await import(pathToFileURL(file).href)
 
 let n = 0
 const ok = (what, cond) => {
@@ -152,5 +151,12 @@ ok(
   liftDone('Done means: whatever you decide, then keep going').done.length === 0
 )
 ok('a block with a prose line under it is not a block', liftDone('x\n\nDone means:\n- a\nand also b').done.length === 0)
+
+// maxTasks: the pool-size-aware cap that replaces the hardcoded MAX_TASKS at the call site.
+ok('a pool of one still gets the queue allowance', maxTasks(1) === 1 + 8)
+ok('a bigger pool adds to the same allowance', maxTasks(4) === 4 + 8)
+ok('the total never passes 12', maxTasks(20) === 12)
+ok('a smaller queue allowance is honoured', maxTasks(4, 2) === 6)
+ok('pool size floors at one', maxTasks(0) === 1 + 8)
 
 console.log(`split-plan: ${n} assertions passed`)

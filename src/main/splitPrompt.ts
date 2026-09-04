@@ -11,13 +11,13 @@
 // unverified, and refusing beats a guess that opens a window nobody asked for.
 
 import { execFile } from 'node:child_process'
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { app } from 'electron'
 import { specFor } from './agents'
 import { getConfig } from './config'
 import { resolveEnv } from '../shared/agents'
-import { parseSplit, splitInstruction, MAX_TASKS, type SplitAnswer } from '../shared/splitPlan'
+import { parseSplit, splitInstruction, maxTasks, type SplitAnswer } from '../shared/splitPlan'
 import { loadTemplate } from './promptForge'
 import { which } from './which'
 
@@ -102,9 +102,25 @@ function quietDir(): string {
  * Nothing in the answer is executed: it is parsed as JSON and drawn as rows somebody has
  * to read and press.
  */
+/**
+ * How many checkouts this repo's own lane pool has, off `.lanes.json`'s `pool` array - the
+ * real number `MAX_TASKS` used to hardcode as four. Missing file, no `pool` key, or
+ * anything unreadable falls back to that same four: a repo with no lanes still has main.
+ */
+function poolSize(): number {
+  try {
+    const raw = readFileSync(join(app.getAppPath(), '.lanes.json'), 'utf8')
+    const cfg = JSON.parse(raw) as { pool?: unknown }
+    return Array.isArray(cfg.pool) && cfg.pool.length > 0 ? cfg.pool.length : 4
+  } catch {
+    return 4
+  }
+}
+
 export async function splitPrompt(text: string): Promise<SplitAnswer> {
   const body = text.trim()
   if (!body) return { error: 'Nothing to split.' }
+  const max = maxTasks(poolSize())
   const cfg = getConfig()
   const id = splitAgent(cfg.defaultAgent, onDisk)
   if (!id) return { error: 'No installed agent can answer a split on its own.' }
@@ -122,7 +138,7 @@ export async function splitPrompt(text: string): Promise<SplitAnswer> {
   const args = [
     ...(spec.alwaysArgs ?? []),
     ...HEADLESS[id],
-    splitInstruction(body, MAX_TASKS, loadTemplate('multi-item-opener'))
+    splitInstruction(body, max, loadTemplate('multi-item-opener'))
   ]
   const raw = await new Promise<{ out: string; err?: string }>((resolve) => {
     execFile(
@@ -150,7 +166,7 @@ export async function splitPrompt(text: string): Promise<SplitAnswer> {
     )
   })
   if (!raw.out.trim()) return { error: raw.err || `${spec.label} answered nothing.` }
-  const plan = parseSplit(raw.out, MAX_TASKS)
+  const plan = parseSplit(raw.out, max)
   // The head of what it DID say, because "not a plan" on its own is unactionable: the two
   // real causes look nothing alike on screen (a refusal sentence, or this desk's own hooks
   // answering for it) and the first 160 characters separate them.
