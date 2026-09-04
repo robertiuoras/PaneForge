@@ -645,6 +645,25 @@ export const DEFAULT_SOUNDS: SoundConfig = {
   custom: []
 }
 
+/**
+ * How loud a countdown is allowed to be, whatever sound it was pointed at.
+ *
+ * Every other alert plays at its recipe's own level, which is right: a bell and a bark
+ * were tuned to sit at the same distance. A countdown is not one of those. It is the one
+ * sound in this app that announces something happening TO somebody's pane in fifteen
+ * seconds, and it was landing on the two quietest recipes in the catalogue: `bowl` at
+ * 0.11 and `tick` at 0.05, against `knock` at 0.155 - so at the saved volume of 0.49 the
+ * arrival was 0.054 and each tick 0.025, under a laptop fan and eight terminals.
+ * Reported 2026-08-23 ("theres no sound on the countdown"), again 2026-08-27 ("make sure
+ * ... countdown you can actually hear it"), and again 2026-09-04.
+ *
+ * A FLOOR, never a multiplier: a sound already louder than this keeps its own level, and
+ * the volume slider still scales everything. The tick stays under the arrival on purpose
+ * - it is a clock, not a second alert.
+ */
+export const COUNTDOWN_GAIN = 0.17
+export const COUNTDOWN_TICK_GAIN = 0.1
+
 /** Prefix that marks a saved id as "one of the user's files" rather than a built-in. */
 export const CUSTOM_PREFIX = 'custom:'
 
