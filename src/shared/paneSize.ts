@@ -93,23 +93,3 @@ export function smallestBorrow(borrows: Iterable<Borrow>): Grid | null {
   }
   return Number.isFinite(cols) && Number.isFinite(rows) ? { cols, rows } : null
 }
-
-/**
- * Whether a screen on THIS copy of the app may lend its grid to a pane whose pty lives on
- * another machine.
- *
- * The rule above - every borrower gets the smallest grid any of them asked for - is right
- * for two people at two desks, and wrong for a copy nobody is sitting at. `npm run try`
- * opens a second PaneForge that lists and mirrors the same paired panes as the real one,
- * so a 960px test window clamped a PC pane's pty to its own grid and the installed app
- * beside it drew that pane as a narrow column of text in a wide black box (2026-09-04,
- * `taskdriver.ai` mirrored from DESKTOP-CMSUCM1). Nobody was reading the test copy; it
- * still won, because the smallest borrower always does.
- *
- * A test copy still MIRRORS - it draws whatever grid it is lent, with slack - it simply
- * does not get a vote in what that grid is. `profileName()` is empty for the installed
- * app and names the profile for every `npm run try` copy.
- */
-export function mayLendSize(profile: string): boolean {
-  return !profile
-}

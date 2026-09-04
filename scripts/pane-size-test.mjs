@@ -236,26 +236,6 @@ manager.resize(id, 80, 24)
 manager.returnSizes()
 ok(sizes.length === before, 'nothing is pushed at a pty that has exited', String(sizes.length - before))
 
-// A copy nobody is sitting at may draw a mirrored pane, but it may not decide how wide
-// that pane is: the far end lends every borrower the smallest grid asked for, so a
-// `npm run try` window clamped a PC pane under the installed app beside it (2026-09-04).
-{
-  // Built from the real module, never re-implemented here: a stub of the rule under test
-  // passes whatever the rule does.
-  buildSync({
-    entryPoints: ['src/shared/paneSize.ts'],
-    bundle: true,
-    format: 'cjs',
-    platform: 'node',
-    outfile: join(work, 'panesize.bundle.cjs'),
-    logLevel: 'silent'
-  })
-  const { mayLendSize } = req('./panesize.bundle.cjs')
-  ok(mayLendSize('') === true, 'the installed app lends its grid')
-  ok(mayLendSize('dev') === false, 'a npm run try copy does not')
-  ok(mayLendSize('dev-a') === false, 'whatever the profile is called')
-}
-
 rmSync(work, { recursive: true, force: true })
 
 console.log(fail.length ? `\n${fail.length} FAILED` : '\nall good')
