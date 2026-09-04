@@ -50,8 +50,24 @@ function regexLiterals(src) {
   for (const rawLine of src.split(/\r?\n/)) {
     const line = rawLine.trim()
     if (line.startsWith('//') || line.startsWith('*') || line.startsWith('/*')) continue
+    // A slash INSIDE a string is not a slash in the code: `'…/rc\\n⏵⏵ bypass…'` in
+    // busy-test.mjs was read as a regex opening at `/rc` and closing at the `/` of a later
+    // word, and the invented body carried a bare break - so this guard failed the whole
+    // suite, and with it every release, over a string it had misread (2026-09-04). Quotes
+    // are tracked the same way `[` already is: crudely, per line, and only to STAY OUT.
+    let quote = ''
     for (let i = 0; i < line.length; i++) {
-      if (line[i] !== '/') continue
+      const ch = line[i]
+      if (quote) {
+        if (ch === BS) i++
+        else if (ch === quote) quote = ''
+        continue
+      }
+      if (ch === '"' || ch === "'" || ch === '`') {
+        quote = ch
+        continue
+      }
+      if (ch !== '/') continue
       const before = line.slice(0, i).replace(/\s+$/, '')
       const prev = before[before.length - 1]
       // `//` is a comment, `/*` opens one, and a value cannot follow a name or a `)`.
