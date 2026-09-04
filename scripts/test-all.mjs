@@ -180,6 +180,7 @@ const TESTS = [
   ['trust', 'trust-test.mjs'],
   ['slash', 'slash-test.mjs'],
   ['reveal', 'reveal-test.mjs'],
+  ['pathlink', 'pathlink-test.mjs'],
   ['revealpane', 'reveal-pane-test.mjs'],
   ['gamemode', 'gamemode-test.mjs'],
   ['openurl', 'open-url-test.mjs'],

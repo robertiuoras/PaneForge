@@ -118,6 +118,14 @@ export function looksLikePath(token: string): boolean {
  * hover can ask bounded, which is the cost this constant actually controls.
  */
 export const MAX_SPACE_WORDS = 8
+/**
+ * ...and a run that STARTS rooted (`~/`, `/`, `./`, `C:\`) may cross more, because the
+ * start is the evidence. `~/Work/Client Files/Jacob P/_deliverables/Jacob - phone clips
+ * full frame comparison.mp4` is eleven words (reported 2026-09-04: no link at all).
+ */
+export const MAX_ROOTED_WORDS = 14
+/** A word that can only be the START of a path: home, the root, here, or a drive. */
+export const ROOTED = /^[('"`[{<]*(?:~[\/]|[\/]|\.{1,2}[\/]|[A-Za-z]:[\/])/
 
 /** A run's final word carries a real-looking extension - the anchor a spaced path needs. */
 const ENDS_WITH_EXTENSION = /\.[A-Za-z][A-Za-z0-9]{0,7}$/
@@ -172,17 +180,22 @@ export function findPathTokens(line: string): PathToken[] {
     // Longest first, so the caller's first confirmed answer is also the most complete one.
     // Only SINGLE spaces are crossed: two or more is column padding in a table or a listing,
     // never the inside of a filename, and crossing it would join two unrelated cells.
-    const last = Math.min(words.length - 1, i + MAX_SPACE_WORDS)
+    // A rooted start is proof enough that a path begins here, so its readings may carry
+    // a FOLDER with a space in it (`Client Files/Jacob P/`) and need no extension at the
+    // end - the disk decides, longest first, and the deepest folder that exists is the
+    // answer when the file's own name ran onto the next row.
+    const rooted = ROOTED.test(line.slice(words[i].start, words[i].end))
+    const last = Math.min(words.length - 1, i + (rooted ? MAX_ROOTED_WORDS : MAX_SPACE_WORDS))
     for (let j = last; j > i; j--) {
       if (line.slice(words[i].end, words[j].start).match(/^(?: [^ ]+)* $/) === null) continue
-      // A separator may only appear in the FIRST word of a spaced candidate. That is the
-      // whole difference between `~/Work/Clients/Sonia/Sonia 21st Birthday V9.mp4`, where
-      // the folders are all in front, and `Wrote docs/proposals/thing.pdf`, where the word
-      // before the path is prose - without it every sentence containing a path becomes a
-      // second, longer candidate covering the words around it.
-      if (/[\\/]/.test(line.slice(words[i].end, words[j].end))) continue
+      // A separator may only appear in the FIRST word of an UNROOTED spaced candidate.
+      // That is the whole difference between `~/Work/Clients/Sonia/Sonia 21st Birthday
+      // V9.mp4`, where the folders are all in front, and `Wrote docs/proposals/thing.pdf`,
+      // where the word before the path is prose - without it every sentence containing a
+      // path becomes a second, longer candidate covering the words around it.
+      if (!rooted && /[\\/]/.test(line.slice(words[i].end, words[j].end))) continue
       const cand = trimRun(line, words[i].start, words[j].end)
-      if (cand && looksLikeSpacedPath(cand.text)) readings.push(cand)
+      if (cand && (rooted || looksLikeSpacedPath(cand.text))) readings.push(cand)
     }
     const base = trimRun(line, words[i].start, words[i].end)
     if (base && looksLikePath(base.text)) readings.push(base)
