@@ -88,13 +88,16 @@ commit since the installed build into a step: where it lives (off the files touc
 what to look for, a ring around the control, and the commit's own `scripts/<x>-test.mjs`
 RUN on the card with the result. It WAITS to be started and then plays itself - opens each
 step's surface, counts down visibly (`dwellFor`) and ticks the step off on its way out;
-Pause, Previous and Next stop it where it is. A step with something to DO on it - a surface
+only Pause stops it, Previous and Next steer and it carries on from where they left it
+(Robert 2026-09-04: "its just to go to the next thing"). A step with something to DO on it - a surface
 opened, a control ringed - has NO clock (`waitsForYou`) and holds until Done or Next.
 STARTING IS THE APPROVAL: from that press each step's suites run as it arrives, streaming
 their counted lines onto the card (`TourProgress`, `app:tourCheckLine`), and a check in
 flight holds the tour where it is (Robert 2026-09-04: "if we doing tour then it should do
 everything itself", reversing his own earlier per-step approval). Nothing runs before that
-press; a step reached by hand keeps its button. The list holds only commits that touched
+press, and after it NO button asks again - a step reached by Next, or sat on while paused,
+runs its own checks too (`started`, never `playing`); a running suite shows a discrete
+`steps()` pulse, its tally and its last printed line. The list holds only commits that touched
 `src/`, deduplicated by subject, two `See:` lines each, and no npm script name reaches the
 card (`checkWords`, never `checkName`). No pane is opened and no prompt is
 typed (Robert 2026-09-04: "i dont want the try in pane testing helper"), so a `Try:` line
