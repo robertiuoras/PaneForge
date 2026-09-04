@@ -1,6 +1,6 @@
 import { statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { isAbsolute, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, parse, resolve } from 'node:path'
 import { looksLikePath, parsePathToken } from '../shared/pathToken'
 import type { RevealTarget } from '../shared/pathToken'
 
@@ -43,6 +43,27 @@ export function resolveRevealTarget(cwd: string, token: string): RevealTarget | 
     if (st.isFile()) return { abs, kind: 'file', line }
   } catch {
     /* gone, unreadable, or never a path in the first place */
+  }
+  // A spaced, rooted path whose tail is not there is usually a path the CLI wrapped onto
+  // the next row (`.../_deliverables/Jacob - phone` / `clips full frame comparison.mp4`,
+  // 2026-09-04): the row only ever holds the front of it. The deepest folder of it that
+  // exists is what "open that folder" means, so that is what the link reveals. Only for
+  // a run with a space in it and only below home or the root - `/foo/bar.ts` planned
+  // and not yet written stays no link.
+  if (/\s/.test(path) && (path.startsWith('~') || isAbsolute(path))) {
+    const floor = path.startsWith('~') ? homedir() : parse(abs).root
+    let dir = dirname(abs)
+    // ...and never the pane's own folder: that is where the pane already is.
+    while (dir.length > floor.length && dir !== cwd) {
+      try {
+        if (statSync(dir).isDirectory()) return { abs: dir, kind: 'dir' }
+      } catch {
+        /* keep climbing */
+      }
+      const up = dirname(dir)
+      if (up === dir) break
+      dir = up
+    }
   }
   return null
 }
