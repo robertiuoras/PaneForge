@@ -11,7 +11,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const {
   buildSteps, makeTour, currentStep, next, previous, done, surfaceFor, tourAllowed,
-  stepFrom, placesFor, trailersOf, firstParagraph, checkAllowed, readCheck, checkName, plainWords, howToCheck,
+  stepFrom, placesFor, trailersOf, firstParagraph, checkAllowed, readCheck, checkName, plainWords, howToCheck, needsRestart,
   dwellFor, waitsForYou, DWELL_CHECKS_MS, DWELL_PLAIN_MS, NO_SCREEN,
   stepKey, nextUnchecked, stepName, whatChanged, checkWords, summaryCount, checkedWords, demoFor, titleFor, checkedAll
 } = await import(pathToFileURL(join(root, 'src/shared/tour.ts')).href)
@@ -95,6 +95,10 @@ console.log('a sentence with no known surface gets none')
   ok('settings is recognised', surfaceFor('Settings search finds the setting, not the page') === 'settings')
   ok('the sidebar is recognised', surfaceFor('Hiding the list gives the panes the whole window, not 42px of it') === 'sidebarHidden')
   ok('workspaces is recognised', surfaceFor('A workspace launches every project again') === 'workspaces')
+  // Step 1 of 35, 2026-09-04: a real change to a real button, filed as `inside the app,
+  // nothing to click` because nothing knew History was a place.
+  ok('a conversation is History', surfaceFor('A conversation with no reply is not offered to the CLI') === 'history')
+  ok('...and so is history itself', surfaceFor('History rows say what they were working on') === 'history')
   const t = makeTour([c('Something nobody wrote a keyword for')])
   ok('and it lands on the step as none, not a guess', currentStep(t).open === 'none')
 }
@@ -173,6 +177,16 @@ console.log('the card speaks to somebody who has never coded')
   ok('and names the window it just opened', /New session window/.test(howToCheck({ open: 'newSession', checks: [] })))
   ok('a pane step says to click and type in it', /click it, type in it/.test(howToCheck({ open: 'pane', checks: [] })))
   ok('a hidden list points at the ringed button', /ringed button/.test(howToCheck({ open: 'sidebarHidden', checks: [] })))
+  ok('a History step names the window it opened', /History is open behind this card/.test(howToCheck({ open: 'history', checks: [] })))
+  // A `Try:` the tour cannot run from inside the window it is describing.
+  const restartTry = 'open two panes in the same project folder, quit PaneForge, reopen it'
+  ok('quitting the app is spotted', needsRestart(restartTry))
+  ok('...and reopening it', needsRestart('restart the app and look at the list'))
+  ok('but an ordinary hands-on test is not', !needsRestart('open a session, ask the agent for a folder path, click it'))
+  const across = howToCheck({ open: 'pane', checks: ['scripts/x-test.mjs'], tryIt: restartTry })
+  ok('a restart step never hands over an errand', !/^Do this: /.test(across), across)
+  ok('...says it is only visible across a restart', /only shows across a restart/.test(across), across)
+  ok('...and still quotes what to look for next launch', across.includes(restartTry), across)
   // `Nothing to click` said what the CARD could not do and never why. A step with no
   // screen now says the reason it has none, and what stands in for the press.
   const noScreen = howToCheck({ open: 'none', checks: ['scripts/x-test.mjs'] })

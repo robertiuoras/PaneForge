@@ -100,6 +100,8 @@ const SURFACE_SEL: Record<string, string | null> = {
   sidebarHidden: '.side-reveal',
   workspaces: '.sidebar',
   pane: '.pane',
+  // The History window is `.dialog wide tall`; `.dialog` alone is the New session one too.
+  history: '.dialog.wide.tall',
   none: null
 }
 

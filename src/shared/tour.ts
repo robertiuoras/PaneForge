@@ -32,7 +32,14 @@
 
 /** A surface this app can open to show a step, or `'none'` when a change names nothing
  * recognisable - never a guess that opens the wrong thing. */
-export type TourSurface = 'newSession' | 'settings' | 'sidebarHidden' | 'workspaces' | 'pane' | 'none'
+export type TourSurface =
+  | 'newSession'
+  | 'settings'
+  | 'sidebarHidden'
+  | 'workspaces'
+  | 'pane'
+  | 'history'
+  | 'none'
 
 /** One change, as `try-diff.mjs` reads it off git. */
 export interface TourCommit {
@@ -96,7 +103,13 @@ const SURFACE_WORDS: ReadonlyArray<readonly [RegExp, TourSurface]> = [
   [/\bnew session\b|\bstart(?:ing)? a project\b|\bopen a project\b/i, 'newSession'],
   [/\bsettings?\b/i, 'settings'],
   [/\bsidebar\b|\bthe list\b|\bhid(?:e|ing|den)\s+the list\b/i, 'sidebarHidden'],
-  [/\bworkspace/i, 'workspaces']
+  [/\bworkspace/i, 'workspaces'],
+  // A change to what History offers has a screen, and it is the one nothing used to open.
+  // `A conversation with no reply is not offered to the CLI` read as `inside the app,
+  // nothing to click` - a true sentence about a button a person can go and look at
+  // (Robert, 2026-09-04, step 1 of 35: "what conversation with no reply i must see an
+  // example or something").
+  [/\bhistor(?:y|ies)\b|\bpast sessions?\b|\bconversations?\b|\btranscripts?\b/i, 'history']
 ]
 
 /** Which surface a sentence is about, or `'none'`. */
@@ -122,6 +135,8 @@ const PLACES: ReadonlyArray<readonly [RegExp, Place]> = [
   [/components\/NewSessionDialog\.tsx$/, { where: 'the New session dialog', open: 'newSession', spot: '.dialog .dialog-head' }],
   [/components\/SettingsDialog\.tsx$/, { where: 'Settings', open: 'settings', spot: '.dialog.settings .dialog-head' }],
   [/components\/TourCard\.tsx$/, { where: 'this card' }],
+  [/components\/HistoryDialog\.tsx$/, { where: 'History', open: 'history', spot: '.hist-list .hist-actions button' }],
+  [/^src\/main\/history\.ts$/, { where: 'History', open: 'history', spot: '.hist-list .hist-actions button' }],
   [/components\/TerminalPane\.tsx$/, { where: 'a pane', open: 'pane', spot: '.pane-title' }],
   [/(?:renderer\/src|shared)\/headerFit\.ts$/, { where: "a session's header", open: 'pane', spot: '.pt-actions' }],
   [/components\/([A-Z][A-Za-z]+)\.tsx$/, { where: '' }],
@@ -157,6 +172,7 @@ const SCOPE_PLACES: ReadonlyMap<string, Place> = new Map<string, Place>([
   ['panes', { where: 'the panes', open: 'pane', spot: '.pane-title' }],
   ['rail', { where: "a pane's prompt marks", open: 'pane', spot: '.pane-title' }],
   ['tour', { where: 'this card' }],
+  ['history', { where: 'History', open: 'history', spot: '.hist-list .hist-actions button' }],
   ['cards', { where: 'the cards in the corner' }]
 ])
 
@@ -298,9 +314,29 @@ export function plainWords(text: string, cap = 160): string {
  * So every step now opens with a verb, and the no-screen one names the reason it has no
  * verb and what stands in for one.
  */
+/**
+ * Whether the author's own test asks for the app to be shut down and started again.
+ *
+ * A tour runs INSIDE the window it is describing, so an instruction beginning "quit
+ * PaneForge, reopen it" is an errand nobody can run from the card - and the card said it
+ * anyway, on a step about two chats in one folder coming back in their own places
+ * (Robert, 2026-09-04, step 15 of 35: "the tour for this step doesnt work how can i
+ * see..."). The honest answer is that this one is only visible across a restart, said in
+ * those words, with the check that proves it now underneath.
+ *
+ * Deliberately narrow: only the words that mean THIS app going away and coming back.
+ * Anything else - open a pane, type, click - the tour can still hand over.
+ */
+export function needsRestart(tryIt: string): boolean {
+  return /\b(?:quit|restart|reopen|relaunch|reinstall|close)\b[^.]{0,40}\b(?:paneforge|the app|it)\b/i.test(tryIt)
+}
+
 export function howToCheck(step: Pick<TourStep, 'open' | 'checks' | 'tryIt'>): string {
   // The author wrote the test for this change; nothing worked out from a file list beats it.
-  if (step.tryIt) return `Do this: ${step.tryIt}`
+  if (step.tryIt && !needsRestart(step.tryIt))
+    return `Do this: ${step.tryIt}`
+  if (step.tryIt)
+    return `Nothing to do here now: this one only shows across a restart, and the tour is running inside the window it would restart. Next time the app starts: ${step.tryIt.replace(/\s*$/, '').replace(/[.!]?$/, '.')}${step.checks.length ? ' The check below proves it without waiting.' : ''}`
   switch (step.open) {
     case 'newSession':
       return 'Do this: look at the New session window the tour just opened - the ring is round what changed. Close it when you are done.'
@@ -310,6 +346,8 @@ export function howToCheck(step: Pick<TourStep, 'open' | 'checks' | 'tryIt'>): s
       return 'Do this: the list of sessions is hidden. Press the ringed button to bring it back.'
     case 'workspaces':
       return 'Do this: look at the list on the left, under your open panes.'
+    case 'history':
+      return 'Do this: History is open behind this card - every session this machine has had, newest first. The ring is round the button that puts one back on the desk. Close it when you are done.'
     case 'pane':
       return 'Do this: a session is open behind this card. The ring is round the part that changed - click it, type in it, see it behave.'
     default:
@@ -342,6 +380,9 @@ const SURFACE_SPOT: Record<TourSurface, string | undefined> = {
   settings: '.dialog.settings .dialog-head',
   sidebarHidden: '.side-reveal',
   workspaces: '.sidebar',
+  // The row's own buttons, which is where `Open again` is - the control every History
+  // change so far has been about, and small enough to ring.
+  history: '.hist-list .hist-actions button',
   none: undefined
 }
 
