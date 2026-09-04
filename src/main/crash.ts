@@ -11,10 +11,13 @@
 // up. Nothing is swallowed silently - `paneforge-errors.log` next to the config is the
 // record, and the app says so in the pane footer when a window exists to say it in.
 
-import { appendFileSync, mkdirSync } from 'node:fs'
+import { appendFileSync, mkdirSync, renameSync, statSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { app } from 'electron'
+
+/** paneforge-errors.log is rotated past this size. 20 MB is months of normal faults. */
+const LOG_MAX_BYTES = 20 * 1024 * 1024
 
 const MAX_REPORTS = 50
 
@@ -41,6 +44,13 @@ function write(kind: string, err: unknown): void {
   try {
     const p = logPath()
     mkdirSync(dirname(p), { recursive: true })
+    // 2026-09-04: this file had reached 7.8 GB - a renderer wedge logs a line every few
+    // seconds and nothing ever trimmed it. Keep one previous generation and start over.
+    try {
+      if (statSync(p).size > LOG_MAX_BYTES) renameSync(p, `${p}.1`)
+    } catch {
+      /* no file yet, or rename lost a race - appending is still right */
+    }
     appendFileSync(p, `[${at}] ${kind}: ${detail}\n`)
   } catch {
     /* the console line above is the fallback */
