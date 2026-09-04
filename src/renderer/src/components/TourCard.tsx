@@ -35,6 +35,21 @@ const api = window.api
 // the commit's own subject (`stepKey`), never a slot number, so a rebuilt tour with the
 // same commits still remembers what was already looked at.
 const DONE_KEY = 'tour.done'
+// And what each step's checks ANSWERED, keyed the same way. A verdict is expensive - a
+// suite is a real process taking real seconds - and losing it on a reopen is what made
+// finding a broken thing mid-tour cost a whole second pass (Robert 2026-09-04: "we find a
+// broken thing in the middle then i need to come here and tell you then you have to reopen
+// the dev window so that i can test again etc. its annoying if progress isnt saved").
+const CHECKS_KEY = 'tour.checks'
+
+function loadChecks(): Record<string, TourCheck[]> {
+  try {
+    const raw = localStorage.getItem(CHECKS_KEY)
+    return raw ? (JSON.parse(raw) as Record<string, TourCheck[]>) : {}
+  } catch {
+    return {}
+  }
+}
 
 function loadMap(key: string): Record<string, boolean> {
   try {
@@ -110,6 +125,10 @@ export default function TourCard({ onOpen, sounds }: TourCardProps): JSX.Element
   // one: the button that used to ask per step is gone.
   const [started, setStarted] = useState(false)
   const [doneMap, setDoneMap] = useState<Record<string, boolean>>(() => loadMap(DONE_KEY))
+  // Verdicts from every earlier run of this dev copy, by step. A step whose checks already
+  // answered is not run again on a reopen - it arrives wearing the answer, with `Check
+  // again` for when the thing it proved has just been changed.
+  const [saved, setSaved] = useState<Record<string, TourCheck[]>>(() => loadChecks())
   // The last line the running check printed, and its tally so far - see `main/tour.ts`,
   // which sends one of these per counted line rather than a buffer at the end.
   const [live, setLive] = useState<TourProgress | null>(null)
@@ -150,15 +169,28 @@ export default function TourCard({ onOpen, sounds }: TourCardProps): JSX.Element
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [index, gone])
 
-  const runChecks = (): void => {
+  const runChecks = (again = false): void => {
     if (!state) return
     const step = currentStep(state)
-    if (!step.checks.length || checks[index]) return
+    const key = stepKey(step)
+    if (!step.checks.length) return
+    if (!again && (checks[index] || saved[key])) return
     setLive(null)
     setChecks((c) => ({ ...c, [index]: { state: 'running' } }))
-    void Promise.all(step.checks.map((s) => api.tourCheck(s))).then((results) =>
+    void Promise.all(step.checks.map((s) => api.tourCheck(s))).then((results) => {
       setChecks((c) => ({ ...c, [index]: { state: 'done', results } }))
-    )
+      // Written the moment it lands, not at the end of the tour: the run that finds a
+      // broken thing is the run that gets interrupted.
+      setSaved((was) => {
+        const upd = { ...was, [key]: results }
+        try {
+          localStorage.setItem(CHECKS_KEY, JSON.stringify(upd))
+        } catch {
+          // Full storage - the tour still works, it just forgets between opens.
+        }
+        return upd
+      })
+    })
   }
 
   // A TOUR RUNS ITS OWN CHECKS. The card used to wait to be told, one button press per
@@ -173,10 +205,11 @@ export default function TourCard({ onOpen, sounds }: TourCardProps): JSX.Element
   // needed" is that button's answer - it is gone, nothing on the card asks twice.
   useEffect(() => {
     if (!state || gone || !started) return
-    if (!currentStep(state).checks.length || checks[index]) return
+    const step = currentStep(state)
+    if (!step.checks.length || checks[index] || saved[stepKey(step)]) return
     runChecks()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [index, gone, started])
+  }, [index, gone, started, saved])
 
   // THE TOUR DOES THE THING. A step about a sound was a sentence about a sound; now the
   // sound plays as the step arrives (Robert 2026-09-04: "i actually meant for it to play
@@ -248,7 +281,8 @@ export default function TourCard({ onOpen, sounds }: TourCardProps): JSX.Element
 
   const step = currentStep(state)
   const isLast = done(state)
-  const check = checks[index]
+  // What this step's checks answered - this run's, or the one kept from an earlier open.
+  const check: Checking | undefined = checks[index] ?? (saved[stepKey(currentStep(state))] ? { state: 'done', results: saved[stepKey(currentStep(state))] } : undefined)
   const key = stepKey(step)
   const doneCount = state.steps.filter((s) => doneMap[stepKey(s)]).length
   const allDone = doneCount === state.steps.length
@@ -384,9 +418,15 @@ export default function TourCard({ onOpen, sounds }: TourCardProps): JSX.Element
                 <div key={r.script} className={'tour-check ' + (r.ok ? 'ok' : 'bad')}>
                   <span className="tour-check-mark">{r.ok ? '✓' : '✗'}</span>
                   <span>{checkedWords(r)}</span>
+                  {!checks[index] && <span className="tour-check-kept">kept from an earlier run</span>}
                   {!r.ok && <pre className="tour-check-tail">{r.tail}</pre>}
                 </div>
               ))
+            )}
+            {check?.state === 'done' && (
+              <button type="button" className="ghost small tour-again" data-testid="tour-check-again" onClick={() => runChecks(true)}>
+                Check again
+              </button>
             )}
           </div>
         )}

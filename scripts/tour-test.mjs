@@ -205,13 +205,13 @@ console.log('the tour plays itself')
   // everything itself so we wont need the run test:cloudwork"), reversing the earlier
   // per-step approval. Starting the tour IS the approval - the card still runs nothing on
   // its own before that press, and a step reached by hand still has a button.
-  ok('starting the tour runs each step\'s checks', /if \(!state \|\| gone \|\| !started\) return\s+if \(!currentStep\(state\)\.checks\.length \|\| checks\[index\]\) return\s+runChecks\(\)/.test(card))
+  ok('starting the tour runs each step\'s checks', /if \(!state \|\| gone \|\| !started\) return\s+const step = currentStep\(state\)\s+if \(!step\.checks\.length[^\n]*\) return\s+runChecks\(\)/.test(card))
   // "why is there button checking this change? is it even needed" (Robert, 2026-09-04).
   // It is not: once the tour is started nothing on the card asks a second time.
   ok('no button asks to run a check', !/data-testid="tour-run"/.test(card))
   // Keyed on `started`, not `playing` - a step reached by Next, or sat on while paused, is
   // still a step in a tour that was started, and its checks run there too.
-  ok('a paused or hand-steered step still runs its checks', /const \[started, setStarted\] = useState\(false\)/.test(card) && /\[index, gone, started\]/.test(card))
+  ok('a paused or hand-steered step still runs its checks', /const \[started, setStarted\] = useState\(false\)/.test(card) && /\[index, gone, started, saved\]/.test(card))
   ok('nothing runs before the tour is started', /const \[playing, setPlaying\] = useState\(false\)/.test(card))
   ok('and the card says so instead of offering a button', /when you start the tour/.test(card))
   // `test:cloudwork` is the name of a file in this repository and has no business on a
@@ -280,6 +280,17 @@ console.log('the tour plays itself')
     const css = readFileSync(join(root, 'src/renderer/src/styles.css'), 'utf8')
     ok('the bar is drawn as segments, not one filled strip', /\.tour-bar \{ display: flex;/.test(css) && /\.tour-bar > span\.lit \{ background: var\(--accent\)/.test(css))
   }
+
+  // PROGRESS IS KEPT ACROSS A REOPEN. Finding a broken thing halfway means closing the dev
+  // copy, fixing it, and opening it again - and re-running twenty suites to get back to
+  // where you were is what made that cost a whole second pass (Robert, 2026-09-04).
+  ok('verdicts are written to disk, not just ticks', /const CHECKS_KEY = 'tour\.checks'/.test(card))
+  ok('and written the moment one lands', /localStorage\.setItem\(CHECKS_KEY, JSON\.stringify\(upd\)\)/.test(card))
+  ok('a step that already answered is not run again', /if \(!step\.checks\.length \|\| checks\[index\] \|\| saved\[stepKey\(step\)\]\) return/.test(card))
+  ok('a kept verdict is drawn like a fresh one', /saved\[stepKey\(currentStep\(state\)\)\] \? \{ state: 'done', results:/.test(card))
+  ok('and says it is kept, so it is not mistaken for this run', /kept from an earlier run/.test(card))
+  ok('a kept verdict can be re-run by hand', /data-testid="tour-check-again"/.test(card) && /runChecks\(true\)/.test(card))
+  ok('the ticks survive too', /localStorage\.setItem/.test(card) && /const DONE_KEY = 'tour\.done'/.test(card))
 
   ok('and the last step is where it stops', /if \(done\(state\)\) \{[\s\S]*?setPlaying\(false\)/.test(card))
 }

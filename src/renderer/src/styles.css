@@ -3255,6 +3255,8 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
 .tour-check.bad { color: var(--danger, var(--text)); }
 .tour-check-mark { font-weight: 700; }
 .tour-check-count { color: var(--muted); font-variant-numeric: tabular-nums; }
+.tour-check-kept { color: var(--muted); font-size: 11px; }
+.tour-again { align-self: flex-start; }
 /* The one moving thing on the card, and the only sign a suite is alive between two
    printed lines. `steps(1, end)` makes it discrete - it composites on the step, three
    times a cycle, and nothing in between, which is why anim-cost-test exempts it. */
