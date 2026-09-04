@@ -84,9 +84,18 @@ go-ahead; a release another chat is cutting is not yours to join; "make the dev 
 said yesterday does not cover today. `npm run test:unreleased`.
 
 The dev window's tour (`shared/tour.ts`, `TourCard.tsx`) turns every `feat:`/`fix:`/`perf:`
-commit since the installed build into a step: where it lives (off the files touched),
-what to look for, a ring around the control, and the commit's own `scripts/<x>-test.mjs`
-RUN on the card with the result. It WAITS to be started and then plays itself - opens each
+commit since the installed build into a step: a NAME in the words of the thing on screen
+(`A session's header`), the commit's own sentence under it, a ring around the control, and
+the commit's own `scripts/<x>-test.mjs` RUN on the card with the result. The name comes
+from the commit's SCOPE first (`fix(header):` -> `SCOPE_PLACES`) and only then off the
+files touched - a header fix editing nothing but `src/shared/headerFit.ts` read as
+`inside the app, nothing to click` (Robert 2026-09-04, step 4 of 30). A step about a pane
+OPENS one: the pane on the desk is brought forward, or one plain SHELL pane is opened in
+this checkout - never an agent CLI, so it costs nothing and leaves no conversation. Every
+suite a step ran is ONE verdict line with the counts added up (`checkedAll`); two rows
+saying `Checked - 34 things proved` over `Checked - 38 things proved` read as the card
+disagreeing with itself. Next ticks the step it leaves off once the tour is STARTED, so a
+step that waits for you still counts; Previous ticks nothing. It WAITS to be started and then plays itself - opens each
 step's surface, counts down visibly (`dwellFor`) and ticks the step off on its way out;
 only Pause stops it, Previous and Next steer and it carries on from where they left it
 (Robert 2026-09-04: "its just to go to the next thing"). A step with something to DO on it - a surface

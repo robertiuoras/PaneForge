@@ -13,7 +13,7 @@ const {
   buildSteps, makeTour, currentStep, next, previous, done, surfaceFor, tourAllowed,
   stepFrom, placesFor, trailersOf, firstParagraph, checkAllowed, readCheck, checkName, plainWords, howToCheck,
   dwellFor, waitsForYou, DWELL_CHECKS_MS, DWELL_PLAIN_MS, NO_SCREEN,
-  stepKey, nextUnchecked, checkWords, summaryCount, checkedWords, demoFor
+  stepKey, nextUnchecked, checkWords, summaryCount, checkedWords, demoFor, titleFor, checkedAll
 } = await import(pathToFileURL(join(root, 'src/shared/tour.ts')).href)
 
 let failed = 0
@@ -24,7 +24,7 @@ const ok = (what, cond, extra = '') => {
 // A fixture is a change in the APP unless it says otherwise: `buildSteps` drops a commit
 // that touched nothing under `src/`, and every step-list test below is about something
 // else. The filter has its own section further down, with its own explicit files.
-const c = (subject, body = '', files = ['src/main/index.ts']) => ({ subject, body, files })
+const c = (subject, body = '', files = ['src/main/index.ts'], scope = '') => ({ subject, body, files, scope })
 
 console.log('an empty list draws nothing')
 {
@@ -240,7 +240,9 @@ console.log('the tour plays itself')
   // the end of the list clear `playing`; the two arrows write nothing but the index.
   ok('the arrows only move, they do not stop the tour', (card.match(/setPlaying\(false\)/g) ?? []).length === 1)
   ok('Previous just moves', /disabled=\{state\.index === 0\}\s+onClick=\{\(\) => setState\(\(s\) => \(s \? previous\(s\) : s\)\)\}/.test(card))
-  ok('Next just moves', /onClick=\{\(\) => setState\(\(s\) => \(s \? next\(s\) : s\)\)\}/.test(card))
+  // Next now ticks the step it is leaving off (a started tour marks its own progress) and
+  // then moves - what it must still not do is stop the tour, which the count above pins.
+  ok('Next ticks and moves, and stops nothing', /if \(started\) tickDone\(step\)\s*\n\s*setState\(\(s\) => \(s \? next\(s\) : s\)\)/.test(card))
   // The only moving thing on the card, and the only sign a suite is alive between lines.
   ok('a running check has a live pulse', /tour-check-dots/.test(card) && /@keyframes tourDot/.test(readFileSync(join(root, 'src/renderer/src/styles.css'), 'utf8')))
   ok('and it is discrete, so it composites on the step not the frame', /animation: tourDot 1\.2s steps\(1, end\) infinite/.test(readFileSync(join(root, 'src/renderer/src/styles.css'), 'utf8')))
@@ -257,7 +259,7 @@ console.log('the tour plays itself')
   ok('a checked step with no count says just Checked', checkedWords({ ok: true, passed: 0, failed: 0 }) === 'Checked')
   ok('and with one says how many', /829 things proved/.test(checkedWords({ ok: true, passed: 829, failed: 0 })))
   ok('a failure still counts both sides', /2 of 5 failed/.test(checkedWords({ ok: false, passed: 3, failed: 2 })))
-  ok('the card asks for those words rather than writing its own', /checkedWords\(r\)/.test(card))
+  ok('the card asks for those words rather than writing its own', /checkedWords\(all\)/.test(card))
 
   // THE TOUR DOES THE THING. A step about a sound plays the sound.
   const heard = (t) => demoFor({ text: t, see: [] })
@@ -339,6 +341,57 @@ console.log('the card ticks steps off and remembers')
   // The tick is a record of what was looked at, not another way to make the app act: it
   // must not resurrect the pane-opening helper Robert had removed.
   ok('and ticking still opens no pane', !/startSessions/.test(card))
+}
+
+
+console.log('a step is named after the thing on screen, not the commit subject')
+{
+  // The real one Robert was looking at: a header fix whose only source file is under
+  // src/shared, so the file table alone said "nothing to click" about a change to the
+  // icons in every pane header.
+  const header = stepFrom(
+    c('Ask the row whether it fits, instead of adding its widths up', '', ['src/shared/headerFit.ts', 'src/renderer/src/headerFit.ts'], 'header')
+  )
+  ok('the scope names the place', header.where === "a session's header")
+  ok('the title is the place, not the subject', header.title === "A session's header")
+  ok('and it opens a session to show it', header.open === 'pane')
+  ok('ringing the icons, not the whole pane', header.spot === '.pt-actions')
+  ok('the subject is still carried, under the name', header.text.startsWith('Ask the row'))
+  ok('a change with no screen says so plainly', titleFor(NO_SCREEN) === 'Inside the app')
+  ok('and a place nobody could name says the same', titleFor('') === 'Inside the app')
+  ok('a scope this app cannot show falls through to the files', stepFrom(c('X', '', ['src/main/index.ts'], 'promptlib')).where === NO_SCREEN)
+  ok('a pane surface tells you what to look at', /ring/i.test(howToCheck({ open: 'pane', checks: [] })))
+  const card = readFileSync(join(root, 'src/renderer/src/components/TourCard.tsx'), 'utf8')
+  ok('the card draws the name', /data-testid="tour-title"/.test(card))
+  const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
+  ok('the app opens a session for a pane step', /surface === 'pane'/.test(app))
+  ok('a shell, never an agent CLI', /agent: 'shell'/.test(app))
+}
+
+console.log('every suite a step ran is ONE line')
+{
+  const two = [
+    { script: 'scripts/a-test.mjs', ok: true, passed: 34, failed: 0, tail: '' },
+    { script: 'scripts/b-test.mjs', ok: true, passed: 38, failed: 0, tail: '' }
+  ]
+  const all = checkedAll(two)
+  ok('the counts are added up', all.passed === 72 && all.failed === 0 && all.ok)
+  ok('and read as one sentence', checkedWords(all) === 'Checked - 72 things proved')
+  const bad = checkedAll([two[0], { script: 'scripts/c-test.mjs', ok: false, passed: 1, failed: 2, tail: 'FAIL' }])
+  ok('one failing suite fails the step', !bad.ok && bad.failed === 2)
+  ok('nothing at all is still an answer, not a crash', checkedAll([]).ok && checkedAll([]).passed === 0)
+  const card = readFileSync(join(root, 'src/renderer/src/components/TourCard.tsx'), 'utf8')
+  ok('the card draws one verdict row', /data-testid="tour-check-done"/.test(card) && /checkedAll\(check\.results\)/.test(card))
+  ok('and never maps the results into a row each', !/check\.results\.map\(/.test(card))
+}
+
+console.log('a started tour ticks its own steps off')
+{
+  const card = readFileSync(join(root, 'src/renderer/src/components/TourCard.tsx'), 'utf8')
+  ok('Next ticks the step it leaves, once started', /if \(started\) tickDone\(step\)/.test(card))
+  // Previous is steering backwards - it must not tick anything off on the way.
+  const prev = card.slice(card.indexOf('Previous') - 400, card.indexOf('Previous'))
+  ok('Previous ticks nothing', !/tickDone/.test(prev))
 }
 
 console.log(failed ? `\n${failed} failed` : '\ntour: all good')

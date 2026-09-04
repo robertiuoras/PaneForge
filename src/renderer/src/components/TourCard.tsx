@@ -25,7 +25,7 @@
 import { useEffect, useState } from 'react'
 import type { TourCheck, TourProgress, TourState, TourStep, TourSurface } from '../../../shared/tour'
 import type { SoundConfig } from '../../../shared/sounds'
-import { NO_SCREEN, checkWords, checkedWords, currentStep, demoFor, done, dwellFor, howToCheck, next, nextUnchecked, previous, stepKey, waitsForYou } from '../../../shared/tour'
+import { NO_SCREEN, checkWords, checkedAll, checkedWords, currentStep, demoFor, done, dwellFor, howToCheck, next, nextUnchecked, previous, stepKey, waitsForYou } from '../../../shared/tour'
 import { previewSound } from '../useChime'
 import CardX from './CardX'
 
@@ -73,8 +73,11 @@ export interface TourCardProps {
    * app would really use (`previewSound` ignores only a zero floor). */
   sounds?: Partial<SoundConfig>
   /** Set the same state the button for that surface sets - `setPicking(true)` for New
-   * session, and so on. Called whenever the step now on screen changes. */
-  onOpen: (surface: TourSurface) => void
+   * session, and so on. Called whenever the step now on screen changes. `root` is the
+   * checkout this dev copy runs from, which is where `'pane'` opens a session when the
+   * desk has none - a change to a pane's header cannot be looked at on an empty desk
+   * (Robert, 2026-09-04: "it needs to open a session in order to see those icons"). */
+  onOpen: (surface: TourSurface, root: string) => void
 }
 
 type Checking = { state: 'running' } | { state: 'done'; results: TourCheck[] }
@@ -163,7 +166,7 @@ export default function TourCard({ onOpen, sounds }: TourCardProps): JSX.Element
   useEffect(() => {
     if (!state || gone) return
     const step = currentStep(state)
-    onOpen(step.open)
+    onOpen(step.open, state.root)
     // Only the step actually on screen should open anything - not `onOpen` itself, which
     // is a fresh closure every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -357,8 +360,14 @@ export default function TourCard({ onOpen, sounds }: TourCardProps): JSX.Element
           ))}
         </div>
         <div className="tour-body">
+          {/* THE NAME FIRST, in the words of the thing on screen. The commit subject under
+              it is the detail, not the heading: `ask the row whether it fits` is a true
+              sentence nobody can find a screen from (Robert 2026-09-04). */}
+          <div className="tour-title" data-testid="tour-title">{step.title}</div>
           <div className="tour-text">{step.text}</div>
-          {step.where !== NO_SCREEN && <div className="tour-where">Where to look: {step.where}</div>}
+          {step.where !== NO_SCREEN && step.where !== step.title.charAt(0).toLowerCase() + step.title.slice(1) && (
+            <div className="tour-where">Where to look: {step.where}</div>
+          )}
           <div className="tour-how">{howToCheck(step)}</div>
           {playing && waitsForYou(step) && (
             <div className="tour-wait" data-testid="tour-wait">
@@ -414,14 +423,28 @@ export default function TourCard({ onOpen, sounds }: TourCardProps): JSX.Element
                 {live && <div className="tour-check-live" data-testid="tour-check-live">{live.line}</div>}
               </div>
             ) : (
-              check.results.map((r) => (
-                <div key={r.script} className={'tour-check ' + (r.ok ? 'ok' : 'bad')}>
-                  <span className="tour-check-mark">{r.ok ? '✓' : '✗'}</span>
-                  <span>{checkedWords(r)}</span>
-                  {!checks[index] && <span className="tour-check-kept">kept from an earlier run</span>}
-                  {!r.ok && <pre className="tour-check-tail">{r.tail}</pre>}
-                </div>
-              ))
+              // ONE row for every suite this step ran - see `checkedAll`. Two rows saying
+              // `Checked - 34 things proved` and `Checked - 38 things proved` read as the
+              // card contradicting itself, since nothing on the card says which suite is
+              // which.
+              (() => {
+                const all = checkedAll(check.results)
+                return (
+                  <div className={'tour-check ' + (all.ok ? 'ok' : 'bad')} data-testid="tour-check-done">
+                    <span className="tour-check-mark">{all.ok ? '✓' : '✗'}</span>
+                    <span>{checkedWords(all)}</span>
+                    {!checks[index] && <span className="tour-check-kept">kept from an earlier run</span>}
+                    {!all.ok &&
+                      check.results
+                        .filter((r) => !r.ok)
+                        .map((r) => (
+                          <pre key={r.script} className="tour-check-tail">
+                            {r.tail}
+                          </pre>
+                        ))}
+                  </div>
+                )
+              })()
             )}
             {check?.state === 'done' && (
               <button type="button" className="ghost small tour-again" data-testid="tour-check-again" onClick={() => runChecks(true)}>
@@ -458,7 +481,16 @@ export default function TourCard({ onOpen, sounds }: TourCardProps): JSX.Element
             <button
               type="button"
               className="ghost small"
-              onClick={() => setState((s) => (s ? next(s) : s))}
+              onClick={() => {
+                // A STARTED TOUR TICKS ITS OWN STEPS OFF. The play loop already does this
+                // on its way out of a step, but a step that waits for you (`waitsForYou`)
+                // never leaves on a timer, so every one of those sat unticked and the
+                // count stayed where it was however far through you had read - Robert,
+                // 2026-09-04: "done should be auto ticked for me if i start the tour".
+                // Steering back with Previous ticks nothing.
+                if (started) tickDone(step)
+                setState((s) => (s ? next(s) : s))
+              }}
             >
               Next
             </button>

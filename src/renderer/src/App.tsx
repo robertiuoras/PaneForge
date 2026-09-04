@@ -7046,11 +7046,21 @@ export default function App(): JSX.Element {
           everywhere else, so this card asks once and draws nothing the rest of the time. */}
       <TourCard
         sounds={config?.sounds}
-        onOpen={(surface) => {
+        onOpen={(surface, root) => {
           if (surface === 'newSession') setPicking(true)
           else if (surface === 'settings') setSettings(true)
           else if (surface === 'sidebarHidden') setSideHidden(true)
           else if (surface === 'workspaces') setSideHidden(false)
+          else if (surface === 'pane') {
+            // A change to a pane - its header, its icons, its name - can only be looked at
+            // when a pane is on screen, and a dev copy often opens with none. The existing
+            // one is brought to the front; with none, ONE plain shell pane is opened in the
+            // checkout this copy runs from. A shell, never an agent: it costs nothing, it
+            // starts instantly, and there is no conversation left behind when it is closed.
+            setSideHidden(false)
+            if (sessions.length) setActiveId(sessions[0].id)
+            else if (root) void start([{ cwd: root, agent: 'shell' }])
+          }
         }}
       />
       {/* One quiet card in the corner, saying one thing this app can do. It is the only
