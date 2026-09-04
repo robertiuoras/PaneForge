@@ -2605,12 +2605,19 @@ const handoffQueue = new HandoffQueue({
 
 ipcMain.handle(
   'remote:handoff',
-  (_e, device: string, ids?: string[], closeReceiverWhenDone?: boolean, waitForTurn?: boolean) =>
-    runHandoff(String(device), {
+  (_e, device: string, ids?: string[], closeReceiverWhenDone?: boolean, waitForTurn?: boolean) => {
+    // A script that packs every argument into one array reaches here with `device` as
+    // that array. `String()` turned it into "id,pane,false,true", which queued a pane for
+    // a machine that does not exist and tried every other pane on the desk (ids undefined
+    // means all) - 2026-09-04, the wrong-machine hook. A refusal has to be loud and now.
+    if (typeof device !== 'string' || !device)
+      throw new Error(`remote:handoff: device must be a device id, got ${JSON.stringify(device)}`)
+    return runHandoff(device, {
       ids: Array.isArray(ids) && ids.length ? ids.map(String) : undefined,
       closeReceiverWhenDone: closeReceiverWhenDone === true,
       waitForTurn: waitForTurn !== false
     })
+  }
 )
 // One press on a mirrored pane's own card. The answer is the far end's report, so a
 // refusal ("dirty checkout over there") arrives as a sentence naming the pane.
