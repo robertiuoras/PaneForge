@@ -55,6 +55,22 @@ export interface SplitPlan {
  */
 export const MAX_TASKS = 4
 
+/**
+ * How many panes a split may propose, given how many checkouts of this repo actually exist.
+ *
+ * `MAX_TASKS` was the lane pool hardcoded to four - `main` plus `a`/`b`/`c` - which is
+ * wrong the moment `.lanes.json` names a different pool, and it is also narrower than it
+ * needs to be now that a pane past the live checkouts can be QUEUED (`shared/wakePlan.ts`)
+ * rather than refused outright: a fifth task used to be dropped for the same reason a
+ * fifth checkout does not exist, and a queued pane does not share anyone's files, it simply
+ * waits its turn. `queueAllowance` is capped at 12 so a split still cannot propose more
+ * than a person could sensibly review in `SplitDialog`.
+ */
+export function maxTasks(poolSize: number, queueAllowance = 8): number {
+  const pool = Math.max(1, Math.floor(poolSize))
+  return Math.min(pool + Math.max(0, Math.floor(queueAllowance)), 12)
+}
+
 /** Below this there is nothing to split - one ask is one pane. */
 export const MIN_CHARS = 120
 

@@ -4708,3 +4708,66 @@ that channel already carries id/name/status/panes for every paired peer.
 
 Pure logic in `src/shared/offloadFirst.ts`, proved without a window:
 `npm run test:deviceopen` (`scripts/device-open-test.mjs`).
+
+## Many panes, one machine
+
+Robert, 2026-09-04: run 10, 20+ sessions agentically, and when the machine has no more
+room, sleep some and pick up exactly where they left off once room comes back - never
+mid-turn, never at random, because either would look like the app stopping someone's work.
+
+**Two clocks, one arithmetic.** `shared/wakePlan.ts` is pure: `pressureSleepPlan` decides
+which running panes go to sleep because the machine is `warn`/`critical`, and `wakePlan`
+decides which sleeping panes come back once it reads `normal` again. Both read
+`shared/capacity.ts`'s own `Pressure`, the same reading the trim and reclaim ladders
+already use - a fourth independent pressure reading here would be a fourth place for the
+readings to disagree.
+
+**Why a sleep can never stop development.** `pressureSleepPlan` reuses `shared/sleep.ts`'s
+`canSleep` verbatim rather than re-deriving its own refusals: busy, asking, running a job
+or a background job, or a mirror of another device's pty are every one of them "this pane
+is mid-something", and a second copy of that list would drift from the first the next time
+either changed. `critical` sleeps immediately (up to `maxPerSweep`); `warn` waits for the
+reading to have HELD for a minute first, so a load average flapping across the threshold
+does not put a pane to sleep on its way past `ok` - the same flapping problem
+`TRIM_SETTLE_MS` exists for in `capacity.ts`, solved the same way.
+
+**Why waking is careful about WHICH sleep it undoes.** A pane asleep because somebody chose
+it (`manual`) or because it simply sat idle (`idle`) is not this sweep's business - waking
+it back up on its own would be undoing a person's decision, or fighting the idle-sleep
+clock that just put it down. Only `pressure` and `queued` sleepers are candidates, because
+those are the two reasons a person did not ask for. Oldest sleeper first for `pressure` (the
+one that gave back memory longest ago has had the longest rest); `queued` panes wake in
+creation order, because they never ran at all and creation order is the only fair queue for
+a pane that has no "how long has it rested" to measure.
+
+**`roomFor` is the same conservatism `PLANNABLE` already uses.** Zero room under
+`warn`/`critical` whatever the free-memory number says, because the live pressure reading
+always outranks a static one in this app - `capacity.ts`'s own comment on `PLANNABLE` says
+why. Under `normal` it is free memory over one session's `SESSION_MB`, nothing cleverer.
+
+**`shared/sleepWords.ts` is the one place the chip explains a sleep it did not ask for.**
+`manual`/`idle` keep the plain `asleep 3m` `shared/sleep.ts` already drew - a person chose
+it, or it was simply quiet, and either is the ordinary word for that. `pressure` says
+"resting to free memory" and `queued` says "waiting for room", because those are the two a
+person would otherwise read as unexplained. `AsleepChip` in `App.tsx` is the only renderer
+site that draws it, at both places a sleeping pane's chip appears (the row and the header),
+so a reason added there never needs a second wiring point.
+
+**`maxTasks` replaces the hardcoded `MAX_TASKS`.** The old comment on `MAX_TASKS` was
+explicit that four was "the lane pool - `main` plus `a`/`b`/`c`" and refused a fifth task
+because a fifth checkout does not exist to run it in. That reasoning no longer holds once a
+pane past the live checkouts can be QUEUED instead of refused: `shared/splitPlan.ts`'s
+`maxTasks(poolSize)` adds a queue allowance (default 8) on top of the real pool size, capped
+at 12 so a split still cannot propose more rows than `SplitDialog` can sensibly show.
+`main/splitPrompt.ts` reads the pool size off this repo's own `.lanes.json` `pool` array,
+falling back to four when the file is missing or has none - the number the app used to have
+baked in becomes the number it has when nothing else is known.
+
+**Not yet wired: the sweep's `sleep` dependency, and the real pressure source.**
+`src/main/wakeQueue.ts`'s `startWakeQueue` is already called from `index.ts`, registered by
+the contract commit this workstream built on top of, with `pressure: () => 'normal'` and no
+`sleep` dependency - both intentionally left for the session integrating every lane, since
+`index.ts`, `SessionManager.sleep`, and the real pressure publisher are all outside this
+workstream's ownership. `WakeQueueDeps.sleep` is optional for exactly that reason: the wake
+half of the sweep works today, and the pressure-sleep half turns on the moment `sleep(id,
+reason)` and a live `pressure()` are wired in, with no further change to this file.

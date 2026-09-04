@@ -132,7 +132,9 @@ import {
   type AutoPane
 } from '../../shared/autoHandoff'
 import { fleetState } from '../../shared/fleet'
-import { keptWords, sleepWords } from '../../shared/sleep'
+import { keptWords } from '../../shared/sleep'
+import { asleepChip } from '../../shared/sleepWords'
+import type { SleepReason } from '../../shared/types'
 import { idleQuitVerdict } from '../../shared/idlequit'
 import { formatCpu, formatMb, type UsageReport } from '../../shared/usage'
 import { jobWords } from '../../shared/paneBackJobs'
@@ -242,7 +244,15 @@ function AskClock({ at }: { at: number }): React.JSX.Element | null {
  * MINUTE - `sleepWords` says nothing finer, and a pane asleep overnight would otherwise
  * wake the app 3600 times an hour to redraw the same string (see `shared/elapsed.ts`).
  */
-function AsleepChip({ at, id }: { at: number; id: string }): React.ReactElement {
+function AsleepChip({
+  at,
+  id,
+  reason
+}: {
+  at: number
+  id: string
+  reason?: SleepReason
+}): React.ReactElement {
   const now = useNow(60_000, at)
   return (
     <button
@@ -253,7 +263,7 @@ function AsleepChip({ at, id }: { at: number; id: string }): React.ReactElement 
         void api.wakeSession(id)
       }}
     >
-      {sleepWords(at, now)}
+      {asleepChip(reason, at, now)}
     </button>
   )
 }
@@ -4974,7 +4984,7 @@ export default function App(): JSX.Element {
                         // Before the exited chip, and a BUTTON: a sleeping pane wears
                         // `status: 'exited'` (see `Session.asleep`), and the one thing
                         // anybody wants to do to it is the press that gives it back.
-                        <AsleepChip at={s.asleep} id={s.id} />
+                        <AsleepChip at={s.asleep} id={s.id} reason={s.asleepReason} />
                       ) : s.status === 'exited' ? (
                         <span className="chip dead">exited {s.exitCode ?? ''}</span>
                       ) : s.runSince ? (
@@ -5780,7 +5790,7 @@ export default function App(): JSX.Element {
                 />
               )}
               {s.asleep ? (
-                <AsleepChip at={s.asleep} id={s.id} />
+                <AsleepChip at={s.asleep} id={s.id} reason={s.asleepReason} />
               ) : s.status === 'exited' ? (
                 <span className="chip dead">exited {s.exitCode ?? ''}</span>
               ) : s.runSince ? (
