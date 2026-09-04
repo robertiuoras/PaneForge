@@ -28,6 +28,8 @@ import type { AttachIn, AttachResult } from '../../shared/attach'
 import type { BackJob } from '../../shared/backJobs'
 import type { HandoffItem, HandoffPayload, HandoffResult } from '../../shared/handoff'
 import { DEFAULT_REMOTE_PORT, getConfig, setConfig } from '../config'
+import { mayLendSize } from '../../shared/paneSize'
+import { profileName } from '../profile'
 import { Discovery, localAddresses } from './discover'
 import { RemoteHost, type HostBackend } from './host'
 import { RemoteClient, joinId, splitId } from './client'
@@ -179,6 +181,11 @@ export class Remote extends EventEmitter {
    * larger and the pane is drawn at a phone's width in a 157-column window.
    */
   resizeOn(id: string, cols: number, rows: number, viewer?: string): void {
+    // A test copy draws a mirrored pane but does not get a vote in how wide it is: the
+    // far end lends every borrower the SMALLEST grid asked for, so a `npm run try` window
+    // nobody is sitting at was clamping a PC pane under the installed app beside it. See
+    // `mayLendSize` in shared/paneSize.ts.
+    if (!mayLendSize(profileName())) return
     const cut = splitId(id)
     if (!cut) return
     this.clients.get(cut.peer)?.resizeOn(cut.local, cols, rows, viewer)
