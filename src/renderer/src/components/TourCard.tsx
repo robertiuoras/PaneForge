@@ -25,7 +25,8 @@
 import { useEffect, useState } from 'react'
 import type { TourCheck, TourProgress, TourState, TourStep, TourSurface } from '../../../shared/tour'
 import type { SoundConfig } from '../../../shared/sounds'
-import { NO_SCREEN, checkWords, checkedAll, checkedWords, currentStep, demoFor, done, dwellFor, howToCheck, next, nextUnchecked, previous, stepKey, waitsForYou } from '../../../shared/tour'
+import { NO_SCREEN, checkWords, checkedAll, spotFits, checkedWords, currentStep, demoFor, done, dwellFor, howToCheck, next, nextUnchecked, previous, stepKey, waitsForYou } from '../../../shared/tour'
+import { lookVerdict, type LookVerdict } from '../../../shared/lookCheck'
 import { previewSound } from '../useChime'
 import CardX from './CardX'
 
@@ -78,9 +79,23 @@ export interface TourCardProps {
    * desk has none - a change to a pane's header cannot be looked at on an empty desk
    * (Robert, 2026-09-04: "it needs to open a session in order to see those icons"). */
   onOpen: (surface: TourSurface, root: string) => void
+  /** The tour is over or has been put away - anything it opened for its own sake goes
+   * with it, so nobody is left closing a pane they did not ask for. */
+  onFinish?: () => void
 }
 
 type Checking = { state: 'running' } | { state: 'done'; results: TourCheck[] }
+
+/** What has to be on screen for each surface, so the card can say whether it really
+ * opened rather than trusting the state it just set. */
+const SURFACE_SEL: Record<string, string | null> = {
+  newSession: '.dialog',
+  settings: '.dialog.settings',
+  sidebarHidden: '.side-reveal',
+  workspaces: '.sidebar',
+  pane: '.pane',
+  none: null
+}
 
 /** A ring around the control a step is about. Re-measured on a slow tick because the
  * surface it points at is opened by state the card cannot see settle; nothing animates. */
@@ -99,7 +114,8 @@ function TourSpot({ selector }: { selector: string }): JSX.Element | null {
       window.removeEventListener('resize', read)
     }
   }, [selector])
-  if (!box || box.width === 0) return null
+  // A ring that covers the window is not a ring - see `spotFits`.
+  if (!box || !spotFits(box, { width: window.innerWidth, height: window.innerHeight })) return null
   const pad = 6
   return (
     <div
@@ -110,7 +126,7 @@ function TourSpot({ selector }: { selector: string }): JSX.Element | null {
   )
 }
 
-export default function TourCard({ onOpen, sounds }: TourCardProps): JSX.Element | null {
+export default function TourCard({ onOpen, onFinish, sounds }: TourCardProps): JSX.Element | null {
   const [state, setState] = useState<TourState | null>(null)
   const [gone, setGone] = useState(false)
   const [checks, setChecks] = useState<Record<number, Checking>>({})
@@ -231,6 +247,32 @@ export default function TourCard({ onOpen, sounds }: TourCardProps): JSX.Element
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [index, gone, started, demo])
 
+  // THE LOOK CHECK. A node suite cannot see the window, so the two faults Robert found by
+  // eye - a ring covering the window, a surface that never opened - passed every suite in
+  // the repo. The card is IN the window, so it measures what it just pointed at and says
+  // what it can see. Read a beat after the step arrives, since the surface it opens is
+  // state this card cannot watch settle.
+  const [look, setLook] = useState<LookVerdict | null>(null)
+  useEffect(() => {
+    if (!state || gone) return
+    setLook(null)
+    const step = currentStep(state)
+    const t = setTimeout(() => {
+      const el = step.spot ? document.querySelector(step.spot) : null
+      const b = el ? el.getBoundingClientRect() : null
+      const surface = SURFACE_SEL[step.open]
+      setLook(
+        lookVerdict(step, {
+          spot: b ? { width: b.width, height: b.height, x: b.left, y: b.top } : null,
+          surfaceOnScreen: surface ? !!document.querySelector(surface) : null,
+          win: { width: window.innerWidth, height: window.innerHeight }
+        })
+      )
+    }, 900)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [index, gone])
+
   // Playing: hold on this step for as long as it needs to be looked at, then move on.
   // The timer is rebuilt whenever the step, the play state or this step's checks change,
   // so a step that was holding for a check starts its dwell the moment the result lands.
@@ -271,6 +313,12 @@ export default function TourCard({ onOpen, sounds }: TourCardProps): JSX.Element
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [index, gone, playing, checkRunning])
+
+  // Put the card away AND take back anything the tour opened for itself.
+  const putAway = (): void => {
+    setGone(true)
+    onFinish?.()
+  }
 
   if (!state) return null
   // Dismissed or Done: a pill stays in the corner so the steps can always be found
@@ -317,7 +365,7 @@ export default function TourCard({ onOpen, sounds }: TourCardProps): JSX.Element
   if (allDone)
     return (
       <div className="tour-card" role="status" data-testid="tour-card">
-        <CardX onDismiss={() => setGone(true)} />
+        <CardX onDismiss={putAway} />
         <div className="tour-count">
           {doneCount} of {state.steps.length} checked
         </div>
@@ -325,7 +373,7 @@ export default function TourCard({ onOpen, sounds }: TourCardProps): JSX.Element
           <div className="tour-text">Every step is checked off.</div>
         </div>
         <div className="tour-acts">
-          <button type="button" className="primary small" data-testid="tour-done" onClick={() => setGone(true)}>
+          <button type="button" className="primary small" data-testid="tour-done" onClick={putAway}>
             Close
           </button>
         </div>
@@ -335,7 +383,7 @@ export default function TourCard({ onOpen, sounds }: TourCardProps): JSX.Element
   return (
     <>
       <div className="tour-card" role="status" data-testid="tour-card">
-        <CardX onDismiss={() => setGone(true)} />
+        <CardX onDismiss={putAway} />
         <div className="tour-head">
           <div className="tour-count">
             Step {state.index + 1} of {state.steps.length}
@@ -369,6 +417,12 @@ export default function TourCard({ onOpen, sounds }: TourCardProps): JSX.Element
             <div className="tour-where">Where to look: {step.where}</div>
           )}
           <div className="tour-how">{howToCheck(step)}</div>
+          {look && (
+            <div className={'tour-look ' + (look.ok ? 'ok' : 'bad')} data-testid="tour-look">
+              <span className="tour-check-mark">{look.ok ? '👁' : '✗'}</span>
+              <span>{look.says}</span>
+            </div>
+          )}
           {playing && waitsForYou(step) && (
             <div className="tour-wait" data-testid="tour-wait">
               Take as long as you want here - tick Done or press Next to carry on.
@@ -499,7 +553,7 @@ export default function TourCard({ onOpen, sounds }: TourCardProps): JSX.Element
             <input type="checkbox" data-testid="tour-step-done" checked={!!doneMap[key]} disabled={!!doneMap[key]} onChange={markDone} />
             Done
           </label>
-          <button type="button" className="primary small" data-testid="tour-dismiss" onClick={() => setGone(true)}>
+          <button type="button" className="primary small" data-testid="tour-dismiss" onClick={putAway}>
             Close
           </button>
         </div>

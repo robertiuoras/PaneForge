@@ -889,8 +889,12 @@ export default function App(): JSX.Element {
   }, [sideW])
   // Whether the sidebar is hidden. A view preference like sideW, so localStorage not
   // config.json - a phone client has no sidebar to hide.
-  // Set once the tour has opened its own shell pane, so it never opens a second.
+  // The shell pane the tour opened, so it can take it away again. It is the tour's pane,
+  // not the person's: closing it by hand asks "shell is still running in ...", which is
+  // the right question about a pane somebody started and the wrong one about a pane the
+  // app put there to demonstrate a header (Robert, 2026-09-04: "i cant even close it").
   const tourPaneOpened = useRef(false)
+  const tourPaneId = useRef<string | null>(null)
   const [sideHidden, setSideHidden] = useState<boolean>(() => {
     try {
       return localStorage.getItem('pf.sideHidden') === '1'
@@ -7072,9 +7076,20 @@ export default function App(): JSX.Element {
             if (sessions.length) setActiveId(sessions[0].id)
             else if (root && !tourPaneOpened.current) {
               tourPaneOpened.current = true
-              void start([{ cwd: root, agent: 'shell' }])
+              void api.startSessions([{ cwd: root, agent: 'shell' }]).then((st) => {
+                if (!st.length) return
+                tourPaneId.current = st[0].id
+                setActiveId(st[0].id)
+              })
             }
           }
+        }}
+        onFinish={() => {
+          // The tour takes its own pane away with it - no confirm, because nobody asked
+          // for this pane and nobody should have to answer a question to be rid of it.
+          const id = tourPaneId.current
+          tourPaneId.current = null
+          if (id) void api.killSession(id)
         }}
       />
       {/* One quiet card in the corner, saying one thing this app can do. It is the only

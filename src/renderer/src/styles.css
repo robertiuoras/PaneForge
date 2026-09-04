@@ -4852,3 +4852,8 @@ html.login-open .panes { padding-right: calc(var(--login-w, 50vw) + 6px); }
   html.login-open .panes { padding-right: 6px; }
   .login-split { display: none; }
 }
+
+/* What the card can SEE of the step it just showed - the half no node suite can answer.
+   Same row shape as a check verdict, one step quieter. */
+.tour-look { display: flex; gap: 6px; align-items: baseline; font-size: 12px; color: var(--muted); }
+.tour-look.bad { color: var(--danger, var(--text)); }

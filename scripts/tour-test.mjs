@@ -13,7 +13,7 @@ const {
   buildSteps, makeTour, currentStep, next, previous, done, surfaceFor, tourAllowed,
   stepFrom, placesFor, trailersOf, firstParagraph, checkAllowed, readCheck, checkName, plainWords, howToCheck,
   dwellFor, waitsForYou, DWELL_CHECKS_MS, DWELL_PLAIN_MS, NO_SCREEN,
-  stepKey, nextUnchecked, checkWords, summaryCount, checkedWords, demoFor, titleFor, checkedAll
+  stepKey, nextUnchecked, checkWords, summaryCount, checkedWords, demoFor, titleFor, checkedAll, spotFits
 } = await import(pathToFileURL(join(root, 'src/shared/tour.ts')).href)
 
 let failed = 0
@@ -371,6 +371,17 @@ console.log('a step is named after the thing on screen, not the commit subject')
   // Every other step gives the sessions list back: a hidden sidebar leaves no way to
   // reach a pane's own close button, and a collapsed one wears the ring as a line.
   ok('the list comes back unless the step is about hiding it', /setSideHidden\(surface === 'sidebarHidden'\)/.test(app))
+  // The tour's own pane goes when the tour does - closing it by hand asks "shell is still
+  // running", which is the wrong question about a pane nobody asked for.
+  ok('the tour takes its pane away with it', /tourPaneId\.current/.test(app) && /killSession/.test(app))
+  const tcard = readFileSync(join(root, 'src/renderer/src/components/TourCard.tsx'), 'utf8')
+  ok('and Close and the X both do it', (tcard.match(/putAway/g) ?? []).length >= 3)
+  // A ring is for a control. The `.pane` ring was 618x1050 in a 960x1080 window and read
+  // as a glowing line down the left edge.
+  ok('a ring over most of the window is not drawn', !spotFits({ width: 618, height: 1050 }, { width: 960, height: 1080 }))
+  ok('a header row still gets its ring', spotFits({ width: 600, height: 34 }, { width: 960, height: 1080 }))
+  ok('nothing measured is never ringed', !spotFits({ width: 0, height: 0 }, { width: 960, height: 1080 }))
+  ok('no step rings the whole pane', !/spot: '\.pane'/.test(readFileSync(join(root, 'src/shared/tour.ts'), 'utf8')))
 }
 
 console.log('every suite a step ran is ONE line')

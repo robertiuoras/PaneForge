@@ -67,6 +67,21 @@ export interface TourStep {
   spot?: string
 }
 
+/**
+ * Is this box small enough to be a RING rather than a wash over the window?
+ *
+ * A ring around something that fills the screen says nothing and looks like a fault; the
+ * `.pane` ring was 618x1050 of a 960x1080 window - 62% of it - and read as a glowing line
+ * down the left. Anything over `SPOT_MAX_FRAC` of the window is not drawn at all.
+ */
+export const SPOT_MAX_FRAC = 0.45
+
+export function spotFits(box: { width: number; height: number }, win: { width: number; height: number }): boolean {
+  if (box.width <= 0 || box.height <= 0) return false
+  if (win.width <= 0 || win.height <= 0) return false
+  return (box.width * box.height) / (win.width * win.height) <= SPOT_MAX_FRAC
+}
+
 export interface TourState {
   steps: TourStep[]
   index: number
@@ -147,8 +162,12 @@ const PLACES: ReadonlyArray<readonly [RegExp, Place]> = [
 const SCOPE_PLACES: ReadonlyMap<string, Place> = new Map<string, Place>([
   ['header', { where: "a session's header", open: 'pane', spot: '.pt-actions' }],
   ['pane', { where: 'a pane', open: 'pane', spot: '.pane-title' }],
-  ['panes', { where: 'the panes', open: 'pane', spot: '.pane' }],
-  ['rail', { where: "a pane's prompt marks", open: 'pane', spot: '.pane' }],
+  // NEVER `.pane`: a ring around the whole pane is a 618x1050 rectangle whose left edge
+  // is a glowing line down the middle of the window, which reads as a rendering fault and
+  // points at nothing (Robert, 2026-09-04: "theres a glowing line on the left of the pane
+  // window"). A ring is for a CONTROL.
+  ['panes', { where: 'the panes', open: 'pane', spot: '.pane-title' }],
+  ['rail', { where: "a pane's prompt marks", open: 'pane', spot: '.pane-title' }],
   ['tour', { where: 'this card' }],
   ['cards', { where: 'the cards in the corner' }]
 ])
