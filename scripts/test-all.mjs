@@ -22,7 +22,8 @@
 //   node scripts/test-all.mjs rail theme  only the ones whose name contains one of these
 
 import { execFileSync, spawn } from 'node:child_process'
-import { cpus, loadavg } from 'node:os'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { cpus, loadavg, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -303,10 +304,27 @@ const started = Date.now()
  * 197.8s against 196.8s of summed suite time - a pool that was still a queue, and the giveaway
  * is exactly that, the two numbers agreeing. A real pool's wall clock is a fraction of the sum.
  */
+/*
+ * Every suite in here names its scratch directory after itself - `pf-sound-test`,
+ * `pf-promote-test` - and 193 of them do it inside `tmpdir()`. That is fine for one run
+ * and wrong for two: a second `npm test` on the same machine writes the SAME paths, and
+ * one run's `rmSync(work)` deletes the other's bundle mid-build. The failure that makes
+ * is fast and unlike an assertion - `panebound` in 0.1s, `promote` in 0.0s - and both
+ * pass on their own seconds later, which is how a lane's release gate went red on
+ * 2026-09-04 while nothing was wrong with the code.
+ *
+ * One run, one temp root: `TMPDIR` is per-process, `tmpdir()` reads it, so every suite's
+ * fixed name lands inside this run's own folder and two runs cannot collide. Nothing in
+ * the 193 scripts changes.
+ */
+const TMP_ROOT = mkdtempSync(join(tmpdir(), 'pf-test-run-'))
+process.on('exit', () => rmSync(TMP_ROOT, { recursive: true, force: true }))
+
 function runChild(file) {
   return new Promise((done) => {
     const kid = spawn(process.execPath, [join(root, 'scripts', file)], {
       cwd: root,
+      env: { ...process.env, TMPDIR: TMP_ROOT, TEMP: TMP_ROOT, TMP: TMP_ROOT },
       // Captured rather than inherited: 34 passing tests printing their own output is a
       // wall nobody reads, and the gate keeps only the tail. A failure prints in full.
       stdio: ['ignore', 'pipe', 'pipe']

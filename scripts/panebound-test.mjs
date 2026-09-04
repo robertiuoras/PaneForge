@@ -134,12 +134,43 @@ if (process.platform !== 'win32') {
     .filter(Boolean)
     .map((m) => ({ pid: Number(m[1]), ppid: Number(m[2]), cmd: m[3] }))
   const clis = rows.filter((r) => /(?:^|[/\\])(claude|codex)(?:\s|$)/.test(r.cmd) && !/--mcp/.test(r.cmd))
+
+  /** Every command line at or under a pid, as one string. */
+  const subtree = (pid) => {
+    const out = []
+    const walk = (p) => {
+      for (const r of rows) if (r.ppid === p) { out.push(r.cmd); walk(r.pid) }
+    }
+    const self = rows.find((r) => r.pid === pid)
+    if (self) out.push(self.cmd)
+    walk(pid)
+    return out.join(' ')
+  }
+
+  // What this used to assert was "not EVERY agent on this desk is bound", which is a
+  // property of the desk and not of the code: with one CLI running and that CLI holding a
+  // CDP port, the suite went red and stopped a release that had nothing to do with it
+  // (2026-09-04, master, while the batch run had exactly one agent up). The invariant
+  // worth pinning is the one `machineBound` is FOR - it keys on automation flags, so a
+  // pane it binds must have one somewhere in its tree, and a pane with none must be free.
   let bound = 0
-  for (const cli of clis) if (machineBound(rows, cli.pid)) bound++
-  ok(
-    bound < clis.length || clis.length === 0,
-    `not every live agent on this machine is bound (${bound} of ${clis.length})`
-  )
+  for (const cli of clis) {
+    const yes = !!machineBound(rows, cli.pid)
+    if (yes) bound++
+    // The same two signals `paneBound.ts` keys on, flattened: an automation flag anywhere
+    // in the tree, or a browser driver binary. Deliberately a mirror - what this pins is
+    // that walking a REAL process tree agrees with a flat scan of it, which is the leg a
+    // fixture cannot exercise.
+    const text = subtree(cli.pid)
+    const flagged =
+      /(?:^|\s)--(?:remote-debugging-port|remote-debugging-pipe|headless)(?:[=\s]|$)/.test(text) ||
+      /(?:^|[/\\])(chromedriver|geckodriver|msedgedriver|safaridriver)(?:\s|$)/i.test(text)
+    ok(
+      yes === flagged,
+      `a live agent is bound only when something in its tree drives a browser` +
+        ` (${yes ? 'bound' : 'free'}, flags ${flagged ? 'present' : 'absent'}): ${cli.cmd.slice(0, 60)}`
+    )
+  }
   console.log(`  (${clis.length} live agent CLIs here, ${bound} of them driving a browser right now)`)
 }
 
