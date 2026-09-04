@@ -100,7 +100,7 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
     if (!step.try || tried[index]) return
     setTried((t) => ({ ...t, [index]: 'opening' }))
     void api
-      .startSession({ cwd: state.root, prompt: step.try, title: `Try: ${step.text.slice(0, 40)}` })
+      .startSessions([{ cwd: state.root, prompt: step.try, title: `Try: ${step.text.slice(0, 40)}` }])
       .then(() => setTried((t) => ({ ...t, [index]: 'opened' })))
       .catch(() => setTried((t) => ({ ...t, [index]: 'failed' })))
   }

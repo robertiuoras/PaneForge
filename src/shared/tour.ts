@@ -191,10 +191,20 @@ export function firstParagraph(body: string, cap = 320): string {
   return para.length > cap ? para.slice(0, cap - 1).replace(/\s+\S*$/, '') + '…' : para
 }
 
+/** What to ring when only the SENTENCE said which surface a change is about. */
+const SURFACE_SPOT: Record<TourSurface, string | undefined> = {
+  newSession: '.dialog',
+  settings: '.dialog.settings',
+  sidebarHidden: '.side-reveal',
+  workspaces: '.sidebar',
+  none: undefined
+}
+
 export function stepFrom(c: TourCommit): TourStep {
   const text = c.subject.trim()
-  const { where, open: fileOpen, spot } = placesFor(c.files)
+  const { where, open: fileOpen, spot: fileSpot } = placesFor(c.files)
   const open = fileOpen !== 'none' ? fileOpen : surfaceFor(text)
+  const spot = fileSpot ?? SURFACE_SPOT[open]
   const { see, try: tryLine } = trailersOf(c.body)
   const checks: string[] = []
   const byHand: string[] = []
