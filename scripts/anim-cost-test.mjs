@@ -34,7 +34,6 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 // this file reported ok.
 const files = [
   'src/renderer/src/styles.css',
-  'src/renderer/src/shelf.css',
   'src/renderer/src/components/TerminalPane.css',
   // The pet's moods (src/renderer/src/components/mascotMood.css) are their own sheet, and
   // a sheet this file does not read is a sheet with no rule about what it may cost.
