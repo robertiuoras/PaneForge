@@ -54,7 +54,20 @@ console.log('a sentence with no known surface gets none')
 console.log('where a change lives comes off the files it touched, in words')
 {
   const p = placesFor(['src/renderer/src/components/NewSessionDialog.tsx', 'src/renderer/src/styles.css'])
-  ok('a dialog is named and opened', p.where === "the New session dialog, the window's look" && p.open === 'newSession', p.where)
+  ok('a dialog is named and opened', p.where === "the New session dialog and the window's look" && p.open === 'newSession', p.where)
+  // Robert, 2026-09-04, reading `the New session dialog, this card, the window's look,
+  // inside the app, nothing to click` on one card: too long, and it says both that there
+  // is a dialog to look at and that there is nothing to click.
+  const many = placesFor([
+    'src/renderer/src/components/NewSessionDialog.tsx',
+    'src/renderer/src/components/TourCard.tsx',
+    'src/renderer/src/styles.css',
+    'src/main/tour.ts',
+    'src/shared/tour.ts'
+  ])
+  ok('five places are read as the two nearest', many.where === 'the New session dialog and this card', many.where)
+  ok('and a screen never shares the line with "nothing to click"', !/nothing to click/.test(many.where))
+  ok('a change with no screen at all still says so', placesFor(['src/main/tour.ts', 'src/shared/tour.ts']).where === 'inside the app, nothing to click')
   ok('and ringed', p.spot === '.dialog')
   ok('a component nobody listed is still named off its own name', placesFor(['src/renderer/src/components/HandoffDialog.tsx']).where === 'the Handoff dialog')
   ok('main-process files say there is nothing to click', placesFor(['src/main/devServers.ts']).where === 'inside the app, nothing to click')
