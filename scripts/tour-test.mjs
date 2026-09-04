@@ -205,7 +205,7 @@ console.log('the tour plays itself')
   // everything itself so we wont need the run test:cloudwork"), reversing the earlier
   // per-step approval. Starting the tour IS the approval - the card still runs nothing on
   // its own before that press, and a step reached by hand still has a button.
-  ok('starting the tour runs each step\'s checks', /if \(!state \|\| gone \|\| !playing\) return\n\s*if \(!currentStep\(state\)\.checks\.length \|\| checks\[index\]\) return\n\s*runChecks\(\)/.test(card))
+  ok('starting the tour runs each step\'s checks', /if \(!state \|\| gone \|\| !playing\) return\s+if \(!currentStep\(state\)\.checks\.length \|\| checks\[index\]\) return\s+runChecks\(\)/.test(card))
   ok('and a step reached by hand still has its own button', /data-testid="tour-run"/.test(card))
   ok('nothing runs before the tour is started', /const \[playing, setPlaying\] = useState\(false\)/.test(card))
   // `test:cloudwork` is the name of a file in this repository and has no business on a
@@ -228,7 +228,7 @@ console.log('the tour plays itself')
   ok('a step it has shown is ticked off', /tickDone\(currentStep\(state\)\)/.test(card))
   ok('the automatic tick moves nothing by itself', /const tickDone = \(s: TourStep\): void => \{[\s\S]{0,400}?saveMap/.test(card))
   ok('and it never re-writes a step already ticked', /if \(was\[k\]\) return was/.test(card))
-  ok('a hold draws no timer at all', /if \(wait === null\) \{\n\s*setLeft\(null\)\n\s*return\n\s*\}/.test(card))
+  ok('a hold draws no timer at all', /if \(wait === null\) \{\s+setLeft\(null\)\s+return\s+\}/.test(card))
   ok('steering it by hand stops it moving underneath', (card.match(/setPlaying\(false\)/g) ?? []).length >= 3)
   ok('and the last step is where it stops', /if \(done\(state\)\) \{[\s\S]*?setPlaying\(false\)/.test(card))
 }
