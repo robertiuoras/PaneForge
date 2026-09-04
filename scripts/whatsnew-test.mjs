@@ -95,7 +95,11 @@ console.log('it may never take the screen, and never asks twice')
   ok('the card is drawn in the renderer, not as a dialog', !/showMessageBox|dialog\./.test(card))
   ok('it never focuses or raises anything', !/focus\(|setAlwaysOnTop|moveTop/.test(card))
   ok('it is asked once, not polled', (card.match(/api\.whatsNew\(\)/g) || []).length === 1 && !/setInterval/.test(card))
-  ok('an empty answer draws nothing', /!news\.bullets\.length\) return null/.test(card))
+  ok('an empty answer draws nothing', /const shown = !!news && !gone && news\.bullets\.length > 0/.test(card) && /if \(!shown \|\| !news\) return null/.test(card))
+  // Nobody touched it for five minutes: it says something and wants nothing back, so a
+  // press was never the only way it could end (Robert, 2026-09-04). `test:cardidle` holds
+  // the arithmetic and the list of cards that may NOT do this.
+  ok('and it goes away on its own once it is ignored', /useIdleDismiss\(shown, \(\) => setGone\(true\)\)/.test(card))
 
   const css = readFileSync(join(root, 'src/renderer/src/styles.css'), 'utf8')
   // It sits UNDER the update prompt: if a newer build is already downloaded, the offer to
