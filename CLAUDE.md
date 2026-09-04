@@ -125,8 +125,11 @@ for when the thing it proved has just changed. A suite that prints one summary l
 with no number says `Checked`, never `0 things proved`. The list holds only commits that touched
 `src/`, deduplicated by subject, two `See:` lines each, and no npm script name reaches the
 card (`checkWords`, never `checkName`). No pane is opened and no prompt is
-typed (Robert 2026-09-04: "i dont want the try in pane testing helper"), so a `Try:` line
-in a commit body is read by nothing. Every such commit body carries `See: <what Robert
+typed (Robert 2026-09-04: "i dont want the try in pane testing helper"), but a `Try:` line
+in a commit body IS read: it becomes that step's `Do this:` instruction, in place of the
+generic sentence the surface table can work out on its own (Robert 2026-09-04: "tell me how
+to check if it works ... you would open a new session and ask prompt for the path etc then
+test if it works"). One per commit, the first wins. Every such commit body carries `See: <what Robert
 should see on screen>` lines, one per thing; without them the card shows the body's first
 paragraph. The card is ONE SIZE on every step (520px tall, its middle scrolling) with the same four
 buttons two-by-two on a fixed grid - Next disabled, never removed - because a card that
