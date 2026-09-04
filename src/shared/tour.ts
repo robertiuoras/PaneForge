@@ -185,13 +185,19 @@ export function whereWords(places: string[]): string {
  * hands you an errand is not a card that shows you the change, so the tour plays itself
  * instead - see `dwellFor`. Commits may keep writing `Try:`; nothing reads it.
  */
+export const MAX_SEE = 2
+
 export function trailersOf(body: string): { see: string[] } {
   const see: string[] = []
   for (const raw of body.split('\n')) {
     const m = /^See:\s*(.+)$/i.exec(raw.trim())
-    if (m) see.push(m[1].trim())
+    if (m && !see.includes(m[1].trim())) see.push(m[1].trim())
   }
-  return { see }
+  // Two, never three. A card carrying every line the author wrote is a card nobody reads
+  // to the end - Robert, 2026-09-04, looking at a three-bullet step: "too much fluff just
+  // 1 or 2 points to check". The bullets are written most-important-first, so the tail is
+  // what goes.
+  return { see: see.slice(0, MAX_SEE) }
 }
 
 /**
@@ -236,8 +242,8 @@ export function howToCheck(step: Pick<TourStep, 'open' | 'checks'>): string {
       return 'Look at the list on the left.'
     default:
       return step.checks.length
-        ? 'Nothing to click for this one - the app checked it for you below.'
-        : 'Nothing to click for this one, and no automatic check came with it.'
+        ? 'Nothing to click - the app checks this one below.'
+        : 'Nothing to click, and no check came with this one.'
   }
 }
 
@@ -304,9 +310,39 @@ export function nextUnchecked(steps: TourStep[], done: Record<string, boolean>):
   return -1
 }
 
-/** Blank subjects dropped; nothing else about the commits is touched. */
+/**
+ * Is this change one a person can go and look at?
+ *
+ * A commit that touched nothing under `src/` changed nothing in the app: it is a test
+ * script, a build script, a document. Those are real work and they belong in the release
+ * notes; they are not a step on a tour, because the tour's whole promise is "here is what
+ * is different, go and look at it" and there is nothing to look at. Measured on the 44
+ * steps Robert was shown 2026-09-04 - "first of all its too complicated" - 14 of them were
+ * this, mostly `fix(checks)` and `fix(try)` about the tour and the test runner themselves.
+ */
+export function showsInApp(files: string[]): boolean {
+  return files.some((f) => /^src\//.test(f))
+}
+
+/**
+ * Blank subjects dropped, changes with nothing in the app dropped, and a subject seen
+ * twice drawn once.
+ *
+ * The duplicate is not hypothetical: a change committed in one lane and again after a
+ * merge appeared as two identical cards in the same tour, and being asked to check the
+ * same sentence twice is what makes a list of thirty read as a list of forty.
+ */
 export function buildSteps(commits: TourCommit[]): TourStep[] {
-  return commits.filter((c) => c.subject.trim().length > 0).map(stepFrom)
+  const seen = new Set<string>()
+  const kept: TourCommit[] = []
+  for (const c of commits) {
+    const subject = c.subject.trim()
+    if (!subject || seen.has(subject)) continue
+    if (!showsInApp(c.files)) continue
+    seen.add(subject)
+    kept.push(c)
+  }
+  return kept.map(stepFrom)
 }
 
 /** `null` for an empty list - the caller draws no card at all, never an empty one. */
@@ -336,19 +372,43 @@ export function next(state: TourState): TourState {
  * Three lengths, and the reason for each:
  *  - a step whose checks are RUNNING holds (`null`). They only run because somebody
  *    pressed Run, so moving off the result they asked for is the one unforgivable step.
- *  - a step with something on screen - a surface it opened, a control it ringed - gets the
- *    long one: that is the only kind read by looking rather than by reading a line.
+ *  - a step with something on screen - a surface it opened, a control it ringed - holds
+ *    too (`waitsForYou`), for as long as it takes: that is the kind you read by looking at
+ *    the app rather than at the card, and the card cannot know when you have finished.
  *  - everything else gets the short one, being one sentence and a tick already drawn.
+ *
+ * They were 3.5s/7s/4s and every one was too short to read the card: Robert, 2026-09-04,
+ * "start the tour doesnt work and goes by too quick ... it keeps going next thing". The
+ * two that are left are nine seconds, and the third was not made longer - it was replaced
+ * by waiting for a person, which is the only honest length for a step with something to
+ * do on it.
  */
-export const DWELL_CHECKS_MS = 3500
-export const DWELL_LOOK_MS = 7000
-export const DWELL_PLAIN_MS = 4000
+export const DWELL_CHECKS_MS = 9000
+export const DWELL_PLAIN_MS = 9000
+
+/**
+ * A step nothing may move off until a PERSON says so.
+ *
+ * Anything with a surface opened or a control ringed is a step whose whole content is on
+ * the screen behind the card - a dialog to open, a box to type in, a button to press. No
+ * number of seconds is the right number for that, because the answer depends on how long
+ * somebody wants to poke at it: Robert, 2026-09-04, "it should wait if theres any test
+ * like new session and has to type in there and also i can just mark myself if theres more
+ * time to properly check". So the clock does not run there at all. The card says it is
+ * waiting, and Done or Next is what moves it.
+ *
+ * The steps that DO move on their own are the ones with nothing to do: one sentence, and a
+ * result the app fetched itself.
+ */
+export function waitsForYou(step: Pick<TourStep, 'open' | 'spot'>): boolean {
+  return step.open !== 'none' || !!step.spot
+}
 
 export function dwellFor(step: TourStep, checksRunning: boolean): number | null {
   // A check only runs because somebody pressed it, and moving off a result nobody has
   // seen is the same defect as having no result: while one is in flight, the tour holds.
   if (checksRunning) return null
-  if (step.open !== 'none' || step.spot) return DWELL_LOOK_MS
+  if (waitsForYou(step)) return null
   return step.checks.length ? DWELL_CHECKS_MS : DWELL_PLAIN_MS
 }
 

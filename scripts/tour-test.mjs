@@ -12,7 +12,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const {
   buildSteps, makeTour, currentStep, next, previous, done, surfaceFor, tourAllowed,
   stepFrom, placesFor, trailersOf, firstParagraph, checkAllowed, readCheck, checkName, plainWords, howToCheck,
-  dwellFor, DWELL_CHECKS_MS, DWELL_LOOK_MS, DWELL_PLAIN_MS, NO_SCREEN,
+  dwellFor, waitsForYou, DWELL_CHECKS_MS, DWELL_PLAIN_MS, NO_SCREEN,
   stepKey, nextUnchecked
 } = await import(pathToFileURL(join(root, 'src/shared/tour.ts')).href)
 
@@ -21,13 +21,57 @@ const ok = (what, cond, extra = '') => {
   if (!cond) failed++
   console.log(`${cond ? 'ok   ' : 'FAIL '} ${what}${extra ? ` - ${extra}` : ''}`)
 }
-const c = (subject, body = '', files = []) => ({ subject, body, files })
+// A fixture is a change in the APP unless it says otherwise: `buildSteps` drops a commit
+// that touched nothing under `src/`, and every step-list test below is about something
+// else. The filter has its own section further down, with its own explicit files.
+const c = (subject, body = '', files = ['src/main/index.ts']) => ({ subject, body, files })
 
 console.log('an empty list draws nothing')
 {
   ok('no commits at all', makeTour([]) === null)
   ok('only blank subjects', makeTour([c(''), c('   ')]) === null)
   ok('blank subjects dropped from a real list', buildSteps([c(''), c('A real sentence'), c('  ')]).length === 1)
+}
+
+console.log('a tour only lists changes there is something to look at')
+{
+  // Measured on the 44 steps Robert was shown 2026-09-04: 14 of them touched nothing under
+  // src/ - the test runner, the try script, the tour itself - and a step you cannot go and
+  // look at is the whole reason the list read as too long to start.
+  const kept = buildSteps([
+    c('A change in the app', '', ['src/main/sessions.ts']),
+    c('One test run, one temp folder', '', ['scripts/test-all.mjs']),
+    c('A dev window says what is different', '', ['scripts/try.mjs', 'scripts/try-diff.mjs']),
+    c('A note about the design', '', ['docs/design-notes.md'])
+  ])
+  ok('the app change is kept', kept.length === 1 && kept[0].text === 'A change in the app', String(kept.length))
+  ok('a commit with no files at all is dropped', buildSteps([c('Nothing on disk', '', [])]).length === 0)
+  ok('a renderer file counts', buildSteps([c('X', '', ['src/renderer/src/App.tsx'])]).length === 1)
+  // A change committed in a lane and again after a merge was drawn twice, and being asked
+  // to check the same sentence twice is what makes thirty read as forty.
+  const twice = buildSteps([c('The same change'), c('The same change'), c('A different one')])
+  ok('the same subject is drawn once', twice.length === 2, twice.map((x) => x.text).join(' | '))
+}
+
+console.log('a card carries two points, never a wall of them')
+{
+  const body = 'See: the first thing\nSee: the second thing\nSee: the third thing'
+  ok('three See lines become two bullets', trailersOf(body).see.length === 2)
+  ok('and they are the first two', trailersOf(body).see[0] === 'the first thing')
+  ok('a repeated line is not a second bullet', trailersOf('See: same\nSee: same').see.length === 1)
+}
+
+console.log('the tour holds on a step long enough to read it')
+{
+  // 3.5s/7s/4s was too short to read the card, let alone look at what it names - Robert,
+  // 2026-09-04: "start the tour doesnt work and goes by too quick".
+  ok('a plain step is held long enough to read', DWELL_PLAIN_MS >= 8000, String(DWELL_PLAIN_MS))
+  ok('a checked step too', DWELL_CHECKS_MS >= 8000, String(DWELL_CHECKS_MS))
+  // A step with something to DO on it has no right length at all - it waits.
+  ok('a step that opens a surface waits for a person', waitsForYou({ open: 'newSession' }))
+  ok('a ringed control waits too', waitsForYou({ open: 'none', spot: '.pane' }))
+  ok('a sentence with nothing to do does not', !waitsForYou({ open: 'none' }))
+  ok('and the clock does not run on one that waits', dwellFor({ open: 'newSession', checks: [], spot: '.dialog' }, false) === null)
 }
 
 console.log('the index clamps at both ends')
@@ -119,7 +163,7 @@ console.log('the card speaks to somebody who has never coded')
   ok('a first sentence stands alone', plainWords('Short one here that is long enough. Second sentence.') === 'Short one here that is long enough.')
   ok('New session says the window is open', /New session window is open/.test(howToCheck({ open: 'newSession', checks: [] })))
   ok('a hidden list points at the ringed button', /ringed button/.test(howToCheck({ open: 'sidebarHidden', checks: [] })))
-  ok('nothing to click says the app checked it', /checked it for you/.test(howToCheck({ open: 'none', checks: ['scripts/x-test.mjs'] })))
+  ok('nothing to click says the app checks it below', /the app checks this one below/.test(howToCheck({ open: 'none', checks: ['scripts/x-test.mjs'] })))
   ok('nothing ever tells anybody to open a pane', !/pane/i.test(howToCheck({ open: 'none', checks: [] })))
   const card = readFileSync(join(root, 'src/renderer/src/components/TourCard.tsx'), 'utf8')
   ok('Done or dismiss folds to a pill, never to nothing', /tour-pill/.test(card) && /setGone\(false\)/.test(card))
@@ -149,14 +193,23 @@ console.log('the tour plays itself')
   const plain = { text: 'x', open: 'none', where: NO_SCREEN, see: [], checks: [], byHand: [] }
   ok('a check in flight holds the tour where it is', dwellFor(checked, true) === null)
   ok('and it moves on once the result is on the card', dwellFor(checked, false) === DWELL_CHECKS_MS)
-  ok('something on screen is given longer to be looked at', dwellFor(looking, false) === DWELL_LOOK_MS)
-  ok('a ring alone counts as something to look at', dwellFor({ ...plain, spot: '.pane' }, false) === DWELL_LOOK_MS)
-  ok('a sentence with nothing to see gets the short one', dwellFor(plain, false) === DWELL_PLAIN_MS)
-  ok('looking always beats reading', DWELL_LOOK_MS > DWELL_PLAIN_MS && DWELL_LOOK_MS > DWELL_CHECKS_MS)
+  // A step with something on screen has something to DO on it - a dialog to open, a box to
+  // type in - so the clock does not run there at all: it waits for a person.
+  ok('something on screen waits, never counts down', dwellFor(looking, false) === null)
+  ok('a ring alone waits too', dwellFor({ ...plain, spot: '.pane' }, false) === null)
+  ok('a sentence with nothing to do moves on by itself', dwellFor(plain, false) === DWELL_PLAIN_MS)
+  ok('the card says so while it waits', /data-testid="tour-wait"/.test(readFileSync(join(root, 'src/renderer/src/components/TourCard.tsx'), 'utf8')))
   const card = readFileSync(join(root, 'src/renderer/src/components/TourCard.tsx'), 'utf8')
   ok('the card waits to be started, and takes no turn nobody asked for', /const \[playing, setPlaying\] = useState\(false\)/.test(card))
   ok('a suite runs only when it is pressed', /data-testid="tour-run"/.test(card) && !/tourCheck[\s\S]{0,400}useEffect/.test(card))
-  ok('it advances on its own', /setTimeout\(\(\) => setState\(\(s\) => \(s \? next\(s\) : s\)\), wait\)/.test(card))
+  ok('it advances on its own', /setTimeout\(\(\) => \{[\s\S]{0,600}?next\(s\)[\s\S]{0,200}?\}, wait\)/.test(card))
+  // The counter read `0 of 44` however long it ran, so the one number saying how far
+  // through you are said nothing (Robert, 2026-09-04). A step the tour has SHOWN is ticked
+  // on the way out - and by a write that does NOT jump the index, or the play loop and the
+  // tick would fight over where to go next.
+  ok('a step it has shown is ticked off', /tickDone\(currentStep\(state\)\)/.test(card))
+  ok('the automatic tick moves nothing by itself', /const tickDone = \(s: TourStep\): void => \{[\s\S]{0,400}?saveMap/.test(card))
+  ok('and it never re-writes a step already ticked', /if \(was\[k\]\) return was/.test(card))
   ok('a hold draws no timer at all', /if \(wait === null\) return/.test(card))
   ok('steering it by hand stops it moving underneath', (card.match(/setPlaying\(false\)/g) ?? []).length >= 3)
   ok('and the last step is where it stops', /if \(done\(state\)\) \{[\s\S]*?setPlaying\(false\)/.test(card))

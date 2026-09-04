@@ -21,8 +21,8 @@
 // motion beyond the two hover durations.
 
 import { useEffect, useState } from 'react'
-import type { TourCheck, TourState, TourSurface } from '../../../shared/tour'
-import { checkName, currentStep, done, dwellFor, howToCheck, next, nextUnchecked, previous, stepKey } from '../../../shared/tour'
+import type { TourCheck, TourState, TourStep, TourSurface } from '../../../shared/tour'
+import { NO_SCREEN, checkName, currentStep, done, dwellFor, howToCheck, next, nextUnchecked, previous, stepKey, waitsForYou } from '../../../shared/tour'
 import CardX from './CardX'
 
 const api = window.api
@@ -151,7 +151,16 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
     }
     const wait = dwellFor(currentStep(state), checkRunning)
     if (wait === null) return
-    const t = setTimeout(() => setState((s) => (s ? next(s) : s)), wait)
+    const t = setTimeout(() => {
+      // A step the tour has SHOWN is a step that has been checked off. Without this the
+      // counter sat at `0 of 44` however long it ran, so the one number on the card that
+      // says how far through you are said nothing, and there was no way to stop halfway
+      // and come back - Robert, 2026-09-04: "0 of 44 checked and it keeps going next
+      // thing". Ticking happens on the way OUT, never on arrival: a step still on screen
+      // has not been looked at yet.
+      tickDone(currentStep(state))
+      setState((s) => (s ? next(s) : s))
+    }, wait)
     return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [index, gone, playing, checkRunning])
@@ -172,6 +181,19 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
   const key = stepKey(step)
   const doneCount = state.steps.filter((s) => doneMap[stepKey(s)]).length
   const allDone = doneCount === state.steps.length
+
+  // Tick a step off without moving anywhere - what the play loop uses on its way out of a
+  // step, since it is already deciding where to go next. `markDone` below is the same
+  // write plus the jump, which is what a PRESS should do and an automatic tick must not.
+  const tickDone = (s: TourStep): void => {
+    const k = stepKey(s)
+    setDoneMap((was) => {
+      if (was[k]) return was
+      const upd = { ...was, [k]: true }
+      saveMap(DONE_KEY, upd)
+      return upd
+    })
+  }
 
   // Ticking a step off moves to the next one still unticked, so the card is always sitting
   // on something that has not been looked at yet.
@@ -208,12 +230,17 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
         <CardX onDismiss={() => setGone(true)} />
         <div className="tour-count">
           {doneCount} of {state.steps.length} checked
-          {playing && !isLast ? ' · playing' : ''}
+          {playing && !isLast ? (waitsForYou(step) ? ' · waiting for you' : ' · playing') : ''}
         </div>
         <div className="tour-body">
           <div className="tour-text">{step.text}</div>
-          <div className="tour-where">Where to look: {step.where}</div>
+          {step.where !== NO_SCREEN && <div className="tour-where">Where to look: {step.where}</div>}
           <div className="tour-how">{howToCheck(step)}</div>
+          {playing && waitsForYou(step) && (
+            <div className="tour-wait" data-testid="tour-wait">
+              Take as long as you want here - tick Done or press Next to carry on.
+            </div>
+          )}
         {step.see.length > 0 && (
           <ul className="tour-see">
             {step.see.map((s, i) => (
@@ -244,9 +271,6 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
         )}
         {step.byHand.length > 0 && (
           <div className="tour-check byhand">Needs a window - run by hand: {step.byHand.join(', ')}</div>
-        )}
-        {step.checks.length === 0 && step.byHand.length === 0 && (
-          <div className="tour-check none">No automatic check came with this change.</div>
         )}
         </div>
         <div className="tour-acts">
