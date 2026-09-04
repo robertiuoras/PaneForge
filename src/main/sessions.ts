@@ -1084,6 +1084,31 @@ export class SessionManager extends EventEmitter {
    * pane went to sleep with is the screen it must wake with, and it is still in the
    * renderer's own xterm buffer. Nothing is replayed, so there is no width to get wrong.
    */
+  /**
+   * Move a SLEEPING pane to another folder before it wakes, when the folder it fell
+   * asleep in is now somebody else's.
+   *
+   * `place` is `laneFor` from main/index.ts, with this pane left out of the folders it
+   * counts as taken. A sleeping pane keeps its folder against NEW panes (shared/laneTaken.ts),
+   * but two panes restored asleep into one folder both held it, and the second to wake
+   * spawned its agent beside the first. Nothing is spawned here; the request and the
+   * card are pointed at the new folder and `wake` does the rest.
+   */
+  async rehome(id: string, place: (req: StartSessionRequest) => Promise<StartSessionRequest>): Promise<string | null> {
+    const live = this.sessions.get(id)
+    if (!live || !live.meta.asleep) return null
+    const placed = await place({ ...live.req, cwd: live.meta.cwd, lane: live.meta.lane })
+    if (placed.cwd === live.meta.cwd) return null
+    const from = live.meta.cwd
+    live.req = { ...live.req, cwd: placed.cwd, lane: placed.lane, laneEnv: placed.laneEnv }
+    live.meta.cwd = placed.cwd
+    live.meta.lane = placed.lane
+    live.meta.laneNote = placed.laneNote ?? `Moved to ${basename(placed.cwd)} - another pane is in ${basename(from)}`
+    acLog(`wake: ${id} moved ${from} -> ${placed.cwd} (${live.meta.laneNote})`)
+    this.emitSessions()
+    return placed.cwd
+  }
+
   wake(id: string): Session | null {
     const live = this.sessions.get(id)
     if (!live || !live.meta.asleep) return null
