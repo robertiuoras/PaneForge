@@ -945,6 +945,12 @@ export interface HistoryEntry {
   chapters?: string[]
   /** chapters past the cap: the count is kept when the text is not */
   dropped?: number
+  /**
+   * Every ask this session made, oldest first - `chapters` only keeps the first ask of
+   * each subject, this is the whole list `Show all asks` reads. Never a bare slash
+   * command; see `shared/gist.ts`.
+   */
+  askLines?: string[]
   /** internal: a clear happened, so the next real ask opens a chapter */
   fresh?: boolean
   /**

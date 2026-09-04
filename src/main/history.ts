@@ -71,7 +71,14 @@ export function recordStart(s: Session): void {
     let asked: Partial<HistoryEntry> = {}
     try {
       const was = JSON.parse(readFileSync(metaFile(s.id), 'utf8')) as HistoryEntry
-      asked = { gist: was.gist, chapters: was.chapters, dropped: was.dropped, asks: was.asks, fresh: was.fresh }
+      asked = {
+        gist: was.gist,
+        chapters: was.chapters,
+        dropped: was.dropped,
+        asks: was.asks,
+        fresh: was.fresh,
+        askLines: was.askLines
+      }
       remember(s.id, was)
     } catch {
       /* first launch of this pane */

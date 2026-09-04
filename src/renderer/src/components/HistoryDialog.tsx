@@ -59,6 +59,12 @@ export default function HistoryDialog({ agents, onResume, onClose }: Props): JSX
    * show - the chapters are already on the entry.
    */
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  /**
+   * Rows showing every ask the session made, not just the one that opened each chapter -
+   * `chapters` drops every follow-up, and a session worth reopening is often one where the
+   * follow-ups are the useful half.
+   */
+  const [showAsks, setShowAsks] = useState<Set<string>>(new Set())
   // The rows say how long AGO, so they go stale sitting on screen. One clock for the whole
   // list, on the minute - the same subscription every other clock in the app shares, and
   // the only unit `whenWords` moves in inside a day.
@@ -244,6 +250,14 @@ export default function HistoryDialog({ agents, onResume, onClose }: Props): JSX
                       {summaryOf(e)}
                     </div>
                   ))}
+                {/* Every ask, not just the one that opened each chapter - a follow-up
+                    ("now the other file") is dropped from the chapters above, and it is
+                    often the useful half of what a session was for. */}
+                {showAsks.has(e.id) && (e.askLines?.length ?? 0) > 0 && (
+                  <div className="hist-chapters">
+                    {e.askLines!.map((a, i) => `${i + 1}. ${a}`).join('\n')}
+                  </div>
+                )}
                 {/* The lines this session PRINTED that the query matched, when the query
                     did not simply name it. Four of them, which is enough to recognise
                     which session this is without turning the row into a transcript. */}
@@ -275,6 +289,22 @@ export default function HistoryDialog({ agents, onResume, onClose }: Props): JSX
                       }
                     >
                       {expanded.has(e.id) ? 'Show less' : 'View all'}
+                    </button>
+                  )}
+                  {/* Only where there is something `View all` did not already print - a
+                      session with one chapter and one ask has nothing more to list. */}
+                  {(e.askLines?.length ?? 0) > (e.chapters?.length ?? 0) && (
+                    <button
+                      className="ghost small"
+                      onClick={() =>
+                        setShowAsks((s) => {
+                          const next = new Set(s)
+                          if (!next.delete(e.id)) next.add(e.id)
+                          return next
+                        })
+                      }
+                    >
+                      {showAsks.has(e.id) ? 'Hide asks' : 'Show all asks'}
                     </button>
                   )}
                   {/* A folder that is not there any more cannot be reopened, and pressing
