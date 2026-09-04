@@ -11,7 +11,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const {
   buildSteps, makeTour, currentStep, next, previous, done, surfaceFor, tourAllowed,
-  stepFrom, placesFor, trailersOf, firstParagraph, checkAllowed, readCheck, checkName, plainWords, howToCheck
+  stepFrom, placesFor, trailersOf, firstParagraph, checkAllowed, readCheck, checkName, plainWords, howToCheck,
+  derivedTry, stepKey, shouldAutoTry, nextUnchecked
 } = await import(pathToFileURL(join(root, 'src/shared/tour.ts')).href)
 
 let failed = 0
@@ -88,7 +89,12 @@ console.log('what to look for and what to type come from the commit, never inven
   ok('a step carries them', s.see.length === 2 && s.try === 'run rm on a scratch file')
   const plain = stepFrom(c('Subject', 'First paragraph says why.\nStill first.\n\nSecond paragraph.'))
   ok('no See lines: the first paragraph stands in', plain.see.length === 1 && plain.see[0] === 'First paragraph says why. Still first.', plain.see[0])
-  ok('and no Try is invented', plain.try === undefined)
+  ok(
+    'no written Try line: one is derived from what to look for, marked as such',
+    plain.try === 'Show me: First paragraph says why. Still first. Open the place named and say what you see.' && plain.tryDerived === true,
+    plain.try
+  )
+  ok('truly nothing to go on - no See either - derives no Try', stepFrom(c('Subject')).try === undefined)
   ok('an empty body gives an empty list, not a guess', stepFrom(c('Subject')).see.length === 0)
   ok('a first paragraph is capped on a word', firstParagraph('word '.repeat(200)).length <= 320 && /…$/.test(firstParagraph('word '.repeat(200))))
   ok('trailers are not the paragraph', firstParagraph('See: a\nCo-Authored-By: b') === '')
@@ -147,6 +153,53 @@ console.log('it may never take the screen')
   ok('it is a static child of the corner stack, not its own fixed card', /corner-stack > \.tour-card/.test(css))
   ok('and it has no animation of its own', !/\.tour-card[^}]*animation:/.test(css) && !/\.tour-spot[^}]*animation:/.test(css))
   ok('the ring takes no clicks', /\.tour-spot\s*\{[^}]*pointer-events:\s*none/.test(css))
+}
+
+console.log('a step with no Try line still gets one, from what to look for')
+{
+  ok('derived from the first See line', derivedTry({ see: ['the ring is red'] }) === 'Show me: the ring is red. Open the place named and say what you see.')
+  ok('nothing to look for derives nothing', derivedTry({ see: [] }) === undefined)
+  const s = stepFrom(c('Subject', 'See: a red ring appears\nSee: second'))
+  ok(
+    'stepFrom marks it derived',
+    s.try === 'Show me: a red ring appears. Open the place named and say what you see.' && s.tryDerived === true,
+    s.try
+  )
+  const withTry = stepFrom(c('Subject', 'Try: do the real thing\nSee: a red ring appears'))
+  ok('a written Try line is never overridden or marked derived', withTry.try === 'do the real thing' && !withTry.tryDerived)
+}
+
+console.log('a ticked step is skipped, in order')
+{
+  const steps = buildSteps([c('First'), c('Second'), c('Third')])
+  ok('stepKey is the commit\'s own subject', stepKey(steps[0]) === 'First')
+  ok('nobody ticked: starts at the first', nextUnchecked(steps, {}) === 0)
+  ok('first ticked: lands on the second', nextUnchecked(steps, { First: true }) === 1)
+  ok('every one ticked: -1, never a guess', nextUnchecked(steps, { First: true, Second: true, Third: true }) === -1)
+}
+
+console.log('a step opens its pane once, the first time it is shown')
+{
+  const withTry = stepFrom(c('Subject', 'Try: do x'))
+  ok('not seen yet: auto-tries', shouldAutoTry(withTry, {}) === true)
+  ok('already seen: does not try again', shouldAutoTry(withTry, { Subject: true }) === false)
+  const noTry = stepFrom(c('No try here'))
+  ok('nothing to try: never auto-tries', shouldAutoTry(noTry, {}) === false)
+}
+
+console.log('the card ticks steps off, remembers, and auto-tries')
+{
+  const card = readFileSync(join(root, 'src/renderer/src/components/TourCard.tsx'), 'utf8')
+  ok('remembers ticked steps in localStorage', /localStorage/.test(card) && /tour\.done/.test(card))
+  ok('remembers which steps already opened a pane', /tour\.seen/.test(card))
+  ok('a step opens automatically once shown', /shouldAutoTry/.test(card))
+  ok('opens on the next unchecked step when the tour loads', /nextUnchecked/.test(card))
+  ok('the try button can be pressed again once tried', /Try again/.test(card))
+  ok('says when a Try was derived from what to look for', /tryDerived/.test(card))
+  ok('a Done tick exists per step', /data-testid="tour-step-done"/.test(card) && /type="checkbox"/.test(card))
+  ok('the header counts what is checked', /checked/.test(card))
+  ok('offers Close once every step is ticked', /Close/.test(card))
+  ok('still no animation of its own', !/\.tour-card[^}]*animation:/.test(card))
 }
 
 console.log(failed ? `\n${failed} failed` : '\ntour: all good')

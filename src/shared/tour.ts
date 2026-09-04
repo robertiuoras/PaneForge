@@ -53,6 +53,9 @@ export interface TourStep {
   see: string[]
   /** A prompt to type into a fresh pane, or nothing. */
   try?: string
+  /** `try` was never written as a `Try:` line - it was built from `see` instead, so the
+   * card can say so rather than claiming the commit asked for this exact prompt. */
+  tryDerived?: boolean
   /** `scripts/<name>-test.mjs` paths, relative to the repo root, that prove the change. */
   checks: string[]
   /** Suites the change touched that cannot run without a window - named, not run. */
@@ -287,8 +290,44 @@ export function stepFrom(c: TourCommit): TourStep {
     byHand
   }
   if (tryLine) step.try = tryLine
+  else {
+    const derived = derivedTry({ see: step.see })
+    if (derived) {
+      step.try = derived
+      step.tryDerived = true
+    }
+  }
   if (spot) step.spot = spot
   return step
+}
+
+/** A `Try:` prompt for a commit that wrote none - built from the first `See:` line, since
+ * that is the only thing the author actually said to look for. `undefined` when there is
+ * nothing to look for either - a step with no See lines gets no invented Try either. */
+export function derivedTry(step: Pick<TourStep, 'see'>): string | undefined {
+  if (!step.see.length) return undefined
+  const line = step.see[0].trim().replace(/[.!?]+$/, '')
+  return `Show me: ${line}. Open the place named and say what you see.`
+}
+
+/** A stable identity for a step, used to remember which ones already opened a pane or got
+ * ticked done. The commit's own subject - `try-diff.mjs` carries no sha into this file, and
+ * a subject is already unique within one tour's commit list. */
+export function stepKey(step: Pick<TourStep, 'text'>): string {
+  return step.text
+}
+
+/** Whether a step should open its pane the moment it is shown - only the first time, never
+ * a second pane for a step already seen. */
+export function shouldAutoTry(step: Pick<TourStep, 'text' | 'try'>, seen: Record<string, boolean>): boolean {
+  return !!step.try && !seen[stepKey(step)]
+}
+
+/** The first step not yet ticked done, in the order the tour lists them - `-1` once every
+ * step is, so the caller can say so instead of landing back on the first. */
+export function nextUnchecked(steps: TourStep[], done: Record<string, boolean>): number {
+  for (let i = 0; i < steps.length; i++) if (!done[stepKey(steps[i])]) return i
+  return -1
 }
 
 /** Blank subjects dropped; nothing else about the commits is touched. */
