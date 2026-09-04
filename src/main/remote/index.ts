@@ -28,6 +28,7 @@ import type { AttachIn, AttachResult } from '../../shared/attach'
 import type { BackJob } from '../../shared/backJobs'
 import type { HandoffItem, HandoffPayload, HandoffResult } from '../../shared/handoff'
 import { DEFAULT_REMOTE_PORT, getConfig, setConfig } from '../config'
+import { profileName } from '../profile'
 import { Discovery, localAddresses } from './discover'
 import { RemoteHost, type HostBackend } from './host'
 import { RemoteClient, joinId, splitId } from './client'
@@ -93,6 +94,17 @@ export class Remote extends EventEmitter {
   start(): void {
     if (this.started) return
     this.started = true
+    // A TEST COPY does not join the desk. `npm run try` inherits the real app's saved
+    // pairing, so a second window came up mirroring the same paired panes as the installed
+    // one: two viewers of one pty negotiating a grid (`shared/paneSize.ts`), and whichever
+    // window was narrower decided how the pane was drawn in the other. Robert, 2026-09-04,
+    // looking at exactly that: "the grid looks terrible layout both are remote sessions".
+    // A copy opened to check a build tests ITS OWN panes; pairing is still there to be
+    // switched on by hand in Devices if a link is what is being tested.
+    if (profileName()) {
+      log('remote: test copy - not connecting to paired devices')
+      return
+    }
     // First launch after upgrading generates this device's id and code in memory;
     // writing them now is what stops them being different on the next launch, which
     // would quietly break every pairing the other device had just made.

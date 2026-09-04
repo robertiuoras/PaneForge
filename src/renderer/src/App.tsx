@@ -4539,13 +4539,13 @@ export default function App(): JSX.Element {
     // keeps it from being picked again (`quietSince` reads `lastFocus`). Any OTHER pane in
     // the same plan is re-decided by the next sweep rather than closed on a count that is
     // no longer on screen - that is the honest half, because nobody arrived at those.
+    //
+    // ...for a CLOSE. A MOVE is answered by the card's buttons and by nothing else - see
+    // `endsOnArrival`. The lock the move sweep holds stays held, because its countdown is
+    // still on screen.
     const soon = closeSoonsRef.current.find((c) => c.ids.includes(id))
-    if (soon) {
+    if (soon && endsOnArrival(soon)) {
       console.info(`reclaim: countdown dropped - somebody came to ${id}`)
-      // The move sweep holds a lock for as long as its countdown is up. Dropping the
-      // countdown without giving it back is how `stopMove` shipped as a control that
-      // appeared to work and then let nothing move ever again.
-      if (soon.move) handoffSweeping.current = false
       setCloseSoons((list) => list.filter((c) => soonKey(c) !== soonKey(soon)))
     }
     publishClosingRef.current()
