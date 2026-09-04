@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useHeaderFits } from './headerFit'
 import { agentModelLabel, type AgentInfo } from '@shared/agents'
 import { chordOf, resolveKeymap, sameChord } from '@shared/keymap'
 import { stripAnsi } from '@shared/ansi'
@@ -597,6 +598,11 @@ export default function App(): JSX.Element {
       (a, b) => (rank.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.id) ?? Number.MAX_SAFE_INTEGER)
     )
   }, [rawSessions, order])
+  // What each pane header can fit is MEASURED, not guessed from the pane's width - so a
+  // narrow window with an empty row keeps its clear and folder buttons. One observer for
+  // the whole desk; it writes an attribute and no state. See `shared/headerFit.ts`.
+  useHeaderFits([sessions])
+
   const shownSessions = useMemo(
     () =>
       sessions.filter(

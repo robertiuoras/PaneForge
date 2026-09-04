@@ -46,6 +46,7 @@ const TESTS = [
   ['whatsnew', 'whatsnew-test.mjs'],
   ['tour', 'tour-test.mjs'],
   ['devkeep', 'devkeep-test.mjs'],
+  ['headerfit', 'header-fit-test.mjs'],
   ['renderwatch', 'renderwatch-test.mjs'],
   ['elapsed', 'elapsed-test.mjs'],
   ['usage', 'usage-test.mjs'],
