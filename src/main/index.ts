@@ -1270,8 +1270,8 @@ ipcMain.on('login:close', (_e, id: string) => closeLogin(String(id)))
 ipcMain.on('login:dismiss', (_e, id: string) => dismissLogin(String(id)))
 ipcMain.on('login:input', (_e, id: string, ev: LoginInput) => loginInput(String(id), ev))
 ipcMain.on('login:ack', (_e, id: string, ack: number) => paintedFrame(String(id), Number(ack)))
-ipcMain.on('login:size', (_e, id: string, w: number, h: number) =>
-  resizeLogin(String(id), Number(w), Number(h))
+ipcMain.on('login:size', (_e, id: string, w: number, h: number, boxW?: number, boxH?: number) =>
+  resizeLogin(String(id), Number(w), Number(h), Number(boxW) || 0, Number(boxH) || 0)
 )
 
 ipcMain.handle('devs:list', async (_e, panes: Array<{ id: string; pane: number; name: string }>) => {

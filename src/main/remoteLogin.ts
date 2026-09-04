@@ -83,6 +83,8 @@ interface Live {
   waiting: Map<number, { ok: (v: Record<string, unknown>) => void; no: (e: Error) => void; method: string }>
   pacer: Pacer
   size: { w: number; h: number }
+  /** The box on THIS screen, in its own pixels - what the picture is drawn into. */
+  box: { w: number; h: number }
   step: number
   lastMeta: FrameMeta | null
   /** The frame that arrived while one was being painted - the newest, never a queue. */
@@ -172,6 +174,7 @@ export function requestLogin(input: {
     waiting: new Map(),
     pacer: new Pacer(),
     size: { w: 1280, h: 800 },
+    box: { w: 1280, h: 800 },
     step: 0,
     lastMeta: null,
     pendingData: null,
@@ -331,8 +334,11 @@ async function startCast(l: Live): Promise<void> {
   const params = {
     format: 'jpeg',
     quality: s.quality,
-    maxWidth: Math.min(s.maxWidth, Math.max(320, Math.round(l.size.w))),
-    maxHeight: Math.min(s.maxHeight, Math.max(240, Math.round(l.size.h))),
+    // Capped at the BOX, never the viewport: zoomed out, the far page is laid out at
+    // twice the column's width, and sending twice the pixels the column can draw buys
+    // nothing but bytes on the link this whole file exists to economise.
+    maxWidth: Math.min(s.maxWidth, Math.max(320, Math.round(l.box.w))),
+    maxHeight: Math.min(s.maxHeight, Math.max(240, Math.round(l.box.h))),
     everyNthFrame: 1
   }
   const until = Date.now() + CAST_WAIT_MS
@@ -487,10 +493,14 @@ export function paintedFrame(id: string, ack: number): void {
   else finish()
 }
 
-export function resizeLogin(id: string, w: number, h: number): void {
+export function resizeLogin(id: string, w: number, h: number, boxW?: number, boxH?: number): void {
   const l = live.get(id)
   if (!l || !(w > 0) || !(h > 0)) return
-  if (Math.abs(l.size.w - w) < 8 && Math.abs(l.size.h - h) < 8) return
+  const box = { w: boxW && boxW > 0 ? boxW : w, h: boxH && boxH > 0 ? boxH : h }
+  const same = Math.abs(l.size.w - w) < 8 && Math.abs(l.size.h - h) < 8
+  const sameBox = Math.abs(l.box.w - box.w) < 8 && Math.abs(l.box.h - box.h) < 8
+  l.box = box
+  if (same && sameBox) return
   // Recorded whatever the state is. The view mounts and reports its size while `openLogin`
   // is still opening the tunnel, and a size DROPPED there is never asked for again - a
   // ResizeObserver only speaks when the box changes - so the page stayed at the default

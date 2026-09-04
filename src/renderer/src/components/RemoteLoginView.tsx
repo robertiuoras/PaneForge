@@ -14,7 +14,25 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { lagWord, loginKeys, STEPS, type LoginRequest } from '../../../shared/remoteLogin'
+import {
+  clampSplit,
+  fitZoom,
+  lagWord,
+  loginKeys,
+  STEPS,
+  viewportFor,
+  zoomStep,
+  zoomWords,
+  type LoginRequest
+} from '../../../shared/remoteLogin'
+
+/** How wide the column was left last time. Per machine, so it is not worth a config key. */
+const WIDTH_KEY = 'pf.loginWidth'
+
+function savedWidth(): number {
+  const raw = Number(localStorage.getItem(WIDTH_KEY) ?? 0)
+  return clampSplit(raw > 0 ? raw : Math.round(window.innerWidth / 2), window.innerWidth)
+}
 
 /** The pointer ring is drawn HERE the moment the mouse moves, so it never waits on a frame. */
 interface Spot {
@@ -34,10 +52,15 @@ export default function RemoteLoginView({
   onToast: (s: string) => void
 }): React.JSX.Element {
   const canvas = useRef<HTMLCanvasElement | null>(null)
-  const box = useRef<HTMLDivElement | null>(null)
+  const boxRef = useRef<HTMLDivElement | null>(null)
   const [spot, setSpot] = useState<Spot | null>(null)
   const [typing, setTyping] = useState(false)
   const [fps, setFps] = useState(0)
+  // null means "fit the page": the zoom is recomputed from the column's width, so
+  // dragging the column wider shows the same page bigger rather than more of it.
+  const [zoom, setZoom] = useState<number | null>(null)
+  const [box, setBox] = useState<{ w: number; h: number }>({ w: 0, h: 0 })
+  const [width, setWidth] = useState(savedWidth)
   const painted = useRef(0)
   const buttons = useRef(0)
 
@@ -106,28 +129,71 @@ export default function RemoteLoginView({
   }, [])
 
   // ---- size ---------------------------------------------------------------------
-  // The remote page is made the shape of this box, so nothing is letterboxed and no
-  // pixel of the picture is spent on a margin. Debounced: a drag resizes 60 times a
-  // second and each one restarts the screencast at the far end.
+  // Two numbers, not one: the BOX is this column in this window's pixels, and the
+  // VIEWPORT is how wide the far page is told it is. They were the same number until
+  // 2026-09-04, which is why a half-window column gave a 700px browser and every
+  // desktop site rendered at its most cramped. Debounced, because a drag resizes 60
+  // times a second and each one restarts the screencast at the far end.
   useEffect(() => {
-    const el = box.current
+    const el = boxRef.current
     if (!el) return
     let timer: ReturnType<typeof setTimeout> | undefined
+    const read = (): void => {
+      const r = el.getBoundingClientRect()
+      if (r.width > 0 && r.height > 0) setBox({ w: Math.round(r.width), h: Math.round(r.height) })
+    }
     const ro = new ResizeObserver(() => {
       clearTimeout(timer)
-      timer = setTimeout(() => {
-        const r = el.getBoundingClientRect()
-        if (r.width > 0 && r.height > 0) window.api.loginSize(req.id, Math.round(r.width), Math.round(r.height))
-      }, 150)
+      timer = setTimeout(read, 150)
     })
     ro.observe(el)
-    const r = el.getBoundingClientRect()
-    window.api.loginSize(req.id, Math.round(r.width), Math.round(r.height))
+    read()
     return () => {
       clearTimeout(timer)
       ro.disconnect()
     }
   }, [req.id])
+
+  const at = zoom ?? fitZoom(box)
+
+  useEffect(() => {
+    if (!(box.w > 0) || !(box.h > 0)) return
+    const v = viewportFor(box, at)
+    window.api.loginSize(req.id, v.w, v.h, box.w, box.h)
+  }, [req.id, box.w, box.h, at])
+
+  // ---- the column's own width -----------------------------------------------------
+  // Written as a CSS variable rather than a style on this element, because the panes
+  // beside it are padded by the same number and neither may be the other's parent.
+  useEffect(() => {
+    document.documentElement.style.setProperty('--login-w', `${width}px`)
+    return () => {
+      document.documentElement.style.removeProperty('--login-w')
+    }
+  }, [width])
+
+  useEffect(() => {
+    const onWindow = (): void => setWidth((w) => clampSplit(w, window.innerWidth))
+    window.addEventListener('resize', onWindow)
+    return () => window.removeEventListener('resize', onWindow)
+  }, [])
+
+  const grip = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    const el = e.currentTarget
+    el.setPointerCapture(e.pointerId)
+    const move = (ev: PointerEvent): void => setWidth(clampSplit(window.innerWidth - ev.clientX, window.innerWidth))
+    const up = (): void => {
+      el.removeEventListener('pointermove', move)
+      el.removeEventListener('pointerup', up)
+      setWidth((w) => {
+        localStorage.setItem(WIDTH_KEY, String(w))
+        return w
+      })
+    }
+    el.addEventListener('pointermove', move)
+    el.addEventListener('pointerup', up)
+  }, [])
 
   // ---- pointer ------------------------------------------------------------------
   const point = useCallback((e: React.MouseEvent | React.WheelEvent) => {
@@ -195,6 +261,14 @@ export default function RemoteLoginView({
 
   return (
     <section className="login-split" aria-label={`Sign in to ${req.site} on ${req.machine}`}>
+      <div
+        className="login-grip"
+        onPointerDown={grip}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Drag to resize this column"
+        title="Drag to resize"
+      />
       <header className="login-head">
         <span className="login-site">{req.site}</span>
         <span className="login-where">on {req.machine}</span>
@@ -207,6 +281,27 @@ export default function RemoteLoginView({
         </span>
         <span className="login-badge q" title="Pictures a second, measured">
           {fps}/s
+        </span>
+        <span className="login-zoom" role="group" aria-label="How much of the page is shown">
+          <button
+            className="login-btn"
+            onClick={() => setZoom(zoomStep(at, -1))}
+            title="Show more of the page"
+            aria-label="Show more of the page"
+          >
+            −
+          </button>
+          <button className="login-btn" onClick={() => setZoom(null)} title="Fit the whole page in this column">
+            {zoom === null ? `Fit ${zoomWords(at)}` : zoomWords(at)}
+          </button>
+          <button
+            className="login-btn"
+            onClick={() => setZoom(zoomStep(at, 1))}
+            title="Make the page bigger"
+            aria-label="Make the page bigger"
+          >
+            +
+          </button>
         </span>
         <button className="login-btn primary" onClick={onDone}>
           Done
@@ -224,7 +319,7 @@ export default function RemoteLoginView({
       ) : (
         <div
           className={'login-screen' + (typing ? ' typing' : '')}
-          ref={box}
+          ref={boxRef}
           onMouseDown={(e) => {
             const p = point(e)
             if (!p) return
@@ -268,6 +363,13 @@ export default function RemoteLoginView({
           onWheel={(e) => {
             const p = point(e)
             if (!p) return
+            // Ctrl/Cmd + wheel is the gesture every browser gives zoom, so it is spent
+            // here rather than forwarded: the far page's own zoom would change what the
+            // frame metadata means and a click would stop landing where it was aimed.
+            if (e.ctrlKey || e.metaKey) {
+              setZoom(zoomStep(at, e.deltaY < 0 ? 1 : -1))
+              return
+            }
             window.api.loginInput(req.id, {
               kind: 'mouse',
               type: 'mouseWheel',
@@ -281,7 +383,9 @@ export default function RemoteLoginView({
           <canvas ref={canvas} className="login-canvas" />
           {spot && <i className="login-spot" style={{ left: spot.x, top: spot.y }} />}
           {!typing && (
-            <div className="login-tip">Click the picture to type into it. Press Escape twice to stop.</div>
+            <div className="login-tip">
+              Click the picture to type into it. Press Escape twice to stop. Ctrl or Cmd and the wheel zooms.
+            </div>
           )}
         </div>
       )}

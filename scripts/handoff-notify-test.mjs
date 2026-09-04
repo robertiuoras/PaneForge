@@ -182,9 +182,9 @@ function harness(overrides = {}) {
 {
   const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
   ok('the renderer calls cancelHandoff', /api\s*\n?\s*\.cancelHandoff\(/.test(app) || /api\.cancelHandoff\(/.test(app))
-  const at = app.indexOf('waiting <Elapsed')
+  const at = app.indexOf('moves when done <Elapsed')
   const opens = at > 0 ? app.slice(Math.max(0, at - 800), at) : ''
-  ok('the waiting chip is a button, not a label', at > 0 && opens.lastIndexOf('<button') > opens.lastIndexOf('<span'), 'the chip that reports the wait must be the control that ends it')
+  ok('the queued-move chip is a button, not a label', at > 0 && opens.lastIndexOf('<button') > opens.lastIndexOf('<span'), 'the chip that reports the wait must be the control that ends it')
   ok('the chip presses stopMove', /stopMove\(s\)/.test(app))
   ok('the context menu and the phone sheet both offer it', (app.match(/'stop-move'/g) ?? []).length >= 2)
   const main = readFileSync(join(root, 'src/main/index.ts'), 'utf8')

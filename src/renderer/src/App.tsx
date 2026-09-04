@@ -5017,6 +5017,10 @@ export default function App(): JSX.Element {
                           // takes. Drawn as a clock rather than as the word `moving`: a
                           // ten-minute build under a chip that says moving reads as a broken
                           // handoff, which is exactly how three of these were reported.
+                          // The word on it is `moves when done`, not `waiting`: on its
+                          // own `waiting` named nothing it was waiting FOR and read as a
+                          // stuck pane (Robert, 2026-09-04, on a card that had said it
+                          // for seven minutes).
                           // ...and it is the control that undoes it. The wait is minutes
                           // long by construction, so the chip that reports it is the one
                           // place somebody is already looking when they change their mind.
@@ -5029,7 +5033,7 @@ export default function App(): JSX.Element {
                               stopMove(s)
                             }}
                           >
-                            waiting <Elapsed since={s.handoffQueuedAt} title="Queued for a move" />
+                            moves when done <Elapsed since={s.handoffQueuedAt} title="Queued for a move" />
                           </button>
                         ) : (
                           // Which half is running and for how long: a move is a repo push

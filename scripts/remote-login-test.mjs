@@ -368,4 +368,40 @@ ok(/'list'/.test(ctl) && /login:list/.test(ctl), '`pf list` shows the sign-in re
   ok(/PF_PANE/.test(ctl), 'and says which pane is asking, so the app knows what it asked for last')
 }
 
+// ------------------------------------------------- how much of the page is on screen
+// A column is not a browser window: the far page is laid out at whatever width it is
+// GIVEN, and giving it the column's own width is what made every desktop site render at
+// its most cramped (Robert, 2026-09-04: "way too zoomed in").
+{
+  const half = { w: 700, h: 900 }
+  eq(M.fitZoom(half), 0.5, 'a half-window column fits the page at 50%')
+  const v = M.viewportFor(half, M.fitZoom(half))
+  ok(v.w >= M.PAGE_WIDTH, `and that gives the far browser a desktop-width viewport (${v.w}px)`)
+  eq(M.viewportFor(half, 1).w, 700, 'at 100% the far page is the column, which is the old behaviour')
+  eq(M.fitZoom({ w: 1600, h: 900 }), 1, 'a column already wider than a desktop page is not shrunk')
+  eq(M.viewportFor({ w: 100, h: 80 }, 1).w, M.MIN_VIEW.w, 'a viewport is never smaller than a browser can lay out')
+  eq(M.viewportFor({ w: 9000, h: 900 }, 0.1).w, M.MAX_VIEW.w, 'nor big enough to cost frames for nothing')
+
+  eq(M.zoomStep(0.5, 1), 0.67, 'plus goes one rung in')
+  eq(M.zoomStep(0.5, -1), 0.4, 'minus goes one rung out')
+  eq(M.zoomStep(M.ZOOMS[0], -1), M.ZOOMS[0], 'and neither falls off the end of the ladder')
+  eq(M.zoomStep(M.ZOOMS[M.ZOOMS.length - 1], 1), M.ZOOMS[M.ZOOMS.length - 1], 'at either end')
+  eq(M.zoomWords(0.67), '67%', 'the button says a percentage a person reads')
+
+  // The picture keeps its shape, so a click still lands where it was aimed.
+  const box = { w: 700, h: 900 }
+  const view = M.viewportFor(box, 0.5)
+  const p = M.toRemotePoint({ x: 350, y: 450 }, { width: box.w, height: box.h }, { deviceWidth: view.w, deviceHeight: view.h })
+  eq(p.x, Math.round(view.w / 2), 'the middle of the picture is the middle of the page, zoomed out')
+  eq(p.y, Math.round(view.h / 2), 'in both directions')
+}
+
+// ------------------------------------------------------------- and how wide it may be
+{
+  eq(M.clampSplit(10, 1600), M.MIN_SPLIT, 'the column cannot be dragged away to nothing')
+  eq(M.clampSplit(1590, 1600), 1600 - M.KEEP_PANE, 'nor over the pane it is beside')
+  eq(M.clampSplit(800, 1600), 800, 'anything in between is what was dragged')
+  ok(M.clampSplit(50, 500) >= M.MIN_SPLIT, 'a window too narrow for both still leaves a usable column')
+}
+
 console.log(`remote-login: ${n} checks passed`)
