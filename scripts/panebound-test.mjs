@@ -166,7 +166,13 @@ if (process.platform !== 'win32') {
     // that walking a REAL process tree agrees with a flat scan of it - the leg a fixture
     // cannot exercise - and not a copy of the regexes, which would drift and, without the
     // MCP exclusion, would call every pane on this desk bound.
-    const flagged = subtree(cli.pid).some((cmd) => !!boundReason(cmd ?? ''))
+    // Explicitly apply the same MCP exclusion here to prevent a flat scan from false-positives
+    const MCP_EXCLUSION = /(?:^|\s)--?mcp(?:[=\s]|$)|(?:^|[/\\])[a-z0-9-]*-mcp[a-z0-9-]*(?:\s|$)/i
+    const flagged = subtree(cli.pid).some((cmd) => {
+      if (!cmd) return false
+      if (MCP_EXCLUSION.test(cmd)) return false
+      return !!boundReason(cmd)
+    })
     ok(
       yes === flagged,
       `a live agent is bound only when something in its tree drives a browser` +
