@@ -3211,7 +3211,16 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
 }
 /* Everything between the counter and the buttons - the part allowed to scroll. */
 .tour-body { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; min-height: 0; }
-.tour-count { color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+/* The header: where you are on the left, what the tour is doing on the right, and a
+   hairline bar under both. Following design-vault/linear.app.md - the state word is the
+   only accent on the card, the bar is 2px and never animates, and nothing here moves
+   except the number, which is why it is tabular. */
+.tour-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.tour-count { color: var(--text); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.tour-count-done { color: var(--muted); }
+.tour-state { color: var(--accent); font-size: 11.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tour-bar { height: 2px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.tour-bar > span { display: block; height: 100%; background: var(--accent); }
 .tour-text { color: var(--text); font-size: 13px; line-height: 1.4; font-weight: 600; }
 .tour-where { color: var(--muted); font-size: 12px; }
 .tour-how { color: var(--text); font-size: 12px; line-height: 1.4; }
@@ -3234,6 +3243,14 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
 .tour-check.ok { color: var(--ok, var(--text)); }
 .tour-check.bad { color: var(--danger, var(--text)); }
 .tour-check-mark { font-weight: 700; }
+.tour-check-count { color: var(--muted); font-variant-numeric: tabular-nums; }
+/* The line the suite printed a moment ago. Monospace because it IS the suite's own
+   output, dimmed and clipped to one line because it is a sign of life, not a report -
+   the report is the tick that replaces it. */
+.tour-check-live {
+  flex-basis: 100%; font: 11px/1.4 var(--mono, ui-monospace, monospace); color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .tour-check-tail {
   flex-basis: 100%; margin: 0; padding: 6px 8px; font: 11px/1.4 var(--mono, ui-monospace, monospace);
   color: var(--text); background: var(--surface-1); border: 1px solid var(--line); border-radius: 4px;

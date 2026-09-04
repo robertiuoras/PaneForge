@@ -13,7 +13,7 @@ const {
   buildSteps, makeTour, currentStep, next, previous, done, surfaceFor, tourAllowed,
   stepFrom, placesFor, trailersOf, firstParagraph, checkAllowed, readCheck, checkName, plainWords, howToCheck,
   dwellFor, waitsForYou, DWELL_CHECKS_MS, DWELL_PLAIN_MS, NO_SCREEN,
-  stepKey, nextUnchecked
+  stepKey, nextUnchecked, checkWords
 } = await import(pathToFileURL(join(root, 'src/shared/tour.ts')).href)
 
 let failed = 0
@@ -201,7 +201,25 @@ console.log('the tour plays itself')
   ok('the card says so while it waits', /data-testid="tour-wait"/.test(readFileSync(join(root, 'src/renderer/src/components/TourCard.tsx'), 'utf8')))
   const card = readFileSync(join(root, 'src/renderer/src/components/TourCard.tsx'), 'utf8')
   ok('the card waits to be started, and takes no turn nobody asked for', /const \[playing, setPlaying\] = useState\(false\)/.test(card))
-  ok('a suite runs only when it is pressed', /data-testid="tour-run"/.test(card) && !/tourCheck[\s\S]{0,400}useEffect/.test(card))
+  // A TOUR RUNS ITS OWN CHECKS (Robert, 2026-09-04: "if we doing tour then it should do
+  // everything itself so we wont need the run test:cloudwork"), reversing the earlier
+  // per-step approval. Starting the tour IS the approval - the card still runs nothing on
+  // its own before that press, and a step reached by hand still has a button.
+  ok('starting the tour runs each step\'s checks', /if \(!state \|\| gone \|\| !playing\) return\n\s*if \(!currentStep\(state\)\.checks\.length \|\| checks\[index\]\) return\n\s*runChecks\(\)/.test(card))
+  ok('and a step reached by hand still has its own button', /data-testid="tour-run"/.test(card))
+  ok('nothing runs before the tour is started', /const \[playing, setPlaying\] = useState\(false\)/.test(card))
+  // `test:cloudwork` is the name of a file in this repository and has no business on a
+  // card - Robert, 2026-09-04: "why is there another button calld run test:cloudwork? its
+  // wrong". The card asks `checkWords`; `checkName` stays for logs and nothing else.
+  ok('no npm script name reaches the card', !/checkName/.test(card))
+  ok('the check speaks plainly', /Checking this change/.test(String(checkWords(1))))
+  ok('and says how many when there is more than one', /2 checks/.test(String(checkWords(2))))
+  // What it is doing THIS second, straight off the suite's own output.
+  ok('a running check shows its live output', /data-testid="tour-check-live"/.test(card))
+  ok('main streams a line at a time, never a buffer at the end', /onLine\?\.\(\{ script, passed, failed, line \}\)/.test(readFileSync(join(root, 'src/main/tour.ts'), 'utf8')))
+  // A number nobody can see is a tour that looks stuck.
+  ok('a counting step shows the seconds left', /next in \$\{Math\.ceil\(left \/ 1000\)\}s/.test(card))
+  ok('the countdown never decides the move itself', /setLeft\(Math\.max\(0, until - Date\.now\(\)\)\)/.test(card) && /setTimeout\(\(\) => \{/.test(card))
   ok('it advances on its own', /setTimeout\(\(\) => \{[\s\S]{0,600}?next\(s\)[\s\S]{0,200}?\}, wait\)/.test(card))
   // The counter read `0 of 44` however long it ran, so the one number saying how far
   // through you are said nothing (Robert, 2026-09-04). A step the tour has SHOWN is ticked
@@ -210,7 +228,7 @@ console.log('the tour plays itself')
   ok('a step it has shown is ticked off', /tickDone\(currentStep\(state\)\)/.test(card))
   ok('the automatic tick moves nothing by itself', /const tickDone = \(s: TourStep\): void => \{[\s\S]{0,400}?saveMap/.test(card))
   ok('and it never re-writes a step already ticked', /if \(was\[k\]\) return was/.test(card))
-  ok('a hold draws no timer at all', /if \(wait === null\) return/.test(card))
+  ok('a hold draws no timer at all', /if \(wait === null\) \{\n\s*setLeft\(null\)\n\s*return\n\s*\}/.test(card))
   ok('steering it by hand stops it moving underneath', (card.match(/setPlaying\(false\)/g) ?? []).length >= 3)
   ok('and the last step is where it stops', /if \(done\(state\)\) \{[\s\S]*?setPlaying\(false\)/.test(card))
 }
@@ -221,7 +239,7 @@ console.log('the installed app never gets a tour')
   ok('a named dev profile is allowed', tourAllowed('dev-a') === true)
   const main = readFileSync(join(root, 'src/main/tour.ts'), 'utf8')
   ok('main checks tourAllowed before reading anything', main.indexOf('tourAllowed(profileName())') < main.indexOf('diffCommits('))
-  ok('and before running anything', /export function tourCheck[\s\S]*?tourAllowed\(profileName\(\)\)[\s\S]*?checkAllowed\(script\)[\s\S]*?execFile\(/.test(main))
+  ok('and before running anything', /export function tourCheck[\s\S]*?tourAllowed\(profileName\(\)\)[\s\S]*?checkAllowed\(script\)[\s\S]*?spawn\(/.test(main))
   ok('checks run on the node npm test uses, never Electron', /which\('node'\)/.test(main) && !/execFile\(\s*process\.execPath/.test(main))
 }
 

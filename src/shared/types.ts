@@ -2189,6 +2189,8 @@ export interface Api {
    * its answer. Refused outside a dev copy and for any other path. See `shared/tour.ts`.
    */
   tourCheck(script: string): Promise<import('./tour').TourCheck>
+  /** One counted line out of a check that is still running - see `main/tour.ts`. */
+  onTourCheckLine(cb: (p: import('./tour').TourProgress) => void): () => void
   /** replay of everything the pty printed so far, for re-attaching a pane */
   getBuffer(id: string): Promise<string>
   /**
