@@ -215,7 +215,8 @@ import {
 } from './updater'
 import { READY_HOLD_MS } from '../shared/updateStale'
 import * as history from './history'
-import { takenFolders } from '../shared/laneTaken'
+import { clashingRestores, takenFolders } from '../shared/laneTaken'
+import { copyNumber } from '../shared/place'
 import { readBoard, writeMemory, writeTasks } from './board'
 import * as voice from './voice'
 import { installCommand, uninstallCommand } from '../shared/agents'
@@ -1403,7 +1404,7 @@ async function laneFor(
       cwd: home,
       lane: undefined,
       laneEnv: undefined,
-      laneNote: `Lane was empty - back in ${basename(home)}`
+      laneNote: `Nobody else is in ${basename(home)} - back in the project's own folder`
     }
   }
 
@@ -1421,7 +1422,9 @@ async function laneFor(
     cwd: lane.cwd,
     lane: lane.lane,
     laneEnv: lane.env,
-    laneNote: `Opened lane ${lane.lane} on ${lane.branch} - PORT=${lane.port}${memory}`
+    // The card is read by somebody who has never used git: a copy NUMBER, never the slot
+    // letter, never the branch. See `shared/place.ts` and `npm run test:laneplain`.
+    laneNote: `Opened copy ${(lane.lane && copyNumber(lane.lane)) ?? lane.lane} of ${basename(req.cwd)} - PORT=${lane.port}${memory}`
   }
 }
 
@@ -3864,7 +3867,14 @@ function restorePanes(specs: StartSessionRequest[]): void {
   // list is rewritten from what actually restored, so it cannot grow stale entries.
   const wasPinned = new Set(getConfig().pinnedPanes ?? [])
   const nowPinned: string[] = []
-  specs.slice(0, MAX_RESTORE).forEach((req, i) => {
+  const opening = specs.slice(0, MAX_RESTORE)
+  // Two cards can be saved pointing at ONE folder - the desk is written per pane and
+  // nothing in it notices - and restore starts each pane where it was saved, so both
+  // agents came up in one working tree (Alison and Jacob in `clients`, 2026-09-04). The
+  // first pane keeps the folder; a later one comes back asleep and is placed on the way
+  // out of sleep by `sessions:wake`. See `shared/laneTaken.ts`.
+  const clash = clashingRestores(opening)
+  opening.forEach((req, i) => {
     const open = (): void => {
       try {
         // Reopen the conversation this pane was in BY NAME, or open nothing.
@@ -3892,7 +3902,10 @@ function restorePanes(specs: StartSessionRequest[]): void {
           // Everything but the pane being looked at comes back with no agent in it. The
           // card, its place and its screen are all there; a press starts the CLI in the
           // conversation it was in. See `shared/restoreTurn.ts` for the measurement.
-          asleep: req.asleep || restoreAsleep(req, i, recoverOn)
+          asleep: req.asleep || clash[i] || restoreAsleep(req, i, recoverOn),
+          laneNote: clash[i]
+            ? `Another chat is already in ${basename(req.cwd)} - opening this one gives it its own copy`
+            : req.laneNote
         })
         if (req.scrollbackId && wasPinned.has(req.scrollbackId)) nowPinned.push(meta.id)
       } catch {

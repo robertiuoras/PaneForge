@@ -10,7 +10,7 @@ const root = join(realpathSync(tmpdir()), 'paneforge-lane-taken-test')
 mkdirSync(root, { recursive: true })
 const out = join(root, 'laneTaken.mjs')
 buildSync({ entryPoints: [resolve(here, '../src/shared/laneTaken.ts')], outfile: out, bundle: true, format: 'esm', platform: 'node' })
-const { takenFolders, wakeClashes } = await import(pathToFileURL(out).href)
+const { clashingRestores, takenFolders, wakeClashes } = await import(pathToFileURL(out).href)
 
 const rows = [
   { cwd: '/p/clients', status: 'exited', asleep: 1_700_000_000_000 },
@@ -34,4 +34,26 @@ assert.equal(wakeClashes(twins.slice(1), 's3', '/p/clients'), false, 'a pane alo
 assert.equal(wakeClashes(twins, 's2', '/p/car'), false)
 assert.equal(wakeClashes([{ id: 's1', cwd: '/P/Clients', status: 'idle' }], 's3', '/p/clients', (a, b) => a.toLowerCase() === b.toLowerCase()), true, 'same folder, different case')
 assert.ok(!takenFolders(twins, 's1').includes('/p/clients') || takenFolders(twins, 's1').length === 2, 'except drops only that pane')
-console.log('lane-taken: 8 ok')
+// Restore: two cards saved pointing at one folder. The first keeps it; the second comes
+// back asleep so no second agent is spawned in that working tree, and the wake places it.
+// This is the Alison/Jacob case - both saved in `clients`, both restored there awake.
+const saved = [
+  { cwd: '/p/clients' },
+  { cwd: '/p/clients' },
+  { cwd: '/p/car' },
+  { cwd: '/p/clients' }
+]
+assert.deepEqual(clashingRestores(saved), [false, true, false, true], 'only the later duplicates sleep')
+assert.deepEqual(clashingRestores([]), [], 'an empty desk plans nothing')
+assert.deepEqual(clashingRestores([{ cwd: '/p/clients' }]), [false], 'one pane in a folder never sleeps for this')
+assert.deepEqual(
+  clashingRestores([{ cwd: '/p/clients' }, { cwd: '/p/Clients' }], (a, b) => a.toLowerCase() === b.toLowerCase()),
+  [false, true],
+  'same folder, different case'
+)
+assert.deepEqual(
+  clashingRestores([{ cwd: '/p/clients' }, { cwd: '/p/clients-a' }, { cwd: '/p/clients-b' }]),
+  [false, false, false],
+  'the copies are different folders and all three stay awake'
+)
+console.log('lane-taken: 13 ok')
