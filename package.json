@@ -28,6 +28,7 @@
     "test:gamemode": "node scripts/gamemode-test.mjs",
     "test:busy": "node scripts/busy-test.mjs",
     "test:handoffsteps": "node scripts/handoff-steps-test.mjs",
+    "test:panemodel": "node scripts/panemodel-test.mjs",
     "test:staleframe": "node scripts/stale-frame-test.mjs",
     "test:copymode": "node scripts/copymode-test.mjs",
     "test:focus": "node scripts/focus-test.mjs",
