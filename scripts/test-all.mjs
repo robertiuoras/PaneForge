@@ -32,6 +32,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 // build should say so in a second rather than after the slow ones.
 const TESTS = [
   ['shipimports', 'ship-imports-test.mjs'],
+  ['guarddeckhold', 'guarddeck-hold-test.mjs'],
   ['power', 'power-test.mjs'],
   ['killguard', 'kill-guard-test.mjs'],
   ['release', 'release-guard-test.mjs'],
