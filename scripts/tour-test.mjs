@@ -11,7 +11,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const {
   buildSteps, makeTour, currentStep, next, previous, done, surfaceFor, tourAllowed,
-  stepFrom, placesFor, trailersOf, firstParagraph, checkAllowed, readCheck, checkName, plainWords, howToCheck
+  stepFrom, placesFor, trailersOf, firstParagraph, checkAllowed, readCheck, checkName, plainWords, howToCheck,
+  dwellFor, DWELL_CHECKS_MS, DWELL_LOOK_MS, DWELL_PLAIN_MS, NO_SCREEN
 } = await import(pathToFileURL(join(root, 'src/shared/tour.ts')).href)
 
 let failed = 0
@@ -32,7 +33,7 @@ console.log('the index clamps at both ends')
 {
   const t = makeTour([c('First'), c('Second'), c('Third')], '/repo')
   ok('starts at the first step', t.index === 0)
-  ok('carries the checkout root for Try it and the checks', t.root === '/repo')
+  ok('carries the checkout root the checks run in', t.root === '/repo')
   ok('previous at the first step stays put', previous(t).index === 0)
   const atEnd = next(next(next(t)))
   ok('next past the last step stops there, never wraps', atEnd.index === 2, String(atEnd.index))
@@ -97,12 +98,12 @@ console.log('what to look for and what to type come from the commit, never inven
   const body = 'Long story.\n\nSee: the reveal button is 30px\nSee: Save workspace carries a bookmark\nTry: run rm on a scratch file\nTry: ignored second\nCo-Authored-By: x'
   const t = trailersOf(body)
   ok('every See line kept in order', t.see.length === 2 && t.see[1] === 'Save workspace carries a bookmark')
-  ok('the first Try line wins', t.try === 'run rm on a scratch file')
+  ok('a Try line is not read at all any more', t.try === undefined)
   const s = stepFrom(c('Subject', body))
-  ok('a step carries them', s.see.length === 2 && s.try === 'run rm on a scratch file')
+  ok('a step carries the See lines and nothing to press', s.see.length === 2 && s.try === undefined)
   const plain = stepFrom(c('Subject', 'First paragraph says why.\nStill first.\n\nSecond paragraph.'))
   ok('no See lines: the first paragraph stands in', plain.see.length === 1 && plain.see[0] === 'First paragraph says why. Still first.', plain.see[0])
-  ok('and no Try is invented', plain.try === undefined)
+  ok('and a step never carries a prompt for a pane', plain.try === undefined)
   ok('an empty body gives an empty list, not a guess', stepFrom(c('Subject')).see.length === 0)
   ok('a first paragraph is capped on a word', firstParagraph('word '.repeat(200)).length <= 320 && /…$/.test(firstParagraph('word '.repeat(200))))
   ok('trailers are not the paragraph', firstParagraph('See: a\nCo-Authored-By: b') === '')
@@ -115,10 +116,10 @@ console.log('the card speaks to somebody who has never coded')
   ok('code spans and parentheses are gone from a mostly-plain sentence', plainWords('The list is hidden now and the `reveal` button (30px) brings it back to the same place it was.') === 'The list is hidden now and the button brings it back to the same place it was.', plainWords('The list is hidden now and the `reveal` button (30px) brings it back to the same place it was.'))
   ok('camelCase identifiers are gone', !/[a-z][A-Z]/.test(plainWords('the askRef refuses a bare click')))
   ok('a first sentence stands alone', plainWords('Short one here that is long enough. Second sentence.') === 'Short one here that is long enough.')
-  ok('New session says the window is open', /New session window is open/.test(howToCheck({ open: 'newSession', checks: [], try: undefined })))
-  ok('a hidden list points at the ringed button', /ringed button/.test(howToCheck({ open: 'sidebarHidden', checks: [], try: undefined })))
-  ok('nothing to click says the app checked it', /checked it for you/.test(howToCheck({ open: 'none', checks: ['scripts/x-test.mjs'], try: undefined })))
-  ok('a Try prompt says to press it', /Try it in a pane/.test(howToCheck({ open: 'none', checks: [], try: 'do x' })))
+  ok('New session says the window is open', /New session window is open/.test(howToCheck({ open: 'newSession', checks: [] })))
+  ok('a hidden list points at the ringed button', /ringed button/.test(howToCheck({ open: 'sidebarHidden', checks: [] })))
+  ok('nothing to click says the app checked it', /checked it for you/.test(howToCheck({ open: 'none', checks: ['scripts/x-test.mjs'] })))
+  ok('nothing ever tells anybody to open a pane', !/pane/i.test(howToCheck({ open: 'none', checks: [] })))
   const card = readFileSync(join(root, 'src/renderer/src/components/TourCard.tsx'), 'utf8')
   ok('Done or dismiss folds to a pill, never to nothing', /tour-pill/.test(card) && /setGone\(false\)/.test(card))
   // CRLF on a Windows checkout: the assertion below looks for a literal newline.
@@ -140,6 +141,25 @@ console.log('a change with nothing on screen is still checked')
   ok('exit 0 with a FAIL line is still red', !readCheck('s', 0, 'FAIL x').ok)
 }
 
+console.log('the tour plays itself')
+{
+  const looking = { text: 'x', open: 'settings', where: 'Settings', see: [], checks: [], byHand: [] }
+  const checked = { text: 'x', open: 'none', where: NO_SCREEN, see: [], checks: ['scripts/x-test.mjs'], byHand: [] }
+  const plain = { text: 'x', open: 'none', where: NO_SCREEN, see: [], checks: [], byHand: [] }
+  ok('a step still running its checks holds, so no result goes unseen', dwellFor(checked, false) === null)
+  ok('and moves on once the result is on the card', dwellFor(checked, true) === DWELL_CHECKS_MS)
+  ok('something on screen is given longer to be looked at', dwellFor(looking, true) === DWELL_LOOK_MS)
+  ok('a ring alone counts as something to look at', dwellFor({ ...plain, spot: '.pane' }, true) === DWELL_LOOK_MS)
+  ok('a sentence with nothing to see gets the short one', dwellFor(plain, true) === DWELL_PLAIN_MS)
+  ok('looking always beats reading', DWELL_LOOK_MS > DWELL_PLAIN_MS && DWELL_LOOK_MS > DWELL_CHECKS_MS)
+  const card = readFileSync(join(root, 'src/renderer/src/components/TourCard.tsx'), 'utf8')
+  ok('the card starts playing rather than waiting to be pressed', /useState\(true\)/.test(card))
+  ok('it advances on its own', /setTimeout\(\(\) => setState\(\(s\) => \(s \? next\(s\) : s\)\), wait\)/.test(card))
+  ok('a hold draws no timer at all', /if \(wait === null\) return/.test(card))
+  ok('steering it by hand stops it moving underneath', (card.match(/setPlaying\(false\)/g) ?? []).length >= 3)
+  ok('and the last step is where it stops', /if \(done\(state\)\) \{[\s\S]*?setPlaying\(false\)/.test(card))
+}
+
 console.log('the installed app never gets a tour')
 {
   ok("the installed app's profile is refused", tourAllowed('') === false)
@@ -155,7 +175,7 @@ console.log('it may never take the screen')
   const card = readFileSync(join(root, 'src/renderer/src/components/TourCard.tsx'), 'utf8')
   ok('drawn in the renderer, never a dialog', !/showMessageBox|dialog\./.test(card))
   ok('never focuses or raises anything', !/focus\(|setAlwaysOnTop|moveTop/.test(card))
-  ok('Try it opens a pane with the change\'s own prompt', /startSessions\(\[\{[^}]*prompt: step\.try/.test(card))
+  ok('and it opens no pane and types no prompt of its own', !/startSessions/.test(card))
   const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
   ok('it is actually mounted', /<TourCard/.test(app))
   const css = readFileSync(join(root, 'src/renderer/src/styles.css'), 'utf8')

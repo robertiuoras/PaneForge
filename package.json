@@ -223,6 +223,7 @@
     "test:linkstate": "node scripts/link-state-test.mjs",
     "test:whatsnew": "node scripts/whatsnew-test.mjs",
     "test:tour": "node scripts/tour-test.mjs",
+    "test:devkeep": "node scripts/devkeep-test.mjs",
     "test:trimloss": "node scripts/trim-loss-test.mjs",
     "test:renderwatch": "node scripts/renderwatch-test.mjs",
     "test:renderwatchlive": "node scripts/renderwatch-live.mjs",

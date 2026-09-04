@@ -548,6 +548,9 @@ function write(state) {
  * here rather than publishing a claim under a name that collides with somebody else's.
  */
 const DEVICE = refSafe(process.env.PF_DEVICE || hostname(), 40)
+/** The pane this chat is running in, when the app started it. Survives `/clear`, which the
+ * session id does not - see the hold-per-pane rule in `claim`. */
+const PANE = (process.env.PF_PANE || '').trim()
 
 /** Repos with no remote never had lanes to share, and have no channel to share them on. */
 let originKnown
@@ -1477,6 +1480,24 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
   // Cheap, throttled, and the reason most conflicts never reach a human.
   retryConflicts(state)
 
+  // ONE PANE IS ONE CHAT, so a pane may hold one lane and never two.
+  //
+  // A chat's id changes when it is cleared or resumed (`/clear` starts a new session id in
+  // the same pane), and the hold the OLD id took is still in the ledger: nothing tells the
+  // ledger that chat ended, and the stale hold is not idle enough for any sweep to take.
+  // The board then draws the same pane twice - once as the copy it is really in, once as
+  // whatever lane the dead id holds - and the chat is told, in its own hook, that another
+  // chat is working beside it. Measured here 2026-09-04: this pane held `main` as
+  // d30e8ebe and `b` as fb4c882b, a session id that no longer resolves to a conversation.
+  //
+  // The pane id is the identity that survives the clear (`PF_PANE`, set by the app on
+  // every pane it starts), so a claim drops every other hold wearing the same pane. A
+  // hold with no pane id - claimed by hand, or from a terminal outside the app - is left
+  // alone: it belongs to nobody this can identify.
+  if (PANE)
+    for (const [id, c] of Object.entries(state.lanes))
+      if (c.pane === PANE && c.session !== session) delete state.lanes[id]
+
   for (const [id, c] of Object.entries(state.lanes)) {
     if (c.session === session) {
       c.seen = now()
@@ -1507,6 +1528,8 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
       // only kind the strip draws. Later claims carry the folder, so take the first one
       // that does rather than leaving the hold anonymous for its whole life.
       if (cwd && !c.cwd) c.cwd = cwd
+      // Claimed before this chat was cleared, or before the pane id was recorded at all.
+      if (PANE) c.pane = PANE
       // Once a chat has written in its lane the lane is really held, and a later prompt
       // that happens not to mention PaneForge must not hand it back.
       if (!tentative) delete c.tentative
@@ -1715,6 +1738,8 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
     // redundant once the app draws several ledgers and a peer's published claims in one
     // list, where every row needs to be able to say where it is.
     device: DEVICE,
+    // Which pane, when the app started this chat: the one identity that survives a clear.
+    ...(PANE ? { pane: PANE } : {}),
     claimed: now(),
     seen: now(),
     ...(tentative ? { tentative: true } : {}),

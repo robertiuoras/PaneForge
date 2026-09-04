@@ -45,6 +45,28 @@ export interface Borrow extends Grid {
    * `mirrorFit.ts` arriving by a new door.
    */
   at: number
+  /**
+   * Whether a PERSON is at the screen holding this borrow.
+   *
+   * A borrow is what a headless desk reads as "somebody is looking at this pane"
+   * (`ReclaimPane.watched`), and a mirror's borrow never expires - it ends with the
+   * connection, not on a clock (`at: 0` above). Put together, one glance at a PC pane from
+   * the Mac took that pane off the idle clock for as long as the link was up: measured
+   * 2026-09-04, three panes idle on the PC with `idleCloseMinutes: 5` and no close, no
+   * countdown, and nothing in `reclaim.log` since 03:23.
+   *
+   * So the borrowing screen says whether anybody is there (`away.ts`'s `sawPerson`), and a
+   * mirror on a desk nobody is sitting at stops holding the pane open. Absent means YES: a
+   * phone, an older build and a screen that does not say are all "somebody is looking",
+   * which is what shipped before this and the safe direction to be wrong in.
+   */
+  person?: boolean
+}
+
+/** Is any screen holding this pane with a person at it - the "somebody is looking" reading. */
+export function watchedBorrow(borrows: Iterable<Borrow>): boolean {
+  for (const b of borrows) if (b.person !== false) return true
+  return false
 }
 
 /**

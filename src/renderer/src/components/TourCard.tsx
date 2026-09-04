@@ -4,9 +4,16 @@
 // this card at all.
 //
 // Each step: the change in plain words, WHERE it lives, what to look for, a ring drawn
-// around the control it is about (`TourSpot`), `Try it` to open a pane and type the
-// change's own prompt, and the change's own test suites run right here with the result on
-// the card - so a change with nothing to click still gets checked in front of you.
+// around the control it is about (`TourSpot`), and the change's own test suites run right
+// here with the result on the card - so a change with nothing to click still gets checked
+// in front of you.
+//
+// AND IT PLAYS ITSELF. The card opens each step's surface, waits long enough for the thing
+// to be looked at (`dwellFor` - longer when there is something on screen, and never while
+// a check is still running), then moves on by itself. Pause stops it where it is and the
+// arrows still work; pressing either one pauses, because somebody steering is somebody who
+// does not want it moving under them. The button that opened a pane and typed the change's
+// own prompt is gone (Robert 2026-09-04: "i dont want the try in pane testing helper").
 //
 // Same shape as every other corner card (`MoveSoon.tsx`, `WhatsNewCard.tsx`): a static
 // child of `.corner-stack`, never its own `position: fixed`, no animation, no focus taken.
@@ -15,7 +22,7 @@
 
 import { useEffect, useState } from 'react'
 import type { TourCheck, TourState, TourSurface } from '../../../shared/tour'
-import { checkName, currentStep, done, howToCheck, next, previous } from '../../../shared/tour'
+import { checkName, currentStep, done, dwellFor, howToCheck, next, previous } from '../../../shared/tour'
 import CardX from './CardX'
 
 const api = window.api
@@ -60,7 +67,9 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
   const [state, setState] = useState<TourState | null>(null)
   const [gone, setGone] = useState(false)
   const [checks, setChecks] = useState<Record<number, Checking>>({})
-  const [tried, setTried] = useState<Record<number, string>>({})
+  // Playing from the moment the card appears: the window was opened to be shown what
+  // changed, so being shown is the default and stopping is the press.
+  const [playing, setPlaying] = useState(true)
 
   useEffect(() => {
     let live = true
@@ -90,6 +99,25 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [index, gone])
 
+  // Playing: hold on this step for as long as it needs to be looked at, then move on.
+  // The timer is rebuilt whenever the step, the play state or this step's checks change,
+  // so a step that was holding for a check starts its dwell the moment the result lands.
+  const checkDone = checks[index]?.state === 'done'
+  useEffect(() => {
+    if (!state || gone || !playing) return
+    if (done(state)) {
+      // The last step is where it stops: nothing wraps, and the card stays on the change
+      // most recently made rather than starting the list again under somebody reading it.
+      setPlaying(false)
+      return
+    }
+    const wait = dwellFor(currentStep(state), checkDone)
+    if (wait === null) return
+    const t = setTimeout(() => setState((s) => (s ? next(s) : s)), wait)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [index, gone, playing, checkDone])
+
   if (!state) return null
   // Dismissed or Done: a pill stays in the corner so the steps can always be found
   // again (Robert 2026-09-04: "all times in dev window show that test steps").
@@ -104,21 +132,13 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
   const isLast = done(state)
   const check = checks[index]
 
-  const tryIt = (): void => {
-    if (!step.try || tried[index]) return
-    setTried((t) => ({ ...t, [index]: 'opening' }))
-    void api
-      .startSessions([{ cwd: state.root, prompt: step.try, title: `Try: ${step.text.slice(0, 40)}` }])
-      .then(() => setTried((t) => ({ ...t, [index]: 'opened' })))
-      .catch(() => setTried((t) => ({ ...t, [index]: 'failed' })))
-  }
-
   return (
     <>
       <div className="tour-card" role="status" data-testid="tour-card">
         <CardX onDismiss={() => setGone(true)} />
         <div className="tour-count">
           {state.index + 1} of {state.steps.length}
+          {playing && !isLast ? ' · playing' : ''}
         </div>
         <div className="tour-body">
           <div className="tour-text">{step.text}</div>
@@ -156,21 +176,34 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
         )}
         </div>
         <div className="tour-acts">
-          {step.try && (
-            <button type="button" className="ghost small" disabled={!!tried[index]} onClick={tryIt}>
-              {tried[index] === 'opened' ? 'Pane opened' : tried[index] === 'failed' ? 'Could not open' : 'Try it in a pane'}
-            </button>
-          )}
+          <button
+            type="button"
+            className="ghost small"
+            data-testid="tour-play"
+            onClick={() => setPlaying((p) => !p)}
+          >
+            {playing ? 'Pause' : isLast ? 'Play again' : 'Play'}
+          </button>
           <button
             type="button"
             className="ghost small"
             disabled={state.index === 0}
-            onClick={() => setState((s) => (s ? previous(s) : s))}
+            onClick={() => {
+              setPlaying(false)
+              setState((s) => (s ? previous(s) : s))
+            }}
           >
             Previous
           </button>
           {!isLast && (
-            <button type="button" className="ghost small" onClick={() => setState((s) => (s ? next(s) : s))}>
+            <button
+              type="button"
+              className="ghost small"
+              onClick={() => {
+                setPlaying(false)
+                setState((s) => (s ? next(s) : s))
+              }}
+            >
               Next
             </button>
           )}

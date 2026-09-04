@@ -190,10 +190,22 @@ export class Remote extends EventEmitter {
    * one pty and the far end must file them apart, or the smaller one silently replaces the
    * larger and the pane is drawn at a phone's width in a 157-column window.
    */
-  resizeOn(id: string, cols: number, rows: number, viewer?: string): void {
+  resizeOn(id: string, cols: number, rows: number, viewer?: string, person?: boolean): void {
     const cut = splitId(id)
     if (!cut) return
-    this.clients.get(cut.peer)?.resizeOn(cut.local, cols, rows, viewer)
+    this.clients.get(cut.peer)?.resizeOn(cut.local, cols, rows, viewer, person)
+  }
+
+  /**
+   * Somebody arrived at this desk, or left it.
+   *
+   * Every pane this device is mirroring is a pane the OTHER machine is holding open for
+   * us, and its idle clock is refused for as long as it believes a screen is drawing it
+   * with somebody in front of it. Nothing else re-states that: an idle mirrored pane never
+   * repaints. See `Borrow.person` in `shared/paneSize.ts`.
+   */
+  presenceChanged(person: boolean): void {
+    for (const c of this.clients.values()) c.restatePresence(person)
   }
 
   /** One screen here has stopped drawing a mirrored pane: give that one borrow back. */

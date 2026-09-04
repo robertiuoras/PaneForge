@@ -43,7 +43,7 @@ import { jobFromTable, paneJob, programName, SHELLS } from '../shared/paneJob'
 import { canSleep } from '../shared/sleep'
 import { doneEnough } from '../shared/closeWhenDone'
 import { folderName, laneOfCheckout, projectOf } from '../shared/place'
-import { dropStale, smallestBorrow, type Borrow } from '../shared/paneSize'
+import { dropStale, smallestBorrow, watchedBorrow, type Borrow } from '../shared/paneSize'
 import { START_COLS, START_ROWS } from '../shared/paneGrid'
 import { RESTORE_MARK_TEXT } from '../shared/replayWidth'
 import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, SUBMIT_GAP_MS, armDecision, clearChunks, resumeOf, dropFor, dropWords, expiryDecision, queuedPromptDecision, quietEnoughToArm, type DropReason, type QueuedPromptVerdict } from '../shared/autoclear'
@@ -1564,7 +1564,12 @@ export class SessionManager extends EventEmitter {
      * calculation reading from a corrupted entry. Invisible with two borrowers, because
      * the survivor IS the smallest; permanent with three.
      */
-    record = true
+    record = true,
+    /**
+     * Whether a PERSON is at the screen asking. `undefined` is "nobody said", which reads
+     * as yes - see `Borrow.person` in `shared/paneSize.ts`.
+     */
+    person?: boolean
   ): void {
     const s = this.sessions.get(id)
     // An ASLEEP pane is not a dead one, and this guard could not tell them apart.
@@ -1599,6 +1604,8 @@ export class SessionManager extends EventEmitter {
         borrows.set(viewer, {
           cols: Math.max(cols, 20),
           rows: Math.max(rows, 5),
+          // Kept when this resize did not say: a repaint carries a grid, not a person.
+          person: person ?? borrows.get(viewer)?.person,
           // A screen on the far side of the link has no tick of ours to renew with, so it
           // holds no lease and lets go when the connection does. See `at` in paneSize.ts.
           at: viewer.startsWith('guest') ? 0 : Date.now()
@@ -1730,12 +1737,17 @@ export class SessionManager extends EventEmitter {
    * The sweep runs over EVERY pane, not only the ones named: the tick that renews one
    * screen's borrows is also the heartbeat that proves another screen's are dead.
    */
-  touchBorrows(viewer: string, ids: string[]): void {
+  touchBorrows(viewer: string, ids: string[], person?: boolean): void {
     const now = Date.now()
     const on = new Set(ids)
     for (const [id, s] of this.sessions) {
       const b = s.borrows?.get(viewer)
-      if (b && on.has(id)) b.at = now
+      if (b && on.has(id)) {
+        b.at = now
+        // The same tick answers "is anybody there", so a desk whose person walked away
+        // stops holding somebody else's pane open within one tick rather than never.
+        if (person !== undefined) b.person = person
+      }
     }
     this.sweepBorrows(now)
   }
@@ -3100,7 +3112,10 @@ export class SessionManager extends EventEmitter {
       // and the mirror already keep alive, expired here on the same TTL `resize` uses, so a
       // viewer that vanished stops counting within `BORROW_TTL_MS` and not never.
       if (live.borrows) dropStale(live.borrows, now)
-      const watched = !!live.borrows && live.borrows.size > 0
+      // ...and a borrow from a screen nobody is sitting at is not somebody looking. A
+      // mirror's borrow never expires (it ends with the link), so without this one glance
+      // from the other desk held a pane open for as long as the connection lasted.
+      const watched = !!live.borrows && watchedBorrow(live.borrows.values())
       if (watched !== !!meta.watched) {
         meta.watched = watched || undefined
         changed = true

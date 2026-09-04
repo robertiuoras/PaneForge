@@ -74,7 +74,7 @@ import {
   startGameWatch,
   whenClear
 } from './gameMode'
-import { startAway, stopAway } from './away'
+import { away, startAway, stopAway } from './away'
 import { onBatteryNow, watchPower } from './power'
 import {
   initProfile,
@@ -1359,7 +1359,13 @@ manager.on('sessions', () => publishCapacity())
 // Whether anybody is at this machine. The renderer's idle clock freezes while nobody is,
 // so a pane is never closed during minutes a person had no chance to stop it in. Pushed on
 // a CHANGE only - two messages per absence. See src/shared/away.ts.
-startAway((a) => send('system:away', a))
+startAway((a) => {
+  send('system:away', a)
+  // ...and the other desk is told too. A pane of theirs that this machine is mirroring is
+  // held off their idle clock while they believe somebody here is looking at it, and this
+  // is the only thing that ever says otherwise - see `Borrow.person`.
+  remote.presenceChanged(a.sawPerson)
+})
 
 ipcMain.handle('projects:list', () => listProjects())
 ipcMain.handle('projects:create', (_e, name: string) => createProject(name))
@@ -1859,7 +1865,7 @@ ipcMain.on(
     // window's and nothing ever put it back.
     if (remote.owns(id)) {
       if (borrowed === true) borrowedRemote(who).add(id)
-      remote.resizeOn(id, cols, rows, who)
+      remote.resizeOn(id, cols, rows, who, away().sawPerson)
     }
     // A borrowed resize over this channel is a PHONE drawing the pane - the desk window
     // never borrows, it owns. Named so a mirror watching the same pane is a separate
