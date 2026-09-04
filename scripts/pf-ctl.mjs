@@ -16,6 +16,8 @@
  *   node scripts/pf-ctl.mjs close <title-or-id>
  *   node scripts/pf-ctl.mjs rename <title-or-id> <name...>
  *   node scripts/pf-ctl.mjs type <title-or-id> <text...>
+ *   node scripts/pf-ctl.mjs hold [--bundle ID|--name APP|--pid N] [--reason R] [--ttl MIN] [--this]
+ *   node scripts/pf-ctl.mjs hold list | hold release <id>
  *
  * Auth is self-serve: the pairing code lives in the app's own config.json, so a local
  * process that can read it is already inside the trust boundary. Pairs fresh each run -
@@ -37,6 +39,7 @@
 import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 /*
  * `PF_USER_DATA` points this at ONE app's settings folder.
@@ -188,6 +191,81 @@ if (cmd === 'login') {
   }
 }
 
+/**
+ * `pf hold` - tell GuardDeck's reapers to leave something alone while this session is
+ * still using it.
+ *
+ * 2026-09-04: the Idle App Reaper quit a PaneForge dev build mid-review - "Electron:
+ * idle 61m, holding 276 MB, 0.2% cpu". Every signal it has said abandoned, and a build
+ * put on screen for review is looked at rather than clicked, so no amount of tuning
+ * those signals fixes it. The session that produced the build is the only thing on the
+ * machine that knows, so it says so.
+ *
+ * Deliberately handled BEFORE pairing: a hold is a local file, and a session wants one
+ * whether or not the app is up. On a machine with no GuardDeck it is a no-op rather than
+ * an error - a hold can only ever spare something, so failing to take one is never the
+ * dangerous direction.
+ *
+ * The hold dies on its own two ways: a TTL, and (with --this) the pid of whatever
+ * invoked pf. That second one is what makes "while my session is running" true instead
+ * of hopeful - close the pane and the hold goes with it.
+ */
+if (cmd === 'hold') {
+  const holdsPath =
+    process.env.GUARDDECK_HOLDS_MODULE ||
+    join(homedir(), 'Projects', 'claude-memory', 'claude-config', 'guarddeck-holds.mjs')
+  let H
+  try {
+    H = await import(pathToFileURL(holdsPath).href)
+  } catch {
+    console.log('no GuardDeck on this machine - nothing needs holding')
+    process.exit(0)
+  }
+  const sub = rest[0] === 'list' || rest[0] === 'release' ? rest.shift() : 'add'
+  if (sub === 'list') {
+    const holds = H.readHolds()
+    if (!holds.length) console.log('nothing held')
+    for (const h of holds)
+      console.log(
+        [h.id, [...h.bundleIDs, ...h.names, ...h.pids.map((n) => `pid ${n}`)].join(','), H.describe(h)].join('\t')
+      )
+    process.exit(0)
+  }
+  if (sub === 'release') {
+    const id = rest.shift()
+    if (!id) fail(1, 'release needs a hold id - see `pf hold list`')
+    console.log(H.releaseHold(id) ? 'released' : 'no such hold')
+    process.exit(0)
+  }
+  const many = (name) => rest.filter((a, i) => rest[i - 1] === `--${name}`)
+  const bundleIDs = many('bundle')
+  const names = many('name')
+  const pids = many('pid')
+  // The common case by a mile: this pane just built the app it is looking at.
+  if (!bundleIDs.length && !names.length && !pids.length) bundleIDs.push('com.github.Electron')
+  const thisSession = rest.includes('--this')
+  try {
+    const hold = H.addHold({
+      bundleIDs,
+      names,
+      pids,
+      reason: flag(rest, '--reason') ?? 'in use by a PaneForge session',
+      owner: flag(rest, '--owner') ?? (process.env.PF_PANE ? `pane ${process.env.PF_PANE}` : 'a local session'),
+      // `--this` binds the hold to the process that ran pf, which inside a pane is that
+      // pane's shell. Without it the TTL is the only expiry.
+      ownerPid: thisSession ? process.ppid : undefined,
+      ttlMin: flag(rest, '--ttl')
+    })
+    console.log(
+      `held ${hold.id} until ${new Date(hold.expiresAt).toLocaleTimeString()}` +
+        (hold.ownerPid ? ` or until this session exits` : '')
+    )
+  } catch (e) {
+    fail(1, e instanceof Error ? e.message : String(e))
+  }
+  process.exit(0)
+}
+
 // The suite drives the refusals above without an app on the machine; everything past this
 // line needs one.
 if (process.env.PF_CTL_NO_APP === '1') process.exit(0)
@@ -313,5 +391,5 @@ if (cmd === 'list') {
   await send(channel, args)
   console.log('sent')
 } else {
-  fail(1, `unknown command "${cmd ?? ''}" - use: list | open | needs-login | login | close | rename | type | call | send`)
+  fail(1, `unknown command "${cmd ?? ''}" - use: list | open | needs-login | login | close | rename | type | hold | call | send`)
 }
