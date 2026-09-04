@@ -1,14 +1,17 @@
-// Type declarations for try-diff.mjs, so a TypeScript caller (src/main/tour.ts) can
-// import it without pulling `allowJs` on for the whole program. Keep in sync by hand -
-// there is no build step here to generate it from the .mjs.
-
-export interface DiffLines {
+// Hand-written declarations for the .mjs `src/main/tour.ts` imports; tsc does not read
+// JSDoc out of an ESM file it is only told to allow.
+export interface TryDiff {
   base: string | null
   installed: string | null
   guessed: boolean
   lines: string[]
 }
-
+export interface TryCommit {
+  subject: string
+  body: string
+  files: string[]
+}
 export function installedVersion(): string | null
-export function diffLines(root: string): DiffLines
+export function diffLines(root: string): TryDiff
+export function diffCommits(root: string): Omit<TryDiff, 'lines'> & { commits: TryCommit[] }
 export function report(root: string): string

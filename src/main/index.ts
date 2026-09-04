@@ -31,7 +31,7 @@ import { routePrompt } from '../shared/projectRoute'
 import type { RouteResult } from '../shared/projectRoute'
 import { DEFAULT_PHONE_PORT, getConfig, projectsRoot, setConfig } from './config'
 import { whatsNew } from './whatsNew'
-import { tour } from './tour'
+import { tour, tourCheck } from './tour'
 import { addSound, pruneCustomSounds, removeSound, renameSound, soundData } from './sounds'
 import { writeAttachments, readAttachIns } from './attach'
 import { AskNotifier, askMessage, postAsk, telegramCreds } from './askNotify'
@@ -1647,6 +1647,7 @@ ipcMain.handle('sessions:buffer', (_e, id: string) =>
  */
 ipcMain.handle('app:whatsNew', () => whatsNew())
 ipcMain.handle('app:tour', () => tour())
+ipcMain.handle('app:tourCheck', (_e, script: string) => tourCheck(script))
 ipcMain.handle('sessions:log', (_e, id: string, bytes?: number) =>
   remote.owns(id)
     ? remote.buffer(id)

@@ -57,6 +57,25 @@ export function diffLines(root) {
   return { base, installed, guessed: !tag, lines }
 }
 
+// The same commits as `diffLines`, but whole: subject (plain words), body, and the files
+// each touched - what the dev-copy tour builds a step from (`src/shared/tour.ts`). One git
+// call: records split on \x1e, fields on \x1f, the file list is what --name-only prints
+// under each record.
+export function diffCommits(root) {
+  const { base, installed, guessed } = diffLines(root)
+  if (!base) return { base, installed, guessed, commits: [] }
+  const raw = git(root, ['log', '--no-merges', '--name-only', '--format=%x1e%s%x1f%b%x1f', `${base}..HEAD`])
+  const commits = []
+  for (const rec of raw.split('\x1e')) {
+    if (!rec.trim()) continue
+    const [subject, body, tail] = rec.split('\x1f')
+    if (!subject || !/^(feat|fix|perf)(\([^)]*\))?!?:/i.test(subject.trim())) continue
+    const files = (tail || '').split('\n').map((f) => f.trim()).filter(Boolean)
+    commits.push({ subject: words(subject.trim()), body: (body || '').trim(), files })
+  }
+  return { base, installed, guessed, commits }
+}
+
 export function report(root) {
   const { base, installed, guessed, lines } = diffLines(root)
   if (!base) return 'What is different from the installed app: no release tag here to compare against.'

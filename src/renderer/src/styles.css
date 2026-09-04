@@ -3166,8 +3166,27 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
   box-shadow: var(--shadow); padding: 12px 13px; display: flex; flex-direction: column; gap: 8px;
 }
 .tour-count { color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
-.tour-text { color: var(--text); font-size: 13px; line-height: 1.4; }
-.tour-acts { display: flex; justify-content: flex-end; gap: 6px; }
+.tour-text { color: var(--text); font-size: 13px; line-height: 1.4; font-weight: 600; }
+.tour-where { color: var(--muted); font-size: 12px; }
+.tour-see { margin: 0; padding-left: 16px; color: var(--text); font-size: 12px; line-height: 1.4; display: flex; flex-direction: column; gap: 3px; }
+/* The change's own checks, run here: green tick, red cross, the tail of a failure in full. */
+.tour-checks { display: flex; flex-direction: column; gap: 4px; }
+.tour-check { font-size: 12px; line-height: 1.4; color: var(--muted); display: flex; flex-wrap: wrap; gap: 5px; align-items: baseline; }
+.tour-check.ok { color: var(--ok, var(--text)); }
+.tour-check.bad { color: var(--danger, var(--text)); }
+.tour-check-mark { font-weight: 700; }
+.tour-check-tail {
+  flex-basis: 100%; margin: 0; padding: 6px 8px; font: 11px/1.4 var(--mono, ui-monospace, monospace);
+  color: var(--text); background: var(--surface-1); border: 1px solid var(--line); border-radius: 4px;
+  white-space: pre-wrap; max-height: 140px; overflow: auto;
+}
+.tour-acts { display: flex; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
+/* The ring around the control a step is about: a static accent outline over the whole
+   window, under every card, taking no clicks. Nothing animates - see test:anim. */
+.tour-spot {
+  position: fixed; z-index: 44; pointer-events: none; border-radius: 8px;
+  box-shadow: 0 0 0 2px var(--accent), 0 0 0 6px color-mix(in oklab, var(--accent) 30%, transparent);
+}
 
 /* A pane that has just named itself, and the three seconds in which that can be undone.
    One step above the countdown cards: it is the shortest-lived thing in this corner and

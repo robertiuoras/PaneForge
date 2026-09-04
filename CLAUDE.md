@@ -79,6 +79,14 @@ the 2026-09-01 standing order. `npm run unreleased` exiting 1 is a REPORT, never
 go-ahead; a release another chat is cutting is not yours to join; "make the dev release"
 said yesterday does not cover today. `npm run test:unreleased`.
 
+The dev window's tour (`shared/tour.ts`, `TourCard.tsx`) turns every `feat:`/`fix:`/`perf:`
+commit since the installed build into a step: where it lives (off the files touched),
+what to look for, a ring around the control, `Try it in a pane`, and the commit's own
+`scripts/<x>-test.mjs` RUN on the card with the result. So every such commit body carries
+`See: <what Robert should see on screen>` lines (one per thing) and, when a pane can show
+it, one `Try: <prompt to type into a fresh pane in this repo>` line. Without them the card
+shows the body's first paragraph and no Try button. `npm run test:tour`.
+
 A change is tested in a DEV WINDOW before anyone asks for a release, on both machines:
 `npm run try -- --pull --show` fast-forwards that checkout to origin, builds, and opens
 the copy on screen without focus. Merged from the PC and wanted on the Mac: open a pane
