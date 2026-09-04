@@ -7052,6 +7052,9 @@ export default function App(): JSX.Element {
           everywhere else, so this card asks once and draws nothing the rest of the time. */}
       <TourCard
         sounds={config?.sounds}
+        // A pane step is only shown once a pane is really RUNNING. The card can see a
+        // header; only this can see whether anything is behind it. See `LookReading.live`.
+        paneAlive={() => sessions.some((s) => !s.remote && s.status !== 'exited' && !s.asleep)}
         onOpen={(surface, root) => {
           // THE LIST COMES BACK unless this step is about hiding it. One step hid the
           // sidebar and every step after it inherited a window with no sessions list -

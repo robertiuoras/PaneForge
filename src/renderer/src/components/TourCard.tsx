@@ -82,6 +82,9 @@ export interface TourCardProps {
   /** The tour is over or has been put away - anything it opened for its own sake goes
    * with it, so nobody is left closing a pane they did not ask for. */
   onFinish?: () => void
+  /** Is there a pane on this desk with something actually RUNNING in it? Only the app
+   * knows; the card can only see a header. See `LookReading.live`. */
+  paneAlive?: () => boolean
 }
 
 type Checking = { state: 'running' } | { state: 'done'; results: TourCheck[] }
@@ -126,7 +129,7 @@ function TourSpot({ selector }: { selector: string }): JSX.Element | null {
   )
 }
 
-export default function TourCard({ onOpen, onFinish, sounds }: TourCardProps): JSX.Element | null {
+export default function TourCard({ onOpen, onFinish, sounds, paneAlive }: TourCardProps): JSX.Element | null {
   const [state, setState] = useState<TourState | null>(null)
   const [gone, setGone] = useState(false)
   const [checks, setChecks] = useState<Record<number, Checking>>({})
@@ -265,6 +268,9 @@ export default function TourCard({ onOpen, onFinish, sounds }: TourCardProps): J
         lookVerdict(step, {
           spot: b ? { width: b.width, height: b.height, x: b.left, y: b.top } : null,
           surfaceOnScreen: surface ? !!document.querySelector(surface) : null,
+          // ...and, on a pane step, whether the pane it opened has a live process. See
+          // `LookReading.live`: a dead pane draws the same header the ring lands on.
+          live: step.open === 'pane' ? (paneAlive ? paneAlive() : null) : null,
           win: { width: window.innerWidth, height: window.innerHeight }
         })
       )
@@ -511,18 +517,18 @@ export default function TourCard({ onOpen, onFinish, sounds }: TourCardProps): J
           <div className="tour-check byhand">Needs a window - run by hand: {step.byHand.join(', ')}</div>
         )}
         </div>
+        {/* THE TICK ON ITS OWN LINE. It used to sit in the button row with
+            `margin-right: auto`, which pushed the four buttons into a wrapped, uneven
+            two-line block whose shape changed with every step (Robert, 2026-09-04:
+            "buttons squished not aligned"). */}
+        <label className="tour-step-done">
+          <input type="checkbox" data-testid="tour-step-done" checked={!!doneMap[key]} disabled={!!doneMap[key]} onChange={markDone} />
+          Done with this step
+        </label>
+        {/* FOUR BUTTONS, TWO BY TWO, THE SAME FOUR ON EVERY STEP. Next is DISABLED on the
+            last step rather than removed: a control that comes and goes moves the three
+            beside it, which is the other half of what "it keeps moving around" was. */}
         <div className="tour-acts">
-          <button
-            type="button"
-            className="ghost small"
-            data-testid="tour-play"
-            onClick={() => {
-              setStarted(true)
-              setPlaying((p) => !p)
-            }}
-          >
-            {playing ? 'Pause' : isLast ? 'Play again' : started ? 'Carry on' : 'Start the tour'}
-          </button>
           <button
             type="button"
             className="ghost small"
@@ -531,10 +537,11 @@ export default function TourCard({ onOpen, onFinish, sounds }: TourCardProps): J
           >
             Previous
           </button>
-          {!isLast && (
+          {(
             <button
               type="button"
               className="ghost small"
+              disabled={isLast}
               onClick={() => {
                 // A STARTED TOUR TICKS ITS OWN STEPS OFF. The play loop already does this
                 // on its way out of a step, but a step that waits for you (`waitsForYou`)
@@ -549,10 +556,17 @@ export default function TourCard({ onOpen, onFinish, sounds }: TourCardProps): J
               Next
             </button>
           )}
-          <label className="tour-step-done">
-            <input type="checkbox" data-testid="tour-step-done" checked={!!doneMap[key]} disabled={!!doneMap[key]} onChange={markDone} />
-            Done
-          </label>
+          <button
+            type="button"
+            className="ghost small"
+            data-testid="tour-play"
+            onClick={() => {
+              setStarted(true)
+              setPlaying((p) => !p)
+            }}
+          >
+            {playing ? 'Pause' : isLast ? 'Play again' : started ? 'Carry on' : 'Start the tour'}
+          </button>
           <button type="button" className="primary small" data-testid="tour-dismiss" onClick={putAway}>
             Close
           </button>

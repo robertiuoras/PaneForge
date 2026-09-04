@@ -72,7 +72,12 @@ check(
   readsCloudWork('we should check whether the cloud session is worth the money'),
   null
 )
-check('a local shell instead', readsCloudWork('✻ Sautéed for 10s · 1 shell still running'), null)
+// The shell half of the same footer, which this reader used to refuse. A pane wearing it
+// was counting down to close with a render still going (2026-09-04).
+check('a local shell', readsCloudWork('✻ Sautéed for 10s · 1 shell still running'), '1 shell')
+check('shells, plural', readsCloudWork('✻ Cogitated for 2m 56s · done 5:12 PM · 2 shells still running'), '2 shells')
+check('no shell left', readsCloudWork('· 0 shells still running'), null)
+check('the word alone', readsCloudWork('open a shell and run it'), null)
 check('none left', readsCloudWork('◇ 0 cloud sessions still running'), null)
 
 // ------------------------------------------------------------------ the hold expires

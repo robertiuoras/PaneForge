@@ -120,7 +120,14 @@ card (`checkWords`, never `checkName`). No pane is opened and no prompt is
 typed (Robert 2026-09-04: "i dont want the try in pane testing helper"), so a `Try:` line
 in a commit body is read by nothing. Every such commit body carries `See: <what Robert
 should see on screen>` lines, one per thing; without them the card shows the body's first
-paragraph. `npm run test:tour`.
+paragraph. The card is ONE SIZE on every step (520px tall, its middle scrolling) with the same four
+buttons two-by-two on a fixed grid - Next disabled, never removed - because a card that
+resized and a button row that re-wrapped moved every word on it between steps (Robert
+2026-09-04: "keeps moving around too much, buttons squished not aligned"). A step is
+looked at as well as tested: `shared/lookCheck.ts` judges the ring's own measurements in
+the window (`SPOT_MAX_FRAC` 0.45, so a ring over `.dialog` is refused and the head is
+ringed instead) and, on a pane step, whether the pane it opened has a LIVE process behind
+it rather than just a header. `npm run test:tour`, `npm run test:look`.
 
 A dev window opened with `--show` is one a person is watching, so nothing else closes it:
 `npm run try -- --show` records its pid and `closeTestApps` spares that process and its
@@ -1046,6 +1053,12 @@ is the CLI inside (~190 MB each, vs 16-17 MB Codex). `npm run test:reclaim`.
 - `idleCloseAt` clamps overdue pane to `now`, `sameDeadline` stops republishing.
 - `ReclaimPane.pinned` takes a pane off the clock, refused by `onTheClock` and `reclaimPlan`'s filter.
   `keptUntil` (an hour) answers "not now".
+- The pane's OWN FOOTER is a second reading of what it left running: `shared/cloudWork.ts`
+  reads `N cloud sessions still running` AND `N shells still running` off the finished
+  frame and holds the pane off the clock for `CLOUD_HOLD_MS` (45 min) per sighting. The
+  shell half was added 2026-09-04 - a pane wearing `· 1 shell still running` and a red
+  `closes 5min` at the same time, the tree walk having missed the render. `npm run
+  test:cloudwork`.
 - `quietSince` is latest of a keystroke, printed byte, or KEYBOARD LEAVING — stamped on both.
 - `shared/away.ts` freezes the clock while `powerMonitor.getSystemIdleTime()` says nobody's here
   (`AWAY_AFTER_MS` 60s); `main/away.ts` polls 15s, refused by `sawPerson`.
