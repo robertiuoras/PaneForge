@@ -36,3 +36,34 @@ export function wakeClashes(
 ): boolean {
   return takenFolders(sessions, id).some((t) => same(t, cwd))
 }
+
+/**
+ * Which of the panes being restored may NOT start where they were saved, in the order
+ * they are restored: `true` means an earlier pane in this same restore already has that
+ * folder.
+ *
+ * The desk is written as it was, and it is written PER PANE - nothing in it says two
+ * cards point at one folder. Restore then starts each saved pane in its saved folder
+ * without asking (`restorePanes` calls `manager.start` directly, never `laneFor`), so two
+ * client chats saved in `clients` came back as two agents editing one working tree - the
+ * exact thing the copies exist to prevent (Alison and Jacob, 2026-09-04). The first pane
+ * keeps the folder; every later one comes back ASLEEP, and the wake it gets when somebody
+ * opens it is already the placement path (`sessions:wake` -> `rehome` -> `laneFor`), which
+ * moves it to a free copy before its agent is spawned.
+ *
+ * Asleep rather than moved HERE because a move at restore is a different, dearer thing: a
+ * pane's conversation is found through its folder, restore is deliberately synchronous so
+ * a pane's number is its place in the list, and `laneFor` is not. Sleeping costs a press
+ * and cannot lose a conversation.
+ */
+export function clashingRestores(
+  specs: ReadonlyArray<{ cwd: string }>,
+  same: (a: string, b: string) => boolean = (a, b) => a === b
+): boolean[] {
+  const held: string[] = []
+  return specs.map((s) => {
+    if (held.some((h) => same(h, s.cwd))) return true
+    held.push(s.cwd)
+    return false
+  })
+}

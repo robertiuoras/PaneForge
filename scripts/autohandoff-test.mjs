@@ -44,7 +44,8 @@ const {
   IDLE_OFFLOAD_MINUTES,
   staysHere,
   suggestMove,
-  budgetPlan
+  budgetPlan,
+  endsOnArrival
 } = createRequire(import.meta.url)(outfile)
 
 let checks = 0
@@ -615,5 +616,17 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
       idleOffloadPlan(held, macPeers, { ...free, offloadIdleMinutes: 1 }, {}, NOW).length === 1 &&
       autoHandoffPlan(held, over, macPeers, free, {}, NOW).length === 1)
 }
+
+// Somebody arriving at a pane answers a CLOSE countdown and not a MOVE one. A click was
+// also the one cancel that wrote no hold, so the 60s sweep armed the identical countdown
+// again and the card came straight back (Robert, 2026-09-04).
+assert.equal(endsOnArrival({}), true, 'a close countdown ends when somebody comes to the pane')
+assert.equal(endsOnArrival({ move: undefined }), true, 'an unflagged countdown is a close')
+assert.equal(
+  endsOnArrival({ move: { device: 'pc', deviceName: 'PC' } }),
+  false,
+  'a move is answered by the card buttons, never by a click on the pane'
+)
+checks += 3
 
 console.log(`autohandoff: ${checks} checks passed`)

@@ -710,3 +710,20 @@ export function queueVerdict(
 export function queuedNote(deviceName: string): string {
   return `Working - moving to ${deviceName} as soon as this turn ends`
 }
+
+/**
+ * Does somebody arriving at this pane answer its countdown?
+ *
+ * For a CLOSE countdown, yes: a pane being read is not a pane to close, and dropping the
+ * count on arrival is what stops the app closing something under the person's hands.
+ *
+ * For a MOVE, no. Robert, 2026-09-04: "it stops the countdown when i click on the session
+ * which shouldnt happen we just go off the button". A click was also the one cancel that
+ * wrote no hold at all - `keepOpen` blocks the pane for `KEEP_MINUTES`, arrival blocked
+ * nothing - so the 60s sweep armed the identical countdown again and the card came
+ * straight back, which is the shape that gets a feature switched off. A move is answered
+ * by the card's own buttons and by nothing else.
+ */
+export function endsOnArrival(soon: { move?: unknown }): boolean {
+  return !soon.move
+}
