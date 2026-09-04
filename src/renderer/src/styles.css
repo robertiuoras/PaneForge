@@ -1982,7 +1982,9 @@ body.sizing * { user-select: none !important; }
      translateX(-50%) for the length of the animation and the pill snapped sideways. */
   box-shadow: var(--shadow); animation: rise-mid var(--fast);
 }
-@keyframes rise-mid { from { opacity: 0; transform: translate(-50%, 8px); } }
+/* The first frame carries NO opacity: a window Chromium has paused sits on it for ever,
+   and a card that is never drawn is worse than a card that does not slide. See .overlay. */
+@keyframes rise-mid { from { transform: translate(-50%, 8px); } }
 .jump-newest:hover { border-color: var(--accent); }
 
 /* ---- copying out of a pane ------------------------------------------------
@@ -2156,7 +2158,6 @@ body.sizing * { user-select: none !important; }
   border: 1px solid var(--line-strong);
   border-radius: var(--r);
   box-shadow: var(--shadow);
-  animation: fade var(--fast) ease-out;
 }
 .copy-row {
   display: flex; flex-direction: column; gap: 1px;
@@ -2248,7 +2249,9 @@ body.sizing * { user-select: none !important; }
   background: var(--surface-3); border: 1px solid var(--line-strong); border-radius: var(--r);
   padding: 9px 14px; box-shadow: var(--shadow); animation: rise var(--fast);
 }
-@keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+/* The first frame carries NO opacity: a window Chromium has paused sits on it for ever,
+   and a card that is never drawn is worse than a card that does not slide. See .overlay. */
+@keyframes rise { from { transform: translateY(8px); } }
 
 /* ---- agent logos ---- */
 .agent-logo { display: inline-flex; align-items: center; justify-content: center; flex: none; }
@@ -2273,9 +2276,18 @@ body.sizing * { user-select: none !important; }
      the dialog - and costs the compositor one flat rectangle. */
   background: #050508eb;
   display: grid; place-items: start center; padding: 9vh 16px 16px;
-  animation: fade var(--fast);
 }
-@keyframes fade { from { opacity: 0; } }
+/* NOTHING a person is meant to READ fades itself in from `opacity: 0`.
+   Chromium PAUSES css animations for a window it considers not visible, and this app
+   opens windows nobody is looking at on purpose - the tour opens History behind its own
+   card, a pane opens on the second desk. A paused fade sits at its first frame for ever,
+   so the dialog was in the DOM, laid out at 847x749, `visibility: visible`, and drawn at
+   opacity 0: measured 2026-09-04 in a dev copy, `getAnimations()[0].playState` `paused`
+   at `currentTime` 0. What Robert saw was the tour's ring floating over an empty sidebar
+   with nothing behind it ("the highlighted area is wrong"). The ring was exactly right;
+   the thing it was pointing at was invisible.
+   A dialog appearing at once is not a worse dialog, and it is the only one that cannot
+   strand. `scripts/anim-cost-test.mjs` refuses a new one. */
 .dialog {
   width: 680px; max-width: 92vw;
   /* A dialog is never taller than the window. Without this the footer buttons of a
@@ -2346,7 +2358,9 @@ body.sizing * { user-select: none !important; }
   display: flex; flex-direction: column; gap: 11px;
   padding-top: 8px; margin-top: -8px;
 }
-@keyframes pop { from { opacity: 0; transform: translateY(-6px) scale(0.985); } }
+/* The first frame carries NO opacity: a window Chromium has paused sits on it for ever,
+   and a card that is never drawn is worse than a card that does not slide. See .overlay. */
+@keyframes pop { from { transform: translateY(-6px) scale(0.985); } }
 .dialog-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .dialog-head strong { font-size: 14px; }
 .search {

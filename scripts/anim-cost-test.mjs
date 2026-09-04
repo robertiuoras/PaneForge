@@ -198,6 +198,34 @@ for (const { rel, part } of needsGuard) {
   )
 }
 
+// ...and nothing a person is meant to READ may get its visibility from an animation.
+//
+// Chromium pauses css animations for a window it thinks nobody can see, and this app
+// opens surfaces in windows nobody is looking at by design. A fade-in that starts at
+// `opacity: 0` then sits paused at frame 0 is a dialog that is open, laid out, focusable
+// and invisible - measured in a dev copy on 2026-09-04, History at 847x749 and opacity 0
+// behind the tour's own ring.
+{
+  const css = readFileSync(join(root, 'src/renderer/src/styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+  const blind = new Set()
+  for (const m of css.matchAll(/@keyframes\s+([\w-]+)\s*\{([\s\S]*?)\n\}/g)) {
+    const first = /(?:from|0%)\s*\{([^}]*)\}/.exec(m[2])
+    if (first && /opacity\s*:\s*0(?:\.0+)?\s*[;}]/.test(first[1] + '}')) blind.add(m[1])
+  }
+  for (const m of css.matchAll(/animation(?:-name)?\s*:\s*([^;]+);/g)) {
+    // A looping DECORATION is allowed to start invisible - it is motion, not a surface
+    // anybody reads, and the sprite frames above are exactly that. This is about the
+    // one-shot "appear" that is the only thing making a dialog visible.
+    if (/\binfinite\b/.test(m[1])) continue
+    for (const name of blind)
+      if (new RegExp(`\\b${name}\\b`).test(m[1]))
+        problems.push(
+          `styles.css: \`${m[1].trim()}\` starts at opacity 0, so a window Chromium has ` +
+            `paused draws it as nothing at all. Let it appear at once instead.`
+        )
+  }
+}
+
 if (problems.length) {
   console.error('A looping animation is repainting every frame:\n')
   for (const p of problems) console.error('  ' + p)
