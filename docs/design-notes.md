@@ -4668,3 +4668,60 @@ step and not a formality. `ws` was added for it.
 **What stays behind.** Closing the view stops the screencast and kills the ssh child.
 Chrome and the tab stay up on the far machine: the signed-in session is the entire
 deliverable, and tidying it away would undo the work the person just did.
+
+## A sleeping pane keeps its lane
+
+Sleeping a pane (`SessionManager.sleep`) kills its agent CLI, and the CLI's own
+SessionEnd hook has always run `lane.mjs release` on the way out - which deletes the
+hold, marks any finished work ready, and hands the checkout to the next chat that asks.
+That is the right thing for a chat that ENDED and exactly wrong for a pane put to sleep
+on purpose: nothing ended, the pane is being kept for later, and its lane may be
+mid-feature. Measured before this: another chat could take the worktree, a merge could
+land half-finished commits, and the pane would wake into a checkout its own conversation
+no longer matched.
+
+**Why a mark on the hold, not a special lane state.** `scripts/lane.mjs`'s ledger already
+has a vocabulary for "this hold is not to be taken yet" - `tentative`, `parked`,
+`visitor` - so sleeping adds one more word, `asleep: <epoch ms>`, rather than a parallel
+system. Every place that already decides whether a hold may be reaped, stolen, or
+overwritten (`holdGivenUp`, `reap`'s STALE_MS branch, `claim`'s same-pane dedup loop,
+`releaseClaim`) gets one guard: an asleep hold is never any of those things, for up to
+`ASLEEP_MAX_MS` (seven days) - past that it is treated as an ordinary stale hold, because
+nobody plausibly meant to come back to a pane left asleep that long.
+
+**Why `releaseClaim` parks instead of just skipping.** Deleting nothing was the first
+draft, but a hold with no `parked` mark reads on the strip as "a chat is here", which is
+false the moment the CLI has actually exited. Parking it does what the Stop hook already
+does for a clean lane - the wording is right, the steal timers are right - with one
+difference: `holdGivenUp` refuses to honour the park countdown while `asleep` is set, so
+sleeping a pane is strictly safer than an ordinary parked hold, never less.
+
+**Why the ledger call happens in `sessions.ts`, not the hook.** The app is the only thing
+that knows a sleep is about to happen - the CLI is killed, not asked to exit - so
+`ledgerSleep(cwd, paneId)` runs in `SessionManager.sleep()` BEFORE `live.proc.kill()`.
+Only the pane id is reliable at that point (`PF_PANE`, stable across `/clear`); the CLI's
+own session id is what the hook uses when it runs seconds later, and by then `ledgerWake`
+or a normal `claim` has usually already cleared or refreshed the mark, so the two
+identities never need to be reconciled by hand.
+
+**Why `wake()` calls the ledger AFTER spawning, and `restart()` calls it too.** Waking
+should read asleep in the ledger for the whole gap between "the app decided to bring this
+pane back" and "the CLI is actually running" - narrowing that window buys nothing and
+risks a hook running mid-transition. `restart()` clears `meta.asleep` directly rather
+than going through `wake()` (a restart is the louder of the two paths, with a full RESET),
+so it has to clear the ledger mark itself too, or a restarted pane's lane would read
+asleep forever.
+
+**The `queued` exception.** A pane opened past capacity and put straight to sleep
+(`shared/wakePlan.ts`) has never run - there is no work to lose by re-running the launch
+prompt, and dropping it the way every other sleep does would open the pane to nothing.
+`sleep(id, reason)` records why it slept; only `reason === 'queued'` keeps `live.req.prompt`
+across the sleep, so waking such a pane does the thing it was opened to do instead of
+sitting there with an agent and no task.
+
+**What is not wired here.** `ledgerTakenFolders(paneId)` is built and correct - it scans
+every repo on the machine with a lane ledger and returns the folders another pane
+currently holds - but plugging it into `laneFor` at the wake call site in
+`main/index.ts` is out of this workstream's ownership; it belongs to whichever session
+integrates the lane-split. Until that wiring lands, a woken pane can still be sent into a
+folder another chat has since taken - the ledger has the answer, nothing asks it yet.

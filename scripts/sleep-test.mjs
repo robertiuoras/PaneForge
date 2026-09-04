@@ -123,6 +123,19 @@ ok(wake.length > 200, 'found wake()')
 is(/RESET/.test(wake), false, 'waking writes no reset - the old screen IS the screen')
 
 // ---------------------------------------------------------------------------
+// Sleeping keeps its lane (lane-split 2026-09-04): the app marks the ledger asleep
+// before it kills the CLI, so the SessionEnd hook parks the hold instead of releasing it.
+
+ok(/sleep\(id: string, reason: SleepReason = 'manual'\)/.test(sessions), 'sleep takes a reason, default manual')
+ok(/ledgerSleep\(live\.meta\.cwd, id\)/.test(sessions), 'sleep marks the ledger before the CLI dies')
+ok(/ledgerWake\(live\.meta\.cwd, id\)/.test(sessions), 'wake clears the ledger mark once the CLI is running again')
+// A pane put to sleep before it ever ran (`queued`) is woken to do the work it was opened
+// for; every other reason drops the launch prompt, or waking would replay finished work.
+const sleepBody = sessions.slice(sessions.indexOf('  sleep(id: string'), sessions.indexOf('  /**\n   * Start a sleeping'))
+ok(/prompt: reason === 'queued' \? live\.req\.prompt : undefined/.test(sleepBody), 'only `queued` keeps the launch prompt on wake')
+ok(/live\.meta\.asleepReason = reason/.test(sleepBody), 'the reason is recorded, not only the timestamp')
+
+// ---------------------------------------------------------------------------
 // The pin, on a card that is already saying something
 
 // `kept open` above `asleep 2h 36m` was two readings that disagree: the word people take
