@@ -1494,9 +1494,19 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
   // every pane it starts), so a claim drops every other hold wearing the same pane. A
   // hold with no pane id - claimed by hand, or from a terminal outside the app - is left
   // alone: it belongs to nobody this can identify.
+  //
+  // Narrow on purpose: the hold is only dropped when it has ALSO been given up - parked by
+  // its own Stop hook, or still tentative - and its lane holds no uncommitted work and no
+  // commits of its own. A chat that was cleared mid-edit keeps its lane, because the edit
+  // is worth more than the tidy ledger, and nothing here can lose work.
   if (PANE)
-    for (const [id, c] of Object.entries(state.lanes))
-      if (c.pane === PANE && c.session !== session) delete state.lanes[id]
+    for (const [id, c] of Object.entries(state.lanes)) {
+      if (c.pane !== PANE || c.session === session) continue
+      if (!c.parked && !c.tentative) continue
+      const w = laneWork(id)
+      if (w.dirty || w.ahead > 0) continue
+      delete state.lanes[id]
+    }
 
   for (const [id, c] of Object.entries(state.lanes)) {
     if (c.session === session) {
