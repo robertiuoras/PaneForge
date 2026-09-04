@@ -104,6 +104,7 @@ import {
   projectDir,
   resumable,
   resumeIdFor,
+  resumableTranscript,
   transcriptPath
 } from './transcripts'
 import { receiveHandoff, sendHandoff, shareable } from './handoff'
@@ -1409,6 +1410,12 @@ ipcMain.handle('offload:answer', (_e, id: string, go: boolean) => {
 })
 
 async function startOrSend(req: StartSessionRequest, claimed?: string[]): Promise<Session> {
+  // A conversation the CLI would refuse is not resumed by name: History's `Open again`
+  // on a session that never got an answer put `No conversation found with session ID`
+  // on the pane instead of a composer (2026-09-04). The pane opens fresh in its folder.
+  if (req.resume && req.resumeId && !resumableTranscript(req.cwd, req.resumeId)) {
+    req = { ...req, resume: false, resumeId: undefined }
+  }
   // `claimed` is the batch's own list of folders already taken, and it holds the RESOLVED
   // lane rather than what was asked for: two panes launched together for one project must
   // land in different lanes, and it is `laneFor` that decides which. A pane that goes to
@@ -3567,7 +3574,7 @@ function restorePanes(specs: StartSessionRequest[]): void {
         // A desk written BEFORE the claim rules learned to read a transcript's own folder
         // can carry an id belonging to a sibling lane - this desk did, twice - so the saved
         // id is checked the same way a fresh claim now is, not trusted for being saved.
-        const file = req.resumeId ? transcriptPath(req.cwd, req.resumeId) : null
+        const file = req.resumeId ? resumableTranscript(req.cwd, req.resumeId) : null
         const named = Boolean(file && !heldElsewhere(file, req.cwd))
         const meta = manager.start({
           ...req,
@@ -3613,7 +3620,7 @@ function describe(spec: StartSessionRequest, i: number): RestorePane {
   // asking the CLI for one it does not have is worse than continuing the newest.
   // Same reading as the restore itself, or the dialog offers a pane under a line of
   // somebody else's work and then opens it empty.
-  const held = spec.resumeId ? transcriptPath(spec.cwd, spec.resumeId) : null
+  const held = spec.resumeId ? resumableTranscript(spec.cwd, spec.resumeId) : null
   const resumeId = held && !heldElsewhere(held, spec.cwd) ? spec.resumeId : undefined
   return {
     id: String(i),

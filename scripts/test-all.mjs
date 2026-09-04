@@ -83,6 +83,7 @@ const TESTS = [
   ['markanchor', 'mark-anchor-test.mjs'],
   ['recover', 'recover-test.mjs'],
   ['restoreturn', 'restore-turn-test.mjs'],
+  ['restore', 'restore-context-test.mjs'],
   ['claim', 'transcript-claim-test.mjs'],
   ['quitwords', 'quit-words-test.mjs'],
   ['reclaim', 'reclaim-test.mjs'],
