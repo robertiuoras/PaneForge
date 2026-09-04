@@ -429,5 +429,98 @@ ok('the keys that submit a review are a bare return', () => {
   assert.deepEqual(keysForChoice(ask, 1), ['\r'])
 })
 
+// ---------------------------------------------------------------------------
+// Real frame 4: Claude Code's PERMISSION prompt, captured from
+// history/s5-mta1hyqm.log:3752 (ANSI stripped, re-wrapped as the terminal drew
+// it). It prints NO `Enter to select` footer - its legend says how to move and
+// never says which key commits - so before 2026-09-04 this frame read as no
+// question at all: no buttons, no glow, no bell, and a pane the 30-minute idle
+// clock then put to sleep because it had no question to refuse.
+// ---------------------------------------------------------------------------
+const PERM_BASH = [
+  '⏺ Bash(ls -la ~/.claude* ~/.config/claude* ~/.*statusline* 2>/dev/null || true) (ctrl+o to expand)',
+  '',
+  'Command',
+  '─'.repeat(60),
+  '',
+  'Requesting permission for:',
+  '   ls -la ~/.claude* ~/.config/claude* ~/.*statusline* 2>/dev/null || true',
+  '',
+  'Do you want to proceed?',
+  '> 1. Yes',
+  "  2. Yes, and always allow in this conversation for commands that start with 'ls'",
+  "  3. Yes, and always allow for commands that start with 'ls' (Persist to settings.json)",
+  '  4. No',
+  '',
+  '  ↑/↓ Navigate · tab Amend · ctrl+g edit/expand command'
+].join('\n')
+
+ok('a permission prompt with no Enter-to-select footer is still a question', () => {
+  const ask = readAsk(PERM_BASH)
+  assert.ok(ask, 'the frame read as no question at all')
+  assert.equal(ask.options.length, 4)
+  assert.equal(ask.options[0].label, 'Yes')
+  assert.equal(ask.options[3].label, 'No')
+  assert.equal(ask.selected, 1)
+})
+
+ok('...and it says so, so nothing may answer it on somebody else’s behalf', () => {
+  assert.equal(readAsk(PERM_BASH).permission, true)
+})
+
+ok('...and it carries the command it is asking about', () => {
+  const ask = readAsk(PERM_BASH)
+  assert.match(ask.question, /Requesting permission for/)
+  assert.match(ask.question, /Do you want to proceed\?$/)
+})
+
+// The one Robert hit on 2026-09-04, in a pane running with permissions bypassed:
+// Claude Code asks anyway for a destructive command, and draws no legend under it.
+const PERM_RM = [
+  'Do you want to proceed?',
+  '❯ 1. Yes',
+  "  2. Yes, and don't ask again for rm commands in /Users/robertiuoras/Projects/PaneForge-a",
+  '  3. No, and tell Claude what to do differently (esc)',
+  ''
+].join('\n')
+
+ok('the rm prompt reads as three options with the arrow on the first', () => {
+  const ask = readAsk(PERM_RM)
+  assert.ok(ask, 'no ask read')
+  assert.equal(ask.options.length, 3)
+  assert.equal(ask.selected, 1)
+  assert.equal(ask.permission, true)
+})
+
+ok('answering the third option is two downs and a return', () => {
+  assert.deepEqual(keysForChoice(readAsk(PERM_RM), 3), [`${ESC}[B`, `${ESC}[B`, '\r'])
+})
+
+ok('a permission prompt that has already been answered is NOT live', () => {
+  // The output of the command it asked about, and the composer, are drawn over the rows
+  // under the list. A return pressed at that lands in whatever draft is in the composer.
+  const answered = PERM_BASH.replace(
+    '  ↑/↓ Navigate · tab Amend · ctrl+g edit/expand command',
+    ['  ⎿  total 248', '     drwxr-xr-x  22 robertiuoras  staff   704 Sep  4 10:08 .claude', ''].join('\n')
+  )
+  assert.equal(readAsk(answered), null)
+})
+
+ok('the sentence quoted in an answer is not a permission prompt', () => {
+  const prose = [
+    'It asked `Do you want to proceed?` and I said no, so nothing ran.',
+    '',
+    'What it offered was:',
+    '1. Yes',
+    '2. No',
+    ''
+  ].join('\n')
+  assert.equal(readAsk(prose), null, 'a numbered list in an ANSWER carries no arrow')
+})
+
+ok('a permission list with a gap in the numbers is refused', () => {
+  assert.equal(readAsk(PERM_RM.replace('  3. No,', '  4. No,')), null)
+})
+
 rmSync(out, { recursive: true, force: true })
 console.log(`\nchoices: ${n} checks passed`)

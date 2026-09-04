@@ -60,10 +60,32 @@ const PERMISSION = ask(
   'No, and tell Claude what to do differently (esc)'
 )
 
-ok('a permission prompt picks the plain Yes', () => {
+ok('a three-option prompt whose only usable answer is Yes picks it', () => {
   const pick = pickAnswer(PERMISSION, ON)
   assert.equal(pick?.n, 1)
   assert.match(pick.why, /Yes/)
+})
+
+ok('...but the same options flagged as a PERMISSION prompt are never pressed', () => {
+  // `readAsk` began reading these frames on 2026-09-04 (they print no footer, so before
+  // that they read as no question at all and this file never saw one). Reading them is
+  // what makes the pane say it is waiting; pressing one is a different decision, and it
+  // is not this app's: the CLI is asking before a command it judged destructive, and it
+  // asks even where permissions are bypassed. `WIDENS` cannot carry this on its own -
+  // once the widening and the stopping options are refused, `Yes` is the single
+  // yes-shaped survivor, which is exactly the shape that gets pressed.
+  const perm = { ...PERMISSION, permission: true }
+  for (const cfg of [ON, ANY]) {
+    for (const sel of [1, 2, 3]) {
+      assert.equal(pickAnswer({ ...perm, selected: sel }, cfg), null, `mode=${cfg.anyQuestion} sel=${sel}`)
+    }
+  }
+})
+
+ok('...so no countdown is promised for one either', () => {
+  const st = { askKey: 'k', askSince: 1000, autoKey: '', autoAt: 0, autoRun: 0 }
+  assert.equal(autoAnswerAt(st, ON, { ...PERMISSION, permission: true }), 0)
+  assert.ok(autoAnswerAt(st, ON, PERMISSION) > 0, 'the control still counts down')
 })
 
 ok('the widening option is never the one picked', () => {
