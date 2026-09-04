@@ -67,9 +67,12 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
   const [state, setState] = useState<TourState | null>(null)
   const [gone, setGone] = useState(false)
   const [checks, setChecks] = useState<Record<number, Checking>>({})
-  // Playing from the moment the card appears: the window was opened to be shown what
-  // changed, so being shown is the default and stopping is the press.
-  const [playing, setPlaying] = useState(true)
+  // NOT playing until it is asked to. The tour opens surfaces and runs test suites, and
+  // doing either the moment a window appears is the app taking a turn nobody asked for:
+  // Robert 2026-09-04, watching a suite start on its own - "it should wait for my approval
+  // for each new feature to test". So the card waits on `Start`, and each step's checks
+  // wait on their own press.
+  const [playing, setPlaying] = useState(false)
 
   useEffect(() => {
     let live = true
@@ -87,22 +90,25 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
     if (!state || gone) return
     const step = currentStep(state)
     onOpen(step.open)
-    // The change's own suites run the moment its step is on screen, once per step.
-    if (step.checks.length && !checks[index]) {
-      setChecks((c) => ({ ...c, [index]: { state: 'running' } }))
-      void Promise.all(step.checks.map((s) => api.tourCheck(s))).then((results) =>
-        setChecks((c) => ({ ...c, [index]: { state: 'done', results } }))
-      )
-    }
     // Only the step actually on screen should open anything - not `onOpen` itself, which
     // is a fresh closure every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [index, gone])
 
+  const runChecks = (): void => {
+    if (!state) return
+    const step = currentStep(state)
+    if (!step.checks.length || checks[index]) return
+    setChecks((c) => ({ ...c, [index]: { state: 'running' } }))
+    void Promise.all(step.checks.map((s) => api.tourCheck(s))).then((results) =>
+      setChecks((c) => ({ ...c, [index]: { state: 'done', results } }))
+    )
+  }
+
   // Playing: hold on this step for as long as it needs to be looked at, then move on.
   // The timer is rebuilt whenever the step, the play state or this step's checks change,
   // so a step that was holding for a check starts its dwell the moment the result lands.
-  const checkDone = checks[index]?.state === 'done'
+  const checkRunning = checks[index]?.state === 'running'
   useEffect(() => {
     if (!state || gone || !playing) return
     if (done(state)) {
@@ -111,12 +117,12 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
       setPlaying(false)
       return
     }
-    const wait = dwellFor(currentStep(state), checkDone)
+    const wait = dwellFor(currentStep(state), checkRunning)
     if (wait === null) return
     const t = setTimeout(() => setState((s) => (s ? next(s) : s)), wait)
     return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [index, gone, playing, checkDone])
+  }, [index, gone, playing, checkRunning])
 
   if (!state) return null
   // Dismissed or Done: a pill stays in the corner so the steps can always be found
@@ -153,7 +159,11 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
         )}
         {step.checks.length > 0 && (
           <div className="tour-checks" data-testid="tour-checks">
-            {!check || check.state === 'running' ? (
+            {!check ? (
+              <button type="button" className="ghost small tour-run" data-testid="tour-run" onClick={runChecks}>
+                Run {step.checks.map(checkName).join(', ')}
+              </button>
+            ) : check.state === 'running' ? (
               <div className="tour-check running">Checking {step.checks.map(checkName).join(', ')}…</div>
             ) : (
               check.results.map((r) => (
@@ -182,7 +192,7 @@ export default function TourCard({ onOpen }: TourCardProps): JSX.Element | null 
             data-testid="tour-play"
             onClick={() => setPlaying((p) => !p)}
           >
-            {playing ? 'Pause' : isLast ? 'Play again' : 'Play'}
+            {playing ? 'Pause' : isLast ? 'Play again' : 'Start the tour'}
           </button>
           <button
             type="button"

@@ -320,8 +320,8 @@ export function next(state: TourState): TourState {
  * (2026-09-04, dropping the button that opened a pane and typed a prompt).
  *
  * Three lengths, and the reason for each:
- *  - a step whose checks are still running HOLDS (`null`). Moving on from a result nobody
- *    has seen is the same defect as having no result.
+ *  - a step whose checks are RUNNING holds (`null`). They only run because somebody
+ *    pressed Run, so moving off the result they asked for is the one unforgivable step.
  *  - a step with something on screen - a surface it opened, a control it ringed - gets the
  *    long one: that is the only kind read by looking rather than by reading a line.
  *  - everything else gets the short one, being one sentence and a tick already drawn.
@@ -330,8 +330,10 @@ export const DWELL_CHECKS_MS = 3500
 export const DWELL_LOOK_MS = 7000
 export const DWELL_PLAIN_MS = 4000
 
-export function dwellFor(step: TourStep, checksDone: boolean): number | null {
-  if (step.checks.length && !checksDone) return null
+export function dwellFor(step: TourStep, checksRunning: boolean): number | null {
+  // A check only runs because somebody pressed it, and moving off a result nobody has
+  // seen is the same defect as having no result: while one is in flight, the tour holds.
+  if (checksRunning) return null
   if (step.open !== 'none' || step.spot) return DWELL_LOOK_MS
   return step.checks.length ? DWELL_CHECKS_MS : DWELL_PLAIN_MS
 }

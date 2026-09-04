@@ -86,9 +86,11 @@ said yesterday does not cover today. `npm run test:unreleased`.
 The dev window's tour (`shared/tour.ts`, `TourCard.tsx`) turns every `feat:`/`fix:`/`perf:`
 commit since the installed build into a step: where it lives (off the files touched),
 what to look for, a ring around the control, and the commit's own `scripts/<x>-test.mjs`
-RUN on the card with the result. It PLAYS ITSELF - opens each step's surface, holds while
-a check is still running, waits `dwellFor` (longer when there is something on screen) and
-moves on; Pause, Previous and Next stop it where it is. No pane is opened and no prompt is
+RUN on the card with the result. It WAITS to be started and then plays itself - opens each
+step's surface, waits `dwellFor` (longer when there is something on screen) and moves on;
+Pause, Previous and Next stop it where it is. A step's suites run only when its Run button
+is pressed, never on their own (Robert 2026-09-04: "it should wait for my approval for each
+new feature to test"), and a check in flight holds the tour where it is. No pane is opened and no prompt is
 typed (Robert 2026-09-04: "i dont want the try in pane testing helper"), so a `Try:` line
 in a commit body is read by nothing. Every such commit body carries `See: <what Robert
 should see on screen>` lines, one per thing; without them the card shows the body's first
@@ -1044,7 +1046,7 @@ moves exactly that many.
 - Pressure card offers the move: `suggestMove` names dearest pane + destination; `.cap-pop` has
   `Move it` / `Keep it here` (adds PROJECT to `autoHandoff.keepHere`, every rung refuses it).
 - Never handed back where it came from: `senderDevice`/`arrivedFrom` in payload, `hostFor` skips it.
-- Mid-turn pane queued, never killed. `main/handoffQueue.ts` moves it when the turn ends; one that never
+- A pane MID-TURN is never picked at all: `queueable` refuses `working`/`stalled` like `movable` does (2026-09-04, it armed on a chat with a prompt queued and a command running). The queue is for a pane that goes quiet between the decision and the move. `main/handoffQueue.ts` moves it when the turn ends; one that never
   goes quiet expires after `waitMinutes`, said out loud (`remote:handoffCancel` chip ends it); a move
   already in flight has left the queue. `undefined` keeps the stamp, only `null` clears it —
   `handoffQueuedAt` makes chip say `waiting 12m` not `moving`. `TICK_MS` (5s) is expiry backstop.
