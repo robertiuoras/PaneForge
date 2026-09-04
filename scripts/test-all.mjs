@@ -317,7 +317,16 @@ const started = Date.now()
  * the 193 scripts changes.
  */
 const TMP_ROOT = mkdtempSync(join(tmpdir(), 'pf-test-run-'))
-process.on('exit', () => rmSync(TMP_ROOT, { recursive: true, force: true }))
+const dropTmp = () => rmSync(TMP_ROOT, { recursive: true, force: true })
+// `exit` alone leaks the root on every Ctrl-C, and this name is unique per run, so nothing
+// later reclaims it. A signal has to drop it itself, then die of that signal.
+process.on('exit', dropTmp)
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+  process.on(sig, () => {
+    dropTmp()
+    process.exit(1)
+  })
+}
 
 function runChild(file) {
   return new Promise((done) => {

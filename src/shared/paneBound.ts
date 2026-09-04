@@ -60,8 +60,14 @@ const DRIVERS = /(?:^|[/\\])(chromedriver|geckodriver|msedgedriver|safaridriver)
 /** An MCP stdio server. Part of a pane's prelude, running or not, and never a reason. */
 const MCP = /(?:^|\s)--?mcp(?:[=\s]|$)|(?:^|[/\\])[a-z0-9-]*-mcp[a-z0-9-]*(?:\s|$)/i
 
-/** What to call this pane's binding, off the process that caused it. */
-function reasonFor(cmd: string): string | undefined {
+/**
+ * What to call this pane's binding, off the process that caused it.
+ *
+ * Exported so `scripts/panebound-test.mjs` reads the live process table through the same
+ * three signals rather than a copy of them: a mirror of the regexes drifts silently, and
+ * a copy that dropped the MCP exclusion would call every pane on this desk bound.
+ */
+export function boundReason(cmd: string): string | undefined {
   if (MCP.test(cmd)) return undefined
   if (AUTOMATION.test(cmd)) return 'a browser it is driving'
   if (DRIVERS.test(cmd)) return 'a browser driver'
@@ -95,7 +101,7 @@ export function machineBound(rows: BoundRow[], ptyPid: number): string | undefin
       if (seen.has(kid.pid)) continue
       seen.add(kid.pid)
       queue.push(kid.pid)
-      const why = reasonFor(kid.cmd ?? '')
+      const why = boundReason(kid.cmd ?? '')
       if (why) return why
     }
   }

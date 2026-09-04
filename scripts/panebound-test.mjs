@@ -32,7 +32,7 @@ const bundle = (entry, name) => {
   return out
 }
 const require = createRequire(import.meta.url)
-const { machineBound } = require(bundle('src/shared/paneBound.ts', 'panebound.cjs'))
+const { machineBound, boundReason } = require(bundle('src/shared/paneBound.ts', 'panebound.cjs'))
 const { movable, queueable } = require(bundle('src/shared/autoHandoff.ts', 'autohandoff.cjs'))
 
 let checks = 0
@@ -135,16 +135,21 @@ if (process.platform !== 'win32') {
     .map((m) => ({ pid: Number(m[1]), ppid: Number(m[2]), cmd: m[3] }))
   const clis = rows.filter((r) => /(?:^|[/\\])(claude|codex)(?:\s|$)/.test(r.cmd) && !/--mcp/.test(r.cmd))
 
-  /** Every command line at or under a pid, as one string. */
+  /** Every command line UNDER a pid - the pty itself is never a reason, as in `machineBound`. */
   const subtree = (pid) => {
     const out = []
-    const walk = (p) => {
-      for (const r of rows) if (r.ppid === p) { out.push(r.cmd); walk(r.pid) }
+    const seen = new Set([pid])
+    const queue = [pid]
+    while (queue.length) {
+      const p = queue.shift()
+      for (const r of rows) {
+        if (r.ppid !== p || seen.has(r.pid)) continue
+        seen.add(r.pid)
+        queue.push(r.pid)
+        out.push(r.cmd)
+      }
     }
-    const self = rows.find((r) => r.pid === pid)
-    if (self) out.push(self.cmd)
-    walk(pid)
-    return out.join(' ')
+    return out
   }
 
   // What this used to assert was "not EVERY agent on this desk is bound", which is a
@@ -157,14 +162,11 @@ if (process.platform !== 'win32') {
   for (const cli of clis) {
     const yes = !!machineBound(rows, cli.pid)
     if (yes) bound++
-    // The same two signals `paneBound.ts` keys on, flattened: an automation flag anywhere
-    // in the tree, or a browser driver binary. Deliberately a mirror - what this pins is
-    // that walking a REAL process tree agrees with a flat scan of it, which is the leg a
-    // fixture cannot exercise.
-    const text = subtree(cli.pid)
-    const flagged =
-      /(?:^|\s)--(?:remote-debugging-port|remote-debugging-pipe|headless)(?:[=\s]|$)/.test(text) ||
-      /(?:^|[/\\])(chromedriver|geckodriver|msedgedriver|safaridriver)(?:\s|$)/i.test(text)
+    // Read through `boundReason`, the same function the walk calls, so what this pins is
+    // that walking a REAL process tree agrees with a flat scan of it - the leg a fixture
+    // cannot exercise - and not a copy of the regexes, which would drift and, without the
+    // MCP exclusion, would call every pane on this desk bound.
+    const flagged = subtree(cli.pid).some((cmd) => !!boundReason(cmd ?? ''))
     ok(
       yes === flagged,
       `a live agent is bound only when something in its tree drives a browser` +
