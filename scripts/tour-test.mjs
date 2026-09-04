@@ -366,6 +366,11 @@ console.log('a step is named after the thing on screen, not the commit subject')
   const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
   ok('the app opens a session for a pane step', /surface === 'pane'/.test(app))
   ok('a shell, never an agent CLI', /agent: 'shell'/.test(app))
+  // A pane that comes straight back when it is closed is a pane nobody can get rid of.
+  ok('one shell for the whole tour, never a second', /tourPaneOpened\.current = true/.test(app) && /!tourPaneOpened\.current/.test(app))
+  // Every other step gives the sessions list back: a hidden sidebar leaves no way to
+  // reach a pane's own close button, and a collapsed one wears the ring as a line.
+  ok('the list comes back unless the step is about hiding it', /setSideHidden\(surface === 'sidebarHidden'\)/.test(app))
 }
 
 console.log('every suite a step ran is ONE line')

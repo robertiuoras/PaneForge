@@ -889,6 +889,8 @@ export default function App(): JSX.Element {
   }, [sideW])
   // Whether the sidebar is hidden. A view preference like sideW, so localStorage not
   // config.json - a phone client has no sidebar to hide.
+  // Set once the tour has opened its own shell pane, so it never opens a second.
+  const tourPaneOpened = useRef(false)
   const [sideHidden, setSideHidden] = useState<boolean>(() => {
     try {
       return localStorage.getItem('pf.sideHidden') === '1'
@@ -7047,19 +7049,31 @@ export default function App(): JSX.Element {
       <TourCard
         sounds={config?.sounds}
         onOpen={(surface, root) => {
+          // THE LIST COMES BACK unless this step is about hiding it. One step hid the
+          // sidebar and every step after it inherited a window with no sessions list -
+          // no way to reach a pane's own close button, and a `.sidebar` collapsed to a
+          // sliver wearing the tour's ring, which is the glowing line down the left edge
+          // (Robert, 2026-09-04: "i cant even close it and also theres a glowing line on
+          // the left of the pane window").
+          setSideHidden(surface === 'sidebarHidden')
           if (surface === 'newSession') setPicking(true)
           else if (surface === 'settings') setSettings(true)
-          else if (surface === 'sidebarHidden') setSideHidden(true)
-          else if (surface === 'workspaces') setSideHidden(false)
           else if (surface === 'pane') {
             // A change to a pane - its header, its icons, its name - can only be looked at
             // when a pane is on screen, and a dev copy often opens with none. The existing
             // one is brought to the front; with none, ONE plain shell pane is opened in the
             // checkout this copy runs from. A shell, never an agent: it costs nothing, it
             // starts instantly, and there is no conversation left behind when it is closed.
-            setSideHidden(false)
+            //
+            // ONE, for the whole tour, and never again once it has been opened. The tour
+            // passes several pane steps, so opening whenever the desk is empty put a fresh
+            // shell back every time one was closed - a pane that cannot be got rid of.
+            // Closing it is an answer: the rest of the pane steps use whatever is there.
             if (sessions.length) setActiveId(sessions[0].id)
-            else if (root) void start([{ cwd: root, agent: 'shell' }])
+            else if (root && !tourPaneOpened.current) {
+              tourPaneOpened.current = true
+              void start([{ cwd: root, agent: 'shell' }])
+            }
           }
         }}
       />
