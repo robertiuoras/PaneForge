@@ -3,7 +3,7 @@ import { strict as assert } from 'node:assert'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { transformSync } from 'esbuild'
+import { transformSync, buildSync } from 'esbuild'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const source = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
@@ -12,6 +12,8 @@ const to = source.indexOf("\nipcMain.handle('autoclear:cancel'", from)
 assert.ok(from >= 0 && to > from, 'autoclear ask handler is present as a bounded IPC block')
 const handlerSource = transformSync(source.slice(from, to), { loader: 'ts', format: 'cjs', target: 'node20' }).code
 const NOW = 1_000_000_000
+const shared = buildSync({entryPoints:[join(root,'src/shared/autoclear.ts')],bundle:true,platform:'node',format:'esm',write:false}).outputFiles[0].text
+const {hasFreshPaneHandoff} = await import('data:text/javascript;base64,'+Buffer.from(shared).toString('base64'))
 
 function invoke(agent, handoff) {
   let handler
@@ -22,7 +24,7 @@ function invoke(agent, handoff) {
     list: () => [pane],
     armAutoClear(id, plan) { arms++; return { ok: true, id, plan } }
   }
-  new Function('ipcMain', 'readAutoClearAsk', 'remote', 'manager', 'clearCommandFor', 'backJobOf', 'handoffFor', 'resumeBrief', 'Date', handlerSource)(
+  new Function('ipcMain', 'readAutoClearAsk', 'remote', 'manager', 'clearCommandFor', 'backJobOf', 'handoffFor', 'resumeBrief', 'hasFreshPaneHandoff', 'Date', handlerSource)(
     ipcMain,
     (raw) => raw,
     { owns: () => false },
@@ -31,6 +33,7 @@ function invoke(agent, handoff) {
     () => null,
     () => handoff,
     (_ask, path) => `resume ${path ?? 'none'}`,
+    (id, hand) => hasFreshPaneHandoff(id, hand, NOW),
     { now: () => NOW }
   )
   const result = handler({}, { paneId: 'pane1', prompt: 'continue', steps: ['untrusted step'], seconds: 30, noResume: false })
