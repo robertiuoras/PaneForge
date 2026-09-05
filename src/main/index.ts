@@ -2664,8 +2664,20 @@ ipcMain.handle('autoclear:ask', (_e, raw: unknown) => {
   // looks like. Both halves are on THIS side: `handoffSteps.ts` knows which file the
   // handoff is, and the ask carries the steps it says are still open. A `noResume` clear
   // is left alone - it types nothing on purpose.
-  const handoff = pane?.cwd ? handoffFor(pane.cwd, ask.paneId).path : null
-  return manager.armAutoClear(ask.paneId, { ...ask, prompt: resumeBrief(ask, handoff), command })
+  const handoff = pane?.cwd ? handoffFor(pane.cwd, ask.paneId) : null
+  // Claude's Stop hook has already proved its own fresh handoff before it reaches this
+  // channel. Codex and Antigravity have no equivalent continuation hook, so a deliberate
+  // request must prove the pane-scoped handoff here before PaneForge types a fresh-session
+  // command. The pane slot is the attribution contract: a generic project handoff may be
+  // another live pane's work.
+  if (pane?.agent === 'codex' || pane?.agent === 'antigravity') {
+    const expected = `/session-handoff.pane-${ask.paneId}.md`
+    const fresh = !!handoff && Date.now() - handoff.mtimeMs <= 20 * 60_000
+    if (!handoff?.path || !handoff.path.endsWith(expected) || !fresh || handoff.open < 1 || !handoff.steps.length) {
+      return { ok: false, reason: 'that session has no fresh pane handoff to continue' }
+    }
+  }
+  return manager.armAutoClear(ask.paneId, { ...ask, prompt: resumeBrief(ask, handoff?.path ?? null), command })
 })
 ipcMain.handle('autoclear:cancel', (_e, id: string) => manager.cancelAutoClear(String(id), 'cancelled'))
 ipcMain.handle('autoclear:takeover', (_e, id: string) => manager.takeOver(String(id)))
