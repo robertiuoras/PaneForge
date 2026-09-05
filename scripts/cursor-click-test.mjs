@@ -488,3 +488,58 @@ console.log(`cursor click: ${checks} checks passed`)
   term.dispose()
   console.log('renderer Unicode adapter: 4 real xterm cases passed')
 }
+
+// A word-wrap can hide a space at the same edge as an unbroken word. Exercise
+// the actual renderer handler, including cancellation while its reply is pending.
+{
+  const source = readFileSync(join(root, 'src/renderer/src/components/TerminalPane.tsx'), 'utf8')
+  const begin = source.indexOf('const moveAlongLine =')
+  const end = source.indexOf('const forceSelectable =', begin)
+  const code = transformSync(source.slice(begin, end), { loader: 'ts' }).code
+  const revisionOnSleep = source.match(/if \(asleepRef\.current !== asleep\) keyRevision\.current\+\+/)?.[0]
+  assert.ok(revisionOnSleep, 'sleep transitions invalidate pending cursor corrections')
+  const sleepRef = { current: false }, revisionRef = { current: 0 }
+  const renderSleep = new Function('asleepRef', 'keyRevision', 'asleep', revisionOnSleep + ';asleepRef.current=asleep')
+  renderSleep(sleepRef, revisionRef, true)
+  renderSleep(sleepRef, revisionRef, false)
+  assert.equal(revisionRef.current, 2, 'sleep then wake invalidates even when awake at callback')
+  function fixture(selection = '') {
+    const rows = [{ start: 2, end: 49, full: true }, { start: 2, end: 20, full: false }]
+    const b = { type: 'normal', baseY: 0, viewportY: 0, cursorX: 20, cursorY: 1 }
+    const writes = [], timers = []
+    const revision = { current: 0 }, typed = { current: 0 }, asking = { current: false }
+    const cached = { current: selection }, asleep = { current: false }
+    const texts = ['› ' + 'x'.repeat(47), '  second row of text']
+    const t = { cols: 50, rows: 20, buffer: { active: b }, getSelection: () => selection,
+      clearSelection: () => { selection = '' } }
+    const deps = { downAt: { x: 4, y: 0 }, clickCursorRef: { current: true }, askRef: asking,
+      t, el: { querySelector: () => ({ getBoundingClientRect: () => ({ width: 50, height: 20 }) }) },
+      cellAt: () => ({ col: 4, row: 0 }), inputRows: () => ({ top: 0, rows }),
+      spanBottom: s => s.top + s.rows.length - 1, keysToPoint, agent: 'codex',
+      stopForAgent() {}, sendKeys: k => { revision.current++; writes.push(k) },
+      rowText: r => texts[r], keyRevision: revision, typedAt: typed,
+      dead: false, asleepRef: asleep, lastSelection: cached, copied: { current: selection },
+      setTimeout: f => timers.push(f), sameLine: () => false }
+    const handler = new Function(...Object.keys(deps), code + ';return {callback:moveAlongLine,die(){dead=true}}')(...Object.values(deps))
+    handler.callback({ clientX: 4, clientY: 0, preventDefault() {} })
+    return { b, writes, timers, revision, typed, texts, asking, cached, asleep, die: handler.die, selection: () => selection }
+  }
+  const f = fixture('x')
+  assert.ok(f.writes.length === 1 && !f.selection(), 'stationary composer click releases an old selection')
+  assert.equal(f.cached.current, '', 'clearing selection also clears the copy fallback')
+  assert.equal(f.timers.length, 2, 'cross-row click schedules two bounded observations')
+  f.b.cursorY = 0; f.b.cursorX = 5
+  f.timers[0]()
+  assert.equal(f.writes[1], ARROW.left, 'actual cursor corrects one hidden wrap space')
+  for (const change of [f => f.revision.current++, f => f.typed.current = Date.now() + 1,
+    f => f.texts[0] += 'new draft', f => f.asking.current = true,
+    f => f.die(), f => f.asleep.current = true]) {
+    const f = fixture(); f.b.cursorY = 0; f.b.cursorX = 5; change(f); f.timers[0]()
+    assert.equal(f.writes.length, 1, 'new input, click or question cancels the old check')
+  }
+  const pending = fixture(); pending.timers[0]()
+  assert.equal(pending.writes.length, 1, 'no duplicate arrows before the CLI has moved')
+  pending.b.cursorY = 0; pending.b.cursorX = 5; pending.timers[1]()
+  assert.equal(pending.writes[1], ARROW.left, 'a slow renderer gets a second observation')
+  console.log('renderer click placement: selection, wrap correction and cancellation passed')
+}

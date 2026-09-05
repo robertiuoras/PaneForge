@@ -901,7 +901,9 @@ function TerminalPane({
   const inputRowsRef = useRef<(() => { top: number; rows: InputRow[] } | null) | null>(null)
   const autoFixRef = useRef(autoFixUi)
   autoFixRef.current = autoFixUi
+  const keyRevision = useRef(0)
   const asleepRef = useRef(asleep)
+  if (asleepRef.current !== asleep) keyRevision.current++
   asleepRef.current = asleep
   // The width this pane's replayed history was painted at, where the effect that owns the
   // terminal can read it. See `Props.replayCols`.
@@ -951,7 +953,6 @@ function TerminalPane({
   const clickKeys = useRef<string[]>([])
   /** When a person last typed into this pane - see `t.onData`. */
   const typedAt = useRef(0)
-  const keyRevision = useRef(0)
   const sendKeys = (keys: string): void => {
     keyRevision.current++
     clickKeys.current.push(keys)
@@ -2960,6 +2961,7 @@ function TerminalPane({
      */
     let downAt: { x: number; y: number } | null = null
     const markDown = (e: MouseEvent): void => {
+      keyRevision.current++
       downAt = e.button === 0 && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey
         ? { x: e.clientX, y: e.clientY }
         : null
@@ -3221,7 +3223,6 @@ function TerminalPane({
       // `test:askclick`, whose red case types six right arrows into a live question.
       if (askRef.current) return
       if (Math.abs(e.clientX - from.x) > 3 || Math.abs(e.clientY - from.y) > 3) return
-      if (t.getSelection()) return
       if (t.buffer.active.type === 'alternate') return
       const screen = el.querySelector('.xterm-screen') as HTMLElement | null
       if (!screen) return
@@ -3242,6 +3243,11 @@ function TerminalPane({
         const bottom = spanBottom(span)
         const held = (r: number): boolean => r >= span.top && r <= bottom
         if (held(cursorRow) && held(clickRow)) {
+          // A stationary click in the editor replaces a selection. A drag or a
+          // click in transcript text still keeps its highlight for copying.
+          t.clearSelection()
+          lastSelection.current = ''
+          copied.current = ''
           const keys = keysToPoint(
             span.rows,
             { row: cursorRow - span.top, col: b.cursorX },
@@ -3254,9 +3260,38 @@ function TerminalPane({
           e.preventDefault()
           stopForAgent(e)
           sendKeys(keys)
+          if (agent === 'codex' && cursorRow !== clickRow) {
+            // Codex can wrap at a space exactly at its right edge. That screen
+            // looks like a split word, but costs one extra arrow. Check the
+            // resulting caret, without changing text or replaying the move.
+            const sentAt = Date.now()
+            const revision = keyRevision.current
+            const cols = t.cols
+            const beforeCol = b.cursorX
+            const text = span.rows.map((_, i) => rowText(span.top + i)).join('\n')
+            const correct = (): void => {
+              if (dead || asleepRef.current) return
+              if (keyRevision.current !== revision || typedAt.current > sentAt || askRef.current || t.getSelection()) return
+              if (t.cols !== cols || t.buffer.active.type !== 'normal') return
+              const fresh = inputRows()
+              if (!fresh || fresh.top !== span.top || fresh.rows.length !== span.rows.length) return
+              if (fresh.rows.map((_, i) => rowText(fresh.top + i)).join('\n') !== text) return
+              const now = t.buffer.active
+              const row = now.baseY + now.cursorY
+              if (row === cursorRow && now.cursorX === beforeCol) return
+              const correction = keysToPoint(fresh.rows,
+                { row: row - fresh.top, col: now.cursorX },
+                { row: clickRow - fresh.top, col: at.col },
+                Math.abs(cursorRow - clickRow))
+              if (correction) sendKeys(correction)
+            }
+            setTimeout(correct, 180)
+            setTimeout(correct, 400)
+          }
           return
         }
       }
+      if (t.getSelection()) return
       if (!sameLine(cursorRow, clickRow)) return
       // Past the end of what is written is the end of what is written. Without this, a
       // click in the empty half of the row sends a burst of rights that the editor eats one
