@@ -189,6 +189,8 @@ interface Started {
 const started = new Map<string, Started>()
 /** paneId -> transcript file it has taken, so two panes on one repo never share one. */
 const claimed = new Map<string, string>()
+/** paneId -> Codex rollout id, which is not encoded in the rollout filename. */
+const codexClaimed = new Map<string, string>()
 /**
  * Transcripts a pane has moved OFF, which nothing may drift onto.
  *
@@ -395,10 +397,12 @@ function opening(file: string): 'clear' | 'startup' | 'unknown' {
 export function noteSession(id: string, cwd: string, agent: string, resumeId?: string): void {
   started.set(id, { cwd, agent, at: Date.now(), prior: claimed.get(id) })
   claimed.delete(id)
+  codexClaimed.delete(id)
   settled.delete(id)
-  const file = resumeId ? transcriptPath(cwd, resumeId) : null
+  const file = resumeId ? (agent === 'codex' ? codexTranscriptPath(cwd, resumeId) : transcriptPath(cwd, resumeId)) : null
   if (file) {
     claimed.set(id, file)
+    if (agent === 'codex') codexClaimed.set(id, resumeId as string)
     settled.add(id)
     released.delete(file)
   }
@@ -407,6 +411,7 @@ export function noteSession(id: string, cwd: string, agent: string, resumeId?: s
 export function forgetSession(id: string): void {
   started.delete(id)
   claimed.delete(id)
+  codexClaimed.delete(id)
   settled.delete(id)
 }
 
@@ -429,7 +434,35 @@ export function forgetSession(id: string): void {
  */
 export function transcriptFor(id: string): string | null {
   const s = started.get(id)
-  if (!s || !SUPPORTED.has(s.agent)) return null
+  if (!s || (!SUPPORTED.has(s.agent) && s.agent !== 'codex')) return null
+  if (s.agent === 'codex') {
+    const mine = claimed.get(id)
+    const known = codexClaimed.get(id)
+    if (mine && known && codexMatches(mine, s.cwd, known)) return mine
+    const taken = new Set([...claimed].filter(([other]) => other !== id).map(([, file]) => file))
+    const lines = submitted.get(id)
+    // Cwd plus a one-minute launch window is not identity: a first pane can be queried
+    // after a second pane has already written its rollout. Require a line THIS pane typed.
+    if (!lines?.length) return null
+    // Shared evidence cannot decide ownership, but a later pane-specific submitted line
+    // can. Keep only proof no other live same-folder Codex pane also submitted.
+    const uniqueLines = lines.filter((line) => ![...started].some(([other, candidate]) =>
+      other !== id && candidate.agent === 'codex' && sameCwd(candidate.cwd, s.cwd) &&
+      !codexClaimed.has(other) && proofsOverlap([line], submitted.get(other) ?? [])
+    ))
+    if (!uniqueLines.length) return null
+    const matches = codexRollouts(s.at - START_SLACK_MS)
+      .map(codexMeta)
+      .filter((row): row is CodexMeta => Boolean(row))
+      .filter((row) => sameCwd(row.cwd, s.cwd) && row.at >= s.at - START_SLACK_MS && !taken.has(row.file) && codexSaidByPane(row.file, uniqueLines))
+    // Cwd and time identify a candidate only while they identify exactly one. Two panes
+    // launched together in one folder must remain unresumable rather than swap chats.
+    if (matches.length !== 1) return null
+    claimed.set(id, matches[0].file)
+    codexClaimed.set(id, matches[0].id)
+    settled.add(id)
+    return matches[0].file
+  }
   if (s.agent === 'antigravity') {
     const mine = claimed.get(id)
     if (mine && existsSync(mine)) return mine
@@ -633,6 +666,11 @@ function movedTo(
 /** The conversation id to resume this pane with - the transcript's own file name. */
 export function resumeIdFor(id: string): string | undefined {
   const s = started.get(id)
+  if (s?.agent === 'codex') {
+    const found = transcriptFor(id)
+    const conversation = codexClaimed.get(id)
+    return conversation && found && codexMatches(found, s.cwd, conversation) ? conversation : undefined
+  }
   if (s?.agent === 'antigravity') {
     const claimedFile = claimed.get(id)
     if (claimedFile) {
@@ -655,6 +693,126 @@ export function transcriptPath(cwd: string, resumeId: string): string | null {
   const agy = antigravityTranscriptFile(resumeId)
   if (agy) return agy
   return null
+}
+
+/** Codex stores rollouts globally, so a filename alone never proves the conversation. */
+function codexHome(): string {
+  return process.env.CODEX_HOME || join(homedir(), '.codex')
+}
+
+interface CodexMeta {
+  file: string
+  id: string
+  cwd: string
+  at: number
+}
+
+const CODEX_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** Direct validation of an already uniquely claimed local rollout. */
+function codexMatches(file: string, cwd: string, id: string): boolean {
+  const meta = codexMeta(file)
+  return Boolean(meta && meta.id === id && sameCwd(meta.cwd, cwd))
+}
+
+function proofsOverlap(a: string[], b: string[]): boolean {
+  return a.some((left) => b.some((right) => left === right || left.startsWith(right) || right.startsWith(left)))
+}
+
+function codexRollouts(since?: number): string[] {
+  const out: string[] = []
+  const walk = (dir: string): void => {
+    try {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const file = join(dir, entry.name)
+        if (entry.isDirectory()) walk(file)
+        else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
+          try { if (!since || statSync(file).mtimeMs >= since) out.push(file) } catch { /* changing rollout */ }
+        }
+      }
+    } catch {
+      /* an unavailable or changing local session store is simply not resumable */
+    }
+  }
+  walk(join(codexHome(), 'sessions'))
+  return out
+}
+
+/** Read only the metadata record used to bind an exact saved Codex id to its folder. */
+function codexMeta(file: string): CodexMeta | null {
+  let fd = -1
+  try {
+    fd = openSync(file, 'r')
+    const buf = Buffer.alloc(8192)
+    const n = readSync(fd, buf, 0, buf.length, 0)
+    for (const line of buf.toString('utf8', 0, n).split('\n')) {
+      const row = JSON.parse(line) as { type?: string; payload?: Record<string, unknown> }
+      if (row.type !== 'session_meta' || !row.payload) continue
+      const id = typeof row.payload.id === 'string' ? row.payload.id : row.payload.session_id
+      if (typeof id !== 'string' || !CODEX_ID.test(id)) return null
+      if (typeof row.payload.session_id === 'string' && row.payload.session_id !== id) return null
+      const cwd = row.payload.cwd
+      const timestamp = row.payload.timestamp
+      const at = typeof timestamp === 'number' ? timestamp : typeof timestamp === 'string' ? Date.parse(timestamp) : NaN
+      return typeof cwd === 'string' && Number.isFinite(at) ? { file, id, cwd, at } : null
+    }
+  } catch {
+    return null
+  } finally {
+    if (fd >= 0) closeSync(fd)
+  }
+  return null
+}
+
+/** A Codex user message this pane actually submitted, never a loose text search. */
+function codexSaidByPane(file: string, lines: string[]): boolean {
+  try {
+    for (const line of readFileSync(file, 'utf8').split('\n')) {
+      let row: { type?: string; payload?: { type?: string; role?: string; content?: unknown } }
+      try {
+        row = JSON.parse(line) as { type?: string; payload?: { type?: string; role?: string; content?: unknown } }
+      } catch {
+        continue
+      }
+      if (row.type !== 'response_item' || row.payload?.type !== 'message' || row.payload.role !== 'user') continue
+      const content = row.payload.content
+      const texts = Array.isArray(content)
+        ? content.filter((part): part is { type?: string; text?: string } => typeof part === 'object' && part !== null).filter((part) => part.type === 'input_text' && typeof part.text === 'string').map((part) => part.text as string)
+        : []
+      if (texts.some((text) => saidByPane(text, lines))) return true
+    }
+  } catch {
+    return false
+  }
+  return false
+}
+
+function hasCodexReply(file: string): boolean {
+  try {
+    return readFileSync(file, 'utf8').split('\n').some((line) => {
+      try {
+        const row = JSON.parse(line) as { type?: string; payload?: { type?: string; role?: string } }
+        return row.type === 'response_item' && row.payload?.type === 'message' && row.payload.role === 'assistant'
+      } catch {
+        return false
+      }
+    })
+  } catch {
+    return false
+  }
+}
+
+/** The one rollout that metadata proves belongs to this cwd and exact Codex session id. */
+export function codexTranscriptPath(cwd: string, resumeId: string): string | null {
+  if (!cwd || !CODEX_ID.test(resumeId)) return null
+  // Live panes already hold an exact file claim. Revalidate its metadata rather than
+  // opening every historical rollout whenever the context popover refreshes.
+  for (const [pane, conversation] of codexClaimed) {
+    const file = claimed.get(pane)
+    if (conversation === resumeId && file && codexMatches(file, cwd, resumeId)) return file
+  }
+  const matches = codexRollouts().map(codexMeta).filter((row): row is CodexMeta => Boolean(row)).filter((row) => row.id === resumeId && sameCwd(row.cwd, cwd))
+  return matches.length === 1 ? matches[0].file : null
 }
 
 /**
@@ -713,14 +871,18 @@ export function hasReply(file: string): boolean {
 }
 
 /** Where a conversation the CLI can resume lives - on disk AND answered at least once. */
-export function resumableTranscript(cwd: string, resumeId: string): string | null {
-  const file = transcriptPath(cwd, resumeId)
-  return file && hasReply(file) ? file : null
+export function resumableTranscript(cwd: string, resumeId: string, agent = 'claude'): string | null {
+  if (agent === 'antigravity') {
+    const file = antigravityTranscriptFile(resumeId)
+    return file && file.endsWith('.jsonl') && hasReply(file) ? file : null
+  }
+  const file = agent === 'codex' ? codexTranscriptPath(cwd, resumeId) : transcriptPath(cwd, resumeId)
+  return file && (agent === 'codex' ? hasCodexReply(file) : hasReply(file)) ? file : null
 }
 
 /** True while a remembered conversation can still be resumed. */
-export function resumable(cwd: string, resumeId?: string): boolean {
-  return Boolean(resumeId && resumableTranscript(cwd, resumeId))
+export function resumable(cwd: string, resumeId?: string, agent = 'claude'): boolean {
+  return Boolean(resumeId && resumableTranscript(cwd, resumeId, agent))
 }
 
 /**

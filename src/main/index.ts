@@ -1,6 +1,6 @@
 import { execFile, spawn } from 'node:child_process'
 import { existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { tmpdir, homedir } from 'node:os'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
@@ -109,11 +109,15 @@ import {
   resumable,
   resumeIdFor,
   resumableTranscript,
-  transcriptPath
+  transcriptPath,
+  codexTranscriptPath
 } from './transcripts'
+import { codexContextUsage, receivedContinuation } from './contextUsage'
+import { startContinuation } from './continuation'
+import { handoffCandidates } from '../shared/handoffSteps'
 import { receiveHandoff, sendHandoff, shareable } from './handoff'
 import { clearCommandFor, hasFreshPaneHandoff, readAsk as readAutoClearAsk, resumeBrief } from '../shared/autoclear'
-import { handoffFor } from './handoffSteps'
+import { handoffFor, verifiedPaneHandoff } from './handoffSteps'
 import { briefForTask } from './backlogStore'
 import { startAutoClearWatch, stopAutoClearWatch } from './autoclearWatch'
 import { handoffReceiverCanQuit, type HandoffItem, type HandoffRequest } from '../shared/handoff'
@@ -215,7 +219,7 @@ tapIpc()
 const manager = new SessionManager()
 startWakeQueue({
   list: () => manager.list(),
-  wake: (id) => void manager.wake(id),
+  wake: (id) => { if (!continuationOwnsSource(id)) manager.wake(id) },
   // The same reading the budget rung takes (`autoHandoff` below): the memory verdict OR
   // the lag band, whichever is worse. A machine that is not lagging and not short of
   // memory is a machine with room, and that is when a queued pane may start.
@@ -1045,9 +1049,9 @@ const remote = new Remote({
   setBusy: (id, busy, tail, clock, reason) => manager.setBusyOnScreen(id, busy, tail, clock, reason),
   clearAttention: (id) => manager.clearAttention(id),
   kill: (id) => manager.kill(id),
-  restart: (id) => manager.restart(id),
+  restart: (id) => continuationOwnsSource(id) ? null : manager.restart(id),
   rename: (id, title) => manager.rename(id, title),
-  switchAgent: (id, agent, model) => manager.switchAgent(id, agent, model),
+  switchAgent: (id, agent, model) => continuationOwnsSource(id) ? null : manager.switchAgent(id, agent, model),
   // A guest's launch goes through the same lane split a local one does: two agents
   // in one repo must not share a checkout just because one of them is remote.
   startSession: async (req) => manager.start(await laneFor(req)),
@@ -1327,6 +1331,61 @@ ipcMain.handle('projects:create', (_e, name: string) => createProject(name))
 ipcMain.handle('projects:route', (_e, text: string) => routeText(text))
 ipcMain.handle('agents:list', (_e, force?: boolean) => listAgents(force))
 ipcMain.handle('sessions:list', () => allSessions())
+ipcMain.handle('sessions:contextUsage', (_e, id: string) => {
+  const session = manager.list().find((s) => s.id === id)
+  if (!session || session.agent !== 'codex') return null
+  const resumeId = resumeIdFor(id)
+  return resumeId ? codexContextUsage(manager.resumeOrigin(id) ?? session.cwd, resumeId) : null
+})
+
+// A deliberate fresh chat keeps its source asleep for recovery. Delivery is verified separately.
+const continuationReceipts = new Map<string, { cwd: string; digest: string; sourceId: string; deadline: number; received?: boolean; failed?: boolean }>()
+const preparingContinuations = new Map<string, number>()
+function continuationOwnsSource(id: string): boolean {
+  return [...continuationReceipts].some(([target, receipt]) => receipt.sourceId === id &&
+    manager.list().some(s => s.id === target && (s.status !== 'exited' || s.asleep)))
+}
+
+ipcMain.handle('sessions:prepareContinuation', (_e, id: string) => {
+  const pane = manager.list().find((s) => s.id === id)
+  if (!pane || !['codex', 'claude'].includes(pane.agent)) return { ok: false, reason: 'This provider has no verified continuation support.' }
+  if (pane.status !== 'idle' || pane.runSince || pane.drafting || pane.ask || pane.handingOff || pane.autoClearAt || backJobOf(id)) return { ok: false, reason: 'Wait for a safe boundary with no draft or pending work.' }
+  const resumeId = resumeIdFor(id)
+  if (!resumeId) return { ok: false, reason: 'The current conversation has not been identified yet.' }
+  const preparing = preparingContinuations.get(id)
+  const prepared = preparing ? verifiedPaneHandoff(pane.cwd, id, pane.agent, resumeId) : null
+  if (preparing && Date.now() - preparing < 5 * 60_000 && (!prepared?.meta || prepared.meta.createdAt < preparing)) return { ok: false, reason: 'Handoff preparation is already pending.' }
+  preparingContinuations.set(id, Date.now())
+  const file = handoffCandidates(pane.cwd, id, homedir(), () => false)[0]
+  const binding = JSON.stringify({ paneId: id, agent: pane.agent, resumeId, cwd: pane.cwd })
+  manager.sendPrompt(id, `Prepare a concise handoff for this exact current task in ${file}. Keep this conversation open. Do not reset or start new work. Preserve objective, constraints and authorisations, completed work, outstanding steps, relevant files and commits, test evidence, and running jobs. Use nonempty headings Objective, Constraints, Completed, Next steps, Verification, Running jobs. Write None for empty sections. At the top include an HTML comment: paneforge-handoff followed by JSON with these exact fields ${binding} and createdAt set to the current epoch milliseconds when you write the file. Report what is complete or blocked and stop at a safe boundary.`)
+  return { ok: true, reason: 'Handoff preparation queued. Review it before opening a fresh chat.' }
+})
+ipcMain.handle('sessions:continueFresh', (_e, id: string) => {
+  const source = manager.list().find((s) => s.id === id)
+  if (!source || !['codex', 'claude'].includes(source.agent) || backJobOf(id)) return { ok: false, reason: 'No supported, safe source conversation.' }
+  if (continuationOwnsSource(id)) return { ok: false, reason: 'This source already has a live continuation.' }
+  const result = startContinuation({ sleep: (key) => manager.sleep(key), wake: (key) => manager.wake(key), session: (key) => manager.list().find((s) => s.id === key), snapshot: () => manager.snapshot(), start: (req) => manager.start(req) }, id)
+  if (result.ok && result.id && result.digest) {
+    continuationReceipts.set(result.id, { cwd: source.cwd, digest: result.digest, sourceId: id, deadline: Date.now() + 5 * 60_000 })
+    return { ok: true, id: result.id, reason: 'Fresh pane opened; delivery is being checked. Your source is saved asleep.' }
+  }
+  return result
+})
+ipcMain.handle('sessions:continuationStatus', (_e, id: string) => {
+  const receipt = continuationReceipts.get(id)
+  if (!receipt) return null
+  const pane = manager.list().find((s) => s.id === id)
+  const source = manager.list().find((s) => s.id === receipt.sourceId)
+  const recovery = source ? (source.asleep ? 'The source is saved asleep.' : 'The source is still available.') : 'The source pane is closed; the saved handoff remains available.'
+  if (!pane) { continuationReceipts.delete(id); return { received: false, reason: `Fresh pane closed. ${recovery}` } }
+  if (!receipt.received && !receipt.failed) {
+    const resumeId = resumeIdFor(id)
+    receipt.received = !!resumeId && receivedContinuation(receipt.cwd, resumeId, pane.agent, receipt.digest)
+    if (!receipt.received && (pane.status === 'exited' || Date.now() > receipt.deadline)) receipt.failed = true
+  }
+  return { received: !!receipt.received, reason: receipt.received ? `Verified: this conversation received its saved handoff. ${recovery}` : receipt.failed ? `Delivery could not be verified. Recover from the saved handoff or source. ${recovery}` : `Delivery is not verified yet. ${recovery}` }
+})
 /**
  * Move a second session in the same folder into its own git worktree, so two
  * agents in one project cannot overwrite each other's edits or race the index.
@@ -1443,11 +1502,10 @@ async function startOrSend(req: StartSessionRequest, claimed?: string[]): Promis
   // (Robert 2026-09-04: "from history its buggy when i open session"). The pane still
   // opens - that is the useful half - and the toast names the one thing that is different
   // about it.
-  if (req.resume && req.resumeId && !resumableTranscript(req.cwd, req.resumeId)) {
-    req = { ...req, resume: false, resumeId: undefined }
-    noteActivity(
-      activityEntry('cleared', req.title || req.cwd, 'that chat had no answers in it to come back to, so this pane is a fresh one in the same folder')
-    )
+  if (req.resume && req.resumeId && !resumableTranscript(req.resumeCwd ?? req.cwd, req.resumeId, req.agent)) {
+    if (req.agent !== 'shell') {
+      req = { ...req, asleep: true, prompt: undefined, laneNote: 'Saved conversation could not be verified. It remains asleep; start a new session only if you want to replace it.' }
+    } else req = { ...req, resume: false, resumeId: undefined }
   }
   // A row that says "this is where this work happens" - a client - goes back to the pane
   // that is already open there rather than opening a second one beside it. Live panes
@@ -1598,6 +1656,7 @@ ipcMain.handle('sessions:startMany', async (_e, reqs: StartSessionRequest[]) => 
 })
 ipcMain.handle('sessions:restart', (_e, id: string) => {
   if (remote.owns(id)) return remote.send(id, { t: 'restart' }), null
+  if (continuationOwnsSource(id)) return null
   return manager.restart(id)
 })
 ipcMain.handle('sessions:sleep', (_e, id: string) => {
@@ -1608,6 +1667,7 @@ ipcMain.handle('sessions:sleep', (_e, id: string) => {
 })
 ipcMain.handle('sessions:wake', async (_e, id: string) => {
   if (remote.owns(id)) return null
+  if (continuationOwnsSource(id)) return null
   // A sleeping pane is placed again before it wakes: the folder it slept in may now be
   // another pane's (two client chats restored asleep into one checkout, 2026-09-04).
   await manager.rehome(id, (req) => laneFor(req, ledgerTakenFolders(id), id))
@@ -1615,6 +1675,7 @@ ipcMain.handle('sessions:wake', async (_e, id: string) => {
 })
 ipcMain.handle('sessions:switchAgent', (_e, id: string, agent: string, model?: string) => {
   if (remote.owns(id)) return remote.send(id, { t: 'switch', agent, model }), null
+  if (continuationOwnsSource(id)) return null
   return manager.switchAgent(id, agent, model)
 })
 ipcMain.handle('sessions:rename', (_e, id: string, title: string) =>
@@ -2551,7 +2612,8 @@ function runHandoff(device: string, request: HandoffRequest): Promise<HandoffIte
       kill: (id) => manager.kill(id),
       tailOf: (id, bytes) => history.tail(id, bytes),
       tailColsOf: (id) => history.colsOf(id),
-      transcriptFileFor: (cwd, resumeId) => transcriptPath(cwd, resumeId),
+      transcriptFileFor: (cwd, resumeId, agent) => agent === 'codex' ? codexTranscriptPath(cwd, resumeId) : transcriptPath(cwd, resumeId),
+      canResume: (dev, agent) => remote.canResumeHandoff(dev, agent),
       deliver: (dev, payload, file) => remote.handoffTo(dev, payload, file),
       deviceName: (dev) => remote.peerName(dev),
       selfDevice: () => getConfig().remote.id,
@@ -3750,8 +3812,12 @@ function restorePanes(specs: StartSessionRequest[]): void {
         // A desk written BEFORE the claim rules learned to read a transcript's own folder
         // can carry an id belonging to a sibling lane - this desk did, twice - so the saved
         // id is checked the same way a fresh claim now is, not trusted for being saved.
-        const file = req.resumeId ? resumableTranscript(req.cwd, req.resumeId) : null
+        const file = req.resumeId ? resumableTranscript(req.resumeCwd ?? req.cwd, req.resumeId, req.agent) : null
         const named = Boolean(file && !heldElsewhere(file, req.cwd))
+        // A saved agent pane without its exact answered conversation stays visible and
+        // asleep. Starting it fresh would replace work the desk promised to preserve.
+        // A shell has no conversation state, so its existing fresh-shell restore remains.
+        const unavailable = req.agent !== 'shell' && !named
         const meta = manager.start({
           ...req,
           resume: named,
@@ -3760,8 +3826,10 @@ function restorePanes(specs: StartSessionRequest[]): void {
           // Everything but the pane being looked at comes back with no agent in it. The
           // card, its place and its screen are all there; a press starts the CLI in the
           // conversation it was in. See `shared/restoreTurn.ts` for the measurement.
-          asleep: req.asleep || clash[i] || restoreAsleep(req, i, recoverOn),
-          laneNote: clash[i]
+          asleep: unavailable || req.asleep || clash[i] || restoreAsleep(req, i, recoverOn),
+          laneNote: unavailable
+            ? 'Saved conversation could not be verified. It remains asleep; start a new session only if you want to replace it.'
+            : clash[i]
             ? `Another chat is already in ${basename(req.cwd)} - opening this one gives it its own copy`
             : req.laneNote
         })
@@ -3819,7 +3887,7 @@ function describe(spec: StartSessionRequest, i: number): RestorePane {
   // asking the CLI for one it does not have is worse than continuing the newest.
   // Same reading as the restore itself, or the dialog offers a pane under a line of
   // somebody else's work and then opens it empty.
-  const held = spec.resumeId ? resumableTranscript(spec.cwd, spec.resumeId) : null
+  const held = spec.resumeId ? resumableTranscript(spec.resumeCwd ?? spec.cwd, spec.resumeId, spec.agent) : null
   const resumeId = held && !heldElsewhere(held, spec.cwd) ? spec.resumeId : undefined
   return {
     id: String(i),

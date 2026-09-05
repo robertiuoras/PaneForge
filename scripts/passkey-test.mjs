@@ -637,6 +637,7 @@ ok(!server.running, 'the gate test server stopped cleanly')
     // starts either way, this only says on which machine, and the deadline answers alone.
     'offload:answer',
     'activity:list',
+    'sessions:contextUsage', 'sessions:continuationStatus',
     'autoclear:cancel', 'autoclear:takeover',
     'projects:list', 'projects:route', 'agents:list', 'sessions:list', 'sessions:rename', 'sessions:clientUndo',
     // Read-only, and the answer is a public release page's own notes.

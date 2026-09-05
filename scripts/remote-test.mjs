@@ -261,6 +261,7 @@ async function main() {
   client.connect()
 
   ok('the right code connects', await until(() => client.status === 'online'), client.error)
+  ok('legacy peer cannot receive agent conversations without an advertised capability', !client.canResumeHandoff('claude') && !client.canResumeHandoff('codex'))
   ok('the host lists the guest', await until(() => host.list().length === 1))
   ok('the guest is named', host.list()[0]?.name === 'Laptop', JSON.stringify(host.list()[0]))
 

@@ -559,12 +559,12 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                       autoHandoff: { ...DEFAULT_AUTO_HANDOFF, ...config.autoHandoff, enabled: v }
                     })
                   }
-                  label="Move a finished pane to a paired device when this machine is full"
-                  hint="The setting above stops it getting worse by starting the NEXT pane over there; this moves one that is already open, with its conversation, its branch, its screen and the dev server it had running. It fires on the budget below, and on either sign of a machine in trouble - the kernel saying it is out of memory, or the load average saying this desk is lagging, whichever comes first (memory says so late: nine agents here once read as merely tight while the load ran at 8.7 on 10 cores). Only to a device that is online and has the same project. A pane mid-turn is never killed - it is queued and goes the moment its turn ends, because killing a pty mid-answer loses the answer. A pane holding a question on screen is never moved at all. If nothing can take it, the pane is closed instead, which keeps its conversation and its screen in History."
+                  label="Move an idle shell pane to a paired device when this machine is full"
+                  hint="This automatic policy only moves plain shell panes. Agent conversations are never automatically copied or moved because a remote process starting does not prove it resumed the same work. It fires on the budget below, and when memory or load says this machine is under pressure, only to a device online with the same project. Claude and Codex panes stay here; use manual handoff when you want to review its explicit continuity result."
                 />
                 {config.autoHandoff?.enabled !== false && (
                   <div className="setting">
-                    <label>Panes this machine runs itself</label>
+                    <label>Shell panes this machine runs itself</label>
                     <input
                       className="search"
                       type="number"
@@ -583,16 +583,11 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                       }
                     />
                     <p className="hint">
-                      The budget, and the only rule here that does not wait for something to
-                      go wrong. Past this many agents running on this machine, the rest move
-                      to a paired device and come straight back as mirrors - so they are all
-                      still on this screen, still typed into from here, and the memory and
-                      the CPU are over there. It is the one rule allowed to move a pane that
-                      is on screen and a pane that is mid-turn (that one is queued and goes
-                      the moment the turn ends, never killed); the pane you are typing in,
-                      one holding a question, and the last pane on the desk are refused as
-                      always. 0 turns the budget off and leaves the two readings below. With
-                      nothing paired and online it does nothing at all.
+                      The automatic shell budget. Past this many shell panes on this machine,
+                      eligible idle shells can move to a paired device and come back as
+                      mirrors. Agent panes are deliberately excluded, including panes that
+                      are mid-turn. 0 turns the budget off. With nothing paired and online it
+                      does nothing at all.
                     </p>
                   </div>
                 )}
@@ -644,8 +639,8 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                         }
                       })
                     }
-                    label="...and move a quiet one over there even when there is still room"
-                    hint={`The setting above only fires once the machine says it is out of memory, and it refuses any pane that is on screen - which with the grid on is every pane, so on a one-window desk it can never fire at all. This is the clock instead, and it is ON: a pane nobody has typed into for ${IDLE_OFFLOAD_MINUTES} minutes moves to the paired device whatever the memory says - half the time it would take to fall asleep here, so a quiet pane is offered to the machine that can carry on running it before its agent is stopped on this one, because an idle agent costs its ~190 MB the whole time it sits there and the lag arrives long before the kernel admits to it. Every other refusal is unchanged - never the pane you are in, never one mid-turn, never one holding a question, never the last pane - and the pane comes straight back as a mirror, so you keep watching it and typing into it from here.`}
+                    label="...and move a quiet shell over there even when there is still room"
+                    hint={`This clock only considers plain shell panes. After ${IDLE_OFFLOAD_MINUTES} quiet minutes, an eligible shell can move to a paired device even when memory is fine. Agent conversations stay here automatically, so this clock never creates an unconfirmed remote copy. Shells still refuse when focused, busy, asking a question, remote, or the last pane, and return as mirrors after a successful move.`}
                   />
                 )}
                 <Switch

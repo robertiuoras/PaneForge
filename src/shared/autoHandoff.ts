@@ -14,18 +14,15 @@
 //   3. MOVE a finished pane there (this file)    - the work continues, on the other desk
 //   4. close a finished pane      (reclaim.ts)   - the last resort, and only with no peer
 //
-// Rung 3 is only defensible because of what a handoff already is: the conversation, the
-// code and the screen all travel, the sender's pane only closes once the far end says its
-// replacement is running, and a pane whose repo cannot be pushed fails BY NAME and stays
-// open. Nothing here can lose work that the manual button could not already lose.
+// Rung 3 is intentionally limited to plain shell panes. An agent's remote process can be
+// opened, but this app does not yet receive proof that its conversation was accepted, so
+// automatically copying one would duplicate work without safely freeing this machine.
 //
 // Two refusals decide whether this is safe rather than merely clever:
 //
-//   - **A pane mid-turn is never moved.** A handoff kills the pty, and killing a pty
-//     mid-turn throws away the answer being written - the far end resumes from the
-//     transcript, which only holds turns the CLI has already flushed. So a busy pane is
-//     QUEUED and moved the instant its turn ends. That is what makes "hand off mid-turn"
-//     mean the move happens as soon as it can rather than the turn being lost.
+//   - **Automatic plans never move an agent pane.** The manual queue remains separate:
+//     its sender preserves the original agent pane until a real resume acknowledgement
+//     exists, rather than treating a remote process start as continuity.
 //   - **A pane holding a live question is never moved**, queued or otherwise. The chooser
 //     is drawn on a screen, not in the transcript; resuming over there comes back with the
 //     question gone and the agent waiting for something nobody was asked.
@@ -90,9 +87,8 @@ export interface AutoHandoffConfig {
    * wants - that it is the SCREEN, and past a couple of agents the work belongs on the
    * machine that is plugged in.
    *
-   * So this is the budget, and it is the one rule allowed to move a pane that is on screen
-   * and a pane that is mid-turn (queued, then moved the moment the turn ends). That is not
-   * a relaxation of the refusals: everything that could lose work is still refused - the
+   * This budget remains a shell-only automatic policy. Agent panes stay here until manual
+   * handoff has a real resume acknowledgement. Everything that could lose work is refused - the
    * pane you are typing in, one holding a question, one already moving, a mirror, the last
    * pane on the desk. What it drops is the two gates that only ever meant "there is no
    * emergency", because past the budget there is no emergency and the move is still right.
@@ -121,13 +117,9 @@ export interface AutoHandoffConfig {
    * work running on the PC's 64 GB rather than the MacBook, and a threshold no pane reaches
    * is a policy that only exists in the settings screen.
    *
-   * 180 sits just under an ordinary Claude Code pane and well above a Codex one (16-17 MB),
-   * so the rung moves agents and still leaves a cheap pane alone. What makes that safe is
-   * unchanged and is the whole reason the number can move: `machineBound` refuses work that
-   * would not exist over there, `shareable` refuses a checkout that is dirty, unpushed or
-   * has no origin, a pane mid-turn is QUEUED rather than killed, a live question is refused
-   * outright, `keepHere` refuses by project, and nothing is ever handed back to the machine
-   * it arrived from.
+   * 180 sits just under an ordinary Claude Code pane and well above a Codex one (16-17 MB).
+   * It remains a useful shell-cost floor, but automatic plans deliberately do not move
+   * agents until their conversations have a portable, confirmed resume path.
    */
   budgetMinMb: number
   /** ...or this much of one core, which is what a build or a dev server looks like. */
@@ -226,6 +218,8 @@ export function offloadMinutes(cfg: Pick<AutoHandoffConfig, 'offloadIdleMinutes'
 
 export interface AutoPane {
   id: string
+  /** Actual local agent kind. Automatic plans fail closed unless this is `shell`. */
+  agent?: string
   state: FleetState
   /** epoch ms of the last thing a person typed into it */
   lastKeyboard: number
@@ -448,9 +442,8 @@ export function autoHandoffPlan(
  * - and because a moved pane comes straight back as a mirror, so what is on screen stays
  * on screen. And the idle wait, because a budget is not a statement about idleness.
  *
- * Busy panes are eligible and are picked LAST: the sort walks quiet-and-offscreen first,
- * then quiet-and-visible, then whatever is mid-turn. A busy one that does get picked is
- * queued by main and moves when its turn ends - nothing is ever killed mid-answer.
+ * Only shell panes are eligible. The sort still prefers quiet-and-offscreen work, but no
+ * automatic path queues an agent or treats a process start as a completed transfer.
  */
 /**
  * What this pane costs, as one number, for ordering only.
@@ -510,7 +503,7 @@ export function budgetPlan(
 ): AutoHandoff[] {
   if (!cfg.enabled || over <= 0) return []
   const eligible = panes
-    .filter((p) => !p.focused && !p.remote && !p.handingOff && queueable(p))
+    .filter((p) => p.agent === 'shell' && !p.focused && !p.remote && !p.handingOff && queueable(p))
     // Mac-only work, per `AutoHandoffConfig.keepHere`. Before the cost gate on purpose: the
     // dearest pane on the desk is exactly the one this list exists to hold back.
     .filter((p) => !staysHere(cfg, p.projectName))
@@ -588,7 +581,7 @@ export function suggestMove(
 ): AutoHandoff | null {
   if (!cfg.enabled) return null
   const eligible = panes
-    .filter((p) => !p.focused && !p.remote && !p.handingOff && queueable(p))
+    .filter((p) => p.agent === 'shell' && !p.focused && !p.remote && !p.handingOff && queueable(p))
     .filter((p) => !staysHere(cfg, p.projectName))
     .filter((p) => !((blocked[p.id] ?? 0) > now))
     .sort(
@@ -654,7 +647,7 @@ function pick(
 
   const out: AutoHandoff[] = []
   const eligible = panes
-    .filter((p) => !p.focused && !p.remote && !p.handingOff && movable(p))
+    .filter((p) => p.agent === 'shell' && !p.focused && !p.remote && !p.handingOff && movable(p))
     .filter((p) => !staysHere(cfg, p.projectName))
     .filter((p) => !(screen && p.visible))
     .filter((p) => now - quietSince(p) >= minIdle)

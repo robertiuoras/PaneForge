@@ -123,6 +123,17 @@ ok(
 const wake = sessions.slice(sessions.indexOf('  wake(id: string)'), sessions.indexOf('   * A pane\'s folder no longer exists'))
 ok(wake.length > 200, 'found wake()')
 is(/RESET/.test(wake), false, 'waking writes no reset - the old screen IS the screen')
+ok(/resumableTranscript\(resumeCwd, resumeId, live\.meta\.agent\)/.test(wake), 'wake revalidates the saved conversation before spawning')
+ok(/live\.meta\.agent !== 'shell' && !resumable/.test(wake), 'an invalid restored agent placeholder remains asleep')
+ok(/Wake refused: this saved conversation could not be verified/.test(wake), 'the placeholder explains why wake was refused')
+ok(wake.indexOf("live.meta.agent !== 'shell' && !resumable") < wake.indexOf('live.proc = this.spawn'), 'invalid wake returns before a pty can spawn')
+ok(wake.indexOf("live.meta.agent !== 'shell' && !resumable") < wake.indexOf('live.meta.asleep = undefined'), 'invalid wake leaves the pane asleep')
+ok(/live\.meta\.agent !== 'shell' && !resumable/.test(wake), 'a verified named agent session reaches the existing spawn path and shell remains allowed')
+ok(/const resumeCwd = live\.req\.resumeCwd \?\? live\.meta\.cwd/.test(wake), 'wake validates a rehomed saved conversation against its original folder')
+ok(/resumableTranscript\(resumeCwd, resumeId, live\.meta\.agent\)/.test(wake), 'the original folder is used only for exact resume validation')
+ok(/resumeCwd: s\.req\.resumeCwd/.test(sessions), 'snapshot persists the original folder that verifies the named conversation')
+ok(/resumeCwd \?\? from/.test(sessions), 'rehome preserves the original folder for a sleeping named conversation')
+ok(/noteSession\(id, resumeCwd, live\.meta\.agent/.test(wake), 'wake keeps the verified original folder bound to the named conversation')
 
 // ---------------------------------------------------------------------------
 // Sleeping keeps its lane (lane-split 2026-09-04): the app marks the ledger asleep
@@ -137,6 +148,11 @@ ok(/backJob: live\.meta\.backJob/.test(sessions), 'manual sleep keeps an agent b
 const sleepBody = sessions.slice(sessions.indexOf('  sleep(id: string'), sessions.indexOf('  /**\n   * Start a sleeping'))
 ok(/prompt: reason === 'queued' \? live\.req\.prompt : undefined/.test(sleepBody), 'only `queued` keeps the launch prompt on wake')
 ok(/live\.meta\.asleepReason = reason/.test(sleepBody), 'the reason is recorded, not only the timestamp')
+ok(/const resumeId = resumeIdFor\(id\)/.test(sleepBody), 'sleep captures one verified resume id before ending the process')
+ok(/resumableTranscript\(resumeCwd, resumeId, live\.meta\.agent\)/.test(sleepBody), 'sleep requires a completed transcript, not only a saved id')
+ok(/live\.meta\.agent !== 'shell' && !resumable/.test(sleepBody), 'every agent conversation without an exact id refuses sleep before an unnamed resume')
+ok(/Sleep refused: this conversation could not be verified/.test(sleepBody), 'the running pane explains why sleep was refused')
+ok(sleepBody.indexOf("live.meta.agent !== 'shell' && !resumable") < sleepBody.indexOf('ledgerSleep('), 'conversation refusal happens before the ledger and process are changed')
 
 // ---------------------------------------------------------------------------
 // The pin, on a card that is already saying something

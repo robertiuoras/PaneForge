@@ -15,10 +15,12 @@
 
 import { execFile } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, linkSync, mkdirSync, readFileSync, realpathSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import {
-  HANDOFF_MAX_FILE,
+  handoffConversationError,
+  handoffAgentError,
   mapCwd,
   type HandoffItem,
   type HandoffRequest,
@@ -29,6 +31,72 @@ import {
 import { queuedNote } from '../shared/autoHandoff'
 import type { DevServer } from '../shared/devServers'
 import type { Session, StartSessionRequest } from '../shared/types'
+
+type Json = Record<string, unknown>
+function rowsOf(file: Buffer): Json[] | null {
+  try {
+    const rows = file.toString('utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line) as Json)
+    return rows.length ? rows : null
+  } catch {
+    return null
+  }
+}
+
+function hasCompleteReply(agent: string, rows: Json[]): boolean {
+  return rows.some((row) => {
+    const payload = row.payload as Json | undefined
+    const message = row.message as Json | undefined
+    return agent === 'codex'
+      ? row.type === 'response_item' && payload?.type === 'message' && payload.role === 'assistant'
+      : row.type === 'assistant' && (message?.role === 'assistant' || !message?.role)
+  })
+}
+
+type CodexImport = { rows: Json[]; timestamp: Date }
+function parseCodex(file: Buffer, id: string): CodexImport | null {
+  const rows = rowsOf(file)
+  if (!rows || !hasCompleteReply('codex', rows)) return null
+  const metas = rows.filter((row) => row.type === 'session_meta')
+  if (metas.length !== 1) return null
+  const payload = metas[0].payload as Json | undefined
+  const ids = [payload?.id, payload?.session_id].filter((value): value is string => typeof value === 'string')
+  if (!payload || ids.length === 0 || ids.some((value) => value !== id)) return null
+  const timestamp = new Date(typeof payload.timestamp === 'string' ? payload.timestamp : '')
+  return Number.isNaN(timestamp.valueOf()) ? null : { rows, timestamp }
+}
+
+function importCodex(parsed: CodexImport, id: string, cwd: string): { file: Buffer; path: string } | null {
+  const meta = parsed.rows.find((row) => row.type === 'session_meta')!
+  ;(meta.payload as Json).cwd = cwd
+  const stamp = parsed.timestamp.toISOString().replace(/\.\d{3}Z$/, '').replace(/:/g, '-')
+  const day = stamp.slice(0, 10)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null
+  return {
+    file: Buffer.from(parsed.rows.map((row) => JSON.stringify(row)).join('\n') + '\n'),
+    path: join(process.env.CODEX_HOME || join(homedir(), '.codex'), 'sessions', day.slice(0, 4), day.slice(5, 7), day.slice(8, 10), `rollout-${stamp}-${id}.jsonl`)
+  }
+}
+
+function writeConversation(path: string, file: Buffer): string | null {
+  if (existsSync(path)) {
+    try {
+      if (readFileSync(path).equals(file)) return null
+    } catch { /* refuse below */ }
+    return 'A different conversation file already exists here, so nothing was overwritten'
+  }
+  const directory = dirname(path)
+  const temp = join(directory, `.${basename(path)}.${randomBytes(8).toString('hex')}.tmp`)
+  try {
+    mkdirSync(directory, { recursive: true })
+    writeFileSync(temp, file, { flag: 'wx' })
+    linkSync(temp, path)
+    return null
+  } catch {
+    return existsSync(path) ? 'A different conversation file already exists here, so nothing was overwritten' : 'Conversation transcript could not be stored safely'
+  } finally {
+    try { unlinkSync(temp) } catch { /* already published or absent */ }
+  }
+}
 
 /** How much screen goes with the pane. Same order as the pane's own buffer cap. */
 const TAIL_BYTES = 200_000
@@ -143,7 +211,8 @@ export interface SendDeps {
    */
   tailColsOf?(id: string): number
   /** where the pane's conversation lives on this disk, if anywhere */
-  transcriptFileFor(cwd: string, resumeId: string): string | null
+  transcriptFileFor(cwd: string, resumeId: string, agent: string): string | null
+  canResume?(device: string, agent: string): boolean
   deliver(device: string, payload: HandoffPayload, file: Buffer | null): Promise<HandoffResult>
   deviceName(device: string): string
   /** This device's own id, stamped on the pane over there so it is never sent back here. */
@@ -177,6 +246,22 @@ export async function sendHandoff(deps: SendDeps, device: string, request: Hando
   const out: HandoffItem[] = []
   const closeAfter = request.closeReceiverWhenDone === true
   for (const pane of panes) {
+    // Do this before a busy pane enters the queue. A countdown for a provider
+    // that cannot carry its conversation is a false promise, not useful work.
+    const snapshot = deps.snapshot().find((r) => r.scrollbackId === pane.id)
+    const agent = snapshot?.agent || pane.agent || 'claude'
+    const unsupported = handoffAgentError(agent)
+    if (unsupported) {
+      deps.log?.(`${pane.id} -> ${deps.deviceName(device)}: refused before queue - ${unsupported}`)
+      out.push({ id: pane.id, title: pane.title, ok: false, error: unsupported, notes: [] })
+      continue
+    }
+    if (agent !== 'shell' && deps.canResume?.(device, agent) !== true) {
+      const error = `The receiving device does not support safe ${agent === 'codex' ? 'Codex' : 'Claude'} resume yet, so this pane stayed here`
+      deps.log?.(`${pane.id} -> ${deps.deviceName(device)}: refused before queue - ${error}`)
+      out.push({ id: pane.id, title: pane.title, ok: false, error, notes: [] })
+      continue
+    }
     // Mid-turn: queued, never killed. `waitForTurn` defaults on - the caller has to say
     // out loud that an unfinished answer is expendable.
     if (request.waitForTurn !== false && deps.busy?.(pane) && deps.queue) {
@@ -206,6 +291,45 @@ async function sendOne(deps: SendDeps, device: string, pane: Session, closeRecei
   const notes: string[] = []
   const where = deps.deviceName(device)
   const t0 = Date.now()
+
+  // This comes before git add/commit/push. A handoff that cannot carry the
+  // conversation is not a useful handoff, and may not leave an auto-sync
+  // commit behind while it refuses.
+  const handoffSpec: StartSessionRequest = { ...spec, resume: spec.agent === 'claude' || spec.agent === 'codex' ? true : undefined }
+  let file: Buffer | null = null
+  let transcript: HandoffPayload['transcript']
+  if ((handoffSpec.agent === 'claude' || handoffSpec.agent === 'codex') && handoffSpec.resumeId) {
+    const path = deps.transcriptFileFor(handoffSpec.resumeCwd ?? pane.cwd, handoffSpec.resumeId, handoffSpec.agent || 'claude')
+    try {
+      if (path) {
+        const size = statSync(path).size
+        transcript = { name: `${handoffSpec.resumeId}.jsonl`, size }
+        const error = handoffConversationError(handoffSpec, transcript)
+        if (error) return { id: pane.id, title: pane.title, ok: false, error, notes }
+        const rows = rowsOf(readFileSync(path))
+        if (!rows || !hasCompleteReply(handoffSpec.agent, rows)) {
+          return {
+            id: pane.id,
+            title: pane.title,
+            ok: false,
+            error: `${handoffSpec.agent === 'codex' ? 'Codex' : 'Claude'} conversation is malformed or has no completed assistant reply to resume, so it was not handed off`,
+            notes
+          }
+        }
+        file = readFileSync(path)
+        const changed = handoffConversationError(handoffSpec, transcript, file.length)
+        if (changed) return { id: pane.id, title: pane.title, ok: false, error: changed, notes }
+      }
+    } catch {
+      return { id: pane.id, title: pane.title, ok: false, error: 'Claude conversation transcript could not be read, so it was not handed off', notes }
+    }
+  }
+  const conversationError = handoffConversationError(handoffSpec, transcript, file?.length)
+  if (conversationError) {
+    deps.log?.(`${pane.id} -> ${where}: refused before repo push - ${conversationError}`)
+    return { id: pane.id, title: pane.title, ok: false, error: conversationError, notes }
+  }
+
   deps.log?.(`${pane.id} -> ${where}: pushing the repo (${pane.title})`)
   deps.stage?.(pane.id, 'pushing the repo')
 
@@ -230,9 +354,8 @@ async function sendOne(deps: SendDeps, device: string, pane: Session, closeRecei
     }
   }
 
-  let file: Buffer | null = null
   const payload: HandoffPayload = {
-    spec,
+    spec: handoffSpec,
     senderRoot: deps.root(),
     senderDevice: deps.selfDevice?.() || undefined,
     repo: repo ?? undefined,
@@ -241,17 +364,8 @@ async function sendOne(deps: SendDeps, device: string, pane: Session, closeRecei
     closeReceiverWhenDone: closeReceiverWhenDone || undefined,
     dev: dev.length ? dev : undefined
   }
-  if (spec.resumeId) {
-    const path = deps.transcriptFileFor(pane.cwd, spec.resumeId)
-    if (path && statSync(path).size <= HANDOFF_MAX_FILE) {
-      file = readFileSync(path)
-      payload.transcript = { name: basename(path), size: file.length }
-    } else {
-      notes.push(path ? 'Conversation too large to move - agent starts fresh' : 'No transcript found - agent starts fresh')
-    }
-  } else if (spec.agent === 'claude') {
-    notes.push('No conversation to move - agent starts fresh')
-  }
+  if (handoffSpec.agent !== 'shell') payload.sourceRetained = true
+  if (transcript) payload.transcript = transcript
 
   deps.stage?.(pane.id, `sending to ${where}`)
   const t1 = Date.now()
@@ -262,6 +376,11 @@ async function sendOne(deps: SendDeps, device: string, pane: Session, closeRecei
   if (!result.ok) {
     deps.log?.(`${pane.id} -> ${where}: refused over there after ${Date.now() - t1} ms - ${result.error || 'no reason given'}`)
     return { id: pane.id, title: pane.title, ok: false, error: result.error || 'Refused over there', notes }
+  }
+  if (handoffSpec.agent !== 'shell') {
+    const kept = 'Remote conversation opened, but this original pane stays open because PaneForge cannot yet confirm the remote agent accepted the resume.'
+    deps.log?.(`${pane.id} -> ${where}: remote process started after ${Date.now() - t1} ms; original kept - resume acceptance is not confirmed`)
+    return { id: pane.id, title: pane.title, ok: true, sourceKept: true, notes: [...notes, ...result.notes, kept] }
   }
   deps.log?.(`${pane.id} -> ${where}: running there after ${Date.now() - t1} ms (${Date.now() - t0} ms in all)`)
   // The far end's pane is running; this one is now a second window onto old state.
@@ -370,6 +489,23 @@ export async function receiveHandoff(
 ): Promise<HandoffResult> {
   const notes: string[] = []
   const spec = payload.spec
+  const conversationError = handoffConversationError(spec, payload.transcript, file ? file.length : null)
+  if (conversationError) return { ok: false, error: conversationError, notes }
+  if (spec.agent !== 'shell' && payload.sourceRetained !== true) {
+    return { ok: false, error: 'Sender cannot prove it retained the original agent pane, so this conversation was not started', notes }
+  }
+  // Parse every received byte before a repo pull, folder creation, or lane placement. The
+  // target cwd is intentionally applied later, after `place()` has selected its lane.
+  const codex = spec.agent === 'codex' && file && spec.resumeId ? parseCodex(file, spec.resumeId) : null
+  if (file && payload.transcript && spec.agent === 'codex' && !codex) {
+    return { ok: false, error: 'Conversation transcript is malformed, incomplete, or does not match its resume ID', notes }
+  }
+  if (file && payload.transcript && spec.agent === 'claude') {
+    const rows = rowsOf(file)
+    if (!rows || !hasCompleteReply('claude', rows)) {
+      return { ok: false, error: 'Conversation transcript is malformed, incomplete, or does not match its resume ID', notes }
+    }
+  }
   const mapped = mapCwd(spec.cwd, payload.senderRoot, deps.root())
   if (!mapped) {
     return { ok: false, error: `No matching folder here for ${spec.cwd}`, notes }
@@ -400,11 +536,14 @@ export async function receiveHandoff(
   // After placement, never before: a lane split moves the cwd, and the CLI reads
   // transcripts from a folder named after the cwd it actually starts in.
   if (file && payload.transcript && /^[A-Za-z0-9._-]+\.jsonl$/.test(payload.transcript.name)) {
-    const dir = deps.claudeProjectDir(req.cwd)
-    mkdirSync(dir, { recursive: true })
-    writeFileSync(join(dir, payload.transcript.name), file)
+    const target = spec.agent === 'codex'
+      ? importCodex(codex!, spec.resumeId || '', req.cwd)
+      : (() => { const rows = rowsOf(file); return rows && hasCompleteReply('claude', rows) ? { file, path: join(deps.claudeProjectDir(req.cwd), payload.transcript!.name) } : null })()
+    if (!target) return { ok: false, error: 'Conversation transcript is malformed, incomplete, or does not match its resume ID', notes }
+    const conflict = writeConversation(target.path, target.file)
+    if (conflict) return { ok: false, error: conflict, notes }
     req.resume = true
-    req.resumeId = basename(payload.transcript.name, '.jsonl')
+    req.resumeId = spec.resumeId
   } else if (spec.resumeId) {
     notes.push('Conversation did not travel - the agent starts fresh in the right folder')
   }

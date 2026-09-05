@@ -81,6 +81,20 @@ is(resolveEnv(or, { openrouter: '  sk-or-pad  ' }).ANTHROPIC_AUTH_TOKEN, 'sk-or-
 const codex = findAgent(BUILTIN_AGENTS, 'codex')
 is(Object.keys(resolveEnv(codex, { openrouter: 'sk-or-test' })).length, 0, 'an agent that asked for nothing gets nothing')
 ok(!needsOpenRouterKey(codex), 'and is never reported as blocked on a key')
+assert.deepEqual(
+  buildArgs(codex, { resume: true, resumeId: '019c-session-a' }),
+  ['resume', '019c-session-a'],
+  'Codex named resume passes the exact session id'
+)
+checks++
+assert.deepEqual(
+  buildArgs(codex, { resume: true, resumeId: '019c-session-b' }),
+  ['resume', '019c-session-b'],
+  'a different Codex session id stays distinct'
+)
+checks++
+assert.deepEqual(buildArgs(codex, { resume: true }), ['resume', '--last'], 'Codex uses --last only without an id')
+checks++
 
 // --- who is actually blocked without a key ------------------------------------
 ok(needsOpenRouterKey(or), 'the OpenRouter entry authenticates with the key, so it is blocked without one')

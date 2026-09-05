@@ -2520,6 +2520,7 @@ export default function App(): JSX.Element {
     (): AutoPane[] =>
       sessionsRef.current.map((s) => ({
         id: s.id,
+        agent: s.agent,
         state: fleetState(s),
         lastKeyboard: s.lastKeyboard,
         lastOutput: s.lastOutput,
@@ -4063,7 +4064,14 @@ export default function App(): JSX.Element {
         for (const move of plan) {
           const live = sessionsRef.current.find((x) => x.id === move.id)
           if (!live || live.remote) continue
-          const items = await api.handoffToDevice(move.device, [move.id], false, true)
+          const items = await api.handoffToDevice(move.device, [move.id], false, true).catch((error) => [{
+            id: move.id,
+            title: live.title,
+            ok: false,
+            pending: false,
+            notes: [],
+            error: error instanceof Error ? error.message : String(error)
+          }])
           const item = items[0]
           if (item?.ok || item?.pending) {
             setActed({
@@ -4075,6 +4083,7 @@ export default function App(): JSX.Element {
           } else {
             handoffBlocked.current[move.id] = Date.now() + Math.max(1, cooldownMinutes) * 60_000
             console.info(`handoff: ${move.id} stayed here - ${item?.error ?? 'refused over there'}`)
+            api.logReclaim({ event: 'move-failed', id: move.id, device: move.deviceName, reason: item?.error ?? 'refused over there' })
           }
         }
       } finally {
@@ -4095,10 +4104,12 @@ export default function App(): JSX.Element {
       handoffSweeping.current = false
       return
     }
-    for (const move of mine)
+    for (const move of mine) {
       console.info(
         `${why}: moving ${move.id} to ${move.deviceName} - quiet ${Math.round(move.idleMs / 60000)} min`
       )
+      api.logReclaim({ event: 'move-armed', why, id: move.id, device: move.deviceName, idleMin: Math.round(move.idleMs / 60000) })
+    }
     const key = mine.map((p) => p.id).join('|')
     moveSoonRef.current[key] = { plan: mine, cooldownMinutes }
     // The mascot is no longer the only face this has: `MoveSoon` draws the same countdown
@@ -5019,7 +5030,7 @@ export default function App(): JSX.Element {
                           // steps are in handoff.log under the app's data folder.
                           <span
                             className="chip"
-                            title="Moving to a paired device now: the repo is pushed, then the pane starts over there and closes here. Each step is in handoff.log."
+                            title="Preparing handoff to a paired device. Agent originals stay open until resume can be confirmed. Each step is in handoff.log."
                           >
                             {s.handoffStage ?? 'moving'}
                             {s.handoffSince ? (
@@ -6624,7 +6635,7 @@ export default function App(): JSX.Element {
           whole Devices screen with a banner over it. */}
       {handoff && (
         <HandoffDialog
-          target={handoff}
+          target={{ ...handoff, agents: sessions.filter((s) => handoff.ids.includes(s.id)).map((s) => s.agent) }}
           peers={remote?.peers ?? []}
           flash={flash}
           onPair={() => {

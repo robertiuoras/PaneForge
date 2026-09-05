@@ -72,7 +72,7 @@ export interface AutoClearArm {
   tokens?: number
 }
 import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from './pipe'
-import { forgetSession, noteSession, resumeIdFor, transcriptPath } from './transcripts'
+import { forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeIdFor, transcriptPath } from './transcripts'
 import { liveModelFor } from './paneModel'
 import { endHookDeny, feedHookDeny } from './hookDeny'
 import { continueAfterRestore, restoredClock } from '../shared/restoreTurn'
@@ -573,6 +573,11 @@ export class SessionManager extends EventEmitter {
     return [...this.sessions.values()].map((s) => s.meta)
   }
 
+  resumeOrigin(id: string): string | undefined {
+    const live = this.sessions.get(id)
+    return live ? live.req.resumeCwd ?? live.meta.cwd : undefined
+  }
+
   buffer(id: string): string {
     return this.sessions.get(id)?.buffer.read() ?? ''
   }
@@ -611,6 +616,7 @@ export class SessionManager extends EventEmitter {
         // The conversation this pane is actually in, so restoring reopens THAT one
         // rather than whatever happens to be newest in the folder by then.
         resumeId: resumeIdFor(s.meta.id),
+        resumeCwd: s.req.resumeCwd,
         // ...and what was on screen in it. `resumeId` restores the AGENT's memory and
         // not one line of the terminal, which is why a pane comes back blank after an
         // update even though it picks the conversation up mid-sentence.
@@ -784,7 +790,7 @@ export class SessionManager extends EventEmitter {
     // Started ON a conversation (a reopened desk) rather than into a fresh one: say so,
     // or the pane spends its life holding a file older than itself and looking for a
     // newer one to belong to.
-    noteSession(id, req.cwd, agent, req.resume ? req.resumeId : undefined)
+    noteSession(id, req.resumeCwd ?? req.cwd, agent, req.resume ? req.resumeId : undefined)
     this.queuePrompt(id, req.prompt, req.promptDelay)
     // The pane was mid-turn when the app went down. `--resume` brings the conversation
     // back and not the answer that was being written, so the CLI comes back at an empty
@@ -1013,12 +1019,13 @@ export class SessionManager extends EventEmitter {
     live.meta.asleep = undefined
     live.meta.asleepReason = undefined
     live.req = { ...live.req, asleep: undefined }
-    recordEnd(id, resumeIdFor(id))
+    const resumeId = resumeIdFor(id)
+    recordEnd(id, resumeId)
     // A restart is a new conversation unless the CLI is being asked to resume one, and
     // either way the pane is writing a different file from here.
     noteSession(
       id,
-      live.meta.cwd,
+      live.req.resumeCwd ?? live.meta.cwd,
       live.meta.agent,
       live.req.resume ? live.req.resumeId : undefined
     )
@@ -1088,6 +1095,21 @@ export class SessionManager extends EventEmitter {
       })
     )
       return null
+    // An unnamed provider resume selects some other conversation. Do this before the
+    // ledger or process tree changes: a pane without an exact answered conversation
+    // remains running until its own conversation can be identified. Shell panes have no
+    // conversation state and retain their deliberate fresh-shell sleep behavior.
+    const resumeId = resumeIdFor(id)
+    const resumeCwd = live.req.resumeCwd ?? live.meta.cwd
+    const resumable = Boolean(resumeId && resumableTranscript(resumeCwd, resumeId, live.meta.agent))
+    if (live.meta.agent !== 'shell' && !resumable) {
+      const note = '\x1b[33mSleep refused: this conversation could not be verified, so this pane remains running.\x1b[0m\r\n'
+      this.emit('data', id, note)
+      live.buffer.push(note)
+      live.meta.attention = true
+      this.emitSessions()
+      return null
+    }
     // Before the CLI dies, so the SessionEnd hook it fires on the way out reads the lane
     // ledger already marked - the whole point being that it PARKS this hold instead of
     // releasing it (see scripts/lane.mjs `releaseClaim`). Never blocks: worst case the
@@ -1104,12 +1126,12 @@ export class SessionManager extends EventEmitter {
     }
     stopPipe(id)
     live.meta.piping = undefined
-    recordEnd(id, resumeIdFor(id))
+    recordEnd(id, resumeId)
     // What waking spawns from. The conversation it was in is read NOW, while the
     // transcript still names this session. The launch prompt is dropped for every other
     // reason - waking would otherwise re-run the work the pane was opened to do - except
     // `queued`: a pane put to sleep before it ever ran is woken to do exactly that.
-    live.req = { ...live.req, resume: true, resumeId: resumeIdFor(id), prompt: reason === 'queued' ? live.req.prompt : undefined }
+    live.req = { ...live.req, resume: true, resumeId, prompt: reason === 'queued' ? live.req.prompt : undefined }
     this.endRun(live)
     live.jobName = null
     live.meta.job = undefined
@@ -1150,7 +1172,11 @@ export class SessionManager extends EventEmitter {
     const placed = await place({ ...live.req, cwd: live.meta.cwd, lane: live.meta.lane })
     if (placed.cwd === live.meta.cwd) return null
     const from = live.meta.cwd
-    live.req = { ...live.req, cwd: placed.cwd, lane: placed.lane, laneEnv: placed.laneEnv }
+    // Codex stores its exact session metadata with the folder where it began. Keep that
+    // proof for wake validation while the process is asleep, even though the resumed CLI
+    // will start in the lane it was moved to.
+    const resumeCwd = live.req.resume && live.req.resumeId ? (live.req.resumeCwd ?? from) : undefined
+    live.req = { ...live.req, cwd: placed.cwd, lane: placed.lane, laneEnv: placed.laneEnv, resumeCwd }
     live.meta.cwd = placed.cwd
     live.meta.lane = placed.lane
     live.meta.laneNote = placed.laneNote ?? `Moved to ${basename(placed.cwd)} - another pane is in ${basename(from)}`
@@ -1163,7 +1189,21 @@ export class SessionManager extends EventEmitter {
     const live = this.sessions.get(id)
     if (!live || !live.meta.asleep) return null
     const reason = live.meta.asleepReason
-    noteSession(id, live.meta.cwd, live.meta.agent, live.req.resume ? live.req.resumeId : undefined)
+    // Restore can deliberately leave an unavailable saved conversation asleep. Never
+    // turn that placeholder into an unnamed provider resume or a fresh replacement.
+    // Shell panes have no conversation state and deliberately keep their fresh wake.
+    const resumeId = live.req.resume ? live.req.resumeId : undefined
+    const resumeCwd = live.req.resumeCwd ?? live.meta.cwd
+    const resumable = Boolean(resumeId && resumableTranscript(resumeCwd, resumeId, live.meta.agent))
+    if (live.meta.agent !== 'shell' && !resumable) {
+      const note = '\x1b[33mWake refused: this saved conversation could not be verified, so this pane remains asleep. Start a new session to replace it.\x1b[0m\r\n'
+      this.emit('data', id, note)
+      live.buffer.push(note)
+      live.meta.attention = true
+      this.emitSessions()
+      return null
+    }
+    noteSession(id, resumeCwd, live.meta.agent, live.req.resume ? live.req.resumeId : undefined)
     // Cleared before anything else reads the request: it is what made this pane arrive
     // asleep, and a later restart of a pane somebody has woken must not send it back.
     live.req = { ...live.req, asleep: undefined }
@@ -1424,7 +1464,8 @@ export class SessionManager extends EventEmitter {
       // in without restarting. The pane keeps its transcript until told otherwise (a
       // second pane on the same repo must not be able to drift onto it), so this is
       // where being told happens.
-      if (slash && /^\s*\/(clear|resume)\b/.test(live.typed)) {
+      if (slash && /^\s*\/(clear|new|resume)\b/.test(live.typed)) {
+        live.req = { ...live.req, resume: false, resumeId: undefined, resumeCwd: undefined }
         noteSession(id, live.meta.cwd, live.meta.agent)
       }
       const quiet = slash && isQuietSlash(live.typed)
@@ -2895,6 +2936,7 @@ export class SessionManager extends EventEmitter {
         return settle()
       }
       ourWrite('\r')
+      noteSubmittedPrompt(id, prompt)
       acLog(`${id} return sent (try ${tries + 1}/${PROMPT_ENTER_TRIES})`)
       const typedAt = Date.now()
       if (!confirmUntil) confirmUntil = typedAt + PROMPT_CONFIRM_MS * PROMPT_ENTER_TRIES

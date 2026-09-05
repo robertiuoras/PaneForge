@@ -6,6 +6,7 @@
 // value import from a main-side file to an extensionless sibling.
 
 import { lstatSync, readFileSync, statSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { homedir } from 'node:os'
 import { actionableNextSteps, handoffCandidates } from '../shared/handoffSteps'
 
@@ -28,6 +29,8 @@ export interface HandoffReading {
   /** The steps themselves, for the countdown card. */
   steps: string[]
   mtimeMs: number
+  digest?: string
+  meta?: { paneId: string; agent: string; resumeId: string; cwd: string; createdAt: number }
 }
 
 const NONE: HandoffReading = { path: null, open: 0, steps: [], mtimeMs: 0 }
@@ -62,14 +65,38 @@ export function handoffFor(cwd: string, paneId: string, now = Date.now()): Hando
     try {
       const st = statSync(p)
       if (st.mtimeMs <= best.mtimeMs) continue
-      const steps = actionableNextSteps(readFileSync(p, 'utf8'))
-      best = { path: p, open: steps.length, steps, mtimeMs: st.mtimeMs }
+      if (st.size > 64 * 1024) continue
+      const bytes = readFileSync(p)
+      const text = bytes.toString('utf8')
+      const steps = actionableNextSteps(text)
+      const match = /<!--\s*paneforge-handoff\s+({[^>]+})\s*-->/.exec(text)
+      let meta: HandoffReading['meta']
+      try { const x = match ? JSON.parse(match[1]) : null; if (x && typeof x.paneId === 'string' && typeof x.agent === 'string' && typeof x.resumeId === 'string' && typeof x.cwd === 'string' && Number.isFinite(x.createdAt)) meta = x } catch { /* invalid metadata */ }
+      best = { path: p, open: steps.length, steps, mtimeMs: st.mtimeMs, digest: createHash('sha256').update(bytes).digest('hex'), meta }
     } catch {
       /* absent, or unreadable - neither is evidence about the work */
     }
   }
   cache.set(key, { at: now, reading: best })
   return best
+}
+
+export function verifiedPaneHandoff(cwd: string, paneId: string, agent: string, resumeId: string, now = Date.now()): HandoffReading | null {
+  const hand = handoffFor(cwd, paneId, now)
+  const meta = hand.meta
+  if (!hand.path || !meta || meta.paneId !== paneId || meta.agent !== agent || meta.resumeId !== resumeId || meta.cwd !== cwd || now - meta.createdAt > 20 * 60_000 || meta.createdAt > now) return null
+  try {
+    const st = statSync(hand.path)
+    if (now - st.mtimeMs > 20 * 60_000 || st.mtimeMs > now + 1_000 || st.size > 64 * 1024 || handoffCandidates(cwd, paneId, homedir(), symlinked)[0] !== hand.path) return null
+    const bytes = readFileSync(hand.path)
+    if (bytes.length > 64 * 1024 || createHash('sha256').update(bytes).digest('hex') !== hand.digest) return null
+    const text = bytes.toString('utf8')
+    for (const heading of ['Objective', 'Constraints', 'Completed', 'Next steps', 'Verification', 'Running jobs']) {
+      const found = new RegExp(`^#+\\s*${heading}\\s*\\n\\s*[^#\\s]`, 'mi').test(text)
+      if (!found) return null
+    }
+    return hand
+  } catch { return null }
 }
 
 /** Drop a pane's cached reading, so the next read is fresh. Called when a pane closes. */

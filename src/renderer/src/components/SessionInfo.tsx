@@ -11,11 +11,11 @@
 
 import type { AgentInfo } from '@shared/agents'
 import { interventionWords } from '@shared/interventions'
-import type { Session } from '@shared/types'
+import type { Session, ContextUsage } from '@shared/types'
 import type { PaneUsage } from '@shared/usage'
 import { describePlace } from '@shared/place'
 import { formatCpu, formatMb } from '@shared/usage'
-import { useEffect } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import Elapsed, { formatElapsed, useNow } from './Elapsed'
 
 interface Props {
@@ -48,6 +48,35 @@ export default function SessionInfo({ session: s, paneNumber, agents, usage, onR
   const now = useNow()
   const place = describePlace({ cwd: s.cwd, lane: s.lane, pane: paneNumber })
   const agent = agents.find((a) => a.id === s.agent)
+  const [continuation, setContinuation] = useState('')
+  const [freshId, setFreshId] = useState<string | null>(null)
+  const [continuing, setContinuing] = useState(false)
+  const continuationLock = useRef(false)
+  const continuationAction = async (action: 'prepare' | 'start'): Promise<void> => {
+    if (continuationLock.current) return
+    continuationLock.current = true
+    setContinuing(true)
+    try {
+      const result = action === 'prepare' ? await window.api.prepareContinuation(s.id) : await window.api.continueFresh(s.id)
+      setContinuation(result.reason ?? (result.ok ? 'Queued.' : 'Unavailable.'))
+      if ('id' in result && typeof result.id === 'string') setFreshId(result.id)
+    } catch { setContinuation('Could not request the continuation. Your source remains available.') }
+    finally { continuationLock.current = false; setContinuing(false) }
+  }
+  const [context, setContext] = useState<ContextUsage | null | undefined>(undefined)
+
+  useEffect(() => {
+    let disposed = false
+    setContext(undefined)
+    const read = (): void => {
+      void window.api.continuationStatus(freshId ?? s.id).then((value) => { if (!disposed && value) setContinuation(value.reason) }).catch(() => {})
+      void window.api.contextUsage(s.id).then((value) => {
+      if (!disposed) setContext(value)
+    }).catch(() => { if (!disposed) setContext(null) }) }
+    read()
+    const timer = window.setInterval(read, 15_000)
+    return () => { disposed = true; window.clearInterval(timer) }
+  }, [s.id, s.agent, s.asleep, s.cwd, freshId])
 
   useEffect(() => {
     const key = (e: KeyboardEvent): void => {
@@ -118,6 +147,18 @@ export default function SessionInfo({ session: s, paneNumber, agents, usage, onR
             {agent?.label ?? s.agent}
             {s.model ? <span className="si-dim"> · {s.model}</span> : <span className="si-dim"> · its own default model</span>}
           </Row>
+          <Row label="Context">
+            {context === undefined ? 'checking exact session…' : context ? `${context.percent}% used · ${context.used.toLocaleString()} / ${context.window.toLocaleString()} tokens${context.advisory === 'prepare' ? ' · prepare a handoff soon' : context.advisory === 'boundary' ? ' · consider a fresh chat at a safe task boundary' : ''}` : 'unavailable until this session reports fresh context usage'}
+            {context && <div className="si-dim">{context.model} · measured {ago(context.at, now)}. Capacity information, not a quality score.</div>}
+          </Row>
+          {(s.agent === 'codex' || s.agent === 'claude') && !s.remote && <Row label="Fresh chat">
+            <div>For an unfinished task, compaction remains available in the CLI. For a deliberate fresh chat, prepare and review a handoff first. Opening a fresh chat saves the source asleep for recovery.</div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+              <button disabled={continuing || s.status !== 'idle' || !!s.runSince || !!s.drafting || !!s.ask} onClick={() => { void continuationAction('prepare') }}>Prepare handoff</button>
+              <button disabled={continuing || s.status !== 'idle' || !!s.runSince || !!s.drafting || !!s.ask} onClick={() => { void continuationAction('start') }}>Open fresh chat</button>
+            </div>
+            {continuation && <div role="status" style={{ marginTop: 8 }}>{continuation}</div>}
+          </Row>}
           <Row label="Where">
             {place.full}
             <div className="si-path" title={s.cwd}>
