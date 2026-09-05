@@ -3016,22 +3016,27 @@ ipcMain.handle('agents:update', async (_e, id: string) => {
           `it is open. Close every ${spec.label} pane and press Update again.\r\n`
       )
     }
-    refreshPath()
-    forgetCodexVersion()
-    invalidateAgents()
     const found = onPath(spec.bin)
+    const succeeded = code === 0 && found && !locked
+    // Keep the old Codex reading on a failed update. Clearing it makes the picker
+    // re-read the same installed binary and report a stale update as complete.
+    if (succeeded) {
+      refreshPath()
+      if (spec.id === 'codex') forgetCodexVersion()
+      invalidateAgents()
+    }
     // Asking again is a spawn, so the number arrives after this message. Say what
     // happened rather than a version this call cannot yet know.
-    if (spec.id === 'codex') codexInstalledVersion(spec.bin, invalidateAgents)
+    if (succeeded && spec.id === 'codex') codexInstalledVersion(spec.bin, invalidateAgents)
     send('agents:install-event', {
       agentId: id,
       chunk: locked
         ? ''
-        : found
+        : succeeded
           ? `\r\n${spec.label} is up to date${before ? ` (was ${before})` : ''}.\r\n`
           : `\r\nUpdater exited with code ${code} and ${spec.bin} is no longer on PATH.\r\n`,
       done: true,
-      ok: found && !locked
+      ok: succeeded
     })
   } finally {
     installing.delete(id)
