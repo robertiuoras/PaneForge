@@ -12,7 +12,7 @@
 //
 //   node scripts/sleep-test.mjs
 
-import { buildSync } from 'esbuild'
+import { buildSync, transformSync } from 'esbuild'
 import { strict as assert } from 'node:assert'
 import { mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -153,6 +153,60 @@ ok(/resumableTranscript\(resumeCwd, resumeId, live\.meta\.agent\)/.test(sleepBod
 ok(/live\.meta\.agent !== 'shell' && !resumable/.test(sleepBody), 'every agent conversation without an exact id refuses sleep before an unnamed resume')
 ok(/Sleep refused: this conversation could not be verified/.test(sleepBody), 'the running pane explains why sleep was refused')
 ok(sleepBody.indexOf("live.meta.agent !== 'shell' && !resumable") < sleepBody.indexOf('ledgerSleep('), 'conversation refusal happens before the ledger and process are changed')
+
+// Exercise the real manager method across repeated idle sweeps. A failed identity
+// check must keep the process alive without filling its terminal with warnings.
+const events = []
+let verified = false
+let kills = 0
+let ledgerChanges = 0
+const deps = {
+  canSleep, resumeIdFor: () => 'exact-conversation',
+  resumableTranscript: () => verified ? '/fixture/rollout.jsonl' : null,
+  ledgerSleep: () => ledgerChanges++, killPaneStrays() {}, stopPipe() {},
+  recordEnd() {}, logReclaim() {}, basename: () => 'fixture', SLEEP_MARK: 'asleep'
+}
+const method = transformSync(`class Fixture { ${sleepBody} }`, { loader: 'ts' }).code
+const Fixture = new Function(...Object.keys(deps), `${method}; return Fixture`)(...Object.values(deps))
+const manager = new Fixture()
+const live = {
+  meta: { id: 'pane', agent: 'codex', cwd: '/fixture', status: 'idle' },
+  req: {}, busyUntil: 0, buffer: { push: (text) => events.push(['buffer', text]) },
+  proc: { pid: 1, kill: () => kills++ }
+}
+manager.sessions = new Map([['pane', live]])
+manager.emit = (...args) => events.push(args)
+manager.emitSessions = () => events.push(['sessions'])
+manager.endRun = () => {}
+for (let sweep = 0; sweep < 50; sweep++) is(manager.sleep('pane'), null, 'unverified conversation remains running')
+is(kills, 0, 'repeated refusals never kill the process')
+is(ledgerChanges, 0, 'repeated refusals leave lane ownership intact')
+is(events.filter(([kind]) => kind === 'data').length, 1, 'fifty idle sweeps print one warning')
+is(events.filter(([kind]) => kind === 'buffer').length, 1, 'one warning enters the replay buffer')
+is(events.filter(([kind]) => kind === 'sessions').length, 1, 'refusals do not repeatedly raise attention')
+verified = true
+ok(manager.sleep('pane')?.asleep, 'later exact conversation proof still permits sleep')
+is(kills, 1, 'verified sleep ends the process once')
+live.meta.asleep = undefined
+live.meta.status = 'idle'
+verified = false
+manager.sleep('pane')
+is(events.filter(([kind, , text]) => kind === 'data' && text?.includes('Sleep refused')).length, 2, 'a new refusal after successful sleep is visible again')
+const changeStart = sessions.indexOf('      if (slash && /^\\s*\\/(clear|new|resume)')
+ok(changeStart >= 0, 'found the actual conversation-change handler')
+const changeSource = sessions.slice(changeStart, sessions.indexOf('      const quiet =', changeStart))
+const changeConversation = new Function('slash', 'live', 'id', 'noteSession', changeSource)
+for (const [i, command] of ['/clear', '/new', '/resume exact-id'].entries()) {
+  live.typed = command
+  changeConversation(true, live, 'pane', () => {})
+  manager.sleep('pane')
+  manager.sleep('pane')
+  is(events.filter(([kind, , text]) => kind === 'data' && text?.includes('Sleep refused')).length, 3 + i, `${command} permits one warning for the changed conversation`)
+}
+live.typed = '/help'
+changeConversation(true, live, 'pane', () => {})
+manager.sleep('pane')
+is(events.filter(([kind, , text]) => kind === 'data' && text?.includes('Sleep refused')).length, 5, 'an unrelated command does not reset suppression')
 
 // ---------------------------------------------------------------------------
 // The pin, on a card that is already saying something
