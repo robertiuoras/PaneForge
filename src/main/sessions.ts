@@ -1075,7 +1075,9 @@ export class SessionManager extends EventEmitter {
         asleep: live.meta.asleep,
         busy: Boolean(live.meta.runSince) || live.busyUntil > Date.now(),
         asking: Boolean(live.meta.ask),
-        job: live.meta.job
+        drafting: Boolean(live.meta.drafting),
+        job: live.meta.job,
+        backJob: live.meta.backJob
       })
     )
       return null
@@ -1339,6 +1341,11 @@ export class SessionManager extends EventEmitter {
     // typed by this app or by a phone needs telling. `Live.draft` says why.
     const whole = feedDraft(live.draft, data)
     live.draft = whole.state
+    // A CLI owns its composer. An automatic stop cannot recover a typed line, so a known
+    // draft and an edited line we cannot faithfully reconstruct both refuse it.
+    const drafting = !whole.state.certain || whole.state.text.trim().length > 0
+    const draftChanged = drafting !== Boolean(live.meta.drafting)
+    live.meta.drafting = drafting || undefined
     if (origin !== 'desk') {
       // The origin travels with the line. A person typed it on a phone or on a paired
       // machine; the APP typed `/clear` and an autoclear's resume text, and those must not
@@ -1351,6 +1358,7 @@ export class SessionManager extends EventEmitter {
       // is shown or hidden. The CLI answers them with a redraw; that redraw is
       // not the agent starting work.
       live.repaintUntil = Date.now() + REPAINT_GRACE_MS
+      if (draftChanged) this.emitSessions()
       return
     }
     // A real keystroke: whatever comes back next IS work.
@@ -1441,7 +1449,7 @@ export class SessionManager extends EventEmitter {
       live.meta.engaged = true
       touched = true
     }
-    if (touched || submitted) this.emitSessions()
+    if (touched || submitted || draftChanged) this.emitSessions()
     // ...and a `/clear` un-asks it, AFTER the rule above has treated the keystroke as
     // engagement: the two are both true of the same keypress and this is the one that
     // survives it. The run clock still counts the clear itself (the pane reads Running

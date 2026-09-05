@@ -288,7 +288,8 @@
     "test:deviceopen": "node scripts/device-open-test.mjs",
     "test:uilab": "node scripts/ui-lab-test.mjs",
     "test:codexmodels": "node scripts/codex-models-test.mjs",
-    "test:panefit": "node scripts/pane-fit-test.mjs"
+    "test:panefit": "node scripts/pane-fit-test.mjs",
+    "test:railtrack": "node scripts/rail-track-test.mjs"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",

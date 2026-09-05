@@ -34,6 +34,8 @@ export interface SleepPane {
   busy?: boolean
   /** The pane is sitting on a question - see `shared/choices.ts`. */
   asking?: boolean
+  /** An unsent prompt would be lost when the CLI process is stopped. */
+  drafting?: boolean
   /**
    * Something the pane is running that is not a turn: a shell command (`paneJob.ts`) or
    * a background job an agent left behind (`paneBackJobs.ts`).
@@ -62,7 +64,7 @@ export interface SleepPane {
 export function canSleep(p: SleepPane): boolean {
   if (p.status === 'exited' || p.asleep) return false
   if (p.mirror) return false
-  if (p.busy || p.asking) return false
+  if (p.busy || p.asking || p.drafting) return false
   if (p.job || p.backJob) return false
   return true
 }
@@ -73,6 +75,7 @@ export function sleepRefusal(p: SleepPane): string {
   if (p.status === 'exited') return 'This pane has already ended.'
   if (p.mirror) return 'This pane belongs to another machine - sleep it over there.'
   if (p.asking) return 'This pane is waiting for an answer.'
+  if (p.drafting) return 'This pane has an unsent prompt.'
   if (p.busy) return 'This pane is mid-turn.'
   if (p.job) return `This pane is running ${p.job}.`
   if (p.backJob) return `This pane left ${p.backJob} running.`

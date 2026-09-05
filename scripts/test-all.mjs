@@ -42,6 +42,7 @@ const TESTS = [
   ['autoclear', 'autoclear-test.mjs'],
   ['autoclearwatch', 'autoclear-watch-test.mjs'],
   ['deletesettle', 'delete-settle-test.mjs'],
+  ['autoclearask', 'autoclear-ask-test.mjs'],
   ['cwdgone', 'cwd-gone-test.mjs'],
   ['capacity', 'capacity-test.mjs'],
   ['trimloss', 'trim-loss-test.mjs'],
