@@ -31,10 +31,13 @@ import { join } from 'node:path'
 import {
   DEFAULT_AUTOCLEAR,
   clearCommandFor,
+  resumeBrief,
   watchDecision,
   type AutoClearConfig
 } from '../shared/autoclear'
 import { backJobOf } from './usage'
+import { handoffFor } from './handoffSteps'
+import { acLog } from './autoclearLog'
 import type { Session } from '../shared/types'
 import { ensureAntigravityBridge, PF_CONTEXT_FILE, antigravityDir } from './antigravityBridge'
 import { getConfig } from './config'
@@ -51,6 +54,15 @@ let timer: NodeJS.Timeout | null = null
 let manager: SessionManager | null = null
 /** pane id -> when this watcher last armed it. The cooldown in `watchDecision`. */
 const armedAt = new Map<string, number>()
+
+/** A fresh handoff is a turn, not a polling race. Never clear while it is being prepared. */
+const HANDOFF_TIMEOUT_MS = 5 * 60_000
+const HANDOFF_REQUEST =
+  'Write the canonical session handoff now. Preserve the current objective, work state, changed files or commits, verification, and only actionable Next steps. Do not begin new work after writing it.'
+const CONTINUE_HANDOFF = 'Continue the handoff: work its Next steps in order, and do not re-do finished items.'
+
+type Preparing = { startedAt: number; beforeMtime: number; tokens: number }
+const preparing = new Map<string, Preparing>()
 
 function config(): AutoClearConfig {
   return { ...DEFAULT_AUTOCLEAR, ...(getConfig().autoClear ?? {}) }
@@ -285,6 +297,45 @@ function watched(s: Session, claudeToo: boolean): boolean {
   return claudeToo
 }
 
+function prepareOrArm(mgr: SessionManager, pane: Session, tokens: number, command: string, now: number): void {
+  const prior = preparing.get(pane.id)
+  if (prior) {
+    if (now - prior.startedAt > HANDOFF_TIMEOUT_MS) {
+      preparing.delete(pane.id)
+      acLog(`${pane.id} handoff preparation timed out`)
+      return
+    }
+    // The turn that writes the handoff is still running. Its own completion is the only
+    // safe point to inspect the file: reading a half-written handoff as complete loses work.
+    if (pane.status !== 'idle' || backJobOf(pane.id)) return
+    const handoff = handoffFor(pane.cwd, pane.id, now)
+    if (!handoff.path || handoff.mtimeMs <= prior.beforeMtime) return
+    preparing.delete(pane.id)
+    if (!handoff.open || !handoff.steps.length) {
+      acLog(`${pane.id} handoff preparation refused: no actionable next steps`)
+      return
+    }
+    const prompt = resumeBrief(
+      { paneId: pane.id, steps: handoff.steps, prompt: CONTINUE_HANDOFF, seconds: config().seconds },
+      handoff.path
+    )
+    const res = mgr.armAutoClear(pane.id, {
+      steps: handoff.steps,
+      prompt,
+      seconds: config().seconds,
+      command,
+      tokens: prior.tokens
+    })
+    if (res.ok) armedAt.set(pane.id, now)
+    acLog(`${pane.id} handoff ${res.ok ? 'validated and countdown armed' : `validated but countdown refused: ${res.reason ?? 'unknown'}`}`)
+    return
+  }
+  const before = handoffFor(pane.cwd, pane.id, now).mtimeMs
+  preparing.set(pane.id, { startedAt: now, beforeMtime: before, tokens })
+  acLog(`${pane.id} handoff preparation requested at ${Math.round(tokens / 1000)}k context`)
+  mgr.sendPrompt(pane.id, HANDOFF_REQUEST)
+}
+
 function tick(): void {
   const mgr = manager
   if (!mgr) return
@@ -294,13 +345,16 @@ function tick(): void {
   const panes = mgr.list()
   const live = new Set(panes.map((p) => p.id))
   for (const id of armedAt.keys()) if (!live.has(id)) armedAt.delete(id)
+  for (const id of preparing.keys()) if (!live.has(id)) preparing.delete(id)
   const agyPanes = panes.filter((p) => p.agent === 'antigravity').length
 
   for (const pane of panes) {
     if (!watched(pane, claudeToo)) continue
     // Checked before the disk reads as well as inside `watchDecision`: a desk of four busy
     // panes should not walk ~/.codex/sessions four times a minute to be told no.
-    if (pane.status !== 'idle') continue
+    // A preparation turn must be observed until it writes a fresh handoff or times out.
+    // All other busy panes remain untouched.
+    if (pane.status !== 'idle' && !preparing.has(pane.id)) continue
     if (pane.autoClearAt) continue
     // An agent pane that kicked off a build, a Monitor loop or a `run_in_background` shell
     // goes quiet the moment its turn ends: the footer stops, `engaged` drops, the card
@@ -313,6 +367,14 @@ function tick(): void {
         : pane.agent === 'antigravity'
           ? antigravityContextTokens(pane.cwd, agyPanes)
           : null
+    // Native compaction can legitimately drop the same session below the line while it is
+    // writing a handoff. That is success, not a reason to use a now-stale handoff to clear
+    // it later: abandon this preparation and let the next real threshold crossing decide.
+    if (preparing.has(pane.id) && (tokens === null || tokens < cfg.tokens)) {
+      preparing.delete(pane.id)
+      acLog(`${pane.id} handoff preparation stood down: context is below the threshold`)
+      continue
+    }
     if (tokens === null) {
       // Said once per pane, not once per minute: with two antigravity panes and no cwd on
       // the rows this is the permanent state, and a line a minute about it is a log nobody
@@ -333,28 +395,18 @@ function tick(): void {
       lastArmMs: armedAt.get(pane.id),
       now: Date.now()
     })
+    if (preparing.has(pane.id)) {
+      const command = clearCommandFor(pane.agent)
+      if (command) prepareOrArm(mgr, pane, tokens, command, Date.now())
+      continue
+    }
     if (verdict !== 'arm') continue
     const command = clearCommandFor(pane.agent)
     if (!command) continue
-    // Recorded BEFORE the arm, not after: the countdown can be refused, queued or stood
-    // down, and every one of those is still an attempt this pane should not make again for
-    // half an hour. Recording it on success only is how a refused pane gets retried sixty
-    // times an hour.
-    armedAt.set(pane.id, Date.now())
-    const ask: AutoClearArm = {
-      steps: [],
-      prompt: '',
-      seconds: cfg.seconds,
-      noResume: true,
-      command,
-      tokens
-    }
-    const res = mgr.armAutoClear(pane.id, ask)
-    console.info(
-      res.ok
-        ? `autoclear: ${pane.id} (${pane.agent}) countdown started - ${Math.round(tokens / 1000)}k context, ${command} in ${cfg.seconds}s`
-        : `autoclear: ${pane.id} (${pane.agent}) not cleared at ${Math.round(tokens / 1000)}k - ${res.reason}`
-    )
+    // Do not start a fresh CLI with an empty prompt. A non-Claude watcher has no semantic
+    // transcript parser, so it first asks the active agent for its canonical handoff and
+    // proceeds only when a newer actionable file proves what can safely continue.
+    prepareOrArm(mgr, pane, tokens, command, Date.now())
   }
 }
 

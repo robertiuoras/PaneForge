@@ -287,6 +287,15 @@ console.log('the pane-side watcher, which drives the CLIs with no Stop hook')
   ok('one arm per half hour', watchDecision({ ...base, lastArmMs: base.now - 60_000 }) === 'recent')
   ok('and then it may arm again', watchDecision({ ...base, lastArmMs: base.now - WATCH_COOLDOWN_MS - 1 }) === 'arm')
   ok('the default line is 150k', DEFAULT_AUTOCLEAR.tokens === 150_000 && DEFAULT_AUTOCLEAR.watchNonClaude === true)
+
+  // A watcher cannot know an agent's task state from the terminal bytes. It must ask the
+  // active agent for the canonical handoff and wait for a newer actionable file; a direct
+  // promptless `/new` is destructive and was the regression this path was changed for.
+  const watcher = readFileSync(join(root, 'src/main/autoclearWatch.ts'), 'utf8')
+  ok('the watcher prepares a canonical handoff in the existing pane', watcher.includes('mgr.sendPrompt(pane.id, HANDOFF_REQUEST)'))
+  ok('a fresh actionable handoff is required before it arms', /handoff\.mtimeMs <= prior\.beforeMtime/.test(watcher) && /!handoff\.open \|\| !handoff\.steps\.length/.test(watcher))
+  ok('native compaction below the line stands the preparation down', watcher.includes('handoff preparation stood down: context is below the threshold'))
+  ok('the watcher no longer arms an empty noResume clear', !/noResume:\s*true/.test(watcher))
 }
 
 console.log('the payload, which arrives over the phone server')
