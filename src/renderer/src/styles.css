@@ -956,6 +956,14 @@ button.chip.closing:hover { filter: brightness(1.3); }
   box-shadow: inset 0 1px 0 var(--glass-hi);
 }
 .row-sub .chip { flex: 0 9 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.chip.handoff-queued {
+  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+  color: var(--text); background: var(--surface-2); box-shadow: none;
+}
+.handoff-elapsed {
+  display: inline-block; width: 7ch; text-align: right; flex: none;
+  font-variant-numeric: tabular-nums; color: var(--muted);
+}
 /* The widest thing on the line and the most repeated, so it is the first to be asked. */
 .row-sub .chip.place { flex: 0 999 auto; min-width: 3.4em; }
 .chip.dead { color: var(--danger); border-color: #ff8f8f2b; background: #ff8f8f14; }
