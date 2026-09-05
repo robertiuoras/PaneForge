@@ -1940,7 +1940,9 @@ body.sizing * { user-select: none !important; }
    No inset on the right, though: the scrollbar lives at the host's content edge, and 7px of
    padding there pushed it into the middle of nowhere - you had to aim 17px in from the pane
    border for a bar that looks like it hugs it. Flush right, the border is the aim point. */
-.xterm-wrap { position: relative; flex: 1; min-height: 0; display: flex; overflow: hidden; }
+/* Painted in the TERMINAL's colour so the inset below is one edge - header, then
+   terminal - rather than a band of pane surface under every title. */
+.xterm-wrap { position: relative; flex: 1; min-height: 0; display: flex; overflow: hidden; background: var(--term-bg); }
 /* `min-width: 0` is load-bearing and was missing. A flex item defaults to
    `min-width: auto`, which means it may not shrink below its CONTENT - so a pane
    drawing a grid wider than the window (a mirror at the far end's cols, a phone's
@@ -1952,11 +1954,29 @@ body.sizing * { user-select: none !important; }
    could ever constrain the font. That is why a mirror ended up cut across the screen
    rather than merely small. `overflow: hidden` on the wrap is the belt to this brace:
    whatever is left over is clipped to this pane instead of drawn over its neighbour. */
-/* Painted in the TERMINAL's colour, not the pane's. The host's padding used to show the pane
-   surface between the header and the first row, so every pane wore a 7px band in a third
-   colour under its title (Robert, 2026-09-03: "fill this black part at the top"). One edge:
-   header, then terminal. */
-.xterm-host { flex: 1; min-width: 0; min-height: 0; padding: 5px 0 5px 7px; user-select: text; background: var(--term-bg); }
+/* The inset is a MARGIN, and that is load-bearing. It was padding, and every element in
+   this app is `box-sizing: border-box`, so `getComputedStyle(host).height` answered the
+   BORDER box - the 10px of inset included. xterm's fit addon reads exactly that property
+   as the height it has to fill and subtracts only `.xterm`'s own padding, which is zero,
+   so it budgeted 10px it did not have and proposed ONE ROW TOO MANY at every pane size.
+   Measured 2026-09-05 in a 2x2 desk: host box 320.2px, content 310.2px, cell 15.19px, fit
+   proposed 21 rows, and the terminal's screen ended 8.8px below the host's content edge -
+   58% of the bottom row gone. That is the agent's own status line, the row a CLI writes
+   its model, folder and context reading into, so the pane always cut off the one line that
+   never scrolls (Robert 2026-09-05: "its cut off codex bottom statusline").
+
+   A margin is outside the box the fit addon measures, so the number it reads is the number
+   of pixels that exist. `npm run test:panefit` proves it in a real window.
+
+   The inset paints in the TERMINAL's colour because `.xterm-wrap` above carries that
+   background: before, the host's padding showed the PANE surface between the header and
+   the first row, so every pane wore a 7px band in a third colour under its title (Robert
+   2026-09-03: "fill this black part at the top"). One edge: header, then terminal.
+
+   No inset on the right: the scrollbar lives at the host's content edge, and 7px there
+   pushed it into the middle of nowhere - you had to aim 17px in from the pane border for a
+   bar that looks like it hugs it. Flush right, the border is the aim point. */
+.xterm-host { flex: 1; min-width: 0; min-height: 0; margin: 5px 0 5px 7px; user-select: text; background: var(--term-bg); }
 
 /* Dropping files onto a pane types their paths at the prompt. */
 .xterm-wrap.dropping::after {
