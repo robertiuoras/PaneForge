@@ -195,8 +195,9 @@ export function anchorMark(
 // It is to verify the landing against the one thing that identifies the prompt, its own
 // text, and that needs no CLI-specific marker: a row that CONTAINS the key is this prompt's
 // row whether the CLI decorated it or not. The search is bounded by the neighbouring tags,
-// so a prompt quoted back inside a different turn cannot win, and nearest-first with up
-// before down, because a prompt block is drawn starting above its own tag.
+// so a prompt quoted back inside a different turn cannot win. A reply can repeat the same
+// opening words much closer to a tag than the prompt, so among those bounded candidates the
+// first one is the prompt block; a real CLI echo on the tag's own row remains conclusive.
 //
 // Nothing is moved: `landingRow` answers where to scroll and leaves the marker alone.
 // Re-anchoring is `settleEchoes`' job, and a jump is a read.
@@ -219,7 +220,8 @@ export function rowShowsPrompt(row: string | undefined, key: string): boolean {
 
 /**
  * The row a jump to a tag on row `at` should land on: the tag's own row when it still
- * carries the prompt, else the nearest row between `lo` and `hi` that does, else `at`
+ * carries a CLI echo of the prompt, else the earliest row between `lo` and `hi` that does,
+ * else `at`
  * itself - a tag whose prompt has scrolled out of the buffer still jumps where it always
  * did.
  */
@@ -231,15 +233,11 @@ export function landingRow(
   hi: number
 ): number {
   if (at < 0 || !key) return at
-  if (rowShowsPrompt(row(at), key)) return at
+  // An echoed line is unambiguous. A plain substring on the tag's row is not: Codex can
+  // quote the start of its prompt while rendering the reply over the old composer row.
+  if (onEchoRow(row(at), key)) return at
   const top = Math.max(lo, at - LANDING_SCAN_ROWS, 0)
   const bottom = Math.min(hi, at + LANDING_SCAN_ROWS)
-  for (let d = 1; d <= LANDING_SCAN_ROWS; d++) {
-    const up = at - d
-    if (up >= top && rowShowsPrompt(row(up), key)) return up
-    const down = at + d
-    if (down < bottom && rowShowsPrompt(row(down), key)) return down
-    if (up < top && down >= bottom) break
-  }
+  for (let i = top; i < bottom; i++) if (rowShowsPrompt(row(i), key)) return i
   return at
 }

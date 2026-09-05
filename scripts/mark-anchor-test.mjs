@@ -283,4 +283,20 @@ const ERASE_BELOW = '\x1b[5;1H\x1b[J'
   check('the scan is bounded', LANDING_SCAN_ROWS > 0 && LANDING_SCAN_ROWS <= 2000, String(LANDING_SCAN_ROWS))
 }
 
+// A Codex reply can quote the request's opening words. The reply is usually much closer to
+// the stale composer tag than the prompt, so nearest-first silently lands on reply prose.
+{
+  const key = echoKey('please repeat this exact sentence')
+  const rows = Array.from({ length: 50 }, (_, i) => `  reply line ${i}`)
+  rows[10] = '  please repeat this exact sentence'
+  rows[40] = '  The request said: please repeat this exact sentence'
+  rows[41] = '  Repeating it again: please repeat this exact sentence'
+  rows[45] = '› Implement {feature}'
+  const row = (i) => rows[i]
+  eq('an earlier prompt beats a nearer quoted reply', landingRow(row, 45, key, 0, rows.length), 10)
+  eq('a match before the lower neighbour is excluded', landingRow(row, 45, key, 11, rows.length), 40)
+  eq('a match at the upper neighbour is excluded', landingRow(row, 45, key, 0, 40), 10)
+  eq('matches before, at, and after the bounds are excluded', landingRow(row, 45, key, 11, 40), 45)
+}
+
 console.log(`mark anchor: ${checks} checks passed`)
