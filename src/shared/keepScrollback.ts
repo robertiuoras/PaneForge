@@ -360,6 +360,10 @@ export function keepScrollback(
   const MAX_SEQ = 64
   /** The same, for an OSC - a window title can be a whole path. */
   const MAX_OSC = 1024
+  // Find the FIRST terminator in one scan. Looking up BEL and ST separately
+  // rescans the remaining history for every OSC when the other kind is absent.
+  // Codex emits thousands of BEL colour queries in a single Fix replay.
+  const oscEnd = /\x07|\x1b\\/g
 
   const keeper = (chunk: string): string => {
     const s = carry + chunk
@@ -403,9 +407,9 @@ export function keepScrollback(
       }
       if (next === ']') {
         // OSC: a title, a colour query, a hyperlink. It writes nothing to the screen.
-        const bel = s.indexOf('\x07', i)
-        const st = s.indexOf('\x1b\\', i + 2)
-        const endAt = bel >= 0 && (st < 0 || bel < st) ? bel + 1 : st >= 0 ? st + 2 : -1
+        oscEnd.lastIndex = i + 2
+        const ending = oscEnd.exec(s)
+        const endAt = ending ? oscEnd.lastIndex : -1
         if (endAt < 0) {
           if (s.length - i < MAX_OSC) {
             carry = s.slice(i)

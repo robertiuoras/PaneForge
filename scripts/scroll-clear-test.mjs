@@ -12,6 +12,7 @@
 //   node scripts/scroll-clear-test.mjs
 
 import { buildSync } from 'esbuild'
+import { spawnSync } from 'node:child_process'
 import { strict as assert } from 'node:assert'
 import { mkdirSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -628,4 +629,26 @@ eq('nor a blank row', ruleRow('   '), false)
   }
 }
 
+// Fix replays megabytes of colour queries from Codex. Searching for both OSC
+// terminators independently rescans the remaining log when only one kind occurs.
+// Run outside this test process so a regression fails instead of wedging the suite.
+for (const ending of ['\x07', '\x1b\\']) {
+  const replay = spawnSync(process.execPath, ['-e', `
+    const { keepScrollback } = require(${JSON.stringify(outfile)});
+    const ending = ${JSON.stringify(ending)};
+    const raw = ('\\x1b]10;?'+ending+'│answer '.repeat(50)).repeat(12000);
+    const start = performance.now();
+    const result = keepScrollback(() => 30, () => false)(raw);
+    if (result !== raw) process.exit(2);
+    console.log(Math.round(performance.now() - start));
+  `], { encoding: 'utf8', timeout: 1500 });
+  check(`large OSC replay completes and preserves bytes (${JSON.stringify(ending)})`,
+    replay.status === 0, replay.error?.message ?? replay.stderr);
+}
+{
+  const k = keeper();
+  eq('OSC BEL and ST mixed in one chunk', k('\x1b]0;one\x07\x1b]0;two\x1b\\'), '\x1b]0;one\x07\x1b]0;two\x1b\\');
+  eq('split OSC ST waits for its final byte', k('\x1b]0;three\x1b'), '');
+  eq('split OSC ST retains all bytes', k('\\text'), '\x1b]0;three\x1b\\text');
+}
 console.log(`scroll clear: ${checks} checks passed`)
