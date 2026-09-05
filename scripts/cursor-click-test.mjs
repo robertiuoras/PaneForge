@@ -10,9 +10,9 @@
 //
 //   node scripts/cursor-click-test.mjs
 
-import { buildSync } from 'esbuild'
+import { buildSync, transformSync } from 'esbuild'
 import { strict as assert } from 'node:assert'
-import { mkdirSync, rmSync } from 'node:fs'
+import { mkdirSync, rmSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -460,3 +460,31 @@ const box = { left: 100, top: 50, width: 800, height: 400 }
 }
 
 console.log(`cursor click: ${checks} checks passed`)
+
+// Execute the renderer's adapter, not only the arithmetic with hand-built offsets.
+{
+  const { Terminal } = createRequire(import.meta.url)('@xterm/headless')
+  const source = readFileSync(join(root, 'src/renderer/src/components/TerminalPane.tsx'), 'utf8')
+  const begin = source.indexOf('    const textColumn = ')
+  const end = source.indexOf('    /**\n     * What is being typed, row by row', begin)
+  assert.ok(begin > 0 && end > begin)
+  const code = transformSync(source.slice(begin,end), {loader:'ts'}).code
+  for (const value of ['A你BCDE', 'AéBCDEF', 'A😀BCDE']) {
+    const term = new Terminal({cols:6, rows:5, allowProposedApi:true})
+    await new Promise(resolve=>term.write(value,resolve))
+    const inputRow = new Function('t','offsetsForCells',code+';return inputRow')(term,offsetsForCells)
+    const first = inputRow(0,0,null,true)
+    assert.ok(first, `wrapped full row remains editable: ${value}`)
+    assert.equal(first.end,6)
+    term.dispose()
+  }
+  const term = new Terminal({cols:6, rows:5, allowProposedApi:true})
+  await new Promise(resolve=>term.write('A你',resolve))
+  const inputRow = new Function('t','offsetsForCells',code+';return inputRow')(term,offsetsForCells)
+  const row = inputRow(0,0,2,false)
+  assert.ok(row,'CJK textual endpoint maps past continuation cell')
+  assert.equal(row.end,3)
+  assert.equal(row.offsets.at(-1),2)
+  term.dispose()
+  console.log('renderer Unicode adapter: 4 real xterm cases passed')
+}

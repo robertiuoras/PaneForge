@@ -2972,17 +2972,17 @@ function TerminalPane({
       if (!line || offset < 0) return null
       for (let col = 0; col <= t.cols; col++) {
         const seen = line.translateToString(false, 0, col).length
-        if (seen === offset) return col
+        if (seen === offset && (col === t.cols || line.getCell(col)?.getWidth() !== 0)) return col
         if (seen > offset) return null
       }
       return null
     }
 
     /** One input row with cell-to-editor offsets supplied by xterm itself. */
-    const inputRow = (r: number, startText: number, endText: number, full: boolean): InputRow | null => {
+    const inputRow = (r: number, startText: number, endText: number | null, full: boolean): InputRow | null => {
       const line = t.buffer.active.getLine(r)
       const start = textColumn(r, startText)
-      const end = textColumn(r, endText)
+      const end = endText === null ? t.cols : textColumn(r, endText)
       if (!line || start === null || end === null || end < start) return null
       const offsets = offsetsForCells(start, end, (col) => line.getCell(col))
       if (!offsets) return null
@@ -3038,7 +3038,7 @@ function TerminalPane({
         const text = rowText(r)
         // An xterm wrap is a row that ran out of columns, so it holds no character of its
         // own and every row of one is full by definition.
-        const input = inputRow(r, r === top ? inputStart(text) : 0, r === bottom ? inputEnd(text) : t.cols, true)
+        const input = inputRow(r, r === top ? inputStart(text) : 0, r === bottom ? inputEnd(text) : null, true)
         if (!input) return null
         rows.push(input)
       }
@@ -3153,7 +3153,11 @@ function TerminalPane({
         const rowsCrossed = Math.abs(pos.end.y - pos.start.y)
         const sentAt = Date.now()
         const sentRevision = keyRevision.current
+        const wholeInput = want === 0 && offsetIn(span.rows, pos.start.y - span.top, pos.start.x) === 0
         const owed = (): void => {
+          // Reflow can reveal an unselected wrap space, making total length grow.
+          // Only a whole-input selection proves every leftover was selected.
+          if (!wholeInput) return
           if (typedAt.current > sentAt || keyRevision.current !== sentRevision) return
           const seen = composerLength()
           // The CLI may not have drawn the first delete yet. Its unchanged frame
@@ -3239,7 +3243,7 @@ function TerminalPane({
       // Shift is only half the answer: on a Mac xterm reads Option, and only when
       // `macOptionClickForcesSelection` is on - which is why every drag over a Codex pane
       // there selected nothing. See shared/forceSelect.ts.
-      for (const [key, value] of Object.entries(forceKeys(isMac))) {
+      for (const [key, value] of Object.entries(forceKeys(navigator.platform))) {
         try {
           // An own property shadows the prototype getter, so xterm - which sees this event
           // after this capture-phase listener - reads it as a forced selection.

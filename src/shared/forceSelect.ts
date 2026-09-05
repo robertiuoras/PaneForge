@@ -29,11 +29,12 @@ export interface ForceKeys {
 /**
  * The modifiers to stamp on a mousedown so xterm forces a selection.
  *
- * xterm and this renderer use the same `navigator`-based Mac detector. Stamp only the key
+ * Match xterm's platform predicate, including touch devices reporting MacIntel. Stamp only the key
  * xterm reads: Alt on Windows or Linux starts column selection, so sending both turns a
  * normal multi-line drag into a rectangle there.
  */
-export function forceKeys(isMac: boolean): ForceKeys {
+export function forceKeys(platform: string): ForceKeys {
+  const isMac = ['Macintosh', 'MacIntel', 'MacPPC', 'Mac68K'].includes(platform)
   return isMac ? { altKey: true } : { shiftKey: true }
 }
 

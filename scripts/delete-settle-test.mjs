@@ -24,7 +24,7 @@ const { leftoverBackspaces } = await import(
     Buffer.from(build.outputFiles[0].text).toString("base64")
 );
 let cases = 0;
-function fixture({ before = 10, want = 5, rowsCrossed = 1 } = {}) {
+function fixture({ before = 10, want = 0, rowsCrossed = 1, wholeInput = true } = {}) {
   const state = {
     seen: before,
     typedAt: { current: 0 },
@@ -32,6 +32,7 @@ function fixture({ before = 10, want = 5, rowsCrossed = 1 } = {}) {
     sent: [],
   };
   const owed = new Function(
+    "wholeInput",
     "typedAt",
     "keyRevision",
     "sentRevision",
@@ -45,6 +46,7 @@ function fixture({ before = 10, want = 5, rowsCrossed = 1 } = {}) {
     "BACKSPACE",
     code + "; return owed",
   )(
+    wholeInput,
     state.typedAt,
     state.revision,
     1,
@@ -75,7 +77,7 @@ function fixture({ before = 10, want = 5, rowsCrossed = 1 } = {}) {
 }
 {
   const { state, owed } = fixture();
-  state.seen = 6;
+  state.seen = 1;
   owed();
   owed();
   assert.deepEqual(
@@ -87,7 +89,7 @@ function fixture({ before = 10, want = 5, rowsCrossed = 1 } = {}) {
 }
 {
   const { state, owed } = fixture();
-  state.seen = 6;
+  state.seen = 1;
   state.revision.current++;
   owed();
   assert.deepEqual(
@@ -99,7 +101,7 @@ function fixture({ before = 10, want = 5, rowsCrossed = 1 } = {}) {
 }
 {
   const { state, owed } = fixture();
-  state.seen = 6;
+  state.seen = 1;
   state.typedAt.current = 101;
   owed();
   assert.deepEqual(state.sent, [], "typing cancels old correction");
@@ -108,7 +110,7 @@ function fixture({ before = 10, want = 5, rowsCrossed = 1 } = {}) {
 {
   const { state, owed } = fixture();
   owed();
-  state.seen = 5;
+  state.seen = 0;
   owed();
   assert.deepEqual(
     state.sent,
@@ -118,3 +120,10 @@ function fixture({ before = 10, want = 5, rowsCrossed = 1 } = {}) {
   cases++;
 }
 console.log(`delete settle: ${cases} behavioral cases passed`);
+
+{
+ const {state,owed}=fixture({before:192,want:155,wholeInput:false});
+ state.seen=156; owed(); owed();
+ assert.deepEqual(state.sent,[], 'suffix reflow must not delete an unselected wrap space'); cases++;
+}
+console.log(`delete settle including partial selection: ${cases} cases passed`);

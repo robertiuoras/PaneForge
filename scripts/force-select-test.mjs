@@ -54,8 +54,10 @@ if (existsSync(svc)) {
   console.log('force select: xterm sources absent, the rule itself is unchecked')
 }
 
-const macKeys = forceKeys(true)
-const otherKeys = forceKeys(false)
+const macKeys = forceKeys('MacIntel')
+const otherKeys = forceKeys('Win32')
+check('MacIntel touch devices use xterm Alt selection too', forceKeys('MacIntel').altKey === true)
+check('Linux uses Shift selection', forceKeys('Linux x86_64').shiftKey === true)
 // The control: what the pane used to stamp. It has to FAIL on the Mac, or this proves nothing.
 const shiftOnly = { shiftKey: true, altKey: false }
 check('control: Shift alone forces nothing on a Mac', !wouldForce(shiftOnly, true, true))
@@ -87,6 +89,6 @@ check('every mousedown listener is registered', at('placeCursor') > 0 && at('mar
 check('the stamp is registered LAST, so no handler of ours reads the lie', at('forceSelectable') > Math.max(at('placeCursor'), at('markDown'), at('onMouseDown')), `forceSelectable at ${at('forceSelectable')}`)
 check('the stamp only runs while the CLI holds the mouse', /forceSelectable = \(e: MouseEvent\): void => \{\s*\n\s*if \(!mouseSelectRef\.current \|\| !mouseGrabbed\(\)\) return/.test(pane))
 
-check('the pane chooses modifiers from the renderer platform', pane.includes('Object.entries(forceKeys(isMac))'))
+check('the pane chooses modifiers from xterm platform, regardless of touch', pane.includes('Object.entries(forceKeys(navigator.platform))'))
 
 console.log(`force select: ${checks} checks passed`)
