@@ -154,6 +154,8 @@ const GATED_INVOKE = new Set([
   'prompt:split',
   'autoclear:ask',
   'sessions:start',
+  'sessions:prepareContinuation',
+  'sessions:continueFresh',
   'sessions:startMany',
   'sessions:restart',
   'sessions:switchAgent',
@@ -682,6 +684,10 @@ export class PhoneServer {
     const url = new URL(req.url ?? '/', 'http://localhost')
     const path = url.pathname
 
+    // This tiny manifest describes only the pairing entry page. It is deliberately
+    // available before authentication so a home-screen shortcut can retain its own
+    // origin and standalone chrome, while every renderer asset remains behind auth.
+    if (path === '/pf-entry.webmanifest') return this.entryManifest(res)
     if (path === '/pf/pair' && req.method === 'POST') return await this.pair(req, res)
     // Both halves of being let in without a code, and both of them before the auth check:
     // a browser that has not been approved yet is exactly who is asking.
@@ -1048,6 +1054,17 @@ export class PhoneServer {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
     res.end(PAIR_PAGE)
   }
+
+  private entryManifest(res: ServerResponse): void {
+    res.writeHead(200, {
+      'content-type': 'application/manifest+json; charset=utf-8',
+      'cache-control': 'no-store'
+    })
+    // Relative values preserve the hostname that the shortcut was installed from.
+    // There is intentionally no renderer asset or service worker here: pairing remains
+    // a one-page boundary and an unauthenticated request learns nothing behind it.
+    res.end('{"name":"PaneForge","short_name":"PaneForge","start_url":"./","scope":"./","display":"standalone","background_color":"#17150f","theme_color":"#17150f"}')
+  }
 }
 
 /** Addresses a phone on this network can actually type, best first. */
@@ -1229,16 +1246,16 @@ const PAIR_PAGE = `<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>PaneForge</title><style>
 :root{color-scheme:dark light}
-body{margin:0;min-height:100vh;display:grid;place-items:center;background:#17150f;color:#f3ece0;
-font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
-main{width:min(320px,86vw);text-align:center}
+body{margin:0;min-height:100vh;min-height:100dvh;display:grid;place-items:center;background:#17150f;color:#f3ece0;
+font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;padding:max(20px,env(safe-area-inset-top)) max(20px,env(safe-area-inset-right)) max(20px,env(safe-area-inset-bottom)) max(20px,env(safe-area-inset-left));box-sizing:border-box}
+main{width:min(360px,100%);text-align:center}
 h1{font-size:17px;font-weight:600;letter-spacing:.02em;margin:0 0 4px}
 p{margin:0 0 22px;opacity:.6;font-size:14px}
-input{width:100%;box-sizing:border-box;font:600 28px/1 ui-monospace,SFMono-Regular,Menlo,monospace;
+input{width:100%;min-height:56px;box-sizing:border-box;font:600 28px/1 ui-monospace,SFMono-Regular,Menlo,monospace;
 letter-spacing:.28em;text-align:center;text-transform:uppercase;padding:16px 12px;border-radius:12px;
 border:1px solid #3a3327;background:#1f1c14;color:#f3ece0}
 input:focus{outline:2px solid #f0a868;outline-offset:1px}
-button{margin-top:14px;width:100%;padding:14px;border:0;border-radius:12px;background:#f0a868;
+button{margin-top:14px;width:100%;min-height:48px;padding:14px;border:0;border-radius:12px;background:#f0a868;
 color:#211a10;font:600 16px/1 inherit}
 .bad{margin-top:14px;color:#f08a7a;font-size:14px;min-height:20px}
 .sas{font:700 44px/1.1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.22em;
@@ -1250,7 +1267,7 @@ animation:b 1.2s ease-in-out infinite}
 @keyframes b{40%{opacity:1}}
 @media (prefers-reduced-motion:reduce){.dots i{animation:none;opacity:.6}}
 [hidden]{display:none!important}
-</style></head><body>
+</style><meta name="theme-color" content="#17150f"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="apple-mobile-web-app-title" content="PaneForge"><link rel="manifest" href="/pf-entry.webmanifest"></head><body>
 <main id=wait hidden>
 <h1>PaneForge</h1><p id=waitsay>Check this number on the desk, then press Approve there.</p>
 <div class=sas id=sas></div>
@@ -1258,7 +1275,7 @@ animation:b 1.2s ease-in-out infinite}
 <div class=bad id=asked></div>
 </main>
 <main id=manual hidden><form id=f>
-<h1>PaneForge</h1><p>Type the code from Settings &rarr; Devices</p>
+<h1>Connect this phone</h1><p>This shortcut reached PaneForge, but this browser is not signed in here yet. Scan the current code in Devices, or enter it below.</p>
 <input id=c autocomplete=off autocapitalize=characters spellcheck=false inputmode=text maxlength=16>
 <button>Connect</button><div class=bad id=e></div></form></main>
 <main id=busy hidden><p>Connecting&hellip;</p></main>

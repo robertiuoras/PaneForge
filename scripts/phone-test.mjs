@@ -96,6 +96,14 @@ async function post(path, body, cookie, extra) {
   ok(res.status === 200, 'unpaired root answers')
   ok(!text.includes('THE-REAL-UI'), 'unpaired root is NOT the app', text.slice(0, 40))
   ok(text.includes('/pf/pair'), 'unpaired root is the pairing page')
+  ok(text.includes('/pf-entry.webmanifest'), 'unpaired entry keeps standalone home-screen metadata')
+
+  const manifest = await get('/pf-entry.webmanifest')
+  const manifestBody = await manifest.json()
+  ok(manifest.status === 200, 'unpaired entry manifest answers')
+  ok(manifest.headers.get('content-type')?.startsWith('application/manifest+json'), 'entry manifest has its manifest type')
+  ok(manifestBody.start_url === './' && manifestBody.scope === './', 'entry manifest stays on the installed origin')
+  ok(!JSON.stringify(manifestBody).includes('THE-REAL-UI'), 'entry manifest leaks no renderer bytes')
 
   const asset = await get('/assets/app.js')
   ok(!(await asset.text()).includes('export const x'), 'not one asset leaks before pairing')

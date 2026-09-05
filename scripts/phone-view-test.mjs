@@ -17,9 +17,10 @@
 // Out of `npm test` on purpose: it needs a window up and a port bound.
 
 import { spawn } from 'node:child_process'
-import { mkdtempSync, rmSync, existsSync } from 'node:fs'
+import { mkdtempSync, rmSync, existsSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { connect } from './ui-lab.mjs'
 
 const arg = (name, fallback) => {
   const i = process.argv.indexOf(`--${name}`)
@@ -38,12 +39,14 @@ const ok = (cond, what, detail = '') => {
   console.error(`  FAIL ${what}${detail ? ` - ${detail}` : ''}`)
 }
 
-const CHROME = [
-  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-  '/Applications/Chromium.app/Contents/MacOS/Chromium',
-  'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-  'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe'
-].find((p) => existsSync(p))
+const CHROME =
+  process.env.PF_TEST_CHROME ||
+  [
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    '/Applications/Chromium.app/Contents/MacOS/Chromium',
+    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe'
+  ].find((p) => existsSync(p))
 
 if (!CHROME) {
   console.log('phone view: SKIPPED - no system Chrome found (nothing was downloaded)')
@@ -58,6 +61,26 @@ if (!alive) {
   console.log('  start it with: npm run build && npm run try -- --keep --show')
   process.exit(0)
 }
+
+// Own a harmless desktop-fitted pane before the phone connects. The rewrap assertion is
+// meaningful only when the terminal first existed at desk width; never borrow a user's pane.
+const desk = await connect(process.env.PF_PORT || '9334')
+const seed = await desk.evaluate(`(async () => {
+  const rows = await window.api.startSessions([{ cwd: ${JSON.stringify(tmpdir())}, agent: 'shell', title: 'Phone verification' }])
+  return rows[0]?.session?.id ?? rows[0]?.id ?? null
+})()`)
+if (!seed) throw new Error('could not create the owned phone verification shell')
+await desk.evaluate(`(async () => {
+  const id = ${JSON.stringify(seed)}
+  const row = document.querySelector('.row[data-id=' + JSON.stringify(id) + ']')
+  row?.click()
+  for (let n = 0; n < 40; n++) {
+    if ((window.__pf?.[id]?.term?.cols ?? 0) > 80) break
+    await new Promise((r) => setTimeout(r, 100))
+  }
+  window.api.write(id, 'echo PHONE_DESKTOP_HISTORY_MARKER\\r')
+  return window.__pf?.[id]?.term?.cols ?? 0
+})()`)
 
 const profile = mkdtempSync(join(tmpdir(), 'pf-chrome-'))
 const cdpPort = 9444
@@ -110,7 +133,10 @@ function client(ws) {
       const id = next++
       pending.set(id, { resolve, reject })
       ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }))
-      setTimeout(() => pending.has(id) && (pending.delete(id), reject(new Error(`${method} timed out`))), 20_000)
+      setTimeout(
+        () => pending.has(id) && (pending.delete(id), reject(new Error(`${method} timed out`))),
+        20_000
+      )
     })
 }
 
@@ -148,8 +174,7 @@ try {
   {
     const scan = async (url, want) => {
       const t = await send('Target.createTarget', { url })
-      const s = (await send('Target.attachToTarget', { targetId: t.targetId, flatten: true }))
-        .sessionId
+      const s = (await send('Target.attachToTarget', { targetId: t.targetId, flatten: true })).sessionId
       await send('Runtime.enable', {}, s)
       const look = async () => {
         const res = await send(
@@ -216,15 +241,10 @@ try {
     if (has) break
   }
 
-  // A desk with no panes proves nothing about a client that draws panes, so the browser
-  // opens one itself - through the link, which is also the first half of "full control".
-  const opened = await evaluate(`(async () => {
-    const have = await window.api.listSessions()
-    if (have.length) return 'already ' + have.length
-    const s = await window.api.startSession({ cwd: ${JSON.stringify(process.cwd())}, agent: 'shell' })
-    return 'started ' + s.id
-  })()`).catch((e) => `failed: ${e.message}`)
-  ok(!String(opened).startsWith('failed'), 'a pane can be opened from the phone', String(opened))
+  const opened = await evaluate(
+    `(async () => (await window.api.listSessions()).some((s) => s.id === ${JSON.stringify(seed)}))()`
+  )
+  ok(opened, 'the owned desktop pane arrived on the phone', String(opened))
   await sleep(1200)
 
   // ---- 3. the renderer boots, over HTTP, with the HTTP transport ---------------
@@ -252,7 +272,7 @@ try {
   const marker = typed.split(' ')[1]
   const wrote = await evaluate(`(async () => {
     const list = await window.api.listSessions()
-    const id = list[0]?.id
+    const id = list.find((s) => s.id === ${JSON.stringify(seed)})?.id
     if (!id) return 'no pane'
     window.api.write(id, ${JSON.stringify(typed)} + '\\r')
     return id
@@ -318,13 +338,15 @@ try {
   ok(home.panes?.shown === false, 'the panes are not sharing the screen with it')
 
   // Tap a pane the way a finger would.
-  await evaluate(`document.querySelector('.sidebar .list .row')?.click()`)
+  await evaluate(
+    `document.querySelector('.sidebar .list .row[data-id=' + JSON.stringify(${JSON.stringify(seed)}) + ']')?.click()`
+  )
   await sleep(600)
   const pane = await evaluate(`({
     sidebar: ${box('.sidebar')},
     panes: ${box('.panes')},
     back: ${box('.handheld-back')},
-    cols: Object.values(window.__pf ?? {})[0]?.term?.cols ?? 0,
+    cols: window.__pf?.[${JSON.stringify(seed)}]?.term?.cols ?? 0,
     hit: (() => {
       const b = document.querySelector('.handheld-back')
       if (!b) return 'no chip'
@@ -336,7 +358,11 @@ try {
   ok(pane.sidebar?.shown === false, 'a tapped pane takes the screen')
   ok(pane.panes?.w >= list.width - 12, 'the pane has the width', String(pane.panes?.w))
   ok(pane.cols >= 40, 'which is a usable terminal, not 16 columns', `${pane.cols} cols`)
-  ok(pane.back?.shown === true && pane.back.h >= 34, 'the way back is a finger-sized chip', JSON.stringify(pane.back))
+  ok(
+    pane.back?.shown === true && pane.back.h >= 34,
+    'the way back is a finger-sized chip',
+    JSON.stringify(pane.back)
+  )
   ok(pane.hit === 'chip', 'and nothing is drawn over it', String(pane.hit))
 
   // The app may never be taller than the glass. A phone browser's `100vh` is the LARGE
@@ -385,8 +411,9 @@ try {
   ok(fits.tappable === true, 'a tap at its centre reaches the input', String(fits.tappable))
 
   // ---- 7. and what the pane came back WITH ------------------------------------
-  // The pane opened at this phone's width, which is not the desk's, so the pty is resized
-  // and the pane re-wraps. That path used to answer by calling `t.clear()` - which drops
+  // Trigger an actual width change after the phone has painted its initial frame. Initial
+  // fit can already be phone-sized, so mounting alone does not prove the resize path ran.
+  // That path used to answer by calling `t.clear()` - which drops
   // the buffer `getBuffer` had just replayed into this browser, so a pane opened on a
   // phone showed an empty screen and nothing else ("the chat history in terminal doesnt
   // work on mobile, its not showing anything"). It is pushed into the scrollback now.
@@ -395,6 +422,14 @@ try {
   // destroyed was the history from BEFORE the phone connected, and a live echo typed
   // afterwards repopulates the pane and hides it. Waited out past the 400ms the re-wrap
   // path is scheduled on.
+  const beforeCols = await evaluate(`window.__pf?.[${JSON.stringify(seed)}]?.term?.cols ?? 0`)
+  await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true }, sessionId)
+  await sleep(1800)
+  const afterCols = await evaluate(`window.__pf?.[${JSON.stringify(seed)}]?.term?.cols ?? 0`)
+  ok(beforeCols !== afterCols, 'a handset width change really resized the terminal', `${beforeCols} to ${afterCols}`)
+  // Shrinking first waits for the pty acknowledgement; growing fits immediately and
+  // exercises the scrollback-preserving repaint counted by the renderer probe.
+  await send('Emulation.setDeviceMetricsOverride', { width: 430, height: 844, deviceScaleFactor: 1, mobile: true }, sessionId)
   await sleep(1800)
   // Samples rather than one line: xterm re-wraps as the columns change, so a long line
   // from the desk can arrive split across two rows and read as missing when it is there.
@@ -409,7 +444,7 @@ try {
     return lines.slice(0, Math.max(1, Math.floor(lines.length / 2))).slice(-8).map((l) => l.slice(0, 14))
   })()`)
   const kept = await evaluate(`(() => {
-    const h = Object.values(window.__pf ?? {})[0]
+    const h = window.__pf?.[${JSON.stringify(seed)}]
     const t = h?.term
     if (!t) return { lines: 0, text: '', rewraps: 0 }
     const buf = t.buffer.active
@@ -430,7 +465,14 @@ try {
     )
   }
   ok((kept.lines ?? 0) > 1, 'so it is not an empty terminal', String(kept.lines))
+  const screenshot = arg('screenshot', '')
+  if (screenshot) {
+    const shot = await send('Page.captureScreenshot', { format: 'png' }, sessionId)
+    writeFileSync(screenshot, Buffer.from(shot.data, 'base64'))
+  }
 } finally {
+  await desk.evaluate(`window.api.killSession(${JSON.stringify(seed)})`).catch(() => {})
+  desk.ws.close()
   // A CDP browser left open against a live server is the 17 GB mistake; close it.
   await send('Target.closeTarget', { targetId }).catch(() => {})
   ws.close()
