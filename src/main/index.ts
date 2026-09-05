@@ -14,6 +14,7 @@ import {
   nativeImage,
   net,
   Notification,
+  powerMonitor,
   protocol,
   screen,
   shell } from 'electron'
@@ -3966,6 +3967,13 @@ ipcMain.on('restore:answer', (_e, answer: RestoreAnswer) => {
 })
 
 app.whenReady().then(() => {
+  // OS sleep preserves processes, but pending app buffers must also be recoverable
+  // if the battery runs out before the next wake. Do not end or restart any agent.
+  powerMonitor.on('suspend', () => {
+    noteDesk(true)
+    history.flush()
+    updateLog('power', 'suspend: desk and terminal history saved; agents left running')
+  })
   // The app is open again, so the "closed on purpose" marker is stale: clear it, or the
   // keep-alive task would refuse to restart this copy after a genuine crash.
   try {
