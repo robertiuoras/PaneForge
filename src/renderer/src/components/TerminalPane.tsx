@@ -42,6 +42,7 @@ import {
   keysForRows,
   keysToPoint,
   leftoverBackspaces,
+  offsetsForCells,
   offsetIn,
   BACKSPACE
 } from '../../../shared/cursorMove'
@@ -2963,6 +2964,29 @@ function TerminalPane({
       return leadingBlanks(text)
     }
 
+    /** Turn a UTF-16 offset in xterm's rendered text into a verified cell boundary. */
+    const textColumn = (r: number, offset: number): number | null => {
+      const line = t.buffer.active.getLine(r)
+      if (!line || offset < 0) return null
+      for (let col = 0; col <= t.cols; col++) {
+        const seen = line.translateToString(false, 0, col).length
+        if (seen === offset) return col
+        if (seen > offset) return null
+      }
+      return null
+    }
+
+    /** One input row with cell-to-editor offsets supplied by xterm itself. */
+    const inputRow = (r: number, startText: number, endText: number, full: boolean): InputRow | null => {
+      const line = t.buffer.active.getLine(r)
+      const start = textColumn(r, startText)
+      const end = textColumn(r, endText)
+      if (!line || start === null || end === null || end < start) return null
+      const offsets = offsetsForCells(start, end, (col) => line.getCell(col))
+      if (!offsets) return null
+      return { start, end, full, offsets }
+    }
+
     /**
      * What is being typed, row by row: the composer the CLI draws when there is one, and
      * otherwise the cursor's row plus whatever xterm wrapped it onto.
@@ -2996,7 +3020,10 @@ function TerminalPane({
           // so every row that stopped one or two columns short of the edge was called
           // full, its wrap counted as worth nothing, and one character per crossed row
           // survived the delete. That is "it doesn't delete all of it".
-          rows.push({ start, end, full: end >= comp.width - 1 })
+          const input = inputRow(r, start, end, false)
+          if (!input) return null
+          input.full = input.end >= comp.width - 1
+          rows.push(input)
         }
         return { top: comp.top, rows }
       }
@@ -3009,11 +3036,9 @@ function TerminalPane({
         const text = rowText(r)
         // An xterm wrap is a row that ran out of columns, so it holds no character of its
         // own and every row of one is full by definition.
-        rows.push({
-          start: r === top ? inputStart(text) : 0,
-          end: r === bottom ? inputEnd(text) : t.cols,
-          full: true
-        })
+        const input = inputRow(r, r === top ? inputStart(text) : 0, r === bottom ? inputEnd(text) : t.cols, true)
+        if (!input) return null
+        rows.push(input)
       }
       return { top, rows }
     }
@@ -3043,7 +3068,9 @@ function TerminalPane({
       let n = 0
       for (let i = 0; i < span.rows.length; i++) {
         const r = span.rows[i]
-        n += r.end - r.start
+        const width = r.offsets?.[r.offsets.length - 1]
+        if (width === undefined) return -1
+        n += width
         if (i < span.rows.length - 1 && !r.full) n++
       }
       return n

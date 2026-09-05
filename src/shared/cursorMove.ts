@@ -160,15 +160,70 @@ export interface InputRow {
   end: number
   /** the row is drawn out to the composer's full width, so the break below it ate nothing */
   full: boolean
+  /**
+   * Logical editor offsets at cell boundaries, relative to `start`. A wide glyph occupies
+   * two terminal cells but one arrow/backspace position; its continuation boundary is
+   * undefined so a selection cannot split it. Omitted rows retain the old ASCII mapping.
+   */
+  offsets?: readonly (number | undefined)[]
+}
+
+/** The small public part of an xterm buffer cell needed to map its screen columns safely. */
+export interface InputCell {
+  getWidth(): number
+  getChars(): string
+}
+
+/**
+ * Map each cell boundary in `[start, end]` to editor positions.
+ *
+ * xterm already owns Unicode width and cluster handling. Each non-continuation cell it
+ * exposes is one editable unit, whatever `getChars()` contains; a width-zero continuation
+ * has no safe caret boundary. Refusing that boundary is safer than making up a UTF-16
+ * offset and deleting a half-selected glyph.
+ */
+export function offsetsForCells(
+  start: number,
+  end: number,
+  cellAt: (col: number) => InputCell | undefined
+): readonly (number | undefined)[] | null {
+  if (start < 0 || end < start) return null
+  const offsets: (number | undefined)[] = Array(end - start + 1).fill(undefined)
+  offsets[0] = 0
+  let logical = 0
+  for (let col = start; col < end; ) {
+    const cell = cellAt(col)
+    if (!cell) return null
+    const width = cell.getWidth()
+    // Width zero is a continuation, never a safe caret point. Widths above two are not
+    // a terminal shape we have evidence for, so leave that input alone rather than guess.
+    if (width !== 1 && width !== 2) return null
+    // Reading xterm's cluster is deliberate: its one leading cell, not JavaScript's UTF-16
+    // length, is the logical editor unit. Empty cells can be typed spaces on a full row.
+    cell.getChars()
+    if (col + width > end) return null
+    logical++
+    for (let p = col + 1; p < col + width; p++) offsets[p - start] = undefined
+    offsets[col + width - start] = logical
+    col += width
+  }
+  return offsets
 }
 
 /** How many characters into the input a screen position is, or -1 when it is not in it. */
 export function offsetIn(rows: InputRow[], index: number, col: number): number {
   if (!rows.length || index < 0 || index >= rows.length) return -1
   let off = 0
-  for (let i = 0; i < index; i++) off += rows[i].end - rows[i].start + (rows[i].full ? 0 : 1)
+  for (let i = 0; i < index; i++) {
+    const r = rows[i]
+    const n = r.offsets?.[r.offsets.length - 1] ?? r.end - r.start
+    if (n === undefined) return -1
+    off += n + (r.full ? 0 : 1)
+  }
   const r = rows[index]
-  return off + Math.min(Math.max(col, r.start), r.end) - r.start
+  const at = Math.min(Math.max(col, r.start), r.end) - r.start
+  const n = r.offsets ? r.offsets[at] : at
+  return n === undefined ? -1 : off + n
 }
 
 /**

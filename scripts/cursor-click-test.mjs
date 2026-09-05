@@ -38,6 +38,7 @@ const {
   keysForRows,
   keysToPoint,
   offsetIn,
+  offsetsForCells,
   cellAt,
   leftoverBackspaces,
   ARROW,
@@ -52,7 +53,71 @@ function check(what, ok, detail) {
 }
 const eq = (what, got, want) => check(what, got === want, `got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`)
 
+const { Terminal } = createRequire(import.meta.url)('@xterm/headless')
+const write = (t, data) => new Promise((resolve) => t.write(data, resolve))
+async function actualRow(text) {
+  const t = new Terminal({ cols: 24, rows: 4, scrollback: 10, allowProposedApi: true })
+  await write(t, text)
+  const b = t.buffer.active
+  const line = b.getLine(b.baseY + b.cursorY)
+  const end = b.cursorX
+  const offsets = offsetsForCells(0, end, (col) => line?.getCell(col))
+  if (!offsets) throw new Error(`could not map ${JSON.stringify(text)}`)
+  return { t, row: { start: 0, end, full: true, offsets } }
+}
+
 const at = (o) => ({ cursorRow: 10, cursorCol: 20, clickRow: 10, clickCol: 20, ...o })
+
+// --- terminal cell width is not JavaScript string length --------------------------------
+// These rows come from xterm's real buffer, including its width-zero continuation cells.
+// The editor receives one arrow/backspace per leading cell, never per UTF-16 code unit.
+{
+  const emoji = await actualRow('A😀B')
+  try {
+    eq('xterm maps A emoji B to three editor positions', offsetIn([emoji.row], 0, emoji.row.end), 3)
+    const keys = keysForRows({
+      rows: [emoji.row],
+      cursor: { row: 0, col: emoji.row.end },
+      start: { row: 0, col: 1 },
+      end: { row: 0, col: 2 }
+    })
+    eq('selecting only the emoji walks one logical place and backspaces once', keys, ARROW.left + BACKSPACE)
+    const graphemes = ['A', '😀', 'B']
+    let cursor = graphemes.length
+    cursor -= (keys.match(/\x1b\[D/g) ?? []).length
+    graphemes.splice(cursor - (keys.match(/\x7f/g) ?? []).length, (keys.match(/\x7f/g) ?? []).length)
+    eq('emoji deletion preserves the unselected prefix and suffix', graphemes.join(''), 'AB')
+  } finally {
+    emoji.t.dispose()
+  }
+
+  const cjk = await actualRow('A你B')
+  try {
+    eq('xterm maps A CJK B to three editor positions', offsetIn([cjk.row], 0, cjk.row.end), 3)
+    eq('the inside of a wide CJK glyph is refused as an ambiguous caret boundary', offsetIn([cjk.row], 0, 2), -1)
+    eq('clicking before CJK maps to its logical caret', keysToPoint([cjk.row], { row: 0, col: cjk.row.end }, { row: 0, col: 1 }), ARROW.left.repeat(2))
+    eq('clicking after CJK maps to its logical caret', keysToPoint([cjk.row], { row: 0, col: cjk.row.end }, { row: 0, col: 3 }), ARROW.left)
+  } finally {
+    cjk.t.dispose()
+  }
+
+  const combining = await actualRow('Ae\u0301B')
+  try {
+    eq('a combining glyph occupies one logical editor position', offsetIn([combining.row], 0, combining.row.end), 3)
+    eq(
+      'selecting a combining glyph sends one backspace',
+      keysForRows({
+        rows: [combining.row],
+        cursor: { row: 0, col: combining.row.end },
+        start: { row: 0, col: 1 },
+        end: { row: 0, col: 2 }
+      }),
+      ARROW.left + BACKSPACE
+    )
+  } finally {
+    combining.t.dispose()
+  }
+}
 
 // --- the ordinary case: one line, move along it -----------------------------------
 eq('a click 5 columns right is 5 rights', keysForClick(at({ clickCol: 25 })), ARROW.right.repeat(5))
