@@ -309,6 +309,13 @@ const SERIAL = new Set([
   'panebackjobs',
   'deaddev',
   'usage',
+  // Windows: CDP navigation/emulation timed out in the pool; both pass alone in
+  // 2.8s/3.1s. Keep their browser layout work out of the eight-process burst.
+  'handofffit',
+  'confirmfit',
+  // Its Windows Chrome shutdown also times out in the pool (19s), while the same
+  // browser cases and teardown pass alone (6.7s).
+  'paneheaderfit',
   // Measured: passes alone in 4.2s, fails at jobs=8 in 31.8s - `the clock is not cut off,
   // 54.6px of 116px`. It lays out a card whose content is a RUNNING clock, so a slow
   // machine writes a wider string than the box the assertion was written against. The
@@ -339,7 +346,7 @@ const started = Date.now()
  * the 193 scripts changes.
  */
 const TMP_ROOT = mkdtempSync(join(tmpdir(), 'pf-test-run-'))
-const dropTmp = () => rmSync(TMP_ROOT, { recursive: true, force: true })
+const dropTmp = () => rmSync(TMP_ROOT, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
 // `exit` alone leaks the root on every Ctrl-C, and this name is unique per run, so nothing
 // later reclaims it. A signal has to drop it itself, then die of that signal.
 process.on('exit', dropTmp)

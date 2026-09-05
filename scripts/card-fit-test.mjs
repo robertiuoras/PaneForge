@@ -18,7 +18,8 @@
 //   node scripts/card-fit-test.mjs
 
 import { spawn } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { closeTestChrome } from './close-test-chrome.mjs'
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -383,22 +384,7 @@ try {
     )
   }
 } finally {
-  try {
-    ws?.close()
-  } catch {
-    /* already gone */
-  }
-  chrome.kill()
-  await sleep(300)
-  // A killed Chrome keeps writing its profile for a moment after the signal, so a plain
-  // rmSync throws ENOTEMPTY and fails a run whose every assertion passed - which is a
-  // test that reports a tidy-up race as a broken card. Retry, and never let the cleanup
-  // decide the result: what this test measures is above, in `failures`.
-  try {
-    rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
-  } catch {
-    /* a temp dir the OS will collect; it is not this test's verdict */
-  }
+  await closeTestChrome(chrome, profile, ws)
 }
 
 console.log(failures ? `\n${failures} of ${checks} failed` : `\nall ${checks} card-fit checks passed`)

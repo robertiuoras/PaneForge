@@ -1356,7 +1356,7 @@ ipcMain.handle('sessions:prepareContinuation', (_e, id: string) => {
   const prepared = preparing ? verifiedPaneHandoff(pane.cwd, id, pane.agent, resumeId) : null
   if (preparing && Date.now() - preparing < 5 * 60_000 && (!prepared?.meta || prepared.meta.createdAt < preparing)) return { ok: false, reason: 'Handoff preparation is already pending.' }
   preparingContinuations.set(id, Date.now())
-  const file = handoffCandidates(pane.cwd, id, homedir(), () => false)[0]
+  const file = handoffCandidates(pane.cwd, id, process.env.PF_CLAUDE_HOME || join(homedir(), '.claude'), () => false)[0]
   const binding = JSON.stringify({ paneId: id, agent: pane.agent, resumeId, cwd: pane.cwd })
   manager.sendPrompt(id, `Prepare a concise handoff for this exact current task in ${file}. Keep this conversation open. Do not reset or start new work. Preserve objective, constraints and authorisations, completed work, outstanding steps, relevant files and commits, test evidence, and running jobs. Use nonempty headings Objective, Constraints, Completed, Next steps, Verification, Running jobs. Write None for empty sections. At the top include an HTML comment: paneforge-handoff followed by JSON with these exact fields ${binding} and createdAt set to the current epoch milliseconds when you write the file. Report what is complete or blocked and stop at a safe boundary.`)
   return { ok: true, reason: 'Handoff preparation queued. Review it before opening a fresh chat.' }

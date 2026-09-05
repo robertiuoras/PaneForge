@@ -95,7 +95,7 @@ export function paneSlot(id: string): string {
 export function handoffCandidates(
   cwd: string,
   paneId: string,
-  home: string,
+  claudeHome: string,
   symlinked: (path: string) => boolean
 ): string[] {
   const dir = String(cwd || '')
@@ -103,11 +103,11 @@ export function handoffCandidates(
   const base = parts[parts.length - 1] ?? ''
   const out: string[] = []
   const add = (proj: string, name: string): void => {
-    const p = `${home}/.claude/projects/${proj}/memory/${name}`
+    const p = `${claudeHome}/projects/${proj}/memory/${name}`
     if (!out.includes(p)) out.push(p)
   }
   const cwdSlot = (d: string): string =>
-    symlinked(`${home}/.claude/projects/${slugFor(d)}`)
+    symlinked(`${claudeHome}/projects/${slugFor(d)}`)
       ? '.' + (d.split(/[\\/]/).pop() ?? '')
       : ''
   const proj = slugFor(dir)
