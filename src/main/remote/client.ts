@@ -490,6 +490,13 @@ export class RemoteClient extends EventEmitter {
         this.emit('data', joinId(this.peer.id, id), data)
         return
       }
+      case 'typed': {
+        const id = String(m.id ?? '')
+        const line = String(m.line ?? '')
+        if (id && line.trim().length > 1)
+          this.emit('typed', joinId(this.peer.id, id), line, m.origin === 'app' ? 'app' : 'person')
+        return
+      }
       case 'buffer': {
         const id = String(m.id ?? '')
         this.buffers.set(id, new OutBuffer(BUFFER_LIMIT))

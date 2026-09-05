@@ -74,7 +74,7 @@ function bundle() {
 
 /** A stand-in for the session manager: two panes, one of which can be made to talk. */
 function backend() {
-  const listeners = { data: [], sessions: [], attention: [] }
+  const listeners = { data: [], typed: [], sessions: [], attention: [] }
   const sessions = [
     { id: 's1', title: 'assistant', cwd: '/w/assistant', agent: 'claude', status: 'idle', lastOutput: 0, createdAt: 0, cols: 100, rows: 28 },
     { id: 's2', title: 'jarvis', cwd: '/w/jarvis', agent: 'codex', status: 'working', lastOutput: 0, createdAt: 0, cols: 80, rows: 24 }
@@ -104,6 +104,9 @@ function backend() {
     emitData(id, data) {
       buffers[id] = (buffers[id] ?? '') + data
       for (const cb of listeners.data) cb(id, data)
+    },
+    emitTyped(id, line, origin = 'person') {
+      for (const cb of listeners.typed) cb(id, line, origin)
     },
     emitSessions() {
       for (const cb of listeners.sessions) cb(sessions)
@@ -143,6 +146,7 @@ function backend() {
         { pid: 4242, kind: 'agent', label: 'claude', cmd: 'claude -p sweep', port: null, where: 'vrb', elapsed: 900, headless: true }
       ],
       onData: (cb) => (listeners.data.push(cb), () => {}),
+      onTyped: (cb) => (listeners.typed.push(cb), () => {}),
       onSessions: (cb) => (listeners.sessions.push(cb), () => {}),
       onAttention: (cb) => (listeners.attention.push(cb), () => {})
     }
@@ -256,8 +260,10 @@ async function main() {
   const client = new RemoteClient(peer, () => ({ id: 'GUEST', name: 'Laptop', platform: 'darwin', version: '0' }))
   let resets = 0
   const seen = []
+  const prompts = []
   client.on('reset', () => resets++)
   client.on('data', (id, data) => seen.push([id, data]))
+  client.on('typed', (id, line, origin) => prompts.push([id, line, origin]))
   client.connect()
 
   ok('the right code connects', await until(() => client.status === 'online'), client.error)
@@ -296,6 +302,12 @@ async function main() {
   be.emitData('s2', 'hello from the other machine')
   ok('live output streams through', await until(() => seen.some(([id, d]) => id === '@HOSTID/s2' && d.includes('hello from the other machine'))))
   ok('the mirror keeps its own copy', client.buffer('s2').includes('hello from the other machine'))
+  be.emitTyped('s2', 'fix the remote prompt rail')
+  ok(
+    'a submitted prompt reaches its mirror as authoritative metadata',
+    await until(() => prompts.some(([id, line]) => id === '@HOSTID/s2' && line === 'fix the remote prompt rail')),
+    JSON.stringify(prompts)
+  )
 
   // A mirror BORROWS the size. Fitting the font is unwinnable when the two windows
   // are different sizes (the PC's pane was 69x35 against room for 152x58 here), so a

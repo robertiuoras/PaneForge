@@ -1036,6 +1036,10 @@ const remote = new Remote({
   // Without an origin here it defaulted to `desk`, and a pane driven from another
   // machine got no rail tag and no row in the prompt archive.
   write: (id, data) => manager.write(id, data, 'phone'),
+  onTyped: (cb) => {
+    manager.on('typed', cb)
+    return () => manager.off('typed', cb)
+  },
   // `viewer` is who is asking, and it MUST be forwarded rather than named here: this one
   // object is the phone's surface AND the remote host's backend, so hardcoding a name
   // filed every paired device's borrow under the phone's own slot - two viewers writing
@@ -1125,6 +1129,9 @@ remote.on('reset', (id: string) => {
   pump.flushOne(id)
   // Capture in the reset event's turn, before a later data frame mutates it.
   send('pane:reset', id, remote.buffer(id))
+})
+remote.on('typed', (id: string, line: string, origin: string) => {
+  send('pane:typed', id, line, origin === 'app' ? 'app' : 'person')
 })
 remote.on('sessions', () => {
   pump.flush()

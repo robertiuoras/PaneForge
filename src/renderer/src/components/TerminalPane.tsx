@@ -3720,6 +3720,13 @@ function TerminalPane({
 
     const offReset = api.onPaneReset((id, snapshot) => {
       if (id !== sessionId) return
+      // A reconnect replaces the buffer, but it is not a request to leave the part of the
+      // conversation the reader was inspecting. xterm resets the viewport to its tail as
+      // it writes the replacement, so keep its distance from that tail and restore it once
+      // the ordered write is complete. A new pane (and one already following output) has a
+      // zero distance and keeps the normal live-output landing.
+      const wasPinned = pinned.current
+      const tailGap = Math.max(0, t.buffer.active.baseY - t.buffer.active.viewportY)
       // Every tag was anchored into the buffer that reset just threw away, and the tail
       // about to arrive carries those same prompts for `seedMarks` to read back out.
       // Dropping them is also what LETS it run: it refuses on a rail that is not empty.
@@ -3728,7 +3735,6 @@ function TerminalPane({
       if (dead) return
       sawOutput = Boolean(snapshot)
       if (snapshot) setBlank(false)
-      pinned.current = true
       // Queue the reset with its exact snapshot. An imperative reset can run
       // before old queued writes, and an async buffer read can include new deltas
       // that onData already wrote. RIS goes through xterm's ordered write queue.
@@ -3743,7 +3749,8 @@ function TerminalPane({
         readingSnapshot = false
       }
       t.write('\x1bc' + bytes, () => {
-        t.scrollToBottom()
+        if (wasPinned) t.scrollToBottom()
+        else t.scrollToLine(Math.max(0, t.buffer.active.baseY - tailGap))
         seedMarks()
       })
     })
