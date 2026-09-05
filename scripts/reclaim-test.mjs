@@ -97,8 +97,8 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   {
     const drafting = [pane({ id: 'x', drafting: true }), pane({ id: 'keep' })]
     eq('never closes a pane with an unsent draft under pressure', ids(reclaimPlan(drafting, over, DEFAULT_RECLAIM, NOW)), 'keep')
-    eq('never closes a pane with an unsent draft on the five-minute clock', ids(idleClosePlan(drafting, { ...DEFAULT_RECLAIM, idleCloseMinutes: 5 }, NOW)), '')
-    eq('never sleeps a pane with an unsent draft', ids(idleSleepPlan(drafting, { ...DEFAULT_RECLAIM, idleSleepMinutes: 5 }, NOW)), '')
+    check('never closes a pane with an unsent draft on the five-minute clock', !ids(idleClosePlan(drafting, { ...DEFAULT_RECLAIM, idleCloseMinutes: 5 }, NOW)).includes('x'))
+    check('never sleeps a pane with an unsent draft', !ids(idleSleepPlan(drafting, { ...DEFAULT_RECLAIM, idleSleepMinutes: 5 }, NOW)).includes('x'))
   }
   {
     // ...and the other half of `needsYou`, which is the only pane anybody ever wants

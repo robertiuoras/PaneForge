@@ -316,6 +316,7 @@ function reclaimPaneOf(
     // A phone or the other desk is drawing it right now. See `ReclaimPane.watched`.
     watched: !!s.watched,
     asking: !!s.ask,
+    drafting: !!s.drafting,
     handingOff: !!s.handingOff,
     // "Keep this pane open" from the card's right-click. See `ReclaimPane.pinned`.
     pinned,
@@ -2727,6 +2728,7 @@ export default function App(): JSX.Element {
         // finished turn and for a live question alike, so reading it alone refused every
         // finished pane and this sweep had never closed anything on this desk.
         asking: !!s.ask,
+        drafting: !!s.drafting,
         // A pane already on its way to the other machine is not this sweep's to close:
         // the same memory comes back either way, and closing it loses the move.
         handingOff: !!s.handingOff,
@@ -3998,6 +4000,7 @@ export default function App(): JSX.Element {
     const s = sessionsRef.current.find((x) => x.id === id)
     if (!s) return false
     if (s.ask || s.bell) return false
+    if (s.drafting) return false
     if (s.runSince !== undefined) return false
     if (s.handingOff) return false
     const st = fleetState(s)
