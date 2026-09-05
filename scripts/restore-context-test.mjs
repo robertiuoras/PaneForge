@@ -194,7 +194,7 @@ try {
   // conversation id, which is three panes reopening into one chat.
   const lane = `${cwd}-a`
   mkdirSync(lane, { recursive: true })
-  symlinkSync(projects, join(homedir(), '.claude', 'projects', slug(lane)))
+  symlinkSync(projects, join(homedir(), '.claude', 'projects', slug(lane)), process.platform === 'win32' ? 'junction' : 'dir')
   T.noteSession('paneLane', lane, 'claude')
   // It has written nothing of its own yet, and every transcript here is somebody's: the
   // right answer is no id at all. Through the symlink the newest one is `chat-b` spelled
