@@ -142,6 +142,8 @@ export interface Session {
   printed?: number
   /** epoch ms of the most recent user input (prompt submission, keystrokes); used for idle detection */
   lastKeyboard: number
+  /** An unsent prompt exists, or the app cannot prove that the composer is empty. */
+  drafting?: boolean
   createdAt: number
   /**
    * When this PANE first appeared on the desk, across every restart since - which is not

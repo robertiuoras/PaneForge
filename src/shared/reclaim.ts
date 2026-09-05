@@ -277,6 +277,8 @@ export interface ReclaimPane {
    * in the app says yes about it. It comes from the pane's own `ask`, never from its state.
    */
   asking?: boolean
+  /** An unsent prompt exists, or the app cannot prove that the composer is empty. */
+  drafting?: boolean
   /**
    * The command a SHELL pane is running right now, when there is one.
    *
@@ -451,6 +453,7 @@ export function reclaimPlan(
         !p.remote &&
         !p.handingOff &&
         !p.asking &&
+        !p.drafting &&
         !p.busy &&
         !p.job &&
         !p.backJob &&
@@ -707,6 +710,7 @@ function keepable(p: ReclaimPane, personHere = true): boolean {
     !p.remote &&
     !p.handingOff &&
     !p.asking &&
+    !p.drafting &&
     !p.busy &&
     !p.job &&
     !p.backJob &&
