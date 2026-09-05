@@ -171,6 +171,7 @@ function defaults(): Config {
     presets: [],
     defaultAgent: 'claude',
     defaultModels: {},
+    defaultSessionWhere: 'local',
     customAgents: [],
     openrouterKey: '',
     providerKeys: {},

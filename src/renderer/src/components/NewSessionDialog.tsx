@@ -10,6 +10,7 @@ import { folderNameFor } from '@shared/projectName'
 const api = window.api
 
 interface Props {
+  defaultWhere?: 'local' | 'remote' | 'auto'
   projects: Project[]
   defaultAgent: Agent
   /** last model used per agent, so the pick sticks between launches */
@@ -17,7 +18,7 @@ interface Props {
   /** persist the last runner/model picked here for the next New session */
   onDefaultsChange: (agent: Agent, model: string) => void
   agents: AgentInfo[]
-  onStart: (reqs: StartSessionRequest[]) => void
+  onStart: (reqs: StartSessionRequest[]) => Promise<'local' | 'remote' | null>
   /** Paired machines online right now - the ones a new pane could start on. */
   peers: { id: string; name: string }[]
   /** a project folder was made from this dialog, so the list behind it is stale */
@@ -32,6 +33,7 @@ interface Props {
  * that replaces the fixed five-pane .bat, except the list is chosen per launch.
  */
 export default function NewSessionDialog({
+  defaultWhere = 'local',
   projects,
   defaultAgent,
   defaultModels,
@@ -60,7 +62,9 @@ export default function NewSessionDialog({
   const [promptCopied, setPromptCopied] = useState(false)
   // Which machine. Offered only while a paired one is online; `auto` leaves it to the
   // app, which then says what it decided before doing it.
-  const [where, setWhere] = useState<'auto' | 'local' | 'remote'>('auto')
+  const [where, setWhere] = useState<'auto' | 'local' | 'remote'>(defaultWhere)
+  const [whereError, setWhereError] = useState('')
+  const launching = useRef(false)
   // What the first message says it is about. `routed` is the project this dialog ticked
   // on the message's behalf, kept apart from the user's own ticks so it can be swapped
   // when the message changes and dropped the moment the user disagrees with it.
@@ -225,14 +229,24 @@ export default function NewSessionDialog({
         model: model || undefined,
         resume: resume && canResume,
         prompt: prompt.trim() || undefined,
-        where: where === 'auto' || !peers.length ? undefined : where
+        where: peers.length === 0 ? 'local' : where === 'auto' ? undefined : where
       }
     })
   }
 
-  const go = (p?: Project): void => {
+  const go = async (p?: Project): Promise<void> => {
     const reqs = chosen(p)
-    if (reqs.length) onStart(reqs)
+    if (!reqs.length || launching.current) return
+    launching.current = true
+    setWhereError('')
+    try {
+      const destination = await onStart(reqs)
+      if (destination) await api.setConfig({ defaultSessionWhere: where === 'auto' ? 'auto' : destination })
+    } catch {
+      setWhereError('Could not start or save this session choice. Please try again.')
+    } finally {
+      launching.current = false
+    }
   }
 
   const save = (): void => {
@@ -378,31 +392,32 @@ export default function NewSessionDialog({
           <div className="where-head">
             <span className="where-label">Where it runs</span>
             <span className="where-hint">
-              {peers.length === 0
-                ? 'Pair another computer in Devices and it can start work there.'
+              {whereError || (peers.length === 0
+                ? where === 'remote'
+                  ? 'Your saved remote choice is offline. This session will start here.'
+                  : 'Starts here. Connect another computer in Devices to work there.'
                 : where === 'remote'
                   ? 'Runs over there; you watch it and type into it from here.'
                   : where === 'auto'
                     ? 'Stays here unless this machine is under pressure.'
-                    : 'Runs on this machine.'}
+                    : 'Runs on this device. Your choice is remembered.')}
             </span>
           </div>
             <div className="pickrow where-picks">
               {(
                 peers.length === 0
-                  ? ([['local', 'This machine']] as const)
+                  ? ([['local', 'This device']] as const)
                   : ([
-                      // The default leads (Robert 2026-09-04): the app's own pick is what
-                      // most starts use, so it is the first thing read and the one lit.
-                      ['auto', 'Let the app decide'],
-                      ['local', 'This machine'],
-                      ['remote', peers.length === 1 ? peers[0].name : 'The other machine']
+                      ['local', 'This device'],
+                      ['remote', peers.length === 1 ? peers[0].name : 'Another device'],
+                      ['auto', 'Automatic']
                     ] as const)
               ).map(([value, word]) => (
                 <button
                   key={value}
                   type="button"
                   className={`chip pick${where === value || (peers.length === 0 && value === 'local') ? ' on' : ''}`}
+                  aria-pressed={where === value || (peers.length === 0 && value === 'local')}
                   onClick={() => setWhere(value)}
                 >
                   {word}

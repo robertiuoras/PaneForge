@@ -1592,6 +1592,8 @@ export interface Config {
   defaultAgent: Agent
   /** model per agent id, remembered from the last launch ('' = the CLI's default) */
   defaultModels: Record<string, string>
+  /** Last destination chosen in New session, local until a person chooses otherwise. */
+  defaultSessionWhere?: 'local' | 'remote' | 'auto'
   /** extra CLIs the user wired up in Settings, merged over the built-in catalogue */
   customAgents: AgentSpec[]
   /**

@@ -1819,7 +1819,7 @@ export default function App(): JSX.Element {
   )
 
   const start = useCallback(
-    async (reqs: StartSessionRequest[]) => {
+    async (reqs: StartSessionRequest[]): Promise<'local' | 'remote' | null> => {
       setPicking(false)
       const wanted = reqs
       reqs = await offloadReqs(reqs)
@@ -1827,7 +1827,7 @@ export default function App(): JSX.Element {
         // Everything went to a peer. Still remember the model, or the next launch forgets
         // what was picked purely because the machine happened to be busy.
         rememberModel(wanted[0]?.agent, wanted[0]?.model)
-        return
+        return wanted.length ? 'remote' : null
       }
       const rows = await api.startSessions(reqs)
       const started = rows.map((r) => r.session).filter((s): s is Session => !!s)
@@ -1856,6 +1856,8 @@ export default function App(): JSX.Element {
         flash(`${noted.length} sessions moved into their own worktree lanes.`)
       }
       rememberModel(reqs[0]?.agent, reqs[0]?.model)
+      const last = started[started.length - 1]
+      return last ? (last.remote ? 'remote' : 'local') : wanted.length > reqs.length ? 'remote' : null
     },
     [flash, rememberModel, offloadReqs]
   )
@@ -6212,6 +6214,7 @@ export default function App(): JSX.Element {
 
       {picking && config && (
         <NewSessionDialog
+          defaultWhere={config.defaultSessionWhere ?? 'local'}
           projects={projects}
           agents={agents}
           defaultAgent={config.defaultAgent}
