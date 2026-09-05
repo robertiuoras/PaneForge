@@ -703,6 +703,7 @@ export default function App(): JSX.Element {
    * the switch is, and the chip has to go the moment it is pressed.
    */
   const [pinned, setPinned] = useState<Record<string, true>>({})
+  const [selectKeepOpen, setSelectKeepOpen] = useState(false)
   const pinnedRef = useRef(pinned)
   pinnedRef.current = pinned
   /**
@@ -4799,7 +4800,7 @@ export default function App(): JSX.Element {
                 setCardMenu({ id: s.id, x: e.clientX, y: e.clientY })
               }}
             >
-              <input
+              {selectKeepOpen && <input
                 className="keep-open-check"
                 type="checkbox"
                 aria-label={`Keep ${s.title} open`}
@@ -4811,7 +4812,7 @@ export default function App(): JSX.Element {
                 onPointerDown={e => e.stopPropagation()}
                 onDoubleClick={e => e.stopPropagation()}
                 onContextMenu={e => e.stopPropagation()}
-              />
+              />}
               <StatusDot status={s.status} engaged={s.engaged} />
               <div className="row-text">
                 {renaming === s.id ? (
@@ -5436,7 +5437,7 @@ export default function App(): JSX.Element {
         <div className="section">
           {/* "Running" read as "these are all busy" on a list of idle panes. */}
           <span className="section-title">
-            <input
+            {selectKeepOpen && <input
               className="keep-open-check"
               type="checkbox"
               aria-label="Keep all sessions on this device open"
@@ -5449,7 +5450,7 @@ export default function App(): JSX.Element {
               }}
               onChange={e => { void savePins(sessions.filter(s => !s.remote).map(s => s.id), e.target.checked) }}
               onClick={e => e.stopPropagation()}
-            />
+            />}
             Sessions ({shownSessions.length}{shownSessions.length === sessions.length ? '' : `/${sessions.length}`})
           </span>
           {/* Badges and the empty-everything button travel together, hard right. One
@@ -5507,7 +5508,7 @@ export default function App(): JSX.Element {
             )}
           </span>
         </div>
-        {deviceChoices.length > 0 && (
+        {(deviceChoices.length > 0 || selectKeepOpen) && (
           <label className="device-filter">
             <span>Show</span>
             <select value={deviceFilter} onChange={(e) => setDeviceFilter(e.target.value)}>
@@ -5538,6 +5539,19 @@ export default function App(): JSX.Element {
           )}
         </div>
 
+        <button
+          className={'ghost small keep-open-toggle' + (selectKeepOpen ? ' active' : '')}
+          aria-pressed={selectKeepOpen}
+          onClick={() => {
+            setSelectKeepOpen(value => !value)
+            if (!selectKeepOpen) setDeviceFilter('all')
+          }}
+          title="Choose sessions to keep open; checked sessions stay protected when these boxes are hidden"
+        >
+          <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M5 2h6v5l2 2H9v5H7V9H3l2-2z" fill="none" stroke="currentColor" strokeWidth="1.3" /></svg>
+          <span>{selectKeepOpen ? 'Done selecting' : 'Keep open'}</span>
+          {Object.keys(pinned).length > 0 && <span className="badge">{Object.keys(pinned).length}</span>}
+        </button>
         <div className="foot">
           <Segmented
             value={grid ? 'grid' : 'single'}

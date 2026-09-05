@@ -4812,3 +4812,6 @@ html.login-open .panes { padding-right: calc(var(--login-w, 50vw) + 6px); }
 .tour-look.bad { color: var(--danger, var(--text)); }
 
 .session-clock { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+
+.keep-open-toggle { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; margin: 6px 0; }
+.keep-open-toggle.active { color: var(--text); border-color: var(--text); }
