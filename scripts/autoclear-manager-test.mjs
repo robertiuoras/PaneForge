@@ -83,9 +83,13 @@ try {
   timers.slice(timerStart).find((t) => t.ms === 120).fn()
   assert.equal(live.proc.writes.some((text) => text.includes('/new')), false, 'a draft during the arm lead blocks the clear write')
 
-  for (const [label, mutate] of [
+  for (const [label, mutate, clears = false] of [
     ['a submitted turn', (pane) => { pane.meta.drafting = undefined; pane.meta.runSince = Date.now() }],
-    ['a live question', (pane) => { pane.meta.drafting = undefined; pane.meta.ask = { question: 'choose' } }]
+    ['a live question', (pane) => { pane.meta.drafting = undefined; pane.meta.ask = { question: 'choose' } }],
+    ['Keep pressed', (_pane, manager) => manager.cancelAutoClear('pane1', 'cancelled')],
+    ['pane restart', (_pane, manager) => manager.restart('pane1')],
+    ['handoff removed', () => { global.__pfHandoff = bad.missing() }],
+    ['unchanged valid pane', () => {}, true]
   ]) {
     const manager = new SessionManager()
     const started = manager.start({ cwd: root, agent: 'codex' })
@@ -99,9 +103,9 @@ try {
     const start = timers.length
     manager.armAutoClear('pane1', ask)
     timers.slice(start).find((t) => t.ms === 1000).fn()
-    mutate(live)
+    mutate(live, manager)
     timers.slice(start).find((t) => t.ms === 120).fn()
-    assert.equal(live.proc.writes.some((text) => text.includes('/new')), false, `${label} during the arm lead blocks /new`)
+    assert.equal(live.proc.writes.some((text) => text.includes('/new')), clears, `${label} during the arm lead has the expected clear result`)
   }
   console.log('autoclear manager: delayed handoff and draft guards behaved')
 } finally {

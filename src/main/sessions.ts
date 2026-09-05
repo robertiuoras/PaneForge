@@ -998,6 +998,7 @@ export class SessionManager extends EventEmitter {
   restart(id: string): Session | null {
     const live = this.sessions.get(id)
     if (!live) return null
+    this.cancelAutoClear(id, 'cancelled')
     try {
       live.proc?.kill()
     } catch {
@@ -2322,6 +2323,11 @@ export class SessionManager extends EventEmitter {
       const t = setTimeout(() => {
         const current = this.sessions.get(id)
         if (!current) return acLog(`${id} clear skipped: pane gone`)
+        if (current.meta.autoClearAt !== armedAt) return acLog(`${id} clear skipped: countdown cancelled or replaced`)
+        if ((current.meta.agent === 'codex' || current.meta.agent === 'antigravity') && !hasFreshPaneHandoff(id, handoffFor(current.meta.cwd, id))) {
+          this.cancelAutoClear(id, 'cancelled')
+          return acLog(`${id} clear skipped: handoff changed during lead`)
+        }
         // The lead is long enough for the renderer to file the tail. Re-read ALL state
         // before writing: a person may submit, open a question, or recall a history line
         // in this window. The clear is not complete until its command reaches the pty.
@@ -2388,6 +2394,7 @@ export class SessionManager extends EventEmitter {
         }, CLEAR_RESUME_BUDGET_MS, 'idle')
       }, ARM_CLEAR_LEAD_MS)
       t.unref?.()
+      this.autoClearTimers.set(id, t)
     }
     const timer = setTimeout(() => fire(at), plan.seconds * 1000)
     timer.unref?.()
