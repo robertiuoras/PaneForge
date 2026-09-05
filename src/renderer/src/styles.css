@@ -617,7 +617,10 @@ html.glass .mascot-icon:hover { background: var(--glass-hi); }
    the memory badge, `3 working` and `1 waiting` all up, the title was clipped to 28px of
    its 81 at the default 282px sidebar (measured) and read `Ses…`. The badges wrap to a
    second line instead (`.section-tail` above); the title is never clipped. */
-.section-title { flex: none; white-space: nowrap; }
+.section-title { flex: none; white-space: nowrap; display: inline-flex; align-items: center; gap: 7px; }
+.keep-open-check { flex: 0 0 16px; width: 16px; height: 16px; margin: 0; accent-color: var(--text); cursor: pointer; }
+.keep-open-check:disabled { cursor: default; opacity: .45; }
+.keep-open-check:focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
 
 /* The memory notice. Amber for tight, red for over - and deliberately quiet type: this
    appears while the machine is already struggling, and a loud banner on a laptop that is

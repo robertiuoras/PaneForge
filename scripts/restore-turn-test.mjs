@@ -165,7 +165,7 @@ ok(
 
 const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
 ok('the desk reads its pins off the config it is handed', /config\.pinnedPanes \?\? \[\]/.test(app))
-ok('and every press writes them back', /patchConfig\(\{ pinnedPanes: Object\.keys\(next\) \}\)/.test(app))
+ok('and every press writes them back', /await api\.setConfig\(\{ pinnedPanes: \[\.\.\.next\] \}\)/.test(app))
 
 const info = readFileSync(join(root, 'src/renderer/src/components/SessionInfo.tsx'), 'utf8')
 ok('"Open for" counts from when the pane opened, not from this process', /s\.openedAt \?\? s\.createdAt/.test(info))

@@ -4503,23 +4503,34 @@ export default function App(): JSX.Element {
     publishClosingRef.current()
   }, [])
 
-  /** "Keep this pane open" / "Let it close when idle", off the card's right-click. */
-  const togglePin = useCallback(
-    (id: string) => {
-      setPinned((was) => {
-        const next = { ...was }
-        if (next[id]) delete next[id]
-        else next[id] = true
-        // Written from inside the updater so what is saved is what is drawn, rather than a
-        // second reading of state this render has not seen yet. Remembered as well as
-        // written, so the echo of this write is not read back as somebody else's change.
-        pinsWritten.current = Object.keys(next).sort().join(',')
-        patchConfig({ pinnedPanes: Object.keys(next) })
-        return next
-      })
-    },
-    [patchConfig]
-  )
+  const [savingPins, setSavingPins] = useState(false)
+  const savingPinsRef = useRef(false)
+  const savePins = useCallback(async (ids: string[], keep: boolean) => {
+    if (savingPinsRef.current) return
+    savingPinsRef.current = true
+    setSavingPins(true)
+    try {
+      const current = await api.getConfig()
+      const next = new Set(current.pinnedPanes ?? [])
+      const localIds = new Set(sessions.filter(s => !s.remote && !s.id.startsWith('@')).map(s => s.id))
+      for (const id of ids) if (localIds.has(id)) keep ? next.add(id) : next.delete(id)
+      const saved = await api.setConfig({ pinnedPanes: [...next] })
+      pinsWritten.current = [...(saved.pinnedPanes ?? [])].sort().join(',')
+      setPinned(Object.fromEntries((saved.pinnedPanes ?? []).map(id => [id, true as const])))
+      setConfigState(saved)
+      if (keep) {
+        setCloseSoons(list => list.filter(plan => !plan.ids.some(id => ids.includes(id))))
+      }
+    } catch (error) {
+      flash(`Could not save keep-open preference: ${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      savingPinsRef.current = false
+      setSavingPins(false)
+    }
+  }, [sessions, flash])
+  const togglePin = useCallback((id: string) => {
+    void savePins([id], !pinnedRef.current[id])
+  }, [savePins])
 
   // What is serving on this machine, for the mascot's "what dev servers are running" and
   // for stopping one by name. Held rather than polled: the reading costs a whole process
@@ -4777,6 +4788,19 @@ export default function App(): JSX.Element {
                 setCardMenu({ id: s.id, x: e.clientX, y: e.clientY })
               }}
             >
+              <input
+                className="keep-open-check"
+                type="checkbox"
+                aria-label={`Keep ${s.title} open`}
+                title={s.remote ? `Set keep-open on ${s.remote.name}, where this session runs` : 'Keep this session open until unchecked'}
+                disabled={savingPins || Boolean(s.remote)}
+                checked={!s.remote && Boolean(pinned[s.id])}
+                onChange={() => togglePin(s.id)}
+                onClick={e => e.stopPropagation()}
+                onPointerDown={e => e.stopPropagation()}
+                onDoubleClick={e => e.stopPropagation()}
+                onContextMenu={e => e.stopPropagation()}
+              />
               <StatusDot status={s.status} engaged={s.engaged} />
               <div className="row-text">
                 {renaming === s.id ? (
@@ -5396,6 +5420,20 @@ export default function App(): JSX.Element {
         <div className="section">
           {/* "Running" read as "these are all busy" on a list of idle panes. */}
           <span className="section-title">
+            <input
+              className="keep-open-check"
+              type="checkbox"
+              aria-label="Keep all sessions on this device open"
+              title="Keep all sessions on this device open until unchecked"
+              disabled={savingPins || !sessions.some(s => !s.remote)}
+              checked={sessions.some(s => !s.remote) && sessions.filter(s => !s.remote).every(s => Boolean(pinned[s.id]))}
+              ref={el => {
+                const local = sessions.filter(s => !s.remote)
+                if (el) el.indeterminate = local.some(s => pinned[s.id]) && !local.every(s => pinned[s.id])
+              }}
+              onChange={e => { void savePins(sessions.filter(s => !s.remote).map(s => s.id), e.target.checked) }}
+              onClick={e => e.stopPropagation()}
+            />
             Sessions ({shownSessions.length}{shownSessions.length === sessions.length ? '' : `/${sessions.length}`})
           </span>
           {/* Badges and the empty-everything button travel together, hard right. One
@@ -6613,6 +6651,7 @@ export default function App(): JSX.Element {
             items={[
               {
                 key: 'pin',
+                disabled: !local || savingPins,
                 label: pinned[s.id] ? 'Let it close when idle' : 'Keep this pane open',
                 hint: pinned[s.id]
                   ? 'the idle clocks may sleep or close it again'

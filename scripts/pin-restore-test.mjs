@@ -79,7 +79,7 @@ check(
   'it adopts a saved list that is not the one it wrote',
   /if \(key === pinsWritten\.current\) return/.test(app)
 )
-check('and remembers what it writes, so its own echo is ignored', /pinsWritten\.current = Object\.keys\(next\)\.sort\(\)\.join\(','\)/.test(app))
+check('and remembers what it writes, so its own echo is ignored', /pinsWritten\.current = \[\.\.\.\(saved\.pinnedPanes \?\? \[\]\)\]\.sort\(\)\.join\(','\)/.test(app))
 check(
   'the comparison is order-independent',
   /\[\.\.\.saved\]\.sort\(\)\.join\(','\)/.test(app),
