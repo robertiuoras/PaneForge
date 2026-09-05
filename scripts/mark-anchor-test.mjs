@@ -299,4 +299,40 @@ const ERASE_BELOW = '\x1b[5;1H\x1b[J'
   eq('matches before, at, and after the bounds are excluded', landingRow(row, 45, key, 11, 40), 45)
 }
 
+// The caller's preceding marker is a tag boundary, not a candidate row: two consecutive
+// prompts can have the same first 24 characters. This models the exact `previous + 1`
+// lower bound passed by TerminalPane's jump callback.
+{
+  const prompt = 'please repeat this exact sentence for the current prompt'
+  const key = echoKey(prompt)
+  const rows = Array.from({ length: 50 }, (_, i) => `  reply line ${i}`)
+  const previousTag = 10
+  const currentPrompt = 20
+  const currentTag = 45
+  rows[previousTag] = '  please repeat this exact sentence from the previous prompt'
+  rows[currentPrompt] = `  ${prompt}`
+  rows[currentTag] = '› Implement {feature}'
+  const row = (i) => rows[i]
+  eq(
+    'the old inclusive previous-tag bound would land on the preceding prompt',
+    landingRow(row, currentTag, key, previousTag, rows.length),
+    previousTag
+  )
+  eq(
+    'the caller excludes the preceding tag row before finding the current prompt',
+    landingRow(row, currentTag, key, previousTag + 1, rows.length),
+    currentPrompt
+  )
+  const echoRows = [
+    '',
+    '❯ please repeat this exact sentence from the previous prompt',
+    '❯ please repeat this exact sentence for the current prompt'
+  ]
+  eq(
+    'an out-of-span echo cannot bypass the lower bound',
+    landingRow((i) => echoRows[i], 1, key, 2, echoRows.length),
+    2
+  )
+}
+
 console.log(`mark anchor: ${checks} checks passed`)

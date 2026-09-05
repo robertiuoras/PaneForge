@@ -1778,7 +1778,9 @@ function TerminalPane({
     // below it - "the tag does not jump high enough". Bounded by the neighbouring tags so
     // the search cannot wander into another turn.
     const i = marks.findIndex((x) => x.id === m.id)
-    const lo = i > 0 ? lineOf(marks[i - 1]) : 0
+    // `landingRow` includes its lower bound. The preceding tag owns its marker row, so
+    // start immediately after it: consecutive prompts can share their 24-character key.
+    const lo = i > 0 ? lineOf(marks[i - 1]) + 1 : 0
     const next = i >= 0 ? marks[i + 1] : undefined
     const hi = next ? lineOf(next) : b.length
     const land = landingRow(row, at, m.key, lo, hi)

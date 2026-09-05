@@ -233,11 +233,13 @@ export function landingRow(
   hi: number
 ): number {
   if (at < 0 || !key) return at
-  // An echoed line is unambiguous. A plain substring on the tag's row is not: Codex can
-  // quote the start of its prompt while rendering the reply over the old composer row.
-  if (onEchoRow(row(at), key)) return at
   const top = Math.max(lo, at - LANDING_SCAN_ROWS, 0)
   const bottom = Math.min(hi, at + LANDING_SCAN_ROWS)
+  // An echoed line is unambiguous. A plain substring on the tag's row is not: Codex can
+  // quote the start of its prompt while rendering the reply over the old composer row.
+  // It still has to belong to this tag's neighbour-bounded span: a stale or duplicate
+  // marker line must not bypass the bound and claim the preceding turn's prompt.
+  if (at >= top && at < bottom && onEchoRow(row(at), key)) return at
   for (let i = top; i < bottom; i++) if (rowShowsPrompt(row(i), key)) return i
   return at
 }
