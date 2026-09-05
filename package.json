@@ -143,6 +143,7 @@
     "test:markanchor": "node scripts/mark-anchor-test.mjs",
     "test:forceselect": "node scripts/force-select-test.mjs",
     "test:shots": "node scripts/shots-test.mjs",
+    "test:pinrestore": "node scripts/pin-restore-test.mjs",
     "test:copychip": "node scripts/copychip-test.mjs",
     "test:replytext": "node scripts/replytext-test.mjs",
     "test:reviewfixes": "node scripts/review-fixes-test.mjs",

@@ -373,6 +373,14 @@ interface Live {
   /** epoch ms until which incoming output is treated as a repaint we triggered */
   repaintUntil: number
   /**
+   * When this pane was WOKEN, until its CLI prints something. 0 the rest of the time.
+   *
+   * Only there to be subtracted: `wake-printed` in reclaim.log is the gap between the
+   * press and the first byte, which is the whole of "waking one is laggy" and the one
+   * number nothing was writing down.
+   */
+  wokeAt: number
+  /**
    * Has a real turn happened since the user last looked at this pane?
    *
    * This is what stops the chime firing at random. Attention used to hang off
@@ -721,6 +729,7 @@ export class SessionManager extends EventEmitter {
       busyUntil: 0,
       ackedAt: 0,
       repaintUntil: 0,
+      wokeAt: 0,
       turnPending: false,
       footerEndedAt: 0,
       sawFooter: false,
@@ -1158,6 +1167,8 @@ export class SessionManager extends EventEmitter {
     // "the app decided to wake this pane" and "the CLI is actually running again".
     ledgerWake(live.meta.cwd, id)
     logReclaim({ at: Date.now(), action: 'wake', pane: id, reason: reason ?? 'manual', folder: basename(live.meta.cwd) })
+    // Stamped for the `wake-printed` line further down, which is where the seconds are.
+    live.wokeAt = Date.now()
     live.meta.status = 'starting'
     live.meta.printed = undefined
     live.meta.exitCode = undefined
@@ -2598,6 +2609,24 @@ export class SessionManager extends EventEmitter {
       // per launch, at the one moment the answer changes.
       const firstByte = meta.printed === undefined
       if (firstByte) meta.printed = now
+      // How long a woken pane took to say anything at all.
+      //
+      // "Sleeping is fine, waking one is laggy" (Robert, 2026-09-05) is a question about a
+      // duration, and nothing measured it: `wake` logged the moment it decided and the CLI
+      // then spent an unknown number of seconds spawning and replaying its conversation
+      // before a byte arrived. Logged as its own line rather than folded into the `wake`
+      // one, because the interesting half is the GAP and a line written at the decision
+      // cannot carry it. One line per wake, never per byte.
+      if (firstByte && live.wokeAt) {
+        logReclaim({
+          at: now,
+          action: 'wake-printed',
+          pane: id,
+          ms: now - live.wokeAt,
+          folder: basename(meta.cwd)
+        })
+        live.wokeAt = 0
+      }
       const wasIdle = meta.status !== 'working'
       // A repaint we asked for is not a turn: paint it, but do not touch the
       // status or the quiet clock the attention nudge runs on.

@@ -3716,10 +3716,29 @@ function restorePanes(specs: StartSessionRequest[]): void {
   })
   // After the panes, and only when the answer really changed: this writes config.json, and
   // a desk with nothing pinned must not rewrite it on every launch.
+  //
+  // "After the panes" is the load-bearing half. `nowPinned` is filled inside `open`, and
+  // `open` is on a timer whenever the restore is staggered - so read synchronously it is
+  // EMPTY, the list reads as "nothing came back for any of them", and every pin on the
+  // desk is wiped by the very code that exists to carry them across.
+  const settle = (done: () => void): void => {
+    if (gap) setTimeout(done, gap * opening.length + gap)
+    else done()
+  }
+  settle(() => {
   if (wasPinned.size || nowPinned.length) {
     const before = [...wasPinned].join(',')
-    if (before !== nowPinned.join(',')) setConfig({ pinnedPanes: nowPinned })
+    if (before !== nowPinned.join(',')) {
+      setConfig({ pinnedPanes: nowPinned })
+      // ...and SAY so. `setConfig` writes the file and broadcasts nothing - only the
+      // `config:set` handler sends `config:changed` - so this translation reached no
+      // window at all, and a window that had already read the config was holding the ids
+      // of the panes these ones replaced. Every restored pane then drew as not kept, and
+      // most of them come back ASLEEP, which is exactly what the close clock takes.
+      send('config:changed', getConfig())
+    }
   }
+  })
 }
 
 /**

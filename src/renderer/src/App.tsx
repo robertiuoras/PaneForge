@@ -702,17 +702,31 @@ export default function App(): JSX.Element {
   pinnedRef.current = pinned
   /**
    * ...and it is kept in config.json, or the promise lasts until the next restart - which
-   * on an app that updates itself several times a day is not a promise. Read once, when
-   * the config first arrives: after that this state is the truth and every toggle writes
-   * it back, so an echo of our own write cannot fight the press that caused it. Main has
-   * already translated the saved ids onto the panes it restored (`restorePanes`).
+   * on an app that updates itself several times a day is not a promise.
+   *
+   * This used to read the list ONCE, latched on the first config to arrive, on the
+   * strength of "main has already translated the saved ids onto the panes it restored".
+   * It has not: a restored pane is a NEW session, so `restorePanes` rewrites
+   * `config.pinnedPanes` through each pane's `scrollbackId` - and it does that with
+   * `setConfig`, which writes the file and broadcasts NOTHING (only the `config:set` IPC
+   * handler sends `config:changed`). On the ask-after-restart path the restore does not
+   * even begin until somebody answers the dialog, long after this window read the config.
+   * So the window latched the ids of the panes that had just been REPLACED, every card
+   * drew as not kept, and the panes that come back asleep - which is most of them - went
+   * onto the close clock with the promise silently gone.
+   *
+   * So the saved list is adopted whenever it differs from the last one THIS window wrote.
+   * That keeps the property the latch was there for - an echo of our own write cannot
+   * fight the press that caused it - without freezing on a reading taken too early.
    */
-  const pinnedLoaded = useRef(false)
+  const pinsWritten = useRef<string | null>(null)
   useEffect(() => {
-    if (pinnedLoaded.current || !config) return
-    pinnedLoaded.current = true
+    if (!config) return
     const saved = config.pinnedPanes ?? []
-    if (saved.length) setPinned(Object.fromEntries(saved.map((id) => [id, true as const])))
+    const key = [...saved].sort().join(',')
+    if (key === pinsWritten.current) return
+    pinsWritten.current = key
+    setPinned(Object.fromEntries(saved.map((id) => [id, true as const])))
   }, [config])
   const [picking, setPicking] = useState(false)
   const [settings, setSettings] = useState(false)
@@ -4488,7 +4502,9 @@ export default function App(): JSX.Element {
         if (next[id]) delete next[id]
         else next[id] = true
         // Written from inside the updater so what is saved is what is drawn, rather than a
-        // second reading of state this render has not seen yet.
+        // second reading of state this render has not seen yet. Remembered as well as
+        // written, so the echo of this write is not read back as somebody else's change.
+        pinsWritten.current = Object.keys(next).sort().join(',')
         patchConfig({ pinnedPanes: Object.keys(next) })
         return next
       })
