@@ -148,26 +148,33 @@ ok(!shouldLogHold(NOW, NOW - HOLD_LOG_INTERVAL_MS + 60_000), 'a minute short of 
 ok(shouldLogHold(NOW, NOW - HOLD_LOG_INTERVAL_MS), 'thirty minutes on it writes again')
 ok(HOLD_LOG_INTERVAL_MS === 30 * 60_000, 'the interval is named, not written into the rule')
 
-// Exercise the real delayed install function up to its first destructive effect.
+// Exercise the explicit install boundary up to its first destructive effect.
 {
   const main = readFileSync(join(ROOT, 'src/main/index.ts'), 'utf8')
   const start = main.indexOf('function doInstall(')
   const end = main.indexOf('\n}\n', start) + 2
   const code = transformSync(main.slice(start, end), {loader:'ts'}).code
-  let phase = 'idle', panes = [], watches = [], teardown = 0
-  const scope = {installStarted:false,installWhenIdle:true,
-    getUpdateState:()=>({phase}), manager:{list:()=>panes},deskBusy,Date,
-    watchForIdlePanes:on=>watches.push(on),updateLog:()=>{},
+  let phase = 'idle', teardown = 0
+  const scope = {installStarted:false,
+    getUpdateState:()=>({phase}),
     quitting:()=>{teardown++;throw Error('test stops before teardown')}}
   const install = runInNewContext(code+';doInstall', scope)
-  install(true)
-  ok(teardown === 0 && !scope.installWhenIdle && watches.at(-1) === false, 'stale forced callback cancels before any teardown')
-  phase = 'ready'; panes = [{status:'idle',engaged:true}]
   install()
-  ok(teardown === 0 && scope.installWhenIdle && watches.at(-1) === true, 'delayed callback rechecks resumed activity')
-  panes = [{status:'idle',engaged:false}]
+  ok(teardown === 0, 'a stale explicit callback cancels before any teardown')
+  phase = 'ready'
   try { install() } catch (error) { if (error.message !== 'test stops before teardown') throw error }
-  ok(teardown === 1, 'explicitly safe ready desk reaches install boundary')
+  ok(teardown === 1, 'an explicit ready restart reaches the install boundary regardless of pane state')
+}
+
+// A ready build may be downloaded in the background, but the installer may only start
+// from the explicit IPC handler. These source assertions protect against quietly adding
+// another timer, stale-build listener, or failed-install retry to the main process.
+{
+  const main = readFileSync(join(ROOT, 'src/main/index.ts'), 'utf8')
+  const handler = main.slice(main.indexOf("ipcMain.handle('update:install'"), main.indexOf('\n})', main.indexOf("ipcMain.handle('update:install'")))
+  ok(handler.includes('doInstall()'), 'Restart now directly starts the explicit install')
+  ok(!handler.includes('whenClear'), 'Restart now is never silently queued for later')
+  ok(!/function autoInstall|readyTick|consumeInstallRetry|onUpdateIgnored/.test(main), 'no timer, stale-build listener, or failed-install retry can start an update')
 }
 
 console.log(failures ? `\n${failures} failed` : '\nall passed')

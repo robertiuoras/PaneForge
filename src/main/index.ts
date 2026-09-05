@@ -163,18 +163,15 @@ import { ensurePrereq, onPath, refreshPath, runCommand, runOnce, stopInstalls } 
 import { swapAndRelaunch } from './macUpdate'
 import {
   checkForUpdates,
-  consumeInstallRetry,
   getUpdateState,
   initUpdater,
   installUpdate,
   setAutoCheck,
   setDevChannel,
-  onUpdateIgnored,
   stagedInstallable,
   updateLog,
   bootMs
 } from './updater'
-import { READY_HOLD_MS } from '../shared/updateStale'
 import * as history from './history'
 import { clashingRestores, takenFolders } from '../shared/laneTaken'
 import { copyNumber } from '../shared/place'
@@ -188,7 +185,6 @@ import { DEFAULT_RECOVER } from '../shared/recover'
 import type { UsageReport } from '../shared/usage'
 import { loadPerCore, readPressure, totalMb, watchPressure } from './memory'
 import { backJobOf, trackUsage } from './usage'
-import { agentsMidTurn, deskBusy, decideInstall, shouldLogHold } from '../shared/updateHold'
 import type {
   Config,
   GameModeStatus,
@@ -242,11 +238,6 @@ onCrashReport((message) => send('app:error', message))
 // A link or a folder that would not open is not a crash, but it is exactly as invisible:
 // the button does nothing and says nothing. Same toast, its own words. See main/openUrl.ts.
 onOpenProblem((message) => send('app:error', message))
-// Two staged builds thrown away unused means nobody is going to press Restart. The
-// restart-when-idle path below already refuses to take anyone's panes away; until now
-// only a failed install ever started it. See shared/updateStale.ts.
-onUpdateIgnored(() => autoInstall())
-
 // Runs before anything reads userData: a named profile (`--profile=dev`) moves the
 // whole profile aside so a second PaneForge can run beside the live one. It also sets
 // the Windows app id, which ties notifications and the taskbar entry to this app -
@@ -3232,58 +3223,13 @@ let installStarted = false
 ipcMain.handle('update:install', async (): Promise<InstallOutcome> => {
   if (installStarted) return { status: 'installing' }
   if (getUpdateState().phase !== 'ready') return { status: 'nothing-to-install' }
-  // Asked fresh rather than read off the poller: a game started ten seconds ago is
-  // exactly the case where this must not go ahead.
-  await checkGameNow()
-  // Decided in shared/updateHold.ts, not here: this branch cannot be reached in dev at
-  // all (no update metadata, so `phase` never says ready), and a rule that only runs in
-  // production is a rule that ships untested. `npm run test:updatehold` holds it.
-  //
-  // The click used to go straight through, on the reasoning that the user chose the
-  // interruption. They chose the restart; they did not choose to lose the answer a pane
-  // was part-way through writing, and there is no way to tell the two apart from a
-  // button that only says "Restart now". So the click now means "as soon as it is not
-  // expensive", and the panes are the expensive part - `doInstall` hard-kills every pty,
-  // and what comes back is a fresh session with the answer gone and its clock at zero.
-  //
-  // Held here rather than inside `whenClear` because the two holds are about different
-  // things: the game hold protects the SCREEN, and is released by the game closing;
-  // this one protects WORK, and is released by the panes going quiet.
-  const decision = decideInstall({
-    phase: getUpdateState().phase,
-    installStarted,
-    sessions: manager.list()
-  })
-  if (decision.act === 'wait') {
-    installWhenIdle = true
-    watchForIdlePanes(true)
-    updateLog('install', `restart clicked, held: ${decision.busy} agent(s) mid-turn`)
-    const g = gameState()
-    return { status: 'held', busy: decision.busy, game: g.game, manual: g.manual }
-  }
-  if (whenClear('update-install', doInstall)) return { status: 'installing' }
-  // Queued, not done. Say which, and what is holding it: the card is about to swap its
-  // button for "Restart anyway", and a card that cannot name the reason reads as broken.
-  const s = gameState()
-  send('game:changed', gameStatus())
-  return { status: 'held', game: s.game, manual: s.manual }
+  doInstall()
+  return { status: 'installing' }
 })
 
-function doInstall(force = false): void {
+function doInstall(): void {
   if (installStarted) return
-  if (getUpdateState().phase !== 'ready') {
-    installWhenIdle = false
-    watchForIdlePanes(false)
-    return
-  }
-  if (!force && deskBusy(manager.list(), Date.now()) > 0) {
-    updateLog('install', 'restart held: desk became active before install')
-    // A delayed game/idle callback found new work. Keep the original clicked request
-    // pending rather than dropping it after its watcher was cleared.
-    installWhenIdle = true
-    watchForIdlePanes(true)
-    return
-  }
+  if (getUpdateState().phase !== 'ready') return
   installStarted = true
   quitting('installing an update')
 
@@ -3331,139 +3277,6 @@ function doInstall(force = false): void {
   // the user spends looking at no app at all. Nothing is left to save.
   hardExit()
 }
-
-/**
- * How often a held automatic restart looks again. A build that is downloaded and ready
- * stays ready, so this waits rather than giving up on it.
- */
-const AUTO_INSTALL_RECHECK_MS = 60_000
-let autoInstallTimer: NodeJS.Timeout | null = null
-
-/**
- * The restart nobody asked for, held until it costs nothing.
- *
- * A restart is not a blink for the panes: `doInstall` tears down every pty, so an agent
- * mid-turn is killed along with the answer it was writing, and what comes back is a
- * fresh session whose run clock starts again from zero. That is the "why did the running
- * time reset" this app has now been asked about three times, and it is also why the desk
- * reopens over whatever was on screen.
- *
- * Measured 2026-08-02 in `updater.log`: an install that silently failed retried itself at
- * 18:53:34Z, 18:54:18Z and 18:56:24Z - three full teardowns inside three minutes - with
- * eight panes on the desk. Nothing on that path asked whether anything was running. The
- * user-clicked path at least goes through the game hold.
- *
- * A click waits too, in `installWhenIdle` below - on the same rule, released the same
- * way. This path is the one nobody asked for, so it also keeps the 60s recheck rather
- * than reacting to every pane event.
- */
-/** When the busy hold last wrote its line - see `shouldLogHold` in shared/updateHold.ts. */
-let heldLogAt = 0
-function autoInstall(): void {
-  if (autoInstallTimer) {
-    clearTimeout(autoInstallTimer)
-    autoInstallTimer = null
-  }
-  // The build stopped being installable while we waited - superseded, or already going.
-  if (getUpdateState().phase !== 'ready') return
-  // `deskBusy`, not `agentsMidTurn`: a turn boundary is not a safe moment to take somebody's
-  // panes away, it is the pause in the middle of their work. See DESK_QUIET_MS.
-  const running = deskBusy(manager.list(), Date.now())
-  if (running > 0) {
-    // Once when the hold starts, then at most every 30 minutes - not every 60s recheck.
-    // A Mac busy all afternoon used to write the same line hundreds of times and bury the
-    // one that mattered: when the hold finally let go.
-    if (shouldLogHold(Date.now(), heldLogAt)) {
-      heldLogAt = Date.now()
-      updateLog('install', `auto-restart held: ${running} pane(s) in use - looking again in 60s`)
-    }
-    autoInstallTimer = setTimeout(autoInstall, AUTO_INSTALL_RECHECK_MS)
-    autoInstallTimer.unref?.()
-    return
-  }
-  // Clear, so the NEXT busy spell logs its own first line right away.
-  heldLogAt = 0
-  whenClear('update-install', doInstall)
-}
-
-/**
- * A build stops being merely offered and starts being taken - see shared/updateStale.ts.
- *
- * The card still lets somebody press Restart sooner; this is what happens when nobody
- * does, on ANY desk, attended or not. It goes through `autoInstall` and its unchanged
- * deskBusy hold, so a pane somebody is using is never interrupted - only the waiting to
- * be asked stops, once the build has sat ready `READY_HOLD_MS`.
- */
-let readyAt = 0
-let readyVersion = ''
-let readySaid = ''
-function noteReadyState(s: UpdateState): void {
-  if (s.phase !== 'ready') {
-    readyAt = 0
-    readyVersion = ''
-    return
-  }
-  if (s.version === readyVersion) return
-  readyVersion = s.version ?? ''
-  readyAt = Date.now()
-}
-function readyTick(): void {
-  if (installStarted || autoInstallTimer) return
-  const s = getUpdateState()
-  if (s.phase !== 'ready') return
-  const now = Date.now()
-  if (!readyAt || now - readyAt < READY_HOLD_MS) return
-  if (readySaid !== readyVersion) {
-    readySaid = readyVersion
-    updateLog('install', `v${readyVersion} has been ready ${Math.round((now - readyAt) / 60_000)}m - restarting as soon as no pane is in use`)
-  }
-  autoInstall()
-}
-setInterval(readyTick, AUTO_INSTALL_RECHECK_MS).unref?.()
-
-/**
- * A restart the user clicked while a pane was mid-turn, waiting for the panes to finish.
- *
- * The wait ends on the pane list changing, which is what a turn ending emits, so the
- * restart follows the last answer landing by a moment rather than by up to a minute.
- * The interval behind it is a backstop for the ending that changes nothing the list can
- * see, and costs one array filter while - and only while - a restart is queued.
- */
-let installWhenIdle = false
-let idlePaneTimer: NodeJS.Timeout | null = null
-const IDLE_PANE_RECHECK_MS = 5_000
-
-function watchForIdlePanes(on: boolean): void {
-  if (on === Boolean(idlePaneTimer)) return
-  if (on) {
-    idlePaneTimer = setInterval(installOncePanesIdle, IDLE_PANE_RECHECK_MS)
-    idlePaneTimer.unref?.()
-    return
-  }
-  clearInterval(idlePaneTimer as NodeJS.Timeout)
-  idlePaneTimer = null
-}
-
-function installOncePanesIdle(): void {
-  if (!installWhenIdle || installStarted) return
-  // Superseded, or the download went away underneath us. Stop waiting for a restart
-  // that has nothing left to install.
-  if (getUpdateState().phase !== 'ready') {
-    installWhenIdle = false
-    watchForIdlePanes(false)
-    return
-  }
-  const busy = deskBusy(manager.list(), Date.now())
-  if (busy > 0) return
-  installWhenIdle = false
-  watchForIdlePanes(false)
-  updateLog('install', 'panes idle - running the restart that was clicked')
-  // Through the game hold, not around it: the panes being finished says nothing about
-  // whether something is fullscreen on the screen right now.
-  whenClear('update-install', doInstall)
-}
-
-manager.on('sessions', installOncePanesIdle)
 
 /** The update did not happen: put the window back, inactive, once the screen is free. */
 function restoreAfterFailedInstall(): void {
@@ -3523,10 +3336,7 @@ ipcMain.handle('game:manual', (_e, on: boolean) => {
  * this is the user overriding it having been told the cost.
  */
 ipcMain.on('game:installAnyway', () => {
-  installWhenIdle = false
-  watchForIdlePanes(false)
-  cancelDeferred('update-install')
-  doInstall(true)
+  doInstall()
 })
 
 // --- task board + shared memory -------------------------------------------
@@ -4131,11 +3941,6 @@ app.whenReady().then(() => {
   setDevChannel(!!cfg.devUpdates)
   initUpdater((s: UpdateState) => {
     send('update:changed', s)
-    // A "Restart now" whose install never applied: the relaunch is the old version
-    // with the same build downloaded and ready again. Finish the user's click instead
-    // of showing them the same toast - once; updater.ts stops the loop at two tries.
-    if (s.phase === 'ready' && consumeInstallRetry(s.version)) autoInstall()
-    noteReadyState(s)
   }, cfg.autoUpdate)
   offerRestore()
   // Only the copy that owns the window: a launch that lost the lock is on its way out,

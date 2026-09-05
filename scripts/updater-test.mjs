@@ -250,24 +250,19 @@ u.initUpdater(()=>{},false)
 const h=stub.__handlers
 switch(process.env.CASE){
   case 'none':
-    ok(u.consumeInstallRetry('0.3.9')===false,'no marker, no retry')
+    ok(!fs.existsSync(marker),'no marker leaves no retry marker')
     break
   case 'retry':
-    ok(u.consumeInstallRetry('0.3.8')===false,'a different version does not consume the retry')
-    ok(u.consumeInstallRetry('0.3.9')===true,'an install that did not apply retries its version')
-    ok(u.consumeInstallRetry('0.3.9')===false,'the retry fires once')
-    ok(fs.existsSync(marker),'the attempt count survives for the retry to increment')
+    ok(!fs.existsSync(marker),'a failed install marker is cleared without scheduling a retry')
     h['update-downloaded']({version:'0.3.9'})
     try{u.installUpdate()}catch{}
     {const a=JSON.parse(fs.readFileSync(marker,'utf8'))
-     ok(a.version==='0.3.9'&&a.tries===2,'the retry is recorded as attempt 2')}
+     ok(a.version==='0.3.9'&&a.tries===1,'a new explicit install starts a fresh attempt')}
     break
   case 'give-up':
-    ok(u.consumeInstallRetry('0.3.9')===false,'two failed attempts stop the loop')
-    ok(!fs.existsSync(marker),'the exhausted marker is cleared')
+    ok(!fs.existsSync(marker),'an exhausted marker is cleared without a retry')
     break
   case 'applied':
-    ok(u.consumeInstallRetry('0.3.6')===false,'an applied install retries nothing')
     ok(!fs.existsSync(marker),'the marker is cleared once the version is running')
     break
   case 'fresh':

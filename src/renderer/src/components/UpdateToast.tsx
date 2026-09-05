@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { InstallOutcome, UpdateState } from '@shared/types'
-import { ignoredHint } from '@shared/updateStale'
+import type { UpdateState } from '@shared/types'
 import CardX from './CardX'
 
 const api = window.api
@@ -17,10 +16,6 @@ export default function UpdateToast(): JSX.Element | null {
   // now, but the frame between the click and that still belonged to a card that looked
   // like it had ignored the press, which is what "it lags and then closes" was.
   const [restarting, setRestarting] = useState(false)
-  // Do-not-disturb queues the restart rather than running it. Until this existed the
-  // click left the button on "Restarting..." with nothing behind it - the whole of
-  // "installing from the update popup does not work".
-  const [held, setHeld] = useState<InstallOutcome | null>(null)
 
   useEffect(() => {
     api.updateState().then(setState)
@@ -29,7 +24,6 @@ export default function UpdateToast(): JSX.Element | null {
 
   const restart = (): void => {
     setRestarting(true)
-    setHeld(null)
     // Two frames, not one: a rAF callback runs before the paint of the frame it is in,
     // so a single one fired while the button still read "Restart now" - which is the
     // frozen-looking frame this is here to remove.
@@ -40,7 +34,6 @@ export default function UpdateToast(): JSX.Element | null {
             // 'installing' never gets here: the window is already gone.
             if (!r || r.status === 'installing') return
             setRestarting(false)
-            if (r.status === 'held') setHeld(r)
           })
           .catch(() => setRestarting(false))
       })
@@ -60,17 +53,9 @@ export default function UpdateToast(): JSX.Element | null {
       <div className="ut-text">
         <strong>PaneForge {state.version} is {ready ? 'ready' : 'out'}</strong>
         <span className="hint">
-          {held
-            ? held.busy
-              ? `${held.busy === 1 ? 'A pane has an agent' : `${held.busy} panes have agents`} mid-turn, so the restart is queued rather than killing the answer being written. It happens by itself the moment ${held.busy === 1 ? 'it finishes' : 'they finish'} - or restart now anyway.`
-              : held.manual
-                ? 'Do not disturb is on, so the restart is queued rather than taking the screen. It happens the moment you turn it off - or restart now anyway.'
-                : `${held.game ?? 'A game'} is running, so the restart is queued rather than pulling it off the screen. It happens by itself when that closes - or restart now anyway.`
-            : ready
-              ? state.ignored
-                ? ignoredHint(state.current)
-                : `You are on ${state.current}. It installs silently and reopens your panes where they were - or on Later, the next time you quit.`
-              : `You are on ${state.current}. Download it and drag it over the old app.`}
+          {ready
+            ? `You are on ${state.current}. Choose Restart now when you are ready, or Later to install it the next time you quit.`
+            : `You are on ${state.current}. Download it and drag it over the old app.`}
         </span>
       </div>
       <div className="ut-actions">
@@ -85,9 +70,9 @@ export default function UpdateToast(): JSX.Element | null {
           <button
             className="primary small"
             disabled={restarting}
-            onClick={held ? () => api.installUpdateAnyway() : restart}
+            onClick={restart}
           >
-            {restarting ? 'Restarting…' : held ? 'Restart anyway' : 'Restart now'}
+            {restarting ? 'Restarting…' : 'Restart now'}
           </button>
         ) : (
           <button className="primary small" onClick={() => state.url && api.openExternal(state.url)}>
