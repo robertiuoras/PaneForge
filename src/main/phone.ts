@@ -93,6 +93,8 @@ const ASK_WINDOW_MS = 10 * 60_000
 // pane is focused - and the two would then overwrite each other's number on every session
 // broadcast, which is the same last-writer-wins fight `shared/paneSize.ts` documents.
 const DESK_ONLY = new Set([
+  'owner:access',
+  'owner:stats',
   'phone:typeGate',
   'phone:forgetKey',
   'phone:clearMark',

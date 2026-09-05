@@ -38,6 +38,7 @@ import StopServer from './components/StopServer'
 import { chordAllowed, raiseLogin, type LoginRequest } from '../../shared/remoteLogin'
 import LoginCard from './components/LoginCard'
 import RemoteLoginView from './components/RemoteLoginView'
+import UsersDialog from './components/UsersDialog'
 import type { StopSoon } from '../../shared/deadDev'
 import ActivityFlyout from './components/ActivityFlyout'
 import type { ActivityEntry } from '@shared/activity'
@@ -743,6 +744,13 @@ export default function App(): JSX.Element {
   const [renaming, setRenaming] = useState<string | null>(null)
   const [note, setNote] = useState<string | null>(null)
   const [swarm, setSwarm] = useState(false)
+  const [users, setUsers] = useState(false)
+  const [ownerAccess, setOwnerAccess] = useState(false)
+  useEffect(() => {
+    let active = true
+    void api.ownerAccess().then(allowed => { if (active) setOwnerAccess(allowed) }).catch(() => {})
+    return () => { active = false }
+  }, [])
   /** The "split one long ask into panes" dialog. Opened from a press, never on its own. */
   const [splitting, setSplitting] = useState(false)
   const [board, setBoard] = useState<string | null>(null)
@@ -3044,6 +3052,7 @@ export default function App(): JSX.Element {
         setSettings(false)
         setHelp(false)
         setSwarm(false)
+        setUsers(false)
         setBoard(null)
         setHistory(false)
         setDevices(false)
@@ -5327,6 +5336,7 @@ export default function App(): JSX.Element {
             reading was never lost, because the Sessions heading below carries the same
             count as a badge with the word beside it, which is where a number belongs. */}
         <div className="quick">
+          <div className="swarm-users">
           <button
             className="ghost quick-btn"
             title={keyLabel('Swarm: several agents on one mission (Ctrl Shift S)')}
@@ -5334,6 +5344,8 @@ export default function App(): JSX.Element {
           >
             <SwarmIcon />
           </button>
+          {ownerAccess && <button className="ghost small users-button" onClick={() => setUsers(true)} title="Users and downloads: your owner dashboard">Users</button>}
+          </div>
           <button
             className="ghost quick-btn"
             title={keyLabel("Board: tasks and shared memory for the focused pane's folder (Ctrl Shift K)")}
@@ -6326,6 +6338,7 @@ export default function App(): JSX.Element {
           onClose={() => setSplitting(false)}
         />
       )}
+      {users && ownerAccess && <UsersDialog remote={remote} onClose={() => setUsers(false)} />}
       {swarm && config && (
         <SwarmDialog
           projects={projects}

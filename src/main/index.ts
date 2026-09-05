@@ -43,6 +43,7 @@ import { CHOOSE_GAP_MS, keysForChoice, sameAsk } from '../shared/choices'
 import { Remote } from './remote'
 import { readInvite } from './remote/invite'
 import { PhoneServer, newPhoneCode } from './phone'
+import { ownerAccess, ownerStats } from './ownerStats'
 import { Tunnel } from './tunnel'
 import { callInvoke, callSend, tapIpc } from './ipcTap'
 import { surfaceChannels } from '../shared/surface'
@@ -1202,6 +1203,16 @@ const stopUsage = trackUsage(
 // A window opened after the last sample (a reload, a quiet restart) would otherwise draw
 // no figures until the next tick.
 ipcMain.handle('usage:get', () => lastUsage)
+// Owner reporting is never part of the browser/phone surface (DESK_ONLY in phone.ts),
+// and a direct IPC call from any other renderer fails closed as well.
+function fromDesk(e: Electron.IpcMainInvokeEvent): boolean {
+  return Boolean(win && !win.isDestroyed() && e.sender === win.webContents)
+}
+ipcMain.handle('owner:access', (e) => fromDesk(e) && ownerAccess())
+ipcMain.handle('owner:stats', (e) => {
+  if (!fromDesk(e)) throw new Error('Desktop owner access required')
+  return ownerStats()
+})
 
 // The dev servers running on this machine, for the mascot's "what dev servers are
 // running". The renderer supplies only the ORDER and the words - which pane is number 3,
