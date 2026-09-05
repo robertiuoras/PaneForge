@@ -43,6 +43,56 @@ export interface AttachIn {
 export interface AttachResult {
   paths: string[]
   error?: string
+  /**
+   * Small pictures of what was just attached, for the desk the drop happened on.
+   *
+   * A mirrored pane types a path that is true on the OTHER machine, so the only thing the
+   * person who dropped the screenshot sees is a sentence of Windows path at a prompt -
+   * which is exactly the shape of the bug this whole module fixed, read back at them. The
+   * bytes are in hand one step before they are sent, so the picture is made there and
+   * travels no further than the window that asked.
+   */
+  shots?: Shot[]
+}
+
+/**
+ * One picture of a just-attached file, small enough to live in a data URL.
+ *
+ * `url` is a `data:` URL rather than a path because the path is the thing that cannot be
+ * shown: on a mirrored pane it names a file on a disk this window cannot read.
+ */
+export interface Shot {
+  name: string
+  url: string
+  at: number
+}
+
+/** How wide a thumbnail is drawn, in device-independent pixels. */
+export const THUMB_WIDTH = 220
+
+/** How many thumbnails the strip holds. Older ones fall off the end. */
+export const THUMB_KEEP = 4
+
+/** How long the strip stays up when nobody dismisses it. */
+export const THUMB_SHOW_MS = 12000
+
+/**
+ * The strip after `added` arrived: newest first, capped, and nothing repeated.
+ *
+ * Deduplicated on the URL rather than the name because two screenshots pasted a second
+ * apart are the ordinary case and both are called `clipboard.png` - the bytes are the
+ * only thing that tells them apart.
+ */
+export function keepShots(existing: Shot[], added: Shot[], keep = THUMB_KEEP): Shot[] {
+  const out: Shot[] = []
+  const seen = new Set<string>()
+  for (const s of [...added, ...existing]) {
+    if (!s || !s.url || seen.has(s.url)) continue
+    seen.add(s.url)
+    out.push(s)
+    if (out.length >= keep) break
+  }
+  return out
 }
 
 /**

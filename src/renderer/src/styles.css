@@ -2173,6 +2173,29 @@ body.sizing * { user-select: none !important; }
   background: var(--panel); border: 1px solid var(--line);
 }
 
+/* The receipt for a dropped picture: what went, drawn small, bottom-right of the pane.
+   Bottom-LEFT is where Codex draws its own `>` marker and where `.pane-booting.over`
+   sits; the header row is what `headerFit` is already fighting over. One surface step
+   above the panel with a hairline border, following the vault's linear.app entry, and no
+   animation - it is on screen for twelve seconds and `npm run test:anim` refuses a
+   looping decoration. */
+.shot-strip {
+  position: absolute; right: 12px; bottom: 10px; z-index: 6;
+  display: flex; align-items: flex-start; gap: 6px;
+  padding: 6px; border-radius: 8px;
+  background: var(--panel); border: 1px solid var(--line);
+  max-width: calc(100% - 24px); overflow: hidden;
+}
+.shot-thumb {
+  display: block; height: 72px; width: auto; max-width: 140px; object-fit: cover;
+  border-radius: 4px; border: 1px solid var(--line);
+}
+.shot-close {
+  background: none; border: 0; padding: 0 2px; line-height: 1;
+  color: var(--muted); font-size: 12px; cursor: pointer;
+}
+.shot-close:hover { color: var(--fg); }
+
 /* The copy menu, opened by the pane header's copy button or by right-clicking a prompt
    tag on the rail. It replaced a pair of icons that floated beside every prompt on screen
    and moved whenever the pane scrolled.

@@ -34,7 +34,7 @@ import { whatsNew } from './whatsNew'
 import { tour, tourCheck } from './tour'
 import { addSample, dropSample } from './tourSample'
 import { addSound, pruneCustomSounds, removeSound, renameSound, soundData } from './sounds'
-import { writeAttachments, readAttachIns } from './attach'
+import { writeAttachments, readAttachIns, withShots } from './attach'
 import { AskNotifier, askMessage, postAsk, telegramCreds } from './askNotify'
 import { askKeyOf } from '../shared/autoAnswer'
 import type { AttachIn, AttachResult } from '../shared/attach'
@@ -2752,8 +2752,8 @@ ipcMain.handle('pty:choose', (_e, id: string, n: number): boolean => {
 })
 
 ipcMain.handle('pty:attach', (_e, id: string, files: AttachIn[]): Promise<AttachResult> => {
-  if (remote.owns(id)) return remote.attachOn(id, files)
-  return Promise.resolve(writeAttachments(files))
+  if (remote.owns(id)) return withShots(files, remote.attachOn(id, files))
+  return withShots(files, writeAttachments(files))
 })
 
 /**
@@ -2766,8 +2766,8 @@ ipcMain.handle('pty:attach', (_e, id: string, files: AttachIn[]): Promise<Attach
 ipcMain.handle('pty:attachPaths', (_e, id: string, paths: string[]): Promise<AttachResult> => {
   const read = readAttachIns(paths)
   if (read.error) return Promise.resolve({ paths: [], error: read.error })
-  if (remote.owns(id)) return remote.attachOn(id, read.files)
-  return Promise.resolve(writeAttachments(read.files))
+  if (remote.owns(id)) return withShots(read.files, remote.attachOn(id, read.files))
+  return withShots(read.files, writeAttachments(read.files))
 })
 
 /**
@@ -2785,8 +2785,8 @@ ipcMain.handle('pty:attachClipboard', (_e, id: string): Promise<AttachResult> =>
   const png = img.toPNG()
   if (!png.length) return Promise.resolve({ paths: [], error: 'No image on the clipboard' })
   const files: AttachIn[] = [{ name: 'clipboard.png', data: png.toString('base64') }]
-  if (remote.owns(id)) return remote.attachOn(id, files)
-  return Promise.resolve(writeAttachments(files))
+  if (remote.owns(id)) return withShots(files, remote.attachOn(id, files))
+  return withShots(files, writeAttachments(files))
 })
 
 /**

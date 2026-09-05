@@ -7,14 +7,17 @@
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
-import { app } from 'electron'
+import { app, nativeImage } from 'electron'
 import {
   ATTACH_KEEP,
+  THUMB_WIDTH,
+  THUMB_KEEP,
   attachName,
   pruneList,
   tooBig,
   type AttachIn,
-  type AttachResult
+  type AttachResult,
+  type Shot
 } from '../shared/attach'
 
 /** `userData/attachments`, made on first use. */
@@ -82,6 +85,54 @@ export function readAttachIns(paths: string[]): { files: AttachIn[]; error?: str
   const big = tooBig(files)
   if (big) return { files: [], error: big }
   return { files }
+}
+
+/**
+ * Small pictures of the attachments in `files`, for the window that is sending them.
+ *
+ * Made HERE, on the desk the drop happened on, and not on the machine the pty is: the
+ * bytes are in hand one step before they travel, so a mirrored pane's strip costs the
+ * link nothing and works even when the far end is an older build that has never heard of
+ * a thumbnail. Anything Chromium cannot decode as an image is left out rather than drawn
+ * as a broken box - a PDF attached beside a screenshot is an ordinary drop.
+ *
+ * Never throws: a strip is decoration, and a decoder that chokes on one file may not take
+ * the attachment it decorates down with it.
+ */
+export function thumbsFor(files: AttachIn[], now = Date.now()): Shot[] {
+  const list = Array.isArray(files) ? files : []
+  const shots: Shot[] = []
+  for (const f of list) {
+    if (shots.length >= THUMB_KEEP) break
+    try {
+      const img = nativeImage.createFromBuffer(Buffer.from(String(f?.data ?? ''), 'base64'))
+      if (img.isEmpty()) continue
+      const small = img.getSize().width > THUMB_WIDTH ? img.resize({ width: THUMB_WIDTH }) : img
+      const url = small.toDataURL()
+      if (!url || url.length < 32) continue
+      shots.push({ name: String(f?.name ?? ''), url, at: now })
+    } catch {
+      /* not a picture, or a decoder that gave up: the attachment itself still went */
+    }
+  }
+  return shots
+}
+
+/**
+ * An attach answer with this desk's own thumbnails on it.
+ *
+ * Wrapped rather than folded into `writeAttachments` because the interesting caller is the
+ * one that does NOT write: a mirrored pane's bytes are saved on the other machine and the
+ * answer comes back over the link, and the pictures still have to come from here.
+ */
+export async function withShots(
+  files: AttachIn[],
+  answer: Promise<AttachResult> | AttachResult
+): Promise<AttachResult> {
+  const res = await answer
+  if (res.error || !res.paths.length) return res
+  const shots = thumbsFor(files)
+  return shots.length ? { ...res, shots } : res
 }
 
 /** Delete everything this app wrote beyond the newest `ATTACH_KEEP`. Never throws. */
