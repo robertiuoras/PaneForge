@@ -17,6 +17,7 @@
 //     `seedPrompts`: 400 KB gave 351 tags with 103 of 237 panes carrying NO tag at all,
 //     against 1,320 tags and 27 empty panes from 4 MB. So a restored pane came back with
 //     30.8% of its own prompts tagged.
+import { transformSync } from 'esbuild'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -44,7 +45,18 @@ check(
 // `seedMarks` may only add tags to a rail that has none: a pane that has been typed into
 // owns its own tags and must never get a second one for the same prompt.
 const seed = src.slice(src.indexOf('const seedMarks = (): void =>'))
-check(seed.slice(0, 200).includes('if (list.length) return'), 'seedMarks still refuses a rail with tags on it')
+const actualSeed = src.slice(src.indexOf('const seedMarks = (): void =>'), src.indexOf('const addMark = ', src.indexOf('const seedMarks = (): void =>')))
+const executable = transformSync(actualSeed, { loader: 'ts', target: 'node20' }).code
+const entries = [{ key: 'one', at: 123, marker: { line: 1, dispose() {} } }]
+let serial = 0
+const terminal = { buffer: { active: { baseY: 0, cursorY: 5, getLine: () => ({ translateToString: () => '' }) } }, registerMarker: offset => ({ id: ++serial, line: 5 + offset, dispose() { this.disposed = true } }) }
+const runSeed = new Function('t', 'list', 'seedPrompts', 'echoKey', 'flatDraft', 'anchor', 'MARK_CAP', 'RAIL_LABEL_CHARS', 'publish', 'syncTotal', executable + ';return seedMarks')(
+  terminal, entries, () => [{ line: 1, text: 'one' }, { line: 3, text: 'two' }], x => x, x => x, () => {}, 80, 200, () => {}, () => {})
+runSeed()
+check(entries.length === 2 && entries[1].key === 'two', 'a partial rail recovers its missing prompt tag')
+check(entries[0].at === 123, 'a surviving live tag preserves its original identity and time')
+runSeed()
+check(entries.length === 2 && serial === 1, 'repeated repair never duplicates existing prompt tags')
 
 const replay = src.slice(src.indexOf('const replayBuffer = '))
 const done = replay.slice(0, replay.indexOf('reshape(t, f)'))

@@ -2395,13 +2395,12 @@ function TerminalPane({
      * replayed, so it is read back out (shared/promptEcho.ts) and a marker registered on
      * the line it was found on.
      *
-     * Only when the rail is empty: a pane that has been typed into owns its own tags, and
+     * A pane that has been typed into owns its existing tags, and
      * this must never add a second tag for a prompt that already has one. `at` is 0 because
      * the time it was sent is genuinely not known here - `markLabel` prints the text alone
      * rather than inventing a clock reading.
      */
     const seedMarks = (): void => {
-      if (list.length) return
       const b = t.buffer.active
       const cursor = b.baseY + b.cursorY
       const rows: string[] = []
@@ -2410,9 +2409,12 @@ function TerminalPane({
       // `seedPrompts`. Row by row this gave three tags for one ask and a tag on a line of
       // test output, because a replayed screen holds every repaint of the prompt block.
       const found = seedPrompts(rows)
+      const known = new Set(list.map((entry) => entry.key))
       // Same cap as the live rail, and the same end of the list: past this many the tags
       // are a solid bar, and the newest are the ones being looked for.
       for (const f of found.slice(-MARK_CAP)) {
+        const key = echoKey(f.text)
+        if (known.has(key)) continue
         const marker = t.registerMarker(f.line - cursor)
         if (!marker) continue
         const entry: Mark = {
@@ -2422,11 +2424,14 @@ function TerminalPane({
           text: flatDraft(f.text, RAIL_LABEL_CHARS),
           full: f.text,
           at: 0,
-          key: echoKey(f.text)
+          key
         }
         anchor(entry, marker)
         list.push(entry)
+        known.add(key)
       }
+      list.sort((a, b) => a.marker.line - b.marker.line)
+      while (list.length > MARK_CAP) list.shift()?.marker.dispose()
       if (list.length) {
         publish()
         syncTotal()
@@ -3860,6 +3865,8 @@ function TerminalPane({
       fixWhy.current = 'pressed'
     }
     const repair = (): void => {
+      const markersBefore = list.length
+      const repairWhy = fixWhy.current
       noteFix('repair')
       try {
         pinned.current = true
@@ -3870,6 +3877,27 @@ function TerminalPane({
         t.refresh(0, t.rows - 1)
         t.scrollToBottom()
         setScrolledUp(false)
+        // A CLI redraw may dispose anchors on rows it clears. Once its repaint has settled,
+        // recover missing replay tags from the bytes still in xterm; never add a
+        // second tag beside live keystroke marks.
+        window.setTimeout(() => {
+          if (dead) return
+          const surviving = list.length
+          seedMarks()
+          // Metadata only: enough to distinguish disposed anchors from a rail that was
+          // never present, without recording any prompt text from the terminal.
+          api.logFix({
+            id: sessionId,
+            step: 'repair-markers',
+            why: repairWhy,
+            cols: t.cols,
+            grid: t.rows,
+            buffer: t.buffer.active.type,
+            markersBefore,
+            markersAfter: list.length,
+            restored: Math.max(0, list.length - surviving)
+          })
+        }, RESTORE_FIX_MS)
       } catch {
         /* hidden or detached - the visibility effect refits it */
       }
