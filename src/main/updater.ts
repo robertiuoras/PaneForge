@@ -432,9 +432,7 @@ function recordInstallAttempt(version: string): void {
   log('install', `attempt ${tries} for v${version}`)
 }
 
-let retryVersion: string | null = null
-
-/** At launch: consume the marker, decide whether the last install needs finishing. */
+/** At launch, clear the diagnostic marker without retrying an install on the user's behalf. */
 function checkLastAttempt(): void {
   const a = readAttempt()
   if (!a) return
@@ -443,26 +441,9 @@ function checkLastAttempt(): void {
   } catch {
     /* unreadable marker is as good as none */
   }
-  if (!newer(a.version, app.getVersion())) return // it applied - nothing to do
-  if (a.tries >= 2) {
-    log('install', `v${a.version} still not applied after ${a.tries} attempts - leaving the restart to the user`)
-    return
+  if (newer(a.version, app.getVersion())) {
+    log('install', `v${a.version} did not apply (still v${app.getVersion()}) - waiting for the user to restart or quit`)
   }
-  // Put the count back so the retry's own recordInstallAttempt makes this attempt 2.
-  try {
-    writeFileSync(ATTEMPT(), JSON.stringify(a), 'utf8')
-  } catch {
-    /* same best-effort as above */
-  }
-  retryVersion = a.version
-  log('install', `v${a.version} did not apply (still v${app.getVersion()}) - retrying when it is ready again`)
-}
-
-/** True exactly once, when `version` is the build a failed install should retry. */
-export function consumeInstallRetry(version: string | undefined): boolean {
-  if (!retryVersion || retryVersion !== version) return false
-  retryVersion = null
-  return true
 }
 
 // One failed check reaches this module as a burst of identical errors; these two

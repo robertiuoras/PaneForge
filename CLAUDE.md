@@ -178,13 +178,15 @@ When asked for (`"release": "version"`):
 
 Never cut one while a next step is open.
 
-## An update may never need a person
+## Updates wait for the user to restart
 
 Install once, update from app; hand-reinstall = defect.
 
 - Unsupported: skip not retry (`shared/pickRelease.ts`); none installable -> "no update". `npm
   run test:pickrelease`.
-- Restart: `deskBusy` (`shared/updateHold.ts`) till `DESK_QUIET_MS` 10min. `npm run
+- Download in the background, then offer Restart now or Later. Only the explicit Restart
+  now action or a normal user quit installs the staged update. No timed restart, ignored
+  version escalation, or failed-install retry may interrupt a running session. `npm run
   test:updatehold`.
 - `phaseAt`/phase; `CHECK_BUDGET_MS` 2min, `DOWNLOAD_BUDGET_MS` 45min, `PROBE_BUDGET_MS` 5min,
   `POLL_WATCHDOG_MS` 6min. Quit gated `stagedInstallable()`, never `phase==='ready'`.
