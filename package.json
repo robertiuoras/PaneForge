@@ -109,6 +109,7 @@
     "test:railclick": "node scripts/rail-click-test.mjs",
     "test:railplace": "node scripts/rail-place-test.mjs",
     "test:cursorclick": "node scripts/cursor-click-test.mjs",
+    "test:deletesettle": "node scripts/delete-settle-test.mjs",
     "test:devlayout": "node scripts/dev-layout-test.mjs",
     "test:remotereset": "node scripts/remote-reset-test.mjs",
     "test:stickyselect": "node scripts/sticky-select-test.mjs",

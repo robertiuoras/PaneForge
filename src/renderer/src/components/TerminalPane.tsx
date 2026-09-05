@@ -951,7 +951,9 @@ function TerminalPane({
   const clickKeys = useRef<string[]>([])
   /** When a person last typed into this pane - see `t.onData`. */
   const typedAt = useRef(0)
+  const keyRevision = useRef(0)
   const sendKeys = (keys: string): void => {
+    keyRevision.current++
     clickKeys.current.push(keys)
     void api.write(sessionId, keys)
   }
@@ -3150,10 +3152,14 @@ function TerminalPane({
       if (before >= 0 && !replacing) {
         const rowsCrossed = Math.abs(pos.end.y - pos.start.y)
         const sentAt = Date.now()
+        const sentRevision = keyRevision.current
         const owed = (): void => {
-          if (typedAt.current > sentAt) return
+          if (typedAt.current > sentAt || keyRevision.current !== sentRevision) return
           const seen = composerLength()
-          if (seen < 0) return
+          // The CLI may not have drawn the first delete yet. Its unchanged frame
+          // is not proof of a leftover. A corrective send changes the revision,
+          // so the second timer cannot repeat it on another stale frame.
+          if (seen < 0 || seen >= before) return
           const extra = leftoverBackspaces({ seen, want, rowsCrossed })
           if (extra > 0) sendKeys(BACKSPACE.repeat(extra))
         }
