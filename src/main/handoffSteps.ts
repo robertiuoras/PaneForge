@@ -8,6 +8,7 @@
 import { lstatSync, readFileSync, statSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { actionableNextSteps, handoffCandidates } from '../shared/handoffSteps'
 
 /** How stale a cached reading may be. A handoff is rewritten once a session, not once a second. */
@@ -37,6 +38,11 @@ const NONE: HandoffReading = { path: null, open: 0, steps: [], mtimeMs: 0 }
 
 const cache = new Map<string, { at: number; reading: HandoffReading }>()
 
+// Match the transcript reader's state-directory override, including custom folder names.
+function claudeHome(): string {
+  return process.env.PF_CLAUDE_HOME || join(homedir(), '.claude')
+}
+
 /**
  * Read the newest handoff for this pane.
  *
@@ -61,7 +67,7 @@ export function handoffFor(cwd: string, paneId: string, now = Date.now()): Hando
     }
   }
   let best: HandoffReading = NONE
-  for (const p of handoffCandidates(cwd, paneId, homedir(), symlinked)) {
+  for (const p of handoffCandidates(cwd, paneId, claudeHome(), symlinked)) {
     try {
       const st = statSync(p)
       if (st.mtimeMs <= best.mtimeMs) continue
@@ -87,7 +93,7 @@ export function verifiedPaneHandoff(cwd: string, paneId: string, agent: string, 
   if (!hand.path || !meta || meta.paneId !== paneId || meta.agent !== agent || meta.resumeId !== resumeId || meta.cwd !== cwd || now - meta.createdAt > 20 * 60_000 || meta.createdAt > now) return null
   try {
     const st = statSync(hand.path)
-    if (now - st.mtimeMs > 20 * 60_000 || st.mtimeMs > now + 1_000 || st.size > 64 * 1024 || handoffCandidates(cwd, paneId, homedir(), symlinked)[0] !== hand.path) return null
+    if (now - st.mtimeMs > 20 * 60_000 || st.mtimeMs > now + 1_000 || st.size > 64 * 1024 || handoffCandidates(cwd, paneId, claudeHome(), symlinked)[0] !== hand.path) return null
     const bytes = readFileSync(hand.path)
     if (bytes.length > 64 * 1024 || createHash('sha256').update(bytes).digest('hex') !== hand.digest) return null
     const text = bytes.toString('utf8')

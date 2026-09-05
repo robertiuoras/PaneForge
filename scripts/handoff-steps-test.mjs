@@ -120,20 +120,20 @@ t('the chip says nothing for a pane with nothing open', () => {
 // Finding the file. Newest wins, and the pane's own slot is asked for first.
 
 t("a pane's own slot is the first candidate, and the unscoped name is still asked", () => {
-  const list = handoffCandidates('/Users/x/Projects/App', 's6-abc', '/Users/x', noSymlinks)
+  const list = handoffCandidates('/Users/x/Projects/App', 's6-abc', '/Users/x/.claude', noSymlinks)
   assert.ok(list[0].endsWith('session-handoff.pane-s6-abc.md'), list[0])
   assert.ok(list.some((p) => p.endsWith('memory/session-handoff.md')))
   assert.ok(list.every((p) => p.includes('-Users-x-Projects-App')))
 })
 
 t('a lane worktree also looks under the trunk project it belongs to', () => {
-  const list = handoffCandidates('/Users/x/Projects/App-a', 's1-z', '/Users/x', noSymlinks)
+  const list = handoffCandidates('/Users/x/Projects/App-a', 's1-z', '/Users/x/.claude', noSymlinks)
   assert.ok(list.some((p) => p.includes('-Users-x-Projects-App/memory/session-handoff.App-a.md')))
   assert.ok(list.some((p) => p.includes('-Users-x-Projects-App/memory/session-handoff.md')))
 })
 
 t('a pane id that is not a plain name never becomes a path', () => {
-  const list = handoffCandidates('/Users/x/Projects/App', '../../etc/passwd', '/Users/x', noSymlinks)
+  const list = handoffCandidates('/Users/x/Projects/App', '../../etc/passwd', '/Users/x/.claude', noSymlinks)
   assert.ok(!list.some((p) => p.includes('..')), list.join(' '))
 })
 
