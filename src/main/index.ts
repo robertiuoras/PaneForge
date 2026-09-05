@@ -1023,14 +1023,15 @@ function raiseAttention(s: Session): void {
 const remote = new Remote({
   list: () => manager.list(),
   buffer: (id) => manager.buffer(id),
+  log: (id, bytes) => history.tail(id, bytes) || manager.buffer(id),
   // A person typed this on the paired machine's mirror, and this desk never saw the
   // keystrokes - so it needs telling on `pane:typed`, exactly as a phone's line does.
   // Without an origin here it defaulted to `desk`, and a pane driven from another
   // machine got no rail tag and no row in the prompt archive.
   write: (id, data) => manager.write(id, data, 'phone'),
   onTyped: (cb) => {
-    manager.on('typed', cb)
-    return () => manager.off('typed', cb)
+    manager.on('submitted', cb)
+    return () => manager.off('submitted', cb)
   },
   // `viewer` is who is asking, and it MUST be forwarded rather than named here: this one
   // object is the phone's surface AND the remote host's backend, so hardcoding a name
@@ -1117,12 +1118,12 @@ manager.on('armclear', (id: string) => {
   noteActivity(activityEntry('cleared', manager.list().find((x) => x.id === id)?.title ?? 'a pane', 'it was out of context, and its handoff said there was work left'))
 })
 manager.on('handover', (id: string, until: number) => send('pane:handover', id, until))
-remote.on('reset', (id: string) => {
+remote.on('reset', (id: string, snapshot?: string) => {
   pump.flushOne(id)
-  // Capture in the reset event's turn, before a later data frame mutates it.
-  send('pane:reset', id, remote.buffer(id))
+  send('pane:reset', id, snapshot ?? remote.buffer(id))
 })
 remote.on('typed', (id: string, line: string, origin: string) => {
+  pump.flushOne(id)
   send('pane:typed', id, line, origin === 'app' ? 'app' : 'person')
 })
 remote.on('sessions', () => {
@@ -1714,10 +1715,8 @@ ipcMain.handle('sessions:buffer', (_e, id: string) =>
 /**
  * The same pane, further back than the in-memory replay reaches - off its transcript.
  *
- * A mirrored pane's transcript is written on the machine that owns the pty, so there is
- * nothing here to read and the live replay is the whole of what this device has. Answered
- * with the buffer rather than with an error: the caller wants as much of this pane as can
- * be had, and "as much as exists here" is the honest answer to that.
+ * A mirrored pane's transcript lives on the machine that owns the pty, so the read is
+ * forwarded there on demand. The regular 400 KB live buffer stays a separate fast path.
  */
 ipcMain.handle('app:whatsNew', () => whatsNew())
 ipcMain.handle('app:tour', () => tour())
@@ -1725,12 +1724,19 @@ ipcMain.handle('app:tourSample', (_e, on: boolean) => (on ? addSample() : dropSa
 ipcMain.handle('app:tourCheck', (_e, script: string) =>
   tourCheck(script, (p) => send('app:tourCheckLine', p))
 )
-ipcMain.handle('sessions:log', (_e, id: string, bytes?: number) =>
-  remote.owns(id)
-    ? remote.buffer(id)
-    : history.tail(id, Math.min(Math.max(Number(bytes) || 2_000_000, 1), 8 * 1024 * 1024)) ||
-      manager.buffer(id)
-)
+ipcMain.handle('sessions:log', (_e, id: string, bytes?: number) => {
+  const want = Math.min(Math.max(Number(bytes) || 2_000_000, 1), 8 * 1024 * 1024)
+  if (remote.owns(id)) return remote.log(id, want)
+  return history.tail(id, want) || manager.buffer(id)
+})
+ipcMain.handle('sessions:replay', async (_e, id: string) => {
+  if (remote.owns(id)) return remote.replayHistory(id)
+  if (!manager.list().some((session) => session.id === id)) return false
+  pump.flushOne(id)
+  const raw = history.tail(id, 4 * 1024 * 1024) || manager.buffer(id)
+  send('pane:reset', id, raw)
+  return true
+})
 /**
  * Tee a pane's output to a file while it runs (tmux's `pipe-pane`), or stop.
  *

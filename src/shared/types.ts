@@ -2147,6 +2147,8 @@ export interface Api {
    * answered. Raw, not stripped: it is rendered through a terminal at the other end.
    */
   paneLog(id: string, bytes?: number): Promise<string>
+  /** Ordered terminal replacement from transcript history; unlike paneLog it changes the visible pane. */
+  replayHistory(id: string): Promise<boolean>
   /**
    * Start teeing this pane's output to a file, or stop the one that is running.
    *

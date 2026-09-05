@@ -110,6 +110,10 @@ function backend() {
   return {
     list: () => sessions,
     buffer: () => 'SCROLLBACK',
+    log: (_id, bytes) => {
+      backend.lastLogBytes = bytes
+      return 'DISK-HISTORY-OLDER-THAN-LIVE-BUFFER'
+    },
     write: () => {},
     resize: () => {},
     returnSize: () => {},
@@ -123,7 +127,9 @@ function backend() {
     startSession: () => sessions[0],
     projects: async () => [],
     agents: async () => [],
+    jobs: async () => [],
     onData: (cb) => (listeners.data.push(cb), () => {}),
+    onTyped: () => () => {},
     onSessions: (cb) => (listeners.sessions.push(cb), () => {}),
     onAttention: (cb) => (listeners.attention.push(cb), () => {})
   }
@@ -208,6 +214,14 @@ async function main() {
   client.connect()
   ok('the device comes online', await until(() => client.status === 'online'), client.error)
   ok('and its pane is mirrored', await until(() => client.list().length === 1))
+  const history = await client.log('s1', 8 * 1024 * 1024)
+  ok('an explicit history read reaches the owner disk log, not the live buffer', history === 'DISK-HISTORY-OLDER-THAN-LIVE-BUFFER')
+  ok('the remote history request is capped below the wire frame limit', backend.lastLogBytes === 4 * 1024 * 1024, String(backend.lastLogBytes))
+  const ask = client.ask
+  client.ask = () => Promise.reject(new Error('PC did not answer'))
+  const oldHostError = await client.log('s1').then(() => '', (err) => err.message)
+  client.ask = ask
+  ok('an older host fails with an explicit history message', /cannot provide remote history/i.test(oldHostError), oldHostError)
 
   // Nothing is closed here. Both sockets stay open; the bytes just stop arriving.
   const cut = Date.now()

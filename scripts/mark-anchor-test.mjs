@@ -242,6 +242,42 @@ const ERASE_BELOW = '\x1b[5;1H\x1b[J'
   t.dispose()
 }
 
+// The full Mac Codex history carries submitted `›` echoes. Once a repaint has moved that
+// echo away from the marker's old composer row, the same bounded reader must find it and
+// a jump must land on it. This uses xterm's real buffer rather than a string-only stand-in.
+{
+  const t = await pane(0)
+  const prompt = 'keep the moved Codex history mark accurate after replay'
+  await write(t, '\r\n\x1b[48;5;235m› ' + prompt + '\x1b[0m\r\n')
+  for (let i = 0; i < 18; i++) await write(t, `  reply ${i}\r\n`)
+  await write(t, '› ' + prompt + ' quoted by a tool\r\n')
+  await write(t, '\x1b[48;5;235m› ' + prompt + ' unfinished draft\x1b[0m')
+  const b = t.buffer.active
+  let draftStart = -1
+  for (let i = 0; i < b.length; i++) {
+    const line = b.getLine(i)
+    if (line?.translateToString(true).startsWith('› keep the moved')) draftStart = i
+  }
+  const row = (i) => {
+    const line = b.getLine(i)
+    if (!line) return undefined
+    return {
+      text: line.translateToString(true),
+      background: line.getCell(0)?.getBgColor(),
+      active: i >= draftStart
+    }
+  }
+  const key = echoKey(prompt)
+  const echo = findEcho(row, -1, b.length, key, 'codex')
+  check('a coloured submitted Codex echo is recognised for live re-anchoring', echo >= 0 && onEchoRow(row(echo), key, 'codex'), String(echo))
+  const stale = b.baseY + b.cursorY
+  eq('a Codex jump ignores newer uncoloured output and an active draft', landingRow(row, stale, key, 0, b.length, 'codex'), echo)
+  check('Codex plain-text landing fallback also excludes output quotes and active draft rows',
+    !rowShowsPrompt({text:prompt}, key, 'codex') &&
+    !rowShowsPrompt({text:prompt,background:235,active:true}, key, 'codex'))
+  t.dispose()
+}
+
 // ---------------------------------------------------------------------------
 // Landing a jump on the row the prompt is drawn on, with no CLI-specific marker.
 //

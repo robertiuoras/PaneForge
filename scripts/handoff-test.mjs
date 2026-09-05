@@ -89,6 +89,7 @@ function inertBackend() {
     projects: () => Promise.resolve([]),
     agents: () => Promise.resolve([]),
     onData: () => () => {},
+    onTyped: () => () => {},
     onSessions: () => () => {},
     onAttention: () => () => {}
   }

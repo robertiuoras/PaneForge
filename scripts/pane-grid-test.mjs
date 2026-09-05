@@ -84,7 +84,7 @@ check('no literal 120 left in the pane size the pty is spawned at', !/this\.spaw
 check('the pane exposes a full redraw', pane.includes('paneRedraw.set(sessionId, redrawHistory)'))
 check('...which is dropped with the pane', pane.includes('paneRedraw.delete(sessionId)'))
 check('...and writes at a width no narrower than any it was painted at', pane.includes('Math.max(back, replayColsRef.current ?? 0, START_COLS)'))
-check('...and never on a mirror (that pty is another machine\'s)', /redrawHistory = async[\s\S]{0,120}mirrorRef\.current/.test(pane))
+check('a mirrored replay never takes ownership of the host size', pane.includes('if (!mirrorRef.current) api.takePaneSize(sessionId)'))
 check('Fix asks for it', app.includes('paneRedraw.get(target)'))
 check('...and says so only when it happened', app.includes("'Display and history repaired.'"))
 

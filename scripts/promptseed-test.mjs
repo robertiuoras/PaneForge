@@ -32,15 +32,10 @@ const check = (ok, what, note = '') => {
 
 const redraw = src.slice(src.indexOf('const redrawHistory = async'))
 const body = redraw.slice(0, redraw.indexOf('paneRedraw.set('))
-check(body.includes('t.reset()'), 'redrawHistory still resets the terminal')
-check(
-  body.indexOf('m.marker.dispose()') > 0 && body.indexOf('m.marker.dispose()') < body.indexOf('t.reset()'),
-  'redrawHistory drops the tags BEFORE the reset that orphans them'
-)
-check(
-  body.indexOf('seedMarks()') > body.indexOf('t.reset()'),
-  'redrawHistory re-seeds the rail after the deeper draw'
-)
+check(body.includes('api.replayHistory(sessionId)'), 'redraw asks main for an ordered history snapshot')
+check(!body.includes('t.reset()'), 'redraw cannot reset ahead of queued terminal output')
+const reset = src.slice(src.indexOf('const offReset = '), src.indexOf('const off = api.onData'))
+check(reset.includes('m.marker.dispose()') && reset.includes('seedMarks()'), 'ordered reset replaces obsolete tags and seeds the new snapshot')
 
 // `seedMarks` may only add tags to a rail that has none: a pane that has been typed into
 // owns its own tags and must never get a second one for the same prompt.
@@ -49,9 +44,9 @@ const actualSeed = src.slice(src.indexOf('const seedMarks = (): void =>'), src.i
 const executable = transformSync(actualSeed, { loader: 'ts', target: 'node20' }).code
 const entries = [{ key: 'one', at: 123, marker: { line: 1, dispose() {} } }]
 let serial = 0
-const terminal = { buffer: { active: { baseY: 0, cursorY: 5, getLine: () => ({ translateToString: () => '' }) } }, registerMarker: offset => ({ id: ++serial, line: 5 + offset, dispose() { this.disposed = true } }) }
-const runSeed = new Function('t', 'list', 'seedPrompts', 'echoKey', 'flatDraft', 'anchor', 'MARK_CAP', 'RAIL_LABEL_CHARS', 'publish', 'syncTotal', executable + ';return seedMarks')(
-  terminal, entries, () => [{ line: 1, text: 'one' }, { line: 3, text: 'two' }], x => x, x => x, () => {}, 80, 200, () => {}, () => {})
+const terminal = { buffer: { active: { baseY: 0, cursorY: 5, getLine: () => ({ translateToString: () => '', getCell: () => ({getBgColor: () => 0}) }) } }, registerMarker: offset => ({ id: ++serial, line: 5 + offset, dispose() { this.disposed = true } }) }
+const runSeed = new Function('agent', 't', 'list', 'seedPrompts', 'echoKey', 'flatDraft', 'anchor', 'MARK_CAP', 'RAIL_LABEL_CHARS', 'publish', 'syncTotal', executable + ';return seedMarks')(
+  'claude', terminal, entries, () => [{ line: 1, text: 'one' }, { line: 3, text: 'two' }], x => x, x => x, () => {}, 80, 200, () => {}, () => {})
 runSeed()
 check(entries.length === 2 && entries[1].key === 'two', 'a partial rail recovers its missing prompt tag')
 check(entries[0].at === 123, 'a surviving live tag preserves its original identity and time')
@@ -62,8 +57,8 @@ const replay = src.slice(src.indexOf('const replayBuffer = '))
 const done = replay.slice(0, replay.indexOf('reshape(t, f)'))
 check(done.includes('deepSeeded.current = true'), 'the restore replay arms one deeper draw')
 check(
-  done.includes('!list.length') && done.includes('!mirrorRef.current'),
-  'the deeper draw is only for a pane whose rail came back EMPTY, and never a mirror'
+  done.includes('!list.length') && !done.includes('!mirrorRef.current'),
+  'the deeper draw is only for a pane whose rail came back EMPTY, including a mirror with a host log'
 )
 check(
   done.indexOf('seedMarks()') < done.indexOf('deepSeeded.current'),

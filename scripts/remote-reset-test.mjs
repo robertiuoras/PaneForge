@@ -18,13 +18,17 @@ const factory = transformSync(source.slice(keeperStart, keeperEnd), {loader:'ts'
 const keeperSource = readFileSync(new URL('../src/shared/keepScrollback.ts', import.meta.url), 'utf8')
 const { keepScrollback } = await import('data:text/javascript;base64,' + Buffer.from(transformSync(keeperSource, {loader:'ts',format:'esm'}).code).toString('base64'))
 const t = new Terminal({ cols: 80, rows: 10, allowProposedApi: true })
-let reset, resolveRead, reads = 0
+let reset, typed, resolveRead, reads = 0
 const api = {
+  onPaneTyped(fn) { typed = fn; return () => {} },
   onPaneReset(fn) { reset = fn; return () => {} },
   getBuffer() { reads++; return new Promise(resolve => { resolveRead = resolve }) }
 }
+const pending = transformSync(source.slice(source.indexOf('    let pendingDataWrites = '), source.indexOf('    const offHandover = ', source.indexOf('    let pendingDataWrites = '))), {loader:'ts'}).code
 const install = new Function('api', 't', 'keepScrollback', `
   const sessionId = 'remote', list = [], dead = false;
+  const submitted = [];
+  const noteSubmitted = (line) => submitted.push({text:line, row:t.buffer.active.baseY + t.buffer.active.cursorY});
   let sawOutput = false;
   let wipeSnap = null, wipeTimer;
   const window = { clearTimeout }, publish = () => {}, setBlank = () => {}, pinned = { current: true }, seedMarks = () => {};
@@ -32,10 +36,11 @@ const install = new Function('api', 't', 'keepScrollback', `
   const screenNow = () => { throw new Error('armed stale wipe during snapshot'); };
   const armWipeCheck = () => {};
   ${factory}
+  ${pending}
   ${callback}
-  return { pinned };
+  return { pinned, submitted };
 `)
-const { pinned } = install(api, t, keepScrollback)
+const { pinned, submitted } = install(api, t, keepScrollback)
 t.write('stale queued output\r\n')
 reset('remote', 'before\r\n')
 await new Promise(resolve => t.write('after\r\n', resolve))
@@ -74,5 +79,12 @@ assert.equal(
   Math.min(beforeGap, t.buffer.active.baseY),
   'a remote reset preserves the reader\'s distance from the newest output, capped at its new top'
 )
+pinned.current = true
+reset('remote', Array.from({length:200}, (_,i)=>`queued ${i}\r\n`).join(''))
+typed('remote', 'a prompt following the snapshot', 'person')
+assert.equal(submitted.length, 0, 'prompt waits for the queued snapshot before taking its marker row')
+await new Promise(resolve => t.write('', resolve))
+assert.equal(submitted.length, 1, 'prompt drains once after the snapshot')
+assert.ok(submitted[0].row >= 190, 'prompt anchors in the parsed snapshot rather than the old terminal frame')
 t.dispose()
 console.log('remote reset: ordered snapshot, clean reset, and preserved scroll position passed')

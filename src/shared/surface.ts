@@ -63,6 +63,7 @@ export const SURFACE: Surface = {
   tourSample: ['invoke', 'app:tourSample'],
   onTourCheckLine: ['on', 'app:tourCheckLine'],
   paneLog: ['invoke', 'sessions:log'],
+  replayHistory: ['invoke', 'sessions:replay'],
   pipePane: ['invoke', 'sessions:pipe'],
   reorderSessions: ['send', 'sessions:reorder'],
   logReclaim: ['send', 'reclaim:log'],

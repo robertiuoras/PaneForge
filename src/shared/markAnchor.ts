@@ -53,6 +53,21 @@
 
 import { promptEcho } from './promptEcho'
 
+export interface EchoRow {
+  text: string
+  /** Codex's own submitted-prompt paint is indexed background 235. */
+  background?: number
+  /** A live composer may wrap above its cursor; it is never a submitted prompt. */
+  active?: boolean
+}
+
+type EchoRowInput = string | EchoRow
+type EchoAgent = 'claude' | 'codex'
+
+function rowText(row: EchoRowInput): string {
+  return typeof row === 'string' ? row : row.text
+}
+
 /** How much of a prompt identifies it on its echo row. */
 export const ECHO_KEY_CHARS = 24
 /**
@@ -68,9 +83,10 @@ export function echoKey(text: string): string {
 }
 
 /** Whether this buffer row is the CLI's echo of the prompt `key` came from. */
-export function onEchoRow(row: string | undefined, key: string): boolean {
+export function onEchoRow(row: EchoRowInput | undefined, key: string, agent: EchoAgent = 'claude'): boolean {
   if (!row || !key) return false
-  const e = promptEcho(row)
+  if (agent === 'codex' && (typeof row === 'string' || row.background !== 235 || row.active)) return false
+  const e = promptEcho(rowText(row), agent)
   return e.length > 0 && e.replace(/\s+/g, ' ').startsWith(key)
 }
 
@@ -79,13 +95,14 @@ export function onEchoRow(row: string | undefined, key: string): boolean {
  * first, or -1. `row(i)` reads one buffer line as text.
  */
 export function findEcho(
-  row: (i: number) => string | undefined,
+  row: (i: number) => EchoRowInput | undefined,
   from: number,
   to: number,
-  key: string
+  key: string,
+  agent: EchoAgent = 'claude'
 ): number {
   if (!key) return -1
-  for (let i = to - 1; i > from; i--) if (onEchoRow(row(i), key)) return i
+  for (let i = to - 1; i > from; i--) if (onEchoRow(row(i), key, agent)) return i
   return -1
 }
 
@@ -212,10 +229,11 @@ export const LANDING_SCAN_ROWS = 400
 export const LANDING_LEAD_ROWS = 2
 
 /** Whether this buffer row is where `key`'s prompt is drawn - echoed, or plainly printed. */
-export function rowShowsPrompt(row: string | undefined, key: string): boolean {
+export function rowShowsPrompt(row: EchoRowInput | undefined, key: string, agent: EchoAgent = 'claude'): boolean {
   if (!row || !key) return false
-  if (onEchoRow(row, key)) return true
-  return row.replace(/\s+/g, ' ').trim().startsWith(key)
+  if (onEchoRow(row, key, agent)) return true
+  if (agent === 'codex' && (typeof row === 'string' || row.background !== 235 || row.active)) return false
+  return rowText(row).replace(/\s+/g, ' ').trim().startsWith(key)
 }
 
 /**
@@ -226,11 +244,12 @@ export function rowShowsPrompt(row: string | undefined, key: string): boolean {
  * did.
  */
 export function landingRow(
-  row: (i: number) => string | undefined,
+  row: (i: number) => EchoRowInput | undefined,
   at: number,
   key: string,
   lo: number,
-  hi: number
+  hi: number,
+  agent: EchoAgent = 'claude'
 ): number {
   if (at < 0 || !key) return at
   const top = Math.max(lo, at - LANDING_SCAN_ROWS, 0)
@@ -239,7 +258,7 @@ export function landingRow(
   // quote the start of its prompt while rendering the reply over the old composer row.
   // It still has to belong to this tag's neighbour-bounded span: a stale or duplicate
   // marker line must not bypass the bound and claim the preceding turn's prompt.
-  if (at >= top && at < bottom && onEchoRow(row(at), key)) return at
-  for (let i = top; i < bottom; i++) if (rowShowsPrompt(row(i), key)) return i
+  if (at >= top && at < bottom && onEchoRow(row(at), key, agent)) return at
+  for (let i = top; i < bottom; i++) if (rowShowsPrompt(row(i), key, agent)) return i
   return at
 }

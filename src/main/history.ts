@@ -49,8 +49,12 @@ function dir(): string {
   return d
 }
 
-const logFile = (id: string): string => join(dir(), `${id}.log`)
-const metaFile = (id: string): string => join(dir(), `${id}.json`)
+function historyFile(id: string, suffix: 'log' | 'json'): string {
+  if (typeof id !== 'string' || !/^[A-Za-z0-9_-]+$/.test(id)) throw new Error('Invalid history session ID')
+  return join(dir(), `${id}.${suffix}`)
+}
+const logFile = (id: string): string => historyFile(id, 'log')
+const metaFile = (id: string): string => historyFile(id, 'json')
 
 export function setHistoryEnabled(on: boolean): void {
   enabled = on
@@ -502,4 +506,3 @@ export function prune(days: number): void {
     if (total > MAX_TOTAL_BYTES) remove(e.id)
   }
 }
-

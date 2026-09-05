@@ -553,6 +553,15 @@ History's rows.
 - `railNow` only moves on a bucket turnover; `whenWords` answers negative age with full calendar
   date. `Math.max(railNow, m.at)`.
 - A tag rebuilt from a restored pane's output has no clock, says nothing about one.
+- The Prompts list beside the scrollbar exposes every retained prompt as a readable
+  button. Selecting one preserves its reading position while new output arrives.
+- Codex history seeding recognizes submitted `›` prompts on its indexed-235 background,
+  joins wrapped rows, and excludes the active composer and uncoloured output quotes.
+- Remote history recovery uses an ordered `replay` snapshot from the host's saved log
+  (up to 4 MiB), followed by live deltas. Both peers need replay support. The 400 KB live
+  buffer is only the initial fast path; reading `paneLog` alone must never reset a pane.
+- Typed events wait for preceding output to parse before anchoring their tags; the guest
+  that submitted a line does not receive its own duplicate typed notification.
 
 ## Finding something in a pane
 

@@ -57,6 +57,14 @@ assert.equal(promptEcho('❯    '), '')
 assert.equal(promptEcho(''), '')
 assert.equal(promptEcho('the answer mentioned ❯ in the middle'), '', 'the marker must start the line')
 
+// Codex replays a submitted ask with › (not Claude's ❯). The marker is agent-specific,
+// so tool output quoting a chevron in another pane cannot grow a rail tag.
+assert.equal(promptEcho('› fix the historical session tags                                 ', 'codex'), 'fix the historical session tags')
+assert.equal(promptEcho('› fix the historical session tags', 'claude'), '', 'a Codex echo is not read from a Claude pane')
+assert.equal(promptEcho('❯ fix the historical session tags', 'codex'), '', 'a Claude echo is not read from a Codex pane')
+assert.equal(promptEcho('› Ask Codex to do anything', 'codex'), '', 'the empty Codex composer placeholder is not a prompt')
+assert.equal(promptEcho('› y', 'codex'), '', 'a Codex menu key is not a prompt')
+
 // ---------------------------------------------------------------------------------------
 // The WIRING, as a source assertion.
 //
@@ -129,6 +137,77 @@ console.log('promptecho: ok')
   assert.equal(naive, 4, 'CONTROL: reading each row on its own tags four times')
 }
 
+// A scrubbed shape from the full Mac history rendered at 155 columns: the submitted
+// Codex prompt begins with › and its body wraps over terminal rows. The tag is one prompt
+// at the first row, not a tag for the current empty composer or for quoted chevrons.
+{
+  const screen = [
+    'tool output quoted › no tag here',
+    '',
+    { text: '› can you see session five and keep this whole request ', wrapped: false, background: 235 },
+    { text: 'together including the wrapped continuation', wrapped: true },
+    '',
+    'assistant reply',
+    '',
+    '› Ask Codex to do anything'
+  ]
+  const seeded = seedPrompts(screen, 'codex')
+  assert.deepEqual(seeded, [{ line: 2, text: 'can you see session five and keep this whole request together including the wrapped continuation' }], 'a Codex replay seeds its wrapped submitted prompt once')
+}
+
+// The same scrubbed shape through a real xterm buffer. Codex paints the submitted line
+// with background colour 235 and a long prompt wraps into buffer rows; the seed still
+// gets one label at the first row. This is intentionally synthetic, never a saved prompt.
+try {
+  const { Terminal } = createRequire(import.meta.url)('@xterm/headless')
+  const t = new Terminal({ cols: 42, rows: 10, scrollback: 100, allowProposedApi: true })
+  const write = (text) => new Promise((resolve) => t.write(text, resolve))
+  const ask = 'can you keep the complete wrapped Codex prompt on one accurate rail tag'
+  await write(`\r\n\x1b[48;5;235m› ${ask}\x1b[0m\r\nassistant reply\r\n› Ask Codex to do anything`)
+  const b = t.buffer.active
+  const rows = []
+  for (let i = 0; i < b.length - 1; i++) {
+    const line = b.getLine(i)
+    rows.push({ text: line?.translateToString(true) ?? '', wrapped: Boolean(line?.isWrapped), background: line?.getCell(0)?.getBgColor() })
+  }
+  const seeded = seedPrompts(rows, 'codex')
+  assert.equal(seeded.length, 1, 'the xterm fixture produces one Codex tag')
+  assert.equal(seeded[0].text, ask, 'the xterm fixture joins wrapped rows into the submitted ask')
+  t.dispose()
+
+  // The exact false-positive shape: an unfinished draft has the same › and colour as a
+  // completed prompt, but its wrapped first row sits before the cursor. `active` is what
+  // seedMarks derives from the composer containing that cursor.
+  const draft = new Terminal({ cols: 42, rows: 10, scrollback: 100, allowProposedApi: true })
+  const draftText = 'this is an unfinished multiline Codex draft which must never become a rail tag'
+  await new Promise((resolve) => draft.write(`\r\n\x1b[48;5;235m› ${draftText}\x1b[0m`, resolve))
+  const db = draft.buffer.active
+  const draftRows = []
+  let draftStart = -1
+  for (let i = 0; i < db.length; i++) {
+    const line = db.getLine(i)
+    const text = line?.translateToString(true) ?? ''
+    if (text.startsWith('› ')) draftStart = i
+    draftRows.push({ text, wrapped: Boolean(line?.isWrapped), background: line?.getCell(0)?.getBgColor(), active: draftStart >= 0 && i >= draftStart })
+  }
+  assert.deepEqual(seedPrompts(draftRows, 'codex'), [], 'an active wrapped Codex composer is never seeded')
+  draft.dispose()
+
+  const quote = new Terminal({ cols: 42, rows: 8, scrollback: 100, allowProposedApi: true })
+  await new Promise((resolve) => quote.write('\r\n› a tool quoted this chevron without Codex prompt colour', resolve))
+  const qb = quote.buffer.active
+  const quotedRows = []
+  for (let i = 0; i < qb.length; i++) {
+    const line = qb.getLine(i)
+    quotedRows.push({ text: line?.translateToString(true) ?? '', wrapped: Boolean(line?.isWrapped), background: line?.getCell(0)?.getBgColor() })
+  }
+  assert.deepEqual(seedPrompts(quotedRows, 'codex'), [], 'an uncoloured tool chevron is never seeded')
+  quote.dispose()
+  console.log('promptecho xterm: 4 ok')
+} catch {
+  console.log('promptecho xterm: SKIPPED - @xterm/headless is not installed')
+}
+
 
 // ---- completedSlash: a slash tag reads what the CLI ran, off its own echo ----------
 // Measured 2026-09-02 in this desk's history logs: 34 rows of `❯ /model`, none of `❯ /mode`.
@@ -142,5 +221,7 @@ console.log('promptecho: ok')
   assert.equal(completedSlash('hello', ['', '  ❯ /model']), null, 'a prose prompt never adopts a slash echo')
   assert.equal(completedSlash('/', ['', '  ❯ /model']), null, 'a lone slash is a menu key, not a token')
   assert.equal(completedSlash('/mode', ['  │ ❯ /model']), null, 'the live composer box is not an echo')
-  console.log('completedSlash: 8 ok')
+  assert.equal(completedSlash('/mode', ['', '› /model'], 'codex'), '/model', 'a Codex slash echo settles a Codex tag')
+  assert.equal(completedSlash('/mode', ['', '› /model']), null, 'a Codex slash echo does not affect Claude')
+  console.log('completedSlash: 10 ok')
 }

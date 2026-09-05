@@ -14,7 +14,7 @@
  * `❯ what is 2+2` - the same line the marker had anchored to (line 26 for the mark, line
  * 26 for the echo). So a restored buffer is scanned for those and the rail is rebuilt.
  *
- * Deliberately ONE marker, `❯`, and deliberately not `>`:
+ * Claude Code and Codex have distinct, agent-specific markers. Deliberately never `>`:
  *
  *   - `❯` is what Claude Code draws and nothing else on screen starts a line with it.
  *   - `>` starts a quoted line, a diff line, a shell prompt and a markdown blockquote in
@@ -25,11 +25,18 @@
  *   - The live composer draws its own `❯` INSIDE a box (`│ ❯ typing...`), so only spaces
  *     may precede the marker: a framed line is refused.
  *
+ * Codex's `›` uses the same blank-row/repaint checks as Claude below, plus its measured
+ * background colour 235. It is only read for a Codex pane: an uncoloured chevron quoted
+ * by a tool is not a prompt. The active composer carries the same colour and glyph, so
+ * `seedMarks` marks its whole block active and this reader refuses it.
+ *
  * `npm run test:promptecho`.
  */
 
 /** Up to four leading spaces, the marker, a space, then something worth tagging. */
-const ECHO = /^ {0,4}❯ {1,3}(\S.*)$/
+const CLAUDE_ECHO = /^ {0,4}❯ {1,3}(\S.*)$/
+const CODEX_ECHO = /^ {0,4}› {1,3}(\S.*)$/
+const CODEX_PLACEHOLDER = /^Ask Codex to do anything[.…]?$/i
 
 /**
  * A run of the box-drawing rule a CLI paints its frames and separators with.
@@ -43,18 +50,28 @@ const ECHO = /^ {0,4}❯ {1,3}(\S.*)$/
  */
 const RULE = /─{3,}/
 
-export function promptEcho(line: string): string {
-  const m = ECHO.exec(line.replace(/\s+$/, ''))
+export function promptEcho(line: string, agent: 'claude' | 'codex' = 'claude'): string {
+  const m = (agent === 'codex' ? CODEX_ECHO : CLAUDE_ECHO).exec(line.replace(/\s+$/, ''))
   if (!m) return ''
   const text = m[1].trim()
   // Same floor as the live rail: a single character is a menu key, not an ask.
-  return text.length > 1 ? text : ''
+  return text.length > 1 && !(agent === 'codex' && CODEX_PLACEHOLDER.test(text)) ? text : ''
 }
 
 export interface SeededPrompt {
   /** Index into the rows that were scanned. */
   line: number
   text: string
+}
+
+/** One terminal row. A wrapped row continues the preceding visual line. */
+export interface PromptEchoLine {
+  text: string
+  wrapped?: boolean
+  /** xterm's indexed background at the start of this row, when available. */
+  background?: number
+  /** This row belongs to the live composer containing the cursor. */
+  active?: boolean
 }
 
 /**
@@ -75,14 +92,37 @@ export interface SeededPrompt {
  *   - The same prompt drawn several times gets ONE tag, on the LAST copy - the one still
  *     in the place the reader is looking at.
  */
-export function seedPrompts(lines: string[]): SeededPrompt[] {
-  const seen = new Map<string, SeededPrompt>()
+export function seedPrompts(
+  lines: Array<string | PromptEchoLine>,
+  agent: 'claude' | 'codex' = 'claude'
+): SeededPrompt[] {
+  // xterm represents a wrapped terminal line as several buffer rows. A prompt that spans
+  // them is still one submitted ask, and the marker belongs on its first row.
+  const logical: Array<{ line: number; text: string; background?: number; active: boolean }> = []
   for (let i = 0; i < lines.length; i++) {
-    const text = promptEcho(lines[i])
+    const row = lines[i]
+    const text = typeof row === 'string' ? row : row.text
+    if (typeof row !== 'string' && row.wrapped && logical.length) {
+      const previous = logical[logical.length - 1]
+      previous.text += text
+      previous.active ||= Boolean(row.active)
+    } else {
+      logical.push({
+        line: i,
+        text,
+        background: typeof row === 'string' ? undefined : row.background,
+        active: typeof row === 'string' ? false : Boolean(row.active)
+      })
+    }
+  }
+  const seen = new Map<string, SeededPrompt>()
+  for (let i = 0; i < logical.length; i++) {
+    const text = promptEcho(logical[i].text, agent)
     if (!text) continue
-    if (RULE.test(lines[i]) || RULE.test(lines[i + 1] ?? '')) continue
-    if (i > 0 && lines[i - 1].trim() !== '') continue
-    seen.set(text.replace(/\s+/g, ' ').toLowerCase(), { line: i, text })
+    if (agent === 'codex' && (logical[i].background !== 235 || logical[i].active)) continue
+    if (RULE.test(logical[i].text) || RULE.test(logical[i + 1]?.text ?? '')) continue
+    if (i > 0 && logical[i - 1].text.trim() !== '') continue
+    seen.set(text.replace(/\s+/g, ' ').toLowerCase(), { line: logical[i].line, text })
   }
   return [...seen.values()].sort((a, b) => a.line - b.line)
 }
@@ -101,11 +141,15 @@ export function seedPrompts(lines: string[]): SeededPrompt[] {
  * `null` while no such echo has been drawn. A slash echo for some OTHER command is not
  * this tag's, so it is `null` too - the tag keeps what was typed rather than guessing.
  */
-export function completedSlash(typed: string, rows: string[]): string | null {
+export function completedSlash(
+  typed: string,
+  rows: string[],
+  agent: 'claude' | 'codex' = 'claude'
+): string | null {
   const want = typed.trim().split(/\s+/)[0] ?? ''
   if (!want.startsWith('/') || want.length < 2) return null
   for (const row of rows) {
-    const text = promptEcho(row)
+    const text = promptEcho(row, agent)
     if (!text.startsWith('/')) continue
     const got = text.split(/\s+/)[0]
     if (got.startsWith(want)) return text
