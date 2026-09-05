@@ -42,6 +42,7 @@ import {
   keysForRows,
   keysToPoint,
   leftoverBackspaces,
+  offsetsForCells,
   offsetIn,
   BACKSPACE
 } from '../../../shared/cursorMove'
@@ -950,7 +951,9 @@ function TerminalPane({
   const clickKeys = useRef<string[]>([])
   /** When a person last typed into this pane - see `t.onData`. */
   const typedAt = useRef(0)
+  const keyRevision = useRef(0)
   const sendKeys = (keys: string): void => {
+    keyRevision.current++
     clickKeys.current.push(keys)
     void api.write(sessionId, keys)
   }
@@ -1401,6 +1404,14 @@ function TerminalPane({
     term.current?.focus()
   }
 
+  const typeLocalPaths = (paths: string[]): void => {
+    typePaths(paths)
+    // Preview work must not delay typing a path that already exists on this desk.
+    void api.attachPaths(sessionId, paths).then((res) => {
+      if (res.shots?.length) showShots(res.shots)
+    }).catch(() => { /* a missing preview never prevents the drop */ })
+  }
+
   /**
    * Hand files to the machine this pane's pty is on, and type the paths it answers with.
    *
@@ -1807,7 +1818,9 @@ function TerminalPane({
     // below it - "the tag does not jump high enough". Bounded by the neighbouring tags so
     // the search cannot wander into another turn.
     const i = marks.findIndex((x) => x.id === m.id)
-    const lo = i > 0 ? lineOf(marks[i - 1]) : 0
+    // `landingRow` includes its lower bound. The preceding tag owns its marker row, so
+    // start immediately after it: consecutive prompts can share their 24-character key.
+    const lo = i > 0 ? lineOf(marks[i - 1]) + 1 : 0
     const next = i >= 0 ? marks[i + 1] : undefined
     const hi = next ? lineOf(next) : b.length
     const land = landingRow(row, at, m.key, lo, hi)
@@ -2013,24 +2026,26 @@ function TerminalPane({
       window.clearTimeout(wipeTimer)
       wipeTimer = window.setTimeout(wipeSettled, WIPE_SETTLE_MS)
     }
-    const keep = keepScrollback(
+    let readingSnapshot = false
+    const makeKeeper = (): ReturnType<typeof keepScrollback> => keepScrollback(
       () => t.rows,
-      () => t.buffer.active.type === 'alternate',
+      () => !readingSnapshot && t.buffer.active.type === 'alternate',
       Date.now,
       // How much of the screen is worth filing. Everything under the last written row is
       // blank, and scrolling those rows only puts a screenful of nothing into the
       // scrollback in front of the turn being kept. The walk itself is in the shared file
       // so the test can drive the shipped one against a real xterm rather than a copy.
-      () => keptRows(t),
+      () => readingSnapshot ? 0 : keptRows(t),
       // A wipe has started, and nothing in the bytes says whether it is a clear or one of
       // the full repaints this CLI does dozens of times a session. Remember the screen and
       // find out - see `wipeSettled`.
       () => {
-        if (wipeSnap) return
+        if (readingSnapshot || wipeSnap) return
         wipeSnap = screenNow()
         armWipeCheck()
       }
     )
+    let keep = makeKeeper()
     const f = new FitAddon()
     t.loadAddon(f)
     t.open(host.current)
@@ -2922,7 +2937,9 @@ function TerminalPane({
      * alone. `preventDefault` still stops the browser's own drag-select either way.
      */
     const stopForAgent = (e: MouseEvent): void => {
-      if (mouseGrabbed()) e.stopPropagation()
+      // Forced selection starts xterm's document drag listeners even when the
+      // CLI owns the mouse. Its mouseup must reach those listeners to release it.
+      if (mouseGrabbed() && !mouseSelectRef.current) e.stopPropagation()
     }
 
     /**
@@ -2986,6 +3003,29 @@ function TerminalPane({
       return leadingBlanks(text)
     }
 
+    /** Turn a UTF-16 offset in xterm's rendered text into a verified cell boundary. */
+    const textColumn = (r: number, offset: number): number | null => {
+      const line = t.buffer.active.getLine(r)
+      if (!line || offset < 0) return null
+      for (let col = 0; col <= t.cols; col++) {
+        const seen = line.translateToString(false, 0, col).length
+        if (seen === offset && (col === t.cols || line.getCell(col)?.getWidth() !== 0)) return col
+        if (seen > offset) return null
+      }
+      return null
+    }
+
+    /** One input row with cell-to-editor offsets supplied by xterm itself. */
+    const inputRow = (r: number, startText: number, endText: number | null, full: boolean): InputRow | null => {
+      const line = t.buffer.active.getLine(r)
+      const start = textColumn(r, startText)
+      const end = endText === null ? t.cols : textColumn(r, endText)
+      if (!line || start === null || end === null || end < start) return null
+      const offsets = offsetsForCells(start, end, (col) => line.getCell(col))
+      if (!offsets) return null
+      return { start, end, full, offsets }
+    }
+
     /**
      * What is being typed, row by row: the composer the CLI draws when there is one, and
      * otherwise the cursor's row plus whatever xterm wrapped it onto.
@@ -2998,7 +3038,11 @@ function TerminalPane({
       const b = t.buffer.active
       if (b.type === 'alternate') return null
       const cursorRow = b.baseY + b.cursorY
-      const comp = composerAt(rowText, cursorRow)
+      const comp = composerAt(rowText, cursorRow, {
+        codexCols: agent === 'codex' ? t.cols : undefined,
+        maxUp: agent === 'codex' ? t.rows : undefined,
+        maxDown: agent === 'codex' ? t.rows : undefined
+      })
       if (comp) {
         const rows: InputRow[] = []
         for (let r = comp.top; r <= comp.bottom; r++) {
@@ -3015,7 +3059,10 @@ function TerminalPane({
           // so every row that stopped one or two columns short of the edge was called
           // full, its wrap counted as worth nothing, and one character per crossed row
           // survived the delete. That is "it doesn't delete all of it".
-          rows.push({ start, end, full: end >= comp.width - 1 })
+          const input = inputRow(r, start, end, false)
+          if (!input) return null
+          input.full = input.end >= comp.width - 1
+          rows.push(input)
         }
         return { top: comp.top, rows }
       }
@@ -3028,11 +3075,9 @@ function TerminalPane({
         const text = rowText(r)
         // An xterm wrap is a row that ran out of columns, so it holds no character of its
         // own and every row of one is full by definition.
-        rows.push({
-          start: r === top ? inputStart(text) : 0,
-          end: r === bottom ? inputEnd(text) : t.cols,
-          full: true
-        })
+        const input = inputRow(r, r === top ? inputStart(text) : 0, r === bottom ? inputEnd(text) : null, true)
+        if (!input) return null
+        rows.push(input)
       }
       return { top, rows }
     }
@@ -3062,7 +3107,9 @@ function TerminalPane({
       let n = 0
       for (let i = 0; i < span.rows.length; i++) {
         const r = span.rows[i]
-        n += r.end - r.start
+        const width = r.offsets?.[r.offsets.length - 1]
+        if (width === undefined) return -1
+        n += width
         if (i < span.rows.length - 1 && !r.full) n++
       }
       return n
@@ -3142,10 +3189,18 @@ function TerminalPane({
       if (before >= 0 && !replacing) {
         const rowsCrossed = Math.abs(pos.end.y - pos.start.y)
         const sentAt = Date.now()
+        const sentRevision = keyRevision.current
+        const wholeInput = want === 0 && offsetIn(span.rows, pos.start.y - span.top, pos.start.x) === 0
         const owed = (): void => {
-          if (typedAt.current > sentAt) return
+          // Reflow can reveal an unselected wrap space, making total length grow.
+          // Only a whole-input selection proves every leftover was selected.
+          if (!wholeInput) return
+          if (typedAt.current > sentAt || keyRevision.current !== sentRevision) return
           const seen = composerLength()
-          if (seen < 0) return
+          // The CLI may not have drawn the first delete yet. Its unchanged frame
+          // is not proof of a leftover. A corrective send changes the revision,
+          // so the second timer cannot repeat it on another stale frame.
+          if (seen < 0 || seen >= before) return
           const extra = leftoverBackspaces({ seen, want, rowsCrossed })
           if (extra > 0) sendKeys(BACKSPACE.repeat(extra))
         }
@@ -3190,7 +3245,10 @@ function TerminalPane({
           const keys = keysToPoint(
             span.rows,
             { row: cursorRow - span.top, col: b.cursorX },
-            { row: clickRow - span.top, col: at.col }
+            { row: clickRow - span.top, col: at.col },
+            // A confirmed Codex draft can span more than 400 characters. Bound
+            // navigation to one screen; unverified inputs keep the lower limit.
+            agent === 'codex' ? Math.min(t.cols * t.rows, 10_000) : undefined
           )
           if (!keys) return
           e.preventDefault()
@@ -3222,7 +3280,7 @@ function TerminalPane({
       // Shift is only half the answer: on a Mac xterm reads Option, and only when
       // `macOptionClickForcesSelection` is on - which is why every drag over a Codex pane
       // there selected nothing. See shared/forceSelect.ts.
-      for (const [key, value] of Object.entries(forceKeys())) {
+      for (const [key, value] of Object.entries(forceKeys(navigator.platform))) {
         try {
           // An own property shadows the prototype getter, so xterm - which sees this event
           // after this capture-phase listener - reads it as a forced selection.
@@ -3674,23 +3732,33 @@ function TerminalPane({
       setHandoverUntil(until > Date.now() ? until : 0)
     })
 
-    const offReset = api.onPaneReset((id) => {
+    const offReset = api.onPaneReset((id, snapshot) => {
       if (id !== sessionId) return
-      t.reset()
       // Every tag was anchored into the buffer that reset just threw away, and the tail
       // about to arrive carries those same prompts for `seedMarks` to read back out.
       // Dropping them is also what LETS it run: it refuses on a rail that is not empty.
       for (const m of list.splice(0)) m.marker.dispose()
       publish()
-      void api.getBuffer(sessionId).then((b) => {
-        if (dead) return
-        sawOutput = Boolean(b)
-        if (b) setBlank(false)
-        pinned.current = true
-        t.write(keep(b), () => {
-          t.scrollToBottom()
-          seedMarks()
-        })
+      if (dead) return
+      sawOutput = Boolean(snapshot)
+      if (snapshot) setBlank(false)
+      pinned.current = true
+      // Queue the reset with its exact snapshot. An imperative reset can run
+      // before old queued writes, and an async buffer read can include new deltas
+      // that onData already wrote. RIS goes through xterm's ordered write queue.
+      window.clearTimeout(wipeTimer)
+      wipeSnap = null
+      keep = makeKeeper()
+      readingSnapshot = true
+      let bytes: string
+      try {
+        bytes = keep(snapshot)
+      } finally {
+        readingSnapshot = false
+      }
+      t.write('\x1bc' + bytes, () => {
+        t.scrollToBottom()
+        seedMarks()
       })
     })
 
@@ -4376,7 +4444,7 @@ function TerminalPane({
       // for a dropped file at all - both send the bytes and are answered with a path that
       // exists over there.
       if (paths.length === files.length && !sessionId.startsWith('@')) {
-        typePaths(paths)
+        typeLocalPaths(paths)
         return
       }
       void sendFiles(files)
@@ -4410,8 +4478,8 @@ function TerminalPane({
         // image. These paths have no File object behind them, so the bytes are read in the
         // main process instead of here.
         if (pasteImagesInstead(dropped.map((p) => ({ name: p }))))
-          void pasteImages(dropped.map((path) => ({ path }))).catch(() => typePaths(dropped))
-        else typePaths(dropped)
+          void pasteImages(dropped.map((path) => ({ path }))).catch(() => typeLocalPaths(dropped))
+        else typeLocalPaths(dropped)
       }
       else
         void api

@@ -78,6 +78,21 @@ export function clearCommandFor(agent: string | null | undefined): string | null
   return spec?.bin === 'claude' ? '/clear' : null
 }
 
+/** A non-Claude clear may only continue the handoff owned by this exact pane. */
+export const HANDOFF_FRESH_MS = 20 * 60_000
+
+export function hasFreshPaneHandoff(
+  paneId: string,
+  handoff: { path: string | null; mtimeMs: number; open: number; steps: string[] } | null | undefined,
+  now = Date.now()
+): boolean {
+  if (!handoff?.path || handoff.open < 1 || !handoff.steps.length) return false
+  const age = now - handoff.mtimeMs
+  if (age < 0 || age > HANDOFF_FRESH_MS) return false
+  const escaped = String(paneId).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`(?:^|[\\\\/])session-handoff\\.pane-${escaped}\\.md$`).test(handoff.path)
+}
+
 /**
  * When each chunk goes out, relative to the fire.
  *
@@ -250,7 +265,7 @@ export function resumeBrief(ask: AutoClearAsk, handoffPath: string | null): stri
 export type DropReason = 'drafting' | 'working' | 'gone' | 'asked' | 'cancelled'
 
 export function dropFor(
-  pane: { runSince?: number | null; ask?: unknown; typed?: string } | null
+  pane: { runSince?: number | null; ask?: unknown; typed?: string; drafting?: boolean } | null
 ): DropReason | null {
   if (!pane) return 'gone'
   // A pane holding a live question is owed an answer by a PERSON, and clearing it throws
@@ -262,7 +277,7 @@ export function dropFor(
   // the draft is gone, and nothing on screen ever said it was there. 2026-08-25: a message
   // being typed was destroyed this way. Nothing about the countdown is cancelled for it -
   // the timer WAITS and the card stays up (see `ExpiryVerdict`'s 'wait').
-  if (pane.typed && pane.typed.trim()) return 'drafting'
+  if (pane.drafting || (pane.typed && pane.typed.trim())) return 'drafting'
   return null
 }
 
@@ -290,61 +305,25 @@ export function dropWords(why: DropReason): string {
  */
 /** The knobs the pane-side watcher runs on. See `main/autoclearWatch.ts`. */
 export interface AutoClearConfig {
-  /** Context size, in tokens, past which an idle pane is cleared. */
+  /** Context size, in tokens, used by the Claude Stop-hook clear policy. */
   tokens: number
   /** How long the countdown card is up before the keystrokes go out. */
   seconds: number
-  /** Watch codex and antigravity panes at all. Off means only the Stop hook clears. */
+  /** Retained for existing settings; enables non-Claude native-policy status logging. */
   watchNonClaude: boolean
 }
 
 /**
- * 150k, the same line the Stop hook draws.
+ * 150k, the same line the Claude Stop hook draws.
  *
  * Measured 2026-08-13 across a week of transcripts: clearing at 150k costs 28% less than
- * letting a session drift to 300k, because the bill is cache RE-READS of a context nobody
- * is using rather than the tokens the work needs. 15s is long enough to read the card from
- * across the desk and press Keep.
+ * letting a completed Claude session drift to 300k, because the bill is cache RE-READS of
+ * a context nobody is using. Codex uses its native compaction policy instead.
  */
 export const DEFAULT_AUTOCLEAR: AutoClearConfig = {
   tokens: 150_000,
   seconds: 15,
   watchNonClaude: true
-}
-
-/** One arm per pane per half hour. See `watchDecision`. */
-export const WATCH_COOLDOWN_MS = 30 * 60_000
-
-/**
- * Why the watcher is or is not arming a clear on this pane, decided without touching disk.
- *
- * Split out for the same reason `armDecision` was: the bug that killed autoclear for a day
- * was one word inside a method with a pty on the other end of it, and nothing could test
- * it. Everything here is a value the caller already has.
- */
-export type WatchVerdict = 'arm' | 'unknown-cli' | 'busy' | 'under' | 'recent'
-
-export function watchDecision(p: {
-  agent: string | null | undefined
-  status: string
-  tokens: number
-  threshold: number
-  lastArmMs?: number | null
-  now: number
-}): WatchVerdict {
-  // First and hardest: a CLI whose clear command we cannot name is never typed into.
-  if (!clearCommandFor(p.agent)) return 'unknown-cli'
-  // 'working' is the pane mid-turn. 'starting' has no context yet worth clearing and
-  // 'exited' has no pty left to type into, so only a genuinely idle pane is a candidate -
-  // unlike the Stop-hook path, nothing here knows a turn is ending, so there is no reason
-  // to queue against a moving pane rather than look again in a minute.
-  if (p.status !== 'idle') return 'busy'
-  if (!(p.tokens > 0) || p.tokens < p.threshold) return 'under'
-  // The estimator reads a file the CLI writes, and the CLI does not write it the instant a
-  // clear lands. Without this, a pane that has just been cleared reads as oversized for
-  // another minute and gets cleared again - twice more before the file catches up.
-  if (p.lastArmMs && p.now - p.lastArmMs < WATCH_COOLDOWN_MS) return 'recent'
-  return 'arm'
 }
 
 /**

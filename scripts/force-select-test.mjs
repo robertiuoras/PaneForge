@@ -54,19 +54,32 @@ if (existsSync(svc)) {
   console.log('force select: xterm sources absent, the rule itself is unchecked')
 }
 
-const keys = forceKeys()
+const macKeys = forceKeys('MacIntel')
+const otherKeys = forceKeys('Win32')
+check('MacIntel touch devices use xterm Alt selection too', forceKeys('MacIntel').altKey === true)
+check('Linux uses Shift selection', forceKeys('Linux x86_64').shiftKey === true)
 // The control: what the pane used to stamp. It has to FAIL on the Mac, or this proves nothing.
 const shiftOnly = { shiftKey: true, altKey: false }
 check('control: Shift alone forces nothing on a Mac', !wouldForce(shiftOnly, true, true))
 check('control: which is why a Codex drag there selected nothing', !wouldForce(shiftOnly, true, false))
 check('Shift alone was always enough on Windows', wouldForce(shiftOnly, false, false))
 
-const stamped = { shiftKey: keys.shiftKey === true, altKey: keys.altKey === true }
-check('the stamp forces a selection on a Mac', wouldForce(stamped, true, true))
-check('and on Windows and Linux', wouldForce(stamped, false, false))
+check(
+  'the Mac stamp forces a selection on a Mac',
+  wouldForce({ shiftKey: false, altKey: macKeys.altKey === true }, true, true)
+)
+check('the Mac stamp does not add Shift', macKeys.shiftKey !== true)
+check(
+  'the Windows/Linux stamp forces a selection',
+  wouldForce({ shiftKey: otherKeys.shiftKey === true, altKey: false }, false, false)
+)
+check('the Windows/Linux stamp does not add Alt, which would make a rectangle', otherKeys.altKey !== true)
 check('a plain drag with nothing stamped still reaches the CLI', !wouldForce({ shiftKey: false, altKey: false }, false, false))
 check('an unstamped drag reaches the CLI on a Mac too', !wouldForce({ shiftKey: false, altKey: false }, true, true))
-check('the Mac half is dead without the option', !wouldForce(stamped, true, false))
+check(
+  'the Mac half is dead without the option',
+  !wouldForce({ shiftKey: false, altKey: macKeys.altKey === true }, true, false)
+)
 
 // The pane's own two halves: the option, and the order the stamp is registered in.
 const pane = readFileSync(join(root, 'src/renderer/src/components/TerminalPane.tsx'), 'utf8')
@@ -75,5 +88,7 @@ const at = (name) => pane.indexOf(`el.addEventListener('mousedown', ${name}, tru
 check('every mousedown listener is registered', at('placeCursor') > 0 && at('markDown') > 0 && at('onMouseDown') > 0 && at('forceSelectable') > 0)
 check('the stamp is registered LAST, so no handler of ours reads the lie', at('forceSelectable') > Math.max(at('placeCursor'), at('markDown'), at('onMouseDown')), `forceSelectable at ${at('forceSelectable')}`)
 check('the stamp only runs while the CLI holds the mouse', /forceSelectable = \(e: MouseEvent\): void => \{\s*\n\s*if \(!mouseSelectRef\.current \|\| !mouseGrabbed\(\)\) return/.test(pane))
+
+check('the pane chooses modifiers from xterm platform, regardless of touch', pane.includes('Object.entries(forceKeys(navigator.platform))'))
 
 console.log(`force select: ${checks} checks passed`)

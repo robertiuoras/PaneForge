@@ -41,7 +41,7 @@ const restore = index.slice(from, index.indexOf('\n}\n', from))
 check('the pin is still carried across the new ids', /wasPinned\.has\(req\.scrollbackId\)/.test(restore))
 check(
   'the rewrite is announced, not only written',
-  /setConfig\(\{ pinnedPanes: nowPinned \}\)[\s\S]{0,600}?send\('config:changed'/.test(restore),
+  /setConfig\(\{ pinnedPanes: mergedPins \}\)[\s\S]{0,600}?send\('config:changed'/.test(restore),
   'setConfig writes the file and broadcasts nothing'
 )
 check(
@@ -50,8 +50,12 @@ check(
 )
 check(
   'and the rewrite happens inside that wait',
-  restore.indexOf('settle(') < restore.indexOf('setConfig({ pinnedPanes: nowPinned })'),
+  restore.indexOf('settle(') < restore.indexOf('setConfig({ pinnedPanes: mergedPins })'),
   'a synchronous read of nowPinned during a staggered restore is empty'
+)
+check(
+  'pins made while restore waits survive the old-id translation',
+  /const current = getConfig\(\)\.pinnedPanes \?\? \[\][\s\S]*?current\.filter\(\(id\) => !restoredOldIds\.has\(id\)\)[\s\S]*?nowPinned/.test(restore)
 )
 
 // `setConfig` is the half that cannot be relied on to tell anybody. If that ever changes

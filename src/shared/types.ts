@@ -1813,11 +1813,11 @@ export interface Config {
    */
   autoHandoff?: AutoHandoffConfig
   /**
-   * When a pane clears ITSELF for cost, and whether the app watches for it at all.
+   * When a Claude pane clears itself for cost, plus non-Claude native-policy observation.
    *
    * Claude panes are decided by their own Stop hook, which knows the token count exactly.
-   * `watchNonClaude` is the codex/antigravity half, where nothing hooks the end of a turn
-   * and the size has to be read off the CLI's own files - see `main/autoclearWatch.ts`.
+   * Codex compacts its own context. PaneForge does not reset a non-Claude conversation from
+   * a size estimate because that cannot prove a same-session handoff.
    */
   autoClear?: AutoClearConfig
 
@@ -2621,7 +2621,7 @@ export interface Api {
    * other device re-sent everything. The pane clears and redraws instead of appending
    * a second copy of what it already had.
    */
-  onPaneReset(cb: (id: string) => void): () => void
+  onPaneReset(cb: (id: string, snapshot: string) => void): () => void
   /**
    * The app is about to type a clear into this pane itself (autoclear). The pane files its
    * screen into the scrollback now, exactly as it does for a clear somebody typed.

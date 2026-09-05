@@ -20,7 +20,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { buildSync } from 'esbuild'
+import { buildSync, transformSync } from 'esbuild'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const port = process.env.PF_PORT ?? '9333'
@@ -32,6 +32,22 @@ const ok = (cond, what) => {
   if (!cond) {
     failed++
     console.error(`  FAIL  ${what}`)
+  }
+}
+
+// Render the shipped desktop mic control in each active phase. Only a recording
+// can be stopped; loading/transcription must not advertise an action that does nothing.
+{
+  const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
+  const from = app.indexOf('<button', app.indexOf("{voice.target === s.id && voice.phase !== 'idle'"))
+  const jsx = app.slice(from, app.indexOf('</button>', from) + '</button>'.length)
+  const code = transformSync(`const control = ${jsx}`, { loader: 'tsx', jsxFactory: 'h' }).code
+  const render = new Function('voice', 's', 'MicIcon', 'h', `${code}; return control`)
+  const h = (type, props, ...children) => ({ type, props, children })
+  for (const phase of ['recording', 'loading', 'thinking']) {
+    const button = render({ phase, toggle() {} }, { id: 'pane', title: 'Test' }, 'mic', h)
+    ok(button.props.disabled === (phase !== 'recording'), `${phase}: only recording is actionable`)
+    ok((/Stop dictating/.test(button.props['aria-label'])) === (phase === 'recording'), `${phase}: label describes the available action`)
   }
 }
 

@@ -73,6 +73,9 @@ buildSync({
 })
 const xtermJs = readFileSync(bundle, 'utf8')
 const xtermCss = readFileSync(join(root, 'node_modules', '@xterm', 'xterm', 'css', 'xterm.css'), 'utf8')
+const paneSource = readFileSync(join(root, 'src/renderer/src/components/TerminalPane.tsx'), 'utf8')
+const stopBody = paneSource.match(/const stopForAgent = \(e: MouseEvent\): void => \{([\s\S]*?)\n    \}/)?.[1]
+if (!stopBody) throw new Error('could not read the shipped mouseup policy')
 
 function page() {
   return `<!doctype html><meta charset="utf-8">
@@ -87,11 +90,28 @@ function page() {
   const term = new X.Terminal({ cols: 80, rows: 24, fontSize: 14, allowProposedApi: true })
   term.open(host)
   term.write('the quick brown fox jumps over the lazy dog and keeps going for a while\\r\\n')
+  term.write('0123456789abcdefghijklmnop\\r\\n')
 
   // The two policies, applied to the pane's HOST in the capture phase, which is where
   // TerminalPane registers moveAlongLine.
   let policy = 'none'
-  host.addEventListener('mouseup', (e) => { if (policy === 'always') e.stopPropagation() }, true)
+  const mouseGrabbed = () => term.element.classList.contains('enable-mouse-events')
+  const mouseSelectRef = { current: true }
+  const stopForAgent = (e) => { ${stopBody} }
+  host.addEventListener('mouseup', (e) => {
+    if (policy === 'always') e.stopPropagation()
+    if (policy === 'pane') stopForAgent(e)
+  }, true)
+  const FORCE_KEYS = ['Macintosh', 'MacIntel', 'MacPPC', 'Mac68K'].includes(navigator.platform)
+    ? { altKey: true } : { shiftKey: true }
+  host.addEventListener('mousedown', e => {
+    if (policy !== 'pane') return
+    for (const [key, value] of Object.entries(FORCE_KEYS)) Object.defineProperty(e, key, { value })
+  }, true)
+  window.grabMouse = () => new Promise(resolve => {
+    term.options.macOptionClickForcesSelection = true
+    term.write('\\x1b[?1000h', resolve)
+  })
 
   const screen = () => host.querySelector('.xterm-screen')
   const at = (col, row) => {
@@ -118,6 +138,14 @@ function page() {
     fire(document, 'mousemove', 60, 0, 0)
     const after = term.getSelection()
     return { dragged, after, grew: after.length > dragged.length }
+  }
+  window.multiline = () => {
+    term.clearSelection()
+    fire(screen(), 'mousedown', 2, 0, 1)
+    fire(document, 'mousemove', 4, 1, 1)
+    const selected = term.getSelection()
+    fire(screen(), 'mouseup', 4, 1, 0)
+    return selected
   }
   window.ready = 1
   <\/script>`
@@ -223,6 +251,20 @@ try {
     !fixed.grew,
     'letting xterm see the mouseup stops the highlight moving once the button is up',
     `${fixed.dragged.length} chars dragged, ${fixed.after.length} after letting go`
+  )
+  await evaluate('window.grabMouse()')
+  const forced = await evaluate('window.run("pane")')
+  ok(forced.dragged.length > 0, 'forced selection works while the CLI holds the mouse')
+  ok(!forced.grew, 'the shipped policy releases forced selection after mouseup', JSON.stringify(forced))
+  const multiline = await evaluate('window.multiline()')
+  ok(
+    multiline.replace(/\r\n/g, '\n').includes(
+      'e quick brown fox jumps over the lazy dog and keeps going for a while' +
+        String.fromCharCode(10) +
+        '0123'
+    ),
+    'a forced multi-line drag is normal text selection, not a rectangular column',
+    JSON.stringify(multiline)
   )
 } finally {
   try {

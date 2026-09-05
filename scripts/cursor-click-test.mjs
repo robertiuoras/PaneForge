@@ -10,9 +10,9 @@
 //
 //   node scripts/cursor-click-test.mjs
 
-import { buildSync } from 'esbuild'
+import { buildSync, transformSync } from 'esbuild'
 import { strict as assert } from 'node:assert'
-import { mkdirSync, rmSync } from 'node:fs'
+import { mkdirSync, rmSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -38,6 +38,7 @@ const {
   keysForRows,
   keysToPoint,
   offsetIn,
+  offsetsForCells,
   cellAt,
   leftoverBackspaces,
   ARROW,
@@ -52,7 +53,71 @@ function check(what, ok, detail) {
 }
 const eq = (what, got, want) => check(what, got === want, `got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`)
 
+const { Terminal } = createRequire(import.meta.url)('@xterm/headless')
+const write = (t, data) => new Promise((resolve) => t.write(data, resolve))
+async function actualRow(text) {
+  const t = new Terminal({ cols: 24, rows: 4, scrollback: 10, allowProposedApi: true })
+  await write(t, text)
+  const b = t.buffer.active
+  const line = b.getLine(b.baseY + b.cursorY)
+  const end = b.cursorX
+  const offsets = offsetsForCells(0, end, (col) => line?.getCell(col))
+  if (!offsets) throw new Error(`could not map ${JSON.stringify(text)}`)
+  return { t, row: { start: 0, end, full: true, offsets } }
+}
+
 const at = (o) => ({ cursorRow: 10, cursorCol: 20, clickRow: 10, clickCol: 20, ...o })
+
+// --- terminal cell width is not JavaScript string length --------------------------------
+// These rows come from xterm's real buffer, including its width-zero continuation cells.
+// The editor receives one arrow/backspace per leading cell, never per UTF-16 code unit.
+{
+  const emoji = await actualRow('A😀B')
+  try {
+    eq('xterm maps A emoji B to three editor positions', offsetIn([emoji.row], 0, emoji.row.end), 3)
+    const keys = keysForRows({
+      rows: [emoji.row],
+      cursor: { row: 0, col: emoji.row.end },
+      start: { row: 0, col: 1 },
+      end: { row: 0, col: 2 }
+    })
+    eq('selecting only the emoji walks one logical place and backspaces once', keys, ARROW.left + BACKSPACE)
+    const graphemes = ['A', '😀', 'B']
+    let cursor = graphemes.length
+    cursor -= (keys.match(/\x1b\[D/g) ?? []).length
+    graphemes.splice(cursor - (keys.match(/\x7f/g) ?? []).length, (keys.match(/\x7f/g) ?? []).length)
+    eq('emoji deletion preserves the unselected prefix and suffix', graphemes.join(''), 'AB')
+  } finally {
+    emoji.t.dispose()
+  }
+
+  const cjk = await actualRow('A你B')
+  try {
+    eq('xterm maps A CJK B to three editor positions', offsetIn([cjk.row], 0, cjk.row.end), 3)
+    eq('the inside of a wide CJK glyph is refused as an ambiguous caret boundary', offsetIn([cjk.row], 0, 2), -1)
+    eq('clicking before CJK maps to its logical caret', keysToPoint([cjk.row], { row: 0, col: cjk.row.end }, { row: 0, col: 1 }), ARROW.left.repeat(2))
+    eq('clicking after CJK maps to its logical caret', keysToPoint([cjk.row], { row: 0, col: cjk.row.end }, { row: 0, col: 3 }), ARROW.left)
+  } finally {
+    cjk.t.dispose()
+  }
+
+  const combining = await actualRow('Ae\u0301B')
+  try {
+    eq('a combining glyph occupies one logical editor position', offsetIn([combining.row], 0, combining.row.end), 3)
+    eq(
+      'selecting a combining glyph sends one backspace',
+      keysForRows({
+        rows: [combining.row],
+        cursor: { row: 0, col: combining.row.end },
+        start: { row: 0, col: 1 },
+        end: { row: 0, col: 2 }
+      }),
+      ARROW.left + BACKSPACE
+    )
+  } finally {
+    combining.t.dispose()
+  }
+}
 
 // --- the ordinary case: one line, move along it -----------------------------------
 eq('a click 5 columns right is 5 rights', keysForClick(at({ clickCol: 25 })), ARROW.right.repeat(5))
@@ -335,6 +400,15 @@ const box = { left: 100, top: 50, width: 800, height: 400 }
   // A click, which is the same arithmetic without the backspaces - and never an up arrow,
   // whatever rows it crosses: measured, 92 lefts walk the width of the second row and the
   // 93rd steps onto the end of the first.
+  const longDraft = Array.from({ length: 20 }, () => ({ start: 2, end: 50, full: true }))
+  eq('unverified long input still refuses more than 400 arrows',
+    keysToPoint(longDraft, { row: 19, col: 50 }, { row: 0, col: 2 }), '')
+  eq('confirmed Codex draft can cross 400 characters within one screen',
+    keysToPoint(longDraft, { row: 19, col: 50 }, { row: 0, col: 2 }, Math.min(50 * 24, 10_000)),
+    ARROW.left.repeat(960))
+  const hugeDraft = Array.from({ length: 220 }, () => ({ start: 2, end: 50, full: true }))
+  eq('a huge confirmed draft still refuses an excessive arrow burst',
+    keysToPoint(hugeDraft, { row: 219, col: 50 }, { row: 0, col: 2 }, Math.min(50 * 240, 10_000)), '')
   eq(
     'a click at the start of the second row is 92 lefts',
     keysToPoint(spaceWrap, { row: 1, col: 94 }, { row: 1, col: 2 }),
@@ -386,3 +460,31 @@ const box = { left: 100, top: 50, width: 800, height: 400 }
 }
 
 console.log(`cursor click: ${checks} checks passed`)
+
+// Execute the renderer's adapter, not only the arithmetic with hand-built offsets.
+{
+  const { Terminal } = createRequire(import.meta.url)('@xterm/headless')
+  const source = readFileSync(join(root, 'src/renderer/src/components/TerminalPane.tsx'), 'utf8')
+  const begin = source.indexOf('    const textColumn = ')
+  const end = source.indexOf('    /**\n     * What is being typed, row by row', begin)
+  assert.ok(begin > 0 && end > begin)
+  const code = transformSync(source.slice(begin,end), {loader:'ts'}).code
+  for (const value of ['A你BCDE', 'AéBCDEF', 'A😀BCDE']) {
+    const term = new Terminal({cols:6, rows:5, allowProposedApi:true})
+    await new Promise(resolve=>term.write(value,resolve))
+    const inputRow = new Function('t','offsetsForCells',code+';return inputRow')(term,offsetsForCells)
+    const first = inputRow(0,0,null,true)
+    assert.ok(first, `wrapped full row remains editable: ${value}`)
+    assert.equal(first.end,6)
+    term.dispose()
+  }
+  const term = new Terminal({cols:6, rows:5, allowProposedApi:true})
+  await new Promise(resolve=>term.write('A你',resolve))
+  const inputRow = new Function('t','offsetsForCells',code+';return inputRow')(term,offsetsForCells)
+  const row = inputRow(0,0,2,false)
+  assert.ok(row,'CJK textual endpoint maps past continuation cell')
+  assert.equal(row.end,3)
+  assert.equal(row.offsets.at(-1),2)
+  term.dispose()
+  console.log('renderer Unicode adapter: 4 real xterm cases passed')
+}

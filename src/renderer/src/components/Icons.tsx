@@ -13,6 +13,18 @@ interface IconProps {
   size?: number
 }
 
+export function SidebarIcon(p: IconProps): JSX.Element {
+  return <Svg {...p}><rect x="2" y="2.5" width="12" height="11" rx="1.5" /><path d="M6 2.5v11" /></Svg>
+}
+
+export function RestartIcon(p: IconProps): JSX.Element {
+  return <Svg {...p}><path d="M13 6a5 5 0 1 0 .3 3M13 2.5V6H9.5" /></Svg>
+}
+
+export function FolderIcon(p: IconProps): JSX.Element {
+  return <Svg {...p}><path d="M2 5V3.5A1 1 0 0 1 3 2.5h3l1.5 2H13a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5Z" /></Svg>
+}
+
 function Svg({ size = 15, children }: IconProps & { children: React.ReactNode }): JSX.Element {
   return (
     <svg

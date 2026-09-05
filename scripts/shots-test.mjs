@@ -20,7 +20,7 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { buildSync } from 'esbuild'
+import { buildSync, transformSync } from 'esbuild'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const work = join(tmpdir(), 'pf-shots-test')
@@ -109,14 +109,59 @@ for (const handler of ['pty:attach', 'pty:attachPaths', 'pty:attachClipboard']) 
   )
   check(
     `${handler} makes it for a local pane too`,
-    /withShots\([\s\S]*writeAttachments/.test(body),
+    handler === 'pty:attachPaths' ? /withShots\(files, \{ paths: local \}\)/.test(body) : /withShots\([\s\S]*writeAttachments/.test(body),
     body.slice(0, 200)
   )
+}
+
+// Execute the shipped path handler: local previews must not copy files, rewrite
+// paths, or read folders/large attachments merely to decorate the input.
+{
+  const from = index.indexOf("ipcMain.handle('pty:attachPaths'")
+  const code = transformSync(index.slice(from, index.indexOf('\n})', from) + 3), { loader: 'ts' }).code
+  let handler
+  const reads = []
+  const remote = { owns: (id) => id.startsWith('@'), attachOn: async () => ({ paths: ['C:\\sent.png'] }) }
+  new Function('ipcMain', 'remote', 'readAttachIns', 'withShots', 'statSync', 'THUMB_KEEP', 'ATTACH_MAX_BYTES', code)(
+    { handle: (_name, fn) => { handler = fn } }, remote,
+    (paths) => { reads.push(...paths); return { files: paths.map((name) => ({ name, data: 'png' })) } },
+    async (files, result) => ({ ...await result, shots: files.map((f) => shot(f.name)) }),
+    (path) => { if (path.includes('missing')) throw new Error('missing'); return { size: path.includes('huge') ? 6_000_000 : 100 } },
+    THUMB_KEEP, 5 * 1024 * 1024
+  )
+  const paths = ['/desk/a.png', '/desk/folder', '/desk/huge.png', '/desk/missing.png']
+  const local = await handler(null, 'local', paths)
+  assert.deepEqual(local.paths, paths)
+  assert.deepEqual(reads, ['/desk/a.png'])
+  check('local Finder paths retain originals and preview only readable small images', local.shots.length === 1)
+  reads.length = 0
+  await handler(null, 'local', Array.from({ length: 20 }, (_, i) => `/desk/${i}.png`))
+  check('one drop reads at most the visible thumbnail count', reads.length === THUMB_KEEP)
+  const mirrored = await handler(null, '@pc/pane', ['/desk/a.png'])
+  check('mirrored paths still come from the receiving device', mirrored.paths[0] === 'C:\\sent.png')
 }
 
 // --- renderer: every path that types a path also shows what it typed ------------------
 
 const pane = readFileSync(join(root, 'src/renderer/src/components/TerminalPane.tsx'), 'utf8')
+{
+  const from = pane.indexOf('  const typeLocalPaths =')
+  const end = pane.indexOf('\n  }', from) + 4
+  const code = transformSync(pane.slice(from, end), { loader: 'ts' }).code
+  let resolvePreview
+  const typed = [], shown = []
+  const drop = new Function('api', 'sessionId', 'typePaths', 'showShots', `${code}; return typeLocalPaths`)(
+    { attachPaths: () => new Promise((resolve) => { resolvePreview = resolve }) }, 'local',
+    (paths) => typed.push(paths), (shots) => shown.push(shots)
+  )
+  drop(['/desk/a.png'])
+  check('local input is typed before preview work completes', typed.length === 1 && shown.length === 0)
+  resolvePreview({ shots: [shot('preview')] })
+  await Promise.resolve()
+  check('the local preview appears when it arrives', shown.length === 1)
+  check('Finder file drops and file URI drops use the local preview path',
+    pane.includes('typeLocalPaths(paths)') && pane.includes('else typeLocalPaths(dropped)'))
+}
 check('typePaths takes the pictures', /const typePaths = \(paths: string\[\], shots\?: Shot\[\]\)/.test(pane))
 const carried = pane.match(/typePaths\(res\.paths[^)]*\)/g) ?? []
 check('every answer from main is typed', carried.length === 4, carried.join(' | '))

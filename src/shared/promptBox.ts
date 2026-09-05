@@ -213,8 +213,32 @@ export interface Composer {
 export function composerAt(
   read: (row: number) => string,
   cursorRow: number,
-  opts: { maxUp?: number; maxDown?: number } = {}
+  opts: { maxUp?: number; maxDown?: number; codexCols?: number } = {}
 ): Composer | null {
+  // Codex 0.146 draws a borderless draft and explicitly positions each row;
+  // none is an xterm wrap. Require its own marker, the gap above it, and the
+  // status row below. Only the Codex caller opts in, so shell text cannot match.
+  if (opts.codexCols && opts.codexCols > 0) {
+    let top = -1
+    for (let r = cursorRow; r >= Math.max(0, cursorRow - (opts.maxUp ?? 12)); r--) {
+      const text = read(r)
+      if (/^›[ \u00a0]/.test(text) && !read(r - 1).trim()) {
+        top = r
+        break
+      }
+      if (text.trim() && !text.startsWith('  ')) break
+    }
+    if (top >= 0) {
+      for (let r = top + 1; r <= cursorRow + (opts.maxDown ?? 8); r++) {
+        const text = read(r)
+        if (!text.trim() && /^ {2}\S.* · /.test(read(r + 1))) {
+          if (cursorRow < r) return { top, bottom: r - 1, width: opts.codexCols }
+          break
+        }
+        if (text.trim() && !text.startsWith('  ')) break
+      }
+    }
+  }
   const here = read(cursorRow)
   // A framed box says what it is on every row of itself - that is `sameBox`, unchanged.
   if (frameAt(here) >= 0) {

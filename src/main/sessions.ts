@@ -46,7 +46,7 @@ import { folderName, laneOfCheckout, projectOf } from '../shared/place'
 import { dropStale, smallestBorrow, watchedBorrow, type Borrow } from '../shared/paneSize'
 import { START_COLS, START_ROWS } from '../shared/paneGrid'
 import { RESTORE_MARK_TEXT } from '../shared/replayWidth'
-import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, SUBMIT_GAP_MS, armDecision, clearChunks, resumeOf, dropFor, dropWords, expiryDecision, queuedPromptDecision, quietEnoughToArm, type DropReason, type QueuedPromptVerdict } from '../shared/autoclear'
+import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, SUBMIT_GAP_MS, armDecision, clearChunks, hasFreshPaneHandoff, resumeOf, dropFor, dropWords, expiryDecision, queuedPromptDecision, quietEnoughToArm, type DropReason, type QueuedPromptVerdict } from '../shared/autoclear'
 import { acLog } from './autoclearLog'
 import { logReclaim } from './activationLog'
 import { ledgerSleep, ledgerWake } from './laneLedger'
@@ -998,6 +998,7 @@ export class SessionManager extends EventEmitter {
   restart(id: string): Session | null {
     const live = this.sessions.get(id)
     if (!live) return null
+    this.cancelAutoClear(id, 'cancelled')
     try {
       live.proc?.kill()
     } catch {
@@ -1022,6 +1023,12 @@ export class SessionManager extends EventEmitter {
       live.req.resume ? live.req.resumeId : undefined
     )
     live.proc = this.spawn(live.req, live.meta.agent, live.cols, live.rows, live.meta.id)
+    // The replaced process owned the old composer. A new one starts empty,
+    // including when history navigation made the old shadow uncertain.
+    live.typed = ''
+    live.submitLine = newSubmitLine()
+    live.draft = newDraft()
+    live.meta.drafting = undefined
     live.runner = specFor(live.meta.agent).bin
     live.jobName = null
     live.meta.job = undefined
@@ -2206,8 +2213,13 @@ export class SessionManager extends EventEmitter {
     // handoff that EXISTS may refuse - `path: null` is a pane that never wrote one, which
     // is not evidence the work is done.
     const plan = { ...ask }
+    const needsOwnedHandoff = s.meta.agent === 'codex' || s.meta.agent === 'antigravity'
+    const hand = handoffFor(s.meta.cwd, id)
+    if (needsOwnedHandoff && !hasFreshPaneHandoff(id, hand)) {
+      acLog(`${id} refused: no fresh pane handoff for ${s.meta.agent}`)
+      return { ok: false, reason: 'no fresh pane handoff to continue' }
+    }
     if (!plan.noResume) {
-      const hand = handoffFor(s.meta.cwd, id)
       if (hand.path && hand.open === 0) {
         acLog(`${id} refused: ${NOTHING_OPEN} (${hand.path})`)
         return { ok: false, reason: NOTHING_OPEN }
@@ -2289,10 +2301,14 @@ export class SessionManager extends EventEmitter {
         this.cancelAutoClear(id, verdict)
         return
       }
+      if ((live!.meta.agent === 'codex' || live!.meta.agent === 'antigravity') && !hasFreshPaneHandoff(id, handoffFor(live!.meta.cwd, id))) {
+        this.clearAutoClearMeta(live!)
+        this.setAutoClearOutcome(id, 'stood down - handoff no longer belongs to this pane')
+        this.emitSessions()
+        acLog(`${id} clear refused: no fresh pane handoff for ${live!.meta.agent}`)
+        return
+      }
       const chunks = live!.meta.autoClearChunks ?? clearChunks(live!.meta.autoClearPrompt ?? '')
-      this.clearAutoClearMeta(live!)
-      this.setAutoClearOutcome(id, 'cleared')
-      this.emitSessions()
       // The keeper that pushes the screen into scrollback ahead of the CLI's clear is fed
       // by KEYSTROKES (`feedInput` in TerminalPane), and nothing here is a keystroke: this
       // writes straight to the pty, so the renderer never saw the `/clear` and never
@@ -2305,7 +2321,38 @@ export class SessionManager extends EventEmitter {
       const clearCmd = chunks[0]
       const { switchCmd, resume } = resumeOf(chunks)
       const t = setTimeout(() => {
-        if (!this.sessions.get(id)) return acLog(`${id} clear skipped: pane gone`)
+        const current = this.sessions.get(id)
+        if (!current) return acLog(`${id} clear skipped: pane gone`)
+        if (current.meta.autoClearAt !== armedAt) return acLog(`${id} clear skipped: countdown cancelled or replaced`)
+        if ((current.meta.agent === 'codex' || current.meta.agent === 'antigravity') && !hasFreshPaneHandoff(id, handoffFor(current.meta.cwd, id))) {
+          this.cancelAutoClear(id, 'cancelled')
+          return acLog(`${id} clear skipped: handoff changed during lead`)
+        }
+        // The lead is long enough for the renderer to file the tail. Re-read ALL state
+        // before writing: a person may submit, open a question, or recall a history line
+        // in this window. The clear is not complete until its command reaches the pty.
+        const late = dropFor({ ...current.meta, typed: current.typed })
+        if (late === 'drafting') {
+          const next = Date.now() + DRAFT_RETRY_MS
+          current.meta.autoClearAt = next
+          const again = setTimeout(() => fire(next), DRAFT_RETRY_MS)
+          again.unref?.()
+          this.autoClearTimers.set(id, again)
+          this.emitSessions()
+          return acLog(`${id} clear waiting: ${dropWords(late)}`)
+        }
+        if (late === 'working') {
+          this.autoClearPending.set(id, ask)
+          this.cancelAutoClear(id, late)
+          return acLog(`${id} clear requeued: ${dropWords(late)}`)
+        }
+        if (late) {
+          this.cancelAutoClear(id, late)
+          return acLog(`${id} clear skipped: ${dropWords(late)}`)
+        }
+        this.clearAutoClearMeta(current)
+        this.setAutoClearOutcome(id, 'cleared')
+        this.emitSessions()
         acLog(`${id} typing ${JSON.stringify(clearCmd)}`)
         this.write(id, clearCmd, 'app')
         // Everything after the clear goes through the machinery that already knows how to
@@ -2347,6 +2394,7 @@ export class SessionManager extends EventEmitter {
         }, CLEAR_RESUME_BUDGET_MS, 'idle')
       }, ARM_CLEAR_LEAD_MS)
       t.unref?.()
+      this.autoClearTimers.set(id, t)
     }
     const timer = setTimeout(() => fire(at), plan.seconds * 1000)
     timer.unref?.()
@@ -2801,7 +2849,7 @@ export class SessionManager extends EventEmitter {
         exists: true,
         lastKeyboard: live.meta.lastKeyboard,
         mark,
-        drafting: !!live.typed && !!live.typed.trim(),
+        drafting: Boolean(live.meta.drafting) || (!!live.typed && !!live.typed.trim()),
         composerIdle,
         expired: Date.now() >= deadline
       })

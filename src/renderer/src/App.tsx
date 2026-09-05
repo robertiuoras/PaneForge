@@ -58,7 +58,11 @@ import {
   RemoteIcon,
   SwarmIcon,
   TrashIcon,
-  BellIcon
+  BellIcon,
+  GearIcon,
+  SidebarIcon,
+  RestartIcon,
+  FolderIcon
 } from './components/Icons'
 import RemoteDialog from './components/RemoteDialog'
 import { PairAsk } from './components/PairAsk'
@@ -5193,6 +5197,7 @@ export default function App(): JSX.Element {
                 <button
                   className="x"
                   title="Restart"
+                  aria-label="Restart agent"
                   // Same reason as the close button below: the ROW's `onPointerDown` picks
                   // the session and wakes it, and pointerdown lands before click.
                   onPointerDown={(e) => e.stopPropagation()}
@@ -5201,7 +5206,7 @@ export default function App(): JSX.Element {
                     api.restartSession(s.id)
                   }}
                 >
-                  ⟳
+                  <RestartIcon size={13} />
                 </button>
               )}
               <button
@@ -5235,13 +5240,14 @@ export default function App(): JSX.Element {
           <span className="icons">
             <button
               className="icon side-toggle"
+              aria-label="Hide the session list"
               title={keyLabel('Hide the list (Ctrl B)')}
               onClick={() => setSideHidden(true)}
             >
-              ◧
+              <SidebarIcon size={15} />
             </button>
-            <button className="icon" title={keyLabel('Settings (Ctrl ,)')} onClick={() => setSettings(true)}>
-              ⚙
+            <button className="icon" aria-label="Settings" title={keyLabel('Settings (Ctrl ,)')} onClick={() => setSettings(true)}>
+              <GearIcon size={15} />
             </button>
             <button
               className="icon help"
@@ -5899,10 +5905,11 @@ export default function App(): JSX.Element {
                 </button>
                 <button
                   className="icon pt-restart"
+                  aria-label="Restart agent"
                   title={keyLabel('Restart agent (Ctrl Shift R)')}
                   onClick={() => api.restartSession(s.id)}
                 >
-                  ⟳
+                  <RestartIcon size={13} />
                 </button>
                 <button
                   className="icon fix"
@@ -5920,15 +5927,16 @@ export default function App(): JSX.Element {
                 {!s.remote && (
                   <button
                     className="icon desk-only pt-reveal"
+                    aria-label={`Open ${folderLabel(s.cwd)} in ${isMac ? 'Finder' : 'Explorer'}`}
                     title={
                       /* Always this pane's own folder, never the project it belongs to -
                          see shared/revealPane.ts. The basename is on the tooltip so a
                          mismatch is visible before the click, not after it. */
-                      `Open ${folderLabel(s.cwd)} in Explorer - to reach the agent, drag files onto this pane`
+                      `Open ${folderLabel(s.cwd)} in ${isMac ? 'Finder' : 'Explorer'} - to reach the agent, drag files onto this pane`
                     }
                     onClick={() => void api.revealPane(s.cwd).then((p) => p || flash('That folder is gone.'))}
                   >
-                    📁
+                    <FolderIcon size={13} />
                   </button>
                 )}
                 {!s.remote && (
@@ -6125,19 +6133,20 @@ export default function App(): JSX.Element {
                 nobody may be left guessing about. */}
             {voice.target === s.id && voice.phase !== 'idle' && (
               <button
-                className={'mic-live' + (voice.phase === 'thinking' ? ' busy' : '')}
+                className={'mic-live' + (voice.phase !== 'recording' ? ' busy' : '')}
                 title={
                   voice.phase === 'recording'
                     ? `Listening - click to transcribe into ${s.title}`
-                    : 'Working out what you said'
+                    : voice.phase === 'loading' ? 'Preparing the microphone' : 'Working out what you said'
                 }
-                aria-label="Stop dictating and transcribe"
+                aria-label={voice.phase === 'recording' ? 'Stop dictating and transcribe' : voice.phase === 'loading' ? 'Preparing the microphone' : 'Transcribing dictation'}
+                disabled={voice.phase !== 'recording'}
                 onClick={(e) => {
                   e.stopPropagation()
                   voice.toggle(s.id)
                 }}
               >
-                {voice.phase === 'thinking' ? '…' : <MicIcon size={15} />}
+                {voice.phase !== 'recording' ? '…' : <MicIcon size={15} />}
               </button>
             )}
           </div>

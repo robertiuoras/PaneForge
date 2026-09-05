@@ -29,15 +29,13 @@ export interface ForceKeys {
 /**
  * The modifiers to stamp on a mousedown so xterm forces a selection.
  *
- * Both are set rather than the one this platform reads: the answer is applied to an event
- * that xterm judges with its OWN idea of the platform, and a renderer that disagrees with
- * it about that (an Electron window is not always what `navigator` says, and the phone's
- * client is a browser on a third machine) would otherwise stamp the key nothing reads.
- * Stamping both is right on either answer, and no PaneForge handler reads the event after
- * this - see the registration order in `TerminalPane.tsx`.
+ * Match xterm's platform predicate, including touch devices reporting MacIntel. Stamp only the key
+ * xterm reads: Alt on Windows or Linux starts column selection, so sending both turns a
+ * normal multi-line drag into a rectangle there.
  */
-export function forceKeys(): ForceKeys {
-  return { shiftKey: true, altKey: true }
+export function forceKeys(platform: string): ForceKeys {
+  const isMac = ['Macintosh', 'MacIntel', 'MacPPC', 'Mac68K'].includes(platform)
+  return isMac ? { altKey: true } : { shiftKey: true }
 }
 
 /**

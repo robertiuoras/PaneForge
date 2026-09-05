@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve, sep } from 'node:path'
@@ -37,7 +37,7 @@ import { addSound, pruneCustomSounds, removeSound, renameSound, soundData } from
 import { writeAttachments, readAttachIns, withShots } from './attach'
 import { AskNotifier, askMessage, postAsk, telegramCreds } from './askNotify'
 import { askKeyOf } from '../shared/autoAnswer'
-import type { AttachIn, AttachResult } from '../shared/attach'
+import { ATTACH_MAX_BYTES, THUMB_KEEP, type AttachIn, type AttachResult } from '../shared/attach'
 import { CHOOSE_GAP_MS, keysForChoice, sameAsk } from '../shared/choices'
 import { Remote } from './remote'
 import { readInvite } from './remote/invite'
@@ -48,7 +48,8 @@ import { surfaceChannels } from '../shared/surface'
 import { startDisplayAwake } from './awake'
 import { attachGlass, glassSupported } from './glass'
 import { invalidateAgents, listAgents, specFor } from './agents'
-import { codexInstalledVersion, forgetCodexVersion } from './codexModels'
+import { codexInstalledVersion, codexLatest, forgetCodexVersion } from './codexModels'
+import { isOutdated, versionOf } from '../shared/codexCatalogue'
 import { gitInfo } from './git'
 import { projectRoot } from './projectRoot'
 import { diffFiles, diffPatch } from './diff'
@@ -110,7 +111,7 @@ import {
   transcriptPath
 } from './transcripts'
 import { receiveHandoff, sendHandoff, shareable } from './handoff'
-import { clearCommandFor, readAsk as readAutoClearAsk, resumeBrief } from '../shared/autoclear'
+import { clearCommandFor, hasFreshPaneHandoff, readAsk as readAutoClearAsk, resumeBrief } from '../shared/autoclear'
 import { handoffFor } from './handoffSteps'
 import { briefForTask } from './backlogStore'
 import { startAutoClearWatch, stopAutoClearWatch } from './autoclearWatch'
@@ -1117,7 +1118,8 @@ manager.on('armclear', (id: string) => {
 manager.on('handover', (id: string, until: number) => send('pane:handover', id, until))
 remote.on('reset', (id: string) => {
   pump.flushOne(id)
-  send('pane:reset', id)
+  // Capture in the reset event's turn, before a later data frame mutates it.
+  send('pane:reset', id, remote.buffer(id))
 })
 remote.on('sessions', () => {
   pump.flush()
@@ -2671,9 +2673,7 @@ ipcMain.handle('autoclear:ask', (_e, raw: unknown) => {
   // command. The pane slot is the attribution contract: a generic project handoff may be
   // another live pane's work.
   if (pane?.agent === 'codex' || pane?.agent === 'antigravity') {
-    const expected = `/session-handoff.pane-${ask.paneId}.md`
-    const fresh = !!handoff && Date.now() - handoff.mtimeMs <= 20 * 60_000
-    if (!handoff?.path || !handoff.path.endsWith(expected) || !fresh || handoff.open < 1 || !handoff.steps.length) {
+    if (!hasFreshPaneHandoff(ask.paneId, handoff)) {
       return { ok: false, reason: 'that session has no fresh pane handoff to continue' }
     }
   }
@@ -2776,10 +2776,24 @@ ipcMain.handle('pty:attach', (_e, id: string, files: AttachIn[]): Promise<Attach
  * bytes travel (`readAttachIns`).
  */
 ipcMain.handle('pty:attachPaths', (_e, id: string, paths: string[]): Promise<AttachResult> => {
+  if (!remote.owns(id)) {
+    const local = Array.isArray(paths) ? paths.filter((p) => typeof p === 'string' && p) : []
+    // Local drops keep their original paths, including folders and large files.
+    // Read only a bounded set of small images for the decorative preview.
+    const pictures = local.filter((p) => /\.(png|jpe?g|webp|gif|bmp|ico|tiff?)$/i.test(p)).slice(0, THUMB_KEEP)
+    const files = pictures.flatMap((p) => {
+      try {
+        if (statSync(p).size > ATTACH_MAX_BYTES) return []
+        return readAttachIns([p]).files
+      } catch {
+        return []
+      }
+    })
+    return withShots(files, { paths: local })
+  }
   const read = readAttachIns(paths)
   if (read.error) return Promise.resolve({ paths: [], error: read.error })
-  if (remote.owns(id)) return withShots(read.files, remote.attachOn(id, read.files))
-  return withShots(read.files, writeAttachments(read.files))
+  return withShots(read.files, remote.attachOn(id, read.files))
 })
 
 /**
@@ -2989,9 +3003,9 @@ ipcMain.handle('agents:install', async (_e, id: string) => {
  * Move an agent to its newest release. Same console and same one-at-a-time guard as the
  * install, because for most of this catalogue it IS the install line run again.
  *
- * Success is the binary still being on PATH and the version having MOVED, not the
- * updater's exit code: `codex update` exits 0 when there was nothing to do, and an
- * updater that prints an error and exits 0 is the failure that reads as success.
+ * Completion requires a successful updater and a binary still on PATH. Codex also
+ * has to answer a fresh version check against its known latest release; an already
+ * current version is a valid no-op.
  */
 ipcMain.handle('agents:update', async (_e, id: string) => {
   if (installing.has(id)) return
@@ -3027,22 +3041,41 @@ ipcMain.handle('agents:update', async (_e, id: string) => {
           `it is open. Close every ${spec.label} pane and press Update again.\r\n`
       )
     }
-    refreshPath()
-    forgetCodexVersion()
-    invalidateAgents()
     const found = onPath(spec.bin)
-    // Asking again is a spawn, so the number arrives after this message. Say what
-    // happened rather than a version this call cannot yet know.
-    if (spec.id === 'codex') codexInstalledVersion(spec.bin, invalidateAgents)
+    let fresh = ''
+    if (code === 0 && found && !locked && spec.id === 'codex') {
+      fresh = await new Promise<string>((done) => {
+        execFile(spec.bin, ['--version'], { timeout: 8000, windowsHide: true }, (error, output) => {
+          done(error ? '' : versionOf(String(output)))
+        })
+      })
+    }
+    const completed = code === 0 && found && !locked
+    const latest = spec.id === 'codex' ? codexLatest() : ''
+    const verified = completed && (spec.id !== 'codex' || (Boolean(fresh) && Boolean(latest) && !isOutdated(fresh, latest)))
+    // Refresh discovery after a completed updater, including one whose version
+    // verification failed, so the picker can show the binary actually installed.
+    if (completed) {
+      refreshPath()
+      if (spec.id === 'codex') forgetCodexVersion()
+      invalidateAgents()
+    }
+    if (completed && spec.id === 'codex') codexInstalledVersion(spec.bin, invalidateAgents)
     send('agents:install-event', {
       agentId: id,
       chunk: locked
         ? ''
-        : found
+        : verified
           ? `\r\n${spec.label} is up to date${before ? ` (was ${before})` : ''}.\r\n`
-          : `\r\nUpdater exited with code ${code} and ${spec.bin} is no longer on PATH.\r\n`,
+          : spec.id === 'codex' && completed && !fresh
+            ? `\r\nUpdater completed, but Codex version could not be verified.\r\n`
+            : spec.id === 'codex' && completed && !latest
+              ? `\r\nUpdater completed; Codex ${fresh} was verified, but the latest release is unknown.\r\n`
+              : spec.id === 'codex' && completed
+                ? `\r\nUpdater completed, but Codex ${fresh} is still behind ${latest}.\r\n`
+                : `\r\nUpdater ${code === 0 ? 'did not complete' : `exited with code ${code}`} ${found ? 'while the existing binary is still on PATH' : `and ${spec.bin} is no longer on PATH`}.\r\n`,
       done: true,
-      ok: found && !locked
+      ok: verified
     })
   } finally {
     installing.delete(id)
@@ -3739,9 +3772,13 @@ function restorePanes(specs: StartSessionRequest[]): void {
   }
   settle(() => {
   if (wasPinned.size || nowPinned.length) {
-    const before = [...wasPinned].join(',')
-    if (before !== nowPinned.join(',')) {
-      setConfig({ pinnedPanes: nowPinned })
+    // Restore can wait behind an offer or stagger. Keep pins added while it was
+    // waiting, and replace only ids that belonged to panes this restore replaced.
+    const restoredOldIds = new Set(opening.map((req) => req.scrollbackId).filter(Boolean))
+    const current = getConfig().pinnedPanes ?? []
+    const mergedPins = [...new Set([...current.filter((id) => !restoredOldIds.has(id)), ...nowPinned])]
+    if (current.join(',') !== mergedPins.join(',')) {
+      setConfig({ pinnedPanes: mergedPins })
       // ...and SAY so. `setConfig` writes the file and broadcasts nothing - only the
       // `config:set` handler sends `config:changed` - so this translation reached no
       // window at all, and a window that had already read the config was holding the ids

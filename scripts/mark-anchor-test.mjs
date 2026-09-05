@@ -283,4 +283,62 @@ const ERASE_BELOW = '\x1b[5;1H\x1b[J'
   check('the scan is bounded', LANDING_SCAN_ROWS > 0 && LANDING_SCAN_ROWS <= 2000, String(LANDING_SCAN_ROWS))
 }
 
+// A Codex reply can quote the request's opening words. The reply is usually much closer to
+// the stale composer tag than the prompt, so nearest-first silently lands on reply prose.
+{
+  const key = echoKey('please repeat this exact sentence')
+  const rows = Array.from({ length: 50 }, (_, i) => `  reply line ${i}`)
+  rows[10] = '  please repeat this exact sentence'
+  rows[40] = '  The request said: please repeat this exact sentence'
+  rows[41] = '  Repeating it again: please repeat this exact sentence'
+  rows[45] = '› Implement {feature}'
+  const row = (i) => rows[i]
+  eq('an earlier prompt beats a nearer quoted reply', landingRow(row, 45, key, 0, rows.length), 10)
+  eq('a match before the lower neighbour is excluded', landingRow(row, 45, key, 11, rows.length), 45)
+  eq('a match at the upper neighbour is excluded', landingRow(row, 45, key, 0, 40), 10)
+  eq('matches before, at, and after the bounds are excluded', landingRow(row, 45, key, 11, 40), 45)
+}
+
+// The caller's preceding marker is a tag boundary, not a candidate row: two consecutive
+// prompts can have the same first 24 characters. This models the exact `previous + 1`
+// lower bound passed by TerminalPane's jump callback.
+{
+  const prompt = 'please repeat this exact sentence for the current prompt'
+  const key = echoKey(prompt)
+  const rows = Array.from({ length: 50 }, (_, i) => `  reply line ${i}`)
+  const previousTag = 10
+  const currentPrompt = 20
+  const currentTag = 45
+  rows[previousTag] = '  please repeat this exact sentence from the previous prompt'
+  rows[15] = '  You asked: please repeat this exact sentence from the previous prompt'
+  rows[currentPrompt] = `  ${prompt}`
+  rows[currentTag] = '› Implement {feature}'
+  const row = (i) => rows[i]
+  eq(
+    'the old inclusive previous-tag bound would land on the preceding prompt',
+    landingRow(row, currentTag, key, previousTag, rows.length),
+    previousTag
+  )
+  eq(
+    'the caller excludes the preceding tag row before finding the current prompt',
+    landingRow(row, currentTag, key, previousTag + 1, rows.length),
+    currentPrompt
+  )
+  eq(
+    'a preceding reply quoting the key is not mistaken for the current prompt',
+    landingRow(row, currentTag, key, previousTag + 1, rows.length),
+    currentPrompt
+  )
+  const echoRows = [
+    '',
+    '❯ please repeat this exact sentence from the previous prompt',
+    '❯ please repeat this exact sentence for the current prompt'
+  ]
+  eq(
+    'an out-of-span echo cannot bypass the lower bound',
+    landingRow((i) => echoRows[i], 1, key, 2, echoRows.length),
+    2
+  )
+}
+
 console.log(`mark anchor: ${checks} checks passed`)
