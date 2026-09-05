@@ -1819,7 +1819,7 @@ export default function App(): JSX.Element {
   )
 
   const start = useCallback(
-    async (reqs: StartSessionRequest[]) => {
+    async (reqs: StartSessionRequest[]): Promise<'local' | 'remote' | null> => {
       setPicking(false)
       const wanted = reqs
       reqs = await offloadReqs(reqs)
@@ -1827,7 +1827,7 @@ export default function App(): JSX.Element {
         // Everything went to a peer. Still remember the model, or the next launch forgets
         // what was picked purely because the machine happened to be busy.
         rememberModel(wanted[0]?.agent, wanted[0]?.model)
-        return
+        return wanted.length ? 'remote' : null
       }
       const rows = await api.startSessions(reqs)
       const started = rows.map((r) => r.session).filter((s): s is Session => !!s)
@@ -1856,6 +1856,8 @@ export default function App(): JSX.Element {
         flash(`${noted.length} sessions moved into their own worktree lanes.`)
       }
       rememberModel(reqs[0]?.agent, reqs[0]?.model)
+      const last = started[started.length - 1]
+      return last ? (last.remote ? 'remote' : 'local') : wanted.length > reqs.length ? 'remote' : null
     },
     [flash, rememberModel, offloadReqs]
   )
@@ -2518,6 +2520,7 @@ export default function App(): JSX.Element {
     (): AutoPane[] =>
       sessionsRef.current.map((s) => ({
         id: s.id,
+        agent: s.agent,
         state: fleetState(s),
         lastKeyboard: s.lastKeyboard,
         lastOutput: s.lastOutput,
@@ -4061,7 +4064,14 @@ export default function App(): JSX.Element {
         for (const move of plan) {
           const live = sessionsRef.current.find((x) => x.id === move.id)
           if (!live || live.remote) continue
-          const items = await api.handoffToDevice(move.device, [move.id], false, true)
+          const items = await api.handoffToDevice(move.device, [move.id], false, true).catch((error) => [{
+            id: move.id,
+            title: live.title,
+            ok: false,
+            pending: false,
+            notes: [],
+            error: error instanceof Error ? error.message : String(error)
+          }])
           const item = items[0]
           if (item?.ok || item?.pending) {
             setActed({
@@ -4073,6 +4083,7 @@ export default function App(): JSX.Element {
           } else {
             handoffBlocked.current[move.id] = Date.now() + Math.max(1, cooldownMinutes) * 60_000
             console.info(`handoff: ${move.id} stayed here - ${item?.error ?? 'refused over there'}`)
+            api.logReclaim({ event: 'move-failed', id: move.id, device: move.deviceName, reason: item?.error ?? 'refused over there' })
           }
         }
       } finally {
@@ -4093,10 +4104,12 @@ export default function App(): JSX.Element {
       handoffSweeping.current = false
       return
     }
-    for (const move of mine)
+    for (const move of mine) {
       console.info(
         `${why}: moving ${move.id} to ${move.deviceName} - quiet ${Math.round(move.idleMs / 60000)} min`
       )
+      api.logReclaim({ event: 'move-armed', why, id: move.id, device: move.deviceName, idleMin: Math.round(move.idleMs / 60000) })
+    }
     const key = mine.map((p) => p.id).join('|')
     moveSoonRef.current[key] = { plan: mine, cooldownMinutes }
     // The mascot is no longer the only face this has: `MoveSoon` draws the same countdown
@@ -4501,23 +4514,34 @@ export default function App(): JSX.Element {
     publishClosingRef.current()
   }, [])
 
-  /** "Keep this pane open" / "Let it close when idle", off the card's right-click. */
-  const togglePin = useCallback(
-    (id: string) => {
-      setPinned((was) => {
-        const next = { ...was }
-        if (next[id]) delete next[id]
-        else next[id] = true
-        // Written from inside the updater so what is saved is what is drawn, rather than a
-        // second reading of state this render has not seen yet. Remembered as well as
-        // written, so the echo of this write is not read back as somebody else's change.
-        pinsWritten.current = Object.keys(next).sort().join(',')
-        patchConfig({ pinnedPanes: Object.keys(next) })
-        return next
-      })
-    },
-    [patchConfig]
-  )
+  const [savingPins, setSavingPins] = useState(false)
+  const savingPinsRef = useRef(false)
+  const savePins = useCallback(async (ids: string[], keep: boolean) => {
+    if (savingPinsRef.current) return
+    savingPinsRef.current = true
+    setSavingPins(true)
+    try {
+      const current = await api.getConfig()
+      const next = new Set(current.pinnedPanes ?? [])
+      const localIds = new Set(sessions.filter(s => !s.remote && !s.id.startsWith('@')).map(s => s.id))
+      for (const id of ids) if (localIds.has(id)) keep ? next.add(id) : next.delete(id)
+      const saved = await api.setConfig({ pinnedPanes: [...next] })
+      pinsWritten.current = [...(saved.pinnedPanes ?? [])].sort().join(',')
+      setPinned(Object.fromEntries((saved.pinnedPanes ?? []).map(id => [id, true as const])))
+      setConfigState(saved)
+      if (keep) {
+        setCloseSoons(list => list.filter(plan => !plan.ids.some(id => ids.includes(id))))
+      }
+    } catch (error) {
+      flash(`Could not save keep-open preference: ${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      savingPinsRef.current = false
+      setSavingPins(false)
+    }
+  }, [sessions, flash])
+  const togglePin = useCallback((id: string) => {
+    void savePins([id], !pinnedRef.current[id])
+  }, [savePins])
 
   // What is serving on this machine, for the mascot's "what dev servers are running" and
   // for stopping one by name. Held rather than polled: the reading costs a whole process
@@ -4775,6 +4799,19 @@ export default function App(): JSX.Element {
                 setCardMenu({ id: s.id, x: e.clientX, y: e.clientY })
               }}
             >
+              <input
+                className="keep-open-check"
+                type="checkbox"
+                aria-label={`Keep ${s.title} open`}
+                title={s.remote ? `Set keep-open on ${s.remote.name}, where this session runs` : 'Keep this session open until unchecked'}
+                disabled={savingPins || Boolean(s.remote)}
+                checked={!s.remote && Boolean(pinned[s.id])}
+                onChange={() => togglePin(s.id)}
+                onClick={e => e.stopPropagation()}
+                onPointerDown={e => e.stopPropagation()}
+                onDoubleClick={e => e.stopPropagation()}
+                onContextMenu={e => e.stopPropagation()}
+              />
               <StatusDot status={s.status} engaged={s.engaged} />
               <div className="row-text">
                 {renaming === s.id ? (
@@ -4978,14 +5015,14 @@ export default function App(): JSX.Element {
                           // place somebody is already looking when they change their mind.
                           <button
                             type="button"
-                            className="chip"
-                            title="Waiting for this turn to end, then it moves to the paired device. Nothing is killed to make it happen, and it gives up rather than interrupting. Press to keep it here."
+                            className="chip handoff-queued"
+                            title={s.agent !== 'shell' ? 'Opens a conversation copy on the paired device after this turn. The original stays here. Press to cancel.' : 'Waiting for this turn to end before handoff. Press to keep it here.'}
                             onClick={(e) => {
                               e.stopPropagation()
                               stopMove(s)
                             }}
                           >
-                            moves when done <Elapsed since={s.handoffQueuedAt} title="Queued for a move" />
+                            {s.agent !== 'shell' ? 'copy opens when done' : 'moves when done'} <Elapsed className="handoff-elapsed" since={s.handoffQueuedAt} title="Queued for handoff" />
                           </button>
                         ) : (
                           // Which half is running and for how long: a move is a repo push
@@ -4993,7 +5030,7 @@ export default function App(): JSX.Element {
                           // steps are in handoff.log under the app's data folder.
                           <span
                             className="chip"
-                            title="Moving to a paired device now: the repo is pushed, then the pane starts over there and closes here. Each step is in handoff.log."
+                            title="Preparing handoff to a paired device. Agent originals stay open until resume can be confirmed. Each step is in handoff.log."
                           >
                             {s.handoffStage ?? 'moving'}
                             {s.handoffSince ? (
@@ -5012,12 +5049,17 @@ export default function App(): JSX.Element {
                       ) : s.status === 'exited' ? (
                         <span className="chip dead">exited {s.exitCode ?? ''}</span>
                       ) : s.runSince ? (
-                        <Elapsed since={s.runSince} title="This turn" />
+                        <span className="session-clock">turn <Elapsed since={s.runSince} title="This turn" /></span>
                       ) : s.lastRunMs !== undefined ? (
                         <span className="elapsed done" title="Last turn">
-                          {formatElapsed(s.lastRunMs)}
+                          last {formatElapsed(s.lastRunMs)}
                         </span>
                       ) : null}
+                      {s.status !== 'exited' && (
+                        <span className="session-clock" title="Time since this session opened, including idle time">
+                          open <Elapsed since={s.openedAt ?? s.createdAt} className="elapsed done" />
+                        </span>
+                      )}
                       {/* What the pane is still RUNNING with its turn over. This is the one
                           card state Robert reported as a lie: an agent that started work in
                           the background goes quiet, the clock stops, and the card reads
@@ -5394,6 +5436,20 @@ export default function App(): JSX.Element {
         <div className="section">
           {/* "Running" read as "these are all busy" on a list of idle panes. */}
           <span className="section-title">
+            <input
+              className="keep-open-check"
+              type="checkbox"
+              aria-label="Keep all sessions on this device open"
+              title="Keep all sessions on this device open until unchecked"
+              disabled={savingPins || !sessions.some(s => !s.remote)}
+              checked={sessions.some(s => !s.remote) && sessions.filter(s => !s.remote).every(s => Boolean(pinned[s.id]))}
+              ref={el => {
+                const local = sessions.filter(s => !s.remote)
+                if (el) el.indeterminate = local.some(s => pinned[s.id]) && !local.every(s => pinned[s.id])
+              }}
+              onChange={e => { void savePins(sessions.filter(s => !s.remote).map(s => s.id), e.target.checked) }}
+              onClick={e => e.stopPropagation()}
+            />
             Sessions ({shownSessions.length}{shownSessions.length === sessions.length ? '' : `/${sessions.length}`})
           </span>
           {/* Badges and the empty-everything button travel together, hard right. One
@@ -5809,21 +5865,21 @@ export default function App(): JSX.Element {
                   hour that is a minute. Off the header on a phone, where the header is
                   404px and says only WHICH pane this is. */}
               {!handheld.handheld && s.status !== 'exited' && (
-                <Elapsed
+                <span className="session-clock pt-open">open <Elapsed
                   since={s.openedAt ?? s.createdAt}
-                  className="elapsed pt-open"
-                  title={`Open for - since ${new Date(s.openedAt ?? s.createdAt).toLocaleString()}. Not the turn, and a /clear does not reset it.`}
-                />
+                  className="elapsed done"
+                  title={`Session opened ${new Date(s.openedAt ?? s.createdAt).toLocaleString()}; includes idle time.`}
+                /></span>
               )}
               {s.asleep ? (
                 <AsleepChip at={s.asleep} id={s.id} reason={s.asleepReason} />
               ) : s.status === 'exited' ? (
                 <span className="chip dead">exited {s.exitCode ?? ''}</span>
               ) : s.runSince ? (
-                <Elapsed since={s.runSince} className="elapsed pt-clock" title="This turn" />
+                <span className="session-clock pt-clock">turn <Elapsed since={s.runSince} title="This turn" /></span>
               ) : s.lastRunMs !== undefined ? (
                 <span className="elapsed done pt-clock" title="Last turn">
-                  {formatElapsed(s.lastRunMs)}
+                  last {formatElapsed(s.lastRunMs)}
                 </span>
               ) : null}
               <span className="pt-path">{s.cwd}</span>
@@ -6212,6 +6268,7 @@ export default function App(): JSX.Element {
 
       {picking && config && (
         <NewSessionDialog
+          defaultWhere={config.defaultSessionWhere ?? 'local'}
           projects={projects}
           agents={agents}
           defaultAgent={config.defaultAgent}
@@ -6583,7 +6640,7 @@ export default function App(): JSX.Element {
           whole Devices screen with a banner over it. */}
       {handoff && (
         <HandoffDialog
-          target={handoff}
+          target={{ ...handoff, agents: sessions.filter((s) => handoff.ids.includes(s.id)).map((s) => s.agent) }}
           peers={remote?.peers ?? []}
           flash={flash}
           onPair={() => {
@@ -6610,6 +6667,7 @@ export default function App(): JSX.Element {
             items={[
               {
                 key: 'pin',
+                disabled: !local || savingPins,
                 label: pinned[s.id] ? 'Let it close when idle' : 'Keep this pane open',
                 hint: pinned[s.id]
                   ? 'the idle clocks may sleep or close it again'

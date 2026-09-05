@@ -362,6 +362,9 @@ export class RemoteClient extends EventEmitter {
   }
 
   handoff(payload: HandoffPayload, file: Buffer | null): Promise<HandoffResult> {
+    if (payload.spec.agent !== 'shell' && !this.canResumeHandoff(payload.spec.agent || 'claude')) {
+      return Promise.reject(new Error('Update PaneForge on the receiving device before opening a conversation there. The original stays here.'))
+    }
     const body: HandoffPayload = { ...payload }
     if (!file || file.length === 0) {
       file = null
@@ -387,6 +390,10 @@ export class RemoteClient extends EventEmitter {
       }
     }
     return answer
+  }
+
+  canResumeHandoff(agent: string): boolean {
+    return this.status === 'online' && this.conn?.peer.handoffResume?.includes(agent) === true
   }
 
   // -------------------------------------------------------------------------

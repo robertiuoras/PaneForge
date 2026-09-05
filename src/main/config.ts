@@ -171,6 +171,7 @@ function defaults(): Config {
     presets: [],
     defaultAgent: 'claude',
     defaultModels: {},
+    defaultSessionWhere: 'local',
     customAgents: [],
     openrouterKey: '',
     providerKeys: {},
@@ -541,7 +542,8 @@ function dropSavedDiscordId(raw: Record<string, unknown>): void {
 }
 
 export function setConfig(patch: Partial<Config>): Config {
-  const next = { ...getConfig(), ...patch }
+  const previous = getConfig()
+  const next = { ...previous, ...patch }
   // The deprecated single field is kept in step with the record it became, so a build
   // rolled back to before `providerKeys` existed still finds the OpenRouter key where
   // it looks for it. One line, in the one place a key can change.
@@ -554,8 +556,14 @@ export function setConfig(patch: Partial<Config>): Config {
     const tmp = file() + '.tmp'
     writeFileSync(tmp, JSON.stringify(next, null, 2), 'utf8')
     renameSync(tmp, file())
-  } catch {
-    /* read-only profile - keep the in-memory value so the session still works */
+  } catch (error) {
+    // A keep-open checkmark promises protection after restart, so a failed disk write
+    // must be reported rather than acknowledged as a saved preference.
+    if (patch.pinnedPanes !== undefined) {
+      cache = previous
+      throw error
+    }
+    /* read-only profile - keep other in-memory values so the session still works */
   }
   if (patch.launchAtLogin !== undefined) applyLaunchAtLogin(patch.launchAtLogin)
   return next

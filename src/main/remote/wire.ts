@@ -57,6 +57,8 @@ export interface PeerIdentity {
   name: string
   platform: string
   version: string
+  /** Providers whose conversation imports preserve the source until resume is verified. */
+  handoffResume?: string[]
 }
 
 /** Anything either side may put on the wire. Shapes are checked where they land. */
@@ -530,7 +532,8 @@ function identityOf(m: Msg): PeerIdentity {
     id: String(m.id ?? ''),
     name: String(m.name ?? 'Unknown device').slice(0, 40),
     platform: String(m.platform ?? ''),
-    version: String(m.version ?? '')
+    version: String(m.version ?? ''),
+    ...(Array.isArray(m.handoffResume) ? { handoffResume: m.handoffResume.filter((p): p is string => p === 'claude' || p === 'codex') } : {})
   }
 }
 

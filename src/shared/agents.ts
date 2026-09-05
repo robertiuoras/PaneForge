@@ -400,6 +400,9 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
     bin: 'codex',
     // `resume` is a subcommand, not a flag, so it has to lead the argv.
     resumeArgs: ['resume', '--last'],
+    // Codex 0.153.4 accepts `codex resume <SESSION_ID> [PROMPT]`; a named restore
+    // must never fall back to `--last`, which can reopen a different conversation.
+    resumeIdArgs: ['resume'],
     modelFlag: '-m',
     // Measured 2026-08-11 against a ChatGPT-plan login: every `gpt-5.1-codex*` id
     // is answered `400 invalid_request_error - not supported when using Codex with

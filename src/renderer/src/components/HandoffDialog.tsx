@@ -11,7 +11,7 @@
 // to be readable BEFORE the press and not discovered afterwards.
 
 import { useEffect, useRef, useState } from 'react'
-import type { RemotePeerState } from '@shared/types'
+import type { Agent, RemotePeerState } from '@shared/types'
 import { handoffReport } from '@shared/handoff'
 
 const api = window.api
@@ -32,6 +32,8 @@ export interface HandoffTarget {
   ids: string[]
   /** what to call them on screen */
   title: string
+  /** agent kinds in this selection; absent means this older caller cannot say */
+  agents?: Agent[]
   /** any of them is mid-turn or holding a question - it changes what the button promises */
   busy?: boolean
   /** it is still booting its agent - not mid-turn, and the sentence must not say it is */
@@ -82,6 +84,11 @@ export default function HandoffDialog({ target, peers, flash, onPair, onClose }:
   }, [onClose])
 
   const chosen = online.find((p) => p.id === pick) ?? null
+  const agents = target.agents ?? []
+  const hasConversation = agents.some((agent) => agent === 'claude' || agent === 'codex')
+  const hasShell = agents.includes('shell')
+  const unsupported = [...new Set(agents.filter((agent) => agent !== 'claude' && agent !== 'codex' && agent !== 'shell'))]
+  const onlyUnsupported = agents.length > 0 && !hasConversation && !hasShell
 
   async function go(): Promise<void> {
     if (!chosen || busy || sending.current) return
@@ -115,12 +122,14 @@ export default function HandoffDialog({ target, peers, flash, onPair, onClose }:
         </div>
 
         <p className="ho-lead">
-          The work moves to another machine and keeps going there. The pty cannot travel, so
-          everything that outlives it does: uncommitted code is pushed as an
-          <code> auto-sync</code> commit, the conversation and the screen go over the link,
-          and any dev server this pane had running is started again over there. The pane
-          closes here and comes straight back as a mirror, so you keep watching it.
+          A running process cannot travel. {hasConversation ? 'Claude and Codex open their saved conversation on the other machine. The original stays here so you can check the resumed conversation before closing it. Both computers need a PaneForge version that supports this transfer.' : hasShell ? 'A shell starts fresh in the transferred folder on the other machine, then closes here after it starts.' : 'Supported conversations can open on the other machine while the originals stay here.'} Uncommitted code is pushed as an <code> auto-sync</code> commit, and the screen and eligible dev-server names travel over the link.
         </p>
+
+        {unsupported.length > 0 && (
+          <p className="ho-note warn">
+            {unsupported.join(', ')} {unsupported.length === 1 ? 'does' : 'do'} not support conversation handoff yet and {unsupported.length === 1 ? 'will' : 'will'} stay here.
+          </p>
+        )}
 
         {target.asking ? (
           <p className="ho-note warn">
@@ -135,8 +144,7 @@ export default function HandoffDialog({ target, peers, flash, onPair, onClose }:
           </p>
         ) : target.busy ? (
           <p className="ho-note">
-            This pane is mid-turn. Nothing is interrupted: it is queued and moves the moment
-            the turn ends, with the answer intact.
+            This pane is mid-turn. Nothing is interrupted: {hasConversation ? 'its conversation copy opens after the turn ends while this original stays here.' : hasShell ? 'the shell handoff starts after the turn ends.' : 'any supported handoff starts after the turn ends.'}
           </p>
         ) : null}
 
@@ -202,9 +210,11 @@ export default function HandoffDialog({ target, peers, flash, onPair, onClose }:
           <button className="ghost" onClick={onClose}>
             Cancel
           </button>
-          <button className="primary" disabled={!chosen || busy} onClick={() => void go()}>
+          <button className="primary" disabled={!chosen || busy || onlyUnsupported} onClick={() => void go()}>
             {busy
               ? 'Handing off…'
+              : onlyUnsupported
+                ? 'Selected agents cannot hand off'
               : chosen
                 ? target.busy || target.asking
                   ? `Queue for ${chosen.name}`

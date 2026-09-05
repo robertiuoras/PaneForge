@@ -1,3 +1,5 @@
+export interface ContextUsage { used: number; window: number; at: number; model: string; percent: number; advisory?: 'prepare' | 'boundary' }
+
 import type { FrameMeta, LoginInput, LoginRequest } from './remoteLogin'
 
 import type { AutoClearAsk } from './autoclear'
@@ -521,6 +523,8 @@ export interface StartSessionRequest {
    * transcript is gone by the time the panes are offered back.
    */
   resumeId?: string
+  /** Folder whose provider metadata verified `resumeId` when a sleeping pane moved lanes. */
+  resumeCwd?: string
   /**
    * If a pane is already open in this folder, go to that one instead of opening a second.
    *
@@ -1592,6 +1596,8 @@ export interface Config {
   defaultAgent: Agent
   /** model per agent id, remembered from the last launch ('' = the CLI's default) */
   defaultModels: Record<string, string>
+  /** Last destination chosen in New session, local until a person chooses otherwise. */
+  defaultSessionWhere?: 'local' | 'remote' | 'auto'
   /** extra CLIs the user wired up in Settings, merged over the built-in catalogue */
   customAgents: AgentSpec[]
   /**
@@ -1953,6 +1959,10 @@ export interface Api {
   /** every known agent with whether its binary is actually on this machine */
   listAgents(): Promise<AgentInfo[]>
   listSessions(): Promise<Session[]>
+  contextUsage(id: string): Promise<ContextUsage | null>
+  prepareContinuation(id: string): Promise<{ ok: boolean; reason?: string }>
+  continueFresh(id: string): Promise<{ ok: boolean; id?: string; reason?: string }>
+  continuationStatus(id: string): Promise<{ received: boolean; reason: string } | null>
   startSession(req: StartSessionRequest): Promise<Session>
   /**
    * Launch several panes at once. One row back per request, in order: a row carries the

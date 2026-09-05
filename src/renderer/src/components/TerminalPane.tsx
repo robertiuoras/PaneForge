@@ -41,7 +41,6 @@ import {
   keysForClick,
   keysForRows,
   keysToPoint,
-  leftoverBackspaces,
   offsetsForCells,
   offsetIn,
   BACKSPACE
@@ -897,7 +896,7 @@ function TerminalPane({
   // inside the effect that owns it; the key handler is attached before that point and
   // reaches them through here.
   const selectInputRef = useRef<() => boolean>(() => false)
-  const deleteSelectionRef = useRef<(replacing?: boolean) => 'done' | 'refused' | 'no'>(() => 'no')
+  const deleteSelectionRef = useRef<() => 'done' | 'refused' | 'no'>(() => 'no')
   const inputRowsRef = useRef<(() => { top: number; rows: InputRow[] } | null) | null>(null)
   const autoFixRef = useRef(autoFixUi)
   autoFixRef.current = autoFixUi
@@ -2395,13 +2394,12 @@ function TerminalPane({
      * replayed, so it is read back out (shared/promptEcho.ts) and a marker registered on
      * the line it was found on.
      *
-     * Only when the rail is empty: a pane that has been typed into owns its own tags, and
+     * A pane that has been typed into owns its existing tags, and
      * this must never add a second tag for a prompt that already has one. `at` is 0 because
      * the time it was sent is genuinely not known here - `markLabel` prints the text alone
      * rather than inventing a clock reading.
      */
     const seedMarks = (): void => {
-      if (list.length) return
       const b = t.buffer.active
       const cursor = b.baseY + b.cursorY
       const rows: string[] = []
@@ -2410,9 +2408,12 @@ function TerminalPane({
       // `seedPrompts`. Row by row this gave three tags for one ask and a tag on a line of
       // test output, because a replayed screen holds every repaint of the prompt block.
       const found = seedPrompts(rows)
+      const known = new Set(list.map((entry) => entry.key))
       // Same cap as the live rail, and the same end of the list: past this many the tags
       // are a solid bar, and the newest are the ones being looked for.
       for (const f of found.slice(-MARK_CAP)) {
+        const key = echoKey(f.text)
+        if (known.has(key)) continue
         const marker = t.registerMarker(f.line - cursor)
         if (!marker) continue
         const entry: Mark = {
@@ -2422,11 +2423,14 @@ function TerminalPane({
           text: flatDraft(f.text, RAIL_LABEL_CHARS),
           full: f.text,
           at: 0,
-          key: echoKey(f.text)
+          key
         }
         anchor(entry, marker)
         list.push(entry)
+        known.add(key)
       }
+      list.sort((a, b) => a.marker.line - b.marker.line)
+      while (list.length > MARK_CAP) list.shift()?.marker.dispose()
       if (list.length) {
         publish()
         syncTotal()
@@ -2797,7 +2801,7 @@ function TerminalPane({
         t.hasSelection() &&
         (e.key === 'Backspace' || e.key === 'Delete' || e.key.length === 1)
       ) {
-        const outcome = deleteSelectionRef.current(e.key.length === 1)
+        const outcome = deleteSelectionRef.current()
         if (outcome === 'done') {
           if (e.key.length !== 1) {
             e.preventDefault()
@@ -3100,8 +3104,7 @@ function TerminalPane({
 
     /**
      * How many characters the composer is holding, counted the same way the delete counts
-     * them - so a difference between two readings is exact even where a single reading is
-     * a judgement. See `leftoverBackspaces`.
+     * them. Wrapped separators remain ambiguous until the CLI exposes its logical input.
      */
     const composerLength = (): number => {
       const span = inputRows()
@@ -3150,7 +3153,7 @@ function TerminalPane({
      * composer rows are neither framed nor wrapped, so every multi-row selection took that
      * path.
      */
-    const deleteSelection = (replacing = false): 'done' | 'refused' | 'no' => {
+    const deleteSelection = (): 'done' | 'refused' | 'no' => {
       const pos = t.getSelectionPosition()
       if (!pos || t.buffer.active.type === 'alternate') return 'no'
       // A run of backspaces into a chooser is the same mistake as a run of arrows, and
@@ -3163,7 +3166,7 @@ function TerminalPane({
       const bottom = spanBottom(span)
       const inside = (r: number): boolean => r >= span.top && r <= bottom
       if (!inside(cursorRow) || !inside(pos.start.y) || !inside(pos.end.y)) return 'no'
-      const keys = keysForRows({
+      let keys = keysForRows({
         rows: span.rows,
         cursor: { row: cursorRow - span.top, col: b.cursorX },
         start: { row: pos.start.y - span.top, col: pos.start.x },
@@ -3177,38 +3180,20 @@ function TerminalPane({
         before -
         (offsetIn(span.rows, pos.end.y - span.top, pos.end.x) -
           offsetIn(span.rows, pos.start.y - span.top, pos.start.x))
+      const wholeInput = before >= 0 && want === 0 &&
+        offsetIn(span.rows, pos.start.y - span.top, pos.start.x) === 0
+      if (wholeInput) {
+        // Wrapping can hide one separator per boundary. All text is selected, so
+        // deleting to both ends is safe with a small margin. Do not overshoot with
+        // Right: shell autosuggestions can insert text on that key.
+        const margin = span.rows.length
+        const cursorOffset = offsetIn(span.rows, cursorRow - span.top, b.cursorX)
+        keys = BACKSPACE.repeat(cursorOffset + margin) +
+          '\x1b[3~'.repeat(before - cursorOffset + margin)
+      }
       sendKeys(keys)
       t.clearSelection()
       lastSelection.current = ''
-      // A count that came up short leaves the head of the highlight on screen with the
-      // cursor right after it. Checked twice rather than trusted: the CLI redraws on its
-      // own clock, so the first look can be at the old frame.
-      //
-      // Not when the key was a character REPLACING the highlight: that character is on its
-      // way to the pty down xterm's own path, so the composer is legitimately one longer
-      // than this arithmetic wants and a backspace here would delete what was just typed.
-      // Same reason the check stands down the moment anybody types.
-      if (before >= 0 && !replacing) {
-        const rowsCrossed = Math.abs(pos.end.y - pos.start.y)
-        const sentAt = Date.now()
-        const sentRevision = keyRevision.current
-        const wholeInput = want === 0 && offsetIn(span.rows, pos.start.y - span.top, pos.start.x) === 0
-        const owed = (): void => {
-          // Reflow can reveal an unselected wrap space, making total length grow.
-          // Only a whole-input selection proves every leftover was selected.
-          if (!wholeInput) return
-          if (typedAt.current > sentAt || keyRevision.current !== sentRevision) return
-          const seen = composerLength()
-          // The CLI may not have drawn the first delete yet. Its unchanged frame
-          // is not proof of a leftover. A corrective send changes the revision,
-          // so the second timer cannot repeat it on another stale frame.
-          if (seen < 0 || seen >= before) return
-          const extra = leftoverBackspaces({ seen, want, rowsCrossed })
-          if (extra > 0) sendKeys(BACKSPACE.repeat(extra))
-        }
-        window.setTimeout(owed, 140)
-        window.setTimeout(owed, 420)
-      }
       return 'done'
     }
     inputRowsRef.current = inputRows
@@ -3860,6 +3845,8 @@ function TerminalPane({
       fixWhy.current = 'pressed'
     }
     const repair = (): void => {
+      const markersBefore = list.length
+      const repairWhy = fixWhy.current
       noteFix('repair')
       try {
         pinned.current = true
@@ -3870,6 +3857,27 @@ function TerminalPane({
         t.refresh(0, t.rows - 1)
         t.scrollToBottom()
         setScrolledUp(false)
+        // A CLI redraw may dispose anchors on rows it clears. Once its repaint has settled,
+        // recover missing replay tags from the bytes still in xterm; never add a
+        // second tag beside live keystroke marks.
+        window.setTimeout(() => {
+          if (dead) return
+          const surviving = list.length
+          seedMarks()
+          // Metadata only: enough to distinguish disposed anchors from a rail that was
+          // never present, without recording any prompt text from the terminal.
+          api.logFix({
+            id: sessionId,
+            step: 'repair-markers',
+            why: repairWhy,
+            cols: t.cols,
+            grid: t.rows,
+            buffer: t.buffer.active.type,
+            markersBefore,
+            markersAfter: list.length,
+            restored: Math.max(0, list.length - surviving)
+          })
+        }, RESTORE_FIX_MS)
       } catch {
         /* hidden or detached - the visibility effect refits it */
       }

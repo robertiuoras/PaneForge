@@ -217,8 +217,11 @@ export class HandoffQueue {
       .then((items) => {
         const item = items[0]
         if (item?.ok) {
-          this.deps.log(`handoff: ${q.id} moved to ${where} - its turn had ended`)
-          this.deps.notify?.(`Moved ${name} to ${where} - its turn had ended`)
+          const outcome = item.sourceKept
+            ? `Opened ${name} on ${where}. The original stays here; remote resume is not confirmed.`
+            : `Moved ${name} to ${where} - its turn had ended`
+          this.deps.log(`handoff: ${q.id}: ${outcome}`)
+          this.deps.notify?.(outcome)
         } else {
           const why = item?.error ?? 'refused over there'
           this.deps.log(`handoff: ${q.id} could not move - ${why}`)

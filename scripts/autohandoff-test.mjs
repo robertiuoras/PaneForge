@@ -63,6 +63,7 @@ const ok = { ...over, level: 'ok' }
 
 const pane = (o) => ({
   id: 'p',
+  agent: 'shell',
   state: 'ready',
   lastKeyboard: NOW - 20 * MIN,
   focused: false,
@@ -76,6 +77,18 @@ const pane = (o) => ({
 const ids = (plan) => plan.map((p) => p.id).join(',')
 
 const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name: 'proj', path: '/pc/proj' }] }]
+
+{
+  // Automatic handoff may only free an actual shell pty. Agent conversations are
+  // preserved by manual handoff until the receiver can prove their resume succeeded.
+  for (const agent of ['claude', 'codex', undefined]) {
+    const panes = [pane({ id: 'candidate', agent }), pane({ id: 'keep', agent })]
+    eq(`automatic pressure refuses ${agent ?? 'unknown'} agent identity`, ids(autoHandoffPlan(panes, over, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), '')
+    eq(`automatic budget refuses ${agent ?? 'unknown'} agent identity`, ids(budgetPlan(panes, peers, { ...DEFAULT_AUTO_HANDOFF, budgetMinMb: 1 }, {}, NOW, 1)), '')
+    eq(`automatic idle clock refuses ${agent ?? 'unknown'} agent identity`, ids(idleOffloadPlan(panes, peers, { ...DEFAULT_AUTO_HANDOFF, offloadIdleMinutes: 1 }, {}, NOW)), '')
+    eq(`automatic suggestion refuses ${agent ?? 'unknown'} agent identity`, suggestMove(panes, peers, DEFAULT_AUTO_HANDOFF, {}, NOW), null)
+  }
+}
 
 {
   // Only when the policy says so - a machine with room keeps its own panes, however many

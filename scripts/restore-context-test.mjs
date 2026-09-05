@@ -63,10 +63,22 @@ const T = load('src/main/transcripts.ts', [
   'forgetSession',
   'transcriptFor',
   'resumeIdFor',
+  'noteSubmittedPrompt',
   'lastPrompt',
   'promptFromTail',
-  'resumable'
+  'resumable',
+  'resumableTranscript'
 ])
+
+// The restore and History paths must pass the provider through. A Codex id is global to
+// CODEX_HOME and cannot be checked as a Claude per-project filename.
+const mainIndex = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
+assert.match(mainIndex, /resumableTranscript\(req\.resumeCwd \?\? req\.cwd, req\.resumeId, req\.agent\)/, 'start validates the selected provider transcript')
+assert.match(mainIndex, /const file = req\.resumeId \? resumableTranscript\(req\.resumeCwd \?\? req\.cwd, req\.resumeId, req\.agent\) : null/, 'silent restore validates the selected provider transcript')
+assert.match(mainIndex, /const held = spec\.resumeId \? resumableTranscript\(spec\.resumeCwd \?\? spec\.cwd, spec\.resumeId, spec\.agent\) : null/, 'History restore validates the selected provider transcript')
+assert.match(mainIndex, /const unavailable = req\.agent !== 'shell' && !named/, 'a saved agent pane with no verified id becomes unavailable')
+assert.match(mainIndex, /asleep: unavailable \|\| req\.asleep/, 'unavailable restore is a process-free asleep placeholder')
+assert.match(mainIndex, /Saved conversation could not be verified\. It remains asleep/, 'the placeholder explains it was preserved instead of replaced')
 
 // ---------------------------------------------------------------- last prompt
 
@@ -291,9 +303,102 @@ try {
   // A path, not an id: never allowed to escape the project folder.
   assert.equal(T.resumable(cwd, '../../../etc/passwd'), false)
 
-  // Only agents that keep per-directory transcripts get named conversations.
+  // Codex rollouts live globally, so metadata must prove cwd, start time and one claim.
+  const codexHome = mkdtempSync(join(tmpdir(), 'pf-codex-home-'))
+  process.env.CODEX_HOME = codexHome
+  const codexDir = join(codexHome, 'sessions', '2026', '09', '05')
+  mkdirSync(codexDir, { recursive: true })
+  const codexId = '11111111-1111-4111-8111-111111111111'
+  const codexRow = (id, folder, timestamp = new Date().toISOString()) =>
+    JSON.stringify({ type: 'session_meta', payload: { id, session_id: id, cwd: folder, timestamp } })
+  const codexUser = (text) => JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] } })
+  const codexAssistant = () => JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'done' }] } })
+  const rollout = (name, id, folder, timestamp, prompt, answered = true) =>
+    writeFileSync(join(codexDir, `${name}.jsonl`), [codexRow(id, folder, timestamp), codexUser(prompt), ...(answered ? [codexAssistant()] : [])].join('\n') + '\n', 'utf8')
   T.noteSession('pane3', cwd, 'codex')
-  assert.equal(T.resumeIdFor('pane3'), undefined)
+  T.noteSubmittedPrompt('pane3', 'pane three owns this Codex prompt')
+  rollout('one', codexId, cwd, undefined, 'pane three owns this Codex prompt')
+  assert.equal(T.resumeIdFor('pane3'), codexId, 'Codex keeps its metadata-bound session id')
+  assert.equal(T.resumable(cwd, codexId, 'codex'), true, 'an exact Codex id with an assistant reply is resumable')
+  const codexTwo = '22222222-2222-4222-8222-222222222222'
+  T.noteSession('pane-codex-two', cwd, 'codex')
+  T.noteSubmittedPrompt('pane-codex-two', 'pane two owns this Codex prompt')
+  rollout('two', codexTwo, cwd, undefined, 'pane two owns this Codex prompt')
+  assert.equal(T.resumeIdFor('pane-codex-two'), codexTwo, 'a second same-cwd Codex pane does not take the first id')
+  // Querying the first pane after only the second has created a rollout must not let the
+  // first pane steal that second conversation just because both share a folder and time.
+  const firstQueryCwd = mkdtempSync(join(tmpdir(), 'pf-codex-first-query-'))
+  const firstQueryId = '77777777-7777-4777-8777-777777777777'
+  T.noteSession('pane-codex-first-query-first', firstQueryCwd, 'codex')
+  T.noteSubmittedPrompt('pane-codex-first-query-first', 'first pane unique Codex prompt')
+  T.noteSession('pane-codex-first-query-second', firstQueryCwd, 'codex')
+  T.noteSubmittedPrompt('pane-codex-first-query-second', 'second pane unique Codex prompt')
+  rollout('first-query-second', firstQueryId, firstQueryCwd, undefined, 'second pane unique Codex prompt')
+  assert.equal(T.resumeIdFor('pane-codex-first-query-first'), undefined, 'the first queried pane cannot steal the second pane rollout')
+  assert.equal(T.resumeIdFor('pane-codex-first-query-second'), firstQueryId, 'the submitted prompt binds the rollout to its pane')
+  const ambiguousA = '33333333-3333-4333-8333-333333333333'
+  const ambiguousB = '44444444-4444-4444-8444-444444444444'
+  const otherCwd = mkdtempSync(join(tmpdir(), 'pf-codex-cwd-'))
+  T.noteSession('pane-codex-ambiguous-one', otherCwd, 'codex')
+  T.noteSession('pane-codex-ambiguous-two', otherCwd, 'codex')
+  T.noteSubmittedPrompt('pane-codex-ambiguous-one', 'same Codex prompt in two panes')
+  T.noteSubmittedPrompt('pane-codex-ambiguous-two', 'same Codex prompt in two panes')
+  rollout('amb-a', ambiguousA, otherCwd, undefined, 'same Codex prompt in two panes')
+  rollout('amb-b', ambiguousB, otherCwd, undefined, 'same Codex prompt in two panes')
+  assert.equal(T.resumeIdFor('pane-codex-ambiguous-one'), undefined, 'identical Codex prompts with two candidates are refused')
+  assert.equal(T.resumeIdFor('pane-codex-ambiguous-two'), undefined, 'a second identical prompt is refused too')
+  // Even one rollout is ambiguous when two currently tracked panes submitted the same
+  // proof: querying either one first must not turn query order into identity.
+  const sharedOneCwd = mkdtempSync(join(tmpdir(), 'pf-codex-shared-one-'))
+  const sharedOneId = '88888888-8888-4888-8888-888888888888'
+  T.noteSession('pane-codex-shared-one-first', sharedOneCwd, 'codex')
+  T.noteSession('pane-codex-shared-one-second', sharedOneCwd, 'codex')
+  T.noteSubmittedPrompt('pane-codex-shared-one-first', 'identical prompt with one rollout')
+  T.noteSubmittedPrompt('pane-codex-shared-one-second', 'identical prompt with one rollout')
+  rollout('shared-one', sharedOneId, sharedOneCwd, undefined, 'identical prompt with one rollout')
+  assert.equal(T.resumeIdFor('pane-codex-shared-one-first'), undefined, 'first query refuses one rollout shared by identical proofs')
+  assert.equal(T.resumeIdFor('pane-codex-shared-one-second'), undefined, 'second query refuses the same shared rollout')
+  // Shared early wording does not poison a later pane-specific proof. Each rollout is
+  // still bound to the one unique line only its owner submitted.
+  const sharedThenUniqueCwd = mkdtempSync(join(tmpdir(), 'pf-codex-shared-then-unique-'))
+  const uniqueOneId = '99999999-9999-4999-8999-999999999999'
+  const uniqueTwoId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+  T.noteSession('pane-codex-unique-one', sharedThenUniqueCwd, 'codex')
+  T.noteSession('pane-codex-unique-two', sharedThenUniqueCwd, 'codex')
+  T.noteSubmittedPrompt('pane-codex-unique-one', 'shared opening context')
+  T.noteSubmittedPrompt('pane-codex-unique-two', 'shared opening context')
+  T.noteSubmittedPrompt('pane-codex-unique-one', 'only pane one later detail')
+  T.noteSubmittedPrompt('pane-codex-unique-two', 'only pane two later detail')
+  rollout('unique-one', uniqueOneId, sharedThenUniqueCwd, undefined, 'only pane one later detail')
+  rollout('unique-two', uniqueTwoId, sharedThenUniqueCwd, undefined, 'only pane two later detail')
+  assert.equal(T.resumeIdFor('pane-codex-unique-one'), uniqueOneId, 'later unique proof identifies the first pane')
+  assert.equal(T.resumeIdFor('pane-codex-unique-two'), uniqueTwoId, 'later unique proof identifies the second pane')
+  const oldId = '55555555-5555-4555-8555-555555555555'
+  const oldCwd = mkdtempSync(join(tmpdir(), 'pf-codex-old-'))
+  T.noteSession('pane-codex-old', oldCwd, 'codex')
+  T.noteSubmittedPrompt('pane-codex-old', 'old Codex prompt')
+  rollout('old', oldId, oldCwd, new Date(Date.now() - 10 * 60_000).toISOString(), 'old Codex prompt')
+  assert.equal(T.resumeIdFor('pane-codex-old'), undefined, 'a Codex rollout older than the pane is refused')
+  T.noteSession('pane-codex-named', cwd, 'codex', codexId)
+  assert.equal(T.resumeIdFor('pane-codex-named'), codexId, 'a named Codex resume is accepted only when metadata matches cwd and id')
+  const rehomeCwd = mkdtempSync(join(tmpdir(), 'pf-codex-rehome-'))
+  T.noteSession('pane-codex-rehomed', cwd, 'codex', codexId)
+  assert.equal(T.resumable(cwd, codexId, 'codex'), true, 'the original folder proves the rehomed Codex conversation')
+  assert.equal(T.resumable(rehomeCwd, codexId, 'codex'), false, 'the destination folder cannot claim copied metadata as its own')
+  assert.equal(T.resumeIdFor('pane-codex-rehomed'), codexId, 'the original metadata binding keeps the exact id for later sleep and snapshot')
+  const noReplyId = '66666666-6666-4666-8666-666666666666'
+  rollout('unanswered', noReplyId, cwd, undefined, 'Codex without reply', false)
+  assert.equal(T.resumable(cwd, noReplyId, 'codex'), false, 'Codex metadata without an assistant reply is not restorable')
+  T.noteSession('pane-codex-wrong-cwd', otherCwd, 'codex', codexId)
+  assert.equal(T.resumeIdFor('pane-codex-wrong-cwd'), undefined, 'a named Codex id from another cwd is refused')
+  for (const id of ['pane3', 'pane-codex-two', 'pane-codex-first-query-first', 'pane-codex-first-query-second', 'pane-codex-ambiguous-one', 'pane-codex-ambiguous-two', 'pane-codex-shared-one-first', 'pane-codex-shared-one-second', 'pane-codex-unique-one', 'pane-codex-unique-two', 'pane-codex-old', 'pane-codex-named', 'pane-codex-rehomed', 'pane-codex-wrong-cwd']) T.forgetSession(id)
+  rmSync(codexHome, { recursive: true, force: true })
+  rmSync(firstQueryCwd, { recursive: true, force: true })
+  rmSync(sharedOneCwd, { recursive: true, force: true })
+  rmSync(sharedThenUniqueCwd, { recursive: true, force: true })
+  rmSync(rehomeCwd, { recursive: true, force: true })
+  rmSync(otherCwd, { recursive: true, force: true })
+  rmSync(oldCwd, { recursive: true, force: true })
 
   // A closed pane releases its claim, so the next pane in that folder can take it.
   T.forgetSession('pane1')
@@ -350,10 +455,10 @@ const bypass = (...rest) => ['--dangerously-skip-permissions', ...rest]
 assert.deepEqual(A.buildArgs(claude, { resume: true, resumeId: 'chat-a' }), bypass('--resume', 'chat-a'))
 // No id (or an agent with no way to take one): the old behaviour, unchanged.
 assert.deepEqual(A.buildArgs(claude, { resume: true }), bypass('--continue'))
-// Codex has no such flag: nothing is prepended to it.
+// Codex has a named resume subcommand, so the exact id is never replaced by --last.
 assert.deepEqual(A.buildArgs(spec('codex'), { resume: true, resumeId: 'x' }), [
   'resume',
-  '--last'
+  'x'
 ])
 // The model still lands after the resume form, whichever one was used.
 assert.deepEqual(

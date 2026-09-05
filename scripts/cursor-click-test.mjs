@@ -40,7 +40,6 @@ const {
   offsetIn,
   offsetsForCells,
   cellAt,
-  leftoverBackspaces,
   ARROW,
   BACKSPACE
 } =
@@ -448,15 +447,8 @@ const box = { left: 100, top: 50, width: 800, height: 400 }
     BACKSPACE.repeat(192)
   )
   // What the composer is left holding, measured the same way, is one more than wanted.
-  eq('and the check asks for that one back', leftoverBackspaces({ seen: 1, want: 0, rowsCrossed: 1 }), 1)
-  eq('nothing owed when the count came out right', leftoverBackspaces({ seen: 0, want: 0, rowsCrossed: 1 }), 0)
-  eq('nothing owed when more went than was highlighted', leftoverBackspaces({ seen: -1, want: 0, rowsCrossed: 1 }), 0)
   // One per boundary crossed, plus one, is the most a count can honestly lose. More than
   // that is somebody typing, and a backspace into that is a character nobody highlighted.
-  eq('a single row may owe one', leftoverBackspaces({ seen: 1, want: 0, rowsCrossed: 0 }), 1)
-  eq('and no more than one', leftoverBackspaces({ seen: 2, want: 0, rowsCrossed: 0 }), 0)
-  eq('two boundaries may owe three', leftoverBackspaces({ seen: 3, want: 0, rowsCrossed: 2 }), 3)
-  eq('a composer that grew by a paragraph is left alone', leftoverBackspaces({ seen: 40, want: 0, rowsCrossed: 2 }), 0)
 }
 
 console.log(`cursor click: ${checks} checks passed`)

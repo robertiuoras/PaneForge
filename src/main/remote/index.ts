@@ -78,7 +78,7 @@ export class Remote extends EventEmitter {
     super()
     this.me = () => {
       const c = getConfig().remote
-      return { id: c.id, name: c.name, platform: process.platform, version: app.getVersion() }
+      return { id: c.id, name: c.name, platform: process.platform, version: app.getVersion(), handoffResume: ['claude', 'codex'] }
     }
     this.host = new RemoteHost(backend, this.me, () => getConfig().remote.code)
     this.host.on('changed', () => this.changed())
@@ -245,6 +245,10 @@ export class Remote extends EventEmitter {
   }
 
   /** Deliver one pane's handoff to a device. See `main/handoff.ts` for what one is. */
+  canResumeHandoff(device: string, agent: string): boolean {
+    return this.clients.get(device)?.canResumeHandoff(agent) === true
+  }
+
   handoffTo(device: string, payload: HandoffPayload, file: Buffer | null): Promise<HandoffResult> {
     const client = this.clients.get(device)
     if (!client || client.status !== 'online') {

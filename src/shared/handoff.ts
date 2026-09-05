@@ -50,6 +50,8 @@ export interface HandoffPayload {
   repo?: HandoffRepo
   /** announced ahead of its chunks; `name` is `<conversation-id>.jsonl` */
   transcript?: { name: string; size: number }
+  /** New agent senders retain their source pane after the resume attempt. */
+  sourceRetained?: true
   /** groups this payload with its chunk frames on the wire */
   xfer?: string
   /** what was on the pane's screen, replayed into the new pane's scrollback */
@@ -117,6 +119,8 @@ export interface HandoffItem {
   ok: boolean
   error?: string
   notes: string[]
+  /** The receiver opened the conversation, but its source pane remains live here. */
+  sourceKept?: boolean
   /**
    * Not moved yet and not refused: the pane was mid-turn and is queued.
    *
@@ -141,6 +145,58 @@ export const HANDOFF_CHUNK = 2 * 1024 * 1024
 export const HANDOFF_MAX_FILE = 64 * 1024 * 1024
 /** Clone or pull on the far end can genuinely take this long on a cold repo. */
 export const HANDOFF_ASK_MS = 180_000
+
+/** A portable conversation format exists for explicitly negotiated local CLIs. */
+export function handoffAgentError(agent?: string): string | null {
+  const chosen = agent || 'claude'
+  if (chosen === 'claude' || chosen === 'codex' || chosen === 'shell') return null
+  return `PaneForge cannot continue ${chosen} conversations across devices yet. Keep this pane on this device or use Remote Control.`
+}
+
+/**
+ * A handoff may start a new terminal, but it may never pretend that a new agent
+ * terminal is the same conversation. Claude's portable JSONL is the only
+ * conversation format implemented by this transport. Shell panes have no
+ * conversation to resume and deliberately travel as a fresh shell in the
+ * transferred folder.
+ *
+ * Kept shared so the sender rejects before it mutates a repo and the receiver
+ * repeats the check before it creates a folder, writes a file, or starts a pty.
+ */
+export function handoffConversationError(
+  spec: Pick<StartSessionRequest, 'agent' | 'resume' | 'resumeId'>,
+  transcript?: { name: string; size: number },
+  fileSize?: number | null
+): string | null {
+  const agent = spec.agent || 'claude'
+  if (agent === 'shell') {
+    if (spec.resume || spec.resumeId || transcript || (fileSize !== undefined && fileSize !== null)) {
+      return 'Shell handoffs transfer the folder and screen only; they cannot resume an agent conversation'
+    }
+    return null
+  }
+  const agentError = handoffAgentError(agent)
+  if (agentError) return agentError
+  if (spec.resume !== true || !spec.resumeId) {
+    return `${agent === 'codex' ? 'Codex' : 'Claude'} conversation has no resumable ID, so it was not handed off`
+  }
+  const expected = `${spec.resumeId}.jsonl`
+  if (!transcript || transcript.name !== expected || !/^[A-Za-z0-9._-]+\.jsonl$/.test(transcript.name)) {
+    return `${agent === 'codex' ? 'Codex' : 'Claude'} conversation transcript is missing or has an unsupported format, so it was not handed off`
+  }
+  if (!Number.isSafeInteger(transcript.size) || transcript.size <= 0 || transcript.size > HANDOFF_MAX_FILE) {
+    return transcript.size > HANDOFF_MAX_FILE
+      ? `${agent === 'codex' ? 'Codex' : 'Claude'} conversation is too large to hand off`
+      : `${agent === 'codex' ? 'Codex' : 'Claude'} conversation transcript is empty or invalid, so it was not handed off`
+  }
+  if (fileSize === null) {
+    return `${agent === 'codex' ? 'Codex' : 'Claude'} conversation transcript did not arrive, so it was not handed off`
+  }
+  if (fileSize !== undefined && fileSize !== transcript.size) {
+    return `${agent === 'codex' ? 'Codex' : 'Claude'} conversation transcript changed during handoff, so it was not handed off`
+  }
+  return null
+}
 
 const slash = (p: string): string => p.replace(/\\/g, '/')
 
@@ -176,7 +232,8 @@ export function mapCwd(cwd: string, fromRoot: string, toRoot: string): string | 
  */
 export function handoffReport(items: HandoffItem[], deviceName: string, title?: string): string {
   if (items.length === 0) return 'Nothing to hand off - those panes have already closed'
-  const moved = items.filter((i) => i.ok)
+  const moved = items.filter((i) => i.ok && !i.sourceKept)
+  const opened = items.filter((i) => i.ok && i.sourceKept)
   const held = items.filter((i) => !i.ok && i.pending)
   const bad = items.filter((i) => !i.ok && !i.pending)
   const one = items.length === 1
@@ -186,6 +243,12 @@ export function handoffReport(items: HandoffItem[], deviceName: string, title?: 
       one && title
         ? `Moved ${title} to ${deviceName}. It is still on screen here, as a mirror.`
         : `Moved ${moved.length} ${moved.length === 1 ? 'pane' : 'panes'} to ${deviceName}.`
+    )
+  if (opened.length)
+    parts.push(
+      one && title
+        ? `Opened ${title} on ${deviceName}. The original stays open here until its resumed conversation can be confirmed.`
+        : `Opened ${opened.length} ${opened.length === 1 ? 'pane' : 'panes'} on ${deviceName}. Their original panes stay open here until their resumed conversations can be confirmed.`
     )
   if (held.length)
     parts.push(

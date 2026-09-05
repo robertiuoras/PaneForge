@@ -9,6 +9,7 @@ import type {
   RemoteState
 } from '@shared/types'
 import { reachWords } from '@shared/net'
+import { handoffReport } from '@shared/handoff'
 import { versionGap } from '@shared/remoteVersion'
 import { ageWords, jobsSummary, type BackJob } from '@shared/backJobs'
 import { PairQr } from './PairQr'
@@ -17,6 +18,7 @@ import AgentPicker from './AgentPicker'
 import Blurb from './Blurb'
 import { Checkbox, Switch } from './Controls'
 import Select from './Select'
+import './devices-mobile.css'
 
 const api = window.api
 
@@ -382,11 +384,15 @@ function PhonePanel({ flash }: { flash: (message: string) => void }): JSX.Elemen
   // expects to be used, and a QR that quietly encodes a LAN address while a tunnel is up
   // is the version of this feature that works at the desk and nowhere else.
   const url = (state.tunnel.phase === 'up' && state.tunnel.url) || state.urls[0] || ''
+  const hasStableUrl = state.tunnel.phase === 'up' && !!state.tunnel.url && state.tunnel.stable
 
   return (
-    <div className="setting">
+    <section className="setting phone-setup" aria-labelledby="phone-setup-title">
       <div className="setting-row">
-        <label>Phone or tablet</label>
+        <div>
+          <strong id="phone-setup-title">Connect your phone or tablet</strong>
+          <p className="hint phone-setup-lead">Open your PaneForge desk from this phone. It only watches and types into panes that stay on this computer.</p>
+        </div>
         {state.on && state.clients > 0 && (
           <span className="hint">
             {state.clients} {state.clients === 1 ? 'browser' : 'browsers'} watching
@@ -425,16 +431,16 @@ function PhonePanel({ flash }: { flash: (message: string) => void }): JSX.Elemen
                 back into the fragment, which is the old zero-tap path. */}
             <PairQr url={url} code={state.asking ? undefined : state.code} size={168} />
             <div className="pair-scan-say">
-              <strong className="pair-scan-lead">Point your phone&apos;s camera at this</strong>
+              <strong className="pair-scan-lead">Scan this with the phone you want to use</strong>
               <p className="hint">
                 {state.asking
-                  ? 'Open the link it offers and this desk asks you to approve it: four digits, on both screens. One press and that phone stays signed in.'
-                  : 'Open the link it offers and the phone is in. Nothing to type: the code rides in the part of the address a browser never sends anywhere.'}
+                  ? 'Open the link, compare the four digits on both screens, then approve it here. That adds this phone as its own device.'
+                  : 'Open the link and it is in. Nothing to type. If an older shortcut asks for a code, scan this picture again from that phone.'}
               </p>
               {/* What this particular picture reaches, in the same words the address list
                   uses - a QR that works at the desk and nowhere else must not look like one
                   that works from a train. */}
-              {url && <span className="pair-reach">{reachWords(url)}</span>}
+              {url && <span className="pair-reach">{hasStableUrl ? 'Best for a saved home-screen shortcut · ' : ''}{reachWords(url)}</span>}
             </div>
           </div>
           <PhoneTunnel state={state} setState={setState} />
@@ -444,9 +450,17 @@ function PhonePanel({ flash }: { flash: (message: string) => void }): JSX.Elemen
             setState={setState}
             flash={flash}
           />
-          <Fold label="Other ways in">
+          <Fold label="Trouble opening a saved shortcut?">
+            <p className="hint phone-recovery">
+              A shortcut is tied to its address. Open the current link below on that phone and scan this picture again if it shows the code screen. Tailscale connects the network; this step signs the browser into PaneForge.
+            </p>
+            {!state.asking && (
+              <p className="hint phone-recovery">
+                Entering the code works too. It signs the browser in, but does not create a separately named device in this list.
+              </p>
+            )}
             <div className="dev-field">
-              <span className="dev-key">Open on the phone</span>
+              <span className="dev-key">Current links</span>
               <div className="dev-addrs">
                 {/* Each address says what it actually reaches. Without this the list is
                     several equal-looking numbers, and the one difference that matters -
@@ -568,7 +582,7 @@ function PhonePanel({ flash }: { flash: (message: string) => void }): JSX.Elemen
           </Fold>
         </div>
       )}
-    </div>
+    </section>
   )
 }
 
@@ -622,21 +636,7 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
     setHandBusy(true)
     try {
       const items = await api.handoffToDevice(id)
-      const ok = items.filter((i) => i.ok).length
-      // Queued is neither moved nor refused, and saying "moved" about a pane still running
-      // here is the shape of lie this app keeps having to un-tell. It gets its own sentence.
-      const held = items.filter((i) => i.pending)
-      const bad = items.filter((i) => !i.ok && !i.pending)
-      if (items.length === 0) flash('No local panes to hand off')
-      else if (bad.length === 0 && held.length)
-        flash(
-          ok
-            ? `Moved ${ok} to ${name}. ${held.length} still working - ${held.length === 1 ? 'it goes' : 'they go'} as soon as the turn ends.`
-            : `${held.length === 1 ? 'That pane is' : `${held.length} panes are`} mid-turn - ${held.length === 1 ? 'it moves' : 'they move'} to ${name} as soon as the turn ends. Nothing was interrupted.`
-        )
-      else if (bad.length === 0)
-        flash(`Moved ${ok} ${ok === 1 ? 'pane' : 'panes'} to ${name}`)
-      else flash(`Moved ${ok} of ${items.length}. ${bad[0].title}: ${bad[0].error}`)
+      flash(handoffReport(items, name))
     } catch (err) {
       flash((err as Error).message)
     } finally {
@@ -836,7 +836,7 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
       <div className="dialog wide devices" onMouseDown={(e) => e.stopPropagation()}>
         <div className="dialog-head">
           <strong>Devices</strong>
-          <span className="hint">work on this machine&rsquo;s panes from the other one, and back</span>
+          <span className="hint">connect a phone or another computer to this desk</span>
         </div>
         <Blurb id="devices" />
 
@@ -867,7 +867,11 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
         <PhonePanel flash={flash} />
           </div>
 
-          <div className="dev-col">
+          <div className="dev-col computer-setup">
+        <div className="device-section-head">
+          <strong>Connect another computer</strong>
+          <span className="hint">Its panes stay there. You choose which ones to view here.</span>
+        </div>
 
         {/* ------------------------------------------------------------- this device
             The hero card. It is the only thing on this screen that is about the
@@ -1109,11 +1113,11 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
                     {p.status === 'online' && (
                       <button
                         className="ghost small"
-                        title={`Move every pane on this machine to ${p.name}: code is pushed, the conversation and screen travel, and the panes reopen there mid-thought. This desk keeps watching them as mirrors. One pane at a time is the Hand off on its own card, which asks which machine in a box of its own.`}
+                        title={`Open supported panes on ${p.name}. Claude and Codex resume their saved conversations and keep their originals here. Shells start fresh there. Other agents stay here with an explanation. Both computers need an updated PaneForge. This does not transfer a running process.`}
                         disabled={handBusy}
                         onClick={() => void handOff(p.id, p.name)}
                       >
-                        {handBusy ? 'Handing off…' : handing === p.id ? 'Move all panes?' : 'Hand off all'}
+                        {handBusy ? 'Opening…' : handing === p.id ? 'Open supported panes?' : 'Open panes there'}
                       </button>
                     )}
                     <button

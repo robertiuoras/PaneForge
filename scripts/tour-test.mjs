@@ -243,9 +243,8 @@ console.log('the card speaks to somebody who has never coded')
   ok('nothing ever tells anybody to open a pane', !/pane/i.test(howToCheck({ open: 'none', checks: [] })))
   const card = readFileSync(join(root, 'src/renderer/src/components/TourCard.tsx'), 'utf8')
   ok('Done or dismiss folds to a pill, never to nothing', /tour-pill/.test(card) && /setGone\(false\)/.test(card))
-  // CRLF on a Windows checkout: the assertion below looks for a literal newline.
-  const dlg = readFileSync(join(root, 'src/renderer/src/components/NewSessionDialog.tsx'), 'utf8').replace(/\r\n/g, '\n')
-  ok('Let the app decide is the first pick and the default', dlg.indexOf("['auto', 'Let the app decide']") < dlg.indexOf("['local', 'This machine'],\n") && /useState<'auto' \| 'local' \| 'remote'>\('auto'\)/.test(dlg))
+  // Destination ordering and persistence are exercised through the actual picker in
+  // session-device-test.mjs; they are independent of the tour.
 }
 
 console.log('a change with nothing on screen is still checked')

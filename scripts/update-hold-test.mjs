@@ -11,8 +11,9 @@
 //
 // Run: node scripts/update-hold-test.mjs   (part of `npm test`)
 
-import { buildSync } from 'esbuild'
-import { mkdirSync } from 'node:fs'
+import { buildSync, transformSync } from 'esbuild'
+import { mkdirSync, readFileSync } from 'node:fs'
+import { runInNewContext } from 'node:vm'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
@@ -43,7 +44,7 @@ function ok(cond, what) {
 
 const NOW = 1785613026221
 const working = { runSince: NOW - 28 * 60_000, status: 'working' }
-const waiting = { status: 'idle' }
+const waiting = { status: 'idle', engaged: false }
 const starting = { status: 'starting' }
 // The shape that makes a naive `s.runSince` check wrong: the agent exited part-way
 // through a turn, so nothing ever stopped its clock. Holding on this one would defer
@@ -70,7 +71,7 @@ ok(agentsMidTurn([deadMidTurn]) === 0, 'an exited pane with a stale runSince doe
   const empty = { status: 'idle', engaged: false, lastOutput: NOW - 2 * MIN }
 
   ok(deskBusy([warm], NOW) === 1, 'a conversation between turns still holds the restart')
-  ok(deskBusy([cold], NOW) === 0, '...and stops holding it once it has been quiet')
+  ok(deskBusy([cold], NOW) === 1, 'long silence is not permission to restart an engaged pane')
   ok(deskBusy([empty], NOW) === 0, 'a pane with no conversation in it holds nothing')
   ok(deskBusy([working], NOW) === 1, 'mid-turn still holds it, exactly as before')
   ok(deskBusy([{ ...deadMidTurn, engaged: true }], NOW) === 0, 'an exited pane never holds it')
@@ -84,11 +85,16 @@ ok(agentsMidTurn([deadMidTurn]) === 0, 'an exited pane with a stale runSince doe
   )
   ok(DESK_QUIET_MS === 10 * 60_000, 'the quiet window is ten minutes')
 
-  // The clicked path is deliberately NOT widened: a person pressing Restart now has decided.
   ok(
-    decideInstall({ phase: 'ready', installStarted: false, sessions: [warm] }).act === 'install',
-    'a click still restarts over a warm conversation, because somebody asked for it'
+    decideInstall({ phase: 'ready', installStarted: false, sessions: [warm] }).act === 'wait',
+    'a click holds a warm conversation rather than tearing down its pty'
   )
+  for (const pane of [{status:'working'}, {status:'starting',engaged:false}, {status:'idle'}, {}, {status:'idle',engaged:false,backJob:{command:'build'}}]) {
+    ok(deskBusy([pane], NOW) === 1, `unknown or pending activity holds restart: ${JSON.stringify(pane)}`)
+  }
+  ok(deskBusy([{ status: 'idle', drafting: true }], NOW) === 1, 'a draft holds the restart')
+  ok(deskBusy([{ status: 'idle', ask: { text: 'continue?' } }], NOW) === 1, 'a pending answer holds the restart')
+  ok(deskBusy([{ status: 'idle', engaged: true, lastOutput: undefined }], NOW) === 1, 'unknown activity fails closed')
 }
 ok(agentsMidTurn([deadMidTurn, working]) === 1, 'a stale exited pane does not inflate the live count')
 
@@ -141,6 +147,28 @@ ok(!shouldLogHold(NOW, NOW - 60_000), 'a minute after logging it stays quiet')
 ok(!shouldLogHold(NOW, NOW - HOLD_LOG_INTERVAL_MS + 60_000), 'a minute short of the interval it still holds its tongue')
 ok(shouldLogHold(NOW, NOW - HOLD_LOG_INTERVAL_MS), 'thirty minutes on it writes again')
 ok(HOLD_LOG_INTERVAL_MS === 30 * 60_000, 'the interval is named, not written into the rule')
+
+// Exercise the real delayed install function up to its first destructive effect.
+{
+  const main = readFileSync(join(ROOT, 'src/main/index.ts'), 'utf8')
+  const start = main.indexOf('function doInstall(')
+  const end = main.indexOf('\n}\n', start) + 2
+  const code = transformSync(main.slice(start, end), {loader:'ts'}).code
+  let phase = 'idle', panes = [], watches = [], teardown = 0
+  const scope = {installStarted:false,installWhenIdle:true,
+    getUpdateState:()=>({phase}), manager:{list:()=>panes},deskBusy,Date,
+    watchForIdlePanes:on=>watches.push(on),updateLog:()=>{},
+    quitting:()=>{teardown++;throw Error('test stops before teardown')}}
+  const install = runInNewContext(code+';doInstall', scope)
+  install(true)
+  ok(teardown === 0 && !scope.installWhenIdle && watches.at(-1) === false, 'stale forced callback cancels before any teardown')
+  phase = 'ready'; panes = [{status:'idle',engaged:true}]
+  install()
+  ok(teardown === 0 && scope.installWhenIdle && watches.at(-1) === true, 'delayed callback rechecks resumed activity')
+  panes = [{status:'idle',engaged:false}]
+  try { install() } catch (error) { if (error.message !== 'test stops before teardown') throw error }
+  ok(teardown === 1, 'explicitly safe ready desk reaches install boundary')
+}
 
 console.log(failures ? `\n${failures} failed` : '\nall passed')
 process.exit(failures ? 1 : 0)

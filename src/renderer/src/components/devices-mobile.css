@@ -1,0 +1,27 @@
+/* Devices owns a dense mix of one-time pairing and ongoing device control. These small
+   local rules make the two paths legible without changing shared dialog geometry. */
+.phone-setup > .setting-row { align-items: flex-start; }
+.phone-setup .setting-row > div { min-width: 0; }
+.phone-setup-lead { margin: 3px 0 0; max-width: 40rem; }
+.device-section-head { display: flex; flex-direction: column; gap: 3px; padding: 2px 2px 0; }
+.device-section-head strong, .phone-setup strong { font-size: 13px; }
+.phone-recovery { margin: 2px 0 0; line-height: 1.45; }
+
+@media (max-width: 720px) {
+  .devices .dev-cols { gap: 18px; }
+  .phone-setup .pair-hero { align-items: flex-start; gap: 12px; padding: 12px; }
+  .phone-setup .pair-hero svg { flex: 0 0 132px; width: 132px; height: 132px; }
+  .phone-setup .pair-scan-say { min-width: 0; }
+  .phone-setup .dev-field { align-items: flex-start; }
+  .phone-setup .dev-addrs { width: 100%; }
+  .phone-setup .dev-addr-row { width: 100%; align-items: flex-start; flex-direction: column; gap: 3px; }
+  .phone-setup .dev-addr { overflow-wrap: anywhere; white-space: normal; line-height: 1.35; }
+  .phone-setup .dev-acts { min-height: 44px; flex-wrap: wrap; }
+  .phone-setup .dev-acts button, .computer-setup .dev-acts button { min-height: 44px; }
+}
+
+@media (max-width: 390px) {
+  .phone-setup .pair-hero { flex-direction: column; }
+  .phone-setup .pair-hero svg { align-self: center; }
+  .phone-setup .pair-scan-say { text-align: center; }
+}
