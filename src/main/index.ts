@@ -48,8 +48,8 @@ import { surfaceChannels } from '../shared/surface'
 import { startDisplayAwake } from './awake'
 import { attachGlass, glassSupported } from './glass'
 import { invalidateAgents, listAgents, specFor } from './agents'
-import { codexInstalledVersion, forgetCodexVersion } from './codexModels'
-import { versionOf } from '../shared/codexCatalogue'
+import { codexInstalledVersion, codexLatest, forgetCodexVersion } from './codexModels'
+import { isOutdated, versionOf } from '../shared/codexCatalogue'
 import { gitInfo } from './git'
 import { projectRoot } from './projectRoot'
 import { diffFiles, diffPatch } from './diff'
@@ -3026,26 +3026,34 @@ ipcMain.handle('agents:update', async (_e, id: string) => {
         })
       })
     }
-    const succeeded = code === 0 && found && !locked && (spec.id !== 'codex' || (Boolean(fresh) && fresh !== before))
+    const completed = code === 0 && found && !locked
+    const latest = spec.id === 'codex' ? codexLatest() : ''
+    const verified = spec.id !== 'codex' || (Boolean(fresh) && Boolean(latest) && !isOutdated(fresh, latest))
     // Keep the old Codex reading on a failed update. Clearing it makes the picker
     // re-read the same installed binary and report a stale update as complete.
-    if (succeeded) {
+    if (completed) {
       refreshPath()
       if (spec.id === 'codex') forgetCodexVersion()
       invalidateAgents()
     }
     // Asking again is a spawn, so the number arrives after this message. Say what
     // happened rather than a version this call cannot yet know.
-    if (succeeded && spec.id === 'codex') codexInstalledVersion(spec.bin, invalidateAgents)
+    if (completed && spec.id === 'codex') codexInstalledVersion(spec.bin, invalidateAgents)
     send('agents:install-event', {
       agentId: id,
       chunk: locked
         ? ''
-        : succeeded
+        : verified
           ? `\r\n${spec.label} is up to date${before ? ` (was ${before})` : ''}.\r\n`
-          : `\r\nUpdater exited with code ${code} and ${spec.bin} is no longer on PATH.\r\n`,
+          : spec.id === 'codex' && completed && !fresh
+            ? `\r\nUpdater completed, but Codex version could not be verified.\r\n`
+            : spec.id === 'codex' && completed && !latest
+              ? `\r\nUpdater completed; Codex ${fresh} was verified, but the latest release is unknown.\r\n`
+              : spec.id === 'codex' && completed
+                ? `\r\nUpdater completed, but Codex ${fresh} is still behind ${latest}.\r\n`
+                : `\r\nUpdater ${code === 0 ? 'did not complete' : `exited with code ${code}`} ${found ? 'while the existing binary is still on PATH' : `and ${spec.bin} is no longer on PATH`}.\r\n`,
       done: true,
-      ok: succeeded
+      ok: verified
     })
   } finally {
     installing.delete(id)
