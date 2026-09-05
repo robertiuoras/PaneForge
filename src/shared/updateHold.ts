@@ -20,6 +20,9 @@ export interface RunState {
   lastOutput?: number
   /** epoch ms somebody last typed into it */
   lastKeyboard?: number
+  drafting?: boolean
+  ask?: unknown
+  backJob?: unknown
 }
 
 /**
@@ -34,9 +37,8 @@ export interface RunState {
  * handoff or anyhitng please fix this issue".
  *
  * A turn boundary is not a safe moment; it is the pause in the middle of somebody working.
- * So an ENGAGED pane also holds the restart until it has been quiet this long, which is
- * long enough that the desk is genuinely abandoned and short enough that an update still
- * lands the same day. A pane with no conversation in it holds nothing.
+ * Any engaged live pane holds an unprompted restart. Silence is not evidence that work
+ * is abandoned: it may be a long tool, a person reading, or a pending answer.
  */
 export const DESK_QUIET_MS = 10 * 60_000
 
@@ -53,25 +55,18 @@ export function agentsMidTurn(sessions: readonly RunState[]): number {
 }
 
 /**
- * Panes an unprompted restart would interrupt: mid-turn, or in a conversation that is
- * still warm.
- *
- * Deliberately NOT used by the clicked path. A person pressing Restart now has decided;
- * this is the rule for the restart nobody asked for.
+ * Panes a restart would interrupt. Silence never releases an engaged conversation;
+ * only an explicitly idle, unengaged pane with no pending work is safe.
  */
 export function deskBusy(
   sessions: readonly RunState[],
   now: number,
-  quietMs = DESK_QUIET_MS
+  _quietMs = DESK_QUIET_MS
 ): number {
   return sessions.filter((s) => {
     if (s.status === 'exited') return false
-    if (s.runSince) return true
-    if (!s.engaged) return false
-    const seen = Math.max(s.lastOutput ?? 0, s.lastKeyboard ?? 0)
-    // No timestamps at all is not a licence to restart over it: an engaged pane the caller
-    // cannot date is treated as warm, because the expensive mistake is the other one.
-    return !seen || now - seen < quietMs
+    if (s.runSince || s.drafting || s.ask || s.backJob) return true
+    return s.status !== 'idle' || s.engaged !== false
   }).length
 }
 
@@ -98,7 +93,7 @@ export function decideInstall(opts: {
   // Already going. A second click is not a second restart.
   if (opts.installStarted) return { act: 'install' }
   if (opts.phase !== 'ready') return { act: 'nothing' }
-  const busy = agentsMidTurn(opts.sessions)
+  const busy = deskBusy(opts.sessions, Date.now())
   return busy > 0 ? { act: 'wait', busy } : { act: 'install' }
 }
 

@@ -3200,8 +3200,21 @@ ipcMain.handle('update:install', async (): Promise<InstallOutcome> => {
   return { status: 'held', game: s.game, manual: s.manual }
 })
 
-function doInstall(): void {
+function doInstall(force = false): void {
   if (installStarted) return
+  if (getUpdateState().phase !== 'ready') {
+    installWhenIdle = false
+    watchForIdlePanes(false)
+    return
+  }
+  if (!force && deskBusy(manager.list(), Date.now()) > 0) {
+    updateLog('install', 'restart held: desk became active before install')
+    // A delayed game/idle callback found new work. Keep the original clicked request
+    // pending rather than dropping it after its watcher was cleared.
+    installWhenIdle = true
+    watchForIdlePanes(true)
+    return
+  }
   installStarted = true
   quitting('installing an update')
 
@@ -3371,7 +3384,7 @@ function installOncePanesIdle(): void {
     watchForIdlePanes(false)
     return
   }
-  const busy = agentsMidTurn(manager.list())
+  const busy = deskBusy(manager.list(), Date.now())
   if (busy > 0) return
   installWhenIdle = false
   watchForIdlePanes(false)
@@ -3444,7 +3457,7 @@ ipcMain.on('game:installAnyway', () => {
   installWhenIdle = false
   watchForIdlePanes(false)
   cancelDeferred('update-install')
-  doInstall()
+  doInstall(true)
 })
 
 // --- task board + shared memory -------------------------------------------
