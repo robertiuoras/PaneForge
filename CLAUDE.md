@@ -1026,7 +1026,7 @@ Suite pin table: `docs/design-notes.md`, **Checks — what each suite pins**.
 
 Needs a window: `test:view`, `test:stashdrag`, `test:activate`, `test:restorefix`,
 `test:askclick`, `test:askrender`, `test:devicesfit`, `test:phoneview`, `test:contrast`,
-`test:renderwatchlive`, `test:panefit`.
+`test:renderwatchlive`, `test:panefit`, `test:railtrack`.
 
 Needs network: `test:discordbrand`, `node scripts/mac-update-test.mjs --live <v>`.
 

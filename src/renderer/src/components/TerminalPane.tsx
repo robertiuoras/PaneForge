@@ -1228,7 +1228,25 @@ function TerminalPane({
   // written as CSS: the host is inset 7px, but the terminal is a whole number of rows and
   // overhangs that box by whatever the rounding left over, so the track's real top and
   // height are only knowable by measuring. Guessing put every tag a few pixels out.
-  const [track, setTrack] = useState({ top: 7, height: 0 })
+  //
+  // `right` is measured for the same reason, and it is the half that was left as a CSS
+  // constant - `right: 17px`, the width the desktop stylesheet asks the xterm viewport's
+  // scrollbar to be. Two different panes make that constant a lie, and the failure looks
+  // the same in both: a column of tags over the output instead of beside it.
+  //
+  //  - A MIRRORED pane is drawn under a `scale()` (see `reshape`), and the rail is a
+  //    sibling of the scaled host, so it does not shrink with it. Measured in a headless
+  //    copy at `scale(0.6)`: the terminal's right edge sat 363.8px in from the pane's
+  //    while the rail stayed at 17px, and the track stayed 661.3px tall against a 392.4px
+  //    screen. "if i resize paneforge on mac then this remote window gets broken"
+  //    (Robert 2026-09-05).
+  //  - A COARSE-POINTER pane gets an OVERLAY scrollbar, which takes no column out of the
+  //    viewport at all, so the gutter the rail was written to sit beside is 0px wide and
+  //    every tag hangs 17px inside the pane, over the last two columns of output.
+  //
+  // So both ends are read off the viewport's real box: where its right edge actually is,
+  // plus however wide its scrollbar actually is at the scale it is actually drawn at.
+  const [track, setTrack] = useState({ top: 7, height: 0, right: 17 })
   // Which tag just got clicked, so it can light up long enough to be seen.
   const [flash, setFlash] = useState(-1)
   /**
@@ -1540,13 +1558,32 @@ function TerminalPane({
     setRows(t.rows)
     syncGeom()
     const w = wrap.current
-    const vp = host.current?.querySelector('.xterm-viewport')
+    const vp = host.current?.querySelector<HTMLElement>('.xterm-viewport')
     if (!w || !vp) return
+    const wb = w.getBoundingClientRect()
+    const vb = vp.getBoundingClientRect()
+    // How much of the drawn size is transform. A mirror's `scale()` is on the host, so
+    // every number read off the viewport's rect is already through it while its layout
+    // properties (`offsetWidth`, `clientHeight`) are not - and mixing the two is what put
+    // the rail somewhere the terminal is not.
+    const scale = vp.offsetWidth > 0 ? vb.width / vp.offsetWidth : 1
+    // A classic scrollbar takes a column out of the viewport; an overlay one takes none.
+    // The rail sits beside whatever that is, so with no gutter it goes to the edge.
+    const bar = Math.max(0, vp.offsetWidth - vp.clientWidth) * scale
     const next = {
-      top: vp.getBoundingClientRect().top - w.getBoundingClientRect().top,
-      height: vp.clientHeight
+      top: vb.top - wb.top,
+      // ...and the height is the DRAWN height for the same reason `top` is: `clientHeight`
+      // answers the unscaled box, which stretched a mirror's track past its own screen.
+      height: vb.height,
+      right: wb.right - vb.right + bar
     }
-    setTrack((p) => (Math.abs(p.top - next.top) < 0.5 && p.height === next.height ? p : next))
+    setTrack((p) =>
+      Math.abs(p.top - next.top) < 0.5 &&
+      Math.abs(p.height - next.height) < 0.5 &&
+      Math.abs(p.right - next.right) < 0.5
+        ? p
+        : next
+    )
   }
 
   /**
@@ -4703,7 +4740,7 @@ function TerminalPane({
       {marks.length > 0 && (
         <div
           className="mark-rail"
-          style={{ top: track.top, height: track.height || undefined }}
+          style={{ top: track.top, height: track.height || undefined, right: track.right }}
         >
           {placed.map((p, i) => {
             if (!p) return null
