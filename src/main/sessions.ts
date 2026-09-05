@@ -1022,6 +1022,12 @@ export class SessionManager extends EventEmitter {
       live.req.resume ? live.req.resumeId : undefined
     )
     live.proc = this.spawn(live.req, live.meta.agent, live.cols, live.rows, live.meta.id)
+    // The replaced process owned the old composer. A new one starts empty,
+    // including when history navigation made the old shadow uncertain.
+    live.typed = ''
+    live.submitLine = newSubmitLine()
+    live.draft = newDraft()
+    live.meta.drafting = undefined
     live.runner = specFor(live.meta.agent).bin
     live.jobName = null
     live.meta.job = undefined

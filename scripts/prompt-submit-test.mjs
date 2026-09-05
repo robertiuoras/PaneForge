@@ -327,6 +327,17 @@ manager.sessions.delete(dying.id)
 await sleep(400)
 ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding it', String(dead2))
 
+// A new process cannot inherit a composer shadow from the replaced CLI.
+{
+  const pane = manager.start({ cwd: root, agent: 'shell' })
+  manager.write(pane.id, 'unsent draft')
+  manager.write(pane.id, '\x1b[A')
+  const live = manager.sessions.get(pane.id)
+  ok(Boolean(live.meta.drafting), 'history navigation protects an uncertain draft')
+  manager.restart(pane.id)
+  ok(live.typed === '' && live.submitLine.text === '' && live.draft.text === '' &&
+    live.draft.certain && !live.meta.drafting, 'restart clears all old composer shadows')
+}
 manager.killAll?.()
 rmSync(work, { recursive: true, force: true })
 

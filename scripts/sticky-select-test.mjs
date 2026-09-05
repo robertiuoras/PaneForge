@@ -102,7 +102,8 @@ function page() {
     if (policy === 'always') e.stopPropagation()
     if (policy === 'pane') stopForAgent(e)
   }, true)
-  const FORCE_KEYS = { altKey: true }
+  const FORCE_KEYS = ['Macintosh', 'MacIntel', 'MacPPC', 'Mac68K'].includes(navigator.platform)
+    ? { altKey: true } : { shiftKey: true }
   host.addEventListener('mousedown', e => {
     if (policy !== 'pane') return
     for (const [key, value] of Object.entries(FORCE_KEYS)) Object.defineProperty(e, key, { value })
