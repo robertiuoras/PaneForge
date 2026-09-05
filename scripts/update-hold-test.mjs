@@ -150,7 +150,7 @@ ok(HOLD_LOG_INTERVAL_MS === 30 * 60_000, 'the interval is named, not written int
 
 // Exercise the explicit install boundary up to its first destructive effect.
 {
-  const main = readFileSync(join(ROOT, 'src/main/index.ts'), 'utf8')
+  const main = readFileSync(join(ROOT, 'src/main/index.ts'), 'utf8').replace(/\r\n/g, '\n')
   const start = main.indexOf('function doInstall(')
   const end = main.indexOf('\n}\n', start) + 2
   const code = transformSync(main.slice(start, end), {loader:'ts'}).code

@@ -194,7 +194,7 @@ try {
   // conversation id, which is three panes reopening into one chat.
   const lane = `${cwd}-a`
   mkdirSync(lane, { recursive: true })
-  symlinkSync(projects, join(homedir(), '.claude', 'projects', slug(lane)))
+  symlinkSync(projects, join(homedir(), '.claude', 'projects', slug(lane)), process.platform === 'win32' ? 'junction' : 'dir')
   T.noteSession('paneLane', lane, 'claude')
   // It has written nothing of its own yet, and every transcript here is somebody's: the
   // right answer is no id at all. Through the symlink the newest one is `chat-b` spelled
@@ -309,17 +309,23 @@ try {
   const codexDir = join(codexHome, 'sessions', '2026', '09', '05')
   mkdirSync(codexDir, { recursive: true })
   const codexId = '11111111-1111-4111-8111-111111111111'
-  const codexRow = (id, folder, timestamp = new Date().toISOString()) =>
-    JSON.stringify({ type: 'session_meta', payload: { id, session_id: id, cwd: folder, timestamp } })
+  const codexRow = (id, folder, timestamp = new Date().toISOString(), padding = '') =>
+    JSON.stringify({ type: 'session_meta', payload: { id, session_id: id, cwd: folder, timestamp, padding } })
   const codexUser = (text) => JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] } })
   const codexAssistant = () => JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'done' }] } })
-  const rollout = (name, id, folder, timestamp, prompt, answered = true) =>
-    writeFileSync(join(codexDir, `${name}.jsonl`), [codexRow(id, folder, timestamp), codexUser(prompt), ...(answered ? [codexAssistant()] : [])].join('\n') + '\n', 'utf8')
+  const rollout = (name, id, folder, timestamp, prompt, answered = true, padding = '') =>
+    writeFileSync(join(codexDir, `${name}.jsonl`), [codexRow(id, folder, timestamp, padding), codexUser(prompt), ...(answered ? [codexAssistant()] : [])].join('\n') + '\n', 'utf8')
   T.noteSession('pane3', cwd, 'codex')
   T.noteSubmittedPrompt('pane3', 'pane three owns this Codex prompt')
   rollout('one', codexId, cwd, undefined, 'pane three owns this Codex prompt')
   assert.equal(T.resumeIdFor('pane3'), codexId, 'Codex keeps its metadata-bound session id')
   assert.equal(T.resumable(cwd, codexId, 'codex'), true, 'an exact Codex id with an assistant reply is resumable')
+  const largeMetaId = '12121212-1212-4121-8121-121212121212'
+  rollout('large-meta', largeMetaId, cwd, undefined, 'large native metadata is restorable', true, 'x'.repeat(22_000))
+  assert.equal(T.resumable(cwd, largeMetaId, 'codex'), true, 'Codex metadata larger than 8KB is read through its complete first line')
+  const oversizedMetaId = '13131313-1313-4131-8131-131313131313'
+  writeFileSync(join(codexDir, 'oversized-meta.jsonl'), codexRow(oversizedMetaId, cwd, undefined, 'x'.repeat(70_000)), 'utf8')
+  assert.equal(T.resumable(cwd, oversizedMetaId, 'codex'), false, 'unterminated oversized metadata is rejected safely')
   const codexTwo = '22222222-2222-4222-8222-222222222222'
   T.noteSession('pane-codex-two', cwd, 'codex')
   T.noteSubmittedPrompt('pane-codex-two', 'pane two owns this Codex prompt')

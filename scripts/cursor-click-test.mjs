@@ -456,7 +456,7 @@ console.log(`cursor click: ${checks} checks passed`)
 // Execute the renderer's adapter, not only the arithmetic with hand-built offsets.
 {
   const { Terminal } = createRequire(import.meta.url)('@xterm/headless')
-  const source = readFileSync(join(root, 'src/renderer/src/components/TerminalPane.tsx'), 'utf8')
+  const source = readFileSync(join(root, 'src/renderer/src/components/TerminalPane.tsx'), 'utf8').replace(/\r\n/g, '\n')
   const begin = source.indexOf('    const textColumn = ')
   const end = source.indexOf('    /**\n     * What is being typed, row by row', begin)
   assert.ok(begin > 0 && end > begin)
