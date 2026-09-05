@@ -34,8 +34,10 @@ import type { RevealTarget } from './pathToken'
 import type { RouteMatch, RouteResult } from './projectRoute'
 import type { CustomSound, SoundConfig } from './sounds'
 import type { ThemeConfig } from './theme'
+import type { OwnerStats } from './ownerStats'
 
 export type { CustomSound, DiscordStyle, RevealTarget, RouteMatch, RouteResult, SoundConfig, ThemeConfig }
+export type { OwnerStats }
 
 export type SessionStatus =
   | 'starting'   // pty spawned, no output yet
@@ -1948,6 +1950,10 @@ export interface RestoreAnswer {
 
 /** Shape exposed on window.api by the preload script. */
 export interface Api {
+  /** Available only to the authenticated PaneForge repository owner. */
+  ownerAccess(): Promise<boolean>
+  /** Aggregate GitHub installer-asset downloads, not unique people or IP telemetry. */
+  ownerStats(): Promise<OwnerStats>
   listProjects(): Promise<Project[]>
   /** make a project folder from a typed name; null when the name may not be one */
   createProject(name: string): Promise<Project | null>

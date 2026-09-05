@@ -4815,3 +4815,23 @@ html.login-open .panes { padding-right: calc(var(--login-w, 50vw) + 6px); }
 
 .keep-open-toggle { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; margin: 6px 0; }
 .keep-open-toggle.active { color: var(--text); border-color: var(--text); }
+
+.swarm-users { flex: 1; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.swarm-users > .quick-btn { width: 100%; }
+.users-button { font-size: 10px; padding: 3px 2px; }
+.users-dialog { width: min(760px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); }
+.users-dialog .dialog-head > button { margin-left: auto; }
+.users-dialog > .users-body { flex: 1 1 auto; overflow: auto; min-height: 0; }
+.users-body > .hint { line-height: 1.5; }
+.users-heading { display: flex; align-items: center; justify-content: space-between; }
+.users-counts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 12px 0; }
+.users-counts > div { padding: 14px; border: 1px solid var(--line); border-radius: 8px; display: flex; flex-direction: column; gap: 4px; }
+.users-counts strong { font-size: 24px; font-variant-numeric: tabular-nums; }
+.users-counts span { font-size: 12px; color: var(--muted); }
+.users-table-wrap { overflow-x: auto; }
+.users-dialog table { border-collapse: collapse; width: 100%; font-size: 12px; }
+.users-dialog th, .users-dialog td { text-align: left; padding: 8px; border-bottom: 1px solid var(--line); }
+.users-dialog td { overflow-wrap: anywhere; }
+.users-dialog caption { text-align: left; padding: 8px; }
+
+.swarm-users ~ .quick-btn { align-self: start; }
