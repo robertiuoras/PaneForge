@@ -708,6 +708,8 @@ interface CodexMeta {
 }
 
 const CODEX_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+/** Opening metadata can carry a large native rollout payload, but never needs an unbounded read. */
+const CODEX_META_LINE_BYTES = 64 * 1024
 
 /** Direct validation of an already uniquely claimed local rollout. */
 function codexMatches(file: string, cwd: string, id: string): boolean {
@@ -743,11 +745,16 @@ function codexMeta(file: string): CodexMeta | null {
   let fd = -1
   try {
     fd = openSync(file, 'r')
-    const buf = Buffer.alloc(8192)
-    const n = readSync(fd, buf, 0, buf.length, 0)
-    for (const line of buf.toString('utf8', 0, n).split('\n')) {
-      const row = JSON.parse(line) as { type?: string; payload?: Record<string, unknown> }
-      if (row.type !== 'session_meta' || !row.payload) continue
+    const buf = Buffer.alloc(CODEX_META_LINE_BYTES)
+    let n = 0
+    while (n < buf.length) {
+      const read = readSync(fd, buf, n, Math.min(8192, buf.length - n), n)
+      if (!read) return null
+      n += read
+      const end = buf.subarray(0, n).indexOf(0x0a)
+      if (end < 0) continue
+      const row = JSON.parse(buf.toString('utf8', 0, end)) as { type?: string; payload?: Record<string, unknown> }
+      if (row.type !== 'session_meta' || !row.payload) return null
       const id = typeof row.payload.id === 'string' ? row.payload.id : row.payload.session_id
       if (typeof id !== 'string' || !CODEX_ID.test(id)) return null
       if (typeof row.payload.session_id === 'string' && row.payload.session_id !== id) return null
