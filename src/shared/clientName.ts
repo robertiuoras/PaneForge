@@ -665,14 +665,11 @@ export interface TopicReading {
 /**
  * The subject a pane should wear, given every ask it has taken and the newest one.
  *
- * The repeated reading is tried FIRST, in every folder. A pane in a client tree takes its
- * first ask because nothing else tells it apart, but once the desk has said the same
- * thing three times that is the better answer there too - and it is the only reading
- * allowed to replace a name the pane already earned.
+ * A subject is evidence only after repeated user asks. Folder-derived client labels remain
+ * useful immediately, but one vague launch prompt must not rename a live card.
  */
 export function topicReading(cwd: string, asks: string[], text: string): TopicReading {
   const repeated = repeatedTopic(asks)
   if (repeated) return { title: repeated, strong: true }
-  if (mayTopicName(cwd)) return { title: topicTitle(text), strong: false }
   return { title: '', strong: false }
 }

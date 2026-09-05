@@ -374,12 +374,11 @@ is(
   is(three.title, 'Sort Out Invoice Reminders', 'three asks agreeing name the pane')
   is(three.strong, true, '...and that reading may replace a name the pane already wears')
 
-  // Inside a client tree the first ask still names the pane, because every card there
-  // says `clients` - but it says so as a GUESS, so it cannot overwrite anything later.
+  // A client-tree folder is useful identity, but a single task sentence is still a guess.
   const tree = '/Users/r/Projects/clients'
   const guess = topicReading(tree, ['check the rental car booking'], 'check the rental car booking')
-  is(guess.title, 'Checking Rental Car', 'a client-tree pane is still named off its first ask')
-  is(guess.strong, false, '...as a guess, which never replaces a subject already earned')
+  is(guess.title, '', 'a client-tree pane waits for repeated user task evidence')
+  is(guess.strong, false, '...and one vague ask never changes a card title')
 
   // ...and once the tree pane has repeated itself, that reading outranks the first-ask one.
   const settled = topicReading(tree, asks, asks[2])

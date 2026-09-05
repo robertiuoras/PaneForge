@@ -1312,6 +1312,9 @@ export class SessionManager extends EventEmitter {
     const s = this.sessions.get(id)
     if (!s || !title.trim()) return
     s.meta.title = title.trim().slice(0, 60)
+    // A manual name is authoritative even when it happens to equal the folder label.
+    s.meta.autoTitled = undefined
+    s.handle = undefined
     this.emitSessions()
   }
 
@@ -3028,18 +3031,8 @@ export class SessionManager extends EventEmitter {
       live.handle = undefined
       return
     }
-    const text = strip(live.buffer.read())
-    if (text.length < live.handleSeen) live.handleSeen = 0
-    const name = resolvedName(text.slice(live.handleSeen), handle)
-    if (!name) return
+    // Agent output is not user task evidence. Keep titles grounded in submitted prompts.
     live.handle = undefined
-    if (name === s.title) return
-    const was = s.title
-    s.title = name
-    s.autoTitled = 'topic'
-    console.info(`clientname: ${s.id} "${was}" -> "${name}" (reply resolved "${handle}")`)
-    this.emit('clientNamed', { id: s.id, slug: '', title: name, was, from: 'reply' } satisfies ClientNamed)
-    this.emitSessions()
   }
 
   /**
