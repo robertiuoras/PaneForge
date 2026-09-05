@@ -37,7 +37,7 @@ import { addSound, pruneCustomSounds, removeSound, renameSound, soundData } from
 import { writeAttachments, readAttachIns, withShots } from './attach'
 import { AskNotifier, askMessage, postAsk, telegramCreds } from './askNotify'
 import { askKeyOf } from '../shared/autoAnswer'
-import type { AttachIn, AttachResult } from '../shared/attach'
+import { ATTACH_MAX_BYTES, THUMB_KEEP, type AttachIn, type AttachResult } from '../shared/attach'
 import { CHOOSE_GAP_MS, keysForChoice, sameAsk } from '../shared/choices'
 import { Remote } from './remote'
 import { readInvite } from './remote/invite'
@@ -2766,10 +2766,24 @@ ipcMain.handle('pty:attach', (_e, id: string, files: AttachIn[]): Promise<Attach
  * bytes travel (`readAttachIns`).
  */
 ipcMain.handle('pty:attachPaths', (_e, id: string, paths: string[]): Promise<AttachResult> => {
+  if (!remote.owns(id)) {
+    const local = Array.isArray(paths) ? paths.filter((p) => typeof p === 'string' && p) : []
+    // Local drops keep their original paths, including folders and large files.
+    // Read only a bounded set of small images for the decorative preview.
+    const pictures = local.filter((p) => /\.(png|jpe?g|webp|gif|bmp|ico|tiff?)$/i.test(p)).slice(0, THUMB_KEEP)
+    const files = pictures.flatMap((p) => {
+      try {
+        if (statSync(p).size > ATTACH_MAX_BYTES) return []
+        return readAttachIns([p]).files
+      } catch {
+        return []
+      }
+    })
+    return withShots(files, { paths: local })
+  }
   const read = readAttachIns(paths)
   if (read.error) return Promise.resolve({ paths: [], error: read.error })
-  if (remote.owns(id)) return withShots(read.files, remote.attachOn(id, read.files))
-  return withShots(read.files, writeAttachments(read.files))
+  return withShots(read.files, remote.attachOn(id, read.files))
 })
 
 /**

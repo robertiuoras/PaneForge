@@ -1383,6 +1383,14 @@ function TerminalPane({
     term.current?.focus()
   }
 
+  const typeLocalPaths = (paths: string[]): void => {
+    typePaths(paths)
+    // Preview work must not delay typing a path that already exists on this desk.
+    void api.attachPaths(sessionId, paths).then((res) => {
+      if (res.shots?.length) showShots(res.shots)
+    }).catch(() => { /* a missing preview never prevents the drop */ })
+  }
+
   /**
    * Hand files to the machine this pane's pty is on, and type the paths it answers with.
    *
@@ -4360,7 +4368,7 @@ function TerminalPane({
       // for a dropped file at all - both send the bytes and are answered with a path that
       // exists over there.
       if (paths.length === files.length && !sessionId.startsWith('@')) {
-        typePaths(paths)
+        typeLocalPaths(paths)
         return
       }
       void sendFiles(files)
@@ -4394,8 +4402,8 @@ function TerminalPane({
         // image. These paths have no File object behind them, so the bytes are read in the
         // main process instead of here.
         if (pasteImagesInstead(dropped.map((p) => ({ name: p }))))
-          void pasteImages(dropped.map((path) => ({ path }))).catch(() => typePaths(dropped))
-        else typePaths(dropped)
+          void pasteImages(dropped.map((path) => ({ path }))).catch(() => typeLocalPaths(dropped))
+        else typeLocalPaths(dropped)
       }
       else
         void api
