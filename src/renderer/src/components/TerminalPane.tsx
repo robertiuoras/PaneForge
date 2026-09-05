@@ -3206,7 +3206,7 @@ function TerminalPane({
       // Shift is only half the answer: on a Mac xterm reads Option, and only when
       // `macOptionClickForcesSelection` is on - which is why every drag over a Codex pane
       // there selected nothing. See shared/forceSelect.ts.
-      for (const [key, value] of Object.entries(forceKeys())) {
+      for (const [key, value] of Object.entries(forceKeys(isMac))) {
         try {
           // An own property shadows the prototype getter, so xterm - which sees this event
           // after this capture-phase listener - reads it as a forced selection.
