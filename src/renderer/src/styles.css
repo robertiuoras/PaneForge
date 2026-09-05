@@ -4810,3 +4810,5 @@ html.login-open .panes { padding-right: calc(var(--login-w, 50vw) + 6px); }
    Same row shape as a check verdict, one step quieter. */
 .tour-look { display: flex; gap: 6px; align-items: baseline; font-size: 12px; color: var(--muted); }
 .tour-look.bad { color: var(--danger, var(--text)); }
+
+.session-clock { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }

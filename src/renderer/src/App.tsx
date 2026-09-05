@@ -5049,12 +5049,17 @@ export default function App(): JSX.Element {
                       ) : s.status === 'exited' ? (
                         <span className="chip dead">exited {s.exitCode ?? ''}</span>
                       ) : s.runSince ? (
-                        <Elapsed since={s.runSince} title="This turn" />
+                        <span className="session-clock">turn <Elapsed since={s.runSince} title="This turn" /></span>
                       ) : s.lastRunMs !== undefined ? (
                         <span className="elapsed done" title="Last turn">
-                          {formatElapsed(s.lastRunMs)}
+                          last {formatElapsed(s.lastRunMs)}
                         </span>
                       ) : null}
+                      {s.status !== 'exited' && (
+                        <span className="session-clock" title="Time since this session opened, including idle time">
+                          open <Elapsed since={s.openedAt ?? s.createdAt} className="elapsed done" />
+                        </span>
+                      )}
                       {/* What the pane is still RUNNING with its turn over. This is the one
                           card state Robert reported as a lie: an agent that started work in
                           the background goes quiet, the clock stops, and the card reads
@@ -5860,21 +5865,21 @@ export default function App(): JSX.Element {
                   hour that is a minute. Off the header on a phone, where the header is
                   404px and says only WHICH pane this is. */}
               {!handheld.handheld && s.status !== 'exited' && (
-                <Elapsed
+                <span className="session-clock pt-open">open <Elapsed
                   since={s.openedAt ?? s.createdAt}
-                  className="elapsed pt-open"
-                  title={`Open for - since ${new Date(s.openedAt ?? s.createdAt).toLocaleString()}. Not the turn, and a /clear does not reset it.`}
-                />
+                  className="elapsed done"
+                  title={`Session opened ${new Date(s.openedAt ?? s.createdAt).toLocaleString()}; includes idle time.`}
+                /></span>
               )}
               {s.asleep ? (
                 <AsleepChip at={s.asleep} id={s.id} reason={s.asleepReason} />
               ) : s.status === 'exited' ? (
                 <span className="chip dead">exited {s.exitCode ?? ''}</span>
               ) : s.runSince ? (
-                <Elapsed since={s.runSince} className="elapsed pt-clock" title="This turn" />
+                <span className="session-clock pt-clock">turn <Elapsed since={s.runSince} title="This turn" /></span>
               ) : s.lastRunMs !== undefined ? (
                 <span className="elapsed done pt-clock" title="Last turn">
-                  {formatElapsed(s.lastRunMs)}
+                  last {formatElapsed(s.lastRunMs)}
                 </span>
               ) : null}
               <span className="pt-path">{s.cwd}</span>
