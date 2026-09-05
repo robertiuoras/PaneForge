@@ -86,9 +86,22 @@ ok('the re-render reads the log on disk, not the 400 KB live replay', /api\.pane
 ok('...with getBuffer kept only as the fallback', /paneLog\([^)]*\)\)\s*\|\|\s*\(await api\.getBuffer/.test(rd))
 ok('the budget is big enough to be worth the round trip', /REDRAW_BYTES = 4_000_000/.test(pane))
 
-// The measurement itself, against the REAL artifact when this machine has one - a
-// hand-written fixture cannot show this, because the whole effect is that a CLI's bytes
-// are mostly repaints. Skips out loud rather than passing vacuously.
+// A controlled transcript with both retained lines and in-place progress repaints.
+// An arbitrary user's latest log may clear its screen near the end, so its two tails
+// can legitimately render identically. It is useful evidence, not a fixed ratio gate.
+{
+  const log = Buffer.from(Array.from({ length: 10000 }, (_, i) =>
+    `answer ${i}\r\n` + '\r\x1b[2Kworking on the current item'.repeat(10)).join(''))
+  const count = async bytes => {
+    const term = new Terminal({ cols: 120, rows: 40, scrollback: 200000, allowProposedApi: true })
+    await new Promise(resolve => term.write(log.subarray(-bytes), resolve))
+    const n = term.buffer.active.length
+    term.dispose()
+    return n
+  }
+  const small = await count(400000), full = await count(4000000)
+  ok('the deeper replay recovers retained answers from repaint-heavy output', full > small * 4, `${small} -> ${full}`)
+}
 const { homedir } = await import('node:os')
 const { join } = await import('node:path')
 const { existsSync, readdirSync, statSync } = await import('node:fs')
@@ -121,7 +134,7 @@ if (!big) {
   const small = await rows(400_000)
   const full = await rows(4_000_000)
   ok(`neither read hit the scrollback ceiling - ${small} and ${full} of ${HEADROOM}`, full < HEADROOM)
-  ok(`4 MB gives materially more history than 400 KB - ${small} rows -> ${full} rows`, full > small * 4)
+  console.log(`  live-log diagnostic: 400 KB renders ${small} rows; 4 MB renders ${full} rows (content-dependent)`)
 }
 
 console.log(failed ? `\n${failed} failed` : '\ntrim loss: all good')
