@@ -141,6 +141,7 @@
     "test:replaywidth": "node scripts/replay-width-test.mjs",
     "test:panegrid": "node scripts/pane-grid-test.mjs",
     "test:markanchor": "node scripts/mark-anchor-test.mjs",
+    "test:forceselect": "node scripts/force-select-test.mjs",
     "test:copychip": "node scripts/copychip-test.mjs",
     "test:replytext": "node scripts/replytext-test.mjs",
     "test:reviewfixes": "node scripts/review-fixes-test.mjs",

@@ -41,6 +41,7 @@ import {
 import { dropReplay, queueReplay } from '../replayQueue'
 import { keepScrollback, keptRows, mayClearScreen } from '../../../shared/keepScrollback'
 import { fileRows, lostRows, screenLost } from '../../../shared/screenLoss'
+import { forceKeys } from '../../../shared/forceSelect'
 import {
   anchorMark,
   echoKey,
@@ -1871,6 +1872,11 @@ function TerminalPane({
       // GPU device utilisation 50% - enough to make every other app on the machine
       // judder. A steady block cursor is just as visible and costs nothing.
       cursorBlink: false,
+      // Half of what makes a drag select in a pane whose CLI has the mouse. xterm reads
+      // Shift on Windows and Linux and Option ONLY with this on, so without it every drag
+      // over a Codex or Claude Code pane on the Mac went to the CLI. See
+      // shared/forceSelect.ts and `forceSelectable` below.
+      macOptionClickForcesSelection: true,
       allowProposedApi: true,
       scrollback: FULL_SCROLLBACK,
       theme: themeRef.current ?? {
@@ -3145,12 +3151,17 @@ function TerminalPane({
     const forceSelectable = (e: MouseEvent): void => {
       if (!mouseSelectRef.current || !mouseGrabbed()) return
       if (e.button !== 0 || e.shiftKey || e.altKey || e.ctrlKey || e.metaKey) return
-      try {
-        // An own property shadows the prototype getter, so xterm - which sees this event
-        // after this capture-phase listener - reads it as a Shift-drag.
-        Object.defineProperty(e, 'shiftKey', { value: true, configurable: true })
-      } catch {
-        /* a synthetic event that will not take the override */
+      // Shift is only half the answer: on a Mac xterm reads Option, and only when
+      // `macOptionClickForcesSelection` is on - which is why every drag over a Codex pane
+      // there selected nothing. See shared/forceSelect.ts.
+      for (const [key, value] of Object.entries(forceKeys())) {
+        try {
+          // An own property shadows the prototype getter, so xterm - which sees this event
+          // after this capture-phase listener - reads it as a forced selection.
+          Object.defineProperty(e, key, { value, configurable: true })
+        } catch {
+          /* a synthetic event that will not take the override */
+        }
       }
     }
 
@@ -3275,8 +3286,14 @@ function TerminalPane({
     el.addEventListener('keydown', onKeyClearsSelection, true)
     el.addEventListener('mousedown', placeCursor, true)
     el.addEventListener('mousedown', markDown, true)
-    el.addEventListener('mousedown', forceSelectable, true)
     el.addEventListener('mousedown', onMouseDown, true)
+    // LAST of the app's own mousedown listeners, because it LIES about the modifiers to
+    // the listeners after it: it stamps Shift and Option on the event so xterm forces a
+    // selection. Every handler above reads the real ones - `placeCursor` is Option-click,
+    // `markDown` arms the bare click-to-place - so putting this in front of them would
+    // turn every click in an agent pane into a modified one. xterm's own listeners are on
+    // the elements below this, so they still see the stamp.
+    el.addEventListener('mousedown', forceSelectable, true)
     el.addEventListener('mouseup', moveAlongLine, true)
     el.addEventListener('mouseup', onMouseUp)
     el.addEventListener('wheel', onWheel, { capture: true, passive: false })

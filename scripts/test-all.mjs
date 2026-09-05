@@ -82,6 +82,7 @@ const TESTS = [
   ['replaywidth', 'replay-width-test.mjs'],
   ['panegrid', 'pane-grid-test.mjs'],
   ['markanchor', 'mark-anchor-test.mjs'],
+  ['forceselect', 'force-select-test.mjs'],
   ['recover', 'recover-test.mjs'],
   ['restoreturn', 'restore-turn-test.mjs'],
   ['restore', 'restore-context-test.mjs'],
