@@ -1,0 +1,142 @@
+.pf-board-dialog,
+.pf-swarm-dialog {
+  max-width: 980px;
+}
+.pf-board-add {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0;
+}
+.pf-board-add .search {
+  flex: 1;
+  min-width: 0;
+}
+.pf-touch {
+  min-height: 44px;
+}
+.pf-feedback {
+  margin: 10px 0;
+  padding: 9px 10px;
+  border: 1px solid var(--danger);
+  border-radius: var(--r-sm);
+  color: var(--danger);
+  background: var(--surface-2);
+}
+.pf-board-loading {
+  min-height: 160px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+.pf-board {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 12px 0;
+}
+.pf-board-col {
+  min-height: 150px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+.pf-board-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  color: var(--muted);
+}
+.pf-task {
+  margin: 0 0 8px;
+  padding: 9px;
+  border-radius: var(--r-sm);
+  background: var(--surface-3);
+}
+.pf-task-title {
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.pf-task-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.pf-task-actions .pf-touch {
+  height: auto;
+}
+.pf-memory-setting {
+  margin-top: 14px;
+}
+.pf-swarm-status {
+  margin: 8px 0 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.pf-roles {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+.pf-role {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+.pf-role.off {
+  opacity: 0.55;
+}
+.pf-role.invalid {
+  border-color: var(--danger);
+}
+.pf-role-enabled {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 32px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.pf-role .brief {
+  flex-basis: 100%;
+}
+.pf-board-dialog .danger,
+.pf-swarm-dialog .danger {
+  color: var(--danger) !important;
+}
+@media (max-width: 720px) {
+  .pf-board {
+    grid-template-columns: 1fr;
+  }
+  .pf-board-col {
+    min-height: 0;
+  }
+  .pf-board-add {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .pf-board-add .pf-touch {
+    width: 100%;
+  }
+  .pf-role > .select,
+  .pf-role .role-name {
+    flex: 1 1 150px;
+    width: auto;
+    min-height: 44px;
+  }
+  .pf-role-enabled {
+    min-height: 44px;
+  }
+  .pf-swarm-dialog .dialog-row,
+  .pf-board-dialog .dialog-row {
+    flex-wrap: wrap;
+  }
+}

@@ -1,25 +1,16 @@
-import { useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import type { AgentInfo } from '@shared/agents'
 import { modelGroup, modelHint, modelLabel, modelValue, supportsModel } from '@shared/agents'
 import type { Project, SwarmRole } from '@shared/types'
 import AgentLogo from './AgentLogo'
 import Blurb from './Blurb'
 import Select from './Select'
-
+import './board-swarm.css'
 const api = window.api
-
-/**
- * What the dialog was opened WITH, when something other than the toolbar opened it.
- *
- * A caller that already knows the folder and the words - a pane's own offer - hands both
- * over rather than making them be typed twice, which is the reason a feature that exists
- * goes unused.
- */
 export interface SwarmStart {
   cwd?: string
   mission?: string
 }
-
 interface Props {
   projects: Project[]
   agents: AgentInfo[]
@@ -30,15 +21,6 @@ interface Props {
   onClose: () => void
   onLaunched: (count: number) => void
 }
-
-/**
- * One mission, several agents, ONE folder.
- *
- * Right when the agents interleave - a builder and a reviewer want the same files, and
- * the shared memory file is the handover between them. What keeps them apart is their
- * briefs, not the checkout: a job whose parts are genuinely independent wants separate
- * lanes, which is `scripts/lane.mjs` and a pane each, not this dialog.
- */
 export default function SwarmDialog({
   projects,
   agents,
@@ -54,39 +36,56 @@ export default function SwarmDialog({
   const [local, setLocal] = useState<SwarmRole[]>(roles)
   const [editing, setEditing] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-
-  const usable = agents.filter((a) => a.available)
-  const chosen = local.filter((r) => r.enabled)
-
-  const patch = (id: string, p: Partial<SwarmRole>): void =>
-    setLocal((rs) => rs.map((r) => (r.id === id ? { ...r, ...p } : r)))
-
+  const launching = useRef(false)
+  const [error, setError] = useState('')
+  const usable = agents.filter((agent) => agent.available)
+  const chosen = local.filter((role) => role.enabled)
+  const invalid = useMemo(
+    () =>
+      chosen.filter(
+        (role) => !role.name.trim() || !role.brief.trim() || !usable.some((agent) => agent.id === role.agent)
+      ),
+    [chosen, usable]
+  )
+  const ready = Boolean(cwd && mission.trim() && chosen.length && !invalid.length && !busy)
+  const patch = (id: string, value: Partial<SwarmRole>): void =>
+    setLocal((items) => items.map((item) => (item.id === id ? { ...item, ...value } : item)))
   const launch = async (): Promise<void> => {
-    if (!cwd || !mission.trim() || !chosen.length || busy) return
+    if (!ready || launching.current) return
+    launching.current = true
     setBusy(true)
-    onSaveRoles(local)
+    setError('')
     try {
+      onSaveRoles(local)
       const started = await api.startSwarm({
         cwd,
-        mission,
-        // Roles fall back to the agent's remembered default model when none is set.
-        roles: local.map((r) => ({ ...r, model: r.model || defaultModels[r.agent] || undefined }))
+        mission: mission.trim(),
+        roles: local.map((role) => ({
+          ...role,
+          model: role.model || defaultModels[role.agent] || undefined
+        }))
       })
       onLaunched(started.length)
+    } catch (reason) {
+      setError(
+        reason instanceof Error && reason.message
+          ? `Could not launch: ${reason.message}`
+          : 'Could not launch the swarm. Nothing was started.'
+      )
     } finally {
       setBusy(false)
+      launching.current = false
     }
   }
-
+  const unavailable = !usable.length
   return (
     <div className="overlay" onMouseDown={onClose}>
-      <div className="dialog wide" onMouseDown={(e) => e.stopPropagation()}>
+      <div className="dialog wide pf-swarm-dialog" onMouseDown={(event) => event.stopPropagation()}>
         <div className="dialog-head">
           <strong>Swarm</strong>
-          <span className="hint">one mission, one pane per role, all in the same folder</span>
+          <span className="hint">One mission, clear ownership, one shared folder.</span>
         </div>
         <Blurb id="swarm" />
-
         <div className="setting">
           <label>Project</label>
           <Select
@@ -94,35 +93,52 @@ export default function SwarmDialog({
             onChange={setCwd}
             menuWidth={420}
             placeholder="Pick a folder"
-            options={projects.map((p) => ({ value: p.path, label: p.name, hint: p.path }))}
+            options={projects.map((project) => ({
+              value: project.path,
+              label: project.name,
+              hint: project.path
+            }))}
           />
         </div>
-
         <div className="setting">
           <label>Mission</label>
           <textarea
             className="mission"
             autoFocus
             rows={3}
-            placeholder="Add offer replies to the dashboard, with tests."
+            placeholder="Describe the outcome and limits for this team."
             value={mission}
-            onChange={(e) => setMission(e.target.value)}
+            onChange={(event) => setMission(event.target.value)}
           />
         </div>
-
+        <div className="pf-swarm-status" aria-live="polite">
+          {unavailable
+            ? 'No available coding agents on this device.'
+            : invalid.length
+              ? `${invalid.length} enabled role${invalid.length === 1 ? ' needs' : 's need'} a name, brief, or available agent.`
+              : ready
+                ? `${chosen.length} agents are ready to launch.`
+                : 'Choose a project, mission, and at least one role.'}
+        </div>
+        {error && (
+          <div className="pf-feedback error" role="alert">
+            {error}
+          </div>
+        )}
         <div className="setting">
           <div className="setting-row">
             <label>Roles ({chosen.length} panes)</label>
             <button
-              className="ghost small"
+              className="ghost small pf-touch"
+              disabled={busy || unavailable}
               onClick={() =>
-                setLocal((rs) => [
-                  ...rs,
+                setLocal((items) => [
+                  ...items,
                   {
                     id: `r${Date.now().toString(36)}`,
-                    name: 'New role',
+                    name: '',
                     agent: usable[0]?.id ?? 'claude',
-                    brief: 'You own ...',
+                    brief: '',
                     enabled: true
                   }
                 ])
@@ -131,71 +147,87 @@ export default function SwarmDialog({
               Add role
             </button>
           </div>
-
-          <div className="roles">
-            {local.map((r) => {
-              const spec = agents.find((a) => a.id === r.agent)
+          <div className="pf-roles">
+            {local.map((role) => {
+              const spec = agents.find((agent) => agent.id === role.agent)
+              const unavailableRole = role.enabled && !usable.some((agent) => agent.id === role.agent)
               return (
-                <div key={r.id} className={'role' + (r.enabled ? '' : ' off')}>
-                  <input
-                    type="checkbox"
-                    checked={r.enabled}
-                    onChange={(e) => patch(r.id, { enabled: e.target.checked })}
-                  />
+                <div
+                  key={role.id}
+                  className={'pf-role' + (role.enabled ? '' : ' off') + (unavailableRole ? ' invalid' : '')}
+                >
+                  <label className="pf-role-enabled">
+                    <input
+                      type="checkbox"
+                      checked={role.enabled}
+                      disabled={busy}
+                      onChange={(event) => patch(role.id, { enabled: event.target.checked })}
+                    />
+                    <span>{role.enabled ? 'Included' : 'Off'}</span>
+                  </label>
                   <input
                     className="role-name"
-                    value={r.name}
-                    onChange={(e) => patch(r.id, { name: e.target.value })}
+                    aria-label="Role name"
+                    placeholder="Role name"
+                    value={role.name}
+                    disabled={busy}
+                    onChange={(event) => patch(role.id, { name: event.target.value })}
                   />
                   <Select
                     size="sm"
                     menuWidth={240}
-                    value={r.agent}
-                    onChange={(v) => patch(r.id, { agent: v, model: '' })}
-                    options={usable.map((a) => ({
-                      value: a.id,
-                      label: a.label,
-                      icon: <AgentLogo id={a.id} spec={a} size={13} />
+                    value={role.agent}
+                    disabled={busy || unavailable}
+                    onChange={(value) => patch(role.id, { agent: value, model: '' })}
+                    options={agents.map((agent) => ({
+                      value: agent.id,
+                      label: agent.label,
+                      disabled: !agent.available,
+                      hint: agent.available ? undefined : 'Unavailable on this device',
+                      icon: <AgentLogo id={agent.id} spec={agent} size={13} />
                     }))}
                   />
                   {supportsModel(spec) && (
                     <Select
                       size="sm"
                       menuWidth={240}
-                      value={r.model ?? ''}
-                      placeholder="default"
-                      onChange={(v) => patch(r.id, { model: v })}
+                      value={role.model ?? ''}
+                      placeholder="Default model"
+                      disabled={busy}
+                      onChange={(value) => patch(role.id, { model: value })}
                       options={[
                         { value: '', label: 'Default model' },
-                        ...(spec?.models ?? []).map((m) => ({
-                          value: modelValue(m),
-                          label: modelLabel(m),
-                          hint: modelHint(m),
-                          group: modelGroup(m)
+                        ...(spec?.models ?? []).map((model) => ({
+                          value: modelValue(model),
+                          label: modelLabel(model),
+                          hint: modelHint(model),
+                          group: modelGroup(model)
                         }))
                       ]}
                     />
                   )}
                   <button
-                    className="ghost small"
-                    title="Edit what this role is told to do"
-                    onClick={() => setEditing(editing === r.id ? null : r.id)}
+                    className="ghost small pf-touch"
+                    disabled={busy}
+                    onClick={() => setEditing(editing === role.id ? null : role.id)}
                   >
-                    Brief
+                    {editing === role.id ? 'Hide brief' : 'Edit brief'}
                   </button>
                   <button
-                    className="x"
-                    title="Remove role"
-                    onClick={() => setLocal((rs) => rs.filter((x) => x.id !== r.id))}
+                    className="ghost small pf-touch danger"
+                    disabled={busy}
+                    onClick={() => setLocal((items) => items.filter((item) => item.id !== role.id))}
                   >
-                    x
+                    Remove
                   </button>
-                  {editing === r.id && (
+                  {(editing === role.id || !role.brief.trim()) && (
                     <textarea
                       className="brief"
                       rows={3}
-                      value={r.brief}
-                      onChange={(e) => patch(r.id, { brief: e.target.value })}
+                      placeholder="What this role owns, and what it must leave to the others."
+                      value={role.brief}
+                      disabled={busy}
+                      onChange={(event) => patch(role.id, { brief: event.target.value })}
                     />
                   )}
                 </div>
@@ -203,21 +235,13 @@ export default function SwarmDialog({
             })}
           </div>
         </div>
-
         <div className="dialog-row">
-          <span className="hint">
-            Each pane is told its role, the mission, and to read{' '}
-            <code>.paneforge/MEMORY.md</code> first.
-          </span>
-          <button className="ghost" onClick={onClose}>
+          <span className="hint">Each pane reads shared memory before it starts.</span>
+          <button className="ghost pf-touch" disabled={busy} onClick={onClose}>
             Cancel
           </button>
-          <button
-            className="primary"
-            disabled={!cwd || !mission.trim() || !chosen.length || busy}
-            onClick={launch}
-          >
-            {busy ? 'Starting...' : `Launch ${chosen.length} agents`}
+          <button className="primary pf-touch" disabled={!ready} onClick={() => void launch()}>
+            {busy ? 'Launching…' : `Launch ${chosen.length} agents`}
           </button>
         </div>
       </div>
