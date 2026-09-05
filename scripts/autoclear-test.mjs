@@ -46,9 +46,9 @@ write(
 const file = join(out, 'ac.mjs')
 buildSync({ absWorkingDir: root, entryPoints: [entry], bundle: true, platform: 'node', format: 'esm', logLevel: 'warning', outfile: file })
 const { clearChunks, resumeOf, clampSeconds, readAsk, resumeBrief, dropFor, armDecision, clearCommandFor, quietEnoughToArm, ARM_QUIET_MS,
-  watchDecision, expiryDecision, dropWords, DRAFT_RETRY_MS, chunkDelayMs,
+  expiryDecision, dropWords, DRAFT_RETRY_MS, chunkDelayMs,
   CLEAR_SETTLE_MS, SUBMIT_GAP_MS, SUBMIT_RETRIES_MS, CLEAR_PROMPT_START_MS,
-  WATCH_COOLDOWN_MS, DEFAULT_AUTOCLEAR, MIN_SECONDS, MAX_SECONDS, queuedPromptDecision } =
+  DEFAULT_AUTOCLEAR, MIN_SECONDS, MAX_SECONDS, queuedPromptDecision } =
   await import(pathToFileURL(file).href)
 
 console.log('a queued resume prompt never lands in somebody ELSE\'s turn')
@@ -268,26 +268,6 @@ console.log('which CLI, and what it calls starting again')
   ok('an unknown CLI is left alone', clearCommandFor('aider') === null && clearCommandFor('goose') === null)
   ok('a shell pane is left alone', clearCommandFor('shell') === null)
   ok('nothing at all is left alone', clearCommandFor(null) === null && clearCommandFor('') === null && clearCommandFor(undefined) === null)
-}
-
-console.log('the pane-side watcher, which drives the CLIs with no Stop hook')
-{
-  const base = { agent: 'codex', status: 'idle', tokens: 200_000, threshold: 150_000, now: 1_000_000 }
-  ok('an oversized idle codex pane is cleared', watchDecision(base) === 'arm')
-  ok('an unknown CLI is never typed into', watchDecision({ ...base, agent: 'aider' }) === 'unknown-cli')
-  ok('a pane mid-turn is left alone', watchDecision({ ...base, status: 'working' }) === 'busy')
-  // Unlike the hook path there is nothing to queue against here - no turn is ending - so a
-  // pane that is starting or has exited is simply looked at again next minute.
-  ok('a starting pane is left alone', watchDecision({ ...base, status: 'starting' }) === 'busy')
-  ok('an exited pane is never typed into', watchDecision({ ...base, status: 'exited' }) === 'busy')
-  ok('under the line, nothing happens', watchDecision({ ...base, tokens: 149_999 }) === 'under')
-  ok('an unreadable size is not a size of zero', watchDecision({ ...base, tokens: 0 }) === 'under')
-  // The CLI writes its token file when it feels like it, so a pane that was just cleared
-  // still reads as oversized for a minute. Without this it is cleared again, and again.
-  ok('one arm per half hour', watchDecision({ ...base, lastArmMs: base.now - 60_000 }) === 'recent')
-  ok('and then it may arm again', watchDecision({ ...base, lastArmMs: base.now - WATCH_COOLDOWN_MS - 1 }) === 'arm')
-  ok('the default line is 150k', DEFAULT_AUTOCLEAR.tokens === 150_000 && DEFAULT_AUTOCLEAR.watchNonClaude === true)
-
 }
 
 console.log('the payload, which arrives over the phone server')

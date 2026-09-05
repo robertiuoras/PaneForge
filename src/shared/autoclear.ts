@@ -311,41 +311,6 @@ export const DEFAULT_AUTOCLEAR: AutoClearConfig = {
   watchNonClaude: true
 }
 
-/** One arm per pane per half hour. See `watchDecision`. */
-export const WATCH_COOLDOWN_MS = 30 * 60_000
-
-/**
- * Why the watcher is or is not arming a clear on this pane, decided without touching disk.
- *
- * Split out for the same reason `armDecision` was: the bug that killed autoclear for a day
- * was one word inside a method with a pty on the other end of it, and nothing could test
- * it. Everything here is a value the caller already has.
- */
-export type WatchVerdict = 'arm' | 'unknown-cli' | 'busy' | 'under' | 'recent'
-
-export function watchDecision(p: {
-  agent: string | null | undefined
-  status: string
-  tokens: number
-  threshold: number
-  lastArmMs?: number | null
-  now: number
-}): WatchVerdict {
-  // First and hardest: a CLI whose clear command we cannot name is never typed into.
-  if (!clearCommandFor(p.agent)) return 'unknown-cli'
-  // 'working' is the pane mid-turn. 'starting' has no context yet worth clearing and
-  // 'exited' has no pty left to type into, so only a genuinely idle pane is a candidate -
-  // unlike the Stop-hook path, nothing here knows a turn is ending, so there is no reason
-  // to queue against a moving pane rather than look again in a minute.
-  if (p.status !== 'idle') return 'busy'
-  if (!(p.tokens > 0) || p.tokens < p.threshold) return 'under'
-  // The estimator reads a file the CLI writes, and the CLI does not write it the instant a
-  // clear lands. Without this, a pane that has just been cleared reads as oversized for
-  // another minute and gets cleared again - twice more before the file catches up.
-  if (p.lastArmMs && p.now - p.lastArmMs < WATCH_COOLDOWN_MS) return 'recent'
-  return 'arm'
-}
-
 /**
  * What the expiry timer does when it finally fires, decided without touching the pty.
  *
