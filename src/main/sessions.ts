@@ -1076,7 +1076,8 @@ export class SessionManager extends EventEmitter {
         busy: Boolean(live.meta.runSince) || live.busyUntil > Date.now(),
         asking: Boolean(live.meta.ask),
         drafting: Boolean(live.meta.drafting),
-        job: live.meta.job
+        job: live.meta.job,
+        backJob: live.meta.backJob
       })
     )
       return null

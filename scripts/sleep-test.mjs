@@ -131,6 +131,7 @@ is(/RESET/.test(wake), false, 'waking writes no reset - the old screen IS the sc
 ok(/sleep\(id: string, reason: SleepReason = 'manual'\)/.test(sessions), 'sleep takes a reason, default manual')
 ok(/ledgerSleep\(live\.meta\.cwd, id\)/.test(sessions), 'sleep marks the ledger before the CLI dies')
 ok(/ledgerWake\(live\.meta\.cwd, id\)/.test(sessions), 'wake clears the ledger mark once the CLI is running again')
+ok(/backJob: live\.meta\.backJob/.test(sessions), 'manual sleep keeps an agent background job alive')
 // A pane put to sleep before it ever ran (`queued`) is woken to do the work it was opened
 // for; every other reason drops the launch prompt, or waking would replay finished work.
 const sleepBody = sessions.slice(sessions.indexOf('  sleep(id: string'), sessions.indexOf('  /**\n   * Start a sleeping'))
