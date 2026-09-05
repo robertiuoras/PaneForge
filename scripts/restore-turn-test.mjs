@@ -159,8 +159,8 @@ ok(
   /wasPinned\.has\(req\.scrollbackId\)\) nowPinned\.push\(meta\.id\)/.test(index)
 )
 ok(
-  '...and is written back, so ids nothing came back for are dropped',
-  /setConfig\(\{ pinnedPanes: nowPinned \}\)/.test(index)
+  '...and is merged with pins changed while restore was waiting',
+  /setConfig\(\{ pinnedPanes: mergedPins \}\)/.test(index)
 )
 
 const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
