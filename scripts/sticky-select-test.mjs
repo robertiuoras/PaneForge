@@ -258,7 +258,7 @@ try {
   ok(!forced.grew, 'the shipped policy releases forced selection after mouseup', JSON.stringify(forced))
   const multiline = await evaluate('window.multiline()')
   ok(
-    multiline.includes(
+    multiline.replace(/\r\n/g, '\n').includes(
       'e quick brown fox jumps over the lazy dog and keeps going for a while' +
         String.fromCharCode(10) +
         '0123'

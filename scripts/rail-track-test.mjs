@@ -120,8 +120,8 @@ const judge = (rows, where) => {
  * `syncTotal` runs off the pane's resize observer, so a state driven in by hand is not
  * read until something resizes - and the drive has to be a STYLESHEET rule rather than an
  * inline style, because the resize runs `reshape`, which writes `host.style.transform`
- * itself and would wipe an inline one. The nudge is one pixel of the pane's own padding,
- * put straight back.
+ * itself and would wipe an inline one. The nudge resizes the actual viewport and restores it. Changing parent padding
+ * does not resize an absolutely positioned pane in Focus mode.
  */
 const drive = async (id, css) => {
   await link.evaluate(`(() => {
@@ -130,10 +130,12 @@ const drive = async (id, css) => {
     s.textContent = ${JSON.stringify(css)}
     return true
   })()`)
-  for (const px of ['1px', '']) {
-    await link.evaluate(
-      `(() => { for (const p of document.querySelectorAll('.panes')) p.style.paddingRight = ${JSON.stringify(px)}; return true })()`
-    )
+  const size = await link.evaluate('({width:innerWidth,height:innerHeight})')
+  try {
+    await link.resize(size.width + 20, size.height)
+    await sleep(700)
+  } finally {
+    await link.clearResize()
     await sleep(700)
   }
 }
