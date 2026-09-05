@@ -2619,7 +2619,7 @@ export interface Api {
    * other device re-sent everything. The pane clears and redraws instead of appending
    * a second copy of what it already had.
    */
-  onPaneReset(cb: (id: string) => void): () => void
+  onPaneReset(cb: (id: string, snapshot: string) => void): () => void
   /**
    * The app is about to type a clear into this pane itself (autoclear). The pane files its
    * screen into the scrollback now, exactly as it does for a clear somebody typed.

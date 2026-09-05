@@ -1976,24 +1976,26 @@ function TerminalPane({
       window.clearTimeout(wipeTimer)
       wipeTimer = window.setTimeout(wipeSettled, WIPE_SETTLE_MS)
     }
-    const keep = keepScrollback(
+    let readingSnapshot = false
+    const makeKeeper = (): ReturnType<typeof keepScrollback> => keepScrollback(
       () => t.rows,
-      () => t.buffer.active.type === 'alternate',
+      () => !readingSnapshot && t.buffer.active.type === 'alternate',
       Date.now,
       // How much of the screen is worth filing. Everything under the last written row is
       // blank, and scrolling those rows only puts a screenful of nothing into the
       // scrollback in front of the turn being kept. The walk itself is in the shared file
       // so the test can drive the shipped one against a real xterm rather than a copy.
-      () => keptRows(t),
+      () => readingSnapshot ? 0 : keptRows(t),
       // A wipe has started, and nothing in the bytes says whether it is a clear or one of
       // the full repaints this CLI does dozens of times a session. Remember the screen and
       // find out - see `wipeSettled`.
       () => {
-        if (wipeSnap) return
+        if (readingSnapshot || wipeSnap) return
         wipeSnap = screenNow()
         armWipeCheck()
       }
     )
+    let keep = makeKeeper()
     const f = new FitAddon()
     t.loadAddon(f)
     t.open(host.current)
@@ -3637,23 +3639,33 @@ function TerminalPane({
       setHandoverUntil(until > Date.now() ? until : 0)
     })
 
-    const offReset = api.onPaneReset((id) => {
+    const offReset = api.onPaneReset((id, snapshot) => {
       if (id !== sessionId) return
-      t.reset()
       // Every tag was anchored into the buffer that reset just threw away, and the tail
       // about to arrive carries those same prompts for `seedMarks` to read back out.
       // Dropping them is also what LETS it run: it refuses on a rail that is not empty.
       for (const m of list.splice(0)) m.marker.dispose()
       publish()
-      void api.getBuffer(sessionId).then((b) => {
-        if (dead) return
-        sawOutput = Boolean(b)
-        if (b) setBlank(false)
-        pinned.current = true
-        t.write(keep(b), () => {
-          t.scrollToBottom()
-          seedMarks()
-        })
+      if (dead) return
+      sawOutput = Boolean(snapshot)
+      if (snapshot) setBlank(false)
+      pinned.current = true
+      // Queue the reset with its exact snapshot. An imperative reset can run
+      // before old queued writes, and an async buffer read can include new deltas
+      // that onData already wrote. RIS goes through xterm's ordered write queue.
+      window.clearTimeout(wipeTimer)
+      wipeSnap = null
+      keep = makeKeeper()
+      readingSnapshot = true
+      let bytes: string
+      try {
+        bytes = keep(snapshot)
+      } finally {
+        readingSnapshot = false
+      }
+      t.write('\x1bc' + bytes, () => {
+        t.scrollToBottom()
+        seedMarks()
       })
     })
 

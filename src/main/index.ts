@@ -1117,7 +1117,8 @@ manager.on('armclear', (id: string) => {
 manager.on('handover', (id: string, until: number) => send('pane:handover', id, until))
 remote.on('reset', (id: string) => {
   pump.flushOne(id)
-  send('pane:reset', id)
+  // Capture in the reset event's turn, before a later data frame mutates it.
+  send('pane:reset', id, remote.buffer(id))
 })
 remote.on('sessions', () => {
   pump.flush()
