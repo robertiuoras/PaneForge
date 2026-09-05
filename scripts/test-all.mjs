@@ -49,6 +49,7 @@ const TESTS = [
   ['look', 'look-check-test.mjs'],
   ['cardidle', 'card-idle-test.mjs'],
   ['devkeep', 'devkeep-test.mjs'],
+  ['devlayout', 'dev-layout-test.mjs'],
   ['remotereset', 'remote-reset-test.mjs'],
   ['exitclose', 'exitclose-test.mjs'],
   ['headerfit', 'header-fit-test.mjs'],
