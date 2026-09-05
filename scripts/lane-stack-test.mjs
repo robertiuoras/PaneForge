@@ -40,6 +40,7 @@ const bundle = join(root, 'lanes.mjs')
 await build({
   entryPoints: [join(here, '..', 'src', 'main', 'lanes.ts')],
   outfile: bundle,
+  bundle: true,
   format: 'esm',
   platform: 'node',
   logLevel: 'silent'
