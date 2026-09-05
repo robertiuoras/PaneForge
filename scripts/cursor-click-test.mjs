@@ -335,6 +335,15 @@ const box = { left: 100, top: 50, width: 800, height: 400 }
   // A click, which is the same arithmetic without the backspaces - and never an up arrow,
   // whatever rows it crosses: measured, 92 lefts walk the width of the second row and the
   // 93rd steps onto the end of the first.
+  const longDraft = Array.from({ length: 20 }, () => ({ start: 2, end: 50, full: true }))
+  eq('unverified long input still refuses more than 400 arrows',
+    keysToPoint(longDraft, { row: 19, col: 50 }, { row: 0, col: 2 }), '')
+  eq('confirmed Codex draft can cross 400 characters within one screen',
+    keysToPoint(longDraft, { row: 19, col: 50 }, { row: 0, col: 2 }, Math.min(50 * 24, 10_000)),
+    ARROW.left.repeat(960))
+  const hugeDraft = Array.from({ length: 220 }, () => ({ start: 2, end: 50, full: true }))
+  eq('a huge confirmed draft still refuses an excessive arrow burst',
+    keysToPoint(hugeDraft, { row: 219, col: 50 }, { row: 0, col: 2 }, Math.min(50 * 240, 10_000)), '')
   eq(
     'a click at the start of the second row is 92 lefts',
     keysToPoint(spaceWrap, { row: 1, col: 94 }, { row: 1, col: 2 }),

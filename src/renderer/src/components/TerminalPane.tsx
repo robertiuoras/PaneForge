@@ -2887,7 +2887,9 @@ function TerminalPane({
      * alone. `preventDefault` still stops the browser's own drag-select either way.
      */
     const stopForAgent = (e: MouseEvent): void => {
-      if (mouseGrabbed()) e.stopPropagation()
+      // Forced selection starts xterm's document drag listeners even when the
+      // CLI owns the mouse. Its mouseup must reach those listeners to release it.
+      if (mouseGrabbed() && !mouseSelectRef.current) e.stopPropagation()
     }
 
     /**
@@ -2963,7 +2965,11 @@ function TerminalPane({
       const b = t.buffer.active
       if (b.type === 'alternate') return null
       const cursorRow = b.baseY + b.cursorY
-      const comp = composerAt(rowText, cursorRow)
+      const comp = composerAt(rowText, cursorRow, {
+        codexCols: agent === 'codex' ? t.cols : undefined,
+        maxUp: agent === 'codex' ? t.rows : undefined,
+        maxDown: agent === 'codex' ? t.rows : undefined
+      })
       if (comp) {
         const rows: InputRow[] = []
         for (let r = comp.top; r <= comp.bottom; r++) {
@@ -3155,7 +3161,10 @@ function TerminalPane({
           const keys = keysToPoint(
             span.rows,
             { row: cursorRow - span.top, col: b.cursorX },
-            { row: clickRow - span.top, col: at.col }
+            { row: clickRow - span.top, col: at.col },
+            // A confirmed Codex draft can span more than 400 characters. Bound
+            // navigation to one screen; unverified inputs keep the lower limit.
+            agent === 'codex' ? Math.min(t.cols * t.rows, 10_000) : undefined
           )
           if (!keys) return
           e.preventDefault()

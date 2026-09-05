@@ -214,4 +214,29 @@ for (const row of [CC_FIRST, CC_SECOND, ZSH, BASH, '│ >                  │']
   eq('and ends at its last', box?.bottom, 2)
 }
 
+// Captured from Codex 0.146.0 at 50 columns: no border and no xterm wraps.
+{
+  const draft = ['', '› Alpha bravo charlie delta echo foxtrot golf',
+    '  hotel india juliet kilo lima mike november',
+    '  oscar papa quebec romeo sierra tango uniform',
+    '  victor whiskey xray yankee zulu.', '',
+    '  gpt-6-astra high · ~/Projects/PaneForge-a · lane-a'];
+  const read = r => draft[r] ?? '';
+  for (let cursor = 1; cursor <= 4; cursor++) {
+    const span = composerAt(read, cursor, { codexCols: 50 });
+    eq('Codex draft starts at its own prompt marker', span?.top, 1);
+    eq('Codex draft ends before the blank and status row', span?.bottom, 4);
+    eq('Codex draft uses the actual terminal width', span?.width, 50);
+  }
+  eq('generic shell/output never enables the Codex interpretation', composerAt(read, 4), null);
+  eq('a status row is never part of the draft', composerAt(read, 6, { codexCols: 50 }), null);
+  const menu = ['', '› 1. Update now', '  2. Skip', '', '  Press enter to continue'];
+  eq('Codex update menu is not an editable draft', composerAt(r => menu[r] ?? '', 2, { codexCols: 50 }), null);
+  const long = ['', '› first row', ...Array.from({length: 29}, (_,i) => `  continuation ${i}`), '', '  gpt-6-astra high · ~/project'];
+  for (const cursor of [1, 15, 30]) {
+    const span = composerAt(r => long[r] ?? '', cursor, { codexCols: 50, maxUp: 59, maxDown: 59 });
+    eq('a long visible Codex draft starts at its first row', span?.top, 1);
+    eq('a long visible Codex draft includes its final row', span?.bottom, 30);
+  }
+}
 console.log(`prompt box: ${checks} checks passed`)

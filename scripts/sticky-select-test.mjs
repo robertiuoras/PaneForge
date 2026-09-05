@@ -73,6 +73,9 @@ buildSync({
 })
 const xtermJs = readFileSync(bundle, 'utf8')
 const xtermCss = readFileSync(join(root, 'node_modules', '@xterm', 'xterm', 'css', 'xterm.css'), 'utf8')
+const paneSource = readFileSync(join(root, 'src/renderer/src/components/TerminalPane.tsx'), 'utf8')
+const stopBody = paneSource.match(/const stopForAgent = \(e: MouseEvent\): void => \{([\s\S]*?)\n    \}/)?.[1]
+if (!stopBody) throw new Error('could not read the shipped mouseup policy')
 
 function page() {
   return `<!doctype html><meta charset="utf-8">
@@ -91,7 +94,22 @@ function page() {
   // The two policies, applied to the pane's HOST in the capture phase, which is where
   // TerminalPane registers moveAlongLine.
   let policy = 'none'
-  host.addEventListener('mouseup', (e) => { if (policy === 'always') e.stopPropagation() }, true)
+  const mouseGrabbed = () => term.element.classList.contains('enable-mouse-events')
+  const mouseSelectRef = { current: true }
+  const stopForAgent = (e) => { ${stopBody} }
+  host.addEventListener('mouseup', (e) => {
+    if (policy === 'always') e.stopPropagation()
+    if (policy === 'pane') stopForAgent(e)
+  }, true)
+  host.addEventListener('mousedown', e => {
+    if (policy !== 'pane') return
+    Object.defineProperty(e, 'shiftKey', { value: true })
+    Object.defineProperty(e, 'altKey', { value: true })
+  }, true)
+  window.grabMouse = () => new Promise(resolve => {
+    term.options.macOptionClickForcesSelection = true
+    term.write('\\x1b[?1000h', resolve)
+  })
 
   const screen = () => host.querySelector('.xterm-screen')
   const at = (col, row) => {
@@ -224,6 +242,10 @@ try {
     'letting xterm see the mouseup stops the highlight moving once the button is up',
     `${fixed.dragged.length} chars dragged, ${fixed.after.length} after letting go`
   )
+  await evaluate('window.grabMouse()')
+  const forced = await evaluate('window.run("pane")')
+  ok(forced.dragged.length > 0, 'forced selection works while the CLI holds the mouse')
+  ok(!forced.grew, 'the shipped policy releases forced selection after mouseup', JSON.stringify(forced))
 } finally {
   try {
     ws?.close()
