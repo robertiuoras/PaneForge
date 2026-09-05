@@ -41,7 +41,16 @@ import {
 import { dropReplay, queueReplay } from '../replayQueue'
 import { keepScrollback, keptRows, mayClearScreen } from '../../../shared/keepScrollback'
 import { fileRows, lostRows, screenLost } from '../../../shared/screenLoss'
-import { anchorMark, echoKey, findEcho, onEchoRow, ECHO_SCAN_ROWS, type MarkerHost } from '../../../shared/markAnchor'
+import {
+  anchorMark,
+  echoKey,
+  findEcho,
+  onEchoRow,
+  landingRow,
+  ECHO_SCAN_ROWS,
+  LANDING_LEAD_ROWS,
+  type MarkerHost
+} from '../../../shared/markAnchor'
 import { chipSpot, type ChipBox } from '../../../shared/copyChip'
 import { composerAt, frameAt, inputEnd, inputStart, leadingBlanks, promptTop } from '../../../shared/promptBox'
 import { findPathTokens } from '../../../shared/pathToken'
@@ -1718,9 +1727,27 @@ function TerminalPane({
    */
   const jumpTo = (m: Mark): void => {
     const t = term.current
-    if (!t || m.marker.line < 0) return
-    // One line of lead-in so the prompt itself is not glued to the top edge.
-    t.scrollToLine(Math.max(0, m.marker.line - 1))
+    if (!t) return
+    const at = lineOf(m)
+    if (at < 0) return
+    const b = t.buffer.active
+    const row = (i: number): string | undefined => b.getLine(i)?.translateToString(true)
+    // Where the prompt is DRAWN, which is only the tag's own row while the CLI leaves the
+    // row alone. Codex does not (see shared/markAnchor.ts): its tags keep the composer row
+    // the keystroke happened on, the prompt is repainted elsewhere, and the jump then lands
+    // below it - "the tag does not jump high enough". Bounded by the neighbouring tags so
+    // the search cannot wander into another turn.
+    const i = marks.findIndex((x) => x.id === m.id)
+    const lo = i > 0 ? lineOf(marks[i - 1]) : 0
+    const next = i >= 0 ? marks[i + 1] : undefined
+    const hi = next ? lineOf(next) : b.length
+    const land = landingRow(row, at, m.key, lo, hi)
+    t.scrollToLine(Math.max(0, land - LANDING_LEAD_ROWS))
+    // A verified landing. xterm clamps a scroll it cannot make - the last screen of the
+    // buffer cannot be scrolled to the top - so the row asked for is not always the row
+    // shown, and the press that says "take me to my prompt" is the one gesture where
+    // landing somewhere else and saying nothing is the whole failure.
+    if (land < b.viewportY || land >= b.viewportY + t.rows) t.scrollToLine(land)
     pinned.current = false
     setScrolledUp(true)
     setFlash(m.id)

@@ -35,7 +35,8 @@ buildSync({
   outfile
 })
 const require_ = createRequire(import.meta.url)
-const { anchorMark, echoKey, onEchoRow, findEcho } = require_(outfile)
+const { anchorMark, echoKey, onEchoRow, findEcho, landingRow, rowShowsPrompt, LANDING_SCAN_ROWS } =
+  require_(outfile)
 
 let checks = 0
 const check = (what, ok, detail) => {
@@ -239,6 +240,47 @@ const ERASE_BELOW = '\x1b[5;1H\x1b[J'
   eq('disposing the marker the entry moved off changes nothing', moved, before)
   check('the entry stays on the echo row', entry.marker === fresh && entry.marker.line === at)
   t.dispose()
+}
+
+// ---------------------------------------------------------------------------
+// Landing a jump on the row the prompt is drawn on, with no CLI-specific marker.
+//
+// The Codex shape, measured over this desk's own logs 2026-09-05: no ❯ echo anywhere,
+// so `settleEchoes` never moves the tag, the tag keeps the composer row the keystroke
+// happened on, and the CLI repaints the prompt somewhere else. The CONTROL is the old
+// behaviour - the tag's own row - which must land on something that is not the prompt.
+{
+  const rows = []
+  rows.push('• Booting MCP server: magic (0s • esc to interrupt)')
+  for (let i = 1; i <= 20; i++) rows.push(`  reply line ${i}`)
+  rows.push('')
+  // Codex's repaint of the submitted ask - no marker of any kind in front of it.
+  rows.push('  fix the header so the clock stops moving')
+  for (let i = 1; i <= 30; i++) rows.push(`  • Ran step ${i}`)
+  rows.push('› Implement {feature}')
+  // The tag sits on the composer row, which is where the keystroke happened.
+  const at = rows.length - 1
+  rows.push('  229K used · gpt-5.6-sol')
+  const row = (i) => rows[i]
+  const key = echoKey('fix the header so the clock stops moving')
+  eq('the key is the first 24 characters', key, 'fix the header so the cl')
+  check('control: the tag row is not the prompt', !rowShowsPrompt(row(at), key), row(at))
+  const land = landingRow(row, at, key, 0, rows.length)
+  eq('the jump lands on the row Codex drew the prompt on', land, 22)
+  check('which is ABOVE the tag, so the old jump was below the prompt', land < at, `${land} vs ${at}`)
+  eq('a tag already on its prompt stays put', landingRow(row, 22, key, 0, rows.length), 22)
+  eq(
+    'an unknown prompt leaves the jump where it was',
+    landingRow(row, at, echoKey('never typed this'), 0, rows.length),
+    at
+  )
+  eq('a tag with no key at all is left alone', landingRow(row, at, '', 0, rows.length), at)
+  // The bound is the neighbouring tags: the same words inside an earlier turn may not win.
+  eq('the search will not cross into the previous turn', landingRow(row, at, key, 25, rows.length), at)
+  // A Claude Code pane still lands on its own echo row through the same function.
+  const echoRows = ['', '❯ what is 2+2', '4', '', 'composer']
+  eq('an echoed prompt is found the same way', landingRow((i) => echoRows[i], 4, echoKey('what is 2+2'), 0, 5), 1)
+  check('the scan is bounded', LANDING_SCAN_ROWS > 0 && LANDING_SCAN_ROWS <= 2000, String(LANDING_SCAN_ROWS))
 }
 
 console.log(`mark anchor: ${checks} checks passed`)

@@ -173,3 +173,73 @@ export function anchorMark(
     })
   })
 }
+
+// ---------------------------------------------------------------------------
+// Landing a jump on the row the prompt is actually drawn on.
+//
+// `jumpTo` used to be `scrollToLine(mark.line - 1)` and nothing else: a fixed lead-in, no
+// check that the prompt reached the screen. That is right exactly while the tag's row IS
+// the prompt's row, which is what `settleEchoes` above is for - and `settleEchoes` can only
+// move a tag it can RECOGNISE, which means `promptEcho`, which means Claude Code's `❯`.
+//
+// Codex draws no such line. Measured over this desk's own history logs 2026-09-05 (15 Codex
+// panes, the four largest 3.9-8.4 MB): the only `›` rows are the composer's placeholder
+// (`› Implement {feature}`) and the trust dialog's numbered options - not one echo of a
+// submitted prompt in the shape `promptEcho` reads. So in a Codex pane every tag keeps the
+// row the KEYSTROKE happened on, the CLI repaints that region (`CSI J`, see the top of this
+// file), and the prompt ends up drawn somewhere else entirely. The jump then lands BELOW
+// the prompt, which is the report: "the tag does not jump high enough, especially for
+// codex".
+//
+// The fix is not a bigger lead-in - a constant tuned on one pane is wrong on the next one.
+// It is to verify the landing against the one thing that identifies the prompt, its own
+// text, and that needs no CLI-specific marker: a row that CONTAINS the key is this prompt's
+// row whether the CLI decorated it or not. The search is bounded by the neighbouring tags,
+// so a prompt quoted back inside a different turn cannot win, and nearest-first with up
+// before down, because a prompt block is drawn starting above its own tag.
+//
+// Nothing is moved: `landingRow` answers where to scroll and leaves the marker alone.
+// Re-anchoring is `settleEchoes`' job, and a jump is a read.
+
+/** How far either side of a tag its prompt is looked for. */
+export const LANDING_SCAN_ROWS = 400
+/**
+ * Rows kept above the prompt when jumping to it. Both CLIs put a blank row above a prompt
+ * block; landing one row into it is what makes the prompt read as the start of a turn
+ * rather than the continuation of the answer above.
+ */
+export const LANDING_LEAD_ROWS = 2
+
+/** Whether this buffer row is where `key`'s prompt is drawn - echoed, or plainly printed. */
+export function rowShowsPrompt(row: string | undefined, key: string): boolean {
+  if (!row || !key) return false
+  if (onEchoRow(row, key)) return true
+  return row.replace(/\s+/g, ' ').trim().includes(key)
+}
+
+/**
+ * The row a jump to a tag on row `at` should land on: the tag's own row when it still
+ * carries the prompt, else the nearest row between `lo` and `hi` that does, else `at`
+ * itself - a tag whose prompt has scrolled out of the buffer still jumps where it always
+ * did.
+ */
+export function landingRow(
+  row: (i: number) => string | undefined,
+  at: number,
+  key: string,
+  lo: number,
+  hi: number
+): number {
+  if (at < 0 || !key) return at
+  if (rowShowsPrompt(row(at), key)) return at
+  const top = Math.max(lo, at - LANDING_SCAN_ROWS, 0)
+  const bottom = Math.min(hi, at + LANDING_SCAN_ROWS)
+  for (let d = 1; d <= LANDING_SCAN_ROWS; d++) {
+    const up = at - d
+    if (up >= top && rowShowsPrompt(row(up), key)) return up
+    const down = at + d
+    if (down < bottom && rowShowsPrompt(row(down), key)) return down
+    if (up < top && down >= bottom) break
+  }
+  return at
+}
