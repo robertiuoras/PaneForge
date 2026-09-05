@@ -82,6 +82,27 @@ try {
   manager.write('pane1', '\x1b[A', 'desk')
   timers.slice(timerStart).find((t) => t.ms === 120).fn()
   assert.equal(live.proc.writes.some((text) => text.includes('/new')), false, 'a draft during the arm lead blocks the clear write')
+
+  for (const [label, mutate] of [
+    ['a submitted turn', (pane) => { pane.meta.drafting = undefined; pane.meta.runSince = Date.now() }],
+    ['a live question', (pane) => { pane.meta.drafting = undefined; pane.meta.ask = { question: 'choose' } }]
+  ]) {
+    const manager = new SessionManager()
+    const started = manager.start({ cwd: root, agent: 'codex' })
+    const live = manager.sessions.get(started.id)
+    live.meta.id = 'pane1'
+    manager.sessions.delete(started.id)
+    manager.sessions.set('pane1', live)
+    live.meta.lastOutput = NOW - 10_000
+    live.meta.runSince = undefined
+    global.__pfHandoff = valid()
+    const start = timers.length
+    manager.armAutoClear('pane1', ask)
+    timers.slice(start).find((t) => t.ms === 1000).fn()
+    mutate(live)
+    timers.slice(start).find((t) => t.ms === 120).fn()
+    assert.equal(live.proc.writes.some((text) => text.includes('/new')), false, `${label} during the arm lead blocks /new`)
+  }
   console.log('autoclear manager: delayed handoff and draft guards behaved')
 } finally {
   global.setTimeout = realTimers

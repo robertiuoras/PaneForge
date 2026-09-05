@@ -2308,9 +2308,6 @@ export class SessionManager extends EventEmitter {
         return
       }
       const chunks = live!.meta.autoClearChunks ?? clearChunks(live!.meta.autoClearPrompt ?? '')
-      this.clearAutoClearMeta(live!)
-      this.setAutoClearOutcome(id, 'cleared')
-      this.emitSessions()
       // The keeper that pushes the screen into scrollback ahead of the CLI's clear is fed
       // by KEYSTROKES (`feedInput` in TerminalPane), and nothing here is a keystroke: this
       // writes straight to the pty, so the renderer never saw the `/clear` and never
@@ -2325,14 +2322,31 @@ export class SessionManager extends EventEmitter {
       const t = setTimeout(() => {
         const current = this.sessions.get(id)
         if (!current) return acLog(`${id} clear skipped: pane gone`)
-        // The arm lead is deliberately long enough for the renderer to preserve the tail.
-        // A person can still recall history during it, leaving an empty legacy shadow but
-        // an uncertain draft. Never append `/new` or `/clear` to that line.
-        if (dropFor({ ...current.meta, typed: current.typed }) === 'drafting') {
-          this.setAutoClearOutcome(id, 'stood down - there is an unsent line in the box')
+        // The lead is long enough for the renderer to file the tail. Re-read ALL state
+        // before writing: a person may submit, open a question, or recall a history line
+        // in this window. The clear is not complete until its command reaches the pty.
+        const late = dropFor({ ...current.meta, typed: current.typed })
+        if (late === 'drafting') {
+          const next = Date.now() + DRAFT_RETRY_MS
+          current.meta.autoClearAt = next
+          const again = setTimeout(() => fire(next), DRAFT_RETRY_MS)
+          again.unref?.()
+          this.autoClearTimers.set(id, again)
           this.emitSessions()
-          return acLog(`${id} clear skipped: ${dropWords('drafting')}`)
+          return acLog(`${id} clear waiting: ${dropWords(late)}`)
         }
+        if (late === 'working') {
+          this.autoClearPending.set(id, ask)
+          this.cancelAutoClear(id, late)
+          return acLog(`${id} clear requeued: ${dropWords(late)}`)
+        }
+        if (late) {
+          this.cancelAutoClear(id, late)
+          return acLog(`${id} clear skipped: ${dropWords(late)}`)
+        }
+        this.clearAutoClearMeta(current)
+        this.setAutoClearOutcome(id, 'cleared')
+        this.emitSessions()
         acLog(`${id} typing ${JSON.stringify(clearCmd)}`)
         this.write(id, clearCmd, 'app')
         // Everything after the clear goes through the machinery that already knows how to
