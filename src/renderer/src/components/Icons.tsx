@@ -116,8 +116,8 @@ export function RemoteIcon(p: IconProps): JSX.Element {
 export function GearIcon(p: IconProps): JSX.Element {
   return (
     <Svg {...p}>
-      <circle cx="8" cy="8" r="2.1" />
-      <path d="M8 1.4v1.7M8 12.9v1.7M14.6 8h-1.7M3.1 8H1.4M12.7 3.3l-1.2 1.2M4.5 11.5l-1.2 1.2M12.7 12.7l-1.2-1.2M4.5 4.5 3.3 3.3" />
+      <circle cx="8" cy="8" r="2.2" />
+      <path d="M6.5 1h3l.5 2 1.2.7 2-.6 1.5 2.6-1.5 1.5v1.6l1.5 1.5-1.5 2.6-2-.6-1.2.7-.5 2h-3L6 13l-1.2-.7-2 .6-1.5-2.6 1.5-1.5V7.2L1.3 5.7l1.5-2.6 2 .6L6 3z" />
     </Svg>
   )
 }
