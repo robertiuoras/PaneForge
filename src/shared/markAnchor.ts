@@ -215,7 +215,7 @@ export const LANDING_LEAD_ROWS = 2
 export function rowShowsPrompt(row: string | undefined, key: string): boolean {
   if (!row || !key) return false
   if (onEchoRow(row, key)) return true
-  return row.replace(/\s+/g, ' ').trim().includes(key)
+  return row.replace(/\s+/g, ' ').trim().startsWith(key)
 }
 
 /**

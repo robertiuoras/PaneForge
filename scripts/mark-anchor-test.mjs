@@ -294,7 +294,7 @@ const ERASE_BELOW = '\x1b[5;1H\x1b[J'
   rows[45] = '› Implement {feature}'
   const row = (i) => rows[i]
   eq('an earlier prompt beats a nearer quoted reply', landingRow(row, 45, key, 0, rows.length), 10)
-  eq('a match before the lower neighbour is excluded', landingRow(row, 45, key, 11, rows.length), 40)
+  eq('a match before the lower neighbour is excluded', landingRow(row, 45, key, 11, rows.length), 45)
   eq('a match at the upper neighbour is excluded', landingRow(row, 45, key, 0, 40), 10)
   eq('matches before, at, and after the bounds are excluded', landingRow(row, 45, key, 11, 40), 45)
 }
@@ -310,6 +310,7 @@ const ERASE_BELOW = '\x1b[5;1H\x1b[J'
   const currentPrompt = 20
   const currentTag = 45
   rows[previousTag] = '  please repeat this exact sentence from the previous prompt'
+  rows[15] = '  You asked: please repeat this exact sentence from the previous prompt'
   rows[currentPrompt] = `  ${prompt}`
   rows[currentTag] = '› Implement {feature}'
   const row = (i) => rows[i]
@@ -320,6 +321,11 @@ const ERASE_BELOW = '\x1b[5;1H\x1b[J'
   )
   eq(
     'the caller excludes the preceding tag row before finding the current prompt',
+    landingRow(row, currentTag, key, previousTag + 1, rows.length),
+    currentPrompt
+  )
+  eq(
+    'a preceding reply quoting the key is not mistaken for the current prompt',
     landingRow(row, currentTag, key, previousTag + 1, rows.length),
     currentPrompt
   )
