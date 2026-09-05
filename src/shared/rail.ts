@@ -27,7 +27,7 @@
 // actually is instead of dragging everything below it downward.
 
 /** The drawn bar's height, in px (`.mark` in TerminalPane.css). */
-export const BAR = 5
+export const BAR = 8
 /** The most a tag is moved off its true position to clear its neighbour. */
 export const MAX_SEP = 12
 /** The most hit box a tag grows on each side - what an isolated tag has always had. */

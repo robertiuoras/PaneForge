@@ -81,10 +81,11 @@ if (trimPlan) {
 // lines of a four-thousand-line conversation is a pane you still cannot scroll up in,
 // which is what Robert reported a second time on 2026-08-28.
 const pane = readFileSync(new URL('../src/renderer/src/components/TerminalPane.tsx', import.meta.url), 'utf8')
-const rd = /const redrawHistory = async[\s\S]{0,600}/.exec(pane)?.[0] ?? ''
-ok('the re-render reads the log on disk, not the 400 KB live replay', /api\.paneLog\(sessionId, REDRAW_BYTES\)/.test(rd), JSON.stringify(rd.slice(0, 140)))
-ok('...with getBuffer kept only as the fallback', /paneLog\([^)]*\)\)\s*\|\|\s*\(await api\.getBuffer/.test(rd))
-ok('the budget is big enough to be worth the round trip', /REDRAW_BYTES = 4_000_000/.test(pane))
+const rd = pane.slice(pane.indexOf('const redrawHistory = async'), pane.indexOf('paneRedraw.set(sessionId'))
+const main = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+ok('the re-render requests an ordered full-history replay', rd.includes('api.replayHistory(sessionId)'))
+ok('main reads disk history with a live buffer fallback', main.includes('history.tail(id, 4 * 1024 * 1024) || manager.buffer(id)'))
+ok('the renderer cannot erase output by resetting around an asynchronous log read', !rd.includes('t.reset()') && !rd.includes('api.paneLog'))
 
 // A controlled transcript with both retained lines and in-place progress repaints.
 // An arbitrary user's latest log may clear its screen near the end, so its two tails

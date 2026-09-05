@@ -309,6 +309,23 @@ export class RemoteClient extends EventEmitter {
     return this.ask<BackJob[]>({ t: 'jobs' }, 20_000)
   }
 
+  /** The owning machine's disk transcript, not this mirror's 400 KB live tail. */
+  log(localId: string, bytes?: number): Promise<string> {
+    return this.ask<string>({ t: 'log', id: localId, bytes }, 15_000).catch((err: Error) => {
+      throw new Error(`${this.peer.name} cannot provide remote history: ${err.message}`)
+    })
+  }
+
+  /**
+   * Replace one mirror from the owner's transcript in wire order. Unlike `log`, this
+   * deliberately emits reset before resolving, so callers never race a later data frame.
+   */
+  replayHistory(localId: string): Promise<boolean> {
+    return this.ask<boolean>({ t: 'replay', id: localId }, 15_000).catch((err: Error) => {
+      throw new Error(`${this.peer.name} cannot replay remote history: ${err.message}`)
+    })
+  }
+
   /**
    * Save files beside a mirrored pane, on the device that owns it.
    *
@@ -529,6 +546,21 @@ export class RemoteClient extends EventEmitter {
       case 'jobslist':
         this.settle(m, m.list)
         return
+      case 'log':
+        this.settle(m, Buffer.from(String(m.data ?? ''), 'base64').toString('utf8'))
+        return
+      case 'replay': {
+        const id = String(m.id ?? '')
+        const raw = Buffer.from(String(m.data ?? ''), 'base64').toString('utf8')
+        const buffer = new OutBuffer(BUFFER_LIMIT)
+        buffer.push(raw)
+        this.buffers.set(id, buffer)
+        // Keep this synchronous and before settle: any later data frame appends after
+        // this reset, while the renderer writes the full snapshot it receives here.
+        this.emit('reset', joinId(this.peer.id, id), raw)
+        this.settle(m, true)
+        return
+      }
       case 'filesdone':
         this.settle(m, m.result)
         return

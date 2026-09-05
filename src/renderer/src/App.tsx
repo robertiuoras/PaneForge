@@ -1036,6 +1036,8 @@ export default function App(): JSX.Element {
   const restoreFocus = useCallback(() => {
     const el = document.activeElement as HTMLElement | null
     if (el && (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable)) return
+    // The prompt disclosure and its summary retain keyboard navigation after a jump.
+    if (el?.closest('.prompt-index')) return
     // `.login-screen.typing` is the far machine's picture with the keyboard: a click on
     // it must not hand the caret straight back to the pane, or every letter is typed twice
     // - once on the other computer and once at the local prompt.

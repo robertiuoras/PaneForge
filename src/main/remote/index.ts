@@ -221,6 +221,22 @@ export class Remote extends EventEmitter {
     return this.clients.get(cut.peer)?.buffer(cut.local) ?? ''
   }
 
+  /** Ask the owning machine for disk history; live buffers intentionally retain less. */
+  log(id: string, bytes?: number): Promise<string> {
+    const cut = splitId(id)
+    const client = cut && this.clients.get(cut.peer)
+    if (!client) return Promise.reject(new Error('That device is not connected'))
+    return client.log(cut.local, bytes)
+  }
+
+  /** Replace a remote mirror from the owner's transcript without racing live output. */
+  replayHistory(id: string): Promise<boolean> {
+    const cut = splitId(id)
+    const client = cut && this.clients.get(cut.peer)
+    if (!client) return Promise.reject(new Error('That device is not connected'))
+    return client.replayHistory(cut.local)
+  }
+
   /** Forward a pane message to the device that owns it. Silent if it went away. */
   send(id: string, msg: Msg): void {
     const cut = splitId(id)
@@ -768,7 +784,7 @@ export class Remote extends EventEmitter {
     })
     client.on('data', (sessionId: string, data: string) => this.emit('data', sessionId, data))
     client.on('typed', (sessionId: string, line: string, origin: string) => this.emit('typed', sessionId, line, origin))
-    client.on('reset', (sessionId: string) => this.emit('reset', sessionId))
+    client.on('reset', (sessionId: string, snapshot?: string) => this.emit('reset', sessionId, snapshot))
     client.on('attention', (s: Session) => this.emit('attention', s))
     client.on('status', () => this.changed())
   }

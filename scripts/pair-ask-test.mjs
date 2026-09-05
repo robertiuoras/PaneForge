@@ -98,6 +98,7 @@ function backend() {
     projects: async () => [],
     agents: async () => [],
     onData: () => () => {},
+    onTyped: () => () => {},
     onSessions: () => () => {},
     onAttention: () => () => {}
   }

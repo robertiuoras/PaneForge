@@ -653,6 +653,8 @@ ok(!server.running, 'the gate test server stopped cleanly')
     // only (`tourAllowed`). It touches no real chat: every id it writes or removes carries
     // the `tour-example-` prefix.
     'app:tourSample',
+    // Replays existing output into the viewer. Starts no process and sends no pty input.
+    'sessions:replay',
     'app:quitIdle', 'sessions:buffer', 'sessions:log', 'drive:stop', 'drive:list',
     'drive:clear', 'goal:list', 'goal:cancel', 'goal:remove', 'goal:clear', 'config:get',
     'config:pickRoot', 'sounds:add', 'sounds:data', 'sounds:remove', 'sounds:rename',

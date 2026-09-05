@@ -318,12 +318,6 @@ export const paneRepair = new Map<string, () => void>()
  * cheap and runs on its own (a restore, a font change), this one rewrites the whole buffer
  * and only ever runs because somebody pressed Fix. See `redrawHistory`.
  */
-/**
- * How much of a pane's own log a re-render reads back. See `redrawHistory` for the table
- * this number came off; 4 MB is where the rows-recovered curve goes flat on a real pane.
- */
-export const REDRAW_BYTES = 4_000_000
-
 export const paneRedraw = new Map<string, () => Promise<boolean>>()
 
 /** Per-pane render counter, exposed on the window for probes. See the component body. */
@@ -1806,7 +1800,19 @@ function TerminalPane({
     const at = lineOf(m)
     if (at < 0) return
     const b = t.buffer.active
-    const row = (i: number): string | undefined => b.getLine(i)?.translateToString(true)
+    const cursor = b.baseY + b.cursorY
+    const composer = agent === 'codex'
+      ? composerAt((row) => b.getLine(row)?.translateToString(true) ?? '', cursor, { codexCols: t.cols, maxUp: t.rows, maxDown: t.rows })
+      : null
+    const row = (i: number) => {
+      const line = b.getLine(i)
+      if (!line) return undefined
+      return {
+        text: line.translateToString(true),
+        background: line.getCell(0)?.getBgColor(),
+        active: Boolean(composer && i >= composer.top && i <= composer.bottom)
+      }
+    }
     // Where the prompt is DRAWN, which is only the tag's own row while the CLI leaves the
     // row alone. Codex does not (see shared/markAnchor.ts): its tags keep the composer row
     // the keystroke happened on, the prompt is repainted elsewhere, and the jump then lands
@@ -1818,7 +1824,7 @@ function TerminalPane({
     const lo = i > 0 ? lineOf(marks[i - 1]) + 1 : 0
     const next = i >= 0 ? marks[i + 1] : undefined
     const hi = next ? lineOf(next) : b.length
-    const land = landingRow(row, at, m.key, lo, hi)
+    const land = landingRow(row, at, m.key, lo, hi, agent === 'codex' ? 'codex' : 'claude')
     t.scrollToLine(Math.max(0, land - LANDING_LEAD_ROWS))
     // A verified landing. xterm clamps a scroll it cannot make - the last screen of the
     // buffer cannot be scrolled to the top - so the row asked for is not always the row
@@ -2397,12 +2403,29 @@ function TerminalPane({
     const seedMarks = (): void => {
       const b = t.buffer.active
       const cursor = b.baseY + b.cursorY
-      const rows: string[] = []
-      for (let i = 0; i < cursor; i++) rows.push(b.getLine(i)?.translateToString(true) ?? '')
+      // A Codex composer may start on the row before the cursor when it wraps. That first
+      // row used to be scanned as history and seeded as a false submitted prompt.
+      const composer = agent === 'codex'
+        ? composerAt(
+            (row) => b.getLine(row)?.translateToString(true) ?? '',
+            cursor,
+            { codexCols: t.cols, maxUp: t.rows, maxDown: t.rows }
+          )
+        : null
+      const rows: Array<{ text: string; wrapped: boolean; background?: number; active: boolean }> = []
+      for (let i = 0; i < cursor; i++) {
+        const line = b.getLine(i)
+        rows.push({
+          text: line?.translateToString(true) ?? '',
+          wrapped: Boolean(line?.isWrapped),
+          background: line?.getCell(0)?.getBgColor(),
+          active: Boolean(composer && i >= composer.top && i <= composer.bottom)
+        })
+      }
       // One tag per prompt, on the copy that is still in the right place - see
       // `seedPrompts`. Row by row this gave three tags for one ask and a tag on a line of
       // test output, because a replayed screen holds every repaint of the prompt block.
-      const found = seedPrompts(rows)
+      const found = seedPrompts(rows, agent === 'codex' ? 'codex' : 'claude')
       const known = new Set(list.map((entry) => entry.key))
       // Same cap as the live rail, and the same end of the list: past this many the tags
       // are a solid bar, and the newest are the ones being looked for.
@@ -2546,7 +2569,7 @@ function TerminalPane({
         }
         const rows: string[] = []
         for (let i = from; i <= cursor; i++) rows.push(b.getLine(i)?.translateToString(true) ?? '')
-        const said = completedSlash(m.full, rows)
+        const said = completedSlash(m.full, rows, agent === 'codex' ? 'codex' : 'claude')
         if (said === null) continue
         m.pending = false
         if (said !== m.full) {
@@ -2604,23 +2627,36 @@ function TerminalPane({
     const ECHO_TRIES = 5
     let echoLen = -1
     const settleEchoes = (): void => {
+      if (!list.length) return
       const b = t.buffer.active
       if (b.length !== echoLen) {
         echoLen = b.length
         for (const m of list) m.tries = 0
       }
-      const row = (i: number): string | undefined => b.getLine(i)?.translateToString(true)
+      const cursor = b.baseY + b.cursorY
+      const composer = agent === 'codex'
+        ? composerAt((row) => b.getLine(row)?.translateToString(true) ?? '', cursor, { codexCols: t.cols, maxUp: t.rows, maxDown: t.rows })
+        : null
+      const row = (i: number) => {
+        const line = b.getLine(i)
+        if (!line) return undefined
+        return {
+          text: line.translateToString(true),
+          background: line.getCell(0)?.getBgColor(),
+          active: Boolean(composer && i >= composer.top && i <= composer.bottom)
+        }
+      }
       for (let k = 0; k < list.length; k++) {
         const m = list[k]
         if (!m.key || m.pending || m.marker.line < 0) continue
-        if (onEchoRow(row(m.marker.line), m.key)) continue
+        if (onEchoRow(row(m.marker.line), m.key, agent === 'codex' ? 'codex' : 'claude')) continue
         if ((m.tries ?? 0) >= ECHO_TRIES) continue
         m.tries = (m.tries ?? 0) + 1
         const next = list[k + 1]
         const to = next && next.marker.line > m.marker.line ? next.marker.line : b.length
         const prev = k > 0 ? list[k - 1].marker.line : -1
         const from = Math.max(prev, to - ECHO_SCAN_ROWS - 1)
-        const at = findEcho(row, from, to, m.key)
+        const at = findEcho(row, from, to, m.key, agent === 'codex' ? 'codex' : 'claude')
         if (at < 0 || at === m.marker.line) continue
         const fresh = t.registerMarker(at - (b.baseY + b.cursorY))
         if (!fresh || fresh.line < 0) continue
@@ -3476,10 +3512,10 @@ function TerminalPane({
         // So a restored pane came back with 30.8% of its own prompts tagged, and a third
         // of them came back with none: "the tag to scroll to my prompt does nothing" is
         // most of the time "the prompt was never replayed". `redrawHistory` already reads
-        // the LOG at `REDRAW_BYTES` (4 MB) and re-seeds off it - 118 ms once, measured -
+        // the LOG at the 4 MiB replay budget and re-seeds off it - 118 ms once, measured -
         // so a pane whose rail came back empty is given that one deeper draw. Only then:
         // a rail with tags on it has what it needs, and this must not cost every pane.
-        if (!mirrorRef.current && !list.length && !deepSeeded.current) {
+        if (!list.length && !deepSeeded.current) {
           deepSeeded.current = true
           // A hidden pane cannot be measured and is not being read; it gets the deeper
           // draw the moment somebody presses Fix, or reopens it.
@@ -3708,9 +3744,21 @@ function TerminalPane({
     })
 
     // A prompt typed by the app or by a phone: main saw the bytes, this window did not.
+    // A remote host flushes batched PTY bytes before it sends `pane:typed`, but xterm
+    // parses those bytes asynchronously. Hold the prompt record until that write has
+    // landed, or its marker reads the cursor from the older frame. This is deliberately
+    // only for streamed data: local input already made its own mark synchronously.
+    let pendingDataWrites = 0
+    const pendingTyped: { line: string; origin: 'app' | 'person' }[] = []
+    const drainTyped = (): void => {
+      if (pendingDataWrites || dead) return
+      for (const item of pendingTyped.splice(0))
+        noteSubmitted(item.line, item.origin === 'app' ? 'app' : 'person')
+    }
     const offTyped = api.onPaneTyped((id, line, origin) => {
       if (id !== sessionId) return
-      noteSubmitted(line, origin === 'app' ? 'app' : 'person')
+      pendingTyped.push({ line, origin: origin === 'app' ? 'app' : 'person' })
+      drainTyped()
     })
 
     const offHandover = api.onPaneHandover((id, until) => {
@@ -3748,10 +3796,14 @@ function TerminalPane({
       } finally {
         readingSnapshot = false
       }
+      pendingDataWrites++
       t.write('\x1bc' + bytes, () => {
+        pendingDataWrites--
+        if (dead) return
         if (wasPinned) t.scrollToBottom()
         else t.scrollToLine(Math.max(0, t.buffer.active.baseY - tailGap))
         seedMarks()
+        drainTyped()
       })
     })
 
@@ -3773,6 +3825,7 @@ function TerminalPane({
       // line lands in scrollback the scrollbar already believes it has reached, the turn
       // looks finished, and only a keypress brings it back (scrollOnUserInput doing what the
       // write should have). Intent cannot drift, so this recovers by itself.
+      pendingDataWrites++
       t.write(keep(data), () => {
         // A wipe is judged once its redraw stops, not on a fixed delay: a banner drawn in
         // three bursts must not be compared with the screen half way through it.
@@ -3781,6 +3834,8 @@ function TerminalPane({
         // Same callback so the rail is measured against a buffer that has already grown,
         // rather than one write behind it.
         bumpTotal()
+        pendingDataWrites--
+        drainTyped()
       })
     })
 
@@ -3886,48 +3941,44 @@ function TerminalPane({
      *
      * So the recovery a regrow ran was giving a pane back about a HUNDRED lines of a
      * conversation with four thousand in it, which reads from the outside as "I still
-     * cannot scroll up" - and 40x more history costs 51 ms once. `REDRAW_BYTES` is 4 MB
+     * cannot scroll up" - and 40x more history costs 51 ms once. The replay budget is 4 MiB
      * rather than the log's own 8 MB cap because the curve is flat past the file's real
      * size and this runs on the UI thread.
      *
-     * `paneLog` falls back to main's buffer by itself when there is no log on disk (a
-     * mirrored pane, a fresh install), so there is no second path to keep in step.
+     * The session owner falls back to its live buffer when it has no saved log. Remote
+     * recovery uses the same ordered snapshot path as local recovery.
      */
+    let redrawingHistory = false
     const redrawHistory = async (): Promise<boolean> => {
-      if (mirrorRef.current) return false
-      const b = (await api.paneLog(sessionId, REDRAW_BYTES)) || (await api.getBuffer(sessionId))
-      if (!b) return false
-      noteFix('redraw')
-      // Fix is a person at the machine that owns this pty, so it takes the pane's size
-      // back before it re-renders. A borrow from a paired device never expires on a clock
-      // (`Borrow.at` is 0 for a mirror), and while one is held every desk resize below -
-      // `reshape` included - is swallowed by `resize` in sessions.ts. So a pane clamped to
-      // a mirror's grid redrew at that grid for ever, which is the black margin down the
-      // right-hand side of an otherwise healthy pane.
-      api.takePaneSize(sessionId)
+      if (redrawingHistory || dead) return false
+      redrawingHistory = true
       const back = t.cols
       const wide = Math.max(back, replayColsRef.current ?? 0, START_COLS)
-      // Every tag is anchored INTO the buffer the reset below throws away: a marker whose
-      // line is gone reports -1 and stops moving, so the rail keeps drawing tags that
-      // scroll nowhere - "the tags do nothing" after a Fix. They are dropped here rather
-      // than left, which is also what lets `seedMarks` run at the end: it refuses a rail
-      // that is not empty, so without this the deeper draw re-seeded nothing.
-      for (const m of list.splice(0)) m.marker.dispose()
-      publish()
       try {
+        // Finish already queued terminal writes before changing their painted width.
+        await new Promise<void>(resolve => t.write('', resolve))
+        if (dead) return false
+        noteFix('redraw')
+        if (!mirrorRef.current) api.takePaneSize(sessionId)
         replaying.current = true
-        t.reset()
         if (wide !== back) t.resize(wide, t.rows)
-        await new Promise<void>((res) => t.write(keep(b), () => res()))
-        if (wide !== back) t.resize(back, t.rows)
+        // Main delivers the snapshot through the same ordered reset/data stream. Reading
+        // a log here and then resetting could erase output that arrived during that read.
+        const restored = await api.replayHistory(sessionId)
+        if (dead) return false
+        await new Promise<void>(resolve => t.write('', resolve))
+        return restored
+      } catch (error) {
+        if (!dead) say(error instanceof Error ? error.message : 'History is unavailable from that device')
+        return false
       } finally {
+        redrawingHistory = false
         replaying.current = false
+        if (!dead) {
+          if (wide !== back) t.resize(back, t.rows)
+          reshape(t, f)
+        }
       }
-      reshape(t, f)
-      t.scrollToBottom()
-      setScrolledUp(false)
-      seedMarks()
-      return true
     }
     paneRedraw.set(sessionId, redrawHistory)
     paneRepair.set(sessionId, repair)
@@ -4826,6 +4877,29 @@ function TerminalPane({
           className="mark-rail"
           style={{ top: track.top, height: track.height || undefined, right: track.right }}
         >
+          <details className="prompt-index" onKeyDown={event => {
+            if (event.key !== 'Escape') return
+            event.preventDefault()
+            event.stopPropagation()
+            event.currentTarget.open = false
+            event.currentTarget.querySelector('summary')?.focus()
+          }}>
+            <summary>Prompts · {marks.length}</summary>
+            <div className="prompt-index-list">
+              {marks.map((mark, index) => <button
+                key={mark.id}
+                title={markLabel(mark, Math.max(railNow, mark.at))}
+                onClick={event => {
+                  jumpTo(mark)
+                  const details = event.currentTarget.closest('details')
+                  if (details) {
+                    details.open = false
+                    details.querySelector('summary')?.focus()
+                  }
+                }}
+              >{index + 1}. {mark.text}</button>)}
+            </div>
+          </details>
           {placed.map((p, i) => {
             if (!p) return null
             const { mark: m, top, hitUp, hitDown } = p

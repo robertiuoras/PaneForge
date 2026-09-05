@@ -80,6 +80,8 @@ function backend() {
     { id: 's2', title: 'jarvis', cwd: '/w/jarvis', agent: 'codex', status: 'working', lastOutput: 0, createdAt: 0, cols: 80, rows: 24 }
   ]
   const buffers = { s1: 'SECRET-SCROLLBACK-s1', s2: '' }
+  const histories = { ...buffers }
+  let logCalls = 0
   const typed = []
   // What a mirror asked this desk to do to the SIZE of its own panes.
   const resized = []
@@ -100,9 +102,14 @@ function backend() {
     resized,
     returned,
     started,
+    setHistory(id, data) {
+      histories[id] = data
+    },
+    logCalls: () => logCalls,
     sessions,
     emitData(id, data) {
       buffers[id] = (buffers[id] ?? '') + data
+      histories[id] = (histories[id] ?? '') + data
       for (const cb of listeners.data) cb(id, data)
     },
     emitTyped(id, line, origin = 'person') {
@@ -117,7 +124,14 @@ function backend() {
     api: {
       list: () => sessions,
       buffer: (id) => buffers[id] ?? '',
-      write: (id, data) => typed.push([id, data]),
+      log: (id, bytes) => {
+        logCalls++
+        return (histories[id] ?? '').slice(-bytes)
+      },
+      write: (id, data) => {
+        typed.push([id, data])
+        if (data.endsWith('\r')) for (const cb of listeners.typed) cb(id, data.trim(), 'phone')
+      },
       resize: (id, cols, rows, borrowed, viewer) =>
         resized.push([id, cols, rows, borrowed === true, viewer]),
       returnSize: (id, viewer) => returned.push([id, viewer]),
@@ -261,9 +275,10 @@ async function main() {
   let resets = 0
   const seen = []
   const prompts = []
+  const ordered = []
   client.on('reset', () => resets++)
-  client.on('data', (id, data) => seen.push([id, data]))
-  client.on('typed', (id, line, origin) => prompts.push([id, line, origin]))
+  client.on('data', (id, data) => { seen.push([id, data]); ordered.push(['data', data]) })
+  client.on('typed', (id, line, origin) => { prompts.push([id, line, origin]); ordered.push(['typed', line]) })
   client.connect()
 
   ok('the right code connects', await until(() => client.status === 'online'), client.error)
@@ -302,11 +317,17 @@ async function main() {
   be.emitData('s2', 'hello from the other machine')
   ok('live output streams through', await until(() => seen.some(([id, d]) => id === '@HOSTID/s2' && d.includes('hello from the other machine'))))
   ok('the mirror keeps its own copy', client.buffer('s2').includes('hello from the other machine'))
+  be.emitData('s2', 'output before the submitted prompt')
   be.emitTyped('s2', 'fix the remote prompt rail')
   ok(
     'a submitted prompt reaches its mirror as authoritative metadata',
     await until(() => prompts.some(([id, line]) => id === '@HOSTID/s2' && line === 'fix the remote prompt rail')),
     JSON.stringify(prompts)
+  )
+  ok(
+    'the preceding PTY batch arrives before its prompt record',
+    ordered.findIndex(([kind, text]) => kind === 'data' && text.includes('output before')) < ordered.findIndex(([kind, text]) => kind === 'typed'),
+    JSON.stringify(ordered)
   )
 
   // A mirror BORROWS the size. Fitting the font is unwinnable when the two windows
@@ -374,9 +395,41 @@ async function main() {
   client.setWatch(['s1', 's2'])
   ok('both are watched again', await until(() => client.list().length === 2))
 
+  // A transcript replay is an ordered reset, not a read followed by a renderer reset.
+  // Keep this fixture synthetic: the real 400 KB captures contain private terminal data.
+  const replayEvents = []
+  client.on('reset', (id, snapshot) => replayEvents.push(['reset', id, snapshot]))
+  client.on('data', (id, data) => replayEvents.push(['data', id, data]))
+  const replayRaw = '.'.repeat(4 * 1024 * 1024 - 128) + ' REPLAY-TAIL'
+  be.setHistory('s1', replayRaw)
+  be.emitData('s1', ' PRE-SNAPSHOT')
+  const replayed = await client.replayHistory('s1')
+  be.emitData('s1', ' POST-SNAPSHOT')
+  ok('a replay request succeeds for a watched remote pane', replayed === true)
+  ok(
+    'host output queued before replay arrives before its reset snapshot',
+    replayEvents.findIndex((e) => e[0] === 'data' && e[2] === ' PRE-SNAPSHOT') < replayEvents.findIndex((e) => e[0] === 'reset'),
+    JSON.stringify(replayEvents.map((e) => [e[0], e[2]?.slice?.(-32) ?? '']))
+  )
+  const reset = replayEvents.findLast((e) => e[0] === 'reset')
+  ok('the reset carries the full owner transcript, beyond the live buffer cap', typeof reset?.[2] === 'string' && reset[2].length > 400_000 && reset[2].endsWith('PRE-SNAPSHOT'))
+  ok('post-snapshot output follows the reset and remains live', await until(() => client.buffer('s1').endsWith('POST-SNAPSHOT')))
+  const beforeTraversal = be.logCalls()
+  const traversal = await client.replayHistory('../outside').then(() => '', (err) => err.message)
+  ok('a replay traversal id is refused before the host reads history', /no longer exists/i.test(traversal) && be.logCalls() === beforeTraversal, traversal)
+  const logTraversal = await client.log('../outside').then(() => '', (err) => err.message)
+  ok('a read-only log traversal is refused before disk access', /no longer exists/i.test(logTraversal) && be.logCalls() === beforeTraversal, logTraversal)
+  const encodedReplay = Buffer.from('.'.repeat(4 * 1024 * 1024)).toString('base64')
+  ok(
+    'a maximum replay response stays below the eight MiB wire frame',
+    Buffer.byteLength(JSON.stringify({ t: 'replay', rid: 1, id: 's1', data: encodedReplay })) < 8 * 1024 * 1024
+  )
+
   // Keystrokes back.
   client.send({ t: 'write', id: 's1', data: 'npm test\r' })
   ok('keystrokes reach the far pty', await until(() => be.typed.some(([id, d]) => id === 's1' && d === 'npm test\r')))
+  await new Promise(resolve => setTimeout(resolve, 60))
+  ok('writing viewer does not receive its own prompt a second time', !prompts.some(([, line]) => line === 'npm test'))
 
   // A finished turn over there raises a hand here.
   let raised = null

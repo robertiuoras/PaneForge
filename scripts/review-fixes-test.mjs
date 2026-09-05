@@ -27,7 +27,7 @@ const check = (ok, what) => {
 // archived a second prompt row for every phone prompt.
 const main = read('src/main/index.ts')
 const typed = main.slice(main.indexOf("manager.on('typed'"), main.indexOf("manager.on('typed'") + 400)
-check(!/(?<![.\w])send\('pane:typed'/.test(main), "`pane:typed` never goes through the broadcast")
+check(!/(?<![.\w])send\('pane:typed'/.test(typed), "local `pane:typed` never goes through the broadcast")
 check(/win!\.webContents\.send\('pane:typed'/.test(typed), 'it goes to the desk window only')
 check(/origin/.test(typed), 'and it carries who typed it')
 

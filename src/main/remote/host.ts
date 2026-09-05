@@ -24,10 +24,14 @@ import type { Project, Session, StartSessionRequest, TurnClock } from '../../sha
 import { WireBatch, type WireFrame } from '../../shared/wireBatch'
 import { Conn, deriveKey, type Msg, type PeerIdentity } from './wire'
 
+/** Four MiB raw stays comfortably below wire.ts's eight MiB encrypted frame once base64 encoded. */
+const HISTORY_BYTES = 4 * 1024 * 1024
+
 /** Everything the host is allowed to do to this app on a guest's behalf. */
 export interface HostBackend {
   list(): Session[]
   buffer(id: string): string
+  log(id: string, bytes: number): string
   write(id: string, data: string): void
   resize(
     id: string,
@@ -248,8 +252,13 @@ export class RemoteHost extends EventEmitter {
     )
     this.unhook.push(
       this.backend.onTyped((id, line, origin) => {
+        // A marker describes the cursor after the bytes that came before its Enter. PTY
+        // data is gathered for throughput, so release that older batch first: otherwise a
+        // fast remote prompt can arrive at the viewer before its preceding output and tag
+        // the wrong row.
+        this.flush(this.batch.drain(id))
         for (const g of this.guests)
-          if (g.attached.has(id)) g.conn.send({ t: 'typed', id, line, origin })
+          if (g !== this.writingGuest && g.attached.has(id)) g.conn.send({ t: 'typed', id, line, origin })
       })
     )
     this.unhook.push(
@@ -375,6 +384,8 @@ export class RemoteHost extends EventEmitter {
       .catch((err: Error) => conn.send({ t: 'failed', rid: m.rid, error: err.message || `${key} failed` }))
   }
 
+  private writingGuest: GuestConn | null = null
+
   private handle(guest: GuestConn, m: Msg): void {
     const conn = guest.conn
     const id = typeof m.id === 'string' ? m.id : ''
@@ -409,7 +420,10 @@ export class RemoteHost extends EventEmitter {
           this.backend.returnSize?.(id, guest.viewerKey(m.viewer))
           return
         case 'write':
-          this.backend.write(id, String(m.data ?? ''))
+          // The writing viewer already registered this prompt from its own keystrokes.
+          this.writingGuest = guest
+          try { this.backend.write(id, String(m.data ?? '')) }
+          finally { this.writingGuest = null }
           return
         case 'resize':
           // A mirror asking to BORROW the size, which is what stops the far end drawing
@@ -541,6 +555,31 @@ export class RemoteHost extends EventEmitter {
           // in `Remote.jobsOn`.
           this.answer(conn, m, this.backend.jobs(), 'jobs', (list) => ({ t: 'jobslist', list }))
           return
+        case 'log': {
+          if (!this.backend.list().some((session) => session.id === id)) {
+            conn.send({ t: 'failed', rid: m.rid, error: 'That pane no longer exists on this device' })
+            return
+          }
+          const bytes = Math.min(Math.max(Number(m.bytes) || 2_000_000, 1), HISTORY_BYTES)
+          conn.send({ t: 'log', rid: m.rid, data: Buffer.from(this.backend.log(id, bytes)).toString('base64') })
+          return
+        }
+        case 'replay': {
+          // This is an operation on an existing pane, never a path lookup. Checking the
+          // host-owned list before touching its transcript also makes an old or malicious
+          // guest's ../ id a clear refusal instead of a surprising disk read.
+          if (!this.backend.list().some((session) => session.id === id)) {
+            conn.send({ t: 'failed', rid: m.rid, error: 'That pane no longer exists on this device' })
+            return
+          }
+          // Drain output that predates this snapshot first. The guest receives those data
+          // frames before reset; all later output follows reset, so a terminal reset never
+          // erases a live frame that arrived after the disk read.
+          this.flush(this.batch.drain(id))
+          const raw = this.backend.log(id, HISTORY_BYTES) || this.backend.buffer(id)
+          conn.send({ t: 'replay', rid: m.rid, id, data: Buffer.from(raw).toString('base64') })
+          return
+        }
         case 'files': {
           // The bytes are written here because here is where the pty is. A refusal is a
           // sentence in the result rather than a `failed` frame: the caller is a person

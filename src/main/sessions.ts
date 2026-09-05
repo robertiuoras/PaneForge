@@ -1396,12 +1396,12 @@ export class SessionManager extends EventEmitter {
     const drafting = !whole.state.certain || whole.state.text.trim().length > 0
     const draftChanged = drafting !== Boolean(live.meta.drafting)
     live.meta.drafting = drafting || undefined
-    if (origin !== 'desk') {
-      // The origin travels with the line. A person typed it on a phone or on a paired
-      // machine; the APP typed `/clear` and an autoclear's resume text, and those must not
-      // arm the keeper a second time or be archived as an ask somebody made.
-      for (const line of whole.submitted)
-        if (line.trim().length > 1) this.emit('typed', id, line, origin)
+    for (const line of whole.submitted) {
+      if (line.trim().length <= 1) continue
+      // Mirrors need owner-desk submissions too. The desk's own renderer already saw
+      // its keystrokes, so keep its narrower `typed` notification separate.
+      this.emit('submitted', id, line, origin)
+      if (origin !== 'desk') this.emit('typed', id, line, origin)
     }
     if (!isTyping(data)) {
       // Terminal chatter - focus reports, cursor/device replies sent when a pane

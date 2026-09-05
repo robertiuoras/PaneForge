@@ -17,7 +17,7 @@
 //
 //   node scripts/scrollback-test.mjs
 
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { buildSync } from 'esbuild'
 import { tmpdir } from 'node:os'
@@ -106,6 +106,11 @@ writeFileSync(join(histDir, 'old.json'), JSON.stringify({ id: 'old', cols: 96 })
 ok(h.tail('old', 1_000) === RAW, 'a whole log under the cap comes back byte for byte', JSON.stringify(h.tail('old', 1_000)))
 ok(h.tail('old', 1_000).includes('\x1b[32m'), 'and it is RAW - a stripped tail would replay as plain text')
 ok(h.tail('nobody-at-all', 1_000) === '', 'a log that does not exist is empty, not a throw')
+writeFileSync(join(histDir, '..', 'outside.log'), 'must stay private')
+writeFileSync(join(histDir, '..', 'outside.json'), '{}')
+ok(h.tail('../outside', 1_000) === '' && h.read('../outside') === '', 'history reads refuse paths outside the history directory')
+try { h.remove('../outside') } catch { /* invalid IDs are rejected */ }
+ok(readFileSync(join(histDir, '..', 'outside.log'), 'utf8') === 'must stay private' && existsSync(join(histDir, '..', 'outside.json')), 'history deletion cannot escape its directory')
 
 const cut = h.tail('old', 20)
 ok(cut.length <= 20, 'a log over the cap is cut to it', `${cut.length}`)

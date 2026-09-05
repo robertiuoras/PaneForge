@@ -14,7 +14,7 @@
   top: 7px;
   bottom: 7px;
   right: 17px;
-  width: 20px;
+  width: 28px;
   /* Only the tags are targets. The rest of the strip is terminal, and swallowing clicks
      over it would put a dead column down the side of every pane. */
   pointer-events: none;
@@ -34,13 +34,13 @@
 .mark {
   position: absolute;
   right: 3px;
-  width: 14px;
-  height: 5px;
+  width: 18px;
+  height: 8px;
   /* Centred on the line it marks rather than hanging below it. */
-  margin-top: -2px;
+  margin-top: -4px;
   padding: 0;
   border: 0;
-  border-radius: 3px;
+  border-radius: 4px;
   /* The agent's own colour, so a grid of panes still reads as separate agents. */
   background: var(--agent, #8b8b99);
   opacity: 0.6;
@@ -57,7 +57,7 @@
   opacity: 1;
 }
 .mark:hover {
-  width: 19px;
+  width: 24px;
 }
 
 /* The bar has to stay thin - eighty of them at 15px would be a wall down the pane, not a
@@ -102,7 +102,7 @@
   border-radius: var(--r);
   box-shadow: var(--shadow);
   padding: 4px 9px;
-  font-size: 11px;
+  font-size: 12px;
   /* display:none rather than opacity alone: a hidden label must not sit over the terminal
      eating mouse events for a column 320px wide. */
   display: none;
@@ -110,6 +110,12 @@
 }
 .mark:hover .mark-tip {
   display: block;
+}
+/* The newest prompt names the rail without asking somebody to find a five-pixel dash
+   first. Older labels remain on hover so a busy pane does not become a stack of overlap. */
+.mark.newest .mark-tip {
+  display: block;
+  max-width: min(320px, calc(100vw - 120px));
 }
 
 /* The pane wrapper and the scrollbar's own pseudo-elements declared no cursor at all, so
@@ -334,3 +340,11 @@
     animation: none;
   }
 }
+
+/* A crowded rail still has a full-size way to choose every prompt. */
+.prompt-index { position: absolute; top: 0; right: 25px; z-index: 2; pointer-events: auto; font-size: 11px; }
+.prompt-index summary { list-style: none; white-space: nowrap; cursor: pointer; padding: 4px 8px; border: 1px solid var(--line-strong); border-radius: var(--r); background: var(--surface-3); color: var(--text); }
+.prompt-index summary::-webkit-details-marker { display: none; }
+.prompt-index-list { position: absolute; right: 0; top: calc(100% + 4px); width: min(340px, calc(100vw - 100px)); max-height: min(360px, 55vh); overflow: auto; background: var(--surface-3); border: 1px solid var(--line-strong); border-radius: var(--r); padding: 4px; box-shadow: var(--shadow); }
+.prompt-index-list button { display: block; width: 100%; padding: 8px; text-align: left; white-space: normal; overflow-wrap: anywhere; background: transparent; color: var(--text); border: 0; border-radius: var(--r); cursor: pointer; }
+.prompt-index-list button:hover, .prompt-index-list button:focus-visible { background: var(--surface-2); }
