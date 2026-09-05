@@ -3733,9 +3733,13 @@ function restorePanes(specs: StartSessionRequest[]): void {
   }
   settle(() => {
   if (wasPinned.size || nowPinned.length) {
-    const before = [...wasPinned].join(',')
-    if (before !== nowPinned.join(',')) {
-      setConfig({ pinnedPanes: nowPinned })
+    // Restore can wait behind an offer or stagger. Keep pins added while it was
+    // waiting, and replace only ids that belonged to panes this restore replaced.
+    const restoredOldIds = new Set(opening.map((req) => req.scrollbackId).filter(Boolean))
+    const current = getConfig().pinnedPanes ?? []
+    const mergedPins = [...new Set([...current.filter((id) => !restoredOldIds.has(id)), ...nowPinned])]
+    if (current.join(',') !== mergedPins.join(',')) {
+      setConfig({ pinnedPanes: mergedPins })
       // ...and SAY so. `setConfig` writes the file and broadcasts nothing - only the
       // `config:set` handler sends `config:changed` - so this translation reached no
       // window at all, and a window that had already read the config was holding the ids
