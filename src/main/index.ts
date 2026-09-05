@@ -2993,9 +2993,9 @@ ipcMain.handle('agents:install', async (_e, id: string) => {
  * Move an agent to its newest release. Same console and same one-at-a-time guard as the
  * install, because for most of this catalogue it IS the install line run again.
  *
- * Success is the binary still being on PATH and the version having MOVED, not the
- * updater's exit code: `codex update` exits 0 when there was nothing to do, and an
- * updater that prints an error and exits 0 is the failure that reads as success.
+ * Completion requires a successful updater and a binary still on PATH. Codex also
+ * has to answer a fresh version check against its known latest release; an already
+ * current version is a valid no-op.
  */
 ipcMain.handle('agents:update', async (_e, id: string) => {
   if (installing.has(id)) return
@@ -3042,16 +3042,14 @@ ipcMain.handle('agents:update', async (_e, id: string) => {
     }
     const completed = code === 0 && found && !locked
     const latest = spec.id === 'codex' ? codexLatest() : ''
-    const verified = spec.id !== 'codex' || (Boolean(fresh) && Boolean(latest) && !isOutdated(fresh, latest))
-    // Keep the old Codex reading on a failed update. Clearing it makes the picker
-    // re-read the same installed binary and report a stale update as complete.
+    const verified = completed && (spec.id !== 'codex' || (Boolean(fresh) && Boolean(latest) && !isOutdated(fresh, latest)))
+    // Refresh discovery after a completed updater, including one whose version
+    // verification failed, so the picker can show the binary actually installed.
     if (completed) {
       refreshPath()
       if (spec.id === 'codex') forgetCodexVersion()
       invalidateAgents()
     }
-    // Asking again is a spawn, so the number arrives after this message. Say what
-    // happened rather than a version this call cannot yet know.
     if (completed && spec.id === 'codex') codexInstalledVersion(spec.bin, invalidateAgents)
     send('agents:install-event', {
       agentId: id,

@@ -146,6 +146,7 @@
     "test:forceselect": "node scripts/force-select-test.mjs",
     "test:shots": "node scripts/shots-test.mjs",
     "test:pinrestore": "node scripts/pin-restore-test.mjs",
+    "test:updatecompletion": "node scripts/update-completion-test.mjs",
     "test:tokens": "node scripts/tokens-test.mjs",
     "test:copychip": "node scripts/copychip-test.mjs",
     "test:replytext": "node scripts/replytext-test.mjs",
