@@ -60,7 +60,7 @@ export const SETTINGS: SettingEntry[] = [
   { tab: 'voice', label: "Transcriber", find: "Transcriber" },
   { tab: 'voice', label: "Model", find: "Model" },
   { tab: 'voice', label: "Language", find: "Language" },
-  { tab: 'voice', label: "Show a mic on every pane, and enable the global push-to-talk key", find: "Show a mic on every pane, and enable the global push-to-talk key" },
+  { tab: 'voice', label: "Let me talk to a pane with the push-to-talk key, and the mic on a phone", find: "Let me talk to a pane with the push-to-talk key, and the mic on a phone" },
   { tab: 'discord', label: "Show what the desk is doing on Discord", find: "Show what the desk is doing on Discord Rich presence on your profile, refreshed as turns start and finish. Counts and project folder names only, never a byte of what a pane says. Needs the Discord app running; off tells Discord nothing at all." },
   { tab: 'discord', label: "What Discord will show", find: "What Discord will show" },
   { tab: 'discord', label: "Name the projects being worked in", find: "Name the projects being worked in The second line. Folder names of the panes whose turn is running - off leaves only the numbers, which says you are busy without saying on what." },

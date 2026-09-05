@@ -2997,9 +2997,24 @@ ipcMain.handle('agents:update', async (_e, id: string) => {
   }
   installing.add(id)
   const before = spec.id === 'codex' ? codexInstalledVersion(spec.bin) : ''
+  // An updater cannot overwrite a binary that is RUNNING. On Windows that lands as
+  // `EBUSY: resource busy or locked` over one of the vendored exes, which reads as an
+  // npm bug and is nothing of the sort - it is this app's own panes holding the file.
+  // Measured 2026-09-05 on `codex update` with Codex panes open. Watched for rather
+  // than pre-checked: a pane can open while the installer runs.
+  let locked = false
   try {
     say(`> ${command}\r\n\r\n`)
-    const code = await runOnce(command, say)
+    const code = await runOnce(command, (chunk) => {
+      if (/EBUSY|resource busy or locked|being used by another process/i.test(chunk)) locked = true
+      say(chunk)
+    })
+    if (locked) {
+      say(
+        `\r\nThat failed because ${spec.label} is still running: a file cannot be replaced while ` +
+          `it is open. Close every ${spec.label} pane and press Update again.\r\n`
+      )
+    }
     refreshPath()
     forgetCodexVersion()
     invalidateAgents()
@@ -3009,11 +3024,13 @@ ipcMain.handle('agents:update', async (_e, id: string) => {
     if (spec.id === 'codex') codexInstalledVersion(spec.bin, invalidateAgents)
     send('agents:install-event', {
       agentId: id,
-      chunk: found
-        ? `\r\n${spec.label} is up to date${before ? ` (was ${before})` : ''}.\r\n`
-        : `\r\nUpdater exited with code ${code} and ${spec.bin} is no longer on PATH.\r\n`,
+      chunk: locked
+        ? ''
+        : found
+          ? `\r\n${spec.label} is up to date${before ? ` (was ${before})` : ''}.\r\n`
+          : `\r\nUpdater exited with code ${code} and ${spec.bin} is no longer on PATH.\r\n`,
       done: true,
-      ok: found
+      ok: found && !locked
     })
   } finally {
     installing.delete(id)

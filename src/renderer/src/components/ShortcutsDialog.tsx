@@ -161,11 +161,11 @@ const KEYS: Key[] = [
   ['Ctrl Shift K', 'Tasks and shared memory for the focused folder'],
   ['Ctrl H', 'Search every past session'],
   ['Ctrl Shift D', 'Devices: another machine’s panes, in this window'],
-  // Called out: the mic is the one control here people ask where to find, and the key
-  // is faster than the button it points at.
+  // Called out: since the mic button was taken off the terminal this key IS how you
+  // dictate on a desk, so it is the one row here that has to be found.
   [
     'Ctrl Shift Space',
-    'Talk to the agent: dictate into the focused pane. Press once to start, again to transcribe - same as the mic button floating over the prompt box at the bottom-left of the pane',
+    'Talk to the agent: dictate into the focused pane. Press once to start, again to transcribe',
     true
   ],
   ['Ctrl ,', 'Settings'],
@@ -354,9 +354,10 @@ const TOPICS: Topic[] = [
     find: 'voice mic dictate speak whisper transcribe',
     body: (
       <p>
-        {MOD} Shift Space, or the mic floating at the bottom-left of a pane, dictates into the
-        prompt. Press once to start, again to transcribe. Nothing is sent anywhere until you
-        press it, and the text lands in the prompt box for you to edit before it goes.
+        {MOD} Shift Space dictates into the pane you are in. Press once to start, again to
+        transcribe. While it is listening a red mic appears in that pane&apos;s top-right corner,
+        and clicking it stops the recording too. Nothing is sent anywhere until you press it,
+        and the text lands in the prompt box for you to edit before it goes.
       </p>
     )
   },

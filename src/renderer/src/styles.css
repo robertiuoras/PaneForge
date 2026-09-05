@@ -351,9 +351,9 @@ button:focus-visible, input:focus-visible, .opt:focus-visible, [role='option']:f
     font-size: 19px; line-height: 1;
     min-width: 44px; min-height: 44px;
   }
-  /* The dictate button is drawn over the terminal and was 28x28, which is the smallest
+  /* Stopping a recording is drawn over the terminal at 28x28, which is the smallest
      control in the app on the device the microphone exists for. */
-  html.handheld .mic-float { width: 44px; height: 44px; opacity: 0.9; }
+  html.handheld .mic-live { width: 44px; height: 44px; }
 
   /* The sheet itself: the ordinary phone action sheet, which is what a hand expects. Rows
      are the full width with a word on them, because the thing being fixed is a column of
@@ -1194,7 +1194,7 @@ html:is(.hi-refresh, .on-battery) .chip.place.lane-chip.stuck,
 html:is(.hi-refresh, .on-battery) .chip.place.lane-chip.busy,
 html:is(.hi-refresh, .on-battery) .lane-tag.busy,
 html:is(.hi-refresh, .on-battery) .badge.stuck,
-html:is(.hi-refresh, .on-battery) .mic-float.rec,
+html:is(.hi-refresh, .on-battery) .mic-live,
 html:is(.hi-refresh, .on-battery) .ic-dot.spin,
 html:is(.hi-refresh, .on-battery) .voice-dots i,
 html:is(.hi-refresh, .on-battery) .mascot-ball { animation: none !important; }
@@ -2822,39 +2822,29 @@ input[type='range']::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px var(--ac
 .quick { display: flex; gap: 6px; }
 .quick .ghost { flex: 1; justify-content: center; }
 
-/* The mic floats over the bottom-LEFT of its own pane, beside the prompt box it
-   dictates into, rather than sitting in the header row where it was one of six
-   same-sized glyphs and a neighbour of the buttons that end a run.
+/* All that is left of the pane mic.
+   The resting button is gone from every pane (Robert 2026-09-05: "remove the mic icon in
+   the terminal") - it was drawn at bottom-left, directly over the `>` marker Codex puts
+   its caret beside, and a pane nobody dictates into still wore a control over its text.
+   Dictation itself is unchanged: Ctrl/Cmd Shift Space, the pane's menu, the phone's
+   whole-screen recorder.
 
-   Left, not right: "↓ Newest" appears at the bottom-right the moment a pane leaves the
-   tail (right: 22px, bottom: 12px in the .jump-newest block above), and the mic sat at
-   right: 26px - the two overlapped, so scrolling up put the pill on top of the mic and
-   whichever you meant, you hit the other. The left edge has nothing floating over it.
-   The pane is the containing block. */
-.mic-float {
-  position: absolute; left: 12px; bottom: 12px; z-index: 10;
+   A LIVE microphone still shows, because a mic that is listening and says nothing is the
+   one state nobody may be left guessing about. Top-right is the only corner of a pane
+   nothing else floats over: the CLI's prompt box owns the bottom-left and "↓ Newest" the
+   bottom-right, which is what the old placement kept colliding with. */
+.mic-live {
+  position: absolute; right: 12px; top: 12px; z-index: 10;
   display: inline-flex; align-items: center; justify-content: center;
   width: 28px; height: 28px; padding: 0; line-height: 1;
   border-radius: 50%; cursor: pointer;
-  border: 1px solid var(--line-strong);
   /* Opaque rather than blurred: this pill sits directly ON the pane's WebGL canvas, so a
-     backdrop filter here re-samples a surface that repaints on every line the agent
-     prints. See `.overlay` for the whole argument. */
+     backdrop filter here re-samples a surface that repaints on every printed line. */
   background: var(--surface-2);
-  color: var(--muted);
-  opacity: 0.55;
-  transition: opacity var(--fast), color var(--fast), background var(--fast), border-color var(--fast);
-}
-/* Faint until wanted: it lives on top of the agent's own output, so it has to be
-   findable without being one more thing competing with the text underneath. */
-.pane:hover .mic-float { opacity: 0.9; }
-.mic-float:hover { opacity: 1; color: var(--text); border-color: var(--accent); background: var(--surface-3); }
-.mic-float:disabled { opacity: 0.22; cursor: default; }
-.mic-float.rec {
-  opacity: 1; color: #ff8f8f; border-color: #ff8f8f66; background: #ff5f5f2e;
+  color: #ff8f8f; border: 1px solid #ff8f8f66;
   animation: pulse 1.1s ease-in-out infinite;
 }
-.mic-float.busy { opacity: 1; color: var(--accent); border-color: #8b9dff55; font-size: 13px; }
+.mic-live.busy { color: var(--accent); border-color: #8b9dff55; font-size: 13px; animation: none; }
 @keyframes pulse { 50% { opacity: 0.45; } }
 
 .agent-actions { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 6px; }

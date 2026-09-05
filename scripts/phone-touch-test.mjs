@@ -75,7 +75,9 @@ const TOUCH = [
   ['.brand .icon.help', 'the help button, which out-specifies its sibling'],
   ['.pane-title .pt-more', 'the ⋯ every pane action lives behind'],
   ['.handheld-back', 'the only way back to the list'],
-  ['.mic-float', 'the microphone, on the device it exists for'],
+  // Only drawn while this pane is being dictated into - the resting mic was removed from
+  // the terminal on 2026-09-05. Still a touch target: it is how you STOP recording.
+  ['.mic-live', 'the microphone, on the device it exists for'],
   ['.section-btn', 'close-all, which may not be the smallest thing on screen'],
   ['.quick-btn', 'the row of icons under the search box'],
   ['.seg-btn', 'Focus / Grid'],

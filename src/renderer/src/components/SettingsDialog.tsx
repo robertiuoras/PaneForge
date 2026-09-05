@@ -1180,10 +1180,12 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
               <div className="setting">
                 <label>Dictation</label>
                 <span className="hint">
-                  Click the mic in any pane's header and talk - it goes into that pane, whichever agent is
-                  running there. {keyLabel('Ctrl+Shift+Space')} does the same for the focused pane, from
-                  anywhere. On a phone, or any narrow window, the mic takes the whole screen instead: a
-                  32-pixel target beside a terminal is not a thing you can hit at arm's length.
+                  {keyLabel('Ctrl+Shift+Space')} and talk - it goes into the pane you are in, whichever
+                  agent is running there. Press it again to transcribe. While it is listening a red mic
+                  shows in that pane's top-right corner, and clicking that stops it too; nothing is drawn
+                  over a pane nobody is dictating into. On a phone, or any narrow window, the mic takes
+                  the whole screen instead: a 32-pixel target beside a terminal is not a thing you can
+                  hit at arm's length.
                 </span>
               </div>
 
@@ -1283,7 +1285,7 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                 <Switch
                   checked={config.voice.enabled}
                   onChange={(v) => onChange({ voice: { ...config.voice, enabled: v } })}
-                  label="Show a mic on every pane, and enable the global push-to-talk key"
+                  label="Let me talk to a pane with the push-to-talk key, and the mic on a phone"
                 />
               </div>
             </>

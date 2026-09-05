@@ -6089,37 +6089,36 @@ export default function App(): JSX.Element {
               booting={!s.printed && !s.asleep && s.status !== 'exited'}
               asleep={Boolean(s.asleep)}
             />
-            {/* The mic floats over the bottom-LEFT of the pane, next to the prompt box
-                it types into, instead of hiding in a row of six header icons. Nothing
-                is drawn there by any of these CLIs - the prompt box's outer edge is
-                empty - and the button is the only thing in the pane that takes a click,
-                so the terminal underneath keeps every one of its own. Left rather than
-                right because "↓ Newest" owns the bottom-right whenever a pane is scrolled
-                up, and the two were landing on the same pixels. */}
-            {config?.voice.enabled && (
+            {/* The mic used to float over the bottom-LEFT of the pane. It is gone from the
+                terminal on purpose (Robert 2026-09-05: "remove the mic icon in the
+                terminal"): it sat directly ON the CLI's own prompt box - Codex draws its
+                `>` marker at exactly that spot, so the button covered the caret it was
+                meant to sit beside - and a pane that is only ever read still wore a
+                control over its text.
+
+                Dictation is not gone with it. Ctrl/Cmd Shift Space still dictates into the
+                focused pane, the pane's right-click menu still carries it, and a phone
+                still gets the whole-screen recorder. Only the thing drawn over the
+                terminal has been taken away.
+
+                While recording there IS still something over the pane - see `.mic-live`
+                below - because a mic that is listening and says nothing is the one state
+                nobody may be left guessing about. */}
+            {voice.target === s.id && voice.phase !== 'idle' && (
               <button
-                className={
-                  'mic-float' +
-                  (voice.phase === 'recording' && voice.target === s.id ? ' rec' : '') +
-                  (voice.phase === 'thinking' && voice.target === s.id ? ' busy' : '')
-                }
-                // Every pane owns a mic, so dictating into the third pane does not mean
-                // clicking into it first and hoping the focus stuck.
+                className={'mic-live' + (voice.phase === 'thinking' ? ' busy' : '')}
                 title={
-                  voice.phase === 'recording' && voice.target === s.id
+                  voice.phase === 'recording'
                     ? `Listening - click to transcribe into ${s.title}`
-                    : voice.phase !== 'idle'
-                      ? 'Already listening for another pane'
-                      : keyLabel(`Dictate into ${s.title} (Ctrl Shift Space dictates into the focused pane)`)
+                    : 'Working out what you said'
                 }
-                aria-label="Dictate into this pane"
-                disabled={voice.phase !== 'idle' && voice.target !== s.id}
+                aria-label="Stop dictating and transcribe"
                 onClick={(e) => {
                   e.stopPropagation()
                   voice.toggle(s.id)
                 }}
               >
-                {voice.phase === 'thinking' && voice.target === s.id ? '…' : <MicIcon size={15} />}
+                {voice.phase === 'thinking' ? '…' : <MicIcon size={15} />}
               </button>
             )}
           </div>
