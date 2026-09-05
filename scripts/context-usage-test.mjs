@@ -5,7 +5,8 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { buildSync } from 'esbuild'
 import { createRequire } from 'node:module'
-const root = new URL('..', import.meta.url).pathname
+import { fileURLToPath } from 'node:url'
+const root = fileURLToPath(new URL('..', import.meta.url))
 const work = mkdtempSync(join(tmpdir(), 'pf-context-'))
 const oldHome = process.env.CODEX_HOME
 process.env.CODEX_HOME = work

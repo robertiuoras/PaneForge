@@ -33,7 +33,8 @@
 //   node scripts/confirm-fit-test.mjs
 
 import { spawn } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { closeTestChrome } from './close-test-chrome.mjs'
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -307,18 +308,7 @@ try {
     }
   }
 } finally {
-  try {
-    ws?.close()
-  } catch {
-    /* already gone */
-  }
-  chrome.kill()
-  await sleep(300)
-  try {
-    rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
-  } catch {
-    /* a temp dir the OS will collect; it is not this test's verdict */
-  }
+  await closeTestChrome(chrome, profile, ws)
 }
 
 console.log(failures ? `\n${failures} of ${checks} failed` : `\nall ${checks} confirm-fit checks passed`)
