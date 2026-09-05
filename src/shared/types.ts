@@ -1811,11 +1811,11 @@ export interface Config {
    */
   autoHandoff?: AutoHandoffConfig
   /**
-   * When a pane clears ITSELF for cost, and whether the app watches for it at all.
+   * When a Claude pane clears itself for cost, plus non-Claude native-policy observation.
    *
    * Claude panes are decided by their own Stop hook, which knows the token count exactly.
-   * `watchNonClaude` is the codex/antigravity half, where nothing hooks the end of a turn
-   * and the size has to be read off the CLI's own files - see `main/autoclearWatch.ts`.
+   * Codex compacts its own context. PaneForge does not reset a non-Claude conversation from
+   * a size estimate because that cannot prove a same-session handoff.
    */
   autoClear?: AutoClearConfig
 

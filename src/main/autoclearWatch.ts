@@ -1,20 +1,13 @@
-// Clearing a pane that has no Stop hook to speak for it.
+// Context observation for panes that have no Stop hook to speak for them.
 //
 // The claude path is decided by `claude-config/autoclear.mjs`, which runs INSIDE the
-// session, knows the token count exactly and asks this app for a countdown. Codex and
-// Antigravity have no such hook, so the same job has to be done from the outside: read
-// the size the CLI writes down for itself, and arm the same countdown when it is past the
-// line. Everything visible to the user is identical - the same card, the same Keep
-// button, the same refusals - because this is a second way of DECIDING, not a second way
-// of clearing.
+// session, knows the token count exactly and asks this app for a countdown. Codex has
+// native compaction, and a fresh conversation without a deliberate handoff loses task
+// state; this watcher never types `/new` or a synthetic handoff into it. Antigravity does
+// not expose a session-owned continuation record, so it is also observed but never reset.
 //
-// Two rules hold the whole file up:
-//
-// 1. An agent whose clear command we cannot name is never typed into. `clearCommandFor`
-//    returns null for it and this loop skips it for ever. The cost of guessing is a slash
-//    command sent as a PROMPT into somebody's live session.
-// 2. An estimate we cannot make is not an estimate of zero, and not a reason to act. Every
-//    reader here returns null on anything it does not understand, and null means skip.
+// This file never types into a non-Claude agent pane. A context number is not proof of a
+// safe continuation, and unknown CLI commands are never guessed.
 
 import {
   closeSync,
@@ -30,18 +23,12 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import {
   DEFAULT_AUTOCLEAR,
-  clearCommandFor,
-  resumeBrief,
-  watchDecision,
   type AutoClearConfig
 } from '../shared/autoclear'
-import { backJobOf } from './usage'
-import { handoffFor } from './handoffSteps'
 import { acLog } from './autoclearLog'
-import type { Session } from '../shared/types'
-import { ensureAntigravityBridge, PF_CONTEXT_FILE, antigravityDir } from './antigravityBridge'
+import { PF_CONTEXT_FILE, antigravityDir } from './antigravityBridge'
 import { getConfig } from './config'
-import type { AutoClearArm, SessionManager } from './sessions'
+import type { SessionManager } from './sessions'
 
 /**
  * A minute. The thing being watched moves at the speed of a turn ending, and the reading
@@ -52,17 +39,8 @@ const TICK_MS = 60_000
 
 let timer: NodeJS.Timeout | null = null
 let manager: SessionManager | null = null
-/** pane id -> when this watcher last armed it. The cooldown in `watchDecision`. */
-const armedAt = new Map<string, number>()
-
-/** A fresh handoff is a turn, not a polling race. Never clear while it is being prepared. */
-const HANDOFF_TIMEOUT_MS = 5 * 60_000
-const HANDOFF_REQUEST =
-  'Write the canonical session handoff now. Preserve the current objective, work state, changed files or commits, verification, and only actionable Next steps. Do not begin new work after writing it.'
-const CONTINUE_HANDOFF = 'Continue the handoff: work its Next steps in order, and do not re-do finished items.'
-
-type Preparing = { startedAt: number; beforeMtime: number; tokens: number }
-const preparing = new Map<string, Preparing>()
+/** One durable explanation per pane rather than a line each minute. */
+const nativePolicyLogged = new Set<string>()
 
 function config(): AutoClearConfig {
   return { ...DEFAULT_AUTOCLEAR, ...(getConfig().autoClear ?? {}) }
@@ -287,131 +265,28 @@ export function antigravityContextTokens(cwd: string, panes: number): number | n
 }
 
 /** A codex or antigravity pane, or a claude one the env var has opted in. */
-function watched(s: Session, claudeToo: boolean): boolean {
-  if (!clearCommandFor(s.agent)) return false
-  // Anything left that is not one of these two IS claude family - `clearCommandFor` only
-  // answers for `bin === 'claude'` beyond them. Those panes belong to the Stop hook, which
-  // knows the real token count; two things driving one pane is how a pane gets cleared
-  // twice, so this side stays out unless somebody asks for it.
-  if (s.agent === 'codex' || s.agent === 'antigravity') return true
-  return claudeToo
-}
-
-function prepareOrArm(mgr: SessionManager, pane: Session, tokens: number, command: string, now: number): void {
-  const prior = preparing.get(pane.id)
-  if (prior) {
-    if (now - prior.startedAt > HANDOFF_TIMEOUT_MS) {
-      preparing.delete(pane.id)
-      acLog(`${pane.id} handoff preparation timed out`)
-      return
-    }
-    // The turn that writes the handoff is still running. Its own completion is the only
-    // safe point to inspect the file: reading a half-written handoff as complete loses work.
-    if (pane.status !== 'idle' || backJobOf(pane.id)) return
-    const handoff = handoffFor(pane.cwd, pane.id, now)
-    if (!handoff.path || handoff.mtimeMs <= prior.beforeMtime) return
-    preparing.delete(pane.id)
-    if (!handoff.open || !handoff.steps.length) {
-      acLog(`${pane.id} handoff preparation refused: no actionable next steps`)
-      return
-    }
-    const prompt = resumeBrief(
-      { paneId: pane.id, steps: handoff.steps, prompt: CONTINUE_HANDOFF, seconds: config().seconds },
-      handoff.path
-    )
-    const res = mgr.armAutoClear(pane.id, {
-      steps: handoff.steps,
-      prompt,
-      seconds: config().seconds,
-      command,
-      tokens: prior.tokens
-    })
-    if (res.ok) armedAt.set(pane.id, now)
-    acLog(`${pane.id} handoff ${res.ok ? 'validated and countdown armed' : `validated but countdown refused: ${res.reason ?? 'unknown'}`}`)
-    return
+/**
+ * The policy is deliberately executed before any rollout/statusline disk read. A context
+ * threshold is not a task boundary, and this process cannot prove a handoff belongs to the
+ * visible agent session. Deliberate clear+handoff remains available through `autoclear:ask`.
+ */
+export function runAutoClearWatchTick(
+  mgr: Pick<SessionManager, 'list'>,
+  cfg = config(),
+  log: (line: string) => void = acLog
+): void {
+  if (!cfg.watchNonClaude) return
+  for (const pane of mgr.list()) {
+    if (pane.agent !== 'codex' && pane.agent !== 'antigravity') continue
+    if (nativePolicyLogged.has(pane.id)) continue
+    nativePolicyLogged.add(pane.id)
+    log(`${pane.id} automatic reset skipped: ${pane.agent === 'codex' ? 'Codex uses native context compaction' : 'no session-owned handoff proof'}`)
   }
-  const before = handoffFor(pane.cwd, pane.id, now).mtimeMs
-  preparing.set(pane.id, { startedAt: now, beforeMtime: before, tokens })
-  acLog(`${pane.id} handoff preparation requested at ${Math.round(tokens / 1000)}k context`)
-  mgr.sendPrompt(pane.id, HANDOFF_REQUEST)
 }
 
 function tick(): void {
-  const mgr = manager
-  if (!mgr) return
-  const cfg = config()
-  if (!cfg.watchNonClaude) return
-  const claudeToo = process.env.PF_AUTOCLEAR_CLAUDE_WATCH === '1'
-  const panes = mgr.list()
-  const live = new Set(panes.map((p) => p.id))
-  for (const id of armedAt.keys()) if (!live.has(id)) armedAt.delete(id)
-  for (const id of preparing.keys()) if (!live.has(id)) preparing.delete(id)
-  const agyPanes = panes.filter((p) => p.agent === 'antigravity').length
-
-  for (const pane of panes) {
-    if (!watched(pane, claudeToo)) continue
-    // Checked before the disk reads as well as inside `watchDecision`: a desk of four busy
-    // panes should not walk ~/.codex/sessions four times a minute to be told no.
-    // A preparation turn must be observed until it writes a fresh handoff or times out.
-    // All other busy panes remain untouched.
-    if (pane.status !== 'idle' && !preparing.has(pane.id)) continue
-    if (pane.autoClearAt) continue
-    // An agent pane that kicked off a build, a Monitor loop or a `run_in_background` shell
-    // goes quiet the moment its turn ends: the footer stops, `engaged` drops, the card
-    // reads finished - and clearing it now restarts the CLI on top of work that is still
-    // going. `shared/paneBackJobs.ts` is the only reading that can see it.
-    if (backJobOf(pane.id)) continue
-    const tokens =
-      pane.agent === 'codex'
-        ? codexContextTokens(pane.cwd, pane.openedAt ?? pane.createdAt)
-        : pane.agent === 'antigravity'
-          ? antigravityContextTokens(pane.cwd, agyPanes)
-          : null
-    // Native compaction can legitimately drop the same session below the line while it is
-    // writing a handoff. That is success, not a reason to use a now-stale handoff to clear
-    // it later: abandon this preparation and let the next real threshold crossing decide.
-    if (preparing.has(pane.id) && (tokens === null || tokens < cfg.tokens)) {
-      preparing.delete(pane.id)
-      acLog(`${pane.id} handoff preparation stood down: context is below the threshold`)
-      continue
-    }
-    if (tokens === null) {
-      // Said once per pane, not once per minute: with two antigravity panes and no cwd on
-      // the rows this is the permanent state, and a line a minute about it is a log nobody
-      // can read past.
-      if (pane.agent === 'antigravity' && agyPanes > 1 && !warned.has(pane.id)) {
-        warned.add(pane.id)
-        console.info(
-          `autoclear: ${pane.id} not watched - ${agyPanes} antigravity panes and no folder on the statusline rows to tell them apart`
-        )
-      }
-      continue
-    }
-    const verdict = watchDecision({
-      agent: pane.agent,
-      status: pane.status,
-      tokens,
-      threshold: cfg.tokens,
-      lastArmMs: armedAt.get(pane.id),
-      now: Date.now()
-    })
-    if (preparing.has(pane.id)) {
-      const command = clearCommandFor(pane.agent)
-      if (command) prepareOrArm(mgr, pane, tokens, command, Date.now())
-      continue
-    }
-    if (verdict !== 'arm') continue
-    const command = clearCommandFor(pane.agent)
-    if (!command) continue
-    // Do not start a fresh CLI with an empty prompt. A non-Claude watcher has no semantic
-    // transcript parser, so it first asks the active agent for its canonical handoff and
-    // proceeds only when a newer actionable file proves what can safely continue.
-    prepareOrArm(mgr, pane, tokens, command, Date.now())
-  }
+  if (manager) runAutoClearWatchTick(manager)
 }
-
-/** Panes already told about, so a permanent condition is logged once. */
-const warned = new Set<string>()
 
 /**
  * Start watching, and put the antigravity tee in place.
@@ -423,16 +298,6 @@ const warned = new Set<string>()
  */
 export function startAutoClearWatch(mgr: SessionManager): void {
   manager = mgr
-  if (process.platform === 'darwin' || process.platform === 'win32') {
-    try {
-      const r = ensureAntigravityBridge()
-      if (r.changed) console.info(`autoclear: antigravity statusline bridge ${r.created ? 'written' : 'updated'}`)
-    } catch (e) {
-      // Never fatal. This runs during startup, and a statusline hook we could not edit is
-      // one CLI unwatched, not an app that will not open.
-      console.info(`autoclear: antigravity bridge skipped - ${String(e)}`)
-    }
-  }
   if (timer) return
   timer = setInterval(tick, TICK_MS)
   timer.unref?.()
@@ -442,6 +307,5 @@ export function stopAutoClearWatch(): void {
   if (timer) clearInterval(timer)
   timer = null
   manager = null
-  armedAt.clear()
-  warned.clear()
+  nativePolicyLogged.clear()
 }

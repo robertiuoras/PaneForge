@@ -290,21 +290,20 @@ export function dropWords(why: DropReason): string {
  */
 /** The knobs the pane-side watcher runs on. See `main/autoclearWatch.ts`. */
 export interface AutoClearConfig {
-  /** Context size, in tokens, past which an idle pane is cleared. */
+  /** Context size, in tokens, used by the Claude Stop-hook clear policy. */
   tokens: number
   /** How long the countdown card is up before the keystrokes go out. */
   seconds: number
-  /** Watch codex and antigravity panes at all. Off means only the Stop hook clears. */
+  /** Retained for existing settings; enables non-Claude native-policy status logging. */
   watchNonClaude: boolean
 }
 
 /**
- * 150k, the same line the Stop hook draws.
+ * 150k, the same line the Claude Stop hook draws.
  *
  * Measured 2026-08-13 across a week of transcripts: clearing at 150k costs 28% less than
- * letting a session drift to 300k, because the bill is cache RE-READS of a context nobody
- * is using rather than the tokens the work needs. 15s is long enough to read the card from
- * across the desk and press Keep.
+ * letting a completed Claude session drift to 300k, because the bill is cache RE-READS of
+ * a context nobody is using. Codex uses its native compaction policy instead.
  */
 export const DEFAULT_AUTOCLEAR: AutoClearConfig = {
   tokens: 150_000,
