@@ -78,6 +78,21 @@ export function clearCommandFor(agent: string | null | undefined): string | null
   return spec?.bin === 'claude' ? '/clear' : null
 }
 
+/** A non-Claude clear may only continue the handoff owned by this exact pane. */
+export const HANDOFF_FRESH_MS = 20 * 60_000
+
+export function hasFreshPaneHandoff(
+  paneId: string,
+  handoff: { path: string | null; mtimeMs: number; open: number; steps: string[] } | null | undefined,
+  now = Date.now()
+): boolean {
+  if (!handoff?.path || handoff.open < 1 || !handoff.steps.length) return false
+  const age = now - handoff.mtimeMs
+  if (age < 0 || age > HANDOFF_FRESH_MS) return false
+  const escaped = String(paneId).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`(?:^|[\\\\/])session-handoff\\.pane-${escaped}\\.md$`).test(handoff.path)
+}
+
 /**
  * When each chunk goes out, relative to the fire.
  *
@@ -250,7 +265,7 @@ export function resumeBrief(ask: AutoClearAsk, handoffPath: string | null): stri
 export type DropReason = 'drafting' | 'working' | 'gone' | 'asked' | 'cancelled'
 
 export function dropFor(
-  pane: { runSince?: number | null; ask?: unknown; typed?: string } | null
+  pane: { runSince?: number | null; ask?: unknown; typed?: string; drafting?: boolean } | null
 ): DropReason | null {
   if (!pane) return 'gone'
   // A pane holding a live question is owed an answer by a PERSON, and clearing it throws
@@ -262,7 +277,7 @@ export function dropFor(
   // the draft is gone, and nothing on screen ever said it was there. 2026-08-25: a message
   // being typed was destroyed this way. Nothing about the countdown is cancelled for it -
   // the timer WAITS and the card stays up (see `ExpiryVerdict`'s 'wait').
-  if (pane.typed && pane.typed.trim()) return 'drafting'
+  if (pane.drafting || (pane.typed && pane.typed.trim())) return 'drafting'
   return null
 }
 

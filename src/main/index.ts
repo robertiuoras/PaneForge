@@ -111,7 +111,7 @@ import {
   transcriptPath
 } from './transcripts'
 import { receiveHandoff, sendHandoff, shareable } from './handoff'
-import { clearCommandFor, readAsk as readAutoClearAsk, resumeBrief } from '../shared/autoclear'
+import { clearCommandFor, hasFreshPaneHandoff, readAsk as readAutoClearAsk, resumeBrief } from '../shared/autoclear'
 import { handoffFor } from './handoffSteps'
 import { briefForTask } from './backlogStore'
 import { startAutoClearWatch, stopAutoClearWatch } from './autoclearWatch'
@@ -2673,9 +2673,7 @@ ipcMain.handle('autoclear:ask', (_e, raw: unknown) => {
   // command. The pane slot is the attribution contract: a generic project handoff may be
   // another live pane's work.
   if (pane?.agent === 'codex' || pane?.agent === 'antigravity') {
-    const expected = `/session-handoff.pane-${ask.paneId}.md`
-    const fresh = !!handoff && Date.now() - handoff.mtimeMs <= 20 * 60_000
-    if (!handoff?.path || !handoff.path.endsWith(expected) || !fresh || handoff.open < 1 || !handoff.steps.length) {
+    if (!hasFreshPaneHandoff(ask.paneId, handoff)) {
       return { ok: false, reason: 'that session has no fresh pane handoff to continue' }
     }
   }

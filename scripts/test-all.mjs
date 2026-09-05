@@ -40,6 +40,7 @@ const TESTS = [
   ['grid', 'grid-layout-test.mjs'],
   ['awake', 'awake-test.mjs'],
   ['autoclear', 'autoclear-test.mjs'],
+  ['autoclearmanager', 'autoclear-manager-test.mjs'],
   ['autoclearwatch', 'autoclear-watch-test.mjs'],
   ['deletesettle', 'delete-settle-test.mjs'],
   ['autoclearask', 'autoclear-ask-test.mjs'],

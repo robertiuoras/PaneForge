@@ -46,7 +46,7 @@ import { folderName, laneOfCheckout, projectOf } from '../shared/place'
 import { dropStale, smallestBorrow, watchedBorrow, type Borrow } from '../shared/paneSize'
 import { START_COLS, START_ROWS } from '../shared/paneGrid'
 import { RESTORE_MARK_TEXT } from '../shared/replayWidth'
-import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, SUBMIT_GAP_MS, armDecision, clearChunks, resumeOf, dropFor, dropWords, expiryDecision, queuedPromptDecision, quietEnoughToArm, type DropReason, type QueuedPromptVerdict } from '../shared/autoclear'
+import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, SUBMIT_GAP_MS, armDecision, clearChunks, hasFreshPaneHandoff, resumeOf, dropFor, dropWords, expiryDecision, queuedPromptDecision, quietEnoughToArm, type DropReason, type QueuedPromptVerdict } from '../shared/autoclear'
 import { acLog } from './autoclearLog'
 import { logReclaim } from './activationLog'
 import { ledgerSleep, ledgerWake } from './laneLedger'
@@ -2212,8 +2212,13 @@ export class SessionManager extends EventEmitter {
     // handoff that EXISTS may refuse - `path: null` is a pane that never wrote one, which
     // is not evidence the work is done.
     const plan = { ...ask }
+    const needsOwnedHandoff = s.meta.agent === 'codex' || s.meta.agent === 'antigravity'
+    const hand = handoffFor(s.meta.cwd, id)
+    if (needsOwnedHandoff && !hasFreshPaneHandoff(id, hand)) {
+      acLog(`${id} refused: no fresh pane handoff for ${s.meta.agent}`)
+      return { ok: false, reason: 'no fresh pane handoff to continue' }
+    }
     if (!plan.noResume) {
-      const hand = handoffFor(s.meta.cwd, id)
       if (hand.path && hand.open === 0) {
         acLog(`${id} refused: ${NOTHING_OPEN} (${hand.path})`)
         return { ok: false, reason: NOTHING_OPEN }
@@ -2295,6 +2300,13 @@ export class SessionManager extends EventEmitter {
         this.cancelAutoClear(id, verdict)
         return
       }
+      if ((live!.meta.agent === 'codex' || live!.meta.agent === 'antigravity') && !hasFreshPaneHandoff(id, handoffFor(live!.meta.cwd, id))) {
+        this.clearAutoClearMeta(live!)
+        this.setAutoClearOutcome(id, 'stood down - handoff no longer belongs to this pane')
+        this.emitSessions()
+        acLog(`${id} clear refused: no fresh pane handoff for ${live!.meta.agent}`)
+        return
+      }
       const chunks = live!.meta.autoClearChunks ?? clearChunks(live!.meta.autoClearPrompt ?? '')
       this.clearAutoClearMeta(live!)
       this.setAutoClearOutcome(id, 'cleared')
@@ -2311,7 +2323,16 @@ export class SessionManager extends EventEmitter {
       const clearCmd = chunks[0]
       const { switchCmd, resume } = resumeOf(chunks)
       const t = setTimeout(() => {
-        if (!this.sessions.get(id)) return acLog(`${id} clear skipped: pane gone`)
+        const current = this.sessions.get(id)
+        if (!current) return acLog(`${id} clear skipped: pane gone`)
+        // The arm lead is deliberately long enough for the renderer to preserve the tail.
+        // A person can still recall history during it, leaving an empty legacy shadow but
+        // an uncertain draft. Never append `/new` or `/clear` to that line.
+        if (dropFor({ ...current.meta, typed: current.typed }) === 'drafting') {
+          this.setAutoClearOutcome(id, 'stood down - there is an unsent line in the box')
+          this.emitSessions()
+          return acLog(`${id} clear skipped: ${dropWords('drafting')}`)
+        }
         acLog(`${id} typing ${JSON.stringify(clearCmd)}`)
         this.write(id, clearCmd, 'app')
         // Everything after the clear goes through the machinery that already knows how to
@@ -2807,7 +2828,7 @@ export class SessionManager extends EventEmitter {
         exists: true,
         lastKeyboard: live.meta.lastKeyboard,
         mark,
-        drafting: !!live.typed && !!live.typed.trim(),
+        drafting: Boolean(live.meta.drafting) || (!!live.typed && !!live.typed.trim()),
         composerIdle,
         expired: Date.now() >= deadline
       })

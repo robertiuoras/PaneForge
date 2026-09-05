@@ -51,6 +51,12 @@ const { clearChunks, resumeOf, clampSeconds, readAsk, resumeBrief, dropFor, armD
   DEFAULT_AUTOCLEAR, MIN_SECONDS, MAX_SECONDS, queuedPromptDecision } =
   await import(pathToFileURL(file).href)
 
+const draftEntry = join(out, 'draft-entry.ts')
+write(draftEntry, `export * from ${JSON.stringify(join(root, 'src/shared/draft.ts').replace(/\\\\/g, '/'))}`, 'utf8')
+const draftFile = join(out, 'draft.mjs')
+buildSync({ absWorkingDir: root, entryPoints: [draftEntry], bundle: true, platform: 'node', format: 'esm', outfile: draftFile })
+const { feedDraft, newDraft } = await import(pathToFileURL(draftFile).href)
+
 console.log('a queued resume prompt never lands in somebody ELSE\'s turn')
 {
   // 2026-08-30, pane s4-mtednh9i: the 02:12 autoclear cleared correctly, the SessionStart
@@ -107,6 +113,19 @@ console.log('a busy pane WAITS, it is not refused')
   // re-asks after the remainder. If this ever returned 'refuse' the ask would be thrown
   // away for being too fresh, which is the failure this replaces.
   ok('the floor never turns into a refusal', armDecision(null) === 'arm')
+}
+
+console.log('a history-recalled draft is protected even when the legacy shadow is empty')
+{
+  // Up-arrow makes the terminal's line editor hold a previous prompt. PaneForge cannot
+  // reconstruct that text, so `text` stays empty but `certain` goes false.
+  const history = feedDraft(newDraft(), '\x1b[A').state
+  const drafting = !history.certain || !!history.text.trim()
+  ok('Up history creates an uncertain empty draft', history.text === '' && drafting)
+  ok('the conservative drafting flag queues an arm', armDecision(dropFor({ typed: '', drafting })) === 'queue')
+  ok('it makes an expired countdown wait', expiryDecision({ exists: true, metaAt: 1, armedAt: 1, now: 1, drop: dropFor({ typed: '', drafting }) }) === 'wait')
+  ok('it makes a queued prompt wait', queuedPromptDecision({ exists: true, lastKeyboard: 1, mark: 1, drafting, composerIdle: true, expired: false }) === 'wait')
+  ok('and abandon at its deadline', queuedPromptDecision({ exists: true, lastKeyboard: 1, mark: 1, drafting, composerIdle: true, expired: true }) === 'abandon')
 }
 
 console.log('nothing but the button stands a countdown down')
