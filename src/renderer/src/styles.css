@@ -2170,7 +2170,12 @@ body.sizing * { user-select: none !important; }
 .pane-booting.over {
   top: auto; bottom: 10px;
   padding: 3px 8px; border-radius: 6px;
-  background: var(--panel); border: 1px solid var(--line);
+  /* `--panel` is not a token this app has - `paletteFor` in shared/theme.ts writes
+     `--surface`/`--surface-2`/`--surface-3` - and `var()` naming a missing one does not
+     error, it falls through to transparent. So this card carried NO background at all,
+     measured in a headless copy: `backgroundColor: rgba(0, 0, 0, 0)`, which is the exact
+     thing the comment above says it must not be. */
+  background: var(--surface-2); border: 1px solid var(--line);
 }
 
 /* The receipt for a dropped picture: what went, drawn small, bottom-right of the pane.
@@ -2183,7 +2188,7 @@ body.sizing * { user-select: none !important; }
   position: absolute; right: 12px; bottom: 10px; z-index: 6;
   display: flex; align-items: flex-start; gap: 6px;
   padding: 6px; border-radius: 8px;
-  background: var(--panel); border: 1px solid var(--line);
+  background: var(--surface-2); border: 1px solid var(--line);
   max-width: calc(100% - 24px); overflow: hidden;
 }
 .shot-thumb {
@@ -2194,7 +2199,7 @@ body.sizing * { user-select: none !important; }
   background: none; border: 0; padding: 0 2px; line-height: 1;
   color: var(--muted); font-size: 12px; cursor: pointer;
 }
-.shot-close:hover { color: var(--fg); }
+.shot-close:hover { color: var(--text); }
 
 /* The copy menu, opened by the pane header's copy button or by right-clicking a prompt
    tag on the rail. It replaced a pair of icons that floated beside every prompt on screen
@@ -2445,7 +2450,7 @@ body.sizing * { user-select: none !important; }
    project that does not exist yet. A button so it is reachable by keyboard, wearing the
    project row's own geometry - it belongs to that list and reads as one of its rows, and
    the dashed edge is the only thing saying this one is not there yet. */
-.proj.proj-new { width: 100%; text-align: left; background: none; border: 1px dashed var(--border); color: var(--text); font: inherit; cursor: pointer; }
+.proj.proj-new { width: 100%; text-align: left; background: none; border: 1px dashed var(--line); color: var(--text); font: inherit; cursor: pointer; }
 .proj.proj-new:hover { background: var(--surface); }
 .proj.proj-new:disabled { opacity: 0.6; cursor: default; }
 .tag {
@@ -3090,7 +3095,7 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
 .where-picks { margin: 0; flex-wrap: wrap; }
 .where-picks button.chip.pick { font-size: 12px; padding: 5px 12px; min-height: 28px; }
 /* Tabular, or the sentence re-flows every second as the digit narrows. */
-.move-soon-count { font-variant-numeric: tabular-nums; color: var(--acc); }
+.move-soon-count { font-variant-numeric: tabular-nums; color: var(--accent); }
 .move-soon-why { color: var(--muted); font-size: 12px; }
 .move-soon-acts { display: flex; justify-content: flex-end; gap: 6px; }
 
@@ -3206,7 +3211,7 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
 }
 .tour-check-tail {
   flex-basis: 100%; margin: 0; padding: 6px 8px; font: 11px/1.4 var(--mono, ui-monospace, monospace);
-  color: var(--text); background: var(--surface-1); border: 1px solid var(--line); border-radius: 4px;
+  color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 4px;
   white-space: pre-wrap; max-height: 140px; overflow: auto;
 }
 /* Two by two, equal widths, one hairline above - button metrics from
@@ -3238,7 +3243,7 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
 }
 .client-toast.beside-pet { bottom: 108px; }
 .client-toast-say { color: var(--text); font-size: 13px; }
-.client-toast-say strong { color: var(--acc); font-weight: 590; }
+.client-toast-say strong { color: var(--accent); font-weight: 590; }
 .client-toast-why { color: var(--muted); font-size: 12px; }
 .client-toast-acts { display: flex; justify-content: flex-end; gap: 6px; }
 
@@ -4699,7 +4704,7 @@ html.handheld .card-x { width: 44px; height: 44px; top: 0; right: 0; font-size: 
 .act-why { grid-column: 2; color: var(--muted); font-size: 11.5px; line-height: 1.4; }
 /* The one kind that took something away reads in the accent, so a list of eight rows
    answers "did it close anything" without being read word by word. */
-.act-kind.k-closed, .act-kind.k-cleared { color: var(--acc); }
+.act-kind.k-closed, .act-kind.k-cleared { color: var(--accent); }
 
 /* ---- signing in to a browser on another machine ----------------------------
    The chat keeps the left half of the pane column and the far machine's browser

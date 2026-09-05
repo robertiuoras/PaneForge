@@ -85,6 +85,7 @@ const TESTS = [
   ['forceselect', 'force-select-test.mjs'],
   ['shots', 'shots-test.mjs'],
   ['pinrestore', 'pin-restore-test.mjs'],
+  ['tokens', 'tokens-test.mjs'],
   ['recover', 'recover-test.mjs'],
   ['restoreturn', 'restore-turn-test.mjs'],
   ['restore', 'restore-context-test.mjs'],
