@@ -767,6 +767,7 @@ export class Remote extends EventEmitter {
       this.changed()
     })
     client.on('data', (sessionId: string, data: string) => this.emit('data', sessionId, data))
+    client.on('typed', (sessionId: string, line: string, origin: string) => this.emit('typed', sessionId, line, origin))
     client.on('reset', (sessionId: string) => this.emit('reset', sessionId))
     client.on('attention', (s: Session) => this.emit('attention', s))
     client.on('status', () => this.changed())

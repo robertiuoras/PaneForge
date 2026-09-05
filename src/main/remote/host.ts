@@ -77,6 +77,8 @@ export interface HostBackend {
   attachFiles(files: AttachIn[]): AttachResult
   /** subscribe to pty output; returns an unsubscribe */
   onData(cb: (id: string, data: string) => void): () => void
+  /** A submitted prompt from another input surface, for mirrors that saw no keystrokes. */
+  onTyped(cb: (id: string, line: string, origin: string) => void): () => void
   onSessions(cb: (sessions: Session[]) => void): () => void
   onAttention(cb: (s: Session) => void): () => void
 }
@@ -243,6 +245,12 @@ export class RemoteHost extends EventEmitter {
     if (this.unhook.length) return
     this.unhook.push(
       this.backend.onData((id, data) => this.gather(id, data))
+    )
+    this.unhook.push(
+      this.backend.onTyped((id, line, origin) => {
+        for (const g of this.guests)
+          if (g.attached.has(id)) g.conn.send({ t: 'typed', id, line, origin })
+      })
     )
     this.unhook.push(
       this.backend.onSessions((sessions) => {
