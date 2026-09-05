@@ -6130,19 +6130,20 @@ export default function App(): JSX.Element {
                 nobody may be left guessing about. */}
             {voice.target === s.id && voice.phase !== 'idle' && (
               <button
-                className={'mic-live' + (voice.phase === 'thinking' ? ' busy' : '')}
+                className={'mic-live' + (voice.phase !== 'recording' ? ' busy' : '')}
                 title={
                   voice.phase === 'recording'
                     ? `Listening - click to transcribe into ${s.title}`
-                    : 'Working out what you said'
+                    : voice.phase === 'loading' ? 'Preparing the microphone' : 'Working out what you said'
                 }
-                aria-label="Stop dictating and transcribe"
+                aria-label={voice.phase === 'recording' ? 'Stop dictating and transcribe' : voice.phase === 'loading' ? 'Preparing the microphone' : 'Transcribing dictation'}
+                disabled={voice.phase !== 'recording'}
                 onClick={(e) => {
                   e.stopPropagation()
                   voice.toggle(s.id)
                 }}
               >
-                {voice.phase === 'thinking' ? '…' : <MicIcon size={15} />}
+                {voice.phase !== 'recording' ? '…' : <MicIcon size={15} />}
               </button>
             )}
           </div>
