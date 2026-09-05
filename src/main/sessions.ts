@@ -310,6 +310,8 @@ export function setSilenceAlert(minutes: number | undefined): void {
 
 interface Live {
   meta: Session
+  /** A refused idle sweep may retry, but must not keep printing into the terminal. */
+  sleepRefusalShown?: boolean
   /**
    * Null while the pane is ASLEEP - a card with no process behind it. That is a real
    * state a pane can be BORN in (a restore, see `shared/restoreTurn.ts`), not only one it
@@ -1019,6 +1021,7 @@ export class SessionManager extends EventEmitter {
     live.meta.asleep = undefined
     live.meta.asleepReason = undefined
     live.req = { ...live.req, asleep: undefined }
+    live.sleepRefusalShown = false
     const resumeId = resumeIdFor(id)
     recordEnd(id, resumeId)
     // A restart is a new conversation unless the CLI is being asked to resume one, and
@@ -1103,6 +1106,8 @@ export class SessionManager extends EventEmitter {
     const resumeCwd = live.req.resumeCwd ?? live.meta.cwd
     const resumable = Boolean(resumeId && resumableTranscript(resumeCwd, resumeId, live.meta.agent))
     if (live.meta.agent !== 'shell' && !resumable) {
+      if (live.sleepRefusalShown) return null
+      live.sleepRefusalShown = true
       const note = '\x1b[33mSleep refused: this conversation could not be verified, so this pane remains running.\x1b[0m\r\n'
       this.emit('data', id, note)
       live.buffer.push(note)
@@ -1110,6 +1115,7 @@ export class SessionManager extends EventEmitter {
       this.emitSessions()
       return null
     }
+    live.sleepRefusalShown = false
     // Before the CLI dies, so the SessionEnd hook it fires on the way out reads the lane
     // ledger already marked - the whole point being that it PARKS this hold instead of
     // releasing it (see scripts/lane.mjs `releaseClaim`). Never blocks: worst case the
@@ -1465,6 +1471,7 @@ export class SessionManager extends EventEmitter {
       // second pane on the same repo must not be able to drift onto it), so this is
       // where being told happens.
       if (slash && /^\s*\/(clear|new|resume)\b/.test(live.typed)) {
+        live.sleepRefusalShown = false
         live.req = { ...live.req, resume: false, resumeId: undefined, resumeCwd: undefined }
         noteSession(id, live.meta.cwd, live.meta.agent)
       }

@@ -192,6 +192,21 @@ live.meta.status = 'idle'
 verified = false
 manager.sleep('pane')
 is(events.filter(([kind, , text]) => kind === 'data' && text?.includes('Sleep refused')).length, 2, 'a new refusal after successful sleep is visible again')
+const changeStart = sessions.indexOf('      if (slash && /^\\s*\\/(clear|new|resume)')
+ok(changeStart >= 0, 'found the actual conversation-change handler')
+const changeSource = sessions.slice(changeStart, sessions.indexOf('      const quiet =', changeStart))
+const changeConversation = new Function('slash', 'live', 'id', 'noteSession', changeSource)
+for (const [i, command] of ['/clear', '/new', '/resume exact-id'].entries()) {
+  live.typed = command
+  changeConversation(true, live, 'pane', () => {})
+  manager.sleep('pane')
+  manager.sleep('pane')
+  is(events.filter(([kind, , text]) => kind === 'data' && text?.includes('Sleep refused')).length, 3 + i, `${command} permits one warning for the changed conversation`)
+}
+live.typed = '/help'
+changeConversation(true, live, 'pane', () => {})
+manager.sleep('pane')
+is(events.filter(([kind, , text]) => kind === 'data' && text?.includes('Sleep refused')).length, 5, 'an unrelated command does not reset suppression')
 
 // ---------------------------------------------------------------------------
 // The pin, on a card that is already saying something
