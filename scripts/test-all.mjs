@@ -313,6 +313,9 @@ const SERIAL = new Set([
   // 2.8s/3.1s. Keep their browser layout work out of the eight-process burst.
   'handofffit',
   'confirmfit',
+  // Its Windows Chrome shutdown also times out in the pool (19s), while the same
+  // browser cases and teardown pass alone (6.7s).
+  'paneheaderfit',
   // Measured: passes alone in 4.2s, fails at jobs=8 in 31.8s - `the clock is not cut off,
   // 54.6px of 116px`. It lays out a card whose content is a RUNNING clock, so a slow
   // machine writes a wider string than the box the assertion was written against. The
