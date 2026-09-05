@@ -87,13 +87,22 @@ const here = dirname(fileURLToPath(import.meta.url))
 // PaneForge rename for two days (EBUSY, no cwd in the folder - a stray handle).
 // Timing out throws, which gitSafe already reports and the callers already handle.
 const GIT_TIMEOUT_MS = 20_000
+// A lifecycle hook's parent deadline also bounds its children. Keep 300ms for
+// the engine and canonical hook to report failure before their own timeouts.
+function hookTimeout(normal) {
+  const deadline = Number(process.env.PANEFORGE_HOOK_DEADLINE)
+  if (!Number.isFinite(deadline) || !deadline) return normal
+  const remaining = deadline - Date.now() - 300
+  if (remaining < 1) throw new Error('Lane hook deadline reached')
+  return Math.min(normal, remaining)
+}
 
 function git(cwd, ...args) {
   return execFileSync('git', args, {
     cwd,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
-    timeout: GIT_TIMEOUT_MS,
+    timeout: hookTimeout(GIT_TIMEOUT_MS),
     killSignal: 'SIGKILL'
   }).trim()
 }
@@ -366,7 +375,7 @@ function hideLane(id) {
   const dir = laneDir(id)
   if (!existsSync(dir)) return
   try {
-    spawnSync('chflags', ['hidden', dir], { stdio: 'ignore', timeout: 10000 })
+    spawnSync('chflags', ['hidden', dir], { stdio: 'ignore', timeout: hookTimeout(10000) })
   } catch {
     /* no chflags: the folder stays visible, which is where it was anyway */
   }
@@ -696,7 +705,7 @@ function lockToken() {
         encoding: 'utf8',
         input,
         stdio: ['pipe', 'pipe', 'pipe'],
-        timeout: GIT_TIMEOUT_MS,
+        timeout: hookTimeout(GIT_TIMEOUT_MS),
         killSignal: 'SIGKILL',
         env
       }).trim()
