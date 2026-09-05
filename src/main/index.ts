@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve, sep } from 'node:path'
@@ -49,6 +49,7 @@ import { startDisplayAwake } from './awake'
 import { attachGlass, glassSupported } from './glass'
 import { invalidateAgents, listAgents, specFor } from './agents'
 import { codexInstalledVersion, forgetCodexVersion } from './codexModels'
+import { versionOf } from '../shared/codexCatalogue'
 import { gitInfo } from './git'
 import { projectRoot } from './projectRoot'
 import { diffFiles, diffPatch } from './diff'
@@ -3017,7 +3018,15 @@ ipcMain.handle('agents:update', async (_e, id: string) => {
       )
     }
     const found = onPath(spec.bin)
-    const succeeded = code === 0 && found && !locked
+    let fresh = ''
+    if (code === 0 && found && !locked && spec.id === 'codex') {
+      fresh = await new Promise<string>((done) => {
+        execFile(spec.bin, ['--version'], { timeout: 8000, windowsHide: true }, (error, output) => {
+          done(error ? '' : versionOf(String(output)))
+        })
+      })
+    }
+    const succeeded = code === 0 && found && !locked && (spec.id !== 'codex' || (Boolean(fresh) && fresh !== before))
     // Keep the old Codex reading on a failed update. Clearing it makes the picker
     // re-read the same installed binary and report a stale update as complete.
     if (succeeded) {
