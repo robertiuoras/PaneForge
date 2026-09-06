@@ -215,6 +215,7 @@ function unwedge(): void {
   log('wedged', `${held} never finished after ${secs}s (${cause}) - dropping it and looking again`)
   noteWedge(`${held} after ${secs}s, ${cause}`)
   macStaging = ''
+  if (restoreStagedReady()) return
   // Not 'error': nothing the user asked for failed, and the next check is one tick away.
   // 'error' would put a red badge in the corner for a fault that has already been undone.
   set({ phase: 'idle', version: undefined, percent: undefined, error: undefined })
@@ -1000,6 +1001,16 @@ function have(): string {
   return held && newer(held, current) ? held : current
 }
 
+/** Restore the restart notification when a complete Mac bundle is still on disk. */
+function restoreStagedReady(): boolean {
+  const version = stagedInstallable()
+  if (!version) return false
+  if (state.phase !== 'ready' || state.version !== version) {
+    set({ phase: 'ready', version, percent: 100, error: undefined, url: `${RELEASES_URL}/tag/v${version}` })
+  }
+  return true
+}
+
 /**
  * A release this machine cut itself that has not arrived on the feed yet.
  *
@@ -1110,6 +1121,13 @@ export function initUpdater(onChange: Emit, enabled: boolean): void {
     )
     u.on('error', (e: Error) => {
       const message = e?.message ?? String(e)
+      // `failFast()` can give a ready-state probe back its turn before electron-updater
+      // emits the error from that original request. A completed Windows download is still
+      // installable, as is a Mac bundle staged on disk, so keep the restart notification.
+      if (state.phase === 'ready' || restoreStagedReady()) {
+        log('ready error', message.slice(0, 160))
+        return
+      }
       // A probe that fails changes nothing: the build already downloaded is still there
       // and still installable, and saying "update failed" over it would be a lie.
       if (isProbing()) {
@@ -1268,6 +1286,7 @@ async function supersede(): Promise<void> {
 export async function checkForUpdates(): Promise<UpdateState> {
   const u = load()
   if (!app.isPackaged || !u) return state
+  if (restoreStagedReady()) return state
   // The bug this guards: with autoDownload on, every check that finds a new version
   // starts a download. A second check fired while the first 80 MB is still in flight
   // starts a SECOND download into the same temp file, and the pair kill each other
