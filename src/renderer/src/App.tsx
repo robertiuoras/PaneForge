@@ -5357,7 +5357,6 @@ export default function App(): JSX.Element {
             reading was never lost, because the Sessions heading below carries the same
             count as a badge with the word beside it, which is where a number belongs. */}
         <div className="quick">
-          <div className="swarm-users">
           <button
             className="ghost quick-btn"
             title={keyLabel('Swarm: several agents on one mission (Ctrl Shift S)')}
@@ -5366,7 +5365,6 @@ export default function App(): JSX.Element {
             <SwarmIcon />
           </button>
           {ownerAccess && <button className="ghost quick-btn users-button" aria-label="Users and downloads" onClick={() => setUsers(true)} title="Users and downloads: your owner dashboard"><UsersIcon /></button>}
-          </div>
           <button
             className="ghost quick-btn"
             title={keyLabel("Board: tasks and shared memory for the focused pane's folder (Ctrl Shift K)")}
