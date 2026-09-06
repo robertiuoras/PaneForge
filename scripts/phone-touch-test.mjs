@@ -46,6 +46,14 @@ const platform = readFileSync(join(root, 'src/renderer/src/platform.ts'), 'utf8'
 ok(/iPhone\|iPad\|iPod/.test(platform), 'phone: isMac refuses an iOS user agent')
 ok(/maxTouchPoints/.test(platform), 'phone: isMac refuses a touch device an iPad calls a Macintosh')
 ok(/html\.handheld \.kbd\s*\{[^}]*display:\s*none/.test(src), 'phone: no keyboard hints on a handheld')
+// The desk's grid layout is the desk's: on a handheld every pane stacked in block flow
+// and the tapped one sat below the fold (measured 2026-09-06, two panes at 414x896:
+// document 1000px tall, focused pane at y=522). A phone draws one pane.
+const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
+ok(
+  /const grid = \(config\?\.grid \?\? false\) && !handheld\.handheld/.test(app),
+  'phone: the desk grid setting never tiles a handheld'
+)
 
 // --- the home screen is the list ---------------------------------------------
 // Measured at 390x844 before this: the list had 605px of the screen only after 250px of

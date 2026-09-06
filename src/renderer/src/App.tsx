@@ -2141,7 +2141,14 @@ export default function App(): JSX.Element {
     [flash]
   )
 
-  const grid = config?.grid ?? false
+  // The grid is the DESK's layout and a phone has no room for one. The setting used to
+  // reach the phone unread: with it on, every pane was drawn on the handset in block flow,
+  // one under the other at grid-cell height, and the pane just tapped was the second or
+  // fourth of them - below the fold, reached by scrolling the whole page, its terminal
+  // sized for a cell (Robert 2026-09-06: "broken view and scrolls down"). Measured on a
+  // 414x896 phone viewport with two panes: document 1000px tall, the focused pane at
+  // y=522. A handheld draws ONE pane, the active one, whatever the desk is tiled as.
+  const grid = (config?.grid ?? false) && !handheld.handheld
 
   /**
    * One pane made full-window for a minute, without disturbing the grid.
