@@ -422,10 +422,10 @@ if (event === 'prompt') {
             // to install and a restart to take it, and he was getting one per session for
             // work he had not looked at yet - so the proof is now a dev copy he can see,
             // and the release waits for him to ask.
-            `That merges this lane into ${info.mainBranch} and pushes - it does NOT cut a version. Prove the change in a second copy instead (\`npm run try -- --keep --remote-debugging-port=9333\` plus \`npm run probe\`), report what you measured, and leave it there. Only cut a release when Robert asks for one, with \`npm run ship\`.`
+            `That merges this lane into ${info.mainBranch} and pushes; the ready command does not cut a version. Verify ordinary changes in this lane's dev copy. If Robert explicitly requested a dev or public release, that request remains authorized: merge the finished work, then complete the project's manual release workflow. Do not stop at lane readiness or enable automatic version bumps.`
           : // `mainBranch`, not `branch` - `branch` is this lane's own, and saying "merges into
             // lane-a" to the chat sitting in lane-a is a sentence that answers nothing.
-            `That merges this lane into ${info.mainBranch} and pushes, batched with every other finished lane. No version is cut here - this repo is not set up for releases (\`"release": "version"\` in .lanes.json turns that on).`
+            `That merges this lane into ${info.mainBranch} and pushes, batched with every other finished lane. The ready command does not cut a version. If the user explicitly requested a release, complete the project's manual release workflow after merging; merge-only lane configuration does not cancel that request. Do not enable automatic version bumps just to fulfill a manual release.`
     )
   }
   lines.push(
