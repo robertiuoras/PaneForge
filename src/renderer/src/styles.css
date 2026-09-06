@@ -4816,9 +4816,9 @@ html.login-open .panes { padding-right: calc(var(--login-w, 50vw) + 6px); }
 .keep-open-toggle { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; margin: 6px 0; }
 .keep-open-toggle.active { color: var(--text); border-color: var(--text); }
 
-.users-dialog { width: min(760px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); }
+.users-dialog { width: min(760px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); overflow: hidden; }
 .users-dialog .dialog-head > button { margin-left: auto; }
-.users-dialog > .users-body { flex: 1 1 auto; overflow: auto; min-height: 0; }
+.users-dialog > .users-body { flex: 1 1 auto; overflow: auto; min-height: 0; overscroll-behavior: contain; scrollbar-gutter: stable; padding-bottom: 8px; }
 .users-body > .hint { line-height: 1.5; }
 .users-heading { display: flex; align-items: center; justify-content: space-between; }
 .users-counts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 12px 0; }
