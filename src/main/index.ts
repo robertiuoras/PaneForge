@@ -57,7 +57,7 @@ import { projectRoot } from './projectRoot'
 import { diffFiles, diffPatch } from './diff'
 import type { ClientNamed, DiffScope, EffortChoice, PhoneState } from '../shared/types'
 import { detectLane, laneExtras, resolveLane } from './lanes'
-import { laneWork, mergeLaneBack, repoOf, returnToBase, sweepLanes, trackTyped } from './laneWork'
+import { inspectLaneFolders, laneWork, mergeLaneBack, repoOf, returnToBase, sweepLanes, trackTyped } from './laneWork'
 import { attachLaneOwners, laneBoards, laneReclaim, laneRetry, markGone } from './laneBoard'
 import type { LanePane } from './laneBoard'
 import { resolveRevealTarget } from './revealPath'
@@ -2283,6 +2283,9 @@ ipcMain.handle(
 
 // A worktree lane of the user's own project: what is in it, and putting it back.
 ipcMain.handle('lanes:work', (_e, cwd: string) => laneWork(cwd))
+// Physical worktrees are read separately from the ledger. A forgotten ledger claim must
+// never make an on-disk copy invisible to the Issues safety check.
+ipcMain.handle('lanes:folders', (_e, repo: string) => inspectLaneFolders(repo))
 ipcMain.handle('lanes:merge', async (_e, cwd: string) => {
   const result = await mergeLaneBack(cwd, { busy: busyDirs() })
   // A lane that merged while its own pane was still in it is now empty, and will be

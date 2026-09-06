@@ -2848,10 +2848,9 @@ function TerminalPane({
       // typing over it replaces it, which is what the selection in every other text field
       // on the machine does. Both refuse quietly when the selection is not on the line the
       // far end is still editing - the highlight is left alone and the key does what it
-      // always did. Behind the same setting as click-to-place-cursor: it is the same trick,
-      // an intention this window can see turned into keys the pty understands.
+      // always did. Unlike click-to-place-cursor, this does not depend on that optional
+      // mouse behaviour: a visible selection is an explicit editing action.
       if (
-        clickCursorRef.current &&
         !e.ctrlKey &&
         !e.metaKey &&
         !e.altKey &&

@@ -40,6 +40,8 @@ import { chordAllowed, raiseLogin, type LoginRequest } from '../../shared/remote
 import LoginCard from './components/LoginCard'
 import RemoteLoginView from './components/RemoteLoginView'
 import UsersDialog from './components/UsersDialog'
+import ToolsDialog from './components/ToolsDialog'
+import IssuesDialog, { readIssueErrors, rememberIssueError } from './components/IssuesDialog'
 import type { StopSoon } from '../../shared/deadDev'
 import ActivityFlyout from './components/ActivityFlyout'
 import type { ActivityEntry } from '@shared/activity'
@@ -52,13 +54,13 @@ import HistoryDialog from './components/HistoryDialog'
 import { fleetRow, fleetWaiting } from '@shared/fleet'
 import { deskGroups, deskRows as buildDeskRows, type DeskRow } from '@shared/desk'
 import {
-  BoardIcon,
+  ToolsIcon,
+  UsersIcon,
   HistoryIcon,
   LinkIcon,
   CopyIcon,
   SearchIcon,
   RemoteIcon,
-  SwarmIcon,
   TrashIcon,
   BellIcon,
   GearIcon,
@@ -154,13 +156,8 @@ import RestoreDialog from './components/RestoreDialog'
 import { measureRefreshRate } from './refreshRate'
 import SettingsDialog from './components/SettingsDialog'
 import ShortcutsDialog from './components/ShortcutsDialog'
-import LaneStrip, {
-  LaneChip,
-  laneOfSession,
-  useLaneBoards,
-  useLanesByPane
-} from './components/LaneStrip'
-import { laneBusy, samePath } from './laneWords'
+import LaneStrip, { useLaneBoards } from './components/LaneStrip'
+import SessionCopies from './components/SessionCopies'
 import StatusDot from './components/StatusDot'
 import SwarmDialog, { type SwarmStart } from './components/SwarmDialog'
 import SplitDialog from './components/SplitDialog'
@@ -746,6 +743,11 @@ export default function App(): JSX.Element {
   const [note, setNote] = useState<string | null>(null)
   const [swarm, setSwarm] = useState(false)
   const [users, setUsers] = useState(false)
+  const [toolsOpen, setToolsOpen] = useState(false)
+  const [issues, setIssues] = useState(false)
+  const [issueErrors, setIssueErrors] = useState<string[]>(() => {
+    try { return readIssueErrors(sessionStorage.getItem('paneforge-issue-errors')) } catch { return [] }
+  })
   const [ownerAccess, setOwnerAccess] = useState(false)
   useEffect(() => {
     let active = true
@@ -1042,7 +1044,7 @@ export default function App(): JSX.Element {
     // `.login-screen.typing` is the far machine's picture with the keyboard: a click on
     // it must not hand the caret straight back to the pane, or every letter is typed twice
     // - once on the other computer and once at the local prompt.
-    if (document.querySelector('.overlay, .select-menu, .login-screen.typing')) return
+    if (document.querySelector('.overlay, .act-fly, .select-menu, .login-screen.typing')) return
     const id = activeRef.current
     if (id) paneFocus.get(id)?.()
   }, [])
@@ -1591,7 +1593,14 @@ export default function App(): JSX.Element {
 
   // A main-process error used to be a modal box that took the keyboard off whatever you
   // were typing. It says so in the corner now; the stack is in paneforge-errors.log.
-  useEffect(() => api.onAppError((message) => flash(`Something went wrong: ${message}`)), [flash])
+  useEffect(() => api.onAppError((message) => {
+    flash(`Something went wrong: ${message}`)
+    setIssueErrors(previous => {
+      const next = rememberIssueError(previous, message)
+      try { sessionStorage.setItem('paneforge-issue-errors', JSON.stringify(next)) } catch { /* storage is optional */ }
+      return next
+    })
+  }), [flash])
 
 
   /**
@@ -3058,11 +3067,15 @@ export default function App(): JSX.Element {
           setDiff(null)
           return
         }
+        // The board checks unsaved memory and owns its discard confirmation.
+        if (document.querySelector('.pf-board-dialog')) return
         setPicking(false)
         setSettings(false)
         setHelp(false)
         setSwarm(false)
         setUsers(false)
+        setIssues(false)
+        setToolsOpen(false)
         setBoard(null)
         setHistory(false)
         setDevices(false)
@@ -3823,7 +3836,6 @@ export default function App(): JSX.Element {
   // The dev lanes of every repo an open pane is in - one board per repo. Empty on a
   // machine with no lane-using checkout, and then nothing below draws anything.
   const laneBoards = useLaneBoards()
-  const lanesByPane = useLanesByPane(laneBoards)
   // The worktree lane whose contents are open on screen, by folder.
   const [laneCwd, setLaneCwd] = useState<string | null>(null)
   const [laneHelp, setLaneHelp] = useState(false)
@@ -4647,6 +4659,8 @@ export default function App(): JSX.Element {
    * so counting it is the same call over a longer list.
    */
   const needsYou = fleetWaiting(deskRows)
+  const attentionRows = useMemo(() => buildDeskRows(sessions, sessions, remote?.peers ?? [], 'all')
+    .filter(row => ['needsYou', 'stalled'].includes(fleetState(row))), [sessions, remote])
 
   /**
    * Open a pane that is running on another machine: mirror it, then switch to it.
@@ -5160,109 +5174,11 @@ export default function App(): JSX.Element {
                       {stepsWord(s.handoffOpen)}
                     </span>
                   ) : null}
-                  {/* Which project this pane is in, which the card never said.
-                      The title is whatever the pane was named - `basename(cwd)` by
-                      default, which for a worktree copy is `PaneForge-w2`, and anything
-                      at all once somebody renames it. So the project is stated rather
-                      than inferred from the title, and a copy carries the number that
-                      switches to it. No branch here: the sidebar has no git poll of its
-                      own, and adding one per card to print `master` would be a `git
-                      status` per pane for a word that says nothing. The pane header's
-                      badge, which already polls, carries the branch. */}
-                  {(() => {
-                    const place = describePlace({ cwd: s.cwd, lane: s.lane, pane: paneNumber })
-                    const inLane = place.kind === 'lane'
-                    // Usually the lane this chat HOLDS and the lane this pane is OPEN in
-                    // are one checkout, and then two chips were drawn for it. This one is
-                    // the useful half - it opens the lane's dialog - so it takes the other
-                    // one's colour and its word, and the other one is not drawn at all.
-                    const held = laneOfSession(lanesByPane, s.id)
-                    const heldHere = held ? samePath(held.dir, s.cwd) : false
-                    const laneMark = !heldHere
-                      ? ''
-                      : held!.conflicted
-                        ? ' stuck'
-                        : held!.ready
-                          ? ' done'
-                          : laneBusy(held!)
-                            ? ' busy'
-                            : ''
-                    // A chip that repeats the line above it, and costs the line below it a
-                    // word. A pane is named `basename(cwd)` by default, so on an ordinary
-                    // card the title already IS the project - `taskdriver.ai` written
-                    // twice, once as the name and once as a chip. Measured at the real
-                    // 260px list width with the shipped stylesheet: that chip plus a lane
-                    // chip squeezed `.row-agent` to 0px, so the card said which project it
-                    // was in twice and which agent it was running not at all. Dropping it
-                    // gives the name 67.4px back, which is "Claude Code" in full.
-                    //
-                    // Kept whenever it is saying something new: a renamed pane, a lane
-                    // (whose label is not the folder name and whose chip is also the way
-                    // into the lane dialog), a copy. The full sentence is on the title
-                    // either way, so nothing is lost, only unrepeated.
-                    if (!inLane && place.short.trim() === s.title.trim()) return null
-                    // In a lane the project name is on this line for the THIRD time - the
-                    // pane's own title says it, this chip said `PaneForge · lane a`, and
-                    // the lane chip beside it said `lane a` again. Measured with
-                    // scripts/card-fit-test.mjs at the real 190px sub-line: the line wanted
-                    // 313px, so the place chip was drawn 34px wide out of 99 and the agent's
-                    // name 46px out of 67 - Robert's "Claude Code text is hidden when a lane
-                    // is being used", reported for the second time. The project is dropped
-                    // whenever the title above has already printed it, which is the ordinary
-                    // case; it comes straight back on a renamed pane.
-                    const named = s.title.trim().includes(place.project)
-                    return (
-                      <button
-                        className={'chip place' + (inLane ? ' lane-chip' : '') + laneMark}
-                        title={
-                          place.full +
-                          (inLane
-                            ? '\n\nIts own checkout, so this pane cannot clash with the other one open on this project.\nClick to see what is in it, or to merge it back.'
-                            : '')
-                        }
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          if (inLane) {
-                            // This button sits inside the session card and names the
-                            // checkout that session is running in. Opening its details
-                            // without selecting the session made the most explicit
-                            // PaneForge-a target feel dead whenever another pane was up.
-                            setActiveId(s.id)
-                            handheld.showPane()
-                            setLaneCwd(s.cwd)
-                          }
-                        }}
-                      >
-                        {inLane && named ? place.role : place.short}
-                        {laneMark === ' done' ? ' done' : laneMark === ' stuck' ? ' stuck' : ''}
-                      </button>
-                    )
-                  })()}
-                  {/* The dev lane this chat holds, if it holds one. Same fact the sidebar
-                      used to repeat in a second list of the same sessions.
-
-                      `paneProject` is why the chip beside it does not say the project name
-                      a second time: the button above has just printed it, and two chips in
-                      a row reading `taskdriver.ai` then `taskdriver.ai · lane b` read as
-                      two facts about two things. It comes back the moment the lane is a
-                      copy of some OTHER project than the one this pane is open in, which
-                      happens: a chat opened in `assistant` can hold Toolstash's lane c. */}
-                  {/* ...and only when it is a DIFFERENT checkout from the one this pane is
-                      open in. A chat in `assistant` can hold Toolstash's lane c, and that
-                      is the case this chip exists for; the ordinary case - the pane sitting
-                      in the very lane its chat holds - is one fact, and the place chip
-                      above now carries it, colour and all. */}
-                  {(() => {
-                    const held = laneOfSession(lanesByPane, s.id)
-                    if (!held || samePath(held.dir, s.cwd)) return null
-                    return (
-                      <LaneChip
-                        lane={held}
-                        paneProject={describePlace({ cwd: s.cwd, lane: s.lane }).project}
-                        onHelp={() => setLaneHelp(true)}
-                      />
-                    )
-                  })()}
+                  <SessionCopies session={s} boards={laneBoards} onOpen={cwd => {
+                    setActiveId(s.id)
+                    handheld.showPane()
+                    setLaneCwd(cwd)
+                  }} />
                 </div>
               </div>
               {s.status === 'exited' && (
@@ -5346,39 +5262,27 @@ export default function App(): JSX.Element {
           Search <span className="kbd">{keyLabel('Ctrl K')}</span>
         </button>
 
-        {/* Icons, not words. Three labels already wrapped on a narrow sidebar and a
-            fourth would not have fitted at all; a fixed-width row has room to grow and
-            reads faster once you know it. Every one keeps its full sentence on hover. */}
-        {/* Four buttons, and every one of them is a button. The first slot used to hold
-            a `<span>` wearing the same border as its four neighbours that did nothing
-            when pressed: it was a READING - how many panes want you - drawn as a
-            control, in a row whose whole promise is that a press opens something. The
-            reading was never lost, because the Sessions heading below carries the same
-            count as a badge with the word beside it, which is where a number belongs. */}
+        {/* Everyday views stay one click away; occasional coordination lives in Tools. */}
         <div className="quick">
-          <div className="swarm-users">
           <button
             className="ghost quick-btn"
-            title={keyLabel('Swarm: several agents on one mission (Ctrl Shift S)')}
-            onClick={() => setSwarm(true)}
+            aria-label="Tools"
+            aria-haspopup="dialog"
+            aria-expanded={toolsOpen}
+            title="Tools: attention, project board, swarm and shortcuts"
+            onClick={() => setToolsOpen(true)}
           >
-            <SwarmIcon />
+            <ToolsIcon />
+            {attentionRows.length > 0 && <span className="quick-dot" />}
           </button>
-          {ownerAccess && <button className="ghost small users-button" onClick={() => setUsers(true)} title="Users and downloads: your owner dashboard">Users</button>}
-          </div>
+          {ownerAccess && <div className="owner-actions">
+            <button className="ghost quick-btn users-button" aria-label="Users and downloads" onClick={() => setUsers(true)} title="Users and downloads: your owner dashboard"><UsersIcon /></button>
+            <button className="ghost quick-btn" aria-label="Issues" aria-haspopup="dialog" onClick={() => setIssues(true)} title="Known lane safety issues"><svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><circle cx="8" cy="8" r="6" /><path d="M8 4.5v4M8 10.5v1" /></svg></button>
+          </div>}
           <button
             className="ghost quick-btn"
-            title={keyLabel("Board: tasks and shared memory for the focused pane's folder (Ctrl Shift K)")}
-            disabled={!activeId}
-            onClick={() => {
-              const s = sessions.find((x) => x.id === activeId)
-              if (s) setBoard(s.cwd)
-            }}
-          >
-            <BoardIcon />
-          </button>
-          <button
-            className="ghost quick-btn"
+            aria-label="History"
+            aria-haspopup="dialog"
             title={keyLabel('History: search past sessions (Ctrl H)')}
             onClick={() => setHistory(true)}
           >
@@ -5386,6 +5290,8 @@ export default function App(): JSX.Element {
           </button>
           <button
             className={'ghost quick-btn' + (remoteLive ? ' live' : '')}
+            aria-label="Devices"
+            aria-haspopup="dialog"
             title={
               remoteLive
                 ? keyLabel(`Devices: ${remoteLive} connected (Ctrl Shift D)`)
@@ -5401,6 +5307,9 @@ export default function App(): JSX.Element {
               happened. The dot counts what has arrived since it was last opened. */}
           <button
             className={'ghost quick-btn' + (activityNew > 0 ? ' live' : '')}
+            aria-label="Recent activity"
+            aria-haspopup="dialog"
+            aria-expanded={Boolean(activityAt)}
             title={
               activityNew > 0
                 ? `Recently: ${activityNew} new thing${activityNew === 1 ? '' : 's'} the app did on its own`
@@ -5582,7 +5491,6 @@ export default function App(): JSX.Element {
         >
           <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M5 2h6v5l2 2H9v5H7V9H3l2-2z" fill="none" stroke="currentColor" strokeWidth="1.3" /></svg>
           <span>{selectKeepOpen ? 'Done selecting' : 'Keep open'}</span>
-          {Object.keys(pinned).length > 0 && <span className="badge">{Object.keys(pinned).length}</span>}
         </button>
         <div className="foot">
           <Segmented
@@ -6366,6 +6274,17 @@ export default function App(): JSX.Element {
         />
       )}
       {users && ownerAccess && <UsersDialog remote={remote} onClose={() => setUsers(false)} />}
+      {toolsOpen && <ToolsDialog waiting={attentionRows} hasSession={Boolean(activeId)} onClose={() => setToolsOpen(false)}
+        onFocus={row => {
+          setToolsOpen(false)
+          if (row.session) { touchPane(row.session.id); setActiveId(row.session.id); handheld.showPane() }
+          else if (row.listed) void openListed(row.listed.device.id, row.listed.pane.id)
+        }}
+        onBoard={() => { const session = sessions.find(row => row.id === activeId); if (session) { setToolsOpen(false); setBoard(session.cwd) } }}
+        onSwarm={() => { setToolsOpen(false); setSwarm(true) }}
+        onHelp={() => { setToolsOpen(false); setHelp(true) }}
+        onSettings={() => { setToolsOpen(false); setSettings(true) }} />}
+      {issues && ownerAccess && <IssuesDialog boards={laneBoards} sessions={sessions} errors={issueErrors} onClose={() => setIssues(false)} />}
       {swarm && config && (
         <SwarmDialog
           projects={projects}

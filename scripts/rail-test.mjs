@@ -297,6 +297,24 @@ async function run(cdp) {
     await evalIn(cdp, "[...document.querySelectorAll('.mark')].findIndex((el) => el.classList.contains('newest')) === document.querySelectorAll('.mark').length - 1"),
     'last tag in DOM order carries .newest'
   )
+  const newestTip = await evalIn(
+    cdp,
+    `(() => {
+      const mark = document.querySelector('.mark.newest')
+      const tip = mark?.querySelector('.mark-tip')
+      const idle = tip ? getComputedStyle(tip).display : null
+      // This is the keyboard path, rather than a hover synthesised by the CDP probe.
+      mark?.focus({ focusVisible: true })
+      return { idle, focused: tip ? getComputedStyle(tip).display : null }
+    })()`
+  )
+  check(
+    'the newest prompt preview stays hidden until hover or keyboard focus',
+    newestTip.idle === 'none' && newestTip.focused === 'block',
+    newestTip.idle === null
+      ? 'no newest prompt tag was rendered'
+      : `idle display ${newestTip.idle}; keyboard-focus display ${newestTip.focused}`
+  )
 
   // Off the tail, so the "Newest" pill is on screen and can be hit-tested and pressed.
   // Done before the reach measurement, not after, so one pass covers both.
