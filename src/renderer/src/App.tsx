@@ -154,12 +154,8 @@ import RestoreDialog from './components/RestoreDialog'
 import { measureRefreshRate } from './refreshRate'
 import SettingsDialog from './components/SettingsDialog'
 import ShortcutsDialog from './components/ShortcutsDialog'
-import LaneStrip, {
-  LaneChip,
-  laneOfSession,
-  useLaneBoards,
-  useLanesByPane
-} from './components/LaneStrip'
+import LaneStrip, { useLaneBoards } from './components/LaneStrip'
+import SessionCopies from './components/SessionCopies'
 import { laneBusy, samePath } from './laneWords'
 import StatusDot from './components/StatusDot'
 import SwarmDialog, { type SwarmStart } from './components/SwarmDialog'
@@ -3823,7 +3819,6 @@ export default function App(): JSX.Element {
   // The dev lanes of every repo an open pane is in - one board per repo. Empty on a
   // machine with no lane-using checkout, and then nothing below draws anything.
   const laneBoards = useLaneBoards()
-  const lanesByPane = useLanesByPane(laneBoards)
   // The worktree lane whose contents are open on screen, by folder.
   const [laneCwd, setLaneCwd] = useState<string | null>(null)
   const [laneHelp, setLaneHelp] = useState(false)
@@ -5160,109 +5155,11 @@ export default function App(): JSX.Element {
                       {stepsWord(s.handoffOpen)}
                     </span>
                   ) : null}
-                  {/* Which project this pane is in, which the card never said.
-                      The title is whatever the pane was named - `basename(cwd)` by
-                      default, which for a worktree copy is `PaneForge-w2`, and anything
-                      at all once somebody renames it. So the project is stated rather
-                      than inferred from the title, and a copy carries the number that
-                      switches to it. No branch here: the sidebar has no git poll of its
-                      own, and adding one per card to print `master` would be a `git
-                      status` per pane for a word that says nothing. The pane header's
-                      badge, which already polls, carries the branch. */}
-                  {(() => {
-                    const place = describePlace({ cwd: s.cwd, lane: s.lane, pane: paneNumber })
-                    const inLane = place.kind === 'lane'
-                    // Usually the lane this chat HOLDS and the lane this pane is OPEN in
-                    // are one checkout, and then two chips were drawn for it. This one is
-                    // the useful half - it opens the lane's dialog - so it takes the other
-                    // one's colour and its word, and the other one is not drawn at all.
-                    const held = laneOfSession(lanesByPane, s.id)
-                    const heldHere = held ? samePath(held.dir, s.cwd) : false
-                    const laneMark = !heldHere
-                      ? ''
-                      : held!.conflicted
-                        ? ' stuck'
-                        : held!.ready
-                          ? ' done'
-                          : laneBusy(held!)
-                            ? ' busy'
-                            : ''
-                    // A chip that repeats the line above it, and costs the line below it a
-                    // word. A pane is named `basename(cwd)` by default, so on an ordinary
-                    // card the title already IS the project - `taskdriver.ai` written
-                    // twice, once as the name and once as a chip. Measured at the real
-                    // 260px list width with the shipped stylesheet: that chip plus a lane
-                    // chip squeezed `.row-agent` to 0px, so the card said which project it
-                    // was in twice and which agent it was running not at all. Dropping it
-                    // gives the name 67.4px back, which is "Claude Code" in full.
-                    //
-                    // Kept whenever it is saying something new: a renamed pane, a lane
-                    // (whose label is not the folder name and whose chip is also the way
-                    // into the lane dialog), a copy. The full sentence is on the title
-                    // either way, so nothing is lost, only unrepeated.
-                    if (!inLane && place.short.trim() === s.title.trim()) return null
-                    // In a lane the project name is on this line for the THIRD time - the
-                    // pane's own title says it, this chip said `PaneForge · lane a`, and
-                    // the lane chip beside it said `lane a` again. Measured with
-                    // scripts/card-fit-test.mjs at the real 190px sub-line: the line wanted
-                    // 313px, so the place chip was drawn 34px wide out of 99 and the agent's
-                    // name 46px out of 67 - Robert's "Claude Code text is hidden when a lane
-                    // is being used", reported for the second time. The project is dropped
-                    // whenever the title above has already printed it, which is the ordinary
-                    // case; it comes straight back on a renamed pane.
-                    const named = s.title.trim().includes(place.project)
-                    return (
-                      <button
-                        className={'chip place' + (inLane ? ' lane-chip' : '') + laneMark}
-                        title={
-                          place.full +
-                          (inLane
-                            ? '\n\nIts own checkout, so this pane cannot clash with the other one open on this project.\nClick to see what is in it, or to merge it back.'
-                            : '')
-                        }
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          if (inLane) {
-                            // This button sits inside the session card and names the
-                            // checkout that session is running in. Opening its details
-                            // without selecting the session made the most explicit
-                            // PaneForge-a target feel dead whenever another pane was up.
-                            setActiveId(s.id)
-                            handheld.showPane()
-                            setLaneCwd(s.cwd)
-                          }
-                        }}
-                      >
-                        {inLane && named ? place.role : place.short}
-                        {laneMark === ' done' ? ' done' : laneMark === ' stuck' ? ' stuck' : ''}
-                      </button>
-                    )
-                  })()}
-                  {/* The dev lane this chat holds, if it holds one. Same fact the sidebar
-                      used to repeat in a second list of the same sessions.
-
-                      `paneProject` is why the chip beside it does not say the project name
-                      a second time: the button above has just printed it, and two chips in
-                      a row reading `taskdriver.ai` then `taskdriver.ai · lane b` read as
-                      two facts about two things. It comes back the moment the lane is a
-                      copy of some OTHER project than the one this pane is open in, which
-                      happens: a chat opened in `assistant` can hold Toolstash's lane c. */}
-                  {/* ...and only when it is a DIFFERENT checkout from the one this pane is
-                      open in. A chat in `assistant` can hold Toolstash's lane c, and that
-                      is the case this chip exists for; the ordinary case - the pane sitting
-                      in the very lane its chat holds - is one fact, and the place chip
-                      above now carries it, colour and all. */}
-                  {(() => {
-                    const held = laneOfSession(lanesByPane, s.id)
-                    if (!held || samePath(held.dir, s.cwd)) return null
-                    return (
-                      <LaneChip
-                        lane={held}
-                        paneProject={describePlace({ cwd: s.cwd, lane: s.lane }).project}
-                        onHelp={() => setLaneHelp(true)}
-                      />
-                    )
-                  })()}
+                  <SessionCopies session={s} boards={laneBoards} onOpen={cwd => {
+                    setActiveId(s.id)
+                    handheld.showPane()
+                    setLaneCwd(cwd)
+                  }} />
                 </div>
               </div>
               {s.status === 'exited' && (
