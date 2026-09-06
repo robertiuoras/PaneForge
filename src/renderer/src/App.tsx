@@ -6185,7 +6185,14 @@ export default function App(): JSX.Element {
               // 157 columns into a 50-column pty wraps every line of the agent's frame.
               // Not `mirror`: this pane's pty is still ours, and everything else a mirror
               // implies (no busy reading, no local clipboard) is wrong for it.
-              grid={!s.remote && s.borrowed && s.cols && s.rows ? { cols: s.cols, rows: s.rows } : null}
+              // ...and on the PHONE, the other way round: a person at the desk is keeping
+              // the pty at the desk's grid (`deskHeld`), so the phone draws that grid
+              // scaled rather than fitting its own screen to a pty that will not follow.
+              grid={
+                !s.remote && s.cols && s.rows && (s.borrowed || (s.deskHeld && isPhoneClient()))
+                  ? { cols: s.cols, rows: s.rows }
+                  : null
+              }
               // The pty's CONFIRMED grid, whoever owns it. A pane shrinking asks for a
               // narrower pty and waits to see it here before narrowing its own terminal -
               // going the other way round paints the agent's next frame at the old width

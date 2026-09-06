@@ -305,6 +305,68 @@ ok(
   'Fix asks for the size back before it re-renders'
 )
 
+// ---- 6d. a person at the desk outranks the phone ------------------------------------
+//
+// Robert 2026-09-06, screenshot of session 1 on the Mac: a wide pane drawn at a phone's
+// grid with a fat font and a third of the box empty, because he had opened that pane on
+// the phone "to watch". The desk is where the work is typed, so while a person is AT it
+// the phone's borrow is recorded and not applied - the pty stays at the desk's grid, the
+// phone draws it scaled (`deskHeld`) - and the moment the desk goes idle the phone gets
+// what it asked for without asking again. See `lentGrid` in shared/paneSize.ts.
+{
+  const { lentGrid } = req('./paneSize.bundle.cjs')
+  const two = [{ cols: 50, rows: 49, at: 1 }, { cols: 90, rows: 30, at: 1 }]
+  ok(lentGrid(two, false) !== null && lentGrid(two, false).cols === 50, 'nobody at the desk: the smallest borrow is lent')
+  ok(lentGrid(two, true) === null, 'a person at the desk: nothing is lent')
+  ok(lentGrid([], false) === null, 'and nothing to lend is still nothing')
+
+  manager.returnSizes()
+  manager.resize(id, 157, 57)
+  let watched = true
+  manager.deskWatched = () => watched
+  manager.resize(id, 50, 49, true, 'phone', true, true)
+  ok(shape() === '157x57', 'a phone borrow while a person is at the desk leaves the pty alone', shape())
+  ok(live.borrowed !== true, 'so nothing is owed back yet')
+  ok(live.meta.deskHeld === true, 'and the phone is told the desk is holding it')
+  ok(live.meta.borrowed !== true, 'while the desk is told nothing of the sort')
+  ok(live.borrows.get('phone')?.cols === 50, 'the phone\'s size is on record all the same')
+  manager.resize(id, 160, 60)
+  ok(live.borrows.get('phone')?.cols === 50, 'a desk resize (a dialog, the grid) keeps that record')
+  ok(live.deskCols === 160 && live.deskRows === 60, 'and moves the desk size')
+
+  // the person walks away
+  watched = false
+  manager.presenceChanged()
+  ok(shape() === '50x49', 'the desk going idle lends the phone its grid, unasked', shape())
+  ok(live.borrowed === true && live.meta.deskHeld !== true, 'and the flags follow')
+
+  // ...and comes back
+  watched = true
+  manager.presenceChanged()
+  ok(shape() === '160x60', 'a person sitting down takes the desk\'s grid back', shape())
+  ok(live.borrowed !== true && live.meta.deskHeld === true, 'holding the phone off again')
+  ok(live.borrows.get('phone')?.cols === 50, 'with the phone still on record')
+
+  // the phone looks away while held: nothing to hand over when the desk next goes idle
+  manager.returnSizes('phone')
+  ok(live.meta.deskHeld !== true, 'the phone looking away ends the hold')
+  ok(!live.borrows?.size, 'and its record')
+  watched = false
+  manager.presenceChanged()
+  ok(shape() === '160x60', 'so the desk going idle later changes nothing', shape())
+
+  // a held borrow whose phone stopped ticking expires like an applied one
+  watched = true
+  manager.resize(id, 50, 49, true, 'phone', true, true)
+  ok(live.meta.deskHeld === true, 'held again')
+  manager.sweepBorrows(Date.now() + 10 * 60_000)
+  ok(live.meta.deskHeld !== true && !live.borrows?.size, 'a phone that stopped ticking loses its held place too')
+  watched = false
+  manager.presenceChanged()
+  ok(shape() === '160x60', 'and gets nothing when the desk goes idle', shape())
+  manager.deskWatched = () => false
+}
+
 // ---- 7. an exited pane is not resized ---------------------------------------------
 const before = sizes.length
 live.meta.status = 'exited'

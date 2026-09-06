@@ -992,6 +992,26 @@ function TerminalPane({
     borrowRef.current = out.state
     if (out.ask) api.resize(sessionId, cols, rows, true)
   }
+  /**
+   * The phone's shape of the same ask, while a person at the desk is holding the pty at
+   * the desk's grid (`deskHeld`). The desk is drawn scaled here exactly like a mirror,
+   * and the phone keeps its own size ON RECORD - under its own viewer name, so the
+   * borrow holds a lease and expires with the phone - for the moment the desk goes idle.
+   * Same storm brake as a mirror's ask.
+   */
+  const askHeld = (cols: number, rows: number): void => {
+    const g = gridRef.current
+    const out = shouldAsk({
+      cols,
+      rows,
+      hostCols: g?.cols ?? 0,
+      hostRows: g?.rows ?? 0,
+      now: Date.now(),
+      state: borrowRef.current
+    })
+    borrowRef.current = out.state
+    if (out.ask) api.resize(sessionId, cols, rows, true, viewerName())
+  }
   // Same reason as the font: the terminal is built once per session, and changing the
   // theme must not tear down a running agent's scrollback to recolour its background.
   const themeRef = useRef(termTheme)
@@ -1021,9 +1041,19 @@ function TerminalPane({
     // A phone is holding this pane's size. Same drawing as a mirror - take the grid, fit
     // the font to it - and no resize is reported, because reporting one is exactly what
     // used to pull the pty out from under the phone.
+    // On the phone the grid only arrives while a person at the desk is holding the pty
+    // (`deskHeld`): drawn scaled, and the phone's own size kept on record for later.
     const g = gridRef.current
-    if (g && !isPhoneClient() && g.cols > 0 && g.rows > 0)
-      return mirrorFit(t, f, pinned.current, g, fontRef.current, host.current)
+    if (g && g.cols > 0 && g.rows > 0)
+      return mirrorFit(
+        t,
+        f,
+        pinned.current,
+        g,
+        fontRef.current,
+        host.current,
+        isPhoneClient() ? askHeld : undefined
+      )
     // No longer drawn at somebody else's grid: drop any scale a mirror left behind,
     // or the pane keeps drawing at two thirds size with nothing to explain it.
     if (host.current && host.current.style.transform) host.current.style.transform = ''
@@ -4341,7 +4371,7 @@ function TerminalPane({
     // so the setting is only the ceiling it may not exceed. reshape() applies that.
     // Same for a pane whose size a phone is holding: the font is derived from that grid
     // while the borrow lasts, and goes back to the setting when the phone lets go.
-    const derived = Boolean(mirror) || Boolean(grid && !isPhoneClient())
+    const derived = Boolean(mirror) || Boolean(grid)
     // The font not needing to move is NOT a reason to skip the refit when the pane has
     // just stopped being drawn at somebody else's grid. `mirrorFit` shrinks the font to
     // fit that grid, and the number it lands on is regularly the setting itself - a 50
