@@ -50,7 +50,7 @@ export default function UsersDialog({ remote, onClose }: {
         <span className="hint">Only your GitHub owner account</span>
         <button className="ghost small" aria-label="Close Users" onClick={onClose}>Close</button>
       </div>
-      <div className="users-body">
+      <div className="users-body" tabIndex={0} role="region" aria-label="Downloads and devices">
         <p className="hint">PaneForge has no user accounts or global usage tracking. Downloads below are installer fetches, not unique people. IP addresses belong to devices connected to this desk.</p>
         <div className="users-heading"><h3>Release downloads</h3><button className="ghost small" disabled={loading} onClick={() => setRefresh(value => value + 1)}>Refresh</button></div>
         {loading && <p role="status">Reading GitHub downloads…</p>}
@@ -63,7 +63,7 @@ export default function UsersDialog({ remote, onClose }: {
           </div>
           <p className="hint">Newest {stats.releases.length} releases · EXE and DMG files · checked {new Date(stats.fetchedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
           <div className="users-table-wrap"><table><caption className="hint">Downloads by release</caption><thead><tr><th>Version</th><th>Published</th><th>Windows</th><th>macOS</th></tr></thead><tbody>
-            {stats.releases.slice(0, 10).map(release => <tr key={release.version}><td>{release.version}</td><td>{release.publishedAt ? new Date(release.publishedAt).toLocaleDateString() : 'Unpublished'}</td><td>{release.windows}</td><td>{release.mac}</td></tr>)}
+            {stats.releases.map(release => <tr key={release.version}><td>{release.version}</td><td>{release.publishedAt ? new Date(release.publishedAt).toLocaleDateString() : 'Unpublished'}</td><td>{release.windows}</td><td>{release.mac}</td></tr>)}
           </tbody></table></div>
         </>}
         <h3>Your devices</h3>

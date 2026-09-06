@@ -6,9 +6,14 @@ assert.ok(id,'PF_EDITOR_PANE must identify an owned editor parity test pane')
 const q=JSON.stringify(id), c=await connect(process.env.PF_PORT??'9334')
 const pause=ms=>new Promise(r=>setTimeout(r,ms))
 let checks=0
+let clickMovesCursor
 try {
  const session=await c.evaluate(`window.api.listSessions().then(a=>a.find(s=>s.id===${q}))`)
  assert.ok(session && /editor parity test/i.test(session.title) && /\/tmp\/pf-editor-parity$/.test(session.cwd),'refuse to edit a user pane')
+ clickMovesCursor=await c.evaluate('window.api.getConfig().then(c=>c.clickMovesCursor)')
+ // Selection replacement is ordinary editing, not cursor placement. It must work for
+ // people who turn cursor-clicking off to leave a CLI's mouse behaviour unchanged.
+ await c.evaluate('window.api.setConfig({clickMovesCursor:false})')
  await c.evaluate(`document.querySelector('.row[data-id="'+${q}+'"]')?.click()`)
  await pause(160)
  const inspect=()=>c.evaluate(`(()=>{const p=window.__pf[${q}],s=p.inputRows(),t=p.term;return {cols:t.cols,span:s,lines:s?.rows.map((r,i)=>t.buffer.active.getLine(s.top+i).translateToString(true).slice(r.start,r.end)),cursor:[t.buffer.active.cursorX,t.buffer.active.baseY+t.buffer.active.cursorY],batches:p.clickKeys().length}})()`)
@@ -43,4 +48,7 @@ try {
   checks++
  }
  console.log(`${session.agent} actual editor: ${checks} deletion/replacement cases passed; no prompt submitted`)
-} finally {c.close()}
+} finally {
+ if (clickMovesCursor !== undefined) await c.evaluate(`window.api.setConfig({clickMovesCursor:${clickMovesCursor}})`)
+ c.close()
+}

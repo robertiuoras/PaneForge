@@ -8,6 +8,7 @@ import { rankBy } from '@shared/historySearch'
 import { renderLines } from '../termRender'
 import AgentLogo from './AgentLogo'
 import Blurb from './Blurb'
+import useDialogFocus from './useDialogFocus'
 import Elapsed, { useNow } from './Elapsed'
 
 const api = window.api
@@ -45,6 +46,7 @@ interface Props {
  * hour ago, and closing the pane used to destroy it.
  */
 export default function HistoryDialog({ agents, onResume, onClose }: Props): JSX.Element {
+  const dialog = useDialogFocus()
   const [entries, setEntries] = useState<HistoryEntry[]>([])
   const [query, setQuery] = useState('')
   const [hits, setHits] = useState<HistoryHit[] | null>(null)
@@ -161,15 +163,17 @@ export default function HistoryDialog({ agents, onResume, onClose }: Props): JSX
 
   return (
     <div className="overlay" onMouseDown={onClose}>
-      <div className="dialog wide tall" onMouseDown={(e) => e.stopPropagation()}>
+      <div ref={dialog} className="dialog wide tall" role="dialog" aria-modal="true" aria-labelledby="history-title" onMouseDown={(e) => e.stopPropagation()}>
         <div className="dialog-head">
-          <strong>History</strong>
+          <strong id="history-title">History</strong>
           <span className="hint">{entries.length} saved sessions on this machine</span>
+          <button className="ghost small" aria-label="Close history" onClick={onClose}>Close</button>
         </div>
         <Blurb id="history" />
 
         <input
           className="search"
+          aria-label="Search session history"
           autoFocus
           placeholder="Search everything every agent printed"
           value={query}

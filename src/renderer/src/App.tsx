@@ -40,6 +40,7 @@ import { chordAllowed, raiseLogin, type LoginRequest } from '../../shared/remote
 import LoginCard from './components/LoginCard'
 import RemoteLoginView from './components/RemoteLoginView'
 import UsersDialog from './components/UsersDialog'
+import ToolsDialog from './components/ToolsDialog'
 import IssuesDialog, { readIssueErrors, rememberIssueError } from './components/IssuesDialog'
 import type { StopSoon } from '../../shared/deadDev'
 import ActivityFlyout from './components/ActivityFlyout'
@@ -53,13 +54,13 @@ import HistoryDialog from './components/HistoryDialog'
 import { fleetRow, fleetWaiting } from '@shared/fleet'
 import { deskGroups, deskRows as buildDeskRows, type DeskRow } from '@shared/desk'
 import {
-  BoardIcon,
+  ToolsIcon,
+  UsersIcon,
   HistoryIcon,
   LinkIcon,
   CopyIcon,
   SearchIcon,
   RemoteIcon,
-  SwarmIcon,
   TrashIcon,
   BellIcon,
   GearIcon,
@@ -742,6 +743,7 @@ export default function App(): JSX.Element {
   const [note, setNote] = useState<string | null>(null)
   const [swarm, setSwarm] = useState(false)
   const [users, setUsers] = useState(false)
+  const [toolsOpen, setToolsOpen] = useState(false)
   const [issues, setIssues] = useState(false)
   const [issueErrors, setIssueErrors] = useState<string[]>(() => {
     try { return readIssueErrors(sessionStorage.getItem('paneforge-issue-errors')) } catch { return [] }
@@ -1042,7 +1044,7 @@ export default function App(): JSX.Element {
     // `.login-screen.typing` is the far machine's picture with the keyboard: a click on
     // it must not hand the caret straight back to the pane, or every letter is typed twice
     // - once on the other computer and once at the local prompt.
-    if (document.querySelector('.overlay, .select-menu, .login-screen.typing')) return
+    if (document.querySelector('.overlay, .act-fly, .select-menu, .login-screen.typing')) return
     const id = activeRef.current
     if (id) paneFocus.get(id)?.()
   }, [])
@@ -3065,11 +3067,15 @@ export default function App(): JSX.Element {
           setDiff(null)
           return
         }
+        // The board checks unsaved memory and owns its discard confirmation.
+        if (document.querySelector('.pf-board-dialog')) return
         setPicking(false)
         setSettings(false)
         setHelp(false)
         setSwarm(false)
         setUsers(false)
+        setIssues(false)
+        setToolsOpen(false)
         setBoard(null)
         setHistory(false)
         setDevices(false)
@@ -4653,6 +4659,8 @@ export default function App(): JSX.Element {
    * so counting it is the same call over a longer list.
    */
   const needsYou = fleetWaiting(deskRows)
+  const attentionRows = useMemo(() => buildDeskRows(sessions, sessions, remote?.peers ?? [], 'all')
+    .filter(row => ['needsYou', 'stalled'].includes(fleetState(row))), [sessions, remote])
 
   /**
    * Open a pane that is running on another machine: mirror it, then switch to it.
@@ -5254,36 +5262,27 @@ export default function App(): JSX.Element {
           Search <span className="kbd">{keyLabel('Ctrl K')}</span>
         </button>
 
-        {/* Icons, not words. Three labels already wrapped on a narrow sidebar and a
-            fourth would not have fitted at all; a fixed-width row has room to grow and
-            reads faster once you know it. Every one keeps its full sentence on hover. */}
-        {/* Four buttons, and every one of them is a button. The first slot used to hold
-            a `<span>` wearing the same border as its four neighbours that did nothing
-            when pressed: it was a READING - how many panes want you - drawn as a
-            control, in a row whose whole promise is that a press opens something. The
-            reading was never lost, because the Sessions heading below carries the same
-            count as a badge with the word beside it, which is where a number belongs. */}
+        {/* Everyday views stay one click away; occasional coordination lives in Tools. */}
         <div className="quick">
           <button
             className="ghost quick-btn"
-            title={keyLabel('Swarm: several agents on one mission (Ctrl Shift S)')}
-            onClick={() => setSwarm(true)}
+            aria-label="Tools"
+            aria-haspopup="dialog"
+            aria-expanded={toolsOpen}
+            title="Tools: attention, project board, swarm and shortcuts"
+            onClick={() => setToolsOpen(true)}
           >
-            <SwarmIcon />
+            <ToolsIcon />
+            {attentionRows.length > 0 && <span className="quick-dot" />}
           </button>
+          {ownerAccess && <div className="owner-actions">
+            <button className="ghost quick-btn users-button" aria-label="Users and downloads" onClick={() => setUsers(true)} title="Users and downloads: your owner dashboard"><UsersIcon /></button>
+            <button className="ghost quick-btn" aria-label="Issues" aria-haspopup="dialog" onClick={() => setIssues(true)} title="Known lane safety issues"><svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><circle cx="8" cy="8" r="6" /><path d="M8 4.5v4M8 10.5v1" /></svg></button>
+          </div>}
           <button
             className="ghost quick-btn"
-            title={keyLabel("Board: tasks and shared memory for the focused pane's folder (Ctrl Shift K)")}
-            disabled={!activeId}
-            onClick={() => {
-              const s = sessions.find((x) => x.id === activeId)
-              if (s) setBoard(s.cwd)
-            }}
-          >
-            <BoardIcon />
-          </button>
-          <button
-            className="ghost quick-btn"
+            aria-label="History"
+            aria-haspopup="dialog"
             title={keyLabel('History: search past sessions (Ctrl H)')}
             onClick={() => setHistory(true)}
           >
@@ -5291,6 +5290,8 @@ export default function App(): JSX.Element {
           </button>
           <button
             className={'ghost quick-btn' + (remoteLive ? ' live' : '')}
+            aria-label="Devices"
+            aria-haspopup="dialog"
             title={
               remoteLive
                 ? keyLabel(`Devices: ${remoteLive} connected (Ctrl Shift D)`)
@@ -5306,6 +5307,9 @@ export default function App(): JSX.Element {
               happened. The dot counts what has arrived since it was last opened. */}
           <button
             className={'ghost quick-btn' + (activityNew > 0 ? ' live' : '')}
+            aria-label="Recent activity"
+            aria-haspopup="dialog"
+            aria-expanded={Boolean(activityAt)}
             title={
               activityNew > 0
                 ? `Recently: ${activityNew} new thing${activityNew === 1 ? '' : 's'} the app did on its own`
@@ -5325,10 +5329,6 @@ export default function App(): JSX.Element {
             {activityNew > 0 && <span className="quick-dot" />}
           </button>
         </div>
-        {ownerAccess && <div className="owner-actions">
-          <button className="ghost small" onClick={() => setUsers(true)} title="Users and downloads: your owner dashboard">Users</button>
-          <button className="ghost small" onClick={() => setIssues(true)} title="Known lane safety issues">Issues</button>
-        </div>}
 
         {config && config.presets.length > 0 && (
           <>
@@ -5491,7 +5491,6 @@ export default function App(): JSX.Element {
         >
           <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M5 2h6v5l2 2H9v5H7V9H3l2-2z" fill="none" stroke="currentColor" strokeWidth="1.3" /></svg>
           <span>{selectKeepOpen ? 'Done selecting' : 'Keep open'}</span>
-          {Object.keys(pinned).length > 0 && <span className="badge">{Object.keys(pinned).length}</span>}
         </button>
         <div className="foot">
           <Segmented
@@ -6275,6 +6274,16 @@ export default function App(): JSX.Element {
         />
       )}
       {users && ownerAccess && <UsersDialog remote={remote} onClose={() => setUsers(false)} />}
+      {toolsOpen && <ToolsDialog waiting={attentionRows} hasSession={Boolean(activeId)} onClose={() => setToolsOpen(false)}
+        onFocus={row => {
+          setToolsOpen(false)
+          if (row.session) { touchPane(row.session.id); setActiveId(row.session.id); handheld.showPane() }
+          else if (row.listed) void openListed(row.listed.device.id, row.listed.pane.id)
+        }}
+        onBoard={() => { const session = sessions.find(row => row.id === activeId); if (session) { setToolsOpen(false); setBoard(session.cwd) } }}
+        onSwarm={() => { setToolsOpen(false); setSwarm(true) }}
+        onHelp={() => { setToolsOpen(false); setHelp(true) }}
+        onSettings={() => { setToolsOpen(false); setSettings(true) }} />}
       {issues && ownerAccess && <IssuesDialog boards={laneBoards} sessions={sessions} errors={issueErrors} onClose={() => setIssues(false)} />}
       {swarm && config && (
         <SwarmDialog
