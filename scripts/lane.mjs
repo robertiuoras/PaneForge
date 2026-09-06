@@ -3633,7 +3633,7 @@ function doctor() {
     RELEASE === 'version'
       ? `Lanes branch off ${MB}. Finishing one cuts a version, tags it and publishes the installers.`
       : RELEASE === 'merge'
-        ? `Lanes branch off ${MB}. Finishing one merges into ${MB} and pushes. No version is cut here.`
+        ? `Lanes branch off ${MB}. Finishing one merges into ${MB} and pushes. Readiness does not cut a version; explicitly requested releases use the project's manual release workflow.`
         : `Lanes branch off ${MB}. Finishing one does nothing else - this repo neither tags nor pushes.`
   )
   say()

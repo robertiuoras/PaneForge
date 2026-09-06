@@ -187,6 +187,29 @@ is(events.filter(([kind]) => kind === 'buffer').length, 1, 'one warning enters t
 is(events.filter(([kind]) => kind === 'sessions').length, 1, 'refusals do not repeatedly raise attention')
 is(events.filter(([kind]) => kind === 'redraw').length, 1, 'the refusal asks the CLI to repaint the composer it was written over')
 ok(sleepBody.indexOf('this.redraw(id)') > sleepBody.indexOf("emit('data', id, note)"), 'the repaint is asked for after the line is written, never before')
+const redrawStart = sessions.indexOf('  redraw(id: string)')
+ok(redrawStart >= 0, 'found the actual redraw method')
+const redrawBody = sessions.slice(redrawStart, sessions.indexOf('\n  /**', redrawStart))
+const redrawClass = transformSync(`class RedrawFixture { ${redrawBody} }`, { loader: 'ts' }).code
+for (const cols of [20, 80]) {
+  const resizes = []
+  const timers = []
+  const RedrawFixture = new Function('setTimeout', `${redrawClass}; return RedrawFixture`)(
+    (callback) => timers.push(callback)
+  )
+  const repaint = new RedrawFixture()
+  repaint.sessions = new Map([['pane', {
+    meta: { status: 'idle' }, cols, rows: 24,
+    proc: { resize: (...size) => resizes.push(size) }
+  }]])
+  repaint.redraw('pane')
+  ok(resizes.length === 1 && resizes[0][0] !== cols && resizes[0][1] === 24,
+    `${cols}-column repaint changes the actual pty dimensions`)
+  is(timers.length, 1, 'one deferred resize restores the pane')
+  timers[0]()
+  ok(resizes.length === 2 && resizes[1][0] === cols && resizes[1][1] === 24,
+    `${cols}-column repaint restores the actual size`)
+}
 verified = true
 ok(manager.sleep('pane')?.asleep, 'later exact conversation proof still permits sleep')
 is(kills, 1, 'verified sleep ends the process once')
