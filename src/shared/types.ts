@@ -344,6 +344,13 @@ export interface Session {
    */
   borrowed?: boolean
   /**
+   * A phone asked to hold this pane's size and a PERSON at the desk is keeping it: the
+   * pty stays at the desk's grid (`cols`/`rows` above are the DESK's) and the phone
+   * draws that grid scaled, the way a mirror does, until the desk goes idle. See
+   * `lentGrid` in shared/paneSize.ts.
+   */
+  deskHeld?: boolean
+  /**
    * The width the RESTORED part of this pane's buffer was painted at, when it has one.
    *
    * A reopened pane replays the log of the pane it is coming back from, and those bytes

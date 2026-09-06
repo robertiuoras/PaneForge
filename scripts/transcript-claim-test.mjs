@@ -22,7 +22,7 @@
 
 import { buildSync } from 'esbuild'
 import { strict as assert } from 'node:assert'
-import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -73,7 +73,7 @@ buildSync({
   platform: 'node',
   outfile
 })
-const { noteSession, forgetSession, resumeIdFor, projectDir } = createRequire(
+const { noteSession, forgetSession, resumeIdFor, projectDir, reads } = createRequire(
   import.meta.url
 )(outfile)
 
@@ -220,6 +220,37 @@ ok('...and so does the other one', projectDir(CWD + '-b') === projectDir(CWD))
   forgetSession('pane-c')
   rmSync(join(trunk, `${mine}.jsonl`))
   rmSync(join(trunk, `${rivals}.jsonl`))
+}
+
+// ---------------------------------------- a folder full of old chats costs no reads
+{
+  // 402 transcripts in this repo's own history folder, each read to 256 KB once a second
+  // per pane, was 59% of the installed app's main thread (2026-09-06 CPU profile) - the
+  // thread the pty bytes cross, so it was the lag a keystroke felt. A file born before
+  // the pane is refused off its stat and never opened; a head that has settled is read once.
+  const then = (Date.now() - 3_600_000) / 1000
+  for (let i = 0; i < 400; i++) {
+    const f = join(trunk, `old-${i}.jsonl`)
+    writeFileSync(f, JSON.stringify({ type: 'mode', mode: 'normal' }) + '\n' + 'x'.repeat(300_000))
+    utimesSync(f, then, then)
+  }
+  const mine = chat('busy-desk-chat', 'startup')
+  noteSession('pane-busy', CWD, 'claude', mine)
+  ok('a pane on a busy folder holds its own chat', resumeIdFor('pane-busy') === mine)
+  const before = reads.head
+  for (let i = 0; i < 10; i++) resumeIdFor('pane-busy')
+  const spent = reads.head - before
+  ok(`...and ten sweeps over 400 older transcripts open none of them (${spent} head reads)`, spent === 0)
+
+  await sleep(20)
+  const after = chat('busy-desk-cleared', 'clear')
+  noteSession('pane-busy', CWD, 'claude')
+  ok('...still follows its own /clear', resumeIdFor('pane-busy') === after)
+  const settled = reads.head
+  for (let i = 0; i < 10; i++) resumeIdFor('pane-busy')
+  const again = reads.head - settled
+  ok(`...and asking again reads nothing (${again} head reads)`, again === 0)
+  forgetSession('pane-busy')
 }
 
 // ------------------------------------------------------------------ the control

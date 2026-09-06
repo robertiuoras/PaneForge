@@ -574,7 +574,12 @@ function createWindow(): void {
    * assumed - which also means the `if (document.hidden) return` guards the polling
    * badges carry had never skipped a single poll. This is the signal they use instead.
    */
-  const pushVisible = (): void => send('app:visible', !win?.isMinimized() && !!win?.isVisible())
+  const pushVisible = (): void => {
+    send('app:visible', !win?.isMinimized() && !!win?.isVisible())
+    // A window hidden or minimised is a desk nobody is looking at, whoever is at the
+    // keyboard - so a phone holding one of its panes gets the grid it asked for.
+    manager.presenceChanged()
+  }
   win.on('minimize', pushVisible)
   win.on('restore', pushVisible)
   win.on('show', pushVisible)
@@ -1328,8 +1333,17 @@ manager.on('sessions', () => publishCapacity())
 // Whether anybody is at this machine. The renderer's idle clock freezes while nobody is,
 // so a pane is never closed during minutes a person had no chance to stop it in. Pushed on
 // a CHANGE only - two messages per absence. See src/shared/away.ts.
+// ...and the same reading, with the window's own visibility, is what decides whether a
+// phone borrowing a pane's size gets it or waits: a person at this desk keeps the pty at
+// the desk's grid (`lentGrid`, shared/paneSize.ts).
+manager.deskWatched = (): boolean => {
+  const a = away()
+  if (!a.sawPerson || a.awaySince !== null) return false
+  return !!win && !win.isDestroyed() && win.isVisible() && !win.isMinimized()
+}
 startAway((a) => {
   send('system:away', a)
+  manager.presenceChanged()
   // ...and the other desk is told too. A pane of theirs that this machine is mirroring is
   // held off their idle clock while they believe somebody here is looking at it, and this
   // is the only thing that ever says otherwise - see `Borrow.person`.

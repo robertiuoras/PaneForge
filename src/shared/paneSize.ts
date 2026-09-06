@@ -106,6 +106,27 @@ export function dropStale(
  * have no single window between them, and cols and rows are independent constraints -
  * pairing them would hand somebody a grid wider than their screen to keep an aspect.
  */
+/**
+ * The grid a pane's pty is LENT while screens are borrowing it - or null when the desk
+ * keeps its own.
+ *
+ * A person AT the desk outranks every borrower. The borrow used to win outright: a phone
+ * opened "just to watch" bent the pty to its 50 columns and the desk then drew that pane
+ * at the phone's grid, font scaled to fit - a wide pane with a fat font, twenty rows of
+ * screen and a third of the box empty, on the machine the person was actually typing at
+ * (Robert 2026-09-06: "layout of session 1 is broken because I opened it on my mobile
+ * app to watch"). The screen with a person at it is the one the pty should fit, and when
+ * BOTH have one the desk wins: it is where the work is typed, and the phone can draw the
+ * desk's grid scaled the way a mirror does. `deskWatched` is that reading - a person
+ * present (`away.ts`) and the window on screen - and the borrows stay RECORDED while it
+ * holds, so the moment the desk goes idle the phone gets the grid it asked for without
+ * asking again.
+ */
+export function lentGrid(borrows: Iterable<Borrow>, deskWatched: boolean): Grid | null {
+  if (deskWatched) return null
+  return smallestBorrow(borrows)
+}
+
 export function smallestBorrow(borrows: Iterable<Borrow>): Grid | null {
   let cols = Infinity
   let rows = Infinity

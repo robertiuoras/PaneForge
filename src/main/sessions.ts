@@ -43,7 +43,7 @@ import { jobFromTable, paneJob, programName, SHELLS } from '../shared/paneJob'
 import { canSleep } from '../shared/sleep'
 import { doneEnough } from '../shared/closeWhenDone'
 import { folderName, laneOfCheckout, projectOf } from '../shared/place'
-import { dropStale, smallestBorrow, watchedBorrow, type Borrow } from '../shared/paneSize'
+import { dropStale, lentGrid, watchedBorrow, type Borrow } from '../shared/paneSize'
 import { START_COLS, START_ROWS } from '../shared/paneGrid'
 import { RESTORE_MARK_TEXT } from '../shared/replayWidth'
 import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, SUBMIT_GAP_MS, armDecision, clearChunks, hasFreshPaneHandoff, resumeOf, dropFor, dropWords, expiryDecision, queuedPromptDecision, quietEnoughToArm, type DropReason, type QueuedPromptVerdict } from '../shared/autoclear'
@@ -1904,14 +1904,12 @@ export class SessionManager extends EventEmitter {
           // holds no lease and lets go when the connection does. See `at` in paneSize.ts.
           at: viewer.startsWith('guest') ? 0 : Date.now()
         })
-      const all = smallestBorrow(borrows.values())
-      if (all) {
-        cols = all.cols
-        rows = all.rows
-      }
-      // Nothing to do when the pty is already at that grid: a mirror re-states its size on
-      // every repaint, and obeying each one costs the CLI a full redraw for no change.
-      if (s.cols === cols && s.rows === rows && s.borrowed) return
+      // Recorded, and then DECIDED - by who is borrowing and whether a person is at this
+      // desk - in the one place every other change of that picture goes through too.
+      // Nothing happens when the pty is already at the grid decided: a mirror re-states
+      // its size on every repaint, and obeying each one costs the CLI a full redraw.
+      this.settleBorrows(id)
+      return
     }
     // A DESK resize arriving while a phone is holding this pane is remembered, not
     // obeyed. "The desk wins on the spot" was written for a borrow that had OUTLIVED the
@@ -1936,21 +1934,74 @@ export class SessionManager extends EventEmitter {
       s.deskRows = Math.max(rows, 5)
       return
     }
+    // A desk resize takes ownership back from EVERY borrower, or the next repaint from
+    // a viewer that is still attached re-applies the old minimum on top of it. Except
+    // the borrows a person at this desk is HOLDING OFF (`deskHeld`): those are waiting
+    // for the desk to go idle, and a dialog opening here must not make the phone ask
+    // again.
+    if (!s.meta.deskHeld) s.borrows?.clear()
+    s.deskCols = Math.max(cols, 20)
+    s.deskRows = Math.max(rows, 5)
+    this.applyGrid(id, s.deskCols, s.deskRows, false)
+  }
+
+  /**
+   * Whether a person is at THIS desk looking at its window - set by main/index.ts off
+   * `away.ts` and the window's own visibility. Nobody, until somebody says.
+   */
+  deskWatched: () => boolean = () => false
+
+  /** Somebody arrived at, or left, this desk: every borrowed pane is re-decided. */
+  presenceChanged(): void {
+    for (const id of this.sessions.keys()) this.settleBorrows(id)
+  }
+
+  /**
+   * Re-decide one pane's grid from who is borrowing it and whether a person is at this
+   * desk - the ONE place that reads `lentGrid`, so a borrow arriving, a borrow expiring,
+   * a phone looking away and a person sitting down all land on the same answer.
+   *
+   * Three outcomes. A grid to lend: applied, unless the pty is already there. Nothing to
+   * lend while the pty is still borrowed: given back to the desk, and the CLI asked to
+   * repaint, because the frame on the desk was drawn for the phone. Nothing to lend and
+   * nothing borrowed: only the `deskHeld` flag can move, and it is what tells the phone
+   * to draw the desk's grid scaled rather than fit its own screen.
+   */
+  private settleBorrows(id: string): void {
+    const s = this.sessions.get(id)
+    if (!s) return
+    const any = Boolean(s.borrows && s.borrows.size)
+    const held = any && this.deskWatched()
+    const lent = any ? lentGrid(s.borrows!.values(), held) : null
+    if (lent) {
+      if (!(s.borrowed && s.cols === lent.cols && s.rows === lent.rows))
+        this.applyGrid(id, lent.cols, lent.rows, true)
+    } else if (s.borrowed) {
+      this.applyGrid(id, s.deskCols, s.deskRows, false)
+      this.redraw(id)
+    } else if (s.meta.borrowed) {
+      // Same numbers, but the desk is drawing this pane as a borrowed one until it is
+      // told otherwise - so the flag still has to travel even when nothing resizes.
+      s.meta.borrowed = false
+      this.emitSessions()
+    }
+    const flag = held ? true : undefined
+    if (s.meta.deskHeld !== flag) {
+      s.meta.deskHeld = flag
+      this.emitSessions()
+    }
+  }
+
+  /** Put the pty at a grid, and tell every screen drawing it. */
+  private applyGrid(id: string, cols: number, rows: number, borrowed: boolean): void {
+    const s = this.sessions.get(id)
+    if (!s) return
     s.cols = Math.max(cols, 20)
     s.rows = Math.max(rows, 5)
     // History replays this pane's raw bytes at whatever width they were written for, so
     // the last one wins. In memory only - a dragged window resizes many times a second.
     noteCols(id, s.cols)
-    if (borrowed) {
-      s.borrowed = true
-    } else {
-      // A desk resize takes ownership back from EVERY borrower, or the next repaint from
-      // a viewer that is still attached re-applies the old minimum on top of it.
-      s.borrowed = false
-      s.borrows?.clear()
-      s.deskCols = s.cols
-      s.deskRows = s.rows
-    }
+    s.borrowed = borrowed
     // Carried on the session itself so a device mirroring this pane can draw it at the
     // size it actually is. Only pushed when the numbers moved: a window drag is dozens
     // of these a second and they mostly land on the same cell count.
@@ -1992,31 +2043,16 @@ export class SessionManager extends EventEmitter {
    */
   returnSize(id: string, viewer?: string): void {
     const s = this.sessions.get(id)
-    if (!s || !s.borrowed) return
-    // One viewer looking away is not every viewer looking away. Drop that one's borrow and,
-    // if anybody is still watching, re-apply the smallest of what is left - the pane goes
-    // back to the desk only when the last screen has let go.
-    if (viewer !== undefined && s.borrows?.size) {
-      s.borrows.delete(viewer)
-      const rest = smallestBorrow(s.borrows.values())
-      if (rest) {
-        // Applied, not recorded: nobody asked for this grid, it is the floor of what the
-        // viewers still watching asked for. See `record` on resize().
-        this.resize(id, rest.cols, rest.rows, true, '', false)
-        return
-      }
-    }
-    s.borrows?.clear()
-    s.borrowed = false
-    if (s.cols === s.deskCols && s.rows === s.deskRows) {
-      if (s.meta.borrowed) {
-        s.meta.borrowed = false
-        this.emitSessions()
-      }
-      return
-    }
-    this.resize(id, s.deskCols, s.deskRows)
-    this.redraw(id)
+    if (!s) return
+    // One viewer looking away is not every viewer looking away. Drop that one's borrow
+    // and re-decide: anybody still watching gets the floor of what is left, and the pane
+    // goes back to the desk only when the last screen has let go. A pane the desk was
+    // HOLDING (nothing applied, the borrow only on record) settles the same way, which
+    // is what stops a phone that has closed from getting the pty the moment the desk
+    // goes idle.
+    if (viewer !== undefined) s.borrows?.delete(viewer)
+    else s.borrows?.clear()
+    this.settleBorrows(id)
   }
 
   /**
@@ -2049,40 +2085,22 @@ export class SessionManager extends EventEmitter {
   /** Give back every pane whose borrowers have all stopped ticking. */
   sweepBorrows(now = Date.now()): void {
     for (const [id, s] of this.sessions) {
-      if (!s.borrowed || !s.borrows) continue
+      // Every pane with a borrow ON RECORD, applied or held off by a person at the desk:
+      // a phone that stopped ticking while the desk was busy must lose its place too.
+      if (!s.borrows?.size) continue
       if (!dropStale(s.borrows, now)) continue
-      const rest = smallestBorrow(s.borrows.values())
-      // Somebody is still watching: fall back to the floor of what is left, exactly as
-      // one viewer looking away does. Nobody left: the desk owns it again.
-      if (rest) this.resize(id, rest.cols, rest.rows, true, '', false)
-      else this.returnSize(id)
+      this.settleBorrows(id)
     }
   }
 
   returnSizes(viewer?: string): void {
     // With a viewer named this is just `returnSize` over every pane it is holding - the
-    // phone's "I have looked away" now has to leave a mirror's borrow alone.
-    if (viewer !== undefined) {
-      for (const [id, s] of this.sessions) {
-        if (s.borrows?.has(viewer)) this.returnSize(id, viewer)
-      }
-      return
-    }
+    // phone's "I have looked away" has to leave a mirror's borrow alone. Unnamed, every
+    // borrow ends at once.
     for (const [id, s] of this.sessions) {
-      if (!s.borrowed) continue
-      s.borrows?.clear()
-      s.borrowed = false
-      if (s.cols === s.deskCols && s.rows === s.deskRows) {
-        // Same numbers, but the desk is drawing this pane as a borrowed one until it is
-        // told otherwise - so the flag still has to travel even when nothing resizes.
-        if (s.meta.borrowed) {
-          s.meta.borrowed = false
-          this.emitSessions()
-        }
-        continue
-      }
-      this.resize(id, s.deskCols, s.deskRows)
-      this.redraw(id)
+      if (!s.borrows?.size && !s.borrowed && !s.meta.borrowed) continue
+      if (viewer !== undefined && !s.borrows?.has(viewer)) continue
+      this.returnSize(id, viewer)
     }
   }
 

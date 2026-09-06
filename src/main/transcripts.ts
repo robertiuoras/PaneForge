@@ -240,21 +240,51 @@ export function projectDir(cwd: string): string {
 }
 
 /** The transcripts in a folder, newest write first. */
-function transcripts(dir: string): { file: string; at: number }[] {
+type Listed = { file: string; at: number; born: number }
+
+/** Every transcript in a folder, newest first, with `born` off the same stat as `at`. */
+function transcripts(dir: string): Listed[] {
   try {
     return readdirSync(dir)
       .filter((f) => f.endsWith('.jsonl'))
       .map((f) => {
         try {
-          return { file: join(dir, f), at: statSync(join(dir, f)).mtimeMs }
+          const st = statSync(join(dir, f))
+          return { file: join(dir, f), at: st.mtimeMs, born: bornOf(st) }
         } catch {
           return null
         }
       })
-      .filter((x): x is { file: string; at: number } => Boolean(x))
+      .filter((x): x is Listed => Boolean(x))
       .sort((a, b) => b.at - a.at)
   } catch {
     return []
+  }
+}
+
+/**
+ * The first HEAD_BYTES of a transcript, read into ONE buffer the module keeps.
+ *
+ * The three readers below each allocated their own 256 KB and read it on every call, and
+ * their caller runs once a second for every pane over every file in the folder: 402 files
+ * in this repo's own history folder was 3.6 s of every 6 s on the installed app's main
+ * thread (2026-09-06 CPU profile: `Buffer.slice` 2.0 s, open+read 0.45 s) - the thread the
+ * pty bytes pass through, so it was the lag a keystroke felt. `reads.head` counts, so a
+ * test can prove a file is not read again for an answer that cannot change.
+ */
+export const reads = { head: 0 }
+const head = Buffer.alloc(HEAD_BYTES)
+function readHead(file: string): string | null {
+  let fd = -1
+  try {
+    fd = openSync(file, 'r')
+    const n = readSync(fd, head, 0, HEAD_BYTES, 0)
+    reads.head++
+    return head.toString('utf8', 0, n)
+  } catch {
+    return null
+  } finally {
+    if (fd >= 0) closeSync(fd)
   }
 }
 
@@ -275,20 +305,20 @@ function transcripts(dir: string): { file: string; at: number }[] {
  * because transcripts run to tens of megabytes.
  */
 function interactive(file: string): boolean {
-  let fd = -1
-  try {
-    fd = openSync(file, 'r')
-    const buf = Buffer.alloc(HEAD_BYTES)
-    const n = readSync(fd, buf, 0, HEAD_BYTES, 0)
-    return buf.toString('utf8', 0, n).includes('"type":"mode"')
-  } catch {
-    // Unreadable is not evidence of anything. Falling back to "yes" keeps the old
-    // behaviour rather than silently refusing to ever resume this pane.
-    return true
-  } finally {
-    if (fd >= 0) closeSync(fd)
-  }
+  if (interactives.has(file)) return true
+  const text = readHead(file)
+  // Unreadable is not evidence of anything. Falling back to "yes" keeps the old
+  // behaviour rather than silently refusing to ever resume this pane.
+  if (text === null) return true
+  const yes = text.includes('"type":"mode"')
+  // The mode record is in the first lines and is never taken back, so a yes is final. A
+  // no is not: a newborn file's head may not have been flushed yet.
+  if (yes) interactives.add(file)
+  return yes
 }
+
+/** Files already proved to hold a person's session. */
+const interactives = new Set<string>()
 
 /**
  * The folder a conversation was actually held in, when the file says.
@@ -320,18 +350,11 @@ export function heldElsewhere(file: string, cwd: string): boolean {
 function wroteIn(file: string): string | null {
   const hit = cwds.get(file)
   if (hit !== undefined) return hit
-  let fd = -1
   let said: string | null = null
-  try {
-    fd = openSync(file, 'r')
-    const buf = Buffer.alloc(HEAD_BYTES)
-    const n = readSync(fd, buf, 0, HEAD_BYTES, 0)
-    const m = /"cwd":"((?:[^"\\]|\\.)*)"/.exec(buf.toString('utf8', 0, n))
+  const text = readHead(file)
+  if (text) {
+    const m = /"cwd":"((?:[^"\\]|\\.)*)"/.exec(text)
     if (m) said = m[1].replace(/\\(.)/g, '$1')
-  } catch {
-    said = null
-  } finally {
-    if (fd >= 0) closeSync(fd)
   }
   // A file whose head has not been flushed yet says nothing, and it is about to. Only a
   // real answer is remembered: caching the silence would pin a newborn chat as anonymous
@@ -361,29 +384,39 @@ const cwds = new Map<string, string>()
  * refusal, and only that is worth a false negative - it is a second CLI launched in the
  * same folder, and adopting it would move a pane into somebody else's conversation.
  */
-function opening(file: string): 'clear' | 'startup' | 'unknown' {
-  let fd = -1
-  try {
-    fd = openSync(file, 'r')
-    const buf = Buffer.alloc(HEAD_BYTES)
-    const n = readSync(fd, buf, 0, HEAD_BYTES, 0)
-    for (const line of buf.toString('utf8', 0, n).split('\n')) {
-      const said = /"hookName":"SessionStart:(\w+)"/.exec(line)
-      // `resume` is a launch like any other: it is a process somebody started, and the
-      // pane that meant it passes its id through noteSession rather than being guessed at.
-      if (said) return said[1] === 'clear' || said[1] === 'compact' ? 'clear' : 'startup'
-      // Past the opening records, everything is the conversation's own text - and a chat
-      // that PRINTS a hook name (this file's tests do, and so does any chat about lanes)
-      // must not read as one. Attachments are hook output, so they are still opening.
-      if (/"type":"(user|assistant)"/.test(line) && !line.includes('"attachment"')) break
+function opening(file: string): Opening {
+  const hit = openings.get(file)
+  if (hit) return hit
+  const text = readHead(file)
+  if (text === null) return 'unknown'
+  let said: Opening = 'unknown'
+  let settled = false
+  for (const line of text.split('\n')) {
+    const m = /"hookName":"SessionStart:(\w+)"/.exec(line)
+    // `resume` is a launch like any other: it is a process somebody started, and the
+    // pane that meant it passes its id through noteSession rather than being guessed at.
+    if (m) {
+      said = m[1] === 'clear' || m[1] === 'compact' ? 'clear' : 'startup'
+      settled = true
+      break
     }
-    return 'unknown'
-  } catch {
-    return 'unknown'
-  } finally {
-    if (fd >= 0) closeSync(fd)
+    // Past the opening records, everything is the conversation's own text - and a chat
+    // that PRINTS a hook name (this file's tests do, and so does any chat about lanes)
+    // must not read as one. Attachments are hook output, so they are still opening.
+    if (/"type":"(user|assistant)"/.test(line) && !line.includes('"attachment"')) {
+      settled = true
+      break
+    }
   }
+  // Only a settled head is remembered: once the conversation's own records have begun
+  // the opening cannot change, but a file still writing its first lines may yet say.
+  if (settled) openings.set(file, said)
+  return said
 }
+
+type Opening = 'clear' | 'startup' | 'unknown'
+/** How each transcript began, once its head was complete enough to say. */
+const openings = new Map<string, Opening>()
 
 /**
  * A pane started, restarted, or changed conversation: from here on it owns one.
@@ -504,9 +537,11 @@ export function transcriptFor(id: string): string | null {
   // the Claude Code session that was driving it, and a hand-off then shipped that 309KB
   // file to the PC, where the pane resumed somebody else's conversation and sat frozen
   // mid-turn showing its tool output. `movedTo` had this right at the other call site.
+  // The date comes off the stat the listing already took, so every file older than this
+  // pane is turned away before anything is opened.
   const pick = transcripts(dir).find(
     (t) =>
-      birth(t.file) >= s.at - START_SLACK_MS &&
+      t.born >= s.at - START_SLACK_MS &&
       !taken.has(t.file) &&
       !released.has(t.file) &&
       // A conversation somebody LAUNCHED is never a pane's continuation. `movedTo` has
@@ -544,13 +579,16 @@ export function transcriptFor(id: string): string | null {
  */
 function birth(file: string): number {
   try {
-    const st = statSync(file)
-    if (!st.birthtimeMs) return st.mtimeMs
-    if (!st.mtimeMs) return st.birthtimeMs
-    return Math.min(st.birthtimeMs, st.mtimeMs)
+    return bornOf(statSync(file))
   } catch {
     return 0
   }
+}
+
+function bornOf(st: { birthtimeMs: number; mtimeMs: number }): number {
+  if (!st.birthtimeMs) return st.mtimeMs
+  if (!st.mtimeMs) return st.birthtimeMs
+  return Math.min(st.birthtimeMs, st.mtimeMs)
 }
 
 function mtime(file: string): number {
@@ -626,17 +664,19 @@ function movedTo(
   const cand = transcripts(projectDir(s.cwd)).find(
     (t) =>
       t.file !== mine &&
+      // Born after this pane said it had moved, and after the last line was written to the
+      // conversation it is leaving. Both, because "newer" alone is any live chat in the
+      // folder, and a pane is not allowed to walk into one of those. These come first
+      // because they cost nothing: the stat is the listing's own, and they turn away every
+      // old file in the folder before a single one is opened.
+      t.born >= s.at - START_SLACK_MS &&
+      t.born >= mineAt &&
       !taken.has(t.file) &&
       !released.has(t.file) &&
       // What the file says about how it began: proof for a pane that was never told it
       // moved, and a veto for every pane - no conversation a person launched is a pane's
       // continuation, however well the clocks line up.
       (said ? opening(t.file) === 'clear' : opening(t.file) !== 'startup') &&
-      // Born after this pane said it had moved, and after the last line was written to the
-      // conversation it is leaving. Both, because "newer" alone is any live chat in the
-      // folder, and a pane is not allowed to walk into one of those.
-      birth(t.file) >= s.at - START_SLACK_MS &&
-      birth(t.file) >= mineAt &&
       // A `/clear` keeps the pane where it is standing, so the new conversation states
       // this pane's folder. One stating a sibling lane is another pane's clear.
       !heldElsewhere(t.file, s.cwd) &&

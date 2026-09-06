@@ -2142,7 +2142,14 @@ export default function App(): JSX.Element {
     [flash]
   )
 
-  const grid = config?.grid ?? false
+  // The grid is the DESK's layout and a phone has no room for one. The setting used to
+  // reach the phone unread: with it on, every pane was drawn on the handset in block flow,
+  // one under the other at grid-cell height, and the pane just tapped was the second or
+  // fourth of them - below the fold, reached by scrolling the whole page, its terminal
+  // sized for a cell (Robert 2026-09-06: "broken view and scrolls down"). Measured on a
+  // 414x896 phone viewport with two panes: document 1000px tall, the focused pane at
+  // y=522. A handheld draws ONE pane, the active one, whatever the desk is tiled as.
+  const grid = (config?.grid ?? false) && !handheld.handheld
 
   /**
    * One pane made full-window for a minute, without disturbing the grid.
@@ -6196,7 +6203,14 @@ export default function App(): JSX.Element {
               // 157 columns into a 50-column pty wraps every line of the agent's frame.
               // Not `mirror`: this pane's pty is still ours, and everything else a mirror
               // implies (no busy reading, no local clipboard) is wrong for it.
-              grid={!s.remote && s.borrowed && s.cols && s.rows ? { cols: s.cols, rows: s.rows } : null}
+              // ...and on the PHONE, the other way round: a person at the desk is keeping
+              // the pty at the desk's grid (`deskHeld`), so the phone draws that grid
+              // scaled rather than fitting its own screen to a pty that will not follow.
+              grid={
+                !s.remote && s.cols && s.rows && (s.borrowed || (s.deskHeld && isPhoneClient()))
+                  ? { cols: s.cols, rows: s.rows }
+                  : null
+              }
               // The pty's CONFIRMED grid, whoever owns it. A pane shrinking asks for a
               // narrower pty and waits to see it here before narrowing its own terminal -
               // going the other way round paints the agent's next frame at the old width
