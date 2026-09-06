@@ -111,6 +111,7 @@ export const SURFACE: Surface = {
   diffPatch: ['invoke', 'git:diffPatch'],
   laneBoard: ['invoke', 'lanes:board'],
   laneWork: ['invoke', 'lanes:work'],
+  laneFolders: ['invoke', 'lanes:folders'],
   mergeLane: ['invoke', 'lanes:merge'],
   onLaneMoved: ['on', 'lane:moved'],
   onHandoffMoved: ['on', 'handoff:moved'],

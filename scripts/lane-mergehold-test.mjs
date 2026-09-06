@@ -126,5 +126,16 @@ const landed = (repo) => git(repo, 'log', '--oneline', 'master').includes('fix: 
   ok('and does not put it on master yet', !landed(repo), done.out)
 }
 
+// A repository can hide untracked files from interactive `git status`. That must not
+// turn a lane's ordinary draft into permission to mark it ready and merge its commit.
+{
+  const { repo, lane, work } = fixture('hidden-untracked-repo', 'merge')
+  git(work.dir, 'config', 'status.showUntrackedFiles', 'no')
+  writeFileSync(join(work.dir, 'draft.md'), 'still being written\n')
+  const done = lane('ready', '--session', 'sess-b')
+  ok('ready refuses a configured-hidden untracked draft', done.code !== 0 && /commit your changes first/.test(done.err), done.err || done.out)
+  ok('and does not merge the lane commit while the draft remains', !landed(repo) && readFileSync(join(work.dir, 'draft.md'), 'utf8').includes('still being written'))
+}
+
 console.log(failed ? `\n${failed} failed` : '\nall passed')
 process.exit(failed ? 1 : 0)

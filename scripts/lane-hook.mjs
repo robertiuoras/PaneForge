@@ -25,7 +25,7 @@
 // including the ones with nothing to do with any of this. Nothing below throws.
 
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { closeSync, existsSync, openSync, readFileSync, readSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -155,6 +155,38 @@ function repoOf(dir) {
 }
 
 /**
+ * The first Codex JSONL row records the folder the conversation started in. Read only
+ * that bounded header: a hook runs on every prompt and a rollout may be very large.
+ */
+function codexHomeOf(transcriptPath) {
+  if (!transcriptPath) return null
+  let fd
+  try {
+    fd = openSync(transcriptPath, 'r')
+    const bytes = Buffer.alloc(64 * 1024)
+    const count = readSync(fd, bytes, 0, bytes.length, 0)
+    const newline = bytes.subarray(0, count).indexOf(10)
+    if (newline < 0) return null
+    const row = JSON.parse(bytes.subarray(0, newline).toString('utf8').replace(/\r$/, ''))
+    return row?.type === 'session_meta' && typeof row?.payload?.cwd === 'string' ? row.payload.cwd : null
+  } catch {
+    return null
+  } finally {
+    if (fd !== undefined) {
+      try {
+        closeSync(fd)
+      } catch {
+        // A hook must never make a chat fail because a transcript disappeared.
+      }
+    }
+  }
+}
+
+function isCodexSessionPath(transcriptPath) {
+  return /(?:^|[\\/])sessions[\\/]\d{4}[\\/]\d{2}[\\/]\d{2}(?:[\\/]|$)/.test(transcriptPath)
+}
+
+/**
  * Should this repository have lanes at all?
  *
  * Wanted: a real project, with somewhere for finished work to go. Not wanted: the config
@@ -233,15 +265,21 @@ if (event === 'prompt') {
         : null
 
   // A VISITOR is a chat whose own project is a different repository - it is only here
-  // because its shell happened to cd into this one. The tell is the transcript, which
-  // lives under the project the session was STARTED in, spelled as a slug (every
-  // non-alphanumeric becomes a dash); `cwd` follows the shell and cannot answer this.
+  // because its shell happened to cd into this one. Claude stores transcripts below a
+  // slugged project folder. Codex stores date-named rollouts, whose first `session_meta`
+  // row has the original cwd. `cwd` follows the shell and cannot answer this.
   // A visitor is handed a letter lane and gives its checkout back the moment its turn
   // ends clean (`park`); a home chat is treated exactly as before.
   const slugOf = (p) => String(p).replace(/[^A-Za-z0-9-]/g, '-')
   const tp = input.transcript_path ?? input.transcriptPath ?? ''
+  const codexHome = codexHomeOf(tp)
   const home = tp ? basename(dirname(tp)) : ''
-  const visitor = Boolean(home) && home !== slugOf(repo) && !home.startsWith(slugOf(repo) + '-')
+  const visitor =
+    codexHome !== null
+      ? repoOf(codexHome) !== repo
+      : isCodexSessionPath(tp)
+        ? false
+        : Boolean(home) && home !== slugOf(repo) && !home.startsWith(slugOf(repo) + '-')
 
   const r = lane(
     repo,
