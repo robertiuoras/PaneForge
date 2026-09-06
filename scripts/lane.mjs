@@ -126,6 +126,11 @@ function gitSafe(cwd, ...args) {
   }
 }
 
+// Safety decisions must see ordinary untracked output even when a repository hides it
+// from interactive status for performance. Ignored files remain outside this predicate:
+// they may be seeded dependencies, and only destructive sweep treats them as a hold.
+const WORK_STATUS = ['status', '--porcelain', '--untracked-files=all']
+
 const errText = (e) => String(e.stderr ?? e.stdout ?? e.message).trim()
 
 /**
@@ -1000,7 +1005,7 @@ function reap(state) {
     if (!existsSync(laneDir(id))) continue
     const dir = laneDir(id)
     const moved = mark.commit && gitSafe(dir, 'rev-parse', 'HEAD').out !== mark.commit
-    if (moved || Boolean(gitSafe(dir, 'status', '--porcelain').out)) delete state.ready[id]
+    if (moved || Boolean(gitSafe(dir, ...WORK_STATUS).out)) delete state.ready[id]
   }
   return state
 }
@@ -1062,7 +1067,7 @@ function catchUp(id, { keepConflict = false } = {}) {
   const dir = laneDir(id)
   if (id === 'main' || !existsSync(dir)) return { moved: false, conflicts: [], dirty: false }
   // Never merge on top of someone's uncommitted edit.
-  if (gitSafe(dir, 'status', '--porcelain').out) return { moved: false, conflicts: [], dirty: true }
+  if (gitSafe(dir, ...WORK_STATUS).out) return { moved: false, conflicts: [], dirty: true }
   // Already contains master -> nothing to do (and no empty merge commit).
   if (gitSafe(dir, 'merge-base', '--is-ancestor', MB, 'HEAD').ok) {
     return { moved: false, conflicts: [], dirty: false }
@@ -1126,7 +1131,7 @@ function healLane(id) {
     gitSafe(dir, 'rebase', '--abort')
     did.push('aborted an unfinished rebase')
   }
-  const clean = !gitSafe(dir, 'status', '--porcelain').out
+  const clean = !gitSafe(dir, ...WORK_STATUS).out
   if (clean && aheadOf(laneBranch(id)) === 0) {
     // Every change in this lane is already in master: start the next chat from master
     // instead of from a branch full of commits that only look unshipped.
@@ -2091,7 +2096,7 @@ function laneWork(id) {
   // uncommitted work because it has no work: say so, and let ensureWorktree repair it.
   if (id !== 'main' && !isWorktree(dir))
     return { dirty: false, ahead: aheadOf(laneBranch(id)), broken: true, touchedAt: 0 }
-  const porcelain = gitSafe(dir, 'status', '--porcelain').out
+  const porcelain = gitSafe(dir, ...WORK_STATUS).out
   const dirty = Boolean(porcelain)
   const branch = id === 'main' ? MB : laneBranch(id)
   const ahead = id === 'main' ? unreleasedOnMaster() : aheadOf(laneBranch(id))
@@ -2706,7 +2711,7 @@ function ready(session, wanted) {
   if (!id) throw new Error('this session holds no lane')
   // Declaring work finished is the other way a reservation becomes real.
   if (state.lanes[id]) delete state.lanes[id].tentative
-  const dirty = git(laneDir(id), 'status', '--porcelain')
+  const dirty = git(laneDir(id), ...WORK_STATUS)
   if (dirty) throw new Error(`commit your changes first:\n${dirty}`)
 
   // Merge master in HERE, while this chat is still around, rather than letting the release
@@ -2881,7 +2886,7 @@ function ship(kind, session) {
   write(state)
 
   try {
-    const dirty = git(MAIN, 'status', '--porcelain')
+    const dirty = git(MAIN, ...WORK_STATUS)
     if (dirty) throw new Error(`main checkout is dirty, commit first:\n${dirty}`)
 
     // A hand-cut release skips the SUITE, deliberately - it is Robert asking for a build

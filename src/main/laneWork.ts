@@ -164,7 +164,10 @@ async function dirtyCount(cwd: string): Promise<number> {
  * file that exists, so the pair is consumed together and only that half is kept.
  */
 async function dirtyFiles(cwd: string): Promise<string[]> {
-  const r = await gitOut(cwd, ['status', '--porcelain', '-z'])
+  // Do not let a repository preference hide an agent's scratch file.  In particular,
+  // `status.showUntrackedFiles=no` is useful in a large checkout but must never turn
+  // an untracked lane into one that cleanup is allowed to remove.
+  const r = await gitOut(cwd, ['status', '--porcelain', '-z', '--untracked-files=all'])
   if (!r.ok || !r.out) return []
   const parts = r.out.split('\0').filter((p) => p.length > 0)
   const out: string[] = []
@@ -179,6 +182,18 @@ async function dirtyFiles(cwd: string): Promise<string[]> {
     if (status.includes('R') || status.includes('C')) i++
   }
   return out
+}
+
+/**
+ * Ignored files are deliberately excluded from the normal dirty count: lanes seed
+ * ignored dependencies and local environment files, and those must not block a merge.
+ * They are still real files, though.  Before the only destructive operation, treat an
+ * unreadable status or one ignored path as a reason to leave the whole lane alone.
+ */
+async function hasIgnoredFiles(cwd: string): Promise<boolean> {
+  const r = await gitOut(cwd, ['status', '--porcelain', '-z', '--ignored=matching'])
+  if (!r.ok) return true
+  return r.out.split('\0').some((entry) => entry.startsWith('!! '))
 }
 
 /**
@@ -555,6 +570,9 @@ export async function sweepLanes(repo: string, busy: string[] = []): Promise<str
     if (busy.some((b) => inside(b, dir))) continue
     const work = await laneWork(dir)
     if (!work || work.dirty > 0) continue
+    // Never discard a file merely because Git is configured to ignore it.  This keeps
+    // seeded dependencies too; retained disk is recoverable, deleted agent output is not.
+    if (await hasIgnoredFiles(dir)) continue
     // Claimed by a chat that is not in the folder yet. See heldLanes().
     if (held.has(work.lane)) continue
     // Ours to delete, or somebody else's worktree that happens to sit at `<repo>-a` and
