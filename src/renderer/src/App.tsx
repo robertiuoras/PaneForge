@@ -5582,7 +5582,6 @@ export default function App(): JSX.Element {
         >
           <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M5 2h6v5l2 2H9v5H7V9H3l2-2z" fill="none" stroke="currentColor" strokeWidth="1.3" /></svg>
           <span>{selectKeepOpen ? 'Done selecting' : 'Keep open'}</span>
-          {Object.keys(pinned).length > 0 && <span className="badge">{Object.keys(pinned).length}</span>}
         </button>
         <div className="foot">
           <Segmented
