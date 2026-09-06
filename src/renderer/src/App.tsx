@@ -1789,10 +1789,14 @@ export default function App(): JSX.Element {
       // a question about a move that has nowhere to go is a question with one answer.
       const pairs = reqs.map((req) => ({
         req,
-        target: offloadTarget(capacity, candidates, projectNameOf(req.cwd))
+        // Restoring a conversation needs this machine's provider transcript. Capacity
+        // is not a handoff, and must also preserve every explicit placement in a batch.
+        target:
+          req.where || req.device || req.resume || req.resumeId || req.resumeCwd || req.asleep || req.scrollbackId || req.reuse
+            ? null
+            : offloadTarget(capacity, candidates, projectNameOf(req.cwd))
       }))
-      // A pane the person already placed by hand is not asked about again.
-      const movable = pairs.filter((p) => p.target && !p.req.where)
+      const movable = pairs.filter((p) => p.target)
       if (!movable.length) return reqs
       // ONE device per question, and the question names it. A launch whose panes belong
       // to different projects can have two different peers offering, and a dialog saying
@@ -6328,7 +6332,7 @@ export default function App(): JSX.Element {
             // With the id, not just `resume: true`: without one the CLI resumes the newest
             // conversation in that folder, which after the pane closed is somebody else's.
             start([
-              { cwd: e.cwd, title: e.title, agent: e.agent, model: e.model, resume: true, resumeId: e.resumeId }
+              { cwd: e.cwd, title: e.title, agent: e.agent, model: e.model, resume: true, resumeId: e.resumeId, where: 'local' }
             ])
           }}
           onClose={() => setHistory(false)}

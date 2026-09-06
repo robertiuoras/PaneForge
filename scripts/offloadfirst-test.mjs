@@ -16,6 +16,7 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import ts from 'typescript'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const work = join(tmpdir(), 'pf-offloadfirst-test')
@@ -273,6 +274,73 @@ for (const rel of ['src/renderer/src/App.tsx', 'src/shared/capacity.ts', 'src/ma
   const src = readFileSync(join(root, rel), 'utf8')
   ok(!askKeyGone.test(src), `${rel} carries no offload-ask key`)
 }
+
+// Exercise the renderer callback itself: its capacity route runs before startOrSend,
+// so testing placeNewPane alone missed History sending a Mac resume ID to the PC.
+const appSource = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
+const appTree = ts.createSourceFile('App.tsx', appSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+let offloadCallback
+const findOffload = (node) => {
+  if (ts.isVariableDeclaration(node) && node.name.getText(appTree) === 'offloadReqs') {
+    offloadCallback = node.initializer.arguments[0].getText(appTree)
+  }
+  ts.forEachChild(node, findOffload)
+}
+findOffload(appTree)
+if (!offloadCallback) throw new Error('Renderer offload callback not found')
+const rendererOut = join(work, 'renderer-offload.cjs')
+buildSync({
+  absWorkingDir: root,
+  stdin: {
+    contents: `import { offloadTarget, offloadPlan, projectNameOf } from './src/shared/capacity';
+      export function createOffload(api, capacity, config, flash) { return ${offloadCallback}; }`,
+    resolveDir: root,
+    loader: 'ts'
+  },
+  bundle: true,
+  format: 'cjs',
+  platform: 'node',
+  outfile: rendererOut
+})
+const { createOffload } = require(rendererOut)
+const sent = []
+const api = {
+  remoteState: async () => ({ peers: [{ id: 'pc', name: 'PC', status: 'online' }] }),
+  remoteProjects: async () => [{ name: 'taskdriver.ai', path: 'C:/Projects/taskdriver.ai' }],
+  startRemote: async (device, req) => sent.push({ device, req })
+}
+const offload = createOffload(api, { offload: true }, {}, () => {})
+const fresh = { cwd: '/Users/test/Projects/taskdriver.ai', agent: 'codex', title: 'new work' }
+for (const flags of [
+  { resume: true, resumeId: 'mac-conversation' },
+  { resume: true },
+  { resumeId: 'mac-conversation' },
+  { resumeCwd: '/Users/test/Projects/taskdriver.ai-a' },
+  { asleep: true },
+  { scrollbackId: 'old-pane' },
+  { reuse: true },
+  { where: 'local' },
+  { where: 'remote' },
+  { device: 'chosen-pc' }
+]) {
+  const protectedReq = { ...fresh, ...flags }
+  sent.length = 0
+  const alone = await offload([protectedReq])
+  ok(alone.length === 1 && alone[0] === protectedReq && sent.length === 0,
+    `${JSON.stringify(flags)} reaches main placement unchanged when alone`)
+  for (const batch of [[protectedReq, fresh], [fresh, protectedReq]]) {
+    sent.length = 0
+    const local = await offload(batch)
+    ok(local.length === 1 && local[0] === protectedReq,
+      `${JSON.stringify(flags)} stays protected in a mixed batch`)
+    ok(sent.length === 1 && sent[0].req.title === fresh.title && !sent[0].req.resumeId &&
+      sent[0].req.cwd === 'C:/Projects/taskdriver.ai', 'only the eligible fresh request offloads')
+  }
+}
+sent.length = 0
+api.startRemote = async () => { throw new Error('peer disconnected') }
+const fallback = await offload([fresh])
+ok(fallback.length === 1 && fallback[0] === fresh, 'failed offload retains the original local request')
 
 rmSync(work, { recursive: true, force: true })
 if (failed) {
