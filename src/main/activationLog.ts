@@ -80,6 +80,18 @@ export function logHandoff(line: string): void {
   write('handoff.log', { line })
 }
 
+/**
+ * Every decision about how hard a Codex pane should think, one line each, with the
+ * milliseconds the prompt was held while the keys went in.
+ *
+ * That number is the whole cost of the feature - a prompt somebody typed sits in this
+ * app for exactly as long as it takes to walk the ladder - so it is measured rather than
+ * reasoned about, the same as `activation.log`'s delta.
+ */
+export function logEffort(entry: Record<string, unknown>): void {
+  write('effort.log', entry)
+}
+
 export function logActivation(entry: Record<string, unknown>): void {
   write('activation.log', entry)
 }

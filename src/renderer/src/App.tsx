@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useHeaderFits } from './headerFit'
 import { agentModelLabel, type AgentInfo } from '@shared/agents'
+import { effortChip, effortWords } from '@shared/effort'
 import { chordOf, resolveKeymap, sameChord } from '@shared/keymap'
 import { stripAnsi } from '@shared/ansi'
 import type {
@@ -5132,6 +5133,16 @@ export default function App(): JSX.Element {
                       </span>
                     ) : null
                   })()}
+                  {/* How hard this Codex pane is thinking, and why. Only ever the level the
+                      conversation's own log has CONFIRMED - a change that has been asked
+                      for and not yet proved wears a `…` and says so on hover. No new
+                      colour: it is the same chip the model wears. */}
+                  {s.effort ? (
+                    <span className="chip" title={effortWords(s.effort)}>
+                      {effortChip(s.effort)}
+                      {s.effort.pending ? '…' : ''}
+                    </span>
+                  ) : null}
                   {/* What this pane's HANDOFF says is left, which nothing on the desk said.
                       A pane past the context line writes one, and its `## Next steps` is
                       the only place that answers "is there work left in there" - the
@@ -6737,6 +6748,38 @@ export default function App(): JSX.Element {
                 : []),
               { key: 'rename', label: 'Rename…', hint: 'or double-click the card', run: () => setRenaming(s.id) },
               { key: 'info', label: 'Session info', hint: 'how long it has been open, what it costs', run: () => setInfo(s.id) },
+              // How hard this Codex pane thinks. Codex is the only CLI that can be told
+              // between turns, so the rows are only offered on one. The level rows come
+              // from what the model itself said it offers - never a list in this build.
+              ...(local && s.agent === 'codex'
+                ? [
+                    {
+                      key: 'effort-auto',
+                      label: 'Thinking: choose it for me',
+                      hint: s.effort?.mode === 'auto' ? 'in use now' : 'harder for hard asks',
+                      run: () => void api.setEffort(s.id, { mode: 'auto' })
+                    },
+                    ...(s.effort?.ladder ?? []).map((level) => ({
+                      key: `effort-${level}`,
+                      label: `Thinking: ${level[0].toUpperCase()}${level.slice(1)}`,
+                      hint:
+                        s.effort?.mode === 'manual' && s.effort?.level === level
+                          ? 'in use now'
+                          : undefined,
+                      run: () => void api.setEffort(s.id, { mode: 'manual', level })
+                    })),
+                    ...(s.effort
+                      ? [
+                          {
+                            key: 'effort-off',
+                            label: 'Thinking: leave it to Codex',
+                            hint: 'stop changing it',
+                            run: () => void api.setEffort(s.id, { mode: 'off' })
+                          }
+                        ]
+                      : [])
+                  ]
+                : []),
               ...(s.handoffQueuedAt
                 ? [{ key: 'stop-move', label: 'Keep it here', hint: 'stop the move it is queued for', run: () => stopMove(s) }]
                 : []),

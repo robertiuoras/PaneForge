@@ -172,3 +172,13 @@ console.log(`\n${pass} cases passed`)
   assert.ok(/liveModelFor/.test(main) && /resolveCatalogueValue/.test(main), 'liveModelFor uses the shared mapping')
   console.log('ok   a changed transcript is read again inside the cache window')
 }
+
+// The catalogue row itself, not only the trimming: the API answers `claude-fable-5-1`
+// and the CLAUDE catalogue used to hold `claude-fable-5` labelled "Fable 5", so every pane
+// on 5.1 was trimmed onto the older name and the card said "Fable 5" (Robert 2026-09-06:
+// "session 2 shows fable 5 but it using 5.1"). The row must carry the real id.
+t('the Claude catalogue names Fable by its real id and version', () => {
+  const src = readFileSync(join(process.cwd(), 'src', 'shared', 'agents.ts'), 'utf8')
+  assert.ok(/value: 'claude-fable-5-1', label: 'Fable 5\.1'/.test(src), 'claude-fable-5-1 row labelled Fable 5.1')
+  assert.ok(!/value: 'claude-fable-5',/.test(src), 'no bare claude-fable-5 row left to trim onto')
+})

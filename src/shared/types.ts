@@ -123,6 +123,25 @@ export interface ClientNamed {
   from: 'folder' | 'prompt' | 'topic' | 'reply'
 }
 
+/** What a card says about a Codex pane's reasoning effort. See `shared/effort.ts`. */
+export interface PaneEffort {
+  mode: 'auto' | 'manual'
+  /** the level the conversation's own log has CONFIRMED, never one only typed */
+  level?: string
+  /** plain words: `routine implementation`, `kept while the problem is open` */
+  reason: string
+  /** a change has been typed and the next turn has not confirmed it yet */
+  pending?: boolean
+  /** the levels this model offers, for the right-click menu */
+  ladder?: string[]
+}
+
+/** Auto, a level by hand, or off again. */
+export type EffortChoice =
+  | { mode: 'auto' }
+  | { mode: 'manual'; level: string }
+  | { mode: 'off' }
+
 export interface Session {
   id: string
   title: string
@@ -452,6 +471,14 @@ export interface Session {
    */
   handoffOpen?: number
   /**
+   * How hard this Codex pane is thinking, and why - the card's reading of it.
+   *
+   * The full state (what is in flight, how long High is held for) stays in main; this is
+   * only what a screen needs. Absent on every pane that has not been switched on, which
+   * is every pane by default: this is opt-in, per session.
+   */
+  effort?: PaneEffort
+  /**
    * Epoch ms this pane was put to sleep: the pty is gone and the card is not.
    *
    * A sleeping pane carries `status: 'exited'` as well, deliberately - every guard in
@@ -524,6 +551,13 @@ export interface StartSessionRequest {
    * `where`; a device that is not online refuses the pane by name, never falls back.
    */
   device?: string
+  /**
+   * Let this Codex pane pick its own reasoning effort, or hold it at one level.
+   *
+   * Only the CHOICE travels - never a level that was confirmed, which belongs to a
+   * conversation this request is about to replace. Absent on every other pane.
+   */
+  effort?: { mode: 'auto' | 'manual'; manual?: string }
   /** resume the most recent session in that directory (`claude --continue`) */
   resume?: boolean
   /**
@@ -1987,6 +2021,11 @@ export interface Api {
   /** swap a running pane to another CLI/model - same folder, same pane, fresh process */
   switchAgent(id: string, agent: Agent, model?: string): Promise<Session | null>
   renameSession(id: string, title: string): Promise<void>
+  /**
+   * Let a Codex pane pick its own reasoning effort, pin it to one level by hand, or stop
+   * doing either. Per pane, off until asked for.
+   */
+  setEffort(id: string, choice: EffortChoice): Promise<void>
   /**
    * Put a client rename back and stop offering it for this pane. The card's Cancel.
    *

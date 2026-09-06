@@ -74,6 +74,21 @@ export interface AutoClearArm {
 import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from './pipe'
 import { forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeIdFor, transcriptPath } from './transcripts'
 import { liveModelFor } from './paneModel'
+// How hard a Codex pane thinks. The rule is `shared/effort.ts`, the disk is
+// `main/effort.ts`, the levels each model offers come from Codex itself.
+import {
+  EFFORT_PRESS_GAP_MS,
+  EFFORT_SETTLE_MS,
+  confirmEffort,
+  decideBeforeTurn,
+  planEffortKeys,
+  type EffortState
+} from '../shared/effort'
+import { rolloutTurn } from './effort'
+import type { EffortChoice, PaneEffort } from '../shared/types'
+import { codexLadders } from './effortLevels'
+import { logEffort } from './activationLog'
+import { codexTranscriptPath } from './transcripts'
 import { endHookDeny, feedHookDeny } from './hookDeny'
 import { continueAfterRestore, restoredClock } from '../shared/restoreTurn'
 
@@ -308,6 +323,38 @@ export function setSilenceAlert(minutes: number | undefined): void {
   stallAfterMs = silenceMs(minutes)
 }
 
+/** What a new Codex pane is launched thinking at, when the reading is on for it. */
+const EFFORT_START = 'medium'
+
+/**
+ * The card's half of a pane's effort state: the level the rollout has CONFIRMED, the plain
+ * words for why, and the levels this model offers so the right-click menu can list them.
+ * Everything else - what is in flight, how long High is being held - stays in main.
+ */
+function effortReading(state: EffortState | undefined): PaneEffort | undefined {
+  if (!state) return undefined
+  return {
+    mode: state.mode,
+    level: state.confirmed ?? state.launched,
+    reason: state.reason,
+    pending: state.pending ? true : undefined,
+    ladder: state.ladder
+  }
+}
+
+/** A pane opened with the reading switched on. Codex only; nothing is claimed yet. */
+function effortStart(req: StartSessionRequest, agent: Agent): EffortState | undefined {
+  if (agent !== 'codex' || !req.effort) return undefined
+  return {
+    mode: req.effort.mode === 'manual' ? 'manual' : 'auto',
+    manual: req.effort.manual,
+    // What the `-c model_reasoning_effort` flag on the spawn asked for. It is a starting
+    // point for the arithmetic and not a claim: the first rollout line confirms it.
+    launched: EFFORT_START,
+    reason: "waiting for Codex's first reply"
+  }
+}
+
 interface Live {
   meta: Session
   /** A refused idle sweep may retry, but must not keep printing into the terminal. */
@@ -332,6 +379,19 @@ interface Live {
    */
   runner: string
   jobName: string | null
+  /**
+   * How hard this Codex pane is thinking, and everything known about how it got there.
+   * Absent unless somebody switched it on for this pane - it is opt-in, per session.
+   */
+  effort?: EffortState
+  /**
+   * A prompt held while the arrow keys that change the level go in: whatever was typed
+   * after the return that started the turn. A second return arriving mid-hold joins this
+   * tail rather than starting a second decision.
+   */
+  effortHold?: { tail: string; since: number }
+  /** The one write that must not be looked at again: the held return, on its way out. */
+  effortPassThrough?: boolean
   /** the last few things asked at this pane, for `repeatedTopic` - see `topicFor` */
   topicAsks?: string[]
   /** a phone is holding the pty at its own shape, and owes the desk its size back */
@@ -637,7 +697,11 @@ export class SessionManager extends EventEmitter {
         engaged: s.meta.engaged,
         // `runSince` is the turn clock: it is set exactly while the agent is producing an
         // answer, so it is the one honest reading of "mid-turn" at the moment we die.
-        wasWorking: Boolean(s.meta.runSince)
+        wasWorking: Boolean(s.meta.runSince),
+        // ...and whether this pane was picking its own reasoning effort. Only the choice
+        // survives, never the level: the pane comes back as a new conversation's worth of
+        // launch flag, and what it is really running is confirmed from the rollout again.
+        effort: s.effort ? { mode: s.effort.mode, manual: s.effort.manual } : undefined
       }))
   }
 
@@ -734,6 +798,7 @@ export class SessionManager extends EventEmitter {
       deskRows: START_ROWS,
       runner: specFor(agent).bin,
       jobName: null,
+      effort: effortStart(req, agent),
       busyUntil: 0,
       ackedAt: 0,
       repaintUntil: 0,
@@ -1384,9 +1449,122 @@ export class SessionManager extends EventEmitter {
     this.queuePrompt(id, text)
   }
 
+  /**
+   * Let a Codex pane pick its own reasoning effort, pin it by hand, or stop.
+   *
+   * Nothing is typed here. A change only ever reaches the pane at the next turn boundary
+   * (`holdForEffort`), which is the one moment arrow keys cannot land in the middle of
+   * somebody's work.
+   */
+  setEffort(id: string, choice: EffortChoice): void {
+    const live = this.sessions.get(id)
+    if (!live || live.meta.agent !== 'codex') return
+    const before = live.effort
+    if (choice.mode === 'off') {
+      live.effort = undefined
+    } else {
+      live.effort = {
+        ...(before ?? { launched: undefined }),
+        mode: choice.mode,
+        manual: choice.mode === 'manual' ? choice.level : before?.manual,
+        reason: choice.mode === 'manual' ? 'set by hand' : 'picking its own'
+      }
+    }
+    live.meta.effort = effortReading(live.effort)
+    // So it survives a restart: `snapshot()` carries this back into the request.
+    live.req.effort = live.effort ? { mode: live.effort.mode, manual: live.effort.manual } : undefined
+    logEffort({
+      id,
+      set: choice.mode,
+      level: choice.mode === 'manual' ? choice.level : undefined
+    })
+    this.emitSessions()
+  }
+
+  /**
+   * The turn boundary, and the only place this feature ever types.
+   *
+   * Answers true when it has TAKEN the write over - the prompt is held for as long as the
+   * arrow keys take and sent afterwards, unchanged. Every other path answers false and the
+   * bytes go straight through: a pane mid-turn, a model whose levels nobody has listed, a
+   * change already in flight, a level that is already right.
+   */
+  private holdForEffort(live: Live, data: string, origin: WriteOrigin): boolean {
+    const state = live.effort
+    if (!state || live.meta.agent !== 'codex' || live.effortPassThrough) return false
+    if (live.effortHold) {
+      // A second submission while the keys are going in. It joins the tail rather than
+      // being classified: the decision in flight stands, and the NEXT boundary gets its
+      // own. Two decisions racing each other is the oscillation this refuses outright.
+      live.effortHold.tail += data
+      return true
+    }
+    const cut = data.indexOf('\r')
+    if (cut < 0) return false
+    const head = data.slice(0, cut)
+    const rest = data.slice(cut + 1)
+    const now = Date.now()
+    const prompt = typeLine(live.typed, head)
+    // Mid-turn is `runSince` OR the pane's own busy footer - the same two readings every
+    // other rule in this file trusts, and either one is a refusal.
+    const busy = Boolean(live.meta.runSince) || live.busyUntil > now
+    const call = decideBeforeTurn(state, prompt, { busy, now })
+    state.holdTurns = call.holdTurns
+    state.reason = call.reason
+    const from = state.confirmed ?? state.launched
+    const plan =
+      call.target && from ? planEffortKeys(from, call.target, state.ladder ?? []) : null
+    if (!plan || !call.target) {
+      if (call.refused) logEffort({ id: live.meta.id, refused: call.refused, why: call.reason })
+      live.meta.effort = effortReading(state)
+      this.emitSessions()
+      return false
+    }
+    const started = now
+    state.pending = { level: call.target, at: started }
+    live.effortHold = { tail: rest, since: started }
+    live.meta.effort = effortReading(state)
+    this.emitSessions()
+    // The head of the line first, so the composer holds the whole prompt before anything
+    // else is pressed. It has no return in it, so this goes straight through.
+    if (head) this.write(live.meta.id, head, origin)
+    const key = plan.seq.slice(0, plan.seq.length / plan.presses)
+    let delay = 0
+    for (let i = 0; i < plan.presses; i++) {
+      delay += EFFORT_PRESS_GAP_MS
+      setTimeout(() => live.proc?.write(key), delay)
+    }
+    setTimeout(() => {
+      const tail = live.effortHold?.tail ?? ''
+      live.effortHold = undefined
+      logEffort({
+        id: live.meta.id,
+        mode: state.mode,
+        from,
+        to: call.target,
+        why: call.reason,
+        presses: plan.presses,
+        heldMs: Date.now() - started
+      })
+      // Through `write` again, not `proc.write`: the return is what starts the turn
+      // clock, tags the rail and counts the intervention, and all of that lives there.
+      live.effortPassThrough = true
+      try {
+        this.write(live.meta.id, '\r' + tail, origin)
+      } finally {
+        live.effortPassThrough = false
+      }
+    }, delay + EFFORT_SETTLE_MS)
+    return true
+  }
+
   write(id: string, data: string, origin: WriteOrigin = 'desk'): void {
     const live = this.sessions.get(id)
     if (!live || !live.proc) return
+    // Before a byte moves: a submitted prompt is a turn boundary, and a turn boundary is
+    // the one moment a Codex pane's reasoning effort may be changed. An `app` write
+    // (a queued prompt, an automatic clear) is a turn too, so it takes the same path.
+    if (this.holdForEffort(live, data, origin)) return
     live.proc.write(data)
     // Rebuild the line being typed, before the isTyping gate: a lone backspace is not
     // "typing" to the gate below, but it still has to erase from this record.
@@ -2669,7 +2847,15 @@ export class SessionManager extends EventEmitter {
     const spec = specFor(agent)
     // resume is per-CLI: `claude --continue` but `codex resume --last`, and some
     // agents have nothing at all - buildArgs drops the flag rather than guessing.
-    const args = buildArgs(spec, { resume: req.resume, resumeId: req.resumeId, model: req.model })
+    // `effort` only reaches a Codex spec, and only when the pane was opened with the
+    // reading on: it is a `-c` override for THIS process, so the person's own
+    // config.toml is never read, written or consulted.
+    const args = buildArgs(spec, {
+      resume: req.resume,
+      resumeId: req.resumeId,
+      model: req.model,
+      effort: req.effort ? EFFORT_START : undefined
+    })
     // Antigravity opens on `Yes, I trust this folder` in any folder it has not seen, and
     // a pane this app was asked to open is not a question anybody wants to answer twice.
     // No-op for every other agent and on a desk where that CLI is not installed.
@@ -3372,6 +3558,31 @@ export class SessionManager extends EventEmitter {
         const live2 = liveModelFor(path, meta.model, claudeModelValues(), now)
         if (live2 !== meta.model) {
           meta.model = live2
+          changed = true
+        }
+      }
+      // ...and how hard a Codex pane is REALLY thinking. The keys this app sends may have
+      // been eaten by a menu or a composer that was not where it looked, so a level is
+      // only ever claimed once the conversation's own log says the turn ran at it. Same
+      // seam and the same cost as the model reading above: one cached tail read, and only
+      // when the file has actually moved.
+      if (live.effort && meta.agent === 'codex') {
+        const turn = rolloutTurn(codexTranscriptPath(meta.cwd, resumeIdFor(meta.id) ?? ''))
+        if (!live.effort.ladder?.length) {
+          // Which model, in order: the flag the pane was launched with, else the one the
+          // conversation's own log names - a pane started with no model flag took the
+          // person's own default and this app was never told which that is.
+          const model = meta.model || turn.model
+          const ladder = model ? codexLadders(specFor(meta.agent).bin)[model] : undefined
+          if (ladder?.length) live.effort.ladder = ladder
+        }
+        if (turn.effort && turn.effort !== live.effort.confirmed) {
+          live.effort = confirmEffort(live.effort, turn.effort, now)
+          logEffort({ id: meta.id, confirmed: turn.effort })
+        }
+        const reading = effortReading(live.effort)
+        if (JSON.stringify(reading) !== JSON.stringify(meta.effort)) {
+          meta.effort = reading
           changed = true
         }
       }
