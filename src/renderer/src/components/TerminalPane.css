@@ -108,14 +108,9 @@
   display: none;
   pointer-events: none;
 }
-.mark:hover .mark-tip {
+.mark:hover .mark-tip,
+.mark:focus-visible .mark-tip {
   display: block;
-}
-/* The newest prompt names the rail without asking somebody to find a five-pixel dash
-   first. Older labels remain on hover so a busy pane does not become a stack of overlap. */
-.mark.newest .mark-tip {
-  display: block;
-  max-width: min(320px, calc(100vw - 120px));
 }
 
 /* The pane wrapper and the scrollbar's own pseudo-elements declared no cursor at all, so
