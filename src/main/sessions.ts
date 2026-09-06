@@ -1178,6 +1178,11 @@ export class SessionManager extends EventEmitter {
       live.buffer.push(note)
       live.meta.attention = true
       this.emitSessions()
+      // The line lands at the cursor, which on an agent pane is inside the composer the
+      // CLI drew - so a sentence nobody typed appears on the prompt row, reading as
+      // input. The CLI owns that box and is the only thing that can put it back, so poke
+      // it into repainting the frame it just had written over.
+      this.redraw(id)
       return null
     }
     live.sleepRefusalShown = false

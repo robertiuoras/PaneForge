@@ -177,6 +177,7 @@ const live = {
 manager.sessions = new Map([['pane', live]])
 manager.emit = (...args) => events.push(args)
 manager.emitSessions = () => events.push(['sessions'])
+manager.redraw = () => events.push(['redraw'])
 manager.endRun = () => {}
 for (let sweep = 0; sweep < 50; sweep++) is(manager.sleep('pane'), null, 'unverified conversation remains running')
 is(kills, 0, 'repeated refusals never kill the process')
@@ -184,6 +185,8 @@ is(ledgerChanges, 0, 'repeated refusals leave lane ownership intact')
 is(events.filter(([kind]) => kind === 'data').length, 1, 'fifty idle sweeps print one warning')
 is(events.filter(([kind]) => kind === 'buffer').length, 1, 'one warning enters the replay buffer')
 is(events.filter(([kind]) => kind === 'sessions').length, 1, 'refusals do not repeatedly raise attention')
+is(events.filter(([kind]) => kind === 'redraw').length, 1, 'the refusal asks the CLI to repaint the composer it was written over')
+ok(sleepBody.indexOf('this.redraw(id)') > sleepBody.indexOf("emit('data', id, note)"), 'the repaint is asked for after the line is written, never before')
 verified = true
 ok(manager.sleep('pane')?.asleep, 'later exact conversation proof still permits sleep')
 is(kills, 1, 'verified sleep ends the process once')
