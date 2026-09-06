@@ -174,6 +174,12 @@ const GATED_INVOKE = new Set([
   // set was a door straight past the gate: a stolen cookie could pick "1. Yes, run it"
   // on any permission prompt on screen without a passkey touch.
   'pty:choose',
+  // Reviewed 2026-09-06. Switching a Codex pane's reasoning effort on, or pinning it to a
+  // level, ends in arrow keys and a return going into that pane before its next turn - the
+  // same class as `pty:choose`, and gated for the same reason. It also spends more of
+  // somebody's weekly limit per turn, which is nobody's decision to make through a stolen
+  // cookie.
+  'sessions:setEffort',
   // Typing, on a delay. `autoclear:ask` ends in `/clear` plus a prompt typed into a pane
   // unless somebody at the desk stops it, and `autoclear:answer` with 'now' skips even
   // that wait - so both are the same class as `pty:write`, not a lesser one.

@@ -964,7 +964,7 @@ export function needsOpenRouterKey(spec: AgentSpec): boolean {
 /** Full argv for one launch: resume form or fresh form, plus the model. */
 export function buildArgs(
   spec: AgentSpec,
-  opts: { resume?: boolean; resumeId?: string; model?: string }
+  opts: { resume?: boolean; resumeId?: string; model?: string; effort?: string }
 ): string[] {
   const named = opts.resume && opts.resumeId && spec.resumeIdArgs
   const argv = named
@@ -973,6 +973,16 @@ export function buildArgs(
       ? [...spec.resumeArgs]
       : [...(spec.args ?? [])]
   if (spec.alwaysArgs?.length) argv.unshift(...spec.alwaysArgs)
+  // How hard the pane starts out thinking. Codex only, and only when the pane was opened
+  // with that reading switched on: it is a `-c` override of `model_reasoning_effort` for
+  // THIS process, so nothing on disk changes and the person's own config.toml is left
+  // exactly as it is. `shared/effort.ts` owns the words.
+  //
+  // Written out here rather than imported from `shared/effort.ts`: this file is imported
+  // by bare `node` test runs, which cannot follow an extensionless sibling import, so it
+  // has no imports at all. `effort-test.mjs` holds the two spellings against each other.
+  if (spec.id === 'codex' && opts.effort?.trim())
+    argv.push('-c', `model_reasoning_effort="${opts.effort.trim()}"`)
   const model = opts.model?.trim()
   if (!model) return argv
   if (spec.modelStyle === 'arg') argv.push(model)

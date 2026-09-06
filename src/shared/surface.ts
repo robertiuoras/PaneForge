@@ -51,6 +51,7 @@ export const SURFACE: Surface = {
   restartSession: ['invoke', 'sessions:restart'],
   switchAgent: ['invoke', 'sessions:switchAgent'],
   renameSession: ['invoke', 'sessions:rename'],
+  setEffort: ['invoke', 'sessions:setEffort'],
   undoClientName: ['invoke', 'sessions:clientUndo'],
   killSession: ['invoke', 'sessions:kill'],
   sleepSession: ['invoke', 'sessions:sleep'],

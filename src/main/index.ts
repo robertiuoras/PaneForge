@@ -55,7 +55,7 @@ import { isOutdated, versionOf } from '../shared/codexCatalogue'
 import { gitInfo } from './git'
 import { projectRoot } from './projectRoot'
 import { diffFiles, diffPatch } from './diff'
-import type { ClientNamed, DiffScope, PhoneState } from '../shared/types'
+import type { ClientNamed, DiffScope, EffortChoice, PhoneState } from '../shared/types'
 import { detectLane, laneExtras, resolveLane } from './lanes'
 import { laneWork, mergeLaneBack, repoOf, returnToBase, sweepLanes, trackTyped } from './laneWork'
 import { attachLaneOwners, laneBoards, laneReclaim, laneRetry, markGone } from './laneBoard'
@@ -1692,6 +1692,11 @@ ipcMain.handle('sessions:rename', (_e, id: string, title: string) =>
   remote.owns(id) ? remote.send(id, { t: 'rename', title }) : manager.rename(id, title)
 )
 ipcMain.handle('sessions:clientUndo', (_e, id: string) => manager.undoClientName(id))
+// How hard a Codex pane thinks. Nothing is typed here: the choice is remembered and the
+// pane acts on it at its next turn boundary. See `shared/effort.ts`.
+ipcMain.handle('sessions:setEffort', (_e, id: string, choice: EffortChoice) =>
+  manager.setEffort(id, choice)
+)
 ipcMain.handle('sessions:kill', (_e, id: string) => {
   if (remote.owns(id)) {
     // The row goes at once on a live link; a link that could not carry the frame is said
