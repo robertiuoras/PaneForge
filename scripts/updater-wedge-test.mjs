@@ -212,8 +212,22 @@ const h=stub.__handlers,calls=stub.__calls,at=()=>calls.length
   void u.pollOnce()
   await sleep(260)
   stub.__hang(false)
+  // failFast gives supersede its turn back and clears probing before electron-updater's
+  // original request gives up. That delayed error used to replace this installable
+  // update with an error state.
+  h['error'](new Error('late probe failure after timeout'))
+  ok(u.getUpdateState().phase==='ready'&&u.getUpdateState().version==='0.9.0',
+     'a late probe error preserves the staged ready build')
+  b=at(); const exposed=await u.checkForUpdates()
+  ok(exposed.phase==='ready'&&at()===b&&!calls.includes('install'),
+     'Check re-exposes the staged build without another download or install')
   h['update-available']({version:'0.9.9'})
   ok(u.getUpdateState().phase!=='ready','a probe that never came back stops swallowing events')
+
+  h['update-not-available']()
+  h['error'](new Error('ordinary feed failure with no staged build'))
+  ok(u.getUpdateState().phase==='error'&&u.getUpdateState().error==='ordinary feed failure with no staged build',
+     'an error remains visible when no build is ready')
 
   const health=JSON.parse(fs.readFileSync(path.join(el.__dir,'update-health.json'),'utf8'))
   ok(health.wedges>=3,'every recovered wedge is counted ('+health.wedges+')')
@@ -239,19 +253,35 @@ fs.writeFileSync(path.join(bundle,'Info.plist'),'<plist><dict><key>CFBundleShort
 fs.writeFileSync(path.join(bundle,'MacOS','PaneForge'),'#!/bin/sh\\n',{mode:0o755})
 const u=require('./updater.bundle.cjs')
 u.initUpdater(()=>{},false)
-const h=stub.__handlers
+const h=stub.__handlers,calls=stub.__calls,at=()=>calls.length
 const mac=process.platform==='darwin'
 if(!mac){
   ok(u.stagedInstallable()==='','off macOS there is no bundle to swap in')
   done(fail.length)
 }
-ok(u.getUpdateState().phase==='ready','a bundle staged by an earlier run is adopted at launch')
-ok(u.stagedInstallable()==='0.9.0','and is installable on the way out')
-// Now the state this Mac was actually in: a NEWER version stuck downloading over it.
-h['download-progress']({percent:33})
-ok(u.getUpdateState().phase==='downloading','a newer version starts downloading over it')
-ok(u.stagedInstallable()==='0.9.0','quitting still installs the staged bundle - the disk wins over the badge')
-done(fail.length)
+;(async()=>{
+  ok(u.getUpdateState().phase==='ready','a bundle staged by an earlier run is adopted at launch')
+  ok(u.stagedInstallable()==='0.9.0','and is installable on the way out')
+  // A late checking event can arrive after the bundle was staged. Its watchdog must
+  // return the disk-backed notification, and Check must return it without touching
+  // electron-updater again.
+  h['checking-for-update']()
+  ok(u.getUpdateState().phase==='checking','a late updater event can hide the staged badge as checking')
+  await sleep(260)
+  ok(u.getUpdateState().phase==='ready'&&u.stagedInstallable()==='0.9.0',
+     'the checking watchdog restores the Mac bundle ready state')
+  let b=at(); const exposed=await u.checkForUpdates()
+  ok(exposed.phase==='ready'&&at()===b&&!calls.includes('download')&&!calls.includes('install'),
+     'Check restores a staged Mac update without an updater call, download, or install')
+  h['error'](new Error('late probe failure after staged adoption'))
+  ok(u.getUpdateState().phase==='ready'&&u.stagedInstallable()==='0.9.0',
+     'a delayed error cannot hide a Mac bundle already staged on disk')
+  // Now the state this Mac was actually in: a NEWER version stuck downloading over it.
+  h['download-progress']({percent:33})
+  ok(u.getUpdateState().phase==='downloading','a newer version starts downloading over it')
+  ok(u.stagedInstallable()==='0.9.0','quitting still installs the staged bundle - the disk wins over the badge')
+  done(fail.length)
+})()
 `
 )
 
