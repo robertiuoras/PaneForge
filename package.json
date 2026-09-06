@@ -289,7 +289,8 @@
     "test:uilab": "node scripts/ui-lab-test.mjs",
     "test:codexmodels": "node scripts/codex-models-test.mjs",
     "test:panefit": "node scripts/pane-fit-test.mjs",
-    "test:railtrack": "node scripts/rail-track-test.mjs"
+    "test:railtrack": "node scripts/rail-track-test.mjs",
+    "test:issues": "node scripts/issues-dialog-test.mjs"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",

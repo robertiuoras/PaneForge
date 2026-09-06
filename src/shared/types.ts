@@ -2296,6 +2296,8 @@ export interface Api {
   laneBoard(): Promise<LaneBoard[]>
   /** what is in a pane's worktree lane; null when the folder is not a lane */
   laneWork(cwd: string): Promise<LaneWork | null>
+  /** physical worktree lanes of a known repository, including copies absent from its ledger */
+  laneFolders(repo: string): Promise<string[] | null>
   /** merge a worktree lane back into the branch it came from */
   mergeLane(cwd: string): Promise<LaneMergeResult>
   /** a pane was sent back to its project folder because its lane held nothing */

@@ -146,8 +146,9 @@ async function head(cwd: string): Promise<string> {
   return r.ok ? r.out : ''
 }
 
-async function dirtyCount(cwd: string): Promise<number> {
-  return (await dirtyFiles(cwd)).length
+async function dirtyCount(cwd: string): Promise<number | null> {
+  const files = await dirtyFiles(cwd)
+  return files === null ? null : files.length
 }
 
 /**
@@ -163,12 +164,13 @@ async function dirtyCount(cwd: string): Promise<number> {
  * A rename is two entries: the new path, then the old one, in that order. The new one is the
  * file that exists, so the pair is consumed together and only that half is kept.
  */
-async function dirtyFiles(cwd: string): Promise<string[]> {
+async function dirtyFiles(cwd: string): Promise<string[] | null> {
   // Do not let a repository preference hide an agent's scratch file.  In particular,
   // `status.showUntrackedFiles=no` is useful in a large checkout but must never turn
   // an untracked lane into one that cleanup is allowed to remove.
   const r = await gitOut(cwd, ['status', '--porcelain', '-z', '--untracked-files=all'])
-  if (!r.ok || !r.out) return []
+  if (!r.ok) return null
+  if (!r.out) return []
   const parts = r.out.split('\0').filter((p) => p.length > 0)
   const out: string[] = []
   for (let i = 0; i < parts.length; i++) {
@@ -278,12 +280,14 @@ export async function laneWork(dir: string): Promise<LaneWork | null> {
   if (!branch || !base || branch === 'HEAD' || base === 'HEAD') return null
 
   const counted = await gitOut(dir, ['rev-list', '--count', `${base}..HEAD`])
-  const ahead = counted.ok ? Number(counted.out) || 0 : 0
+  if (!counted.ok || !/^\d+$/.test(counted.out)) return null
+  const ahead = Number(counted.out)
   const [touching, baseDirty, last] = await Promise.all([
     dirtyFiles(dir),
     dirtyCount(repo),
     lastCommit(dir)
   ])
+  if (touching === null || baseDirty === null) return null
   const dirty = touching.length
   return {
     lane,
@@ -372,6 +376,9 @@ export async function mergeLaneBack(
  * empty, and if that changed in between, git says no and nothing is lost.
  */
 async function removeLane(repo: string, dir: string, branch: string): Promise<boolean> {
+  // Git protects ordinary changes but will delete ignored output even without --force.
+  // Both manual merge and automatic sweep pass through this final guard.
+  if (await hasIgnoredFiles(dir)) return false
   await git(repo, ['worktree', 'remove', dir], 120_000)
   if (!(await finished(repo, dir))) return false
   // -d, never -D: a branch with unmerged commits keeps existing, folder or no folder.
@@ -442,15 +449,20 @@ export function repoOf(cwd: string): Promise<string | null> {
   return mainRepo(cwd)
 }
 
-/** Lane folders of this repo, whether or not anything is in them. */
-export async function laneFolders(repo: string): Promise<string[]> {
+/** Physical lane folders, or null when git could not answer safely. */
+export async function inspectLaneFolders(repo: string): Promise<string[] | null> {
   const list = await gitOut(repo, ['worktree', 'list', '--porcelain'])
-  if (!list.ok) return []
+  if (!list.ok) return null
   return list.out
     .split(/\r?\n/)
     .filter((l) => l.startsWith('worktree '))
     .map((l) => l.slice('worktree '.length))
     .filter((p) => !samePath(p, repo) && Boolean(laneLabel(p, repo)))
+}
+
+/** Lane folders for lifecycle callers. A failed git read preserves every folder. */
+export async function laneFolders(repo: string): Promise<string[]> {
+  return (await inspectLaneFolders(repo)) ?? []
 }
 
 /** Is `child` that folder, or somewhere inside it? */

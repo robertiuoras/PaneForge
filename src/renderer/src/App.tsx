@@ -40,6 +40,7 @@ import { chordAllowed, raiseLogin, type LoginRequest } from '../../shared/remote
 import LoginCard from './components/LoginCard'
 import RemoteLoginView from './components/RemoteLoginView'
 import UsersDialog from './components/UsersDialog'
+import IssuesDialog, { readIssueErrors, rememberIssueError } from './components/IssuesDialog'
 import type { StopSoon } from '../../shared/deadDev'
 import ActivityFlyout from './components/ActivityFlyout'
 import type { ActivityEntry } from '@shared/activity'
@@ -156,7 +157,6 @@ import SettingsDialog from './components/SettingsDialog'
 import ShortcutsDialog from './components/ShortcutsDialog'
 import LaneStrip, { useLaneBoards } from './components/LaneStrip'
 import SessionCopies from './components/SessionCopies'
-import { laneBusy, samePath } from './laneWords'
 import StatusDot from './components/StatusDot'
 import SwarmDialog, { type SwarmStart } from './components/SwarmDialog'
 import SplitDialog from './components/SplitDialog'
@@ -742,6 +742,10 @@ export default function App(): JSX.Element {
   const [note, setNote] = useState<string | null>(null)
   const [swarm, setSwarm] = useState(false)
   const [users, setUsers] = useState(false)
+  const [issues, setIssues] = useState(false)
+  const [issueErrors, setIssueErrors] = useState<string[]>(() => {
+    try { return readIssueErrors(sessionStorage.getItem('paneforge-issue-errors')) } catch { return [] }
+  })
   const [ownerAccess, setOwnerAccess] = useState(false)
   useEffect(() => {
     let active = true
@@ -1587,7 +1591,14 @@ export default function App(): JSX.Element {
 
   // A main-process error used to be a modal box that took the keyboard off whatever you
   // were typing. It says so in the corner now; the stack is in paneforge-errors.log.
-  useEffect(() => api.onAppError((message) => flash(`Something went wrong: ${message}`)), [flash])
+  useEffect(() => api.onAppError((message) => {
+    flash(`Something went wrong: ${message}`)
+    setIssueErrors(previous => {
+      const next = rememberIssueError(previous, message)
+      try { sessionStorage.setItem('paneforge-issue-errors', JSON.stringify(next)) } catch { /* storage is optional */ }
+      return next
+    })
+  }), [flash])
 
 
   /**
@@ -5253,7 +5264,6 @@ export default function App(): JSX.Element {
             reading was never lost, because the Sessions heading below carries the same
             count as a badge with the word beside it, which is where a number belongs. */}
         <div className="quick">
-          <div className="swarm-users">
           <button
             className="ghost quick-btn"
             title={keyLabel('Swarm: several agents on one mission (Ctrl Shift S)')}
@@ -5261,8 +5271,6 @@ export default function App(): JSX.Element {
           >
             <SwarmIcon />
           </button>
-          {ownerAccess && <button className="ghost small users-button" onClick={() => setUsers(true)} title="Users and downloads: your owner dashboard">Users</button>}
-          </div>
           <button
             className="ghost quick-btn"
             title={keyLabel("Board: tasks and shared memory for the focused pane's folder (Ctrl Shift K)")}
@@ -5317,6 +5325,10 @@ export default function App(): JSX.Element {
             {activityNew > 0 && <span className="quick-dot" />}
           </button>
         </div>
+        {ownerAccess && <div className="owner-actions">
+          <button className="ghost small" onClick={() => setUsers(true)} title="Users and downloads: your owner dashboard">Users</button>
+          <button className="ghost small" onClick={() => setIssues(true)} title="Known lane safety issues">Issues</button>
+        </div>}
 
         {config && config.presets.length > 0 && (
           <>
@@ -6263,6 +6275,7 @@ export default function App(): JSX.Element {
         />
       )}
       {users && ownerAccess && <UsersDialog remote={remote} onClose={() => setUsers(false)} />}
+      {issues && ownerAccess && <IssuesDialog boards={laneBoards} sessions={sessions} errors={issueErrors} onClose={() => setIssues(false)} />}
       {swarm && config && (
         <SwarmDialog
           projects={projects}
