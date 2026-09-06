@@ -60,7 +60,7 @@ function repo(name) {
   git(dir, 'init', '-q', '-b', 'master')
   git(dir, 'config', 'user.email', 'test@paneforge')
   git(dir, 'config', 'user.name', 'PaneForge Test')
-  writeFileSync(join(dir, '.gitignore'), 'node_modules/\n.env\n')
+  writeFileSync(join(dir, '.gitignore'), 'node_modules/\n.env\n*.out\n')
   writeFileSync(join(dir, 'app.txt'), 'one\n')
   mkdirSync(join(dir, 'node_modules'), { recursive: true })
   writeFileSync(join(dir, 'node_modules', 'dep.js'), 'module.exports = 1\n')
@@ -79,6 +79,12 @@ function lane(dir, n = 2) {
   return path
 }
 
+/** Make a fixture genuinely empty when the case is testing normal cleanup. */
+function clearIgnoredSeed(path) {
+  rmSync(join(path, 'node_modules'), { recursive: true, force: true })
+  rmSync(join(path, '.env'), { force: true })
+}
+
 // The sweep keeps a lane that holds nothing until it has been untouched for
 // SWEEP_GRACE_MS (a day). Every case below builds its lane a millisecond before sweeping
 // it, so the grace is turned off for them and pinned on its own in the last block.
@@ -90,6 +96,7 @@ console.log('lane sweep')
 {
   const dir = repo('merged')
   const path = lane(dir)
+  clearIgnoredSeed(path)
   writeFileSync(join(path, 'app.txt'), 'two\n')
   git(path, 'commit', '-qam', 'lane work')
   git(dir, 'merge', '-q', '--no-ff', '-m', 'merge lane', 'pf/w2')
@@ -113,6 +120,7 @@ console.log('lane sweep')
 {
   const dir = repo('squashed')
   const path = lane(dir)
+  clearIgnoredSeed(path)
   writeFileSync(join(path, 'app.txt'), 'two\n')
   git(path, 'commit', '-qam', 'lane work')
   git(dir, 'merge', '-q', '--squash', 'pf/w2')
@@ -202,8 +210,32 @@ console.log('lane sweep')
   const path = lane(dir)
 
   const swept = await sweepLanes(dir, [])
-  check('a lane nothing was ever done in is removed', !existsSync(path) && swept.length === 1)
-  check('with its ignored files', !existsSync(join(path, 'node_modules')))
+  check('a lane with only ignored seeded files is kept', existsSync(path) && swept.length === 0)
+}
+
+// 8b. An agent's ignored output is still output. Cleanup must leave it alone.
+{
+  const dir = repo('ignored-output')
+  const path = lane(dir)
+  writeFileSync(join(path, 'agent-output.out'), 'report worth keeping\n')
+
+  await sweepLanes(dir, [])
+  check('a lane holding ignored output is kept', existsSync(path))
+  check('...including the ignored output itself', existsSync(join(path, 'agent-output.out')))
+}
+
+// 8c. A repository may hide untracked files from ordinary status output. The safety
+// predicate asks Git to show them anyway.
+{
+  const dir = repo('untracked-hidden-by-config')
+  const path = lane(dir)
+  clearIgnoredSeed(path)
+  git(path, 'config', 'status.showUntrackedFiles', 'no')
+  writeFileSync(join(path, 'notes.md'), 'do not remove\n')
+
+  await sweepLanes(dir, [])
+  check('a configured-hidden untracked file is kept', existsSync(path))
+  check('...and its output remains', existsSync(join(path, 'notes.md')))
 }
 
 // 9. The grace period itself: a lane that holds nothing is still a folder somebody may be
@@ -213,6 +245,7 @@ console.log('lane sweep')
 {
   const dir = repo('fresh')
   const path = lane(dir)
+  clearIgnoredSeed(path)
   writeFileSync(join(path, 'app.txt'), 'two\n')
   git(path, 'commit', '-qam', 'lane work')
   git(dir, 'merge', '-q', '--no-ff', '-m', 'merge lane', 'pf/w2')

@@ -312,6 +312,27 @@ const commit = (cwd, file, text, msg) => {
   check('the main checkout is never sent anywhere', (await lw.returnToBase(repo, [])) === null)
 }
 
+// Merging commits must not discard output excluded by .gitignore.
+{
+  const { repo, lane } = fixture('merge-ignored-output')
+  commit(lane, '.gitignore', 'ignored.out\n', 'ignore output')
+  writeFileSync(join(lane, 'ignored.out'), 'agent result\n')
+  const merged = await lw.mergeLaneBack(lane)
+  check('ignored output does not block commit integration', merged.ok === true)
+  check('merged lane retains ignored output', merged.removed === false && readFileSync(join(lane, 'ignored.out'), 'utf8') === 'agent result\n')
+}
+
+// An unreadable Git index is unknown, never a clean lane eligible for cleanup.
+{
+  const { repo, lane } = fixture('unreadable-status')
+  const index = git(lane, ['rev-parse', '--path-format=absolute', '--git-path', 'index'])
+  writeFileSync(index, 'corrupt index')
+  check('failed status is unknown', await lw.laneWork(lane) === null)
+  await lw.sweepLanes(repo)
+  check('unreadable lane is retained', existsSync(lane))
+  check('failed folder enumeration is unknown', await lw.inspectLaneFolders(join(work, 'missing-repo')) === null)
+}
+
 // ---------------------------------------------------------------- spotting /clear
 
 {
