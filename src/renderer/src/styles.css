@@ -4838,3 +4838,14 @@ html.login-open .panes { padding-right: calc(var(--login-w, 50vw) + 6px); }
 .users-dialog td { overflow-wrap: anywhere; }
 .users-dialog caption { text-align: left; padding: 8px; }
 
+.tools-dialog { width: 440px; overflow: hidden; }
+.tools-dialog > .tools-body { min-height: 0; flex: 1 1 auto; overflow-y: auto; }
+.tools-dialog .dialog-head > button:last-child { margin-left: auto; }
+.tools-body > .hint { line-height: 1.5; margin: 0 0 12px; }
+.tool-action { display: flex; align-items: center; text-align: left; gap: 12px; width: 100%; padding: 12px; margin-top: 6px; }
+.tool-action > svg, .tool-help { flex: 0 0 16px; }
+.tool-action > span:last-child { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.tool-action strong { font-size: 13px; font-weight: 550; }
+.tool-action small { color: var(--muted); font-size: 12px; white-space: normal; overflow-wrap: anywhere; }
+.tools-empty { padding: 24px 12px; text-align: center; }
+.tools-empty p { color: var(--muted); line-height: 1.5; }
