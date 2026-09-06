@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ProjectBoard, TaskItem, TaskStatus } from '@shared/types'
 import Blurb from './Blurb'
+import useDialogFocus from './useDialogFocus'
 import './board-swarm.css'
 
 const api = window.api
@@ -16,6 +17,7 @@ const COLUMNS: { key: TaskStatus; label: string }[] = [
 ]
 
 export default function BoardDialog({ cwd, onSend, onClose }: Props): JSX.Element {
+  const dialog = useDialogFocus()
   const [board, setBoard] = useState<ProjectBoard | null>(null)
   const [draft, setDraft] = useState('')
   const [memory, setMemory] = useState('')
@@ -56,7 +58,8 @@ export default function BoardDialog({ cwd, onSend, onClose }: Props): JSX.Elemen
       if (event.key !== 'Escape') return
       event.preventDefault()
       event.stopImmediatePropagation()
-      requestClose()
+      if (confirmDiscard) setConfirmDiscard(false)
+      else requestClose()
     }
     document.addEventListener('keydown', escape, true)
     return () => document.removeEventListener('keydown', escape, true)
@@ -140,10 +143,11 @@ export default function BoardDialog({ cwd, onSend, onClose }: Props): JSX.Elemen
   }
   return (
     <div className="overlay" onMouseDown={requestClose}>
-      <div className="dialog wide pf-board-dialog" onMouseDown={(event) => event.stopPropagation()}>
+      <div ref={dialog} className="dialog wide pf-board-dialog" role="dialog" aria-modal="true" aria-labelledby="board-title" onMouseDown={(event) => event.stopPropagation()}>
         <div className="dialog-head">
-          <strong>Board</strong>
-          <span className="hint">{cwd}</span>
+          <strong id="board-title">Board</strong>
+          <span className="hint" title={cwd}>{cwd}</span>
+          <button className="ghost small" aria-label="Close board" onClick={requestClose}>Close</button>
         </div>
         <Blurb id="board" />
         <div className="pf-board-add">
@@ -257,25 +261,23 @@ export default function BoardDialog({ cwd, onSend, onClose }: Props): JSX.Elemen
         </div>
       </div>
       {confirmDiscard && (
-        <div className="overlay" onMouseDown={(event) => event.stopPropagation()}>
-          <div className="dialog" onMouseDown={(event) => event.stopPropagation()}>
-            <div className="dialog-head">
-              <strong>Discard unsaved memory?</strong>
-            </div>
-            <p className="hint">Your shared-memory edits have not been saved.</p>
-            <div className="dialog-row">
-              <button className="ghost pf-touch" onClick={() => setConfirmDiscard(false)}>
-                Keep editing
-              </button>
-              <button className="primary pf-touch" onClick={onClose}>
-                Discard and close
-              </button>
-            </div>
-          </div>
-        </div>
+        <DiscardMemory onKeep={() => setConfirmDiscard(false)} onDiscard={onClose} />
       )}
     </div>
   )
+}
+function DiscardMemory({ onKeep, onDiscard }: { onKeep(): void; onDiscard(): void }): JSX.Element {
+  const dialog = useDialogFocus()
+  return <div className="overlay" onMouseDown={event => event.stopPropagation()}>
+    <div ref={dialog} className="dialog" role="alertdialog" aria-modal="true" aria-labelledby="discard-memory-title" onMouseDown={event => event.stopPropagation()}>
+      <div className="dialog-head"><strong id="discard-memory-title">Discard unsaved memory?</strong></div>
+      <p className="hint">Your shared-memory edits have not been saved.</p>
+      <div className="dialog-row">
+        <button className="ghost pf-touch" onClick={onKeep}>Keep editing</button>
+        <button className="primary pf-touch" onClick={onDiscard}>Discard and close</button>
+      </div>
+    </div>
+  </div>
 }
 const prev = (status: TaskStatus): TaskStatus => (status === 'done' ? 'doing' : 'todo')
 const next = (status: TaskStatus): TaskStatus => (status === 'todo' ? 'doing' : 'done')

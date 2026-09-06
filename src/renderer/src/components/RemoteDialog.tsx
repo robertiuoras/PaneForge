@@ -16,6 +16,7 @@ import { PairQr } from './PairQr'
 import AgentLogo from './AgentLogo'
 import AgentPicker from './AgentPicker'
 import Blurb from './Blurb'
+import useDialogFocus from './useDialogFocus'
 import { Checkbox, Switch } from './Controls'
 import Select from './Select'
 import './devices-mobile.css'
@@ -600,6 +601,7 @@ function PhonePanel({ flash }: { flash: (message: string) => void }): JSX.Elemen
  * off rather than just changing what to type next time.
  */
 export default function RemoteDialog({ state, onState, onClose, flash }: Props): JSX.Element {
+  const dialog = useDialogFocus()
   const [address, setAddress] = useState('')
   const [port, setPort] = useState('7311')
   const [code, setCode] = useState('')
@@ -717,9 +719,10 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
   if (!state) {
     return (
       <div className="overlay" onMouseDown={onClose}>
-        <div className="dialog" onMouseDown={(e) => e.stopPropagation()}>
+        <div ref={dialog} className="dialog" role="dialog" aria-modal="true" aria-labelledby="devices-title" onMouseDown={(e) => e.stopPropagation()}>
           <div className="dialog-head">
-            <strong>Devices</strong>
+            <strong id="devices-title">Devices</strong>
+            <button className="ghost small" aria-label="Close devices" onClick={onClose}>Close</button>
           </div>
           <p className="hint">Starting up...</p>
         </div>
@@ -833,10 +836,11 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
 
   return (
     <div className="overlay" onMouseDown={onClose}>
-      <div className="dialog wide devices" onMouseDown={(e) => e.stopPropagation()}>
+      <div ref={dialog} className="dialog wide devices" role="dialog" aria-modal="true" aria-labelledby="devices-title" onMouseDown={(e) => e.stopPropagation()}>
         <div className="dialog-head">
-          <strong>Devices</strong>
+          <strong id="devices-title">Devices</strong>
           <span className="hint">connect a phone or another computer to this desk</span>
+          <button className="ghost small" aria-label="Close devices" onClick={onClose}>Close</button>
         </div>
         <Blurb id="devices" />
 

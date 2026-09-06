@@ -1043,7 +1043,7 @@ export default function App(): JSX.Element {
     // `.login-screen.typing` is the far machine's picture with the keyboard: a click on
     // it must not hand the caret straight back to the pane, or every letter is typed twice
     // - once on the other computer and once at the local prompt.
-    if (document.querySelector('.overlay, .select-menu, .login-screen.typing')) return
+    if (document.querySelector('.overlay, .act-fly, .select-menu, .login-screen.typing')) return
     const id = activeRef.current
     if (id) paneFocus.get(id)?.()
   }, [])
@@ -3059,6 +3059,8 @@ export default function App(): JSX.Element {
           setDiff(null)
           return
         }
+        // The board checks unsaved memory and owns its discard confirmation.
+        if (document.querySelector('.pf-board-dialog')) return
         setPicking(false)
         setSettings(false)
         setHelp(false)

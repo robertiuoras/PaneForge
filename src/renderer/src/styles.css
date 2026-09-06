@@ -2436,6 +2436,9 @@ body.sizing * { user-select: none !important; }
 @keyframes pop { from { transform: translateY(-6px) scale(0.985); } }
 .dialog-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .dialog-head strong { font-size: 14px; }
+.dialog-head > strong, .dialog-head > button { flex-shrink: 0; }
+.dialog-head > .hint { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pf-board-dialog > .dialog-head { position: sticky; top: -16px; z-index: 2; background: var(--surface-2); padding-block: 8px; }
 .search {
   width: 100%; padding: 10px 11px; border-radius: var(--r);
   background: var(--bg); color: var(--text); border: 1px solid var(--line); outline: none;
@@ -4687,12 +4690,13 @@ html.handheld .card-x { width: 44px; height: 44px; top: 0; right: 0; font-size: 
 .act-back { position: fixed; inset: 0; z-index: 64; }
 .act-fly {
   position: fixed; z-index: 65;
-  max-height: min(420px, calc(100vh - 24px)); overflow: auto;
+  max-height: min(420px, calc(100vh - 24px)); overflow: hidden;
   background: var(--surface-3); border: 1px solid var(--line-strong);
   border-radius: var(--r); box-shadow: var(--shadow);
   display: flex; flex-direction: column;
 }
 .act-head {
+  flex: 0 0 auto;
   display: flex; align-items: center; justify-content: space-between;
   padding: 9px 8px 7px 13px; color: var(--muted); font-size: 11px;
   letter-spacing: .04em; text-transform: uppercase;
@@ -4700,7 +4704,10 @@ html.handheld .card-x { width: 44px; height: 44px; top: 0; right: 0; font-size: 
   background: var(--surface-3);
 }
 .act-empty { padding: 16px 13px; color: var(--muted); font-size: 12.5px; line-height: 1.5; }
-.act-list { list-style: none; margin: 0; padding: 4px 0; display: flex; flex-direction: column; }
+.act-list { list-style: none; margin: 0; padding: 4px 0; display: flex; flex-direction: column; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.act-filters { flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.act-filters > input { flex-basis: 100%; width: 100%; min-width: 0; }
+.act-filters .active { border-color: var(--accent); color: var(--accent-text); }
 .act-row {
   display: grid; grid-template-columns: auto 1fr; gap: 2px 8px;
   padding: 8px 13px; border-bottom: 1px solid var(--line);
@@ -4830,3 +4837,4 @@ html.login-open .panes { padding-right: calc(var(--login-w, 50vw) + 6px); }
 .users-dialog th, .users-dialog td { text-align: left; padding: 8px; border-bottom: 1px solid var(--line); }
 .users-dialog td { overflow-wrap: anywhere; }
 .users-dialog caption { text-align: left; padding: 8px; }
+
