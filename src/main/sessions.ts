@@ -2118,7 +2118,9 @@ export class SessionManager extends EventEmitter {
     const s = this.sessions.get(id)
     if (!s || s.meta.status === 'exited') return
     try {
-      s.proc?.resize(Math.max(20, s.cols - 1), s.rows)
+      // At the minimum width, shrinking would leave the size unchanged and send no
+      // SIGWINCH. Grow by one column there so the CLI always receives a real resize.
+      s.proc?.resize(s.cols === 20 ? 21 : Math.max(20, s.cols - 1), s.rows)
       setTimeout(() => {
         try {
           if (this.sessions.get(id) === s) s.proc?.resize(s.cols, s.rows)
