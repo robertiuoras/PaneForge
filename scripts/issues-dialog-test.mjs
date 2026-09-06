@@ -4,6 +4,7 @@ import { buildSync } from 'esbuild'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 const dir = mkdtempSync(join(tmpdir(), 'pf-issues-'))
 try {
@@ -12,7 +13,7 @@ try {
   // The pure exports are in the component file. Its module-level bridge is never called
   // by this test, but Electron normally supplies it before the renderer imports.
   globalThis.window = { api: {} }
-  const { laneIssues, rememberIssueError, readIssueErrors, folderInspectionResults } = await import(out)
+  const { laneIssues, rememberIssueError, readIssueErrors, folderInspectionResults } = await import(pathToFileURL(out).href)
   const board = { repo: '/work/widget', device: 'desk', releasing: null, lastShip: null, hold: { reason: 'Waiting for checks.', at: 1 }, lanes: [
     { lane: 'main', dir: '/work/widget', branch: 'main', from: null, session: null, ownerPane: null, held: false, seen: 1, ready: false, conflicted: false, adoptable: false, resolver: null, device: 'desk', peer: false },
     { lane: 'a', dir: '/work/widget-a', branch: 'lane-a', from: '/work/widget', session: 'one', ownerPane: null, held: false, seen: 1, ready: false, conflicted: true, conflictDetail: 'src/a.ts', adoptable: true, resolver: null, device: 'desk', peer: false },
