@@ -53,6 +53,7 @@ import { fleetRow, fleetWaiting } from '@shared/fleet'
 import { deskGroups, deskRows as buildDeskRows, type DeskRow } from '@shared/desk'
 import {
   BoardIcon,
+  UsersIcon,
   HistoryIcon,
   LinkIcon,
   CopyIcon,
@@ -5364,7 +5365,7 @@ export default function App(): JSX.Element {
           >
             <SwarmIcon />
           </button>
-          {ownerAccess && <button className="ghost small users-button" onClick={() => setUsers(true)} title="Users and downloads: your owner dashboard">Users</button>}
+          {ownerAccess && <button className="ghost quick-btn users-button" aria-label="Users and downloads" onClick={() => setUsers(true)} title="Users and downloads: your owner dashboard"><UsersIcon /></button>}
           </div>
           <button
             className="ghost quick-btn"
