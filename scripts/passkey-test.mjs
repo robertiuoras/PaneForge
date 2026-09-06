@@ -659,7 +659,9 @@ ok(!server.running, 'the gate test server stopped cleanly')
     'drive:clear', 'goal:list', 'goal:cancel', 'goal:remove', 'goal:clear', 'config:get',
     'config:pickRoot', 'sounds:add', 'sounds:data', 'sounds:remove', 'sounds:rename',
     'discord:status', 'shell:pathKind', 'clipboard:fixtureActive', 'git:info',
-    'git:diffFiles', 'git:diffPatch', 'lanes:board', 'lanes:work', 'admin:status',
+    'git:diffFiles', 'git:diffPatch', 'lanes:board', 'lanes:work',
+    // Read-only worktree paths, already exposed by lanes:board to paired clients.
+    'lanes:folders', 'admin:status',
     'app:profile', 'agents:locate', 'update:state', 'update:check', 'game:status',
     'app:visibleNow', 'game:manual', 'restore:pending', 'board:get', 'board:tasks',
     'board:memory', 'history:list', 'history:search', 'history:read', 'recents:list',
