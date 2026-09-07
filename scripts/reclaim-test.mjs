@@ -166,8 +166,10 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   eq('on by default', DEFAULT_RECLAIM.idleCloseMinutes, IDLE_CLOSE_MINUTES)
   // The number itself is asked for by name: it is what the Settings SWITCH writes, so it is
   // a user-visible duration and not an implementation detail. Robert, 2026-08-27: "the idle
-  // close is 30 minutes and i want 10", then "actually sorry its 5 min".
-  eq('...at five minutes', IDLE_CLOSE_MINUTES, 5)
+  // close is 30 minutes and i want 10", then "actually sorry its 5 min" - and back to ten
+  // on 2026-09-08, because reclaim.log showed five closing panes he woke by hand minutes
+  // later (manual wakes 11:55, 12:29, 12:36 on 2026-09-07).
+  eq('...at ten minutes', IDLE_CLOSE_MINUTES, 10)
   eq('off when the number is zero', idleClosePlan(panes, { ...DEFAULT_RECLAIM, idleCloseMinutes: 0 }, NOW).length, 0)
   eq('and off when reclaim itself is off', idleClosePlan(panes, { ...CLOCKED, enabled: false }, NOW).length, 0)
   eq('oldest quiet first, and only past the clock', ids(idleClosePlan(panes, CLOCKED, NOW)), 'a,b')
