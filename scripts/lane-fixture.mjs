@@ -32,6 +32,10 @@ export function laneScripts(here, entry = 'lane.mjs') {
 
 /** Copy them into `<repo>/scripts`, which the caller has already created. */
 export function installLane(here, repo) {
+  // The pane id of the chat RUNNING the test leaks into every claim the test makes, and
+  // `claim` drops every other hold wearing the same pane - so four "chats" collapsed into
+  // one and tentative-lane-test failed only when run from inside PaneForge (2026-09-07).
+  delete process.env.PF_PANE
   const names = laneScripts(here)
   for (const f of names) copyFileSync(join(here, f), join(repo, 'scripts', f))
   return names
