@@ -32,7 +32,7 @@ globalThis.__logWriteFs = mock
 let source = readFileSync(new URL('../src/main/logWrite.ts', import.meta.url), 'utf8')
 source = source.replace(/import \{([^}]+)\} from 'node:fs\/promises'/, 'const {$1} = globalThis.__logWriteFs')
 const { code } = await transform(source, { loader: 'ts', format: 'esm', target: 'es2022' })
-const { appendLog, rewriteLog, writeLatest } = await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`)
+const { appendLog, rewriteLog, writeLatest, flushLogsOnExit } = await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`)
 
 blockedFile = '/ordered'
 appendLog('/ordered', 'A')
@@ -71,4 +71,22 @@ appendLog('/small', '\nnext\nlast\n', { halveAt: 5 })
 await nextTurn()
 assert.equal(files.get('/small'), 'last\n')
 console.log('ok trimming reads only logs above the byte threshold')
+blockedFile = '/exit'
+appendLog('/exit', 'terminal')
+await nextTurn()
+let flushed = false
+const flush = flushLogsOnExit().then(() => { flushed = true })
+await nextTurn()
+assert.equal(flushed, false, 'exit waits for pending diagnostics')
+release()
+await flush
+assert.equal(files.get('/exit'), 'terminal')
+blockedFile = '/stalled'
+appendLog('/stalled', 'late')
+await nextTurn()
+await flushLogsOnExit()
+assert.equal(files.has('/stalled'), false, 'stalled disk cannot hold exit indefinitely')
+release()
+await nextTurn()
+console.log('ok exit flush waits for writes and bounds stalled disk wait')
 delete globalThis.__logWriteFs

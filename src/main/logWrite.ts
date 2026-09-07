@@ -118,3 +118,16 @@ async function drain(file: string): Promise<void> {
     saving.delete(file)
   }
 }
+
+/** Give terminal diagnostics a bounded chance to finish without blocking the main thread. */
+export async function flushLogsOnExit(): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      Promise.all([...chains.values(), ...saving.values()]),
+      new Promise<void>((resolve) => { timer = setTimeout(resolve, 250) })
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
+}

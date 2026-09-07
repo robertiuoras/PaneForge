@@ -864,7 +864,7 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
 {
   const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
   check('the desk runs the sleep sweep', /idleSleepPlan\(/.test(app), '')
-  check('...and it really sleeps the panes it names', /for \(const p of plan\) void api\.sleepSession\(p\.id\)/.test(app), '')
+  check('...and it sleeps each pane with the measured pressure reason', /for \(const p of plan\) void api\.sleepSession\(p\.id, pressure === 'ok' \? 'idle' : 'pressure'/.test(app), '')
   check(
     'and "Sleep this pane" is gone from the card menu - the clock does it',
     !/key: 'sleep'/.test(app),
