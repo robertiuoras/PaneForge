@@ -134,6 +134,32 @@ is(
   'and shell housekeeping is never the name'
 )
 
+// A long-lived shell keeps its original `-c` line after commands in it have finished.
+// Its direct children describe the command that is actually running now. Keep the shell
+// as the job boundary, but name this sequential pipeline by its meaningful current process.
+const SEQUENTIAL = [
+  { pid: 30, ppid: 1, elapsed: 900, cmd: '/usr/local/bin/claude' },
+  { pid: 31, ppid: 30, elapsed: 700, cmd: shellCmd('python3 prepare.py && node scripts/unbuilt-commits.mjs | head') },
+  { pid: 32, ppid: 31, elapsed: 24, cmd: 'node scripts/unbuilt-commits.mjs' },
+  { pid: 33, ppid: 31, elapsed: 23, cmd: 'head' }
+]
+is(
+  paneBackJobs(SEQUENTIAL, 30)[0].label,
+  'unbuilt-commits.mjs',
+  'a sequential shell is named by its active direct child, not its completed first command'
+)
+
+const INLINE_CHILD = [
+  { pid: 40, ppid: 1, elapsed: 900, cmd: '/usr/local/bin/claude' },
+  { pid: 41, ppid: 40, elapsed: 700, cmd: shellCmd('node wait-for-result.mjs') },
+  { pid: 42, ppid: 41, elapsed: 24, cmd: 'python3 -c "import time; time.sleep(60)"' }
+]
+is(
+  paneBackJobs(INLINE_CHILD, 40)[0].label,
+  'python3',
+  'an active interpreter evaluating inline code keeps its runtime name'
+)
+
 is(paneBackJobs(REAL, 0), [], 'no pty pid, no answer')
 is(paneBackJobs([], 22457), [], 'an empty table is a failed read, never a busy pane')
 
