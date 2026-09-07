@@ -114,7 +114,34 @@ function samePath(a: string, b: string): boolean {
  * `--git-common-dir` is the shared `.git` of the whole repo, so a lane asked to
  * spawn another lane still branches off the original, not off itself.
  */
+/**
+ * ...asked once per folder per beat, because it is a `git` PROCESS.
+ *
+ * Deciding where a new pane goes asks this about the folder, about every lane folder it
+ * might reuse, and again about the lane it settles on: with eight copies on disk that is
+ * nine spawns before a pty exists. Measured 2026-09-08 on this machine, a shell pane in a
+ * repo whose lanes are all taken: 207ms to decide the folder, of 242ms to open the pane at
+ * all. A folder does not change which repo it belongs to inside five seconds, and a folder
+ * that has just been CREATED was never cached (`isWorktreeOf` refuses a path that is not
+ * there, and a fresh worktree is asked about for the first time here).
+ */
+const REPO_FRESH_MS = 5_000
+const repoOfFolder = new Map<string, { at: number; repo: string | null }>()
+
 async function mainRepo(cwd: string): Promise<string | null> {
+  const key = resolve(cwd)
+  const now = Date.now()
+  const held = repoOfFolder.get(key)
+  if (held && now - held.at < REPO_FRESH_MS) return held.repo
+  const answer = await readMainRepo(cwd)
+  repoOfFolder.set(key, { at: now, repo: answer })
+  // Nothing sweeps this map, so it is capped rather than left to grow for the life of the
+  // app: the entries are seconds old and the oldest is the one nobody is starting in.
+  if (repoOfFolder.size > 64) repoOfFolder.delete(repoOfFolder.keys().next().value as string)
+  return answer
+}
+
+async function readMainRepo(cwd: string): Promise<string | null> {
   const common = await git(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir'])
   if (!common.ok || !common.out) return null
   const dir = common.out.split(/\r?\n/)[0]

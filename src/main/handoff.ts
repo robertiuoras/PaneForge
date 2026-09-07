@@ -15,7 +15,7 @@
 
 import { execFile } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { existsSync, linkSync, mkdirSync, readFileSync, realpathSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, linkSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import {
@@ -77,15 +77,38 @@ function importCodex(parsed: CodexImport, id: string, cwd: string): { file: Buff
   }
 }
 
-function writeConversation(path: string, file: Buffer): string | null {
-  if (existsSync(path)) {
-    try {
-      if (readFileSync(path).equals(file)) return null
-    } catch { /* refuse below */ }
-    return 'A different conversation file already exists here, so nothing was overwritten'
-  }
+export function writeConversation(path: string, file: Buffer): string | null {
   const directory = dirname(path)
   const temp = join(directory, `.${basename(path)}.${randomBytes(8).toString('hex')}.tmp`)
+  // A pane that has been here before left the SAME conversation, shorter: it went to the
+  // other machine, took more turns there, and has come home. Refusing that - which is what
+  // this did until 2026-09-08 - is why a pane moved Mac -> PC -> Mac arrived with its
+  // transcript missing and the log line "A different conversation file already exists
+  // here". A transcript only ever grows by appending, so the older copy is a byte PREFIX
+  // of the incoming one, and that is the whole test. Anything else is still refused.
+  if (existsSync(path)) {
+    let held: Buffer
+    try {
+      held = readFileSync(path)
+    } catch {
+      return 'A different conversation file already exists here, so nothing was overwritten'
+    }
+    if (held.equals(file)) return null
+    if (!(held.length < file.length && file.subarray(0, held.length).equals(held))) {
+      return 'A different conversation file already exists here, so nothing was overwritten'
+    }
+    try {
+      writeFileSync(temp, file, { flag: 'wx' })
+      // Rename, not link: the older copy is still there and this is the one case where
+      // replacing it is the point. Still atomic, so a reader never sees half a file.
+      renameSync(temp, path)
+      return null
+    } catch {
+      return 'Conversation transcript could not be stored safely'
+    } finally {
+      try { unlinkSync(temp) } catch { /* already published or absent */ }
+    }
+  }
   try {
     mkdirSync(directory, { recursive: true })
     writeFileSync(temp, file, { flag: 'wx' })
