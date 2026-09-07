@@ -69,7 +69,7 @@ function page(rowSub, remote = false, titleChips = '', name = 'PaneForge') {
   <div class="app"><div class="sidebar" style="width:260px"><div class="list">
     <div class="row">
       <div class="row-text">
-        <div class="row-title has-key"><span class="num-wrap"><span class="num">1</span></span>${mark}<span class="row-name">${name}</span><span class="row-tags">${titleChips}<span class="elapsed">1m 20s</span></span></div>
+        <div class="row-title has-key"><span class="num-wrap"><span class="num">1</span></span>${mark}<span class="row-name">${name}</span><span class="row-tags">${titleChips}${titleChips.includes('session-clock') ? '' : '<span class="elapsed">1m 20s</span>'}</span></div>
         <div class="row-sub">${rowSub}</div>
       </div>
       <button class="x">x</button>
@@ -98,6 +98,14 @@ const TURN_DONE = '<span class="elapsed done">4m 12s</span>'
 const JOB = '<span class="chip jobs">running build</span>'
 
 const CASES = [
+  ...[240, 320, 420].flatMap(width => ['running', 'ready', 'waiting for you'].map(state => ({
+    name: `${state} with turn and age at ${width}px`, width,
+    sub: LOGO + AGENT + '<span class="chip">Fable 5.1</span>' + LANE_PLACE,
+    title: `<span class="chip card-status ${state === 'running' ? 'working' : 'idle'}">${state}</span>` +
+      (state === 'running' ? '<span class="session-clock">turn <span class="elapsed">4m 23s</span></span>' :
+        '<span class="session-clock session-last">last 4m 23s</span>') +
+      '<span class="session-clock">open <span class="elapsed done">1h 27m</span></span>'
+  }))),
   { name: 'a plain card', sub: LOGO + AGENT + CLOCK },
   { name: 'with a model', sub: LOGO + AGENT + MODEL + CLOCK },
   { name: 'in a lane', sub: LOGO + AGENT + MODEL + LANE_PLACE + CLOCK },
@@ -259,6 +267,7 @@ try {
     // A navigate resolves before the document is laid out; the fonts are system ones, so
     // one frame is enough and `document.fonts.ready` is the honest way to wait for it.
     await evaluate('document.fonts.ready.then(() => 1)')
+    if (c.width) await evaluate(`document.querySelector('.sidebar').style.width = '${c.width}px'`)
     const m = await evaluate(`(() => {
       const cut = (el) => !el ? null : { w: el.getBoundingClientRect().width, want: el.scrollWidth, text: el.textContent }
       const sub = document.querySelector('.row-sub')
@@ -270,6 +279,7 @@ try {
         place: cut(document.querySelector('.chip.place')),
         lane: cut(document.querySelector('.chip.pf-lane')),
         clock: cut(document.querySelector('.elapsed')),
+        tags: [...document.querySelectorAll('.row-tags > *')].map(cut),
         name: cut(document.querySelector('.row-name')),
         title: (() => {
           const t = document.querySelector('.row-title')
@@ -323,6 +333,7 @@ try {
     // 1px of slack: a fractional layout rounds `scrollWidth` up to a whole pixel, so an
     // element that fits exactly reports one pixel of overflow and nothing is wrong.
     const fits = (x) => !x || x.want <= x.w + 1
+    ok(m.tags.every(fits), `${c.name}: status and timing labels remain whole`)
     ok(
       fits(m.agent),
       `${c.name}: the agent's name is readable`,

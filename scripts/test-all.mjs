@@ -59,6 +59,7 @@ const TESTS = [
   ['devkeep', 'devkeep-test.mjs'],
   ['devlayout', 'dev-layout-test.mjs'],
   ['remotereset', 'remote-reset-test.mjs'],
+  ['terminalprotocol', 'terminal-protocol-test.mjs'],
   ['exitclose', 'exitclose-test.mjs'],
   ['headerfit', 'header-fit-test.mjs'],
   ['promptseed', 'promptseed-test.mjs'],
