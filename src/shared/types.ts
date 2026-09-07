@@ -10,6 +10,7 @@ import type { LinkState } from './linkState'
 // Keep this file dependency-free: it is imported from both sides of the IPC bridge.
 
 import type { ActivityEntry } from './activity'
+import type { LaneEvent } from './laneTimeline'
 import type { AttachIn, AttachResult } from './attach'
 import type { BackJob } from './backJobs'
 import type { Verdict } from './capacity'
@@ -2255,7 +2256,15 @@ export interface Api {
    * that question any more - a chooser that has been answered from the desk in the
    * meantime must not have a stale button press land on whatever replaced it.
    */
-  chooseOption(sessionId: string, n: number): Promise<boolean>
+  /**
+   * Press one of an agent's options.
+   *
+   * `want` is the question's own stamp (`askStamp`), carried by a button that may outlive
+   * the question it was drawn for - a Telegram message, a notification. Left out by every
+   * caller looking at the live pane. A press naming a question the pane has moved on from
+   * is refused rather than landing on whatever replaced it.
+   */
+  chooseOption(sessionId: string, n: number, want?: string): Promise<boolean>
   attachFiles(sessionId: string, files: AttachIn[]): Promise<AttachResult>
   /**
    * The same for paths on the device the window is on, read there - a `file://` drop
@@ -2294,6 +2303,16 @@ export interface Api {
   diffPatch(cwd: string, scope: DiffScope, path: string, untracked: boolean): Promise<DiffPatch>
   /** one board per lane-using repo the open panes are in; empty on a machine without one */
   laneBoard(): Promise<LaneBoard[]>
+  /**
+   * What has HAPPENED to each copy of each project, newest first.
+   *
+   * The board above is the present tense - who has it, is it finished, will it go in.
+   * This is the past one, and it is the only place a copy that was stuck for an hour and
+   * then settled leaves any trace. See `shared/laneTimeline.ts`.
+   */
+  laneTimeline(): Promise<LaneEvent[]>
+  /** The log gained an entry. Carries the whole list, newest first. */
+  onLaneTimeline(fn: (items: LaneEvent[]) => void): () => void
   /** what is in a pane's worktree lane; null when the folder is not a lane */
   laneWork(cwd: string): Promise<LaneWork | null>
   /** physical worktree lanes of a known repository, including copies absent from its ledger */

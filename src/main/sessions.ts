@@ -121,7 +121,7 @@ import { nextCwdGone, reapForMissingCwd } from '../shared/cwdGone'
 import { askKeyOf, autoAnswerAt, DEFAULT_AUTO_ANSWER, dueForAuto, pickAnswer } from '../shared/autoAnswer'
 import { countIntervention } from './interventions'
 import { deskFocused } from './gameMode'
-import { askSignature, CHOOSE_GAP_MS, keysForChoice, readAsk, sameAsk } from '../shared/choices'
+import { askSignature, CHOOSE_GAP_MS, keysForChoice, readAsk, sameAsk , stampMatches} from '../shared/choices'
 import { stripAnsi as strip } from '../shared/ansi'
 import { silenceMs, stalledNow } from '../shared/alerts'
 import { DEFAULT_RECOVER, recover, TAIL_CHARS } from '../shared/recover'
@@ -2169,10 +2169,13 @@ export class SessionManager extends EventEmitter {
    * that gap somebody at the desk may have answered it - at which point the keys would
    * land in a composer, as an arrow through history and a return that submits it.
    */
-  choose(id: string, n: number, hand: WriteOrigin = 'desk'): boolean {
+  choose(id: string, n: number, hand: WriteOrigin = 'desk', want?: string): boolean {
     const live = this.sessions.get(id)
     const ask = live?.meta.ask
     if (!live || !ask) return false
+    // A press that names the question it was drawn against, and names a different one:
+    // it came from a button that outlived its question. Refusing IS the feature.
+    if (!stampMatches(ask, want)) return false
     const keys = keysForChoice(ask, n)
     if (!keys) return false
     // Answering is engaging with the pane, the same as typing in it: the turn that

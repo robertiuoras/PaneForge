@@ -30,7 +30,12 @@ try {
   const row = renderToStaticMarkup(React.createElement(CopyRow, { copy: { dir: '/p/repo-a', slot: 'a', self: false, trunk: false, work: null }, onFocus() {} }))
   assert.match(row, /could not be inspected/i, 'a failed inspection never claims an empty copy')
   const main = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
-  const expr = main.slice(main.indexOf('const lanePanes ='), main.indexOf("ipcMain.handle('lanes:board'"))
+  // To the end of that one declaration, not to the next landmark further down the file:
+  // slicing as far as `ipcMain.handle('lanes:board'` swallowed whatever was written
+  // between them, and the first thing that ever was - a typed arrow feeding the copy
+  // timeline - made `new Function` a SyntaxError about a file this test does not name.
+  const from = main.indexOf('const lanePanes =')
+  const expr = main.slice(from, main.indexOf('\n\n', from))
   const lanePanes = new Function('manager', 'resumeIdFor', expr.replace(': LanePane[]', '') + '; return lanePanes')({ list: () => [asleep, { ...asleep, id: 'closed', asleep: false }] }, id => id)
   assert.deepEqual(lanePanes().map(p => p.id), ['sleep'], 'backend supplies sleeping panes to ownership matching')
   console.log('copy logic: 5 checks passed')

@@ -637,6 +637,10 @@ ok(!server.running, 'the gate test server stopped cleanly')
     // starts either way, this only says on which machine, and the deadline answers alone.
     'offload:answer',
     'activity:list',
+    // What has happened to each copy of each project: a reading of a file this app wrote
+    // itself, naming folders and chat titles the sidebar already draws. Nothing in it can
+    // be pressed and nothing in it types.
+    'lanes:timeline',
     'sessions:contextUsage', 'sessions:continuationStatus',
     'autoclear:cancel', 'autoclear:takeover',
     'projects:list', 'projects:route', 'agents:list', 'sessions:list', 'sessions:rename', 'sessions:clientUndo',
