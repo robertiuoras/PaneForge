@@ -347,16 +347,30 @@ export interface ReclaimPane {
 }
 
 /**
- * When this pane last did anything at all - the latest of a keystroke, a printed byte and
- * the moment the keyboard left it.
+ * When this pane last did anything at all - the latest of a keystroke, a printed byte, the
+ * moment the keyboard left it, and the moment it was PUT TO SLEEP.
  *
  * The whole idle reading in both sweeps below. See `ReclaimPane.lastOutput` for why it is
  * not `lastKeyboard` on its own.
+ *
+ * Sleeping counts because it is a thing that happened to the pane, and leaving it out made
+ * the rung below closing worthless. Both clocks read this one number: a pane goes to sleep
+ * at minute 30 with `quietSince` already half an hour old, so the five-minute close clock
+ * was long past before the sleep had finished - and the pane was closed seconds later.
+ * Measured 2026-09-07 in `reclaim.log`: 33 panes armed for closing while asleep, 20 of them
+ * closed; `s10-mtqtgzjd` slept at 07:05:42 and was gone at 07:06:02, twenty seconds of
+ * sleep. On the desk that is a row wearing `asleep 1m` and `closes now` at the same time,
+ * which is what Robert reported ("session 1 shows closes now asleep 1m all the logic dosnt
+ * make sense there") - and both chips were telling the truth.
+ *
+ * The ladder is meant to be a ladder: sleeping gives the ~190 MB back, and only a pane that
+ * is STILL untouched a close-window later is worth the conversation it costs to close. So
+ * the close clock starts again when the pane sleeps.
  */
 export function quietSince(
-  p: Pick<ReclaimPane, 'lastKeyboard' | 'lastOutput' | 'lastFocus'>
+  p: Pick<ReclaimPane, 'lastKeyboard' | 'lastOutput' | 'lastFocus'> & { asleep?: number }
 ): number {
-  return Math.max(p.lastKeyboard, p.lastOutput ?? 0, p.lastFocus ?? 0)
+  return Math.max(p.lastKeyboard, p.lastOutput ?? 0, p.lastFocus ?? 0, p.asleep ?? 0)
 }
 
 /**
