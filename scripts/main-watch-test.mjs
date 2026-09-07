@@ -56,7 +56,9 @@ await build({
   external: ['electron'],
   plugins: [{ name: 'crash-stub', setup(build) {
     build.onResolve({ filter: /^\.\/crash$/ }, () => ({ path: 'crash-stub', namespace: 'watch' }))
-    build.onLoad({ filter: /.*/, namespace: 'watch' }, () => ({ contents: 'export const logProblem = (...x) => globalThis.__watchLogs.push(x)' }))
+    build.onLoad({ filter: /^crash-stub$/, namespace: 'watch' }, () => ({ contents: 'export const logProblem = (...x) => globalThis.__watchLogs.push(x)' }))
+    build.onResolve({ filter: /^\.\/profile$/ }, () => ({ path: 'profile-stub', namespace: 'watch' }))
+    build.onLoad({ filter: /profile-stub/, namespace: 'watch' }, () => ({ contents: "export const profileName = () => 'named-profile'" }))
   }}]
 })
 const nativeLoad = Module._load
@@ -78,7 +80,7 @@ function lifecycle(forkImpl) {
 }
 function fakeChild() {
   const listeners = new Map()
-  return { killed: false, on(name, fn) { listeners.set(name, fn); return this }, postMessage() {}, kill() { this.killed = true; return true }, emit(name, ...args) { listeners.get(name)?.(...args) } }
+  return { killed: false, messages: [], on(name, fn) { listeners.set(name, fn); return this }, postMessage(message) { this.messages.push(message) }, kill() { this.killed = true; return true }, emit(name, ...args) { listeners.get(name)?.(...args) } }
 }
 try {
   let forks = 0
@@ -91,6 +93,11 @@ try {
   old.emit('error', 'FatalError', 'test')
   old.emit('exit', 1)
   ok('an error kills the old child and error plus exit schedule one retry', old.killed && timeouts.length === 2)
+  const named = fakeChild()
+  const namedLifecycle = lifecycle(() => named)
+  namedLifecycle.startMainWatch()
+  named.emit('spawn')
+  ok('main hello carries the resolved named profile', named.messages[0]?.profile === 'named-profile')
   const stopped = lifecycle(() => fakeChild())
   stopped.startMainWatch()
   stopped.events.get('will-quit')()
@@ -104,11 +111,16 @@ try {
   const childSource = readFileSync(join(root, 'src/main/watchdog-child.ts'), 'utf8')
     .replace("const port = process.parentPort", 'const port = { on() {} }')
     .replace('async function markDeskForRestart(', 'export async function markDeskForRestart(')
+    .replace('function relaunch(', 'export function relaunch(')
   await build({
     stdin: { contents: childSource, resolveDir: join(root, 'src/main'), sourcefile: 'watchdog-child.ts', loader: 'ts' },
     bundle: true, platform: 'node', format: 'cjs', outfile: childOut
   })
-  const { markDeskForRestart } = requireOut(childOut)
+  const spawnCalls = []
+  Module._load = (request, parent, isMain) => request === 'node:child_process'
+    ? { execFile() {}, spawn(command, args, options) { spawnCalls.push({ command, args, options }); return { once() {}, unref() {} } } }
+    : nativeLoad(request, parent, isMain)
+  const { markDeskForRestart, relaunch } = requireOut(childOut)
   const hello = (userData) => ({ t: 'hello', pid: 1, exe: 'pf', appPath: 'pf', userData, platform: 'darwin', argv: [], packaged: false })
   const caseDir = (name) => mkdtempSync(join(work, `${name}-`))
   const writeDesk = (dir, name, desk) => writeFileSync(join(dir, name), JSON.stringify(desk))
@@ -134,6 +146,16 @@ try {
   writeFileSync(join(dir, 'desk.clear'), '4')
   await markDeskForRestart(hello(dir))
   ok('a positive clear tombstone prevents watchdog recovery', !existsSync(join(dir, 'desk.exit.json')))
+
+  const packaged = (platform, profile = '') => ({ t: 'hello', pid: 99, exe: '/opt/pf', appPath: '/Applications/PaneForge.app/Contents/MacOS/PaneForge', userData: '/tmp/pf', platform, profile, packaged: true })
+  relaunch(packaged('darwin', 'named-profile'))
+  relaunch(packaged('win32', 'named-profile'))
+  relaunch(packaged('linux', 'named-profile'))
+  ok('packaged mac recovery passes the exact named profile through open args', spawnCalls[0].command === 'sh' && spawnCalls[0].args[1].includes("open -n -a '/Applications/PaneForge.app' --args '--profile=named-profile'"))
+  ok('packaged Windows recovery passes the exact named profile through start', spawnCalls[1].command === 'cmd' && spawnCalls[1].args[1].includes('"--profile=named-profile"'))
+  ok('packaged Linux recovery passes the exact named profile to the executable', spawnCalls[2].command === 'sh' && spawnCalls[2].args[1].includes("'/opt/pf' '--profile=named-profile'"))
+  relaunch(packaged('linux'))
+  ok('the default profile does not add a profile argument', !spawnCalls[3].args[1].includes('--profile='))
 
   const index = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
   const beforeQuit = index.slice(index.indexOf("app.on('before-quit'"), index.indexOf("app.on('will-quit'"))

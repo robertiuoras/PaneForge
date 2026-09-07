@@ -25,7 +25,7 @@ interface Hello {
   appPath: string
   userData: string
   platform: string
-  argv: string[]
+  profile: string
   /** An unpackaged build is a development copy: it is stopped, never relaunched. */
   packaged: boolean
   /** Test override for the hang threshold, in ms. 0 means use the real one. */
@@ -112,11 +112,10 @@ function sample(h: Hello): Promise<void> {
 /**
  * Say the panes are coming back.
  *
- * `update` is the one desk reason the app restores WITHOUT asking (see the branch in
- * index.ts that reads it). A freeze the app recovered from itself should feel like the
- * update restart does - the panes are simply there again - rather than opening on an empty
- * desk with a dialog about a crash. If the file is missing or unreadable this is skipped
- * and the app comes back offering nothing, which is the old behaviour.
+ * `update` uses the existing restore preferences in index.ts. With the default settings,
+ * a recovered freeze reopens the panes without asking. A user who disabled or requested
+ * confirmation for update restoration keeps that choice. Missing or unreadable desks
+ * are skipped.
  */
 async function markDeskForRestart(h: Hello): Promise<void> {
   const live = join(h.userData, 'desk.json')
@@ -178,11 +177,14 @@ function relaunch(h: Hello): void {
     if (h.platform === 'darwin') {
       // /Applications/PaneForge.app/Contents/MacOS/PaneForge -> /Applications/PaneForge.app
       const bundle = h.appPath.replace(/\/Contents\/MacOS\/[^/]*$/, '')
-      launchRecovery('sh', ['-c', `kill -9 ${h.pid}; sleep 1; open -a ${quote(bundle)}`], h.pid)
+      const args = h.profile ? ` --args ${quote(`--profile=${h.profile}`)}` : ''
+      launchRecovery('sh', ['-c', `kill -9 ${h.pid}; sleep 1; open -n -a ${quote(bundle)}${args}`], h.pid)
     } else if (h.platform === 'win32') {
-      launchRecovery('cmd', ['/c', `taskkill /F /PID ${h.pid} & timeout /t 2 /nobreak & start "" "${h.exe}"`], h.pid)
+      const args = h.profile ? ` "--profile=${h.profile}"` : ''
+      launchRecovery('cmd', ['/c', `taskkill /F /PID ${h.pid} & timeout /t 2 /nobreak & start "" "${h.exe}"${args}`], h.pid)
     } else {
-      launchRecovery('sh', ['-c', `kill -9 ${h.pid}; sleep 1; ${quote(h.exe)} &`], h.pid)
+      const args = h.profile ? ` ${quote(`--profile=${h.profile}`)}` : ''
+      launchRecovery('sh', ['-c', `kill -9 ${h.pid}; sleep 1; ${quote(h.exe)}${args} &`], h.pid)
     }
   } catch {
     // No shell, or no process slots. Stopping the app is still better than leaving a window

@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { app, utilityProcess, type UtilityProcess } from 'electron'
 import { BEAT_MS } from '../shared/mainWatch'
 import { logProblem } from './crash'
+import { profileName } from './profile'
 
 const REFORK_MS = 10_000
 const MAX_REFORKS_PER_HOUR = 5
@@ -60,7 +61,7 @@ function fork(): void {
       appPath: app.getPath('exe'),
       userData: app.getPath('userData'),
       platform: process.platform,
-      argv: process.argv.slice(1),
+      profile: profileName(),
       packaged: app.isPackaged,
       hangMs: !app.isPackaged ? Number(process.env.PF_WATCHDOG_HANG_MS) || 0 : 0
     })

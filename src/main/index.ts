@@ -3998,8 +3998,8 @@ ipcMain.on('restore:answer', (_e, answer: RestoreAnswer) => {
 })
 
 app.whenReady().then(() => {
-  // The watchdog marks a stalled desk as an update so this existing branch restores it
-  // without asking. Its child is outside the main thread and can still act during disk I/O.
+  // The watchdog marks a stalled desk as an update, following the same restore settings.
+  // Its child is outside the main thread and can still act during disk I/O.
   startMainWatch()
   // OS sleep preserves processes, but pending app buffers must also be recoverable
   // if the battery runs out before the next wake. Do not end or restart any agent.
