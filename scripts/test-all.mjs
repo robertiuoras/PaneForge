@@ -65,6 +65,7 @@ const TESTS = [
   ['renderwatch', 'renderwatch-test.mjs'],
   ['mainwatch', 'main-watch-test.mjs'],
   ['logwrite', 'log-write-test.mjs'],
+  ['sleepcause', 'sleep-cause-test.mjs'],
   ['mainasyncio', 'main-async-io-test.mjs'],
   ['mainsyncio', 'main-sync-io-test.mjs'],
   ['elapsed', 'elapsed-test.mjs'],

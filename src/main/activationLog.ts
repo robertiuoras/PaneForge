@@ -15,6 +15,7 @@
 import { join } from 'node:path'
 import { app } from 'electron'
 import { appendLog } from './logWrite'
+import { diagnosticMeta } from './diagnosticMeta'
 
 /** Big enough to hold days of ordinary use, small enough to never matter. */
 const MAX_BYTES = 64 * 1024
@@ -97,7 +98,8 @@ export function logActivation(entry: Record<string, unknown>): void {
 // timer shape that froze the app on 2026-09-07. Trimming happens on the way past rather
 // than on a timer: these files are written a few times a day.
 function write(name: string, entry: Record<string, unknown>): void {
-  appendLog(file(name), JSON.stringify({ t: new Date().toISOString(), ...entry }) + '\n', {
+  appendLog(file(name), JSON.stringify({ ...entry, t: new Date().toISOString(),
+    ...diagnosticMeta() }) + '\n', {
     halveAt: MAX_BYTES
   })
 }

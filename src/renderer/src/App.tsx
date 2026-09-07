@@ -118,6 +118,7 @@ import {
   DEFAULT_RECLAIM,
   idleClosePlan,
   idleSleepPlan,
+  pressureSleepMs,
   type SleepPressure,
   sameDeadline,
   idleCloseAt,
@@ -2874,7 +2875,10 @@ export default function App(): JSX.Element {
         // HERE rather than on the other machine. See `pressureSleepMs`.
         pressure
       )
-      for (const p of plan) void api.sleepSession(p.id)
+      for (const p of plan) void api.sleepSession(p.id, pressure === 'ok' ? 'idle' : 'pressure', {
+        source: 'renderer-idle-sweep', pressure, idleMs: p.idleMs,
+        thresholdMs: pressureSleepMs(cfg.idleSleepMinutes ?? DEFAULT_RECLAIM.idleSleepMinutes!, pressure)
+      })
     }
     // A verdict turning tight is the moment to act, not up to a minute later.
     if (pressure !== 'ok') sweep()
@@ -7011,7 +7015,7 @@ export default function App(): JSX.Element {
           setActiveId(pane.id)
           say('Putting this session to sleep\u2026')
           const t0 = Date.now()
-          await api.sleepSession(pane.id)
+          await api.sleepSession(pane.id, 'tour', { source: 'tour' })
           say(`Asleep in ${sayMs(Date.now() - t0)} - the card says asleep and the agent is gone.`)
           await new Promise((r) => setTimeout(r, TOUR_ASLEEP_MS))
           say('Waking it up again\u2026')

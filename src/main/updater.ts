@@ -33,6 +33,7 @@ import {
   swapAndRelaunch
 } from './macUpdate'
 import { appendLog } from './logWrite'
+import { diagnosticMeta } from './diagnosticMeta'
 
 type Emit = (s: UpdateState) => void
 
@@ -102,7 +103,7 @@ export function bootMs(): number {
 // from power events, the desk and every launch step, so it goes through logWrite.ts.
 // 256 KB is dozens of update cycles; past that the head is worthless anyway.
 function log(...parts: unknown[]): void {
-  appendLog(LOG(), `${new Date().toISOString()} ${parts.map(String).join(' ')}\n`, {
+  appendLog(LOG(), `${new Date().toISOString()} ${parts.map(String).join(' ')} [pf ${JSON.stringify(diagnosticMeta())}]\n`, {
     truncateAt: 256_000
   })
 }

@@ -1,3 +1,4 @@
+import { flushLogsOnExit } from './logWrite'
 import { execFile, spawn } from 'node:child_process'
 import { existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
@@ -1425,7 +1426,7 @@ ipcMain.handle('sessions:continueFresh', (_e, id: string) => {
   const source = manager.list().find((s) => s.id === id)
   if (!source || !['codex', 'claude'].includes(source.agent) || backJobOf(id)) return { ok: false, reason: 'No supported, safe source conversation.' }
   if (continuationOwnsSource(id)) return { ok: false, reason: 'This source already has a live continuation.' }
-  const result = startContinuation({ sleep: (key) => manager.sleep(key), wake: (key) => manager.wake(key), session: (key) => manager.list().find((s) => s.id === key), snapshot: () => manager.snapshot(), start: (req) => manager.start(req) }, id)
+  const result = startContinuation({ sleep: (key) => manager.sleep(key, 'continuation', { source: 'continuation' }), wake: (key) => manager.wake(key), session: (key) => manager.list().find((s) => s.id === key), snapshot: () => manager.snapshot(), start: (req) => manager.start(req) }, id)
   if (result.ok && result.id && result.digest) {
     continuationReceipts.set(result.id, { cwd: source.cwd, digest: result.digest, sourceId: id, deadline: Date.now() + 5 * 60_000 })
     return { ok: true, id: result.id, reason: 'Fresh pane opened; delivery is being checked. Your source is saved asleep.' }
@@ -1754,11 +1755,17 @@ ipcMain.handle('sessions:restart', (_e, id: string) => {
   if (continuationOwnsSource(id)) return null
   return manager.restart(id)
 })
-ipcMain.handle('sessions:sleep', (_e, id: string) => {
+ipcMain.handle('sessions:sleep', (_e, id: string, reason?: import('../shared/types').SleepReason, evidence?: import('../shared/types').SleepEvidence) => {
   // A mirrored pane's pty is the other machine's, and sleeping it there is that desk's
   // decision to make - `canSleep` refuses a mirror at the renderer end too.
   if (remote.owns(id)) return null
-  return manager.sleep(id)
+  if (!_e?.processId) return manager.sleep(id, 'unknown', { source: 'api' })
+  if (evidence?.source === 'renderer-idle-sweep' &&
+      ['ok', 'tight', 'over'].includes(evidence.pressure ?? '')) {
+    return manager.sleep(id, evidence.pressure === 'ok' ? 'idle' : 'pressure', evidence)
+  }
+  if (reason === 'tour') return manager.sleep(id, 'tour', { source: 'tour' })
+  return manager.sleep(id, reason === 'manual' ? 'manual' : 'unknown', { source: 'renderer' })
 })
 ipcMain.handle('sessions:wake', async (_e, id: string) => {
   if (remote.owns(id)) return null
@@ -4191,7 +4198,10 @@ function installStagedMacUpdateOnQuit(): void {
   if (swapAndRelaunch(false)) updateLog('exit', 'installing the staged mac update on quit')
 }
 
+let hardExiting = false
 function hardExit(): void {
+  if (hardExiting) return
+  hardExiting = true
   // The quit line first, for the paths that reach here without `before-quit` ever
   // running; a no-op when it already did.
   logQuit()
@@ -4204,7 +4214,7 @@ function hardExit(): void {
   // The other thing shutdown()'s taskkill cannot reach: whatever the panes started that is
   // no longer linked to them. Detached, so it runs once we are not here to be its parent.
   sweepOwnStraysOnExit()
-  process.exit(0)
+  void flushLogsOnExit().finally(() => process.exit(0))
 }
 
 app.on('browser-window-focus', () => {
@@ -4259,7 +4269,8 @@ app.on('before-quit', (e) => {
   // A driven lane's agent is a detached process in its own group - nothing joins it to
   installStagedMacUpdateOnQuit()
 })
-app.on('will-quit', () => {
+app.on('will-quit', (e) => {
+  e.preventDefault()
   globalShortcut.unregisterAll()
   displayAwake.stop()
   // Dropping the pipe is enough - Discord clears the presence when the client goes.
@@ -4269,4 +4280,5 @@ app.on('will-quit', () => {
   stopAutoClearWatch()
   stopUsage()
   removeTestClipboard()
+  hardExit()
 })
