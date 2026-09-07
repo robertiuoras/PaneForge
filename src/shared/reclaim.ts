@@ -37,6 +37,7 @@
 
 import { SESSION_MB, type Verdict } from './capacity'
 import type { FleetState } from './fleet'
+import type { SleepReason } from './types'
 
 /**
  * States that may be closed to reclaim memory. Everything else is somebody's business.
@@ -344,6 +345,13 @@ export interface ReclaimPane {
    * KEPT (`pinned`) is the one that sleeps instead of closing.
    */
   asleep?: number
+  /**
+   * WHY it is asleep, which decides whether its screen is a turn anybody could have read.
+   *
+   * Only `restored` is read here, and only by `bornAsleep`. See it for the day every
+   * sleeping pane was treated as read.
+   */
+  asleepReason?: SleepReason
 }
 
 /**
@@ -391,6 +399,26 @@ export function quietSince(
  */
 export function unread(p: Pick<ReclaimPane, 'lastOutput' | 'lastFocus'>): boolean {
   return (p.lastOutput ?? 0) > (p.lastFocus ?? 0)
+}
+
+/**
+ * A pane the restore brought back with no agent in it - card, place and old screen, and
+ * nothing spawned (`req.asleep`, `sessions.ts`).
+ *
+ * It is the one sleeping pane whose `unread` reading is a LIE, and the only reason this
+ * function exists. It is born wearing `lastOutput: Date.now()` and no `lastFocus` at all,
+ * so bytes it printed BEFORE the restart - which somebody may well have read then - count
+ * as a turn nobody has seen, and count that way for ever.
+ *
+ * Every OTHER sleeping pane printed what is on its screen during this run, and whether
+ * anybody looked is exactly what `lastFocus` answers. `onTheClock` used to refuse the
+ * question for all of them (`!p.asleep`), which read a pane that finished a turn nobody
+ * saw and then fell asleep as read, and started the close clock on it. Robert, 2026-09-07:
+ * "when a session sleeping it thinks ive read its output ... make sure it doesnt start
+ * closing unless ive actually read its output".
+ */
+function bornAsleep(p: Pick<ReclaimPane, 'asleep' | 'asleepReason'>): boolean {
+  return p.asleep !== undefined && p.asleepReason === 'restored'
 }
 
 /**
@@ -673,11 +701,12 @@ function onTheClock(p: ReclaimPane, personHere = true, now = 0, idleMs = 0): boo
     // the second desk this clock exists for: nothing there is ever read, so an unread
     // refusal would switch the feature off on the one machine that needs it - once a
     // pane has had a real chance to be seen.
-    // ...and never for a SLEEPING pane. Nothing has printed since it slept - what is on
-    // its screen was there when it was put to sleep - and a restored pane comes back
-    // asleep wearing a fresh `lastOutput` and no `lastFocus` at all, so `unread` would
-    // hold it on the desk for ever, exactly as the `asleep` refusal used to.
-    !(!p.asleep && unread(p) && (personHere || freshlyRestored)) && keepable(p, personHere)
+    // ...and never for a pane BORN asleep, whose screen is bytes from before the restart
+    // and whose `unread` reading is a lie about them. Every other sleeping pane is asked
+    // the question like any other pane: it printed what is on its screen during this run,
+    // and a turn nobody looked at is not taken off the desk for going quiet. See
+    // `bornAsleep`.
+    !(!bornAsleep(p) && unread(p) && (personHere || freshlyRestored)) && keepable(p, personHere)
   )
 }
 

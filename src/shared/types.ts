@@ -520,7 +520,23 @@ export interface Session {
   asleepReason?: SleepReason
 }
 
-export type SleepReason = 'manual' | 'idle' | 'pressure' | 'queued' | 'unknown' | 'continuation' | 'tour'
+/**
+ * Why a pane is asleep.
+ *
+ * `restored` is the one nobody chose: the restore brought the card, its place and its
+ * old screen back and spawned nothing, so the pane has never had an agent in it this
+ * run. It reads as the plain `asleep 3m` chip like `manual` and `idle` do - the reader
+ * does not need the word - and `shared/reclaim.ts` is what it exists for.
+ */
+export type SleepReason =
+  | 'manual'
+  | 'idle'
+  | 'pressure'
+  | 'queued'
+  | 'restored'
+  | 'unknown'
+  | 'continuation'
+  | 'tour'
 
 /** Decision evidence, without terminal text, prompts or filesystem paths. */
 export interface SleepEvidence {

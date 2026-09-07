@@ -244,7 +244,7 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   // like any other: 5 of 7 panes sat asleep for ten hours on 2026-09-02 because this
   // refused them. Robert: "id rather them to close than sleep".
   {
-    const slept = pane({ id: 'slept', asleep: NOW - 3 * HOUR, state: 'exited', lastKeyboard: NOW - 9 * HOUR, lastOutput: NOW - 9 * HOUR })
+    const slept = pane({ id: 'slept', asleep: NOW - 3 * HOUR, asleepReason: 'restored', state: 'exited', lastKeyboard: NOW - 9 * HOUR, lastOutput: NOW - 9 * HOUR })
     const pad = pane({ id: 'pad', lastKeyboard: NOW })
     eq('an asleep pane past the clock is closed', ids(idleClosePlan([slept, pad], CLOCKED, NOW)), 'slept')
     check('...and its card carries the countdown', idleCloseAt(slept, CLOCKED, NOW) !== null)
@@ -261,9 +261,13 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
     const justSlept = pane({
       id: 'just',
       asleep: NOW - 20_000,
+      asleepReason: 'idle',
       state: 'exited',
       lastKeyboard: NOW - 9 * HOUR,
-      lastOutput: NOW - 9 * HOUR
+      lastOutput: NOW - 9 * HOUR,
+      // Read before it slept, so this stays a test about the CLOCK. A pane whose last turn
+      // nobody looked at is refused outright now - the block below is that one.
+      lastFocus: NOW - 8 * HOUR
     })
     eq('a pane asleep for 20s is not closed, however stale it was before', ids(idleClosePlan([justSlept, pad], CLOCKED, NOW)), '')
     check(
@@ -274,6 +278,68 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
     // the clock, it does not switch it off.
     const sleptOn = pane({ ...justSlept, id: 'later', asleep: NOW - 3 * HOUR })
     eq('and a close window after it slept, it goes', ids(idleClosePlan([sleptOn, pad], CLOCKED, NOW)), 'later')
+
+    // ...and FALLING ASLEEP IS NOT READING IT. Until 2026-09-07 `onTheClock` dropped the
+    // unread refusal for every sleeping pane (`!p.asleep`), so a pane that printed an
+    // answer nobody looked at and then went to sleep on the 30-minute sleep clock was on
+    // the close clock the moment it slept - the app had decided, on its own, that the
+    // answer had been read. Robert: "when a session sleeping it thinks ive read its output
+    // just make sure it doesnt start closing unless ive actually read its output".
+    //
+    // The refusal it used to buy was real, which is why the fix is not just deleting the
+    // clause: a pane BORN asleep (`asleepReason: 'restored'`) carries a `lastOutput`
+    // stamped at restore and no `lastFocus` at all, so it reads as unread for ever - which
+    // is what left 5 of 7 panes asleep for ten hours on 2026-09-02. Only that one is
+    // exempt now.
+    const sleptUnread = pane({
+      id: 'sleptunread',
+      asleep: NOW - 3 * HOUR,
+      asleepReason: 'idle',
+      state: 'exited',
+      lastKeyboard: NOW - 9 * HOUR,
+      // It printed at 5h and the keyboard last left it at 6h: the last turn is on its
+      // screen and nobody has been back since.
+      lastOutput: NOW - 5 * HOUR,
+      lastFocus: NOW - 6 * HOUR
+    })
+    check('a pane that slept with a turn nobody read is unread', unread(sleptUnread), '')
+    eq(
+      'the close clock refuses it, however long it has slept',
+      ids(idleClosePlan([sleptUnread, pad], CLOCKED, NOW)),
+      ''
+    )
+    eq('...and its card draws no countdown at all', idleCloseAt(sleptUnread, CLOCKED, NOW), null)
+    // CONTROL 1: the same pane, read after it printed, is taken.
+    const sleptRead = pane({ ...sleptUnread, id: 'sleptread', lastFocus: NOW - 4 * HOUR })
+    eq(
+      'CONTROL: once somebody has read it, the clock takes it',
+      ids(idleClosePlan([sleptRead, pad], CLOCKED, NOW)),
+      'sleptread'
+    )
+    // CONTROL 2: the born-asleep pane the old clause was written for, same shape, still
+    // goes - the 2026-09-02 fix is untouched.
+    const bornAsleep = pane({ ...sleptUnread, id: 'born', asleepReason: 'restored' })
+    eq(
+      'CONTROL: a pane the restore brought back asleep still closes',
+      ids(idleClosePlan([bornAsleep, pad], CLOCKED, NOW)),
+      'born'
+    )
+    // CONTROL 3: a desk no person has touched reads nothing, so the refusal lifts there -
+    // the same escape every other unread pane has.
+    eq(
+      'CONTROL: a desk with nobody at it closes it anyway',
+      ids(idleClosePlan([sleptUnread, pad], CLOCKED, NOW, false)),
+      'sleptunread'
+    )
+  }
+
+  // The wiring: the desk has to hand the sweep the reason, or `bornAsleep` reads undefined
+  // for every pane and the refusal above never lifts for a restored one.
+  {
+    const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
+    check('the desk tells the sweep why a pane is asleep', /asleepReason: s\.asleepReason/.test(app), '')
+    const sess = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
+    check("a pane born asleep is stamped 'restored'", /meta\.asleepReason = 'restored'/.test(sess), '')
   }
   // The restore-loses-the-desk bug, 2026-09-03: a pane restored this run comes back with
   // `createdAt` equal to its own restore time, which is also its "quiet since" - so on a
