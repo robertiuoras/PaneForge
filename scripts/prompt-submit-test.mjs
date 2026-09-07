@@ -319,6 +319,30 @@ ok(cmdProc.writes.filter((w) => w === '\r').length === 1, 'and it got exactly on
 ok(cmdSettledAt - cmdAt < Number(process.env.PF_PROMPT_CONFIRM_MS) * Number(process.env.PF_PROMPT_ENTER_TRIES) + 500, 'and it settled at the poll cadence, not after the whole confirm budget', String(cmdSettledAt - cmdAt))
 manager.kill(cmd.id)
 
+// ...and a QUIET composer that printed NOTHING is a swallowed return, not a landed command.
+// 2026-09-07, pane s2-mtqmyvnv: `/clear` restarted the CLI, the `/model opus` return went in
+// during a gap in the boot paint and was eaten, and the confirm settled 1.2s later as
+// "command landed". The 721-character resume prompt was then typed onto a composer still
+// holding `/model opus`, and Claude Code read the pair as one slash command:
+// `Model 'opus\n\nContinue the handoff...' not found`. The clear happened, the handover did
+// not. So the proof is the command's ANSWER, not the silence around it.
+const eaten = manager.start({ cwd: root, agent: 'shell' })
+const eatenProc = manager.sessions.get(eaten.id).proc
+let eatenDone = 0
+manager.queuePrompt(eaten.id, '/model opus', 0, 40, () => eatenDone++, 5000, 'idle')
+await sleep(120)
+eatenProc.say(COMPOSER)
+// The return goes in and the pane stays exactly as it was - quiet at its composer, with
+// nothing printed. The old code settled on that silence within one poll (40ms here).
+await sleep(400)
+ok(eatenDone === 0, 'a command that printed nothing has not landed', String(eatenDone))
+ok(
+  eatenProc.writes.some((w) => w === '\r'),
+  'and the return really was sent, so the silence is the pane\'s answer and not a missing keystroke',
+  JSON.stringify(eatenProc.writes)
+)
+manager.kill(eaten.id)
+
 // A pane that closes mid-wait settles too - otherwise the curtain outlives the pty.
 const dying = manager.start({ cwd: root, agent: 'shell' })
 let dead2 = 0
@@ -353,6 +377,12 @@ rmSync(work, { recursive: true, force: true })
   const src = readFileSync(new URL('../src/main/sessions.ts', import.meta.url), 'utf8')
   const fn = src.slice(src.indexOf('const submit = (tries: number)'), src.indexOf('const tick = ()'))
   ok(/runSince \?\? 0\) >= typedAt/.test(fn), 'a turn newer than the return is the only proof it went in')
+  // ...for a PROMPT. `write()` stamps `runSince` on every return it sends, so a slash
+  // command - which starts no turn - would otherwise be proven by this app's own keystroke.
+  ok(/proof !== 'idle' && \(still\.meta\.runSince/.test(fn),
+    'and a command ignores that stamp, because the return this sends is what set it')
+  ok(/proof === 'idle' && idle\(still\) && \(still\.meta\.lastOutput \?\? 0\) > typedAt/.test(fn),
+    'a command is proven by the pane PRINTING something, never by silence')
   ok(/if \(!idle\(still\)\) \{[\s\S]*?return confirm\(\)/.test(fn), 'a painting pane must be waited out, not settled')
   // ...AND THE CONFIRM IS BOUNDED BY ITS OWN CLOCK, NOT THE WAIT'S.
   // 2026-09-01, pane s31-mti4yatg: the composer only read idle 181s into a 180s budget,
