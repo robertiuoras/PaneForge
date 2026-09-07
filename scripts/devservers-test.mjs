@@ -60,6 +60,12 @@ const eq = (what, a, b) => check(what, JSON.stringify(a) === JSON.stringify(b), 
   eq('pnpm dev shorthand', devSignalOf('pnpm dev'), { kind: 'script', script: 'dev' })
   eq('yarn dev shorthand', devSignalOf('yarn dev'), { kind: 'script', script: 'dev' })
   eq('bun dev shorthand', devSignalOf('bun dev'), { kind: 'script', script: 'dev' })
+  // 2026-09-07: three taskdriver.ai production builds died exit=143 at the 90s mark because
+  // `next build` read as the `next` dev server and the dead-server sweep stopped it.
+  eq('next build is not a server', devSignalOf('node /Users/r/Projects/taskdriver.ai/node_modules/next/dist/bin/next build'), null)
+  eq('next dev still is', devSignalOf('node /Users/r/Projects/taskdriver.ai/node_modules/next/dist/bin/next dev -p 3006'), { kind: 'tool', tool: 'next' })
+  eq('vite build is not a server', devSignalOf('/repo/node_modules/.bin/vite build'), null)
+  eq('a Next worker is not a server', devSignalOf('node /repo/node_modules/next/dist/compiled/jest-worker/processChild.js'), null)
 }
 
 {

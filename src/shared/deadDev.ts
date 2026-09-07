@@ -47,7 +47,14 @@ export interface DeadDevConfig {
   countdownSeconds: number
 }
 
-export const DEFAULT_DEAD_DEV: DeadDevConfig = { enabled: true, countdownSeconds: 5 }
+/**
+ * Off by default since 2026-09-07. GuardDeck's "Dev Server Reaper" already owns idle and
+ * leaking dev servers on this desk (`claude-config/guarddeck`, sourced from
+ * `claude-config/dev-servers.mjs`), and two sweeps over one process table each closing
+ * what the other one kept is how a production build got stopped three times in a row.
+ * Robert: one app manages resources; PaneForge does not touch a server unless asked.
+ */
+export const DEFAULT_DEAD_DEV: DeadDevConfig = { enabled: false, countdownSeconds: 5 }
 
 /**
  * How long a server has to be serving nothing before it counts.
