@@ -15,6 +15,7 @@ import {
   dropLine,
   newQueueKey,
   noteQueued,
+  owedTo,
   readStore,
   sentLine,
   type QueueDrop,
@@ -120,6 +121,11 @@ export function owedAfterRestore(oldId: string, newId: string): QueuedPrompt[] {
   save(moved.store)
   for (const row of moved.prompts) qpLog(`${newId} queued prompt recovered from ${oldId} - ${row.text.length} chars`)
   return moved.prompts
+}
+
+/** How many prompts a pane is still owed - the reading `sendOrOpen` refuses on. */
+export function owedCount(id: string): number {
+  return owedTo(load(), id).length
 }
 
 /** Only for tests and for a fresh read after the file was replaced underneath us. */

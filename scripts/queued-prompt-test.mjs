@@ -140,4 +140,54 @@ t('a submitted prompt is written down too, so the log reads as a ledger', () => 
   assert.doesNotMatch(line, /LOST/)
 })
 
+// ---------------------------------------------------------------------------
+// 2. A brief never queues behind somebody else's turn.
+
+const soo = join(out, 'sendOrOpen.mjs')
+buildSync({ entryPoints: ['src/shared/sendOrOpen.ts'], bundle: true, format: 'esm', platform: 'node', outfile: soo })
+const { sendOrOpen } = await import(pathToFileURL(soo).href)
+
+const idle = { id: 's7', status: 'idle' }
+
+t('no pane on that folder opens one', () =>
+  assert.equal(sendOrOpen({ prompt: 'do the thing', pane: null }).action, 'open'))
+
+t('an idle pane with nothing queued takes the prompt', () => {
+  const v = sendOrOpen({ prompt: 'do the thing', pane: idle })
+  assert.equal(v.action, 'send')
+  assert.equal(v.id, 's7')
+  assert.match(v.why, /idle/)
+})
+
+t('a pane mid-turn gets its own pane instead - the measured failure', () => {
+  assert.equal(sendOrOpen({ prompt: 'brief', pane: { ...idle, status: 'working' } }).action, 'open')
+  assert.equal(sendOrOpen({ prompt: 'brief', pane: { ...idle, runSince: Date.now() } }).action, 'open')
+})
+
+t('a pane already holding a queued prompt gets its own pane', () => {
+  const v = sendOrOpen({ prompt: 'brief', pane: { ...idle, queued: 1 } })
+  assert.equal(v.action, 'open')
+  assert.match(v.why, /already holding a prompt/)
+})
+
+t('a pane waiting on a person, drafting or still starting gets its own pane', () => {
+  assert.equal(sendOrOpen({ prompt: 'b', pane: { ...idle, ask: { options: [] } } }).action, 'open')
+  assert.equal(sendOrOpen({ prompt: 'b', pane: { ...idle, drafting: true } }).action, 'open')
+  assert.equal(sendOrOpen({ prompt: 'b', pane: { ...idle, status: 'starting' } }).action, 'open')
+  assert.equal(sendOrOpen({ prompt: 'b', pane: { ...idle, status: 'exited' } }).action, 'open')
+})
+
+t('going to a chat with no prompt still goes to the busy pane', () => {
+  assert.equal(sendOrOpen({ pane: { ...idle, status: 'working' } }).action, 'send')
+  assert.equal(sendOrOpen({ prompt: '   ', pane: { ...idle, status: 'working' } }).action, 'send')
+})
+
+t('every answer says why, in words with no machinery in them', () => {
+  for (const pane of [null, idle, { ...idle, status: 'working' }, { ...idle, queued: 2 }]) {
+    const why = sendOrOpen({ prompt: 'b', pane }).why
+    assert.ok(why.length > 8, 'there is a sentence')
+    assert.doesNotMatch(why, /lane|worktree|queuePrompt|runSince/, why)
+  }
+})
+
 console.log(`\n${pass} checks passed`)
