@@ -397,7 +397,12 @@ if (cmd === 'tell') {
 if (cmd === 'needs-login' && loginArgs?.desk) {
   const relay = relayCommand(loginArgs)
   if (!relay.ok) fail(1, relay.why)
-  const ssh = spawnSync(process.env.PF_SSH ?? 'ssh', relay.argv, {
+  // `PF_SSH` stands in for the ssh binary when this is being tested. Windows has no `echo`
+  // binary to point it at and cannot spawn a `.cmd` without a shell, so the JSON form
+  // `["<binary>", "<leading arg>"]` lets a test name an interpreter and the script it runs.
+  const sshCmd = process.env.PF_SSH ?? 'ssh'
+  const [sshBin, ...sshLead] = sshCmd.startsWith('[') ? JSON.parse(sshCmd) : [sshCmd]
+  const ssh = spawnSync(sshBin, [...sshLead, ...relay.argv], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe']
   })
