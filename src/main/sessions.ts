@@ -18,6 +18,8 @@ import { colsOf, endAll, gistFor, noteCols, recordData, recordEnd, recordStart, 
 import { jobTable } from './backJobs'
 import { backJobInfo } from './usage'
 import { forgetHandoff, handoffFor } from './handoffSteps'
+import { workShot } from './changedNothing'
+import { changedNothingWhy, changedNothingWords } from '../shared/changedNothing'
 import { clientForCwd, clientForTexts } from './clients'
 import { trustAgyWorkspace } from './agyTrust'
 import {
@@ -392,6 +394,19 @@ interface Live {
   effortHold?: { tail: string; since: number }
   /** The one write that must not be looked at again: the held return, on its way out. */
   effortPassThrough?: boolean
+  /**
+   * The folder as it was when this turn started, and as it was when the turn ended -
+   * `shared/changedNothing.ts`. Both are read once per turn on the turn's own boundaries,
+   * so a desk of eight panes costs two `git status` calls per turn and nothing per tick.
+   *
+   * `undefined` on either side is a reading that FAILED, and the verdict refuses on it.
+   * The pair is cleared the moment the sweep has read it, so a stale after-shot cannot be
+   * compared against the next turn's before-shot.
+   */
+  workBefore?: string
+  workAfter?: string
+  /** The finished turn waiting to be judged, or absent when there is nothing pending. */
+  workTurn?: { startedAt: number; endedAt: number }
   /** the last few things asked at this pane, for `repeatedTopic` - see `topicFor` */
   topicAsks?: string[]
   /** a phone is holding the pty at its own shape, and owes the desk its size back */
@@ -1748,6 +1763,23 @@ export class SessionManager extends EventEmitter {
     // count from now and report a fraction of the real time.
     live.meta.runSince = Date.now() - (clock?.ms ?? 0)
     live.meta.lastRunMs = undefined
+    // Whatever the last turn left on the card belongs to the last turn. A new one clears
+    // it and reads the folder once, so the end of THIS turn has something to compare
+    // against - see `shared/changedNothing.ts`.
+    live.meta.changedNothing = undefined
+    live.meta.changedNothingWhy = undefined
+    live.workAfter = undefined
+    live.workTurn = undefined
+    live.workBefore = undefined
+    // The turn may already have ended by the time git answers. A before-shot that arrives
+    // late is still the right one - it was taken from this turn's own start - but it must
+    // not overwrite a reading taken for a LATER turn, and `runSince` moving is how this
+    // knows another one started.
+    const startedThis = live.meta.runSince
+    void workShot(live.meta.cwd).then((shot) => {
+      if (live.meta.runSince === startedThis || live.workTurn?.startedAt === startedThis)
+        live.workBefore = shot
+    })
     // The bell belongs to the turn that rang it. Nothing clears it but a person looking at
     // the pane, so one left unacknowledged used to follow the pane into its next turn and
     // claim a running agent was waiting on an answer. Only on a genuinely NEW turn - the
@@ -1783,6 +1815,14 @@ export class SessionManager extends EventEmitter {
   private endRun(live: Live): boolean {
     if (!live.meta.runSince) return false
     live.meta.lastRunMs = Date.now() - live.meta.runSince
+    // Read the folder a second time, and hand the pair to the sweep to judge. The verdict
+    // is not taken here because git has not answered yet and this method is synchronous;
+    // it is taken beside `handoffOpen`, on the same seam and under the same contract.
+    live.workTurn = { startedAt: live.meta.runSince, endedAt: Date.now() }
+    const endedThis = live.workTurn.startedAt
+    void workShot(live.meta.cwd).then((shot) => {
+      if (live.workTurn?.startedAt === endedThis) live.workAfter = shot
+    })
     live.meta.runSince = undefined
     live.runEndedAt = Date.now()
     // The turn is over, however it ended: a pane cannot still be "stuck mid-turn"
@@ -1808,6 +1848,22 @@ export class SessionManager extends EventEmitter {
    * line lands between that pane's own turns instead of inside one. It is sent BEFORE the
    * kill: `kill()` deletes this session, and with it the request that names who to tell.
    */
+  /**
+   * Say one line to a pane, between its own turns.
+   *
+   * `queuePrompt` is the difference between this and a raw write: it waits for an idle
+   * composer, so a line that arrives while the agent is mid-answer is not typed into the
+   * middle of it. The sign-in card uses it to tell the pane that asked that the wall is
+   * down; `false` means no such pane, which the caller logs rather than retries.
+   */
+  tellPane(ref: string, text: string): boolean {
+    const live =
+      this.sessions.get(ref) ?? [...this.sessions.values()].find((l) => l.meta.title === ref)
+    if (!live) return false
+    this.queuePrompt(live.meta.id, text)
+    return true
+  }
+
   private sweepCloseWhenDone(live: Live, now: number, quiet: number): void {
     const { meta } = live
     if (!doneEnough({ ...meta, busyUntil: live.busyUntil }, quiet, now)) return
@@ -3576,6 +3632,34 @@ export class SessionManager extends EventEmitter {
       if (open !== meta.handoffOpen) {
         meta.handoffOpen = open
         changed = true
+      }
+      // ...and whether the turn that just ended changed anything at all in this pane's
+      // folder. Same seam, same contract: it decorates, and reaches no busy reading.
+      //
+      // The verdict is taken HERE rather than in `endRun` because both readings are git
+      // calls and `endRun` is synchronous - the after-shot lands a tick or two later. The
+      // pair is cleared once judged, whatever the answer, so a reading kept over into the
+      // next turn cannot be compared against the wrong start.
+      if (live.workTurn && live.workAfter !== undefined) {
+        const words = changedNothingWords({
+          before: live.workBefore,
+          after: live.workAfter,
+          startedAt: live.workTurn.startedAt,
+          endedAt: live.workTurn.endedAt,
+          agent: meta.agent !== 'shell',
+          asking: Boolean(meta.ask)
+        })
+        // A mirror never reaches this sweep at all - a pane drawn from the other desk has
+        // no `Live` here, so there is nothing to read and nothing to say. That is the
+        // `mirror` refusal in `shared/changedNothing.ts`, satisfied by construction.
+        if ((words ?? undefined) !== meta.changedNothing) {
+          meta.changedNothing = words ?? undefined
+          meta.changedNothingWhy = words ? changedNothingWhy(projectOf(meta.cwd)) : undefined
+          changed = true
+        }
+        live.workTurn = undefined
+        live.workAfter = undefined
+        live.workBefore = undefined
       }
       // ...and what model the pane is REALLY running, which the launch flag stops being
       // true about the moment somebody types `/model` inside the CLI - that changes
