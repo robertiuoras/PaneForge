@@ -10,7 +10,7 @@
 import { buildSync } from 'esbuild'
 import { strict as assert } from 'node:assert'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -30,6 +30,10 @@ buildSync({
   outfile: out
 })
 const M = createRequire(import.meta.url)(out)
+
+// The stand-in for ssh, run by node so it works on a machine with no `echo` binary.
+const fakeSsh = join(work, 'fake-ssh.mjs')
+writeFileSync(fakeSsh, 'console.log(process.argv.slice(2).join(" "))\n')
 
 let n = 0
 const eq = (got, want, why) => {
@@ -374,9 +378,11 @@ function pf(args, extraEnv = {}) {
       env: {
         ...process.env,
         PF_CTL_NO_APP: '1',
-        // `echo` in place of ssh: the assertion is the COMMAND the relay builds, and a
-        // test that needed a reachable second machine would only ever be skipped.
-        PF_SSH: process.platform === 'win32' ? 'cmd' : 'echo',
+        // A fake ssh in place of the real one: the assertion is the COMMAND the relay
+        // builds, and a test that needed a reachable second machine would only ever be
+        // skipped. It has to PRINT what it was asked, which `cmd` on Windows does not -
+        // the PC has no `echo` binary at all, so this runs node over a script instead.
+        PF_SSH: JSON.stringify([process.execPath, fakeSsh]),
         ...extraEnv
       }
     })
