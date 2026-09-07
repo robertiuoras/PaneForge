@@ -246,7 +246,15 @@ console.log('keystrokes')
   )
   // Every exit settles, or the curtain outlives the prompt. `settle` is what the callback
   // runs through and it is called on the drop, the submit and the pane going away.
-  ok('and it settles on every exit', (src.match(/return settle\(\)/g) ?? []).length >= 4, String((src.match(/return settle\(\)/g) ?? []).length))
+  // ...and every exit now NAMES how it ended ('sent', or one of the drop words), because
+  // the ledger row is closed here: a settle with no word would leave a prompt on disk for
+  // ever or, worse, report a lost one as sent. See `shared/queuedPrompts.ts`.
+  ok(
+    'and it settles on every exit',
+    (src.match(/return settle\('[a-z]+'\)/g) ?? []).length >= 4,
+    String((src.match(/return settle\(/g) ?? []).length)
+  )
+  ok('and no exit settles without saying how it ended', !/return settle\(\)/.test(src))
   ok('and starts on it', /setTimeout\(tick, Math\.max\(0, startMs\) \+ Math\.max\(0, extraDelay\)\)/.test(src))
 
   // PARITY. Two copies of one contract, in two repos, and nothing compared them.

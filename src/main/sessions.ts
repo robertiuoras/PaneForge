@@ -46,7 +46,7 @@ import { folderName, laneOfCheckout, projectOf } from '../shared/place'
 import { dropStale, lentGrid, watchedBorrow, type Borrow } from '../shared/paneSize'
 import { START_COLS, START_ROWS } from '../shared/paneGrid'
 import { RESTORE_MARK_TEXT } from '../shared/replayWidth'
-import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, SUBMIT_GAP_MS, armDecision, clearChunks, hasFreshPaneHandoff, resumeOf, dropFor, dropWords, expiryDecision, queuedPromptDecision, quietEnoughToArm, type DropReason, type QueuedPromptVerdict } from '../shared/autoclear'
+import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, SUBMIT_GAP_MS, armDecision, clearChunks, hasFreshPaneHandoff, resumeOf, dropFor, dropWords, expiryDecision, queuedPromptDecision, quietEnoughToArm, standDownFor, type DropReason, type QueuedPromptVerdict } from '../shared/autoclear'
 import { acLog } from './autoclearLog'
 import { noteAccepted, noteDropped, noteSubmitted, owedAfterRestore } from './queuedPrompts'
 import type { QueueDrop } from '../shared/queuedPrompts'
@@ -1669,6 +1669,11 @@ export class SessionManager extends EventEmitter {
     const asked = submitted ? live.typed : ''
     if (submitted) {
       live.meta.lastKeyboard = Date.now()
+      // A person sending a line owns the pane, so an armed countdown stands down for it -
+      // and an `app` write never does. `standDownFor` is the whole decision; without it
+      // this app's own queued prompt cancelled the clear and the log blamed the person.
+      const stand = standDownFor(origin)
+      if (stand) this.cancelAutoClear(id, stand)
       const slash = isSlashCommand(live.typed)
       cleared = slash && clearsConversation(live.typed)
       bare = !slash && isBareReturn(live.submitLine)

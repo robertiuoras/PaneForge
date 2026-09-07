@@ -190,4 +190,23 @@ t('every answer says why, in words with no machinery in them', () => {
   }
 })
 
+// ---------------------------------------------------------------------------
+// 3. The app typing is not a person typing.
+
+const ac = join(out, 'autoclear.mjs')
+buildSync({ entryPoints: ['src/shared/autoclear.ts'], bundle: true, format: 'esm', platform: 'node', outfile: ac })
+const { dropWords, standDownFor } = await import(pathToFileURL(ac).href)
+
+t('a queued prompt this app types stands nothing down', () =>
+  assert.equal(standDownFor('app'), null))
+
+t("a person's hand stands the countdown down", () => {
+  for (const hand of ['desk', 'phone', 'remote']) assert.equal(standDownFor(hand), 'cancelled')
+})
+
+t('the words only blame a person when a person did it', () => {
+  assert.equal(dropWords(standDownFor('desk')), 'you stopped it')
+  assert.equal(standDownFor('app'), null, 'there are no words, because there is no stand-down')
+})
+
 console.log(`\n${pass} checks passed`)
