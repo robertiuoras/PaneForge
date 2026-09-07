@@ -29,6 +29,7 @@
     "test:gamemode": "node scripts/gamemode-test.mjs",
     "test:busy": "node scripts/busy-test.mjs",
     "test:handoffsteps": "node scripts/handoff-steps-test.mjs",
+    "test:handoffstatthrottle": "node scripts/handoff-stat-throttle-test.mjs",
     "test:panemodel": "node scripts/panemodel-test.mjs",
     "test:staleframe": "node scripts/stale-frame-test.mjs",
     "test:cloudwork": "node scripts/cloud-work-test.mjs",
