@@ -215,7 +215,19 @@ ok(Object.keys(h).length>=5,'wired all updater events')
   h['error'](new Error('reset-devchannel-3')); await u.checkForUpdates()
   ok(stub.autoUpdater.allowPrerelease===false,'setDevChannel(false) then a check goes back to the stable feed')
 
-  const log=fs.existsSync(logFile)?fs.readFileSync(logFile,'utf8'):''
+  // Diagnostics append asynchronously. Wait for the actual records, not one event-loop turn.
+  await new Promise((resolve,reject)=>{
+    const timer=setTimeout(()=>{watcher.close();reject(new Error('updater diagnostics did not finish'))},5000)
+    const check=()=>{
+      const text=fs.existsSync(logFile)?fs.readFileSync(logFile,'utf8'):''
+      if(/sha512 checksum mismatch/.test(text)&&/state downloading/.test(text)){
+        clearTimeout(timer);watcher.close();resolve()
+      }
+    }
+    const watcher=fs.watch(path.dirname(logFile),check)
+    check()
+  })
+  const log=fs.readFileSync(logFile,'utf8')
   ok(/sha512 checksum mismatch/.test(log),'error written to updater.log')
   ok(/state downloading/.test(log),'phase transitions logged')
   console.log(fail.length?('\\n'+fail.length+' FAILED: '+fail.join(', ')):'\\nall green')

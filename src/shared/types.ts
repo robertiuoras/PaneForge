@@ -520,7 +520,15 @@ export interface Session {
   asleepReason?: SleepReason
 }
 
-export type SleepReason = 'manual' | 'idle' | 'pressure' | 'queued'
+export type SleepReason = 'manual' | 'idle' | 'pressure' | 'queued' | 'unknown' | 'continuation' | 'tour'
+
+/** Decision evidence, without terminal text, prompts or filesystem paths. */
+export interface SleepEvidence {
+  source: 'renderer-idle-sweep' | 'tour' | 'continuation' | 'renderer' | 'api' | 'internal'
+  pressure?: 'ok' | 'tight' | 'over'
+  idleMs?: number
+  thresholdMs?: number
+}
 
 /**
  * A live tee of one pane's output. Rides on the session list rather than an event of
@@ -2085,7 +2093,7 @@ export interface Api {
    * stays where it is wearing an `asleep` chip, and what is on screen is untouched.
    * See `shared/sleep.ts`.
    */
-  sleepSession(id: string): Promise<Session | null>
+  sleepSession(id: string, reason?: SleepReason, evidence?: SleepEvidence): Promise<Session | null>
   /** Start a sleeping pane's agent again, back in the conversation it was in. */
   wakeSession(id: string): Promise<Session | null>
   /**
