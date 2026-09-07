@@ -117,13 +117,34 @@ export function devSignalOf(cmdline: string): DevSignal | null {
 
   // A tool out of node_modules, however it was reached: `node <path>/node_modules/next/...`,
   // `<path>/node_modules/.bin/vite`, or the bare binary on PATH.
-  for (const arg of argv) {
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]
+    if (WORKER_FILE.test(arg)) return null
     const m = /node_modules[\\/](?:\.bin[\\/])?(@[^\\/]+[\\/])?([^\\/]+)/.exec(arg)
     const name = m ? m[2] : (DEV_TOOLS as readonly string[]).includes(base(arg)) ? base(arg) : ''
-    if (name && (DEV_TOOLS as readonly string[]).includes(name)) return { kind: 'tool', tool: name }
+    if (name && (DEV_TOOLS as readonly string[]).includes(name)) {
+      if (argv[i + 1] && ONE_SHOT.test(argv[i + 1])) return null
+      return { kind: 'tool', tool: name }
+    }
   }
   return null
 }
+
+/**
+ * Subcommands of a dev tool that finish and exit. `next build` is the same binary as `next
+ * dev` and is not a server: it never listens, so the dead-server sweep in `deadDev.ts` read
+ * it as "serving nothing for 90s" and stopped it. Measured 2026-09-07: three taskdriver.ai
+ * production builds in a row died `exit=143` during type checking, 85-126s after they
+ * started, whichever `distDir` and whichever shell they ran from.
+ */
+export const ONE_SHOT = /^(build|export|lint|typegen|telemetry|info|test|check|generate|sync|prepare|optimize|analyze)$/
+
+/**
+ * Files a tool runs in a child process (Next's compiled jest-worker, type-check and
+ * page-data workers). They live under `node_modules/next/` and so look like the tool, but
+ * they are not the server, never listen, and die with their parent.
+ */
+const WORKER_FILE = /node_modules[\\/]\S*[\\/](?:compiled[\\/]|jest-worker[\\/]|processChild\.js$)/
 
 /**
  * Whether this command line belongs to a pane whose repo is `root`.

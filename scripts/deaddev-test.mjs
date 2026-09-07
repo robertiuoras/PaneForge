@@ -122,19 +122,23 @@ const none = { now: NOW, kept: new Set(), supervised: new Set() }
 
 // --- the countdown ----------------------------------------------------------
 
+// The sweep ships OFF (GuardDeck owns dev servers since 2026-09-07); the countdown
+// arithmetic is checked with it turned on.
+const ON = { ...DEFAULT_DEAD_DEV, enabled: true }
+
 {
   const dead = deadDevs([dev(100)], new Set(), new Map([[100, OLD]]), none)
-  const plan = stopPlan(dead, null, DEFAULT_DEAD_DEV, NOW)
-  ok(plan, 'a dead server arms a countdown')
+  const plan = stopPlan(dead, null, ON, NOW)
+  ok(plan, 'a dead server arms a countdown once the sweep is turned on')
   eq(plan.deadline - NOW, DEFAULT_DEAD_DEV.countdownSeconds * 1000, 'the deadline is the configured seconds')
   eq(DEFAULT_DEAD_DEV.countdownSeconds, 5, 'five seconds, as asked for')
-  eq(DEFAULT_DEAD_DEV.enabled, true, 'it arrives on')
+  eq(DEFAULT_DEAD_DEV.enabled, false, 'it arrives off - GuardDeck owns dev servers since 2026-09-07')
 
-  const again = stopPlan(dead, plan, DEFAULT_DEAD_DEV, NOW + 2000)
+  const again = stopPlan(dead, plan, ON, NOW + 2000)
   eq(again, plan, 'a countdown already running is never re-armed - the number may only go down')
 
-  eq(stopPlan(dead, null, { ...DEFAULT_DEAD_DEV, enabled: false }, NOW), null, 'off means nothing is offered')
-  eq(stopPlan([], null, DEFAULT_DEAD_DEV, NOW), null, 'nothing dead, nothing armed')
+  eq(stopPlan(dead, null, DEFAULT_DEAD_DEV, NOW), null, 'off means nothing is offered - and off is the default')
+  eq(stopPlan([], null, ON, NOW), null, 'nothing dead, nothing armed')
 }
 {
   // Two dead at once is still one card: the corner holds one countdown, and the next
@@ -150,7 +154,7 @@ const none = { now: NOW, kept: new Set(), supervised: new Set() }
   )
   eq(dead.length, 2, 'both are dead')
   eq(dead[0].pid, 100, 'the one dead longest is offered first')
-  const plan = stopPlan(dead, null, DEFAULT_DEAD_DEV, NOW)
+  const plan = stopPlan(dead, null, ON, NOW)
   eq(plan.dev.pid, 100, 'one card, for that one')
 }
 
