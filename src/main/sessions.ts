@@ -3180,6 +3180,19 @@ export class SessionManager extends EventEmitter {
       noteSubmittedPrompt(id, prompt)
       acLog(`${id} return sent (try ${tries + 1}/${PROMPT_ENTER_TRIES})`)
       const typedAt = Date.now()
+      // AN IDLE COMPOSER IS ONLY PROOF IF SOMETHING WAS PRINTED. A command that ran answers
+      // with at least one line ("Set model to Opus 5..."); a swallowed return prints nothing
+      // at all. Both leave a quiet composer, and reading the quiet alone as proof is what
+      // broke the clear on 2026-09-07, pane s2-mtqmyvnv: `/clear` restarted the CLI, the
+      // `/model opus` return went in 13s later and was eaten by Claude Code's completion
+      // menu (the same menu that eats the first return of a `/clear` - see `write()`), the
+      // confirm settled 1.2s afterwards as "command landed", and the 721-character resume
+      // prompt was then typed onto a composer still holding `/model opus`. Claude Code read
+      // the pair as one slash command and answered `Model 'opus\n\nContinue the handoff...'
+      // not found` - the clear happened, the handover did not.
+      //
+      // `lastOutput` is the pty's own stamp, so it cannot be moved by the return this sends.
+
       if (!confirmUntil) confirmUntil = typedAt + PROMPT_CONFIRM_MS * PROMPT_ENTER_TRIES
       const confirm = (): void => {
         setTimeout(() => {
@@ -3188,7 +3201,11 @@ export class SessionManager extends EventEmitter {
           // A TURN is the only proof the return went in. `runSince` is set when one starts
           // - by this submit or by the agent's own busy footer - so a value newer than the
           // return is the answer being written.
-          if ((still.meta.runSince ?? 0) >= typedAt) {
+          // ...for a PROMPT. `write()` stamps `runSince` on any return it sends, so for a
+          // slash command - which starts no turn of its own - that stamp is this app's own
+          // bookkeeping coming back as evidence. Proof 'idle' therefore ignores it and
+          // waits for the pane to actually print something.
+          if (proof !== 'idle' && (still.meta.runSince ?? 0) >= typedAt) {
             acLog(`${id} prompt submitted - a turn started`)
             return settle()
           }
@@ -3206,9 +3223,19 @@ export class SessionManager extends EventEmitter {
           // painting" - 24s and two stray keystrokes on every clear, before the resume
           // prompt was even queued. For a command, the composer coming back idle IS the
           // proof, read at the poll cadence rather than the confirm's.
-          if (proof === 'idle' && idle(still)) {
+          if (proof === 'idle' && idle(still) && (still.meta.lastOutput ?? 0) > typedAt) {
             acLog(`${id} command landed - the composer is idle again (no turn expected)`)
             return settle()
+          }
+          // Quiet, and nothing printed since the return. Either the command has not
+          // answered yet or the return was eaten, and the two look identical from here - so
+          // WAIT rather than guess. Waiting costs time; guessing costs a stray keystroke in
+          // a live session, which is the thing this path spent 2026-09-02 removing. Only
+          // when the whole confirm window has gone by with the pane silent does this fall
+          // through to the retry below and send another return.
+          if (proof === 'idle' && (still.meta.lastOutput ?? 0) <= typedAt && Date.now() < confirmUntil) return confirm()
+          if (proof === 'idle' && (still.meta.lastOutput ?? 0) <= typedAt) {
+            acLog(`${id} return swallowed - nothing was printed in ${PROMPT_CONFIRM_MS * PROMPT_ENTER_TRIES}ms`)
           }
           if (!idle(still)) {
             // PAINTING IS NOT PROGRESS, and reading it as progress is what stranded pane

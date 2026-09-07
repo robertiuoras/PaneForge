@@ -28,6 +28,7 @@ import DiffDialog from './components/DiffDialog'
 import LaneDialog from './components/LaneDialog'
 import LaneHelp from './components/LaneHelp'
 import { PaneMenu } from './components/PaneMenu'
+import Welcome from './components/Welcome'
 import CopyMenu, { type CopyChoice } from './components/CopyMenu'
 import SessionMenu from './components/SessionMenu'
 import SessionInfo from './components/SessionInfo'
@@ -67,7 +68,8 @@ import {
   GearIcon,
   SidebarIcon,
   RestartIcon,
-  FolderIcon
+  FolderIcon,
+  HelpIcon
 } from './components/Icons'
 import RemoteDialog from './components/RemoteDialog'
 import { PairAsk } from './components/PairAsk'
@@ -5247,7 +5249,7 @@ export default function App(): JSX.Element {
               title={keyLabel('Every shortcut and what it does (F1 or Ctrl /)')}
               onClick={() => setHelp(true)}
             >
-              ?
+              <HelpIcon size={15} />
             </button>
           </span>
         </div>
@@ -5481,7 +5483,11 @@ export default function App(): JSX.Element {
             </Fragment>
           ))}
           {deskRows.length === 0 && (
-            <div className="empty">{keyLabel('No sessions. Ctrl T to start one.')}</div>
+            <Welcome
+              onStart={() => setPicking(true)}
+              onSearch={() => setPalette(true)}
+              onTools={() => setToolsOpen(true)}
+            />
           )}
         </div>
 

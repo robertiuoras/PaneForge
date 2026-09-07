@@ -10,7 +10,19 @@
    simpler: an approximation here is a visible flash of a different-coloured window on
    every launch. They are Forge at its defaults, and scripts/theme-test.mjs pins the
    derived ladder to the same lightnesses. */
+/* Self-hosted so a heading never depends on the network: Manrope (OFL), one variable
+   file, weight axis 200-800. Body text stays the system font - this is for headings
+   only, the way linear.app spends its one custom face on display type and nothing
+   else (design-vault/linear.app.md). */
+@font-face {
+  font-family: 'PF Display';
+  src: url('./assets/fonts/Manrope-Variable.ttf') format('truetype-variations');
+  font-weight: 200 800;
+  font-display: swap;
+}
+
 :root {
+  --font-heading: 'PF Display', 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
   --bg: #0a0a0d;
   --surface: #101014;
   --surface-2: #16161d;
@@ -1221,6 +1233,31 @@ html:is(.hi-refresh, .on-battery) .mascot-ball { animation: none !important; }
 .row:hover .x, .row.active .x { opacity: 1; }
 .x:hover { background: #ff8f8f1f; color: var(--danger); }
 .empty { color: var(--muted); padding: 10px 2px; }
+
+/* The welcome card: a hairline border and a one-step-up surface, no shadow, no gradient -
+   linear.app's card recipe (design-vault/linear.app.md, "Card (feature)"). One accent verb
+   (the + button already used everywhere else), two hairline chips for the two things a
+   person does right after: find something they already had open, or see what is asking
+   for them. Nothing here is a colour literal - every value is a token from paletteFor. */
+.welcome {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 10px;
+  padding: 18px 16px; margin: 4px 0;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg);
+}
+.welcome-h {
+  margin: 0; font-family: var(--font-heading); font-weight: 650;
+  font-size: 19px; line-height: 1.15; letter-spacing: -0.02em; color: var(--text);
+}
+.welcome-sub { margin: 0; font-size: 12px; color: var(--muted); }
+.welcome-start { margin-top: 4px; }
+.welcome-row { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 2px; }
+.welcome-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: none; border: 1px solid var(--line); border-radius: var(--r);
+  padding: 6px 11px; font-size: 12px; color: var(--muted); cursor: pointer;
+  transition: background var(--fast), border-color var(--fast), color var(--fast);
+}
+.welcome-chip:hover { background: var(--surface-2); border-color: var(--line-strong); color: var(--text); }
 /* The one empty state that is a first-run instruction rather than "nothing matched". */
 .empty.first-run { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 16px 2px; }
 .empty.first-run code { color: var(--text); word-break: break-all; }
@@ -2108,6 +2145,9 @@ body.sizing * { user-select: none !important; }
 /* A finger, not a pointer: 30px is a comfortable target for a mouse and a miss for a
    thumb, and answering from the phone is most of why this exists. */
 @media (pointer: coarse) {
+  /* A finger needs 44px: the welcome card chips and the settings rail rows. */
+  .welcome-chip { min-height: 44px; }
+  .nav-item { min-height: 44px; justify-content: center; }
   .pane-ask-btn { min-height: 44px; padding: 8px 14px; font-size: 13px; }
   /* A finger cannot hover, so a control revealed BY hover is a control a phone does not
      have: the card's close button sat at `opacity: 0` unless the row was already the
@@ -3667,11 +3707,12 @@ button.ghost.active { background: var(--accent-dim); border-color: var(--accent)
 .nav-find { margin-bottom: 6px; }
 .nav-item {
   display: flex; flex-direction: column; gap: 1px; align-items: flex-start;
-  background: none; border: 1px solid transparent; border-radius: var(--r-sm);
+  background: none; border: 1px solid transparent; border-radius: 999px;
   padding: var(--row-pad); cursor: pointer; text-align: left; width: 100%;
-  color: var(--text); transition: background var(--fast), border-color var(--fast);
+  color: var(--text); transition: background var(--fast), border-color var(--fast), color var(--fast);
 }
 .nav-item:hover { background: var(--surface-3); }
+.nav-item:active { background: var(--surface-2); }
 /* The selected rail entry is a filled block rather than a coloured word: with eight of
    them stacked, a tinted label alone is not findable without reading all eight. */
 .nav-item.on { background: var(--accent-dim); border-color: var(--accent); }
