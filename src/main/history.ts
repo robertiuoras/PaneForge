@@ -7,7 +7,6 @@
 // database to corrupt.
 
 import {
-  appendFileSync,
   closeSync,
   existsSync,
   fstatSync,
@@ -18,9 +17,10 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  writeSync,
   writeFileSync
 } from 'node:fs'
-import { appendFile, readFile } from 'node:fs/promises'
+import { open, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { app } from 'electron'
 // One stripper, not two: the live tee in `pipe.ts` needs the same rules a chunk at a
@@ -48,6 +48,10 @@ const MAX_PENDING_BYTES = 4 * 1024 * 1024
 let enabled = true
 const pending = new Map<string, string>()
 const sizes = new Map<string, number>()
+/** The next reserved byte in each log. Positions make a shutdown replay idempotent. */
+const offsets = new Map<string, number>()
+/** Writes issued to the thread pool but not yet known to have landed. */
+const outstanding = new Map<string, Array<{ offset: number; text: string }>>()
 /**
  * The append in flight per session, so two flushes cannot interleave one log's chunks.
  * One chain per session id, because a slow write on one pane may not hold up any other.
@@ -58,9 +62,7 @@ const widths = new Map<string, number>()
 let flushTimer: NodeJS.Timeout | null = null
 
 function dir(): string {
-  const d = join(app.getPath('userData'), 'history')
-  if (!existsSync(d)) mkdirSync(d, { recursive: true })
-  return d
+  return join(app.getPath('userData'), 'history')
 }
 
 function historyFile(id: string, suffix: 'log' | 'json'): string {
@@ -86,6 +88,12 @@ export function setHistoryEnabled(on: boolean): void {
 export function recordStart(s: Session): void {
   if (!enabled) return
   try {
+    // A session start is the one place we may discover an existing transcript. Keeping the
+    // result means the hot pty path never stats or creates a directory synchronously.
+    const historyDir = dir()
+    if (!existsSync(historyDir)) mkdirSync(historyDir, { recursive: true })
+    const log = logFile(s.id)
+    offsets.set(s.id, existsSync(log) ? statSync(log).size : 0)
     let asked: Partial<HistoryEntry> = {}
     try {
       const was = JSON.parse(readFileSync(metaFile(s.id), 'utf8')) as HistoryEntry
@@ -251,8 +259,9 @@ export function recordData(id: string, chunk: string): void {
   if (!enabled) return
   if ((sizes.get(id) ?? 0) > MAX_LOG_BYTES) return
   let next = (pending.get(id) ?? '') + chunk
-  if (next.length > MAX_PENDING_BYTES) {
-    next = next.slice(Math.floor(next.length / 2))
+  while (Buffer.byteLength(next) > MAX_PENDING_BYTES) {
+    // Slice by code points, then re-check byte length: terminal output is often Unicode.
+    next = next.slice(Math.ceil(next.length / 2))
     logProblem(
       'history',
       `pane ${id} printed more than ${MAX_PENDING_BYTES} bytes faster than they could be written; the oldest half was dropped`
@@ -328,12 +337,47 @@ export function flush(): Promise<void> {
   for (const [id, text] of pending) {
     if (!text) continue
     try {
-      const file = logFile(id)
-      sizes.set(id, (sizes.get(id) ?? 0) + Buffer.byteLength(text))
+      const offset = offsets.get(id) ?? 0
+      const bytes = Buffer.byteLength(text)
+      offsets.set(id, offset + bytes)
+      sizes.set(id, (sizes.get(id) ?? 0) + bytes)
+      const item = { offset, text }
+      const items = outstanding.get(id) ?? []
+      items.push(item)
+      outstanding.set(id, items)
       const done = (writing.get(id) ?? Promise.resolve())
-        .then(() => appendFile(file, text, 'utf8'))
+        .then(async () => {
+          let fd
+          try {
+            try {
+              fd = await open(logFile(id), 'r+')
+            } catch (error) {
+              if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+              try { fd = await open(logFile(id), 'wx+') } catch (race) {
+                if ((race as NodeJS.ErrnoException).code !== 'EEXIST') throw race
+                fd = await open(logFile(id), 'r+')
+              }
+            }
+            const buffer = Buffer.from(text)
+            let written = 0
+            while (written < buffer.length) {
+              const result = await fd.write(buffer, written, buffer.length - written, offset + written)
+              if (!result.bytesWritten) throw new Error('History log write made no progress')
+              written += result.bytesWritten
+            }
+          } finally {
+            await fd?.close()
+          }
+        })
+        .then(() => {
+          const remaining = outstanding.get(id)
+          if (!remaining) return
+          const at = remaining.indexOf(item)
+          if (at !== -1) remaining.splice(at, 1)
+          if (!remaining.length) outstanding.delete(id)
+        })
         .catch(() => {
-          /* keep going: one bad file must not stall the others */
+          /* keep the reservation: a terminal flush can still replay it */
         })
       writing.set(id, done)
       writes.push(done)
@@ -361,17 +405,59 @@ export function flushSync(): void {
     clearTimeout(flushTimer)
     flushTimer = null
   }
+  // Reserve buffered text before replaying. The async writers use the same byte positions,
+  // so an older thread-pool completion can only repeat its own bytes, never append after a
+  // newer synchronous shutdown write.
   for (const [id, text] of pending) {
     if (!text) continue
     try {
-      // sync-on-purpose: quit, teardown, sleep and read-back have no later turn to write in
-      appendFileSync(logFile(id), text, 'utf8')
-      sizes.set(id, (sizes.get(id) ?? 0) + Buffer.byteLength(text))
+      const bytes = Buffer.byteLength(text)
+      const offset = offsets.get(id) ?? (existsSync(logFile(id)) ? statSync(logFile(id)).size : 0)
+      offsets.set(id, offset + bytes)
+      sizes.set(id, (sizes.get(id) ?? 0) + bytes)
+      const items = outstanding.get(id) ?? []
+      items.push({ offset, text })
+      outstanding.set(id, items)
     } catch {
       /* keep going: one bad file must not stall the others */
     }
   }
   pending.clear()
+  for (const [id, items] of outstanding) {
+    let fd: number | undefined
+    try {
+      try {
+        fd = openSync(logFile(id), 'r+')
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+        try { fd = openSync(logFile(id), 'wx+') } catch (race) {
+          if ((race as NodeJS.ErrnoException).code !== 'EEXIST') throw race
+          fd = openSync(logFile(id), 'r+')
+        }
+      }
+      for (const { offset, text } of items) {
+        // sync-on-purpose: quit, teardown, sleep and read-back have no later turn to write in
+        const buffer = Buffer.from(text)
+        let written = 0
+        while (written < buffer.length) {
+          // sync-on-purpose: terminal replay must finish before the process leaves
+          const count = writeSync(fd, buffer, written, buffer.length - written, offset + written)
+          if (!count) throw new Error('History log write made no progress')
+          written += count
+        }
+      }
+    } catch {
+      /* keep going: one bad file must not stall the others */
+    } finally {
+      if (fd !== undefined) {
+        try {
+          closeSync(fd)
+        } catch {
+          /* already gone */
+        }
+      }
+    }
+  }
 }
 
 export function list(): HistoryEntry[] {

@@ -42,8 +42,8 @@
 // either: an app run that died without killing anything.
 
 import { execFile, spawn } from 'node:child_process'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { mkdir, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { app } from 'electron'
 import { spawnDetachedNoWindow } from './consoles'
@@ -77,6 +77,7 @@ export interface StrayRecord {
 /** What `strays.json` holds: the runs that have not been swept yet. */
 export interface Ledger {
   runs: Record<string, StrayRecord[]>
+  writtenAt?: number
 }
 
 // ---------------------------------------------------------------------------
@@ -274,22 +275,40 @@ export function snapshot(done: (procs: ProcRecord[]) => void): void {
 function file(): string {
   return join(app.getPath('userData'), 'strays.json')
 }
+/** The exit writer never shares its target with an older sampler write. */
+function exitFile(): string {
+  return join(app.getPath('userData'), 'strays.exit.json')
+}
+let lastLedgerGeneration = 0
+function ledgerGeneration(previous = 0): number {
+  lastLedgerGeneration = Math.max(lastLedgerGeneration + 1, Date.now(), previous + 1)
+  return lastLedgerGeneration
+}
 
 export function readLedger(): Ledger {
-  try {
-    const raw = JSON.parse(readFileSync(file(), 'utf8')) as Partial<Ledger>
-    const runs = raw.runs && typeof raw.runs === 'object' ? raw.runs : {}
-    const clean: Record<string, StrayRecord[]> = {}
-    for (const [run, list] of Object.entries(runs)) {
-      if (!Array.isArray(list)) continue
-      clean[run] = list.filter(
-        (r): r is StrayRecord => !!r && typeof r.pid === 'number' && typeof r.started === 'string'
-      )
+  const read = (path: string): Ledger | null => {
+    try {
+      const raw = JSON.parse(readFileSync(path, 'utf8')) as Partial<Ledger>
+      const runs = raw.runs && typeof raw.runs === 'object' ? raw.runs : {}
+      const clean: Record<string, StrayRecord[]> = {}
+      for (const [run, list] of Object.entries(runs)) {
+        if (!Array.isArray(list)) continue
+        clean[run] = list.filter(
+          (r): r is StrayRecord => !!r && typeof r.pid === 'number' && typeof r.started === 'string'
+        )
+      }
+      return { runs: clean, writtenAt: typeof raw.writtenAt === 'number' && Number.isFinite(raw.writtenAt) ? raw.writtenAt : 0 }
+    } catch {
+      return null
     }
-    return { runs: clean }
-  } catch {
-    return { runs: {} }
   }
+  // The terminal ledger removes this process's run. It remains authoritative until a later
+  // sampler has written a fresh ledger, so an old async completion cannot resurrect it.
+  const live = read(file())
+  const terminal = read(exitFile())
+  const newest = !live || (terminal?.writtenAt ?? 0) >= (live.writtenAt ?? 0) ? terminal ?? live : live
+  lastLedgerGeneration = Math.max(lastLedgerGeneration, live?.writtenAt ?? 0, terminal?.writtenAt ?? 0)
+  return newest ?? { runs: {} }
 }
 
 /**
@@ -303,20 +322,26 @@ export function readLedger(): Ledger {
  */
 let queued: Ledger | null = null
 let writing: Promise<void> | null = null
+let sealed = false
 
 function writeLedger(ledger: Ledger): void {
-  queued = ledger
+  if (sealed) return
+  queued = { ...ledger, writtenAt: ledgerGeneration(ledger.writtenAt) }
   if (!writing) writing = drainLedger()
 }
 
 async function drainLedger(): Promise<void> {
   try {
-    while (queued) {
+    while (queued && !sealed) {
       const next = queued
       queued = null
       try {
         await mkdir(dirname(file()), { recursive: true })
-        await writeFile(file(), JSON.stringify(next), 'utf8')
+        // Readers keep the previous complete ledger until this generation is published.
+        const tmp = `${file()}.${process.pid}.${next.writtenAt}.tmp`
+        await writeFile(tmp, JSON.stringify(next), 'utf8')
+        if (sealed) return
+        await rename(tmp, file())
       } catch {
         /* read-only profile: see consoles.ts - a tidy-up may never be a requirement */
       }
@@ -328,11 +353,13 @@ async function drainLedger(): Promise<void> {
 
 /** The exit path has no later turn to be written in: see `sweepOwnStraysOnExit`. */
 function writeLedgerSync(ledger: Ledger): void {
+  sealed = true
   queued = null
   try {
     mkdirSync(dirname(file()), { recursive: true })
     // sync-on-purpose: the app is leaving, an asynchronous write would never land
-    writeFileSync(file(), JSON.stringify(ledger), 'utf8')
+    writeFileSync(`${exitFile()}.tmp`, JSON.stringify({ ...ledger, writtenAt: ledgerGeneration(ledger.writtenAt) }), 'utf8')
+    renameSync(`${exitFile()}.tmp`, exitFile())
   } catch {
     /* read-only profile: see consoles.ts - a tidy-up may never be a requirement */
   }

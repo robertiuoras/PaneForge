@@ -9,7 +9,7 @@
 // all waited on the kernel with nothing to recover them and nothing written to any log.
 //
 // So the rule this checks: in the files below, every remaining `appendFileSync(` or
-// `writeFileSync(` must carry a `// sync-on-purpose: <why>` comment on the line itself or
+// `writeFileSync(` or `writeSync(` must carry a `// sync-on-purpose: <why>` comment on the line itself or
 // in the three lines above it. The legitimate reasons are all the same shape - quitting,
 // going to sleep, an installer about to replace this process - where there is no later turn
 // for an asynchronous write to land in.
@@ -25,6 +25,7 @@ const FILES = [
   'src/main/strays.ts',
   'src/main/logWrite.ts',
   'src/main/crash.ts',
+  'src/main/laneBoard.ts',
   'src/main/audit.ts',
   'src/main/autoclearLog.ts',
   'src/main/interventions.ts',
@@ -38,7 +39,7 @@ const FILES = [
 ]
 
 /** A call, not an import: `import { writeFileSync } from 'node:fs'` has no paren after it. */
-const SYNC_WRITE = /\b(appendFileSync|writeFileSync)\s*\(/
+const SYNC_WRITE = /\b(appendFileSync|writeFileSync|writeSync)\s*\(/
 const REASON = /sync-on-purpose:\s*\S/
 /** How far above the call the reason may sit, for a call split across several lines. */
 const LOOK_BACK = 3
@@ -71,7 +72,7 @@ for (const rel of FILES) {
 const history = read('src/main/history.ts')
 ok(
   'the transcript flush timer writes with fs/promises',
-  /import \{[^}]*\bappendFile\b[^}]*\} from 'node:fs\/promises'/.test(history) &&
+  /import \{[^}]*\bopen\b[^}]*\} from 'node:fs\/promises'/.test(history) &&
     /export function flush\(\): Promise<void>/.test(history)
 )
 ok(
@@ -107,7 +108,7 @@ ok('the quit path still writes the desk synchronously', /function writeDeskSync\
 const strays = read('src/main/strays.ts')
 ok(
   'the stray ledger sampler writes with fs/promises',
-  /import \{ mkdir, writeFile \} from 'node:fs\/promises'/.test(strays) &&
+  /import \{[^}]*\bwriteFile\b[^}]*\} from 'node:fs\/promises'/.test(strays) &&
     /async function drainLedger\(\)/.test(strays)
 )
 ok('the exit sweep still writes the ledger synchronously', /function writeLedgerSync\(/.test(strays))
