@@ -84,9 +84,9 @@ is(
   'and the project\'s own folder is the main copy, not a "checkout"'
 )
 ok(
-  !place.describePlace({ cwd: `${W}\\PaneForge-a`, branch: 'lane-a', lane: 'a' }).full.includes('checkout'),
   'the tooltip drops the word too - it is one paragraph the same person reads'
-)
+,
+  !place.describePlace({ cwd: `${W}\\PaneForge-a`, branch: 'lane-a', lane: 'a' }).full.includes('checkout'))
 
 // ------------------------------------------------- a row says which job was in that copy
 
@@ -120,12 +120,12 @@ is(words.laneHeadline(lane()), words.laneLabel(lane()), 'a chat that left no nam
 is(words.laneUnder(lane(), 'busy now'), 'busy now', 'and its state line does not repeat the folder')
 
 const tip = words.heldByTip(lane({ chatTitle: 'Set Up Meta Ads', chatAbout: 'write the ad copy' }))
-ok(tip.includes('Set Up Meta Ads'), 'the tooltip spells the name out')
-ok(tip.includes('write the ad copy'), 'along with what that chat was asked to do')
+ok('the tooltip spells the name out', tip.includes('Set Up Meta Ads'))
+ok('along with what that chat was asked to do', tip.includes('write the ad copy'))
 ok(
-  !words.heldByTip(lane()).includes('undefined'),
   'a chat with no name leaves no hole in the tooltip'
-)
+,
+  !words.heldByTip(lane()).includes('undefined'))
 
 // --------------------------------------------------------------- no jargon on the screen
 
@@ -175,11 +175,11 @@ is(
 // points back at the row's heading, which only resolves for somebody who already knows
 // the row is about a copy.
 ok(
+  'and it does not ask the reader to resolve a pronoun onto a heading'
+,
   !/its own chat/.test(
     words.holderName(lane({ dir: `${W}\\clients-a`, lane: 'a', from: `${W}\\clients-a` }))
-  ),
-  'and it does not ask the reader to resolve a pronoun onto a heading'
-)
+  ))
 
 // The release gate's list, which was 695px of text in a 231px line (measured in the window
 // 2026-09-01): every letter of the second copy was ellipsed off the end.
@@ -200,29 +200,67 @@ const strip = readFileSync(join(repoRoot, 'src', 'renderer', 'src', 'components'
 const drawn = [
   ...strip.matchAll(/^\s*(?!\/\/|\*|\/\*)([A-Z][^<>{}\n]{3,})$/gm)
 ].map((m) => m[1].trim())
-ok(drawn.length > 0, 'found the drawn headings to check', String(drawn.length))
+ok('found the drawn headings to check', drawn.length > 0, String(drawn.length))
 ok(
-  !drawn.some((t) => /\blanes?\b/i.test(t)),
   'no heading on screen calls a copy a "lane"',
+  !drawn.some((t) => /\blanes?\b/i.test(t)),
   drawn.filter((t) => /\blanes?\b/i.test(t)).join(' | ')
 )
 ok(
-  strip.includes('Other<span className="wide-word"> copies</span>'),
   'the section is headed "Other copies", and still gives the middle word up first when narrow'
-)
+,
+  strip.includes('Other<span className="wide-word"> copies</span>'))
 // The desk tag is 92px of every row and says this machine's own name on a one-machine
 // desk. Only the OTHER machine's rows keep it.
 ok(
-  /lane\.device && \(!here \|\| lane\.device !== here\)/.test(strip),
   'the desk tag is drawn only when the desk is not this one'
-)
+,
+  /lane\.device && \(!here \|\| lane\.device !== here\)/.test(strip))
 ok(
-  /copyNumber\(lane\.lane\)/.test(strip),
   'the tag beside a row is the copy NUMBER, never the slot letter'
-)
+,
+  /copyNumber\(lane\.lane\)/.test(strip))
 ok(
-  !/>\s*\{stuck\} stuck/.test(strip),
   '"stuck" is a state, not a label a person can act on - the badge says who it needs'
+,
+  !/>\s*\{stuck\} stuck/.test(strip))
+
+
+// ------------------------------------- the card the copy chip opens, and its "what is this?"
+//
+// Robert, 2026-09-07, on a screenshot of this dialog: "its just too hard to understand
+// though right?" - and it was. Nine git words on one card ("Lane e", repo, branch,
+// checkout, merging, commits, uncommitted, `lane-e -> main`, "Merge into main"), the same
+// fact explained three times over, and rows headed "lane b" beside a title that had
+// already numbered the copies. None of it was pinned: this file only ever read LaneStrip,
+// so the dialog drifted straight back to the vocabulary the strip had been cleaned of.
+const dialog = readFileSync(join(repoRoot, 'src', 'renderer', 'src', 'components', 'LaneDialog.tsx'), 'utf8')
+const help = readFileSync(join(repoRoot, 'src', 'renderer', 'src', 'components', 'LaneHelp.tsx'), 'utf8')
+const blurbs = readFileSync(join(repoRoot, 'src', 'shared', 'blurbs.ts'), 'utf8')
+
+ok('the dialog calls the project\'s own folder "the main copy", never a checkout', !dialog.includes('main checkout'))
+ok('and a row is headed by a copy NUMBER, never "lane b"', !/`lane \$\{slot\}`/.test(dialog))
+ok('which is copyNumber, the one place a slot becomes a number', dialog.includes('copy ${copyNumber(slot) ?? slot}'))
+ok('the button does not say "merge"', !/Merge into /.test(dialog))
+ok('it says what happens in words - and "now", because it is only ever early', dialog.includes('Bring it back now'))
+ok(
+  'the card SAYS the work goes back by itself; the button is the sooner version, not the only version',
+  dialog.includes('on its own once this chat finishes')
+)
+ok('nothing on the card is "uncommitted"', !/uncommitted/.test(dialog))
+ok('and no count is phrased as a double negative', !/does not have`/.test(dialog))
+ok('no git command is printed at somebody who has never used git', !/git merge /.test(dialog))
+ok('a commit is a "saved change"', !/\bcommit\$\{/.test(dialog))
+
+ok('the help card is not headed "Lanes"', !help.includes('<strong>Lanes</strong>'))
+ok('and it does not teach the word - the reader never needs it', !/is a <b>lane<\/b>/.test(help))
+
+const blurb = /id: 'lane',[\s\S]*?text: '([^']*)'/.exec(blurbs)
+ok('found the copy chip\'s blurb', Boolean(blurb))
+ok(
+  'the blurb under the title carries no git word either',
+  Boolean(blurb) && !/\b(repo|branch|checkout|merg\w+)\b/i.test(blurb[1]),
+  blurb && blurb[1]
 )
 
 console.log(failed ? `\n${failed} plain-words check(s) failed` : '\nall plain-words checks passed')

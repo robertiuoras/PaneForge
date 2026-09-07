@@ -421,9 +421,9 @@ ok(
   laneDoing(work({ touching: ['a.ts', 'b.ts', 'c.ts', 'd.ts'], dirty: 9 }), NOW)
 )
 ok(
-  'a quiet lane is named by its newest commit, with its age',
+  'a quiet copy is named by what it last saved, with its age',
   laneDoing(work({ subject: 'fix(lanes): ship lane-peers.mjs', at: NOW - 3 * 3600_000 }), NOW) ===
-    'last commit 3h ago: "fix(lanes): ship lane-peers.mjs"',
+    'last saved 3h ago: "fix(lanes): ship lane-peers.mjs"',
   laneDoing(work({ subject: 'fix(lanes): ship lane-peers.mjs', at: NOW - 3 * 3600_000 }), NOW)
 )
 ok('a lane with nothing in it says nothing', laneDoing(work(), NOW) === '', laneDoing(work(), NOW))

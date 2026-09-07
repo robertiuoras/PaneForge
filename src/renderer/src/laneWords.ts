@@ -300,7 +300,7 @@ export function laneDoing(
     bits.push(`editing ${shown.join(', ')}${more > 0 ? ` +${more} more` : ''}`)
   }
   if (work.subject) {
-    bits.push(`last commit${work.at ? ` ${ago(work.at, now)} ago` : ''}: "${work.subject}"`)
+    bits.push(`last saved${work.at ? ` ${ago(work.at, now)} ago` : ''}: "${work.subject}"`)
   }
   return bits.join(' · ')
 }

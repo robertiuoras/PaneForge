@@ -28,7 +28,7 @@ try {
   assert.equal(html, '', 'sleeping pane is not counted again under Other copies')
   const { CopyRow } = load('src/renderer/src/components/LaneDialog.tsx', '\nexport { CopyRow };')
   const row = renderToStaticMarkup(React.createElement(CopyRow, { copy: { dir: '/p/repo-a', slot: 'a', self: false, trunk: false, work: null }, onFocus() {} }))
-  assert.match(row, /could not be inspected/i, 'a failed inspection never claims an empty copy')
+  assert.match(row, /could not be read/i, 'a failed inspection never claims an empty copy')
   const main = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
   // To the end of that one declaration, not to the next landmark further down the file:
   // slicing as far as `ipcMain.handle('lanes:board'` swallowed whatever was written
