@@ -177,6 +177,7 @@ import { TOUR_ASLEEP_MS, TOUR_SIDE_BACK_MS } from '../../shared/tour'
 function sayMs(ms: number): string {
   return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`
 }
+
 import Tips from './components/Tips'
 import { DEFAULT_TIPS } from '../../shared/tips'
 import { folderLabel } from '../../shared/revealPane'
@@ -4973,6 +4974,17 @@ export default function App(): JSX.Element {
                         row). One box wraps whole, keeps its chips together, and is the
                         only thing on the line that may be pushed to the right. */}
                     <span className="row-tags">
+                      {/* The dot gives the state its quickest possible scan, but it cannot
+                          be the only reading. Keep the word beside the actual timers so a
+                          green dot never has to be decoded from memory. A question already
+                          has its stronger, more specific "asks you" state below. */}
+                      {!s.ask && s.status !== 'exited' && (
+                        <span className={'chip card-status ' + s.status}>
+                          {s.status === 'idle'
+                            ? (s.engaged !== false ? 'waiting for you' : 'ready')
+                            : s.status === 'working' ? 'running' : s.status}
+                        </span>
+                      )}
                       {s.ask && (
                         <span
                           className="chip asks"
@@ -5100,7 +5112,7 @@ export default function App(): JSX.Element {
                       ) : s.runSince ? (
                         <span className="session-clock">turn <Elapsed since={s.runSince} title="This turn" /></span>
                       ) : s.lastRunMs !== undefined ? (
-                        <span className="elapsed done" title="Last turn">
+                        <span className="session-clock session-last" title="Last turn">
                           last {formatElapsed(s.lastRunMs)}
                         </span>
                       ) : null}
