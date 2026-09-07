@@ -1610,9 +1610,16 @@ async function startOrSend(
   // land in different lanes, and it is `laneFor` that decides which. A pane that goes to
   // the other machine claims nothing here - it takes no folder on this disk.
   const here = async (): Promise<Session> => {
+    // How long the press took to become a pane, in two halves. "Making a new session
+    // lags" (Robert, 2026-09-08) had no number anywhere: deciding the folder walks the
+    // lane ledger and the worktrees on disk, and on a machine short of memory those reads
+    // are the wait. One line per start, in the log that already answers where a pane went.
+    const began = Date.now()
     const lane = await laneFor(req, claimed)
-    claimed?.push(lane.cwd)
-    return manager.start(lane)
+    const decided = Date.now() - began
+    const session = await manager.start(lane)
+    logOffload({ event: 'started', id: session.id, cwd: lane.cwd, decidedMs: decided, openMs: Date.now() - began })
+    return session
   }
   const cfg = getConfig()
   const mode = preferRemoteOf(cfg.autoHandoff)
