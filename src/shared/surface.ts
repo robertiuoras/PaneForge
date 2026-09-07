@@ -119,6 +119,10 @@ export const SURFACE: Surface = {
   /** Cmd-Q with panes still working: the card, and its answer. */
   onQuitAsk: ['on', 'app:quitAsk'],
   answerQuit: ['invoke', 'app:quitAnswer'],
+  /** Obsidian vault beside a pane's project: where it is, its link graph, open a note in Obsidian. Lane e builds the handlers. */
+  vaultInfo: ['invoke', 'vault:info'],
+  vaultGraph: ['invoke', 'vault:graph'],
+  vaultOpen: ['invoke', 'vault:open'],
   answerOffload: ['invoke', 'offload:answer'],
   pathForFile: ['local'],
   adminStatus: ['invoke', 'admin:status'],
