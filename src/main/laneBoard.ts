@@ -14,7 +14,9 @@
 // renderer draws nothing.
 
 import { execFile } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises'
+import { appendLog } from './logWrite'
 import { homedir, hostname } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import type { LaneBoard, LaneBoardEntry } from '../shared/types'
@@ -517,18 +519,7 @@ function noteRetry(main: string, out: string): void {
   const said = out.trim()
   if (!said) return
   const file = join(main, '.git', 'paneforge-lane-retry.log')
-  try {
-    let prev = ''
-    try {
-      prev = readFileSync(file, 'utf8')
-    } catch {
-      /* first line */
-    }
-    const next = `${prev}${new Date().toISOString()} ${said.replace(/\s*\n\s*/g, ' | ')}\n`
-    writeFileSync(file, next.length > RETRY_LOG_MAX ? next.slice(-RETRY_LOG_MAX) : next, 'utf8')
-  } catch {
-    /* a log we cannot write is not worth losing the retry over */
-  }
+  appendLog(file, `${new Date().toISOString()} ${said.replace(/\s*\n\s*/g, ' | ')}\n`, { halveAt: RETRY_LOG_MAX })
 }
 
 /** As much of a pane as lane ownership depends on. */
@@ -684,12 +675,22 @@ function processAlive(pid: number): boolean {
  * gets half-written. Each running copy writes its own atomically-renamed file, so no
  * heartbeat ever reads, changes, and replaces another copy's inventory.
  */
-export function heartbeat(main: string, chats: string[]): Set<string> | null {
+const heartbeatWrites = new Map<string, Promise<Set<string> | null>>()
+
+/** Each repository publishes in order, including the legacy compatibility mirror. */
+export function heartbeat(main: string, chats: string[]): Promise<Set<string> | null> {
+  const next = (heartbeatWrites.get(main) ?? Promise.resolve()).then(() => publishHeartbeat(main, chats))
+  heartbeatWrites.set(main, next)
+  void next.finally(() => { if (heartbeatWrites.get(main) === next) heartbeatWrites.delete(main) })
+  return next
+}
+
+async function publishHeartbeat(main: string, chats: string[]): Promise<Set<string> | null> {
   try {
     const now = Date.now()
     let all: Record<string, Beat>
     try {
-      const raw = JSON.parse(readFileSync(panesFile(main), 'utf8')) as unknown
+      const raw = JSON.parse(await readFile(panesFile(main), 'utf8')) as unknown
       if (!isInventory(raw)) return null
       all = raw
     } catch (error) {
@@ -703,16 +704,18 @@ export function heartbeat(main: string, chats: string[]): Set<string> | null {
 
     const dir = panesDir(main)
     let firstRun = false
-    if (!existsSync(dir)) {
-      mkdirSync(dir)
+    try {
+      await mkdir(dir)
       firstRun = true
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
     }
-    for (const name of readdirSync(dir)) {
+    for (const name of await readdir(dir)) {
       // Interrupted writes have no `.json` name and were never published.
       if (name.endsWith('.tmp')) continue
       const match = /^pf-(\d+)\.json$/.exec(name)
       if (!match) return null
-      const raw = JSON.parse(readFileSync(join(dir, name), 'utf8')) as unknown
+      const raw = JSON.parse(await readFile(join(dir, name), 'utf8')) as unknown
       if (!isBeat(raw)) return null
       const beat = raw as Beat
       const pid = Number(match[1])
@@ -724,15 +727,15 @@ export function heartbeat(main: string, chats: string[]): Set<string> | null {
     all[INSTANCE] = { at: now, chats }
     const own = join(dir, `${INSTANCE}.json`)
     const tmp = `${own}.${process.pid}.tmp`
-    writeFileSync(tmp, JSON.stringify(all[INSTANCE]), 'utf8')
-    renameSync(tmp, own)
+    await writeFile(tmp, JSON.stringify(all[INSTANCE]), 'utf8')
+    await rename(tmp, own)
     // Older running app copies only know this file. It is a compatibility mirror: current
     // copies read the per-process files above, so a simultaneous legacy mirror cannot make
     // a current peer disappear from their liveness answer.
     const legacy = panesFile(main)
     const legacyTmp = `${legacy}.${process.pid}.tmp`
-    writeFileSync(legacyTmp, JSON.stringify(all), 'utf8')
-    renameSync(legacyTmp, legacy)
+    await writeFile(legacyTmp, JSON.stringify(all), 'utf8')
+    await rename(legacyTmp, legacy)
     return firstRun ? null : new Set(Object.values(all).flatMap((b) => b.chats))
   } catch {
     // Unknown inventory is never evidence that every other copy is gone.
@@ -741,6 +744,7 @@ export function heartbeat(main: string, chats: string[]): Set<string> | null {
 }
 
 let reclaiming = false
+let checkingInventories = false
 
 /** What the last reclaim sweep learned about which chats are alive, for `markGone`. */
 let lastLiving: Set<string> | null = null
@@ -775,82 +779,90 @@ export function markGone(board: LaneBoard | null, now = Date.now(), living = las
  * One lane per tick: each release ends in an autoship, and there is no reason to run two at
  * once when the tick comes round every minute.
  */
-export function laneReclaim(panes: LanePane[]): void {
-  if (reclaiming) return
-  // EVERY repo the panes are in, not the one the strip happens to be showing. Lanes stopped
-  // being one project's the day lane.mjs took `--repo`, but this did not: findRepo votes,
-  // and only the winner got a heartbeat and a reclaim. Measured on a real desk with panes
-  // in two projects - the loser's panes file was FOUR HOURS stale, written by a copy that
-  // had quit, so no chat in it counted as living, no dead hold was ever given back, and
-  // every chat that opened there was told another chat had the lane. For 12h, which is
-  // when staleness finally reaps it.
-  const chats = panes.map((p) => p.resumeId).filter((c): c is string => Boolean(c))
-  // Every ledger on the machine, not only the repos with a pane here: a hold in a repo no
-  // pane is in is exactly the one nothing else will ever give back (see `ledgerRepos`).
-  const groups = new Map<string, LanePane[]>()
-  const spelling = new Map<string, string>()
-  for (const main of ledgerRepos(panes)) {
-    spelling.set(samePath(main), main)
-    groups.set(main, [])
-  }
-  for (const p of panes) {
-    const main = p.cwd && mainCheckout(p.cwd)
-    if (!main || !existsSync(join(main, '.git', 'paneforge-lanes.json'))) continue
-    const k = samePath(main)
-    if (!spelling.has(k)) {
-      spelling.set(k, main)
+export async function laneReclaim(panes: LanePane[]): Promise<void> {
+  if (reclaiming || checkingInventories) return
+  checkingInventories = true
+  try {
+    // EVERY repo the panes are in, not the one the strip happens to be showing. Lanes stopped
+    // being one project's the day lane.mjs took `--repo`, but this did not: findRepo votes,
+    // and only the winner got a heartbeat and a reclaim. Measured on a real desk with panes
+    // in two projects - the loser's panes file was FOUR HOURS stale, written by a copy that
+    // had quit, so no chat in it counted as living, no dead hold was ever given back, and
+    // every chat that opened there was told another chat had the lane. For 12h, which is
+    // when staleness finally reaps it.
+    const chats = panes.map((p) => p.resumeId).filter((c): c is string => Boolean(c))
+    // Every ledger on the machine, not only the repos with a pane here: a hold in a repo no
+    // pane is in is exactly the one nothing else will ever give back (see `ledgerRepos`).
+    const groups = new Map<string, LanePane[]>()
+    const spelling = new Map<string, string>()
+    for (const main of ledgerRepos(panes)) {
+      spelling.set(samePath(main), main)
       groups.set(main, [])
     }
-    const at = spelling.get(k) as string
-    groups.set(at, [...(groups.get(at) ?? []), p])
-  }
-  // Our own panes are in this list too, so a chat is never judged dead by the window it
-  // is running in - only by every window agreeing it is nowhere. The list is the whole
-  // machine's and goes into every repo, so liveness is one answer rather than one per
-  // project: a chat is alive if any copy is hosting it, wherever that copy's panes are.
-  const living = new Set<string>()
-  let inventoriesKnown = true
-  for (const main of groups.keys()) {
-    const beats = heartbeat(main, chats)
-    if (!beats) {
-      inventoriesKnown = false
-      continue
-    }
-    for (const chat of beats) living.add(chat)
-  }
-  // A missing, invalid, locked, or unwritable inventory says nothing about a peer copy.
-  // Reclaiming with that gap would free a lane a live window still owns.
-  if (!inventoriesKnown) {
-    lastLiving = null
-    return
-  }
-  lastLiving = living
-
-  for (const [main, own] of groups) {
-    const board = attachLaneOwners(readRepo(main), own)
-    if (!board) continue
-    const gone = goneLanes(board, living)
-    if (!gone.length) continue
-    const engine = laneEngine(board.repo)
-    if (!engine) continue
-    reclaiming = true
-    execFile(
-      process.execPath,
-      [engine, 'release', '--repo', board.repo, '--session', gone[0]],
-      {
-        cwd: board.repo,
-        windowsHide: true,
-        timeout: RETRY_TIMEOUT,
-        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
-      },
-      () => {
-        reclaiming = false
-        dropCaches()
+    for (const p of panes) {
+      const main = p.cwd && mainCheckout(p.cwd)
+      if (!main || !existsSync(join(main, '.git', 'paneforge-lanes.json'))) continue
+      const k = samePath(main)
+      if (!spelling.has(k)) {
+        spelling.set(k, main)
+        groups.set(main, [])
       }
-    )
-    // One lane per tick: each release ends in an autoship, and the tick comes round every
-    // minute. The repo that did not get its turn gets the next one.
-    return
+      const at = spelling.get(k) as string
+      groups.set(at, [...(groups.get(at) ?? []), p])
+    }
+    // Our own panes are in this list too, so a chat is never judged dead by the window it
+    // is running in - only by every window agreeing it is nowhere. The list is the whole
+    // machine's and goes into every repo, so liveness is one answer rather than one per
+    // project: a chat is alive if any copy is hosting it, wherever that copy's panes are.
+    const living = new Set<string>()
+    let inventoriesKnown = true
+    for (const main of groups.keys()) {
+      const beats = await heartbeat(main, chats)
+      if (!beats) {
+        inventoriesKnown = false
+        continue
+      }
+      for (const chat of beats) living.add(chat)
+    }
+    // A missing, invalid, locked, or unwritable inventory says nothing about a peer copy.
+    // Reclaiming with that gap would free a lane a live window still owns.
+    if (!inventoriesKnown) {
+      lastLiving = null
+      return
+    }
+    lastLiving = living
+
+    for (const [main, own] of groups) {
+      const board = attachLaneOwners(readRepo(main), own)
+      if (!board) continue
+      const gone = goneLanes(board, living)
+      if (!gone.length) continue
+      const engine = laneEngine(board.repo)
+      if (!engine) continue
+      reclaiming = true
+      execFile(
+        process.execPath,
+        [engine, 'release', '--repo', board.repo, '--session', gone[0]],
+        {
+          cwd: board.repo,
+          windowsHide: true,
+          timeout: RETRY_TIMEOUT,
+          env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
+        },
+        () => {
+          reclaiming = false
+          dropCaches()
+        }
+      )
+      // One lane per tick: each release ends in an autoship, and the tick comes round every
+      // minute. The repo that did not get its turn gets the next one.
+      return
+    }
+  } catch {
+    // Failed collection is unknown, never proof that a peer is gone.
+    lastLiving = null
+  } finally {
+    checkingInventories = false
   }
 }
 

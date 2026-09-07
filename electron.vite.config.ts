@@ -30,7 +30,17 @@ export default defineConfig({
   // node-pty is a native module: it must stay external (required from node_modules
   // at runtime) or the bundler will try to inline a .node binary and the app dies
   // on launch with "Cannot find module ... pty.node".
-  main: { plugins: [externalizeDepsPlugin()] },
+  main: {
+    plugins: [externalizeDepsPlugin()],
+    build: {
+      rollupOptions: {
+        input: {
+          index: resolve(__dirname, 'src/main/index.ts'),
+          'watchdog-child': resolve(__dirname, 'src/main/watchdog-child.ts')
+        }
+      }
+    }
+  },
   preload: {
     plugins: [externalizeDepsPlugin()],
     build: {

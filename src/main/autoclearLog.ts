@@ -5,10 +5,10 @@
 // console.info goes to a stdout nobody keeps when the app is launched from the dock. One
 // line per decision, appended here, so the next incident is read back instead of re-argued.
 
-import { appendFileSync, mkdirSync, renameSync, statSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { app } from 'electron'
+import { appendLog } from './logWrite'
 
 /** Two files of this size at most; older lines age out rather than growing forever. */
 const MAX_BYTES = 256 * 1024
@@ -23,17 +23,8 @@ export function autoclearLogPath(): string {
   return join(dir, 'autoclear-app.log')
 }
 
+// Written from the autoclear sweep's own timer, so it goes to the disk without the window
+// waiting on it. The log must never be the thing that breaks the clear it is recording.
 export function acLog(line: string): void {
-  try {
-    const file = autoclearLogPath()
-    mkdirSync(dirname(file), { recursive: true })
-    try {
-      if (statSync(file).size > MAX_BYTES) renameSync(file, file + '.1')
-    } catch {
-      /* first run, or the rotate lost a race - either way keep going */
-    }
-    appendFileSync(file, `[${new Date().toISOString()}] ${line}\n`)
-  } catch {
-    // The log must never be the thing that breaks the clear it is recording.
-  }
+  appendLog(autoclearLogPath(), `[${new Date().toISOString()}] ${line}\n`, { rotateAt: MAX_BYTES })
 }

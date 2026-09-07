@@ -5,10 +5,11 @@
 // renderer memory, and "what happened to my pane twenty minutes ago" is exactly the
 // question asked after one of those. One small JSON file under userData.
 
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { app } from 'electron'
 import { addActivity, MAX_ACTIVITY, type ActivityEntry } from '../shared/activity'
+import { writeLatest } from './logWrite'
 
 interface Store {
   /** Newest first. */
@@ -50,12 +51,11 @@ function load(): Store {
   return store
 }
 
+// A list that cannot be written must never be the reason an action does not happen, and
+// neither must a disk that is busy: this is written from pane events, so it is handed over
+// rather than written here. Only the newest list matters - see `writeLatest`.
 function save(): void {
-  try {
-    writeFileSync(file(), JSON.stringify(load()))
-  } catch {
-    // A list that cannot be written must never be the reason an action does not happen.
-  }
+  writeLatest(file(), JSON.stringify(load()))
 }
 
 /** Tell the window whenever the list changes. Set once, from index.ts. */

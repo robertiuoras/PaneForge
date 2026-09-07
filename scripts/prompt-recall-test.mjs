@@ -37,17 +37,17 @@ const eq = (what, a, b) => {
   assert.deepEqual(a, b, `${what}: got ${JSON.stringify(a)}, wanted ${JSON.stringify(b)}`)
 }
 
-function transpile(rel) {
-  const src = readFileSync(join(root, rel), 'utf8')
+function transpile(rel, extra = '') {
+  const src = readFileSync(join(root, rel), 'utf8') + extra
   return tsc.transpileModule(src, {
     compilerOptions: { target: tsc.ScriptTarget.ES2022, module: tsc.ModuleKind.CommonJS }
   }).outputText
 }
 
 /** Load a TS module with a `require` we control, so `electron` can be a stub. */
-function load(rel, requires) {
+function load(rel, requires, extra = '') {
   const mod = { exports: {} }
-  new Function('require', 'module', 'exports', transpile(rel))(
+  new Function('require', 'module', 'exports', transpile(rel, extra))(
     (id) => {
       if (requires[id]) return requires[id]
       // node: builtins are real - the archive genuinely reads and writes files here.
@@ -161,10 +161,12 @@ const work = join(tmpdir(), 'pf-prompt-recall-test')
 rmSync(work, { recursive: true, force: true })
 mkdirSync(work, { recursive: true })
 
+const logWrite = load('src/main/logWrite.ts', {}, '\nexport async function flushTestWrites() { await Promise.all([...chains.values()]) }')
 const archive = load('src/main/promptArchive.ts', {
   electron: { app: { getPath: () => work } },
   // The same module object the assertions above ran against, so the two halves of this file
   // cannot be testing two different copies of the fingerprint.
+  './logWrite': logWrite,
   '../shared/promptKey': promptKey
 })
 const { priorPrompt, recordPrompt, resetPromptArchive } = archive
@@ -209,6 +211,7 @@ ok('filler is not archived', priorPrompt('yes do it', { now: later() }) === null
 
 // Asking the same thing again counts, rather than making a second row.
 recordPrompt(ASK, { project: 'githublinks', agent: 'claude' })
+await logWrite.flushTestWrites()
 resetPromptArchive()
 const twice = priorPrompt(REWORD, { now: later() })
 ok('the archive survives a reload from disk', twice !== null)

@@ -18,6 +18,7 @@ import {
   protocol,
   screen,
   shell } from 'electron'
+import { startMainWatch, stopMainWatch } from './mainWatch'
 import { SessionManager, setSilenceAlert, type WriteOrigin } from './sessions'
 import { DataPump } from './dataPump'
 import { DiscordPresence } from './discordPresence'
@@ -3997,11 +3998,14 @@ ipcMain.on('restore:answer', (_e, answer: RestoreAnswer) => {
 })
 
 app.whenReady().then(() => {
+  // The watchdog marks a stalled desk as an update, following the same restore settings.
+  // Its child is outside the main thread and can still act during disk I/O.
+  startMainWatch()
   // OS sleep preserves processes, but pending app buffers must also be recoverable
   // if the battery runs out before the next wake. Do not end or restart any agent.
   powerMonitor.on('suspend', () => {
     noteDesk(true)
-    history.flush()
+    history.flushSync()
     updateLog('power', 'suspend: desk and terminal history saved; agents left running')
   })
   // Back from sleep. Every CLI is asked to repaint (SIGWINCH) once the machine has had a
@@ -4132,6 +4136,7 @@ app.whenReady().then(() => {
 // Agents are child processes of this app: leaving them running after the window
 // closes would strand invisible `claude` processes holding file locks.
 app.on('window-all-closed', () => {
+  stopMainWatch()
   // Only when this really IS the cause. On Cmd-Q `before-quit` has already run and
   // already said what it knew; the windows closing after it is what a quit DOES.
   if (!quitLogged) quitting('the last window was closed')
@@ -4226,6 +4231,8 @@ app.on('before-quit', (e) => {
       return
     }
   }
+  // The quit was accepted. Stop the watchdog before terminal disk writes can stall.
+  stopMainWatch()
   // Written FIRST, before anything below can throw: the whole value of this line is that
   // it exists for a quit nobody in the app asked for, which is the one that gets reported
   // as "it closed by itself".
