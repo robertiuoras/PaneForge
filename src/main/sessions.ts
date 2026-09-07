@@ -814,6 +814,12 @@ export class SessionManager extends EventEmitter {
     if (born) {
       meta.status = 'exited'
       meta.asleep = Date.now()
+      // Which sleep this is, and not decoration: a pane born asleep is the ONE sleeping
+      // pane whose "nobody has read this" reading is a lie, because `lastOutput` above is
+      // stamped now while its screen is bytes from before the restart. `shared/reclaim.ts`
+      // reads this to tell it apart from a pane that printed a turn and then fell asleep
+      // with nobody having looked at it.
+      meta.asleepReason = 'restored'
     }
     const live: Live = {
       meta,

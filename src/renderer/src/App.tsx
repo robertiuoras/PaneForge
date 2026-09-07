@@ -328,7 +328,10 @@ function reclaimPaneOf(
     pinned,
     // A sleeping pane has already given its agent back and the card is the thing being
     // kept - closing it buys nothing and loses the pane. See `shared/sleep.ts`.
-    asleep: s.asleep
+    asleep: s.asleep,
+    // ...and WHY, which is what tells a pane that finished a turn nobody read from one the
+    // restore brought back wearing an old screen. See `bornAsleep` in shared/reclaim.ts.
+    asleepReason: s.asleepReason
   }
 }
 
