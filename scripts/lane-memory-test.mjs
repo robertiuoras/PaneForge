@@ -13,14 +13,14 @@
 // with its own port, a junction to the original folder's Claude memory, and the
 // original folder's project settings.
 //
-// lanes.ts imports nothing but node builtins, so it is compiled on its own into a
-// temp folder and imported directly - no Electron, no app, ~2s.
+// Bundle lanes.ts with its local helpers into a temp folder; no Electron app is needed.
 
-import { execFileSync, spawnSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { build } from 'esbuild'
 
 const repoRoot = resolve(import.meta.dirname, '..')
 // realpath: see lane-work-test - /var/folders vs /private/var/folders on macOS.
@@ -38,34 +38,12 @@ function git(cwd, args) {
   return (r.stdout ?? '').trim()
 }
 
-/** Compile lanes.ts on its own and import it as a module. */
+/** Bundle the lane implementation and its helpers for Node's ESM loader. */
 async function loadLanes() {
-  const out = join(work, 'build')
-  // The tsc entry script, not the npx shim: node 24 refuses to spawn a .cmd.
-  execFileSync(
-    process.execPath,
-    [
-      join(repoRoot, 'node_modules', 'typescript', 'bin', 'tsc'),
-      join('src', 'main', 'lanes.ts'),
-      '--outDir',
-      out,
-      '--module',
-      'es2022',
-      '--target',
-      'es2022',
-      '--moduleResolution',
-      'bundler',
-      '--skipLibCheck',
-      // The project compiles strict. Without this flag the same files are compiled with
-      // strictNullChecks OFF, where an unrelated shared type stops being assignable and
-      // the test dies on a type error `npm run typecheck` does not have (three lane tests
-      // were red on master for exactly this, saying nothing about lanes).
-      '--strict'
-    ],
-    { cwd: repoRoot, stdio: 'pipe' }
-  )
-  writeFileSync(join(out, 'package.json'), '{"type":"module"}')
-  return import(pathToFileURL(join(out, 'lanes.js')).href)
+  const out = join(work, 'lanes.mjs')
+  await build({ entryPoints: [join(repoRoot, 'src/main/lanes.ts')], outfile: out,
+    bundle: true, platform: 'node', format: 'esm', logLevel: 'silent' })
+  return import(pathToFileURL(out).href)
 }
 
 const lanes = await loadLanes()

@@ -14,7 +14,7 @@
 // renderer draws nothing.
 
 import { execFile } from 'node:child_process'
-import { existsSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { homedir, hostname } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import type { LaneBoard, LaneBoardEntry } from '../shared/types'
@@ -638,6 +638,7 @@ export function goneLanes(board: LaneBoard | null, living: Set<string>, now = Da
 
 /** Where the running copies of the app say which chats they are hosting. */
 const panesFile = (main: string): string => join(main, '.git', 'paneforge-panes.json')
+const panesDir = (main: string): string => join(main, '.git', 'paneforge-panes')
 /** An entry from a copy that has not said anything for this long is a copy that has quit. */
 const BEAT_STALE_MS = 5 * 60 * 1000
 /** This copy, for as long as it runs. Profiles mean two copies share nothing else. */
@@ -648,35 +649,95 @@ interface Beat {
   chats: string[]
 }
 
+function isBeat(value: unknown): value is Beat {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const beat = value as { at?: unknown; chats?: unknown }
+  return (
+    typeof beat.at === 'number' &&
+    Number.isFinite(beat.at) &&
+    beat.at >= 0 &&
+    Array.isArray(beat.chats) &&
+    beat.chats.every((chat) => typeof chat === 'string')
+  )
+}
+
+function isInventory(value: unknown): value is Record<string, Beat> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  return Object.values(value as Record<string, unknown>).every(isBeat)
+}
+
+function processAlive(pid: number): boolean {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return true
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ESRCH'
+  }
+}
+
 /**
  * Say which chats this window is hosting, and read back what every other copy says.
  *
  * Deliberately NOT the lane state file: that one is lane.mjs's, written by hooks from
  * several chats at once, and a second writer on a different clock is how a state file
- * gets half-written. This is a separate file, written the same way (write then rename),
- * and nothing but this function reads it.
+ * gets half-written. Each running copy writes its own atomically-renamed file, so no
+ * heartbeat ever reads, changes, and replaces another copy's inventory.
  */
-function heartbeat(main: string, chats: string[]): Set<string> {
-  const file = panesFile(main)
-  let all: Record<string, Beat> = {}
+export function heartbeat(main: string, chats: string[]): Set<string> | null {
   try {
-    all = JSON.parse(readFileSync(file, 'utf8')) as Record<string, Beat>
+    const now = Date.now()
+    let all: Record<string, Beat>
+    try {
+      const raw = JSON.parse(readFileSync(panesFile(main), 'utf8')) as unknown
+      if (!isInventory(raw)) return null
+      all = raw
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return null
+      all = {}
+    }
+    for (const [id, beat] of Object.entries(all)) {
+      const legacyPid = /^pf-(\d+)$/.exec(id)
+      if (legacyPid && now - beat.at > BEAT_STALE_MS && !processAlive(Number(legacyPid[1]))) delete all[id]
+    }
+
+    const dir = panesDir(main)
+    let firstRun = false
+    if (!existsSync(dir)) {
+      mkdirSync(dir)
+      firstRun = true
+    }
+    for (const name of readdirSync(dir)) {
+      // Interrupted writes have no `.json` name and were never published.
+      if (name.endsWith('.tmp')) continue
+      const match = /^pf-(\d+)\.json$/.exec(name)
+      if (!match) return null
+      const raw = JSON.parse(readFileSync(join(dir, name), 'utf8')) as unknown
+      if (!isBeat(raw)) return null
+      const beat = raw as Beat
+      const pid = Number(match[1])
+      // A sleeping app can be quiet past the timestamp threshold. Its process, rather
+      // than the clock, decides whether its chats remain alive.
+      if (now - beat.at > BEAT_STALE_MS && !processAlive(pid)) continue
+      all[name.slice(0, -'.json'.length)] = beat
+    }
+    all[INSTANCE] = { at: now, chats }
+    const own = join(dir, `${INSTANCE}.json`)
+    const tmp = `${own}.${process.pid}.tmp`
+    writeFileSync(tmp, JSON.stringify(all[INSTANCE]), 'utf8')
+    renameSync(tmp, own)
+    // Older running app copies only know this file. It is a compatibility mirror: current
+    // copies read the per-process files above, so a simultaneous legacy mirror cannot make
+    // a current peer disappear from their liveness answer.
+    const legacy = panesFile(main)
+    const legacyTmp = `${legacy}.${process.pid}.tmp`
+    writeFileSync(legacyTmp, JSON.stringify(all), 'utf8')
+    renameSync(legacyTmp, legacy)
+    return firstRun ? null : new Set(Object.values(all).flatMap((b) => b.chats))
   } catch {
-    /* first run, or something else wrote there - ours is the only entry that matters */
+    // Unknown inventory is never evidence that every other copy is gone.
+    return null
   }
-  const now = Date.now()
-  all[INSTANCE] = { at: now, chats }
-  for (const [id, beat] of Object.entries(all)) {
-    if (now - (beat?.at ?? 0) > BEAT_STALE_MS) delete all[id]
-  }
-  try {
-    const tmp = `${file}.${process.pid}.tmp`
-    writeFileSync(tmp, JSON.stringify(all), 'utf8')
-    renameSync(tmp, file)
-  } catch {
-    /* a read-only or vanished .git is not worth a crash on a heartbeat */
-  }
-  return new Set(Object.values(all).flatMap((b) => b?.chats ?? []))
 }
 
 let reclaiming = false
@@ -748,7 +809,21 @@ export function laneReclaim(panes: LanePane[]): void {
   // machine's and goes into every repo, so liveness is one answer rather than one per
   // project: a chat is alive if any copy is hosting it, wherever that copy's panes are.
   const living = new Set<string>()
-  for (const main of groups.keys()) for (const chat of heartbeat(main, chats)) living.add(chat)
+  let inventoriesKnown = true
+  for (const main of groups.keys()) {
+    const beats = heartbeat(main, chats)
+    if (!beats) {
+      inventoriesKnown = false
+      continue
+    }
+    for (const chat of beats) living.add(chat)
+  }
+  // A missing, invalid, locked, or unwritable inventory says nothing about a peer copy.
+  // Reclaiming with that gap would free a lane a live window still owns.
+  if (!inventoriesKnown) {
+    lastLiving = null
+    return
+  }
   lastLiving = living
 
   for (const [main, own] of groups) {

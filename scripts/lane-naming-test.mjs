@@ -190,21 +190,20 @@ function fixture(name) {
 
 {
   const a = place.describePlace({ cwd: 'C:/Projects/Toolstash-a', lane: 'a', branch: 'lane-a' })
-  ok('a lane reads as "lane a"', a.role === 'lane a', a.role)
+  ok('lane a reads as copy 2', a.role === 'copy 2', a.role)
   ok('under its project name, not the folder name', a.project === 'Toolstash', a.project)
-  ok('and the generated branch is not repeated on the chip', a.short === 'Toolstash · lane a', a.short)
+  ok('and the generated branch is not repeated on the chip', a.short === 'Toolstash copy 2', a.short)
 
   const legacy = place.describePlace({ cwd: 'C:/Projects/Toolstash-w2', lane: 'w2', branch: 'pf/w2' })
-  ok('an old lane reads as the folder it is', legacy.role === 'lane w2', legacy.role)
-  ok('and its branch is recognised as machinery too', legacy.short === 'Toolstash · lane w2', legacy.short)
+  ok('an old lane reads as the folder it is', legacy.role === 'copy 2', legacy.role)
+  ok('and its branch is recognised as machinery too', legacy.short === 'Toolstash copy 2', legacy.short)
 
   const main = place.describePlace({ cwd: 'C:/Projects/Toolstash', lane: 'main', branch: 'main' })
-  ok('the project folder itself is the main checkout', main.role === 'main checkout', main.role)
+  ok('the project folder itself is the main checkout', main.role === 'main copy', main.role)
   ok('and says only the project name', main.short === 'Toolstash', main.short)
 
-  // The word "copy" is gone: it was the app's name for the same thing the script called a
-  // lane, and having both is what this whole file exists to stop.
-  ok('there is no second word for a lane', !JSON.stringify(a).includes('copy'), JSON.stringify(a))
+  // The chip uses the same numbered copy label for both folder conventions.
+  ok('legacy and letter folders share one display label', a.role === legacy.role, JSON.stringify(a))
 }
 
 // ------------------------------------------------- `doctor` says all of it in sentences
