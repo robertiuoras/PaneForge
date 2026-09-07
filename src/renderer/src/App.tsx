@@ -157,7 +157,7 @@ import RestoreDialog from './components/RestoreDialog'
 import { measureRefreshRate } from './refreshRate'
 import SettingsDialog from './components/SettingsDialog'
 import ShortcutsDialog from './components/ShortcutsDialog'
-import LaneStrip, { useLaneBoards } from './components/LaneStrip'
+import LaneStrip, { useLaneBoards, useLaneTimeline } from './components/LaneStrip'
 import SessionCopies from './components/SessionCopies'
 import StatusDot from './components/StatusDot'
 import SwarmDialog, { type SwarmStart } from './components/SwarmDialog'
@@ -3841,6 +3841,7 @@ export default function App(): JSX.Element {
   // The dev lanes of every repo an open pane is in - one board per repo. Empty on a
   // machine with no lane-using checkout, and then nothing below draws anything.
   const laneBoards = useLaneBoards()
+  const laneTimeline = useLaneTimeline()
   // The worktree lane whose contents are open on screen, by folder.
   const [laneCwd, setLaneCwd] = useState<string | null>(null)
   const [laneHelp, setLaneHelp] = useState(false)
@@ -5376,6 +5377,7 @@ export default function App(): JSX.Element {
         <LaneStrip
           boards={laneBoards}
           sessions={sessions}
+          timeline={laneTimeline}
           onFocus={setActiveId}
           onHelp={() => setLaneHelp(true)}
         />

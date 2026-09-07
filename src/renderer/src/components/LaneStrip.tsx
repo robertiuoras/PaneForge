@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { LaneBoard, LaneBoardEntry, Session } from '@shared/types'
+import type { LaneEvent } from '@shared/laneTimeline'
+import { eventsFor } from '@shared/laneTimeline'
+import LaneTimelineFlyout from './LaneTimelineFlyout'
 import { copyNumber, paneRef } from '@shared/place'
 import { appVisible, onAppVisible } from '../appVisible'
 import {
@@ -21,6 +24,8 @@ const api = window.api
 interface Props {
   boards: LaneBoard[]
   sessions: Session[]
+  /** What has happened to each copy, from useLaneTimeline. */
+  timeline: LaneEvent[]
   /** focus the pane a job was handed to */
   onFocus: (id: string) => void
   /** open the "How lanes work" card */
@@ -64,6 +69,27 @@ export function useLaneBoards(): LaneBoard[] {
   }, [])
 
   return boards
+}
+
+/**
+ * What has happened to the copies, newest first, across every project.
+ *
+ * Not polled: main takes the readings on its own timer (main/laneTimeline.ts) because the
+ * strip stops polling the moment the window is off screen, and that is the stretch this
+ * log is asked about. The window asks once and is told after that.
+ */
+export function useLaneTimeline(): LaneEvent[] {
+  const [items, setItems] = useState<LaneEvent[]>([])
+  useEffect(() => {
+    let live = true
+    api.laneTimeline().then((x) => live && setItems(x ?? []))
+    const off = api.onLaneTimeline((x) => setItems(x))
+    return () => {
+      live = false
+      off()
+    }
+  }, [])
+  return items
 }
 
 /**
@@ -171,7 +197,10 @@ export function LaneChip({
   )
 }
 
-export default function LaneStrip({ boards, sessions, onFocus, onHelp }: Props): JSX.Element | null {
+export default function LaneStrip({ boards, sessions, timeline, onFocus, onHelp }: Props): JSX.Element | null {
+  // Which copy's log is open, and the row it opened from. One at a time: the panel is a
+  // reading of ONE copy, and two of them side by side would be a list with no heading.
+  const [reading, setReading] = useState<{ repo: string; lane: string; title: string; at: DOMRect } | null>(null)
   // A job is handed over once. Keyed by when the conflict started, so a lane that gets
   // stuck again later is a new job and not one this ref has already forgotten about.
   const handed = useRef(new Set<string>())
@@ -278,9 +307,20 @@ export default function LaneStrip({ boards, sessions, onFocus, onHelp }: Props):
             hold={o.hold}
             sessions={sessions}
             onFocus={onFocus}
+            onRead={(at) =>
+              setReading({ repo: o.repo, lane: o.lane.lane, title: laneHeadline(o.lane), at })
+            }
           />
         ))}
       </div>
+      {reading && (
+        <LaneTimelineFlyout
+          items={eventsFor(timeline, reading.repo, reading.lane)}
+          title={reading.title}
+          anchor={reading.at}
+          onClose={() => setReading(null)}
+        />
+      )}
     </>
   )
 }
@@ -291,7 +331,8 @@ function LaneRow({
   here,
   hold,
   sessions,
-  onFocus
+  onFocus,
+  onRead
 }: {
   lane: LaneBoardEntry
   repo: string
@@ -301,6 +342,8 @@ function LaneRow({
   hold: { reason: string; at: number } | null
   sessions: Session[]
   onFocus: (id: string) => void
+  /** Open this copy's own log, beside the row that was pressed. */
+  onRead: (at: DOMRect) => void
 }): JSX.Element {
   // The automatic hand-over waits for a pane that is not mid-turn, and leaves a conflict
   // whose own chat is still alive to that chat. This is the same job for someone who does
@@ -331,12 +374,26 @@ function LaneRow({
   return (
     <div
       className={
-        'row lane-row' +
+        'row lane-row readable' +
         (lane.conflicted ? ' stuck' : '') +
         (lane.ready ? ' done' : '') +
         (busy ? ' busy' : '')
       }
-      title={laneTip(lane, holderPane) + (lane.ready && hold ? `\n\n${hold.reason}` : '')}
+      // The row says what is true now; pressing it says what happened before that. It is
+      // the only place a copy that was stuck all morning and then settled leaves a trace.
+      role="button"
+      tabIndex={0}
+      onClick={(e) => onRead(e.currentTarget.getBoundingClientRect())}
+      onKeyDown={(e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return
+        e.preventDefault()
+        onRead(e.currentTarget.getBoundingClientRect())
+      }}
+      title={
+        laneTip(lane, holderPane) +
+        (lane.ready && hold ? `\n\n${hold.reason}` : '') +
+        '\n\nClick: what has happened to this copy.'
+      }
     >
       {/* The copy's NUMBER, never its slot letter. `a` is scripts/lane.mjs's word for a
           position in a pool and means nothing to the person reading this row; the folder

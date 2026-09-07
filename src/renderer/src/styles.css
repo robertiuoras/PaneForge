@@ -4723,6 +4723,16 @@ html.handheld .card-x { width: 44px; height: 44px; top: 0; right: 0; font-size: 
 /* The one kind that took something away reads in the accent, so a list of eight rows
    answers "did it close anything" without being read word by word. */
 .act-kind.k-closed, .act-kind.k-cleared { color: var(--accent); }
+/* The copy's own log, in the same three colours the lane strip already uses for the same
+   three facts: red for work being left out, green for work that is finished or has gone
+   out, blue for somebody being in there. A fourth colour would be a fourth thing to learn
+   for facts the row beside it already draws. */
+.act-kind.lane-k-stuck { color: var(--danger); }
+.act-kind.lane-k-ready, .act-kind.lane-k-shipped, .act-kind.lane-k-unstuck { color: var(--ok); }
+.act-kind.lane-k-taken { color: var(--info); }
+/* A row that opens something says so on hover, the way the session cards do. */
+.lane-row.readable { cursor: pointer; }
+.lane-row.readable:hover { border-color: var(--line-strong); }
 
 /* ---- signing in to a browser on another machine ----------------------------
    The chat keeps the left half of the pane column and the far machine's browser

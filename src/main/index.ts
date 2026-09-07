@@ -55,10 +55,11 @@ import { isOutdated, versionOf } from '../shared/codexCatalogue'
 import { gitInfo } from './git'
 import { projectRoot } from './projectRoot'
 import { diffFiles, diffPatch } from './diff'
-import type { ClientNamed, DiffScope, EffortChoice, PhoneState } from '../shared/types'
+import type { ClientNamed, DiffScope, EffortChoice, PhoneState , LaneBoard} from '../shared/types'
 import { detectLane, laneExtras, resolveLane } from './lanes'
 import { inspectLaneFolders, laneWork, mergeLaneBack, repoOf, returnToBase, sweepLanes, trackTyped } from './laneWork'
 import { attachLaneOwners, laneBoards, laneReclaim, laneRetry, markGone } from './laneBoard'
+import { listLaneTimeline, onLaneTimelineChange, watchLaneTimeline } from './laneTimeline'
 import type { LanePane } from './laneBoard'
 import { resolveRevealTarget } from './revealPath'
 import { which } from './which'
@@ -2268,7 +2269,15 @@ const lanePanes = (): LanePane[] =>
     .filter((s) => s.status !== 'exited' || s.asleep)
     .map((s) => ({ id: s.id, cwd: s.cwd, resumeId: resumeIdFor(s.id) }))
 
-ipcMain.handle('lanes:board', () => {
+/**
+ * Every project's lanes as the strip draws them.
+ *
+ * Named rather than inlined into the handler because two things read it now: the window's
+ * own five-second poll, and the lane-timeline sweep in main - which has to keep taking
+ * readings while the window is off screen, since that is the stretch its log is asked
+ * about. One reader, so the two can never disagree about what a lane looked like.
+ */
+const boardsNow = (): LaneBoard[] => {
   const panes = lanePanes()
   return laneBoards(panes)
     .map((b) => markGone(attachLaneOwners(b, panes)))
@@ -2287,7 +2296,12 @@ ipcMain.handle('lanes:board', () => {
           }
         : b
     )
-})
+    .filter((b): b is LaneBoard => Boolean(b))
+}
+
+ipcMain.handle('lanes:board', () => boardsNow())
+// The readings are taken in main, on a timer, for the reason above.
+watchLaneTimeline(boardsNow)
 
 // What the agent in a folder has actually changed. Read-only, and the file list and the
 // patches are separate calls on purpose - a 300-file diff is 300 patches nobody opened.
@@ -3413,6 +3427,9 @@ ipcMain.on('reclaim:log', (_e, entry: Record<string, unknown>) => {
 })
 
 // --- what the app did on its own -------------------------------------------
+
+ipcMain.handle('lanes:timeline', () => listLaneTimeline())
+onLaneTimelineChange((items) => send('lanes:timeline-changed', items))
 
 ipcMain.handle('activity:list', () => listActivity())
 ipcMain.on('activity:seen', () => markActivitySeen())
