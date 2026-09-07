@@ -823,6 +823,7 @@ export function relayCommand(a: {
   machine?: string
   why?: string
   reportTo?: string
+  /** How to run `pf` over there, when it is not simply `pf`. */
   pf?: string
 }): { ok: true; argv: string[]; remote: string } | { ok: false; why: string } {
   const desk = a.desk.trim()
@@ -835,14 +836,43 @@ export function relayCommand(a: {
     }
   if (!/^https?:\/\//i.test(a.url))
     return { ok: false, why: `A sign-in page starts with http:// or https:// - got "${a.url}"` }
-  const words: string[] = [a.pf ?? 'pf', 'needs-login', a.site?.trim() || siteFromUrl(a.url) || 'the website']
+  const words: string[] = ['needs-login', a.site?.trim() || siteFromUrl(a.url) || 'the website']
   words.push('--url', a.url, '--host', self, '--open')
   if (a.port) words.push('--port', String(a.port))
   if (a.machine?.trim()) words.push('--machine', a.machine.trim())
   if (a.why?.trim()) words.push('--why', a.why.trim())
   if (a.reportTo?.trim()) words.push('--report-to', a.reportTo.trim(), '--report-host', self)
-  const remote = words.map(shellQuote).join(' ')
-  return { ok: true, remote, argv: ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', desk, remote] }
+  const args = words.map(shellQuote).join(' ')
+  // An ssh command runs in a shell that has read no profile: measured 2026-09-07 from the
+  // PC, neither `pf` NOR `node` was on the PATH a non-interactive Mac session gets
+  // (/usr/bin:/bin and little else), so the relay ran, said nothing and raised no card.
+  // A LOGIN shell is what has the paths a person's own terminal has. A desk with no
+  // bash - a Windows one - is named with `--pf` instead.
+  // The CHECKOUT first and the `pf` link second, not the other way round: measured
+  // 2026-09-07 on this Mac, running the link itself through a login shell printed nothing
+  // and exited 0 - a silent no-op that looks exactly like a card being raised.
+  const inner = `node "$HOME/Projects/PaneForge/scripts/pf-ctl.mjs" ${args} || pf ${args}`
+  const remote = a.pf ? `${a.pf} ${args}` : `bash -lc ${shellQuote(inner)}`
+  return {
+    ok: true,
+    remote,
+    // `accept-new` and not `no`: a desk this machine has never spoken to would otherwise
+    // sit on the host-key question until the ssh timed out, which is what it did.
+    argv: [
+      // `-n` is not a nicety: ssh reads its own stdin, and a caller that spawns it with a
+      // pipe it never closes waits for ever. Measured 2026-09-07 - the relay from the PC
+      // hung at 90s every time while the same command by hand answered instantly.
+      '-n',
+      '-o',
+      'BatchMode=yes',
+      '-o',
+      'ConnectTimeout=10',
+      '-o',
+      'StrictHostKeyChecking=accept-new',
+      desk,
+      remote
+    ]
+  }
 }
 
 /** One argument, safe inside the single remote command line ssh runs through a shell. */

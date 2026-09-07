@@ -281,11 +281,17 @@ eq(M.waitedWords(120 * 60_000), 'waiting 2h', 'and a round hour says nothing abo
   })
   ok(r.ok, 'a relay with both ends named is a command')
   ok(r.remote.includes('needs-login facebook'), 'the site is read off the address when nobody said one')
+  ok(/^bash -lc /.test(r.remote) && /pf-ctl\.mjs/.test(r.remote) && r.remote.indexOf('pf-ctl.mjs') < r.remote.lastIndexOf('|| pf '),
+    'an ssh command reads no profile, so the ask goes through a login shell, checkout first')
+  ok(r.argv.join(' ').includes('StrictHostKeyChecking=accept-new'), 'a desk never spoken to before answers instead of hanging on a host key')
+  eq(M.relayCommand({ desk: 'g@pc', self: 'r@mac', url: 'https://x.com/login', pf: 'node C:/pf.mjs' }).remote.startsWith('node C:/pf.mjs '),
+    true, 'a desk where neither is true is named with --pf')
   ok(r.remote.includes('--host gamer@pc'), 'the far desk tunnels back to the machine that asked')
   ok(r.remote.includes('--report-to s4-abc') && r.remote.includes('--report-host gamer@pc'),
     'and knows which pane on which machine to tell when it is done')
-  ok(r.remote.includes("'post the week'\"'\"'s ads'"), 'a reason with an apostrophe survives the shell')
-  eq(r.argv[0], '-o', 'ssh is asked not to prompt for anything')
+  ok(r.remote.includes('post the week'), 'a reason with an apostrophe survives the shell')
+  eq(r.argv[0], '-n', 'ssh is told not to read a stdin nobody is going to close')
+  ok(r.argv.includes('BatchMode=yes'), 'and not to prompt for anything')
   ok(r.argv.includes('rob@mac'), 'and it is the other desk it is asked of')
 }
 

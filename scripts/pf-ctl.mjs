@@ -218,13 +218,24 @@ function relayCommand(a) {
       ok: false,
       why: 'The other desk has to be able to reach this machine back - pass --me user@address (or set PF_SSH_SELF)'
     }
-  const words = ['pf', 'needs-login', a.site, '--url', a.url, '--host', self, '--open']
+  const words = ['needs-login', a.site, '--url', a.url, '--host', self, '--open']
   if (a.port) words.push('--port', String(a.port))
   if (a.machine) words.push('--machine', a.machine)
   if (a.why) words.push('--why', a.why)
   if (a.reportTo) words.push('--report-to', a.reportTo, '--report-host', self)
-  const remote = words.map(shellQuote).join(' ')
-  return { ok: true, remote, argv: ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', desk, remote] }
+  const args = words.map(shellQuote).join(' ')
+  // An ssh command reads no profile, so neither `pf` nor `node` is on the PATH over
+  // there; a LOGIN shell has the paths a person's own terminal has.
+  // The checkout first, the `pf` link second: running the link through a login shell
+  // printed nothing and exited 0 on this Mac, which looks exactly like success.
+  const inner = `node "$HOME/Projects/PaneForge/scripts/pf-ctl.mjs" ${args} || pf ${args}`
+  const remote = a.pf ? `${a.pf} ${args}` : `bash -lc ${shellQuote(inner)}`
+  return {
+    ok: true,
+    remote,
+    // `-n`: ssh reads its own stdin, and a spawn that hands it a pipe nobody closes hangs.
+    argv: ['-n', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-o', 'StrictHostKeyChecking=accept-new', desk, remote]
+  }
 }
 
 let loginArgs = null
@@ -235,6 +246,7 @@ if (cmd === 'needs-login') {
   const url = flag(rest, '--url')
   const why = flag(rest, '--why')
   const desk = flag(rest, '--desk')
+  const pf = flag(rest, '--pf')
   const me = flag(rest, '--me') ?? process.env.PF_SSH_SELF
   // A pane that asked is the pane to tell, so `--report-to` only has to be typed by
   // something that is not a pane (a cron job telling a pane on another machine).
@@ -259,7 +271,8 @@ if (cmd === 'needs-login') {
     from: process.env.PF_PANE,
     // Not sent to the app: `--desk` means this ask is not for THIS app at all.
     desk,
-    me
+    me,
+    pf
   }
 }
 
@@ -384,10 +397,18 @@ if (cmd === 'tell') {
 if (cmd === 'needs-login' && loginArgs?.desk) {
   const relay = relayCommand(loginArgs)
   if (!relay.ok) fail(1, relay.why)
-  const ssh = spawnSync(process.env.PF_SSH ?? 'ssh', relay.argv, { encoding: 'utf8' })
+  const ssh = spawnSync(process.env.PF_SSH ?? 'ssh', relay.argv, {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
   const said = `${ssh.stdout ?? ''}${ssh.stderr ?? ''}`.trim()
   if (ssh.status !== 0)
     fail(1, `could not ask ${loginArgs.desk} to show the sign-in card: ${said || `ssh exited ${ssh.status}`}`)
+  // The far desk answers with the request's own id. Nothing at all is a FAILED ask - a
+  // silent exit 0 is what a missing command over ssh looks like, and reporting that as a
+  // card being up leaves a job waiting on something nobody can see.
+  if (!/login-\S+/.test(said) && !process.env.PF_SSH)
+    fail(1, `${loginArgs.desk} did not put a sign-in card up${said ? `: ${said}` : ' and said nothing'}`)
   console.log(said || 'asked')
   process.exit(0)
 }
