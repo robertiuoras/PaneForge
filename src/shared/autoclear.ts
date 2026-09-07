@@ -281,6 +281,23 @@ export function dropFor(
   return null
 }
 
+/**
+ * Whose hand was on the keyboard, and whether a countdown should stand down for it.
+ *
+ * `'app'` is this process typing - a queued prompt, an automatic clear, a recovered brief.
+ * It is the same contract `shared/interventions.ts` holds for the same reason: work the app
+ * did on its own is not a person stepping in, and a stand-down logged as "you stopped it"
+ * for a write nobody made is a lie in the one log this feature is diagnosed from. Measured
+ * 2026-09-07: pane s7 read `stood down - you stopped it` at 05:22:15Z while the only writes
+ * it had taken were two queued briefs.
+ *
+ * A person's hand - the desk, the phone, a mirrored desk - stands the countdown down, which
+ * is what pressing Keep does and what typing into a pane means.
+ */
+export function standDownFor(hand: string): DropReason | null {
+  return hand === 'app' ? null : 'cancelled'
+}
+
 export function dropWords(why: DropReason): string {
   if (why === 'drafting') return 'there is an unsent line in the box'
   if (why === 'working') return 'the pane started another turn'

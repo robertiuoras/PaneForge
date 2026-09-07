@@ -29,6 +29,8 @@ import { clientForText, rosterRoot } from './clients'
 import { createProject, listProjects } from './projects'
 import { routeCandidates } from './projectAliases'
 import { routePrompt } from '../shared/projectRoute'
+import { sendOrOpen } from '../shared/sendOrOpen'
+import { owedCount } from './queuedPrompts'
 import type { RouteResult } from '../shared/projectRoute'
 import { DEFAULT_PHONE_PORT, getConfig, projectsRoot, setConfig } from './config'
 import { whatsNew } from './whatsNew'
@@ -1561,7 +1563,10 @@ ipcMain.handle('offload:answer', (_e, id: string, go: boolean) => {
   offloadAsks.get(String(id))?.(!!go)
 })
 
-async function startOrSend(req: StartSessionRequest, claimed?: string[]): Promise<Session> {
+async function startOrSend(
+  req: StartSessionRequest,
+  claimed?: string[]
+): Promise<Session & { startAction?: 'send' | 'open'; startWhy?: string }> {
   // A conversation the CLI would refuse is not resumed by name: History's `Open again`
   // on a session that never got an answer put `No conversation found with session ID`
   // on the pane instead of a composer (2026-09-04). The pane opens fresh in its folder.
@@ -1582,7 +1587,21 @@ async function startOrSend(req: StartSessionRequest, claimed?: string[]): Promis
   // asks for that one back. Never a mirror, whose pty belongs to the other desk.
   if (req.reuse) {
     const open = manager.list().find((s) => s.cwd === req.cwd && s.status !== 'exited')
-    if (open) return open
+    // ...but a PROMPT only goes to a pane that can take it this moment. Queueing a brief
+    // behind a twenty-minute turn is how two of them were lost on 2026-09-07: the request
+    // was answered with "that pane will get to it", and the pane was recreated first.
+    // `shared/sendOrOpen.ts` holds the refusals; anything it refuses opens its own pane.
+    const verdict = sendOrOpen({
+      prompt: req.prompt,
+      pane: open ? { ...open, queued: owedCount(open.id) } : null
+    })
+    if (open && verdict.action === 'send') {
+      // The prompt is DELIVERED here rather than left on the request: `queuePrompt` is
+      // what writes it to the ledger, waits for an idle composer and proves the return.
+      if (req.prompt) manager.sendPrompt(open.id, req.prompt)
+      return { ...open, startAction: 'send', startWhy: verdict.why }
+    }
+    if (open) console.info(`start: opening a second pane in ${req.cwd} - ${verdict.why}`)
   }
   // `claimed` is the batch's own list of folders already taken, and it holds the RESOLVED
   // lane rather than what was asked for: two panes launched together for one project must
@@ -1700,7 +1719,13 @@ async function startOrSend(req: StartSessionRequest, claimed?: string[]): Promis
 // `backlog.mjs done --gate` already close at both ends. Reading only: this app never
 // writes to the backlog, which has one writer.
 ipcMain.handle('backlog:task', (_e, ref: string) => briefForTask(String(ref ?? '')))
-ipcMain.handle('sessions:start', (_e, req: StartSessionRequest) => startOrSend(req))
+ipcMain.handle('sessions:start', async (_e, req: StartSessionRequest) => {
+  const s = await startOrSend(req)
+  // `startAction` says whether this is a pane that was opened or one that was already
+  // there and took the prompt - `pf open` prints it, so automation can tell the two apart
+  // instead of assuming a fresh pane every time.
+  return { ...s, startAction: s.startAction ?? 'open' }
+})
 ipcMain.handle('sessions:startMany', async (_e, reqs: StartSessionRequest[]) => {
   const out: StartedPane[] = []
   // Folders claimed earlier in this same batch count as taken: two panes launched
@@ -3753,6 +3778,11 @@ function restorePanes(specs: StartSessionRequest[]): void {
             : req.laneNote
         })
         if (req.scrollbackId && wasPinned.has(req.scrollbackId)) nowPinned.push(meta.id)
+        // A prompt this pane was owed when the app went down. The pane it is replacing was
+        // named by the desk, and the ledger is keyed by that id, so this is the moment the
+        // promise is carried across - queued now if the pane came back with an agent in it,
+        // held on its new id if it came back asleep.
+        manager.deliverOwed(req.scrollbackId ?? meta.id, meta.id, !meta.asleep && meta.status !== 'exited')
       } catch {
         // Folder moved or the agent is no longer installed - skip that pane only.
       }

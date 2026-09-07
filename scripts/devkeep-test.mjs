@@ -31,7 +31,7 @@ const root = join(box, 'PaneForge-fake')
 mkdirSync(join(root, 'node_modules', 'electron', 'dist'), { recursive: true })
 process.env.PF_KEEP_FILE = join(box, 'keep.json')
 
-const { closeTestApps, dropTestAppKeep, keepTestApp, keptTestApp } = await import('./test-app.mjs')
+const { closeTestApps, dropTestAppKeep, keepTestApp, keptTestApp, keptTestAppInfo, launchTakesKept } = await import('./test-app.mjs')
 let failed = 0
 function ok(what, cond) {
   console.log(`${cond ? 'ok' : 'FAIL'}  ${what}`)
@@ -92,6 +92,21 @@ process.kill(dead, 'SIGKILL')
 await wait(300)
 keepTestApp(dead)
 ok('a dead pid is not kept', keptTestApp() === 0)
+
+// Which launches may take the watched window: only one on the SAME profile, and a quiet
+// one (minimized/headless) not even then. Three chats' launches through three profiles
+// killed the shown window three times in two minutes on 2026-09-07.
+const shown = fakeCopy()
+await wait(300)
+keepTestApp(shown, 'dev')
+ok('the marker carries the profile the window was opened as', keptTestAppInfo()?.profile === 'dev')
+ok('a launch on another profile spares it', launchTakesKept(keptTestAppInfo(), 'dev-f') === 'spare')
+ok('a shown launch on the same profile takes it', launchTakesKept(keptTestAppInfo(), 'dev') === 'take')
+ok('a quiet launch on the same profile is refused', launchTakesKept(keptTestAppInfo(), 'dev', { quiet: true }) === 'refuse')
+ok('a quiet launch on another profile is not', launchTakesKept(keptTestAppInfo(), 'dev-f', { quiet: true }) === 'spare')
+ok('nothing kept means nothing to decide', launchTakesKept(null, 'dev') === 'none')
+ok('a marker naming no profile is spared, never taken', launchTakesKept({ pid: 1, profile: '' }, 'dev') === 'spare')
+process.kill(shown, 'SIGKILL')
 
 for (const pid of [watched, leftover, dead]) {
   try {

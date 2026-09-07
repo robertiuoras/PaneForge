@@ -48,8 +48,10 @@ import { folderName, laneOfCheckout, projectOf } from '../shared/place'
 import { dropStale, lentGrid, watchedBorrow, type Borrow } from '../shared/paneSize'
 import { START_COLS, START_ROWS } from '../shared/paneGrid'
 import { RESTORE_MARK_TEXT } from '../shared/replayWidth'
-import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, SUBMIT_GAP_MS, armDecision, clearChunks, hasFreshPaneHandoff, resumeOf, dropFor, dropWords, expiryDecision, queuedPromptDecision, quietEnoughToArm, type DropReason, type QueuedPromptVerdict } from '../shared/autoclear'
+import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, SUBMIT_GAP_MS, armDecision, clearChunks, hasFreshPaneHandoff, resumeOf, dropFor, dropWords, expiryDecision, queuedPromptDecision, quietEnoughToArm, standDownFor, type DropReason, type QueuedPromptVerdict } from '../shared/autoclear'
 import { acLog } from './autoclearLog'
+import { dropAllFor, noteAccepted, noteDropped, noteSubmitted, owedAfterRestore } from './queuedPrompts'
+import type { QueueDrop } from '../shared/queuedPrompts'
 import { logReclaim } from './activationLog'
 import { ledgerSleep, ledgerWake } from './laneLedger'
 import type { SleepReason } from '../shared/types'
@@ -1146,6 +1148,11 @@ export class SessionManager extends EventEmitter {
     this.attach(live)
     recordStart(live.meta)
     this.queuePrompt(id, live.req.prompt, live.req.promptDelay)
+    // A prompt this pane was owed when its process went away. The pane keeps its id
+    // through sleep and restart, so the ledger row is simply re-queued into the composer
+    // that is about to appear - a prompt accepted at 05:19 and never typed is still owed
+    // at 05:45, which is the whole reason it is written down.
+    this.deliverOwed(id, id)
     this.emitSessions()
     return live.meta
   }
@@ -1476,6 +1483,26 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
+   * Type the prompts a pane is still owed, from the ledger rather than from memory.
+   *
+   * `oldId` is the pane the prompt was accepted for - the same pane after a restart or a
+   * wake, and the pane this one is REPLACING after a restore, which is issued a new id.
+   * Each row is re-queued under its own key, so nothing is accepted twice and a prompt
+   * still waiting when the app goes down is still waiting when it comes back.
+   */
+  deliverOwed(oldId: string, newId: string, queue = true): number {
+    const owed = owedAfterRestore(oldId, newId)
+    // A pane that came back ASLEEP has no composer to type into, so the rows are carried
+    // onto its new id and left there: `wake()` calls this again with `queue` on. Typing
+    // into a pane with no process is how a recovered prompt would be lost a second time.
+    if (queue) {
+      for (const row of owed)
+        this.queuePrompt(newId, row.text, 0, PROMPT_START_MS, undefined, PROMPT_WAIT_MAX_MS, 'turn', row.key)
+    }
+    return owed.length
+  }
+
+  /**
    * Let a Codex pane pick its own reasoning effort, pin it by hand, or stop.
    *
    * Nothing is typed here. A change only ever reaches the pane at the next turn boundary
@@ -1657,6 +1684,11 @@ export class SessionManager extends EventEmitter {
     const asked = submitted ? live.typed : ''
     if (submitted) {
       live.meta.lastKeyboard = Date.now()
+      // A person sending a line owns the pane, so an armed countdown stands down for it -
+      // and an `app` write never does. `standDownFor` is the whole decision; without it
+      // this app's own queued prompt cancelled the clear and the log blamed the person.
+      const stand = standDownFor(origin)
+      if (stand) this.cancelAutoClear(id, stand)
       const slash = isSlashCommand(live.typed)
       cleared = slash && clearsConversation(live.typed)
       bare = !slash && isBareReturn(live.submitLine)
@@ -2856,6 +2888,10 @@ export class SessionManager extends EventEmitter {
     }
     stopPipe(id)
     recordEnd(id, resumeIdFor(id))
+    // A prompt this pane was owed dies with it, and SAYS so: the card is gone, so nothing
+    // will ever restore that id, and a row left behind would be a promise the app cannot
+    // keep. The line in `queued-prompts.log` carries enough of the text to find it again.
+    dropAllFor(id, 'gone')
     forgetSession(id)
     this.sessions.delete(id)
     forgetHandoff(id)
@@ -3164,16 +3200,29 @@ export class SessionManager extends EventEmitter {
     startMs = PROMPT_START_MS,
     onSettled?: () => void,
     budgetMs = PROMPT_WAIT_MAX_MS,
-    proof: PromptProof = 'turn'
+    proof: PromptProof = 'turn',
+    known?: string
   ): void {
     if (!prompt) return onSettled?.()
+    // ON DISK BEFORE A BYTE OF IT IS TYPED. Everything below is a wait, and a wait that
+    // lives only in memory is a prompt the app forgets when the pane is recreated - which
+    // is exactly what happened to two briefs on 2026-09-07 (see `shared/queuedPrompts.ts`).
+    // `known` is a prompt already in the ledger being re-queued after a restart, so it is
+    // not accepted a second time.
+    const key = known ?? noteAccepted(id, prompt, this.sessions.get(id)?.meta.cwd)
     // Called exactly once, however this ends - typed and submitted, dropped, or the pane
     // gone. The handover curtain is raised on it, and a curtain with an exit this does not
     // reach is a pane nobody can type into: every `return` below goes through `settle`.
+    //
+    // It is also the one place the ledger row is closed: 'sent' means a turn (or, for a
+    // command, an idle composer) PROVED the text went in; every other word is a prompt
+    // nobody typed, and says so in `queued-prompts.log`.
     let settled = false
-    const settle = (): void => {
+    const settle = (end: QueueDrop | 'sent'): void => {
       if (settled) return
       settled = true
+      if (end === 'sent') noteSubmitted(key)
+      else noteDropped(key, end)
       onSettled?.()
     }
     const deadline = Date.now() + Math.max(0, budgetMs) + Math.max(0, extraDelay)
@@ -3228,12 +3277,12 @@ export class SessionManager extends EventEmitter {
     let confirmUntil = 0
     const submit = (tries: number): void => {
       const live = this.sessions.get(id)
-      if (!live) return settle()
+      if (!live) return settle('gone')
       // A confirm return is still a keystroke into a live CLI. If somebody has sent their
       // own message since the prompt went in, that return would land on THEIR turn.
       if ((live.meta.lastKeyboard ?? 0) > mark) {
         acLog(`${id} prompt left UNSENT: the pane was typed into by hand before the return`)
-        return settle()
+        return settle('unsent')
       }
       ourWrite('\r')
       noteSubmittedPrompt(id, prompt)
@@ -3256,7 +3305,7 @@ export class SessionManager extends EventEmitter {
       const confirm = (): void => {
         setTimeout(() => {
           const still = this.sessions.get(id)
-          if (!still) return settle()
+          if (!still) return settle('gone')
           // A TURN is the only proof the return went in. `runSince` is set when one starts
           // - by this submit or by the agent's own busy footer - so a value newer than the
           // return is the answer being written.
@@ -3266,11 +3315,11 @@ export class SessionManager extends EventEmitter {
           // waits for the pane to actually print something.
           if (proof !== 'idle' && (still.meta.runSince ?? 0) >= typedAt) {
             acLog(`${id} prompt submitted - a turn started`)
-            return settle()
+            return settle('sent')
           }
           if ((still.meta.lastKeyboard ?? 0) > mark) {
             acLog(`${id} prompt left UNSENT: the pane was typed into by hand while confirming`)
-            return settle()
+            return settle('unsent')
           }
           // A SLASH COMMAND STARTS NO TURN. `/model opus` prints one line ("Set model to
           // Opus 5 and saved as your default") and hands the composer straight back, so
@@ -3284,7 +3333,7 @@ export class SessionManager extends EventEmitter {
           // proof, read at the poll cadence rather than the confirm's.
           if (proof === 'idle' && idle(still) && (still.meta.lastOutput ?? 0) > typedAt) {
             acLog(`${id} command landed - the composer is idle again (no turn expected)`)
-            return settle()
+            return settle('sent')
           }
           // Quiet, and nothing printed since the return. Either the command has not
           // answered yet or the return was eaten, and the two look identical from here - so
@@ -3309,14 +3358,14 @@ export class SessionManager extends EventEmitter {
               acLog(
                 `${id} prompt left UNSENT: still painting ${PROMPT_CONFIRM_MS * PROMPT_ENTER_TRIES}ms after the return`
               )
-              return settle()
+              return settle('unsent')
             }
             return confirm()
           }
           // Idle at the composer with no turn behind it: the return was eaten. Send another.
           if (tries + 1 >= PROMPT_ENTER_TRIES) {
             acLog(`${id} prompt left UNSENT: ${PROMPT_ENTER_TRIES} returns were swallowed`)
-            return settle()
+            return settle('unsent')
           }
           submit(tries + 1)
         }, proof === 'idle' ? PROMPT_POLL_MS : PROMPT_CONFIRM_MS)
@@ -3326,7 +3375,7 @@ export class SessionManager extends EventEmitter {
 
     const tick = (): void => {
       const live = this.sessions.get(id)
-      if (!live) return settle()
+      if (!live) return settle('gone')
       const what = verdict(live, idle(live))
       if (what === 'wait') {
         setTimeout(tick, PROMPT_POLL_MS)
@@ -3338,7 +3387,7 @@ export class SessionManager extends EventEmitter {
             (live.meta.lastKeyboard ?? 0) > mark ? 'the pane was used by hand' : 'an unsent draft outlasted the wait'
           }`
         )
-        return settle()
+        return settle('abandoned')
       }
       ourWrite(prompt)
       acLog(`${id} prompt typed (${prompt.length} chars), return in ${PROMPT_ENTER_MS}ms`)

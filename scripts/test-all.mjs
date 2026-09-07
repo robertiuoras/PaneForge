@@ -191,6 +191,7 @@ const TESTS = [
   ['blurbs', 'blurb-test.mjs'],
   ['sounds', 'sound-test.mjs'],
   ['voice', 'voice-test.mjs'],
+  ['voicefetch', 'voice-fetch-test.mjs'],
   ['busy', 'busy-test.mjs'],
   ['fleet', 'fleet-test.mjs'],
   ['crlf', 'crlf-test.mjs'],
@@ -256,7 +257,8 @@ const TESTS = [
   ['qr', 'qr-test.mjs'],
   ['pairask', 'pair-ask-test.mjs'],
   ['gate', 'release-gate-test.mjs'],
-  ['conflict', 'conflict-test.mjs']
+  ['conflict', 'conflict-test.mjs'],
+  ['queuedprompt', 'queued-prompt-test.mjs']
 ]
 
 const only = process.argv.slice(2).filter((a) => !a.startsWith('-'))

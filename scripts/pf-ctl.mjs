@@ -533,7 +533,12 @@ if (cmd === 'list') {
     }
   ])
   const landed = s?.cwd ?? cwd
-  console.log(`opened ${s?.id ?? '?'} in ${landed}`)
+  // Which of the two things happened: a new pane, or a prompt handed to the pane that was
+  // already open on that folder. Only an IDLE pane with nothing queued takes a send - see
+  // `shared/sendOrOpen.ts` - and a caller that cannot tell them apart cannot tell whether
+  // its brief is being worked on now or behind somebody else's turn.
+  if (s?.startAction === 'send') console.log(`sent to ${s?.id ?? '?'} (idle) in ${landed}`)
+  else console.log(`opened ${s?.id ?? '?'} in ${landed}`)
   // The pane may have been placed in a lane copy, which is a different folder and so a
   // different set of conversations. Put the transcript there and start the agent again -
   // a pane seconds old has nothing to lose, and this is the only moment the id is known.
