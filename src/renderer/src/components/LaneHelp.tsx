@@ -55,13 +55,13 @@ export default function LaneHelp({ onClose, boards, sessions }: Props): JSX.Elem
     <div className="overlay confirm-overlay" onMouseDown={onClose}>
       <div className="dialog confirm lane-help" onMouseDown={(e) => e.stopPropagation()}>
         <div className="dialog-head">
-          <strong>Lanes</strong>
+          <strong>Copies of a project</strong>
         </div>
         <div className="confirm-body">
           <p>
-            Two chats cannot edit one folder without overwriting each other, so each chat
-            gets its own copy of the project. That copy is a <b>lane</b>. You never make
-            one, and finished lanes merge back and ship on their own.
+            Two chats cannot edit one folder without writing over each other, so each chat
+            gets its own copy of the project. You never make one, and a copy whose chat has
+            finished folds back into the main copy and ships on its own.
           </p>
 
           {rows.length > 0 && (
@@ -69,8 +69,8 @@ export default function LaneHelp({ onClose, boards, sessions }: Props): JSX.Elem
               {/* The whole reason the card exists now: "why are there two?" is a question
                   about this minute, and the answer is a list of who is in there. */}
               <div className="lane-help-when">
-                {project ? `${project} right now` : 'Right now'}: {rows.length} lane
-                {rows.length === 1 ? '' : 's'} in use
+                {project ? `${project} right now` : 'Right now'}: {rows.length} cop
+                {rows.length === 1 ? 'y' : 'ies'} in use
               </div>
               <ul className="lane-help-now">
                 {rows.map((l) => (
@@ -104,11 +104,11 @@ export default function LaneHelp({ onClose, boards, sessions }: Props): JSX.Elem
               <b>busy now</b>: a chat is typing in that copy. Nothing to do.
             </li>
             <li>
-              <b>done</b>: finished; it merges back with the next update.
+              <b>done</b>: finished; it folds back into the main copy with the next update.
             </li>
             <li>
-              <b>stuck</b>: two lanes changed the same lines, so someone has to pick. That
-              lane waits; everything else still ships.
+              <b>stuck</b>: two copies changed the same lines, so someone has to pick. That
+              copy waits; everything else still ships.
             </li>
           </ul>
         </div>

@@ -55,8 +55,8 @@ export const BLURBS: Blurb[] = [
   },
   {
     id: 'lane',
-    title: 'Lane',
-    text: 'This pane is working in its own copy of the repo on its own branch, so another chat editing the same project cannot collide with it. Merging brings the work back into the main checkout and lets the copy be cleaned up.'
+    title: 'Its own copy',
+    text: 'Two chats cannot edit one folder without writing over each other, so this pane works in a folder of its own. What it does there goes back into the main folder by itself once this chat has finished.'
   },
   {
     id: 'newSession',
