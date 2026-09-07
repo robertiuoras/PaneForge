@@ -282,6 +282,11 @@ const launchRequest = parseOpenArgs(process.argv)
  */
 let quitCause = ''
 let quitLogged = false
+/** `Quit anyway` was pressed on the corner card: the next before-quit goes through. */
+let quitConfirmed = false
+let quitAsked = 0
+/** A beat after `resume` before the repaint, so the ptys are back before they are poked. */
+const RESUME_REDRAW_MS = 1500
 let panesAtQuit = -1
 /*
  * ...and when the app itself did not ask, WHICH of the three it was.
@@ -1512,6 +1517,18 @@ function askOffload(project: string, deviceName: string, reason: string): Promis
     send('offload:soon', { id, project, deviceName, reason, deadline: Date.now() + OFFLOAD_ASK_MS })
   })
 }
+ipcMain.handle('app:quitAnswer', (_e, go: boolean) => {
+  if (!quitAsked) return false
+  quitAsked = 0
+  if (!go) {
+    updateLog('quit', 'kept working - the card was answered Keep working')
+    return true
+  }
+  quitConfirmed = true
+  quitting('Quit anyway pressed with panes still working')
+  app.quit()
+  return true
+})
 ipcMain.handle('offload:answer', (_e, id: string, go: boolean) => {
   offloadAsks.get(String(id))?.(!!go)
 })
@@ -3911,6 +3928,15 @@ app.whenReady().then(() => {
     history.flush()
     updateLog('power', 'suspend: desk and terminal history saved; agents left running')
   })
+  // Back from sleep. Every CLI is asked to repaint (SIGWINCH) once the machine has had a
+  // beat to bring the network and the ptys back; without it a pane stays on the frame it
+  // slept on until the stale-frame clock (4 min) or a keystroke gets to it.
+  powerMonitor.on('resume', () => {
+    setTimeout(() => {
+      const n = manager.redrawAll()
+      updateLog('power', `resume: asked ${n} live pane(s) to repaint`)
+    }, RESUME_REDRAW_MS)
+  })
   // The app is open again, so the "closed on purpose" marker is stale: clear it, or the
   // keep-alive task would refuse to restart this copy after a genuine crash.
   try {
@@ -4108,7 +4134,22 @@ app.on('browser-window-blur', () => {
   focused = false
   lastFocusAt = Date.now()
 })
-app.on('before-quit', () => {
+app.on('before-quit', (e) => {
+  // Cmd-Q with work in flight. Nothing in the app asked (`quitCause` empty - an update
+  // install, the idle clock and the handoff receiver all name themselves first), and at
+  // least one pane is mid-turn or holding a job: the quit is refused ONCE and a corner
+  // card asks. `Quit anyway` comes back through `app:quitAnswer` with the guard lowered.
+  // The card is the whole point - a silent refusal would read as Cmd-Q being broken.
+  if (!quitCause && !quitConfirmed) {
+    const running = manager.list().filter((s) => s.status !== 'exited' && !s.asleep && (s.status === 'working' || s.runSince || s.backJob || s.ask))
+    if (running.length) {
+      e.preventDefault()
+      quitAsked = Date.now()
+      send('app:quitAsk', { names: running.map((s) => s.title || basename(s.cwd)), count: running.length })
+      updateLog('quit', `refused - ${running.length} pane(s) still working; asked`)
+      return
+    }
+  }
   // Written FIRST, before anything below can throw: the whole value of this line is that
   // it exists for a quit nobody in the app asked for, which is the one that gets reported
   // as "it closed by itself".
