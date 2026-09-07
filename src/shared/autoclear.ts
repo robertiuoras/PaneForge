@@ -462,6 +462,29 @@ export function armDecision(why: DropReason | null): 'arm' | 'queue' | 'refuse' 
  */
 export type QueuedPromptVerdict = 'type' | 'wait' | 'abandon'
 
+/**
+ * ...and TYPING IS NOT TAKING THE PANE OVER.
+ *
+ * Until 2026-09-07 both of the person-shaped readings above ENDED the prompt: a keystroke
+ * later than the mark dropped it on the spot, and an unsent draft dropped it at the
+ * deadline. Robert, that morning: "we lost the hands off autoclear flow now its getting
+ * messed up if i type while thats happening". His own log has it - pane s4-mtqqfokz,
+ * 04:42:57, `queued prompt dropped - an unsent draft outlasted the wait`. The clear had
+ * already happened, so the session was cleared and then never told to carry on: the one
+ * thing the whole flow exists to do was the thing skipped, and the only record was a line
+ * in a log file nobody reads at 4am.
+ *
+ * The mistake was reading one signal for two different intentions. A person who presses
+ * `Take over` MEANS the pane is theirs now; a person who reads the fresh screen and types
+ * a question means only that they got there first. `lastKeyboard` cannot tell them apart -
+ * the curtain's own take-over bumps it deliberately (`takeOver`) - so `tookOver` is now
+ * carried separately, and ordinary typing WAITS instead of destroying anything.
+ *
+ * Waiting is safe for the reason the drop was written for. The prompt is only ever typed
+ * at an idle composer with an empty box, so it cannot arrive inside somebody's turn - the
+ * 2026-08-30 incident the drop was answering. It just lands after that turn instead of
+ * never.
+ */
 export function queuedPromptDecision(p: {
   /** The pane still exists. */
   exists: boolean
@@ -475,13 +498,25 @@ export function queuedPromptDecision(p: {
   composerIdle: boolean
   /** The wait budget has run out. */
   expired: boolean
+  /** Somebody pressed `Take over` on the curtain since this prompt was queued. */
+  tookOver?: boolean
+  /** The far ceiling: even a prompt waiting behind a person gives up here. */
+  personExpired?: boolean
 }): QueuedPromptVerdict {
   if (!p.exists) return 'abandon'
-  if (typeof p.lastKeyboard === 'number' && p.lastKeyboard > p.mark) return 'abandon'
-  if (p.drafting) return p.expired ? 'abandon' : 'wait'
+  // The one deliberate cancel. Everything else below is a wait.
+  if (p.tookOver) return 'abandon'
+  const person = (typeof p.lastKeyboard === 'number' && p.lastKeyboard > p.mark) || p.drafting
+  if (person) {
+    if (p.personExpired) return 'abandon'
+    // Their box, their turn: only a composer that is idle AND empty is ours to type into,
+    // and the ordinary deadline may never override that - typing over an unsent line, or
+    // into the middle of the answer they just asked for, is the whole failure.
+    return p.drafting || !p.composerIdle ? 'wait' : 'type'
+  }
   if (p.composerIdle) return 'type'
   // Expiry still types into a merely-busy pane: that is the long-standing rescue for a
-  // CLI whose footer never goes quiet, and the pty queues it. It is only the two cases
+  // CLI whose footer never goes quiet, and the pty queues it. It is only the cases
   // above - a person's message, a person's draft - that the deadline must not override.
   return p.expired ? 'type' : 'wait'
 }

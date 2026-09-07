@@ -203,14 +203,13 @@ ok(
 manager.write(hijack.id, 'it broke again do you have logs')
 manager.write(hijack.id, '\r')
 const humanAt = manager.sessions.get(hijack.id).meta.lastKeyboard
-// Their turn runs and then the composer goes quiet again - which is the exact window
-// the old code typed into.
-hijackProc.say(COMPOSER)
-await sleep(900)
-const afterHuman = hijackProc.writes.join('')
+// Their turn is running. This is the window the 2026-08-30 bug typed into, and nothing
+// may go in here - not at any deadline.
+hijackProc.say(BOOTING)
+await sleep(700)
 ok(
-  !afterHuman.includes('Continue the handoff'),
-  'a prompt queued before a HUMAN sent one is dropped, never typed into their turn',
+  !hijackProc.writes.join('').includes('Continue the handoff'),
+  'the queued prompt is never typed into the turn a person just started',
   JSON.stringify(hijackProc.writes)
 )
 ok(
@@ -218,13 +217,15 @@ ok(
   'the human submit is what moves lastKeyboard, and it is recorded',
   String(humanAt)
 )
-// ...and no stray confirm return goes out either. An Enter into a turn that is already
-// answering is a keystroke at a live CLI, harmless at a composer and not at a chooser.
-const straysBefore = hijackProc.writes.filter((w) => w === '\r').length
-await sleep(700)
+// ...and their turn ends. Until 2026-09-07 the prompt was DROPPED the moment they typed, so
+// the session was cleared and then never told to carry on - Robert: "we lost the hands off
+// autoclear flow now its getting messed up if i type while thats happening". It waits behind
+// them instead, and goes in at the composer they hand back. Late is right; never is not.
+hijackProc.say(COMPOSER)
+await sleep(900)
 ok(
-  hijackProc.writes.filter((w) => w === '\r').length === straysBefore,
-  'and no confirm returns are fired after the person took the pane',
+  hijackProc.writes.join('').includes('Continue the handoff'),
+  'and lands after their turn ends, rather than being lost because they typed',
   JSON.stringify(hijackProc.writes)
 )
 
@@ -260,7 +261,7 @@ curtainProc.say(COMPOSER)
 await sleep(700)
 ok(
   !curtainProc.writes.join('').includes('a queued resume prompt'),
-  'takeOver drops the queued prompt as a real keystroke would',
+  'takeOver drops the queued prompt - the one deliberate cancel, unlike ordinary typing',
   JSON.stringify(curtainProc.writes)
 )
 ok(manager.takeOver('no-such-pane') === false, 'takeOver on a dead id is false, not a throw')

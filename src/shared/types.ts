@@ -168,6 +168,15 @@ export interface Session {
   lastKeyboard: number
   /** An unsent prompt exists, or the app cannot prove that the composer is empty. */
   drafting?: boolean
+  /**
+   * epoch ms of the last deliberate `Take over` on the handover curtain.
+   *
+   * Separate from `lastKeyboard` because the two mean different things and were read as
+   * one until 2026-09-07: typing into a pane mid-handover is somebody getting there first,
+   * pressing `Take over` is somebody claiming the pane. Only the second cancels a queued
+   * prompt - see `queuedPromptDecision`.
+   */
+  tookOverAt?: number
   createdAt: number
   /**
    * When this PANE first appeared on the desk, across every restart since - which is not

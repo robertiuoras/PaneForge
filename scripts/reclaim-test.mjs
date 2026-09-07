@@ -244,12 +244,36 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   // like any other: 5 of 7 panes sat asleep for ten hours on 2026-09-02 because this
   // refused them. Robert: "id rather them to close than sleep".
   {
-    const slept = pane({ id: 'slept', asleep: NOW - HOUR, state: 'exited', lastKeyboard: NOW - 9 * HOUR, lastOutput: NOW - 9 * HOUR })
+    const slept = pane({ id: 'slept', asleep: NOW - 3 * HOUR, state: 'exited', lastKeyboard: NOW - 9 * HOUR, lastOutput: NOW - 9 * HOUR })
     const pad = pane({ id: 'pad', lastKeyboard: NOW })
     eq('an asleep pane past the clock is closed', ids(idleClosePlan([slept, pad], CLOCKED, NOW)), 'slept')
     check('...and its card carries the countdown', idleCloseAt(slept, CLOCKED, NOW) !== null)
     check('...while a KEPT asleep pane stays', !idleClosePlan([pane({ ...slept, pinned: true }), pad], CLOCKED, NOW).length)
     eq('and the sleep clock never takes a pane already asleep', ids(idleSleepPlan([slept, pad], { ...DEFAULT_RECLAIM, idleSleepMinutes: 30 }, NOW)), '')
+
+    // ...but SLEEPING RESTARTS THE CLOSE CLOCK, or the rung below closing is worth nothing.
+    // Both clocks read `quietSince`, and until 2026-09-07 that did not count the moment the
+    // pane was put to sleep - so a pane slept at minute 30 was already long past a 5-minute
+    // close clock and went in the same breath. `reclaim.log` that morning: 33 panes armed
+    // for closing while asleep, 20 closed; `s10-mtqtgzjd` slept 07:05:42, closed 07:06:02.
+    // Robert saw the two chips it draws: "session 1 shows closes now asleep 1m all the logic
+    // dosnt make sense there".
+    const justSlept = pane({
+      id: 'just',
+      asleep: NOW - 20_000,
+      state: 'exited',
+      lastKeyboard: NOW - 9 * HOUR,
+      lastOutput: NOW - 9 * HOUR
+    })
+    eq('a pane asleep for 20s is not closed, however stale it was before', ids(idleClosePlan([justSlept, pad], CLOCKED, NOW)), '')
+    check(
+      '...and its card promises a countdown later, not now',
+      (idleCloseAt(justSlept, CLOCKED, NOW) ?? 0) > NOW
+    )
+    // The control: the same pane, one close window further on, IS taken - sleeping delays
+    // the clock, it does not switch it off.
+    const sleptOn = pane({ ...justSlept, id: 'later', asleep: NOW - 3 * HOUR })
+    eq('and a close window after it slept, it goes', ids(idleClosePlan([sleptOn, pad], CLOCKED, NOW)), 'later')
   }
   // The restore-loses-the-desk bug, 2026-09-03: a pane restored this run comes back with
   // `createdAt` equal to its own restore time, which is also its "quiet since" - so on a
