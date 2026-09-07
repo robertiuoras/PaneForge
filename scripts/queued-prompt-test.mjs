@@ -140,6 +140,26 @@ t('a submitted prompt is written down too, so the log reads as a ledger', () => 
   assert.doesNotMatch(line, /LOST/)
 })
 
+t('a pane that closes leaves no owed rows behind, and a line for each', () => {
+  save({})
+  accept('s7', 'brief one', 1)
+  accept('s7', 'brief two', 2)
+  accept('s9', 'somebody else', 3)
+  // What `dropAllFor` does: every row for the closed pane out of the store, each with its
+  // own line. Another pane's prompt is untouched.
+  const lines = []
+  let store = load()
+  for (const row of owedTo(store, 's7')) {
+    lines.push(dropLine(row, 'gone'))
+    store = clearQueued(store, row.key)
+  }
+  save(store)
+  assert.equal(lines.length, 2)
+  assert.match(lines[0], /brief one/)
+  assert.deepEqual(owedTo(load(), 's7'), [])
+  assert.equal(owedTo(load(), 's9').length, 1, "another pane's prompt is left alone")
+})
+
 // ---------------------------------------------------------------------------
 // 2. A brief never queues behind somebody else's turn.
 

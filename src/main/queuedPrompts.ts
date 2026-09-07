@@ -123,6 +123,25 @@ export function owedAfterRestore(oldId: string, newId: string): QueuedPrompt[] {
   return moved.prompts
 }
 
+/**
+ * The pane is gone for good: close the rows it was owed, out loud.
+ *
+ * Without this a closed pane's prompts sit in the ledger for ever, owed to an id nothing
+ * will ever restore - the file grows and the promise is quietly untrue. Each one writes its
+ * own line with the first 120 characters, which is the whole point: a prompt that was never
+ * typed is findable afterwards rather than gone.
+ */
+export function dropAllFor(id: string, why: QueueDrop = 'gone'): number {
+  const owed = owedTo(load(), id)
+  let next = load()
+  for (const row of owed) {
+    qpLog(dropLine(row, why))
+    next = clearQueued(next, row.key)
+  }
+  if (owed.length) save(next)
+  return owed.length
+}
+
 /** How many prompts a pane is still owed - the reading `sendOrOpen` refuses on. */
 export function owedCount(id: string): number {
   return owedTo(load(), id).length

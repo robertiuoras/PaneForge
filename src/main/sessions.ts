@@ -48,7 +48,7 @@ import { START_COLS, START_ROWS } from '../shared/paneGrid'
 import { RESTORE_MARK_TEXT } from '../shared/replayWidth'
 import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, SUBMIT_GAP_MS, armDecision, clearChunks, hasFreshPaneHandoff, resumeOf, dropFor, dropWords, expiryDecision, queuedPromptDecision, quietEnoughToArm, standDownFor, type DropReason, type QueuedPromptVerdict } from '../shared/autoclear'
 import { acLog } from './autoclearLog'
-import { noteAccepted, noteDropped, noteSubmitted, owedAfterRestore } from './queuedPrompts'
+import { dropAllFor, noteAccepted, noteDropped, noteSubmitted, owedAfterRestore } from './queuedPrompts'
 import type { QueueDrop } from '../shared/queuedPrompts'
 import { logReclaim } from './activationLog'
 import { ledgerSleep, ledgerWake } from './laneLedger'
@@ -2829,6 +2829,10 @@ export class SessionManager extends EventEmitter {
     }
     stopPipe(id)
     recordEnd(id, resumeIdFor(id))
+    // A prompt this pane was owed dies with it, and SAYS so: the card is gone, so nothing
+    // will ever restore that id, and a row left behind would be a promise the app cannot
+    // keep. The line in `queued-prompts.log` carries enough of the text to find it again.
+    dropAllFor(id, 'gone')
     forgetSession(id)
     this.sessions.delete(id)
     forgetHandoff(id)
