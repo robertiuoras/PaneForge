@@ -21,7 +21,7 @@
 //   node scripts/test-all.mjs             every test below
 //   node scripts/test-all.mjs rail theme  only the ones whose name contains one of these
 
-import { execFileSync, spawn } from 'node:child_process'
+import { execFileSync, spawn, execSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { cpus, loadavg, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -367,7 +367,13 @@ const started = Date.now()
  * the 193 scripts changes.
  */
 const TMP_ROOT = mkdtempSync(join(tmpdir(), 'pf-test-run-'))
-const dropTmp = () => rmSync(TMP_ROOT, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+// A suite's headless Chrome outlives a killed run (ppid 1) and then blocks the real Chrome
+// from opening: macOS activates the running bundle instead of launching a window. Kill any
+// Chrome whose profile lives under this run's root before dropping the root.
+const dropTmp = () => {
+  try { execSync(`pkill -9 -f -- "--user-data-dir=${TMP_ROOT}"`, { stdio: 'ignore' }) } catch {}
+  rmSync(TMP_ROOT, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+}
 // `exit` alone leaks the root on every Ctrl-C, and this name is unique per run, so nothing
 // later reclaims it. A signal has to drop it itself, then die of that signal.
 process.on('exit', dropTmp)
