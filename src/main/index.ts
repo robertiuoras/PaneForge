@@ -39,7 +39,7 @@ import { writeAttachments, readAttachIns, withShots } from './attach'
 import { AskNotifier, askMessage, postAsk, telegramCreds } from './askNotify'
 import { askKeyOf } from '../shared/autoAnswer'
 import { ATTACH_MAX_BYTES, THUMB_KEEP, type AttachIn, type AttachResult } from '../shared/attach'
-import { CHOOSE_GAP_MS, keysForChoice, sameAsk } from '../shared/choices'
+import { CHOOSE_GAP_MS, keysForChoice, sameAsk, stampMatches } from '../shared/choices'
 import { Remote } from './remote'
 import { readInvite } from './remote/invite'
 import { PhoneServer, newPhoneCode } from './phone'
@@ -2876,9 +2876,11 @@ ipcMain.handle('clipboard:fixtureActive', () => clipboardFixtureActive())
  * with the session list, so a stale button on this side is refused by `keysForChoice`
  * rather than typed into whatever replaced the chooser.
  */
-ipcMain.handle('pty:choose', (_e, id: string, n: number): boolean => {
-  if (!remote.owns(id)) return manager.choose(id, n)
+ipcMain.handle('pty:choose', (_e, id: string, n: number, want?: string): boolean => {
+  if (!remote.owns(id)) return manager.choose(id, n, 'desk', want)
   const ask = remote.sessions().find((s) => s.id === id)?.ask
+  // The same refusal for a pane on the other desk: the button is just as old over there.
+  if (!stampMatches(ask, want)) return false
   const keys = ask ? keysForChoice(ask, n) : null
   if (!keys) return false
   // Re-read before every key, exactly as `SessionManager.choose` does: the question can

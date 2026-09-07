@@ -109,6 +109,7 @@ const TESTS = [
   ['reclaim', 'reclaim-test.mjs'],
   ['activity', 'activity-test.mjs'],
   ['lanetimeline', 'lane-timeline-test.mjs'],
+  ['askstamp', 'ask-stamp-test.mjs'],
   ['hookdeny', 'hookdeny-test.mjs'],
   ['deaddev', 'deaddev-test.mjs'],
   ['sleep', 'sleep-test.mjs'],

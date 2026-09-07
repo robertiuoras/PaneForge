@@ -2256,7 +2256,15 @@ export interface Api {
    * that question any more - a chooser that has been answered from the desk in the
    * meantime must not have a stale button press land on whatever replaced it.
    */
-  chooseOption(sessionId: string, n: number): Promise<boolean>
+  /**
+   * Press one of an agent's options.
+   *
+   * `want` is the question's own stamp (`askStamp`), carried by a button that may outlive
+   * the question it was drawn for - a Telegram message, a notification. Left out by every
+   * caller looking at the live pane. A press naming a question the pane has moved on from
+   * is refused rather than landing on whatever replaced it.
+   */
+  chooseOption(sessionId: string, n: number, want?: string): Promise<boolean>
   attachFiles(sessionId: string, files: AttachIn[]): Promise<AttachResult>
   /**
    * The same for paths on the device the window is on, read there - a `file://` drop
