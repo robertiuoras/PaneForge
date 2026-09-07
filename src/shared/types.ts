@@ -452,6 +452,19 @@ export interface Session {
   /** Epoch ms that job started, so the row's clock counts the job and not the silence. */
   backJobSince?: number
   /**
+   * The last turn ended having changed no file in this pane's folder - `changed no files`,
+   * or absent when there is nothing to say. See `shared/changedNothing.ts`.
+   *
+   * Same contract as `backJob` and `handoffOpen`: it DECORATES. It reaches no busy
+   * reading, no clock and nothing that could close a pane, because it is a statement about
+   * one finished turn and not about whether the pane is finished with. Absent is the
+   * answer whenever the folder could not be read at both ends of the turn - a failed
+   * reading must never be drawn as a wasted turn.
+   */
+  changedNothing?: string
+  /** The words the chip carries on hover, built once in main so the renderer only draws. */
+  changedNothingWhy?: string
+  /**
    * A phone or the other desk's mirror is drawing this pane right now - a live size borrow
    * (`shared/paneSize.ts`), renewed every 30s and dropped at `BORROW_TTL_MS`. The idle
    * sweeps refuse it (`ReclaimPane.watched`): on a desk nobody sits at it is the only
@@ -2333,12 +2346,6 @@ export interface Api {
   onQuitAsk(cb: (ask: { names: string[]; count: number }) => void): () => void
   /** Answer that card: `go` true quits with the guard lowered, false keeps working. */
   answerQuit(go: boolean): Promise<boolean>
-  /** The Obsidian vault for a folder (walks up for `.obsidian`), or null. */
-  vaultInfo(cwd: string): Promise<VaultInfo | null>
-  /** Notes and their [[wikilinks]] as a graph, read off disk. */
-  vaultGraph(vault: string): Promise<VaultGraph>
-  /** Open a note (or the vault) in the Obsidian app via `obsidian://`. */
-  vaultOpen(vault: string, note?: string): Promise<boolean>
   /**
    * Absolute path of a dropped File. Electron removed File.path, so the real path
    * only comes from webUtils in the preload.
@@ -2383,6 +2390,10 @@ export interface Api {
   openLogin(id: string): Promise<{ ok: boolean; error?: string }>
   /** Done, or Close. The sign-in stays on the machine it was typed into. */
   closeLogin(id: string): void
+  /** Signed in: tell the pane that asked, then close the view. */
+  doneLogin(id: string): void
+  /** Hand one line to a pane, queued for the gap between its own turns. */
+  tellPane(ref: string, text: string): void
   /** Not now. */
   dismissLogin(id: string): void
   /** A pointer or a key, on the remote page. */
@@ -2739,26 +2750,4 @@ export interface Api {
    * Shown as a line in the footer instead; the detail is in paneforge-errors.log.
    */
   onAppError(cb: (message: string) => void): () => void
-}
-
-/** An Obsidian vault found beside a project. `name` is the folder's own name. */
-export interface VaultInfo {
-  path: string
-  name: string
-  notes: number
-  /** Whether the Obsidian app is installed here (the `obsidian://` scheme has a handler). */
-  appInstalled: boolean
-}
-export interface VaultNode {
-  id: string
-  title: string
-  /** Number of links in + out; the graph draws size off it. */
-  degree: number
-  folder: string
-}
-export interface VaultGraph {
-  nodes: VaultNode[]
-  /** [from id, to id] pairs; unresolved links are dropped, not drawn. */
-  links: [string, string][]
-  readAt: number
 }

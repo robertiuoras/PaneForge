@@ -35,6 +35,7 @@ import {
   looksSignedIn,
   askAgain,
   machineWord,
+  signedInWords,
   toRemotePoint,
   type FrameMeta,
   type LoginAsk,
@@ -74,6 +75,10 @@ export interface LoginDeps {
   publish(reqs: LoginRequest[]): void
   /** A frame to paint, and the ack id the renderer must hand back once it has. */
   frame(id: string, data: string, meta: FrameMeta, ack: number): void
+  /** What a pane is called, so the card can say who is stuck rather than "a job". */
+  paneName?(id: string): string | undefined
+  /** Say the wall is down: the pane that asked is told, on whichever desk it is on. */
+  tell?(req: LoginRequest, text: string): void
 }
 
 interface Live {
@@ -128,6 +133,11 @@ export function requestLogin(input: {
   port?: number
   machine?: string
   from?: string
+  /** What the pane will do once it is signed in, in its own words. */
+  why?: string
+  /** Which pane to tell when it is done, and the desk that pane is on. */
+  reportTo?: string
+  reportHost?: string
   /** The asking pane wants the picture in front now, not a card to click. */
   open?: boolean
 }): LoginRequest {
@@ -154,6 +164,14 @@ export function requestLogin(input: {
   if (already) {
     already.req.url = url
     if (input.open) already.req.show = true
+    // A second ask carries a fresher reason, and - when the first came from a script with
+    // nothing to say - the first reason at all.
+    if (input.why?.trim()) already.req.why = input.why.trim()
+    if (input.reportTo?.trim()) {
+      already.req.reportTo = input.reportTo.trim()
+      already.req.reportHost = input.reportHost?.trim() || undefined
+      already.req.reported = false
+    }
     publish()
     return { ...already.req }
   }
@@ -167,7 +185,13 @@ export function requestLogin(input: {
     at: Date.now(),
     state: 'waiting',
     from,
-    show: input.open === true
+    show: input.open === true,
+    fromName: (from ? deps?.paneName?.(from) : undefined) || undefined,
+    why: input.why?.trim() || undefined,
+    // Nothing to report to is not the same as nothing to report: the pane that asked is
+    // the obvious thing to tell, so it is the default.
+    reportTo: input.reportTo?.trim() || from,
+    reportHost: input.reportHost?.trim() || undefined
   }
   live.set(req.id, {
     req,
@@ -658,6 +682,29 @@ function stop(l: Live): void {
   l.ssh = undefined
   l.waiting.clear()
   l.pacer.reset()
+}
+
+/**
+ * Done: the person says they are in, so the pane that asked is told and the view goes.
+ *
+ * The report is the whole point of the card - a job that stopped at a password can only
+ * carry on if something says the password has been typed - and it goes out BEFORE the
+ * request is deleted, because the request is what names who to tell. `reported` stops a
+ * second press sending a second line into that pane's composer.
+ */
+export function doneLogin(id: string): void {
+  const l = live.get(id)
+  if (!l) return
+  if (!l.req.reported && l.req.reportTo) {
+    l.req.reported = true
+    log(`done ${l.req.id} telling ${l.req.reportTo}${l.req.reportHost ? ` on ${l.req.reportHost}` : ''}`)
+    try {
+      deps?.tell?.({ ...l.req }, signedInWords(l.req.site, l.req.machine))
+    } catch (e) {
+      log(`done ${l.req.id} could not tell ${l.req.reportTo}: ${String(e)}`)
+    }
+  }
+  closeLogin(id)
 }
 
 /** Done, or Close: the view goes away, the sign-in stays where it was typed. */

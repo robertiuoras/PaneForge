@@ -5182,6 +5182,17 @@ export default function App(): JSX.Element {
                       {stepsWord(s.handoffOpen)}
                     </span>
                   ) : null}
+                  {/* ...and a turn that ended having written nothing at all. Decided in
+                      main off two readings of the folder taken on the turn's own
+                      boundaries (`shared/changedNothing.ts`); the words are already
+                      chosen there, so this only draws them. Static, unpressable, no
+                      clock: it says something about one finished turn, and the next turn
+                      starting clears it. */}
+                  {s.changedNothing ? (
+                    <span className="chip nowork" title={s.changedNothingWhy}>
+                      {s.changedNothing}
+                    </span>
+                  ) : null}
                   <SessionCopies session={s} boards={laneBoards} onOpen={cwd => {
                     setActiveId(s.id)
                     handheld.showPane()
@@ -6226,7 +6237,9 @@ export default function App(): JSX.Element {
               req={req}
               onToast={flash}
               onDone={() => {
-                api.closeLogin(req.id)
+                // Done is not Close: main tells the pane that asked - on this desk or the
+                // other one - that the wall is down, and closes the view itself.
+                api.doneLogin(req.id)
                 setLoginOpen(null)
                 flash(`Signed in on ${req.machine}. The job can carry on.`)
               }}

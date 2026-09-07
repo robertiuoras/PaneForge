@@ -129,6 +129,7 @@ import { keepDevServer, stopNow, watchDeadDevs } from './deadDev'
 import {
   closeLogin,
   dismissLogin,
+  doneLogin,
   initRemoteLogin,
   listLogins,
   loginInput,
@@ -138,7 +139,7 @@ import {
   resizeLogin,
   shutdownLogins
 } from './remoteLogin'
-import type { LoginInput } from '../shared/remoteLogin'
+import { shellQuote, type LoginInput } from '../shared/remoteLogin'
 import { DEFAULT_DEAD_DEV } from '../shared/deadDev'
 import { listBackJobs, type BackJob } from './backJobs'
 import { DEFAULT_AUTO_HANDOFF } from '../shared/autoHandoff'
@@ -1242,12 +1243,38 @@ ipcMain.handle('owner:stats', (e) => {
  */
 initRemoteLogin({
   publish: (reqs) => send('login:changed', reqs),
-  frame: (id, data, meta, ack) => send('login:frame', { id, data, meta, ack })
+  frame: (id, data, meta, ack) => send('login:frame', { id, data, meta, ack }),
+  paneName: (id) => allSessions().find((s) => s.id === id || s.title === id)?.title,
+  // Telling the pane that asked is the only half of this feature that can cross a
+  // machine boundary without a picture: on this desk it is the ordinary prompt queue,
+  // and on the other one it is the same `pf tell` over the ssh the asker named.
+  tell: (req, text) => {
+    if (!req.reportTo) return
+    if (req.reportHost) {
+      const remote = ['pf', 'tell', req.reportTo, text].map(shellQuote).join(' ')
+      const ssh = spawn('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', req.reportHost, remote], {
+        windowsHide: true,
+        stdio: 'ignore'
+      })
+      ssh.on('error', () => {
+        /* the far desk is unreachable; the sign-in still happened */
+      })
+      ssh.unref()
+      return
+    }
+    manager.tellPane(req.reportTo, text)
+  }
 })
 ipcMain.handle('login:list', () => listLogins())
 ipcMain.handle('login:need', (_e, req: Parameters<typeof requestLogin>[0]) => requestLogin(req))
 ipcMain.handle('login:open', (_e, id: string) => openLogin(String(id)))
 ipcMain.on('login:close', (_e, id: string) => closeLogin(String(id)))
+ipcMain.on('login:done', (_e, id: string) => doneLogin(String(id)))
+// Anything that can reach the app can hand a pane one line, queued for the gap between
+// its turns - which is how the far desk says "signed in" to the pane that asked.
+ipcMain.on('pane:tell', (_e, ref: string, text: string) => {
+  manager.tellPane(String(ref), String(text))
+})
 ipcMain.on('login:dismiss', (_e, id: string) => dismissLogin(String(id)))
 ipcMain.on('login:input', (_e, id: string, ev: LoginInput) => loginInput(String(id), ev))
 ipcMain.on('login:ack', (_e, id: string, ack: number) => paintedFrame(String(id), Number(ack)))

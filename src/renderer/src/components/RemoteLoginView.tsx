@@ -16,6 +16,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   clampSplit,
+  splitFor,
   fitZoom,
   lagWord,
   loginKeys,
@@ -29,9 +30,23 @@ import {
 /** How wide the column was left last time. Per machine, so it is not worth a config key. */
 const WIDTH_KEY = 'pf.loginWidth'
 
+/**
+ * The room the column and the panes SHARE.
+ *
+ * Not the window: the sessions list is on the left and never gives its width up, so a
+ * column clamped against the window leaves the panes whatever is left over from both.
+ * Measured 2026-09-07 in a headless copy - at a 1024px window the column sat at 480px
+ * and the terminal beside it was 165px wide, which is a pane in name only.
+ */
+function roomForSplit(): number {
+  const panes = document.querySelector('.panes')
+  const w = panes ? panes.getBoundingClientRect().width : 0
+  return w > 0 ? Math.round(w) : window.innerWidth
+}
+
 function savedWidth(): number {
   const raw = Number(localStorage.getItem(WIDTH_KEY) ?? 0)
-  return clampSplit(raw > 0 ? raw : Math.round(window.innerWidth / 2), window.innerWidth)
+  return splitFor(roomForSplit(), raw > 0 ? raw : null)
 }
 
 /** The pointer ring is drawn HERE the moment the mouse moves, so it never waits on a frame. */
@@ -61,6 +76,8 @@ export default function RemoteLoginView({
   const [zoom, setZoom] = useState<number | null>(null)
   const [box, setBox] = useState<{ w: number; h: number }>({ w: 0, h: 0 })
   const [width, setWidth] = useState(savedWidth)
+  /** The width somebody actually asked for, which the room may not have had. */
+  const chosen = useRef<number | null>(Number(localStorage.getItem(WIDTH_KEY)) || null)
   const painted = useRef(0)
   const buttons = useRef(0)
 
@@ -172,8 +189,12 @@ export default function RemoteLoginView({
     }
   }, [width])
 
+  // A window that changes shape re-decides the column from the WIDTH SOMEBODY CHOSE, not
+  // from the width it currently happens to be: clamping the clamped number is a ratchet,
+  // and a column squeezed to its floor on a small window stayed 380px wide on a 1440px
+  // one for the rest of the session (measured 2026-09-07).
   useEffect(() => {
-    const onWindow = (): void => setWidth((w) => clampSplit(w, window.innerWidth))
+    const onWindow = (): void => setWidth(splitFor(roomForSplit(), chosen.current))
     window.addEventListener('resize', onWindow)
     return () => window.removeEventListener('resize', onWindow)
   }, [])
@@ -182,12 +203,18 @@ export default function RemoteLoginView({
     e.preventDefault()
     const el = e.currentTarget
     el.setPointerCapture(e.pointerId)
-    const move = (ev: PointerEvent): void => setWidth(clampSplit(window.innerWidth - ev.clientX, window.innerWidth))
+    const move = (ev: PointerEvent): void => {
+      const want = window.innerWidth - ev.clientX
+      chosen.current = want
+      setWidth(clampSplit(want, roomForSplit()))
+    }
     const up = (): void => {
       el.removeEventListener('pointermove', move)
       el.removeEventListener('pointerup', up)
       setWidth((w) => {
-        localStorage.setItem(WIDTH_KEY, String(w))
+        // What is remembered is what was asked for, so a drag done in a narrow window is
+        // still honoured when there is room for it again.
+        localStorage.setItem(WIDTH_KEY, String(chosen.current ?? w))
         return w
       })
     }
@@ -270,6 +297,12 @@ export default function RemoteLoginView({
       <header className="login-head">
         <span className="login-site">{req.site}</span>
         <span className="login-where">on {req.machine}</span>
+        {req.fromName && <span className="login-who">for {req.fromName}</span>}
+        {/* The one thing a person cannot see in a picture: whose keyboard they are on.
+            The outline round the picture says it quietly; this says it in words, because
+            a password typed into the wrong machine is the failure that matters here. */}
+        {typing && <span className="login-typing">typing into {req.machine}</span>}
+        {!typing && req.state === 'open' && <span className="login-where">click the picture to type</span>}
         {req.state === 'signed in' && <span className="login-hint">looks signed in</span>}
         <span className={'login-badge ' + lag} title="How long each picture takes to arrive">
           {rtt}ms
