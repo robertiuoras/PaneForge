@@ -43,7 +43,7 @@
  * Exit codes: 0 ok · 1 target not found / call failed · 2 phone server unreachable/off.
  */
 import { spawnSync } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -175,7 +175,9 @@ export function readOpenManyPlan(path) {
   })
 }
 
-const isMain = import.meta.url === pathToFileURL(process.argv[1] ?? '').href
+// realpath: ~/.local/bin/pf is a symlink, and a symlinked argv[1] never equals import.meta.url,
+// so every `pf ...` call silently did nothing and exited 0 (2026-09-07).
+const isMain = import.meta.url === pathToFileURL(realpathSync(process.argv[1] ?? "/")).href
 const [cmd, ...rest] = isMain ? process.argv.slice(2) : []
 if (isMain) await main()
 
