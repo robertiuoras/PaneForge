@@ -95,6 +95,8 @@ const ASK_WINDOW_MS = 10 * 60_000
 const DESK_ONLY = new Set([
   // Answers the Cmd-Q card. Only the desk can quit the desk.
   'app:quitAnswer',
+  // Reads a vault off this machine's disk and opens the Obsidian app here - desk only.
+  'vault:info', 'vault:graph', 'vault:open',
   'owner:access',
   'owner:stats',
   'phone:typeGate',
