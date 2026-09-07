@@ -945,4 +945,20 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   eq('...and the sweep picks it', ids(idleClosePlan([after, pad], CLOCKED3, NOW)), 'watched')
 }
 
+// One clock, one predicate. `idleClosePlan` is built from `reclaimPaneOf` in App.tsx,
+// which has never refused a pane for a BELL; `stillCloseable` - the re-check at the
+// deadline - did. So the sweep armed a belled pane, the effect dropped the card, and the
+// next sweep armed it again: measured 2026-09-07, s5-mtr24wj7 logged `armed` 76 times and
+// `closed` never, and nothing on disk said why. The refusals must be the same set, and
+// every drop must leave a line where a person reads one.
+{
+  const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
+  const from = app.indexOf('const stillCloseable = useCallback')
+  const to = app.indexOf('const doClose = useCallback')
+  check('stillCloseable is still where this test thinks it is', from > 0 && to > from)
+  const body = app.slice(from, to)
+  check('the deadline re-check refuses nothing the plan does not - a bell is not a question', !/s\.bell/.test(body))
+  check('...and a dropped countdown is written to reclaim.log, not only to DevTools', /event: 'spared'/.test(app))
+}
+
 console.log(`reclaim: ${checks} checks passed`)

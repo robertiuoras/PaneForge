@@ -4054,7 +4054,14 @@ export default function App(): JSX.Element {
   const stillCloseable = useCallback((id: string): boolean => {
     const s = sessionsRef.current.find((x) => x.id === id)
     if (!s) return false
-    if (s.ask || s.bell) return false
+    // `s.ask` only, deliberately. A BELL is not a question: it is a noise the CLI made at
+    // some point, it is never cleared by anything the app does, and `reclaimPaneOf` - the
+    // reading the idle plan is built from - has never refused one. Two predicates for one
+    // clock is how eight panes logged `armed` and only two ever logged `closed`: the sweep
+    // armed a belled pane every five seconds, the effect below dropped the card, and
+    // nothing anywhere said so (measured 2026-09-07: s5-mtr24wj7 armed 76 times, never
+    // closed). Same failure as the two readings of the close clock on 2026-09-01.
+    if (s.ask) return false
     if (s.drafting) return false
     if (s.runSince !== undefined) return false
     if (s.handingOff) return false
@@ -4339,6 +4346,15 @@ export default function App(): JSX.Element {
     const woke = closeSoons.filter((s) => !s.move && !s.ids.every((id) => stillCloseable(id)))
     if (!woke.length) return
     console.info('reclaim: countdown dropped - a pane it named went back to work')
+    // ...and on disk, next to the `armed` line that started it. A drop that only reaches
+    // DevTools is a countdown that vanishes for no readable reason, and a sweep that
+    // re-arms the same pane every five seconds looks exactly like one that works.
+    for (const s of woke) {
+      for (const id of s.ids) {
+        if (stillCloseable(id)) continue
+        api.logReclaim({ event: 'spared', id, name: paneWordRef.current(id), why: 'it went back to work' })
+      }
+    }
     const gone = new Set(woke.map((s) => soonKey(s)))
     setCloseSoons((list) => list.filter((s) => !gone.has(soonKey(s))))
   }, [closeSoons, sessions, stillCloseable])
