@@ -241,6 +241,17 @@ const PROMPT_ENTER_TRIES = ms('PF_PROMPT_ENTER_TRIES', 6)
  */
 const CLEAR_RESUME_BUDGET_MS = ms('PF_CLEAR_RESUME_BUDGET_MS', 180_000)
 /**
+ * How long a queued prompt waits BEHIND a person before giving up on them.
+ *
+ * A different question from `CLEAR_RESUME_BUDGET_MS`, which sizes a CLI booting. This one
+ * sizes somebody's own turn in the pane they just typed into, and those run long: on this
+ * desk a turn started in a freshly cleared session regularly passes ten minutes. It has to
+ * be generous, because expiring here is the failure Robert reported - the handoff prompt
+ * silently never delivered - and waiting costs nothing at all: the pane is his throughout,
+ * the curtain is down, and the prompt goes in the moment the composer is idle and empty.
+ */
+const PERSON_WAIT_MAX_MS = ms('PF_PERSON_WAIT_MAX_MS', 45 * 60_000)
+/**
  * The hard ceiling on the handover curtain.
  *
  * Longer than the prompt's own wait (`PROMPT_WAIT_MAX_MS` plus its confirm retries) so the
@@ -3155,15 +3166,18 @@ export class SessionManager extends EventEmitter {
   /**
    * A person taking the pane back mid-handover.
    *
-   * Moving `lastKeyboard` is what actually cancels the queued resume prompt: `queuePrompt`
-   * compares it against the mark it took when the prompt was queued, and anything later
-   * reads as somebody owning the pane. Doing it this way rather than with a second flag
-   * means the take-over and a real keystroke cannot disagree.
+   * `tookOverAt` is what actually cancels the queued resume prompt, and it is a SECOND
+   * flag on purpose. It used to be `lastKeyboard` alone, on the reasoning that a take-over
+   * and a keystroke cannot disagree - but they mean opposite things, and reading them as
+   * one is what lost the hands-off flow every time Robert typed into a pane mid-handover
+   * (2026-09-07; see `queuedPromptDecision`). A press here says the pane is yours. Typing
+   * only says you got to it first, and now merely makes the prompt wait its turn.
    */
   takeOver(id: string): boolean {
     const live = this.sessions.get(id)
     if (!live) return false
     live.meta.lastKeyboard = Date.now()
+    live.meta.tookOverAt = Date.now()
     this.setHandover(id, 0)
     return true
   }
@@ -3232,6 +3246,13 @@ export class SessionManager extends EventEmitter {
     // rather than delivering it into the turn that person just started. Our own writes
     // re-stamp the mark so the confirm returns never read as somebody else.
     let mark = this.sessions.get(id)?.meta.lastKeyboard ?? Date.now()
+    const takenMark = this.sessions.get(id)?.meta.tookOverAt ?? 0
+    // The far ceiling for a prompt that is waiting BEHIND a person. The ordinary budget
+    // sizes "how long can a CLI take to boot"; this one sizes "how long is somebody's own
+    // turn", which is a different question and a much longer answer - a turn Robert starts
+    // in a freshly cleared pane routinely runs ten minutes. Below it the prompt waits; at
+    // it, it gives up and says so, rather than sitting owed for ever.
+    const personDeadline = Date.now() + PERSON_WAIT_MAX_MS + Math.max(0, extraDelay)
     const ourWrite = (data: string): void => {
       this.write(id, data, 'app')
       const after = this.sessions.get(id)
@@ -3244,7 +3265,9 @@ export class SessionManager extends EventEmitter {
         mark,
         drafting: Boolean(live.meta.drafting) || (!!live.typed && !!live.typed.trim()),
         composerIdle,
-        expired: Date.now() >= deadline
+        expired: Date.now() >= deadline,
+        tookOver: (live.meta.tookOverAt ?? 0) > takenMark,
+        personExpired: Date.now() >= personDeadline
       })
     // The busy read is of the LAST THING PAINTED, never of a window of scrollback:
     // `esc to interrupt` printed during the boot stays in the buffer for ever, so a
@@ -3373,18 +3396,31 @@ export class SessionManager extends EventEmitter {
       confirm()
     }
 
+    let saidWaiting = false
     const tick = (): void => {
       const live = this.sessions.get(id)
       if (!live) return settle('gone')
       const what = verdict(live, idle(live))
       if (what === 'wait') {
+        // Somebody is typing in there. The curtain says "Keys are held" and they are
+        // plainly not, so it comes down: this prompt is now waiting its turn behind a
+        // person rather than holding the pane off them. Said once, not once a poll.
+        if ((live.meta.lastKeyboard ?? 0) > mark || live.meta.drafting) {
+          if (live.meta.handoverUntil) this.setHandover(id, 0)
+          if (!saidWaiting) {
+            saidWaiting = true
+            acLog(`${id} queued prompt waiting behind you - it goes in when your turn ends`)
+          }
+        }
         setTimeout(tick, PROMPT_POLL_MS)
         return
       }
       if (what === 'abandon') {
         acLog(
           `${id} queued prompt dropped - ${
-            (live.meta.lastKeyboard ?? 0) > mark ? 'the pane was used by hand' : 'an unsent draft outlasted the wait'
+            (live.meta.tookOverAt ?? 0) > takenMark
+              ? 'you took the pane over'
+              : `nobody handed the composer back in ${Math.round(PERSON_WAIT_MAX_MS / 60_000)} min`
           }`
         )
         return settle('abandoned')

@@ -67,25 +67,72 @@ console.log('a queued resume prompt never lands in somebody ELSE\'s turn')
   ok('an idle composer gets the prompt', queuedPromptDecision({ ...base, lastKeyboard: 1000 }) === 'type')
   ok('our own writes do not read as a person', queuedPromptDecision({ ...base, lastKeyboard: 999 }) === 'type')
   ok(
-    'a human submit since the queue DROPS the prompt',
-    queuedPromptDecision({ ...base, lastKeyboard: 1001 }) === 'abandon'
+    'a human submit since the queue holds the prompt back',
+    queuedPromptDecision({ ...base, lastKeyboard: 1001, composerIdle: false }) === 'wait'
   )
   ok(
-    'and the deadline does not override that',
-    queuedPromptDecision({ ...base, lastKeyboard: 1001, expired: true, composerIdle: false }) === 'abandon'
+    'and the deadline does not push it into their turn',
+    queuedPromptDecision({ ...base, lastKeyboard: 1001, expired: true, composerIdle: false }) === 'wait'
   )
   ok('a pane that went away is dropped', queuedPromptDecision({ ...base, exists: false, lastKeyboard: 1000 }) === 'abandon')
-  // An unsent line waits, then is abandoned - never pasted onto the end of it.
+  // An unsent line waits - never pasted onto the end of it, and never thrown away for it.
   ok('an unsent draft waits', queuedPromptDecision({ ...base, lastKeyboard: 1000, drafting: true }) === 'wait')
   ok(
-    'and is abandoned at the deadline, not typed over',
-    queuedPromptDecision({ ...base, lastKeyboard: 1000, drafting: true, expired: true }) === 'abandon'
+    'and still waits at the ordinary deadline, not typed over and not lost',
+    queuedPromptDecision({ ...base, lastKeyboard: 1000, drafting: true, expired: true }) === 'wait'
   )
   // The long-standing rescue: a CLI whose footer never goes quiet still gets the prompt.
   ok('a busy pane waits', queuedPromptDecision({ ...base, lastKeyboard: 1000, composerIdle: false }) === 'wait')
   ok(
     'and is typed into at the deadline',
     queuedPromptDecision({ ...base, lastKeyboard: 1000, composerIdle: false, expired: true }) === 'type'
+  )
+}
+
+console.log('...and typing into the pane is not the same as taking it over')
+{
+  // 2026-09-07, Robert: "we lost the hands off autoclear flow now its getting messed up if
+  // i type while thats happening". His autoclear-app.log, pane s4-mtqqfokz at 04:42:57:
+  // `queued prompt dropped - an unsent draft outlasted the wait`. The clear had happened,
+  // so that session was cleared and then never told to carry on - the one thing the flow
+  // exists for, skipped because he had touched the keyboard. Every assertion here is the
+  // difference between waiting for a person and giving up on the work.
+  const base = { exists: true, mark: 1000, drafting: false, composerIdle: true, expired: false }
+  const person = { ...base, lastKeyboard: 1001 }
+
+  // The whole point: his turn ends, the composer comes back idle and empty, the handoff
+  // prompt goes in. Late is the correct answer; never is not.
+  ok('the prompt lands after their turn ends', queuedPromptDecision(person) === 'type')
+  ok(
+    'it waits while they are still typing',
+    queuedPromptDecision({ ...person, drafting: true }) === 'wait'
+  )
+  ok(
+    'it waits while their turn is running',
+    queuedPromptDecision({ ...person, composerIdle: false }) === 'wait'
+  )
+  // The guard the old drop was written for, kept: an idle READING is not enough while a
+  // draft is on screen, at any deadline.
+  ok(
+    'a draft is never typed over, even past every deadline',
+    queuedPromptDecision({ ...person, drafting: true, expired: true }) === 'wait'
+  )
+
+  // `Take over` is the deliberate cancel, and the only one.
+  ok('taking the pane over drops it', queuedPromptDecision({ ...person, tookOver: true }) === 'abandon')
+  ok(
+    'taking over beats an idle composer',
+    queuedPromptDecision({ ...base, lastKeyboard: 1000, tookOver: true }) === 'abandon'
+  )
+
+  // A ceiling, so a prompt owed to somebody who walked away does not sit for ever.
+  ok(
+    'a person who never hands it back loses it, eventually',
+    queuedPromptDecision({ ...person, composerIdle: false, personExpired: true }) === 'abandon'
+  )
+  ok(
+    'and that ceiling does not touch an ordinary wait',
+    queuedPromptDecision({ ...base, lastKeyboard: 1000, composerIdle: false, personExpired: true }) === 'wait'
   )
 }
 
@@ -125,7 +172,8 @@ console.log('a history-recalled draft is protected even when the legacy shadow i
   ok('the conservative drafting flag queues an arm', armDecision(dropFor({ typed: '', drafting })) === 'queue')
   ok('it makes an expired countdown wait', expiryDecision({ exists: true, metaAt: 1, armedAt: 1, now: 1, drop: dropFor({ typed: '', drafting }) }) === 'wait')
   ok('it makes a queued prompt wait', queuedPromptDecision({ exists: true, lastKeyboard: 1, mark: 1, drafting, composerIdle: true, expired: false }) === 'wait')
-  ok('and abandon at its deadline', queuedPromptDecision({ exists: true, lastKeyboard: 1, mark: 1, drafting, composerIdle: true, expired: true }) === 'abandon')
+  ok('and go on waiting at its deadline, not typed over', queuedPromptDecision({ exists: true, lastKeyboard: 1, mark: 1, drafting, composerIdle: true, expired: true }) === 'wait')
+  ok('only the far ceiling gives up on it', queuedPromptDecision({ exists: true, lastKeyboard: 1, mark: 1, drafting, composerIdle: true, expired: true, personExpired: true }) === 'abandon')
 }
 
 console.log('nothing but the button stands a countdown down')
