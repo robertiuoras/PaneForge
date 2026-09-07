@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { LaneBoard, LaneBoardEntry, LaneMergeResult, LaneWork, Session } from '@shared/types'
 import { describePlace, paneRef } from '@shared/place'
 import Blurb from './Blurb'
@@ -91,7 +91,7 @@ interface Copy {
   /** the ledger's row, when this copy has one */
   entry?: LaneBoardEntry
   /** this window's pane holding it, when one is */
-  pane?: { id: string; number: number; title: string; working: boolean }
+  pane?: { id: string; number: number; title: string; working: boolean; asleep: boolean }
   /** counts and last commit, once they have been read */
   work?: LaneWork | null
   /** the copy this dialog is about */
@@ -156,47 +156,55 @@ export default function LaneDialog({
   /** other copies' readings, keyed by folder. Filled in as each answers. */
   const [others, setOthers] = useState<Record<string, LaneWork | null>>({})
 
+  const reading = useRef(0)
+  const [folders, setFolders] = useState<string[]>([])
+  const [folderError, setFolderError] = useState(false)
   const load = (): void => {
-    void api.laneWork(cwd).then(setWork)
+    const request = ++reading.current
+    setWork(undefined)
+    void api.laneWork(cwd).catch(() => null).then(value => {
+      if (request === reading.current) setWork(value)
+    })
   }
-  useEffect(load, [cwd])
+  useEffect(() => {
+    setOthers({})
+    setFolders([])
+    setFolderError(false)
+    setBusy(false)
+    setSaid(null)
+    load()
+    return () => { reading.current++ }
+  }, [cwd])
 
   // The board for the project this lane is a copy of. `work.repo` is the trunk's folder,
   // which is exactly the key laneBoard uses, so the two line up without a second git run.
   const board = work ? boards.find((b) => sameDir(b.repo, work.repo)) ?? null : null
 
-  /**
-   * What is in each of the OTHER copies.
-   *
-   * One `laneWork` per lane folder, and only while this dialog is open - it is seven git
-   * commands per lane (laneWork.ts) and a person opened this, so the cost is paid once at
-   * a press rather than on the 5s poll every card already pays for. The trunk is skipped
-   * on purpose: `laneWork` answers null for a repo's own checkout by construction, and
-   * what the trunk is doing is a `git status` this dialog has no business running in a
-   * folder another chat may be mid-commit in.
-   */
+  // Physical copies can outlive their ledger claims. Enumerate them on inspection,
+  // retaining ledger entries when enumeration fails and treating failed reads as unknown.
   useEffect(() => {
     if (!work) return
     let live = true
+    setOthers({})
+    setFolders([])
+    setFolderError(false)
     const dirs = new Set<string>()
     for (const lane of board?.lanes ?? []) if (!lane.peer) dirs.add(lane.dir)
-    for (const s of sessions) if (!s.remote && s.status !== 'exited') dirs.add(s.cwd)
-    for (const dir of dirs) {
-      if (sameDir(dir, work.repo) || sameDir(dir, cwd)) continue
-      if (!slotOf(dir, work.repo)) continue
-      void api.laneWork(dir).then((w) => {
-        if (live) setOthers((prev) => ({ ...prev, [norm(dir)]: w }))
-      })
-    }
-    return () => {
-      live = false
-    }
-    // Keyed on the FOLDERS, not on `sessions.length`: a count is unchanged when one pane
-    // closes and another opens between two polls, so the new folder was never read and its
-    // row sat on "reading…" for as long as the dialog was open. Not the array either - the
-    // sessions broadcast hands a fresh one every second and every field on it moves (output
-    // clocks, run timers), which would re-run seven git commands per lane per second.
-  }, [work?.repo, board?.lanes.map((l) => l.dir).join('|'), sessions.map((s) => s.cwd).join('|'), cwd])
+    for (const s of sessions) if (!s.remote && (s.status !== 'exited' || s.asleep)) dirs.add(s.cwd)
+    void api.laneFolders(work.repo).catch(() => null).then(physical => {
+      if (!live) return
+      setFolderError(physical === null)
+      setFolders(physical ?? [])
+      for (const dir of physical ?? []) dirs.add(dir)
+      for (const dir of dirs) {
+        if (sameDir(dir, work.repo) || sameDir(dir, cwd) || !slotOf(dir, work.repo)) continue
+        void api.laneWork(dir).catch(() => null).then(value => {
+          if (live) setOthers(prev => ({ ...prev, [norm(dir)]: value }))
+        })
+      }
+    })
+    return () => { live = false }
+  }, [work, board?.lanes.filter(l => !l.peer).map(l => l.dir).join('|'), sessions.filter(s => !s.remote && (s.status !== 'exited' || s.asleep)).map(s => s.cwd).join('|'), cwd])
 
   /**
    * Escape closes it, like every other dialog in the app.
@@ -226,9 +234,11 @@ export default function LaneDialog({
   }, [onClose])
 
   const merge = (): void => {
+    const request = reading.current
     setBusy(true)
     setSaid(null)
     void api.mergeLane(cwd).then((r: LaneMergeResult) => {
+      if (request !== reading.current) return
       setBusy(false)
       if (r.ok) {
         setSaid(
@@ -240,6 +250,11 @@ export default function LaneDialog({
       } else {
         setSaid(r.detail ?? 'Nothing to merge.')
       }
+      load()
+    }).catch(() => {
+      if (request !== reading.current) return
+      setBusy(false)
+      setSaid('The merge result could not be confirmed. Inspect the copy again before retrying.')
       load()
     })
   }
@@ -278,8 +293,14 @@ export default function LaneDialog({
       const slot = slotOf(lane.dir, work.repo) ?? lane.lane
       add(lane.dir, slot, { entry: lane })
     }
+    for (const dir of folders) {
+      const slot = slotOf(dir, work.repo)
+      if (slot) add(dir, slot)
+    }
     for (const s of sessions) {
-      if (s.status === 'exited' || s.remote) continue
+      if ((s.status === 'exited' && !s.asleep) || s.remote) continue
+      // An assignment outranks the launch folder; never draw the same chat on both.
+      if (board?.lanes.some(lane => !lane.peer && lane.ownerPane === s.id)) continue
       const slot = slotOf(s.cwd, work.repo)
       if (!slot) continue
       add(s.cwd, slot, {
@@ -287,7 +308,8 @@ export default function LaneDialog({
           id: s.id,
           number: sessions.indexOf(s) + 1,
           title: s.title,
-          working: s.status === 'working'
+          working: s.status === 'working',
+          asleep: !!s.asleep
         }
       })
     }
@@ -295,14 +317,15 @@ export default function LaneDialog({
     // cannot give: several chats hold lanes from one folder. It beats the folder match above.
     for (const copy of byDir.values()) {
       const owner = copy.entry?.ownerPane
-        ? sessions.find((s) => s.id === copy.entry!.ownerPane && s.status !== 'exited')
+        ? sessions.find((s) => s.id === copy.entry!.ownerPane && (s.status !== 'exited' || s.asleep))
         : undefined
       if (owner)
         copy.pane = {
           id: owner.id,
           number: sessions.indexOf(owner) + 1,
           title: owner.title,
-          working: owner.status === 'working'
+          working: owner.status === 'working',
+          asleep: !!owner.asleep
         }
       copy.work = copy.self ? work : others[norm(copy.dir)]
     }
@@ -325,29 +348,12 @@ export default function LaneDialog({
         </div>
         <Blurb id="lane" />
         {work === undefined && <div className="confirm-body">Reading the lane…</div>}
-        {work === null && (
-          // "This pane is not in a lane any more" was true and was a dead end: the chip
-          // that opens this card says `copy a`, so the person pressing it is asking what
-          // `copy a` MEANS, and being told the thing they just pressed does not exist
-          // answers nothing. Reported 2026-08-31: "it doesnt make sense too confusing for
-          // user and cant even click on the tag to find details about it".
-          //
-          // A folder that is not in the ledger is still a folder, and everything worth
-          // saying about it is on screen already - which project it copies, where it is,
-          // and that its work is put back by hand rather than by this card.
-          <div className="confirm-body">
-            <div className="lane-plain">
-              This pane is typing in <code>{cwd}</code>, a second copy of{' '}
-              <strong>{project || 'this project'}</strong> kept beside the main one so two
-              chats can work on it without landing on each other.
-            </div>
-            <div className="lane-dialog-sub">
-              PaneForge is not tracking this copy - it was made outside the app, or its
-              work has already gone back - so there is nothing here to merge. Press
-              <em> what is this?</em> for how copies work.
-            </div>
-          </div>
-        )}
+        {work === null && <div className="confirm-body" role="alert">
+          This copy could not be inspected. Its changes are unknown; no merge is available.
+          <div className="lane-dialog-sub"><code>{cwd}</code></div>
+          <button className="ghost small" onClick={load}>Retry</button>
+        </div>}
+        {folderError && <div className="confirm-body" role="alert">Some copies could not be listed. The list may be incomplete.</div>}
         {work && (
           <div className="confirm-body">
             {/* Plain words first, git words second. Every noun in `lane-a → main` is a git
@@ -422,7 +428,7 @@ function CopyRow({ copy, onFocus }: { copy: Copy; onFocus: (id: string) => void 
   // the ledger's sentence is all there is; with no ledger row either, the folder is simply
   // sitting there and saying "free" would be a claim nothing here can make.
   const held = pane
-    ? `${paneRef(pane.number)}${pane.working ? ' - working now' : ''}`
+    ? `${paneRef(pane.number)}${pane.asleep ? ' - asleep' : pane.working ? ' - working now' : ''}`
     : entry
       ? laneState(entry, false, Date.now())
       : 'no pane here'
@@ -436,7 +442,7 @@ function CopyRow({ copy, onFocus }: { copy: Copy; onFocus: (id: string) => void 
         ? summary(work)
         : trunk
           ? 'the copy every lane merges back into'
-          : 'nothing in it'
+          : 'could not be inspected; changes unknown'
 
   return (
     <div

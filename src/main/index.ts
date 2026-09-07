@@ -2248,7 +2248,7 @@ ipcMain.handle('git:info', (_e, path: string) =>
 const lanePanes = (): LanePane[] =>
   manager
     .list()
-    .filter((s) => s.status !== 'exited')
+    .filter((s) => s.status !== 'exited' || s.asleep)
     .map((s) => ({ id: s.id, cwd: s.cwd, resumeId: resumeIdFor(s.id) }))
 
 ipcMain.handle('lanes:board', () => {

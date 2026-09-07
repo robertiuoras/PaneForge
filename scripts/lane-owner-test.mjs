@@ -220,14 +220,20 @@ const twoDead = {
   process.env.PANEFORGE_ENGINE = engine
 
   const { laneReclaim } = await load()
-  laneReclaim([
+  const panes = [
     { id: 'pane1', cwd: repo, resumeId: CHAT_A },
     { id: 'pane2', cwd: repo, resumeId: CHAT_B },
     { id: 'pane3', cwd: other, resumeId: CHAT_C }
-  ])
-
-  const beat = (main) => JSON.parse(readFileSync(join(main, '.git', 'paneforge-panes.json'), 'utf8'))
+  ]
+  const beat = (main) => ({ self: JSON.parse(readFileSync(join(main, '.git', 'paneforge-panes', `pf-${process.pid}.json`), 'utf8')) })
   const chatsIn = (main) => Object.values(beat(main)).flatMap((b) => b.chats)
+
+  // A new inventory has no evidence about any other copy until a later heartbeat reads
+  // the established file. The first sweep writes it and deliberately cannot reclaim.
+  laneReclaim(panes)
+  check('the first inventory write is conservative before reclaiming', !existsSync(calls))
+  laneReclaim(panes)
+
   check('the repo that wins the vote is told what this copy hosts', chatsIn(repo).includes(CHAT_A))
   check(
     'and so is every other repo a pane is in, with the whole machine’s chats',

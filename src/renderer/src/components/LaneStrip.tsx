@@ -78,7 +78,7 @@ export function useLaneBoards(): LaneBoard[] {
  */
 export function laneOwner(lane: LaneBoardEntry, sessions: Session[]): Session | undefined {
   if (!lane.ownerPane) return undefined
-  return sessions.find((s) => s.id === lane.ownerPane && s.status !== 'exited')
+  return sessions.find((s) => s.id === lane.ownerPane && (s.status !== 'exited' || s.asleep))
 }
 
 /** Lanes keyed by the pane holding them, for the chip on a session card - every repo's. */
@@ -191,7 +191,7 @@ export default function LaneStrip({ boards, sessions, onFocus, onHelp }: Props):
         const target =
           own ??
           (lane.adoptable ? sessions.find((s) => s.status !== 'exited' && s.status !== 'working') : undefined)
-        if (!target || target.status === 'working') continue
+        if (!target || target.asleep || target.status === 'exited' || target.status === 'working') continue
         handed.current.add(key)
         // Not `write(text + '\r')`. That is the shape measured failing on 2026-08-11 for
         // launch prompts and found failing here on 2026-08-17: the CLIs run with bracketed
@@ -238,7 +238,7 @@ export default function LaneStrip({ boards, sessions, onFocus, onHelp }: Props):
             other. The heading says the plain one. The middle word is still the first
             thing a narrow sidebar gives up - the heading was ellipsed with the count, the
             one number on the line, inside the part that got cut. */}
-        <span className="section-title">
+        <span className="section-title" title="Copies across projects without an open chat card in this window. Chats in another window or on another device may still own them.">
           Other<span className="wide-word"> copies</span> ({orphans.length})
         </span>
         {stuck > 0 && (

@@ -35,12 +35,12 @@ process.env.CLAUDE_CONFIG_DIR = join(root, 'claude')
 process.env.USERPROFILE = root
 process.env.HOME = root
 
-// lanes.ts is TypeScript and imports nothing but node builtins, so a one-file
-// bundle is enough to exercise it outside Electron.
+// Bundle lanes.ts and its local helpers to exercise it outside Electron.
 const bundle = join(root, 'lanes.mjs')
 await build({
   entryPoints: [join(here, '..', 'src', 'main', 'lanes.ts')],
   outfile: bundle,
+  bundle: true,
   format: 'esm',
   platform: 'node',
   logLevel: 'silent'
