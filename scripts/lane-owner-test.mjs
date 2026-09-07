@@ -18,7 +18,7 @@
 //   node scripts/lane-owner-test.mjs
 
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -60,6 +60,21 @@ execFileSync(
   { cwd: repoRoot, stdio: 'pipe' }
 )
 writeFileSync(join(out, 'package.json'), '{"type":"module"}')
+
+// tsc emits the import exactly as it was written, and the app is BUNDLED, so `./logWrite`
+// with no extension is right in the source and unloadable by Node. laneBoard grew its
+// first runtime sibling import on 2026-09-07 (33ed15f6, the async log appender) and this
+// suite has died on ERR_MODULE_NOT_FOUND ever since, saying nothing about lanes. Add the
+// extension in the emitted copy rather than writing it in src, where it would be wrong.
+for (const f of readdirSync(join(out, 'main'))) {
+  if (!f.endsWith('.js')) continue
+  const at = join(out, 'main', f)
+  const fixed = readFileSync(at, 'utf8').replace(
+    /(from\s+['"])(\.\.?\/[^'"]+?)(['"])/g,
+    (all, head, spec, tail) => (/\.[a-z]+$/i.test(spec) ? all : `${head}${spec}.js${tail}`)
+  )
+  writeFileSync(at, fixed)
+}
 
 /**
  * A fresh copy of the module per case.
