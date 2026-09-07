@@ -2213,10 +2213,12 @@ function cannotRun(out) {
 
 /** Does this checkout declare dependencies it has not got? */
 function dependenciesMissing(pkg) {
-  if (!Object.keys({ ...pkg.dependencies, ...pkg.devDependencies }).length) return false
+  const required = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies })
+    .filter((name) => !Object.hasOwn(pkg.optionalDependencies ?? {}, name))
+  if (!required.length) return false
   const mods = join(MAIN, 'node_modules')
   try {
-    return !existsSync(mods) || readdirSync(mods).length === 0
+    return required.some((name) => !existsSync(join(mods, name, 'package.json')))
   } catch {
     return true
   }
@@ -2241,7 +2243,7 @@ function installDeps() {
   const r = spawnSync(cmd, { cwd: MAIN, encoding: 'utf8', timeout: 900_000, shell: true })
   if (r.status === 0) return null
   return (
-    `${basename(MAIN)} has no dependencies installed and \`${cmd}\` could not install them, so nothing was ` +
+    `${basename(MAIN)} is missing declared dependencies and \`${cmd}\` could not install them, so nothing was ` +
     `released - ${firstLine(`${r.stdout ?? ''}${r.stderr ?? ''}`)}. The code is not the problem; the checkout is.`
   )
 }
