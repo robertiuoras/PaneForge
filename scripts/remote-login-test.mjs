@@ -225,10 +225,82 @@ eq(M.machineWord(undefined, 'win32'), 'this PC', 'no host on the PC is the PC it
 eq(M.siteWord('facebook'), 'Facebook', 'a site is named the way it is written on the page')
 eq(M.siteWord(''), 'A website', 'and an unnamed one still reads as a sentence')
 
-const card = M.loginCardText({ site: 'facebook', machine: 'the PC' })
+const card = M.loginCardText({ site: 'facebook', machine: 'the PC', at: 0 }, 0)
 eq(card.title, 'Facebook needs you to sign in', 'the card says what happened')
 ok(card.body.includes('the PC'), 'and which computer to sign in on')
 ok(card.open === 'Open and sign in', 'the button says what pressing it does')
+
+// ------------------------------------------------------------------ who is stuck
+// Robert, 2026-09-07: the card has to name the job, not say "a job is waiting" - with
+// four panes and two machines, WHICH one is the only part a person can act on.
+eq(M.waitedWords(0), 'just now', 'a card that appears saying "waiting 0 min" reads as broken')
+eq(M.waitedWords(59_000), 'just now', 'under a minute is still just now')
+eq(M.waitedWords(4 * 60_000), 'waiting 4 min', 'minutes, while minutes are the unit')
+eq(M.waitedWords(66 * 60_000), 'waiting 1h 6m', 'past an hour the hour leads')
+eq(M.waitedWords(120 * 60_000), 'waiting 2h', 'and a round hour says nothing about minutes')
+{
+  const at = 1_000_000
+  const named = M.loginCardText(
+    { site: 'facebook', machine: 'the PC', fromName: 'codex ads', why: 'post the week\u2019s ads', at },
+    at + 5 * 60_000
+  )
+  ok(named.who.includes('codex ads'), 'the card names the pane that is stuck')
+  ok(named.who.includes('the PC'), 'and the computer it is stuck on')
+  ok(named.who.includes('waiting 5 min'), 'and how long it has been waiting')
+  eq(named.why, 'post the week\u2019s ads', "and what it will do once it is in, in the pane's own words")
+  const anon = M.loginCardText({ site: 'facebook', machine: 'the PC', at }, at)
+  ok(anon.who.startsWith('A job'), 'a request from no pane still reads as a sentence')
+  eq(anon.why, '', 'and says nothing about a reason it was never given')
+}
+
+// ------------------------------------------------------- what the pane that asked is told
+{
+  const said = M.signedInWords('facebook', 'the PC')
+  ok(said.includes('Facebook') && said.includes('the PC'), 'the report names the site and the machine')
+  ok(/carry on/i.test(said), 'and tells the agent the wall is down rather than reporting a status')
+  ok(!/\b(CDP|screencast|tunnel|ssh|socket|debugger|target|localhost|port)\b/i.test(said),
+    'in words a person who has never coded would use')
+}
+
+// ---------------------------------------------- one command puts the card on the OTHER desk
+{
+  const no = M.relayCommand({ desk: '', url: 'https://x.com/login' })
+  eq(no.ok, false, 'a relay with no computer named refuses')
+  const noSelf = M.relayCommand({ desk: 'rob@mac', url: 'https://x.com/login' })
+  eq(noSelf.ok, false, 'and one the far desk could not reach back on refuses too')
+  ok(/--me/.test(noSelf.why), 'saying which flag would fix it')
+  const bad = M.relayCommand({ desk: 'rob@mac', self: 'gamer@pc', url: 'x.com/login' })
+  eq(bad.ok, false, 'an address that is not a page refuses before any ssh runs')
+  const r = M.relayCommand({
+    desk: 'rob@mac',
+    self: 'gamer@pc',
+    url: 'https://www.facebook.com/login',
+    why: "post the week's ads",
+    reportTo: 's4-abc',
+    machine: 'the PC'
+  })
+  ok(r.ok, 'a relay with both ends named is a command')
+  ok(r.remote.includes('needs-login facebook'), 'the site is read off the address when nobody said one')
+  ok(r.remote.includes('--host gamer@pc'), 'the far desk tunnels back to the machine that asked')
+  ok(r.remote.includes('--report-to s4-abc') && r.remote.includes('--report-host gamer@pc'),
+    'and knows which pane on which machine to tell when it is done')
+  ok(r.remote.includes("'post the week'\"'\"'s ads'"), 'a reason with an apostrophe survives the shell')
+  eq(r.argv[0], '-o', 'ssh is asked not to prompt for anything')
+  ok(r.argv.includes('rob@mac'), 'and it is the other desk it is asked of')
+}
+
+// -------------------------------------------- the column is measured against the PANES' room
+{
+  // Measured 2026-09-07 in a headless copy: a 1024px window has 676px left of the sessions
+  // list, and the column was clamped against 1024 - so it stayed 480 wide and the terminal
+  // beside it was 165px. The clamp takes the room the two SHARE.
+  eq(M.clampSplit(800, 900), 900 - M.KEEP_PANE, 'the column gives the pane its 300px back')
+  eq(M.clampSplit(480, 676), M.MIN_SPLIT, 'a room too small for both keeps the column readable')
+  eq(M.splitFor(676, 480), M.MIN_SPLIT, 'and a width chosen in a bigger window shrinks with it')
+  eq(M.splitFor(1600, null), 800, 'with room to spare it opens at half')
+  eq(M.splitFor(1600, 900), 900, 'a width somebody chose is kept')
+  eq(M.splitFor(900, 900), 900 - M.KEEP_PANE, 'until the window shrinks under it')
+}
 eq(
   M.loginPaneTitle({ site: 'facebook', machine: 'the PC' }),
   'Sign in to Facebook on the PC',
@@ -287,13 +359,20 @@ ok(phone.includes("'login:input'"), 'and typing into it, which is the whole poin
 // ------------------------------------------------------------------ `pf needs-login`
 // The command refuses BEFORE it needs an app: an ask with no address is a mistake, and a
 // mistake that opens nothing is cheaper than one that opens the wrong thing.
-function pf(args) {
+function pf(args, extraEnv = {}) {
   try {
     const stdout = execFileSync(process.execPath, [join(root, 'scripts/pf-ctl.mjs'), ...args], {
       cwd: root,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, PF_CTL_NO_APP: '1' }
+      env: {
+        ...process.env,
+        PF_CTL_NO_APP: '1',
+        // `echo` in place of ssh: the assertion is the COMMAND the relay builds, and a
+        // test that needed a reachable second machine would only ever be skipped.
+        PF_SSH: process.platform === 'win32' ? 'cmd' : 'echo',
+        ...extraEnv
+      }
     })
     return { code: 0, out: stdout, err: '' }
   } catch (e) {
@@ -323,6 +402,45 @@ for (const word of ['list', 'open', 'needs-login'])
 ok(/login:need/.test(ctl), 'and goes through the declared channel, not a second door')
 ok(/--host/.test(ctl) && /--port/.test(ctl) && /--machine/.test(ctl), 'with the flags the spec named')
 ok(/'list'/.test(ctl) && /login:list/.test(ctl), '`pf list` shows the sign-in requests as well as the panes')
+ok(/--why/.test(ctl) && /--report-to/.test(ctl) && /--desk/.test(ctl), 'and the flags a stuck agent needs')
+ok(/pane:tell/.test(ctl), '`pf tell` hands a pane one line through the declared channel')
+
+// ------------------------------------------- a job on the PC raises the card on the Mac
+// The hop is real ssh, so the test replaces the ssh binary with one that prints what it
+// was asked. Nothing here reaches an app: `--desk` means this ask is not for this one.
+{
+  const relayed = pf([
+    'needs-login',
+    'facebook',
+    '--url',
+    'https://www.facebook.com/login',
+    '--desk',
+    'rob@mac',
+    '--me',
+    'gamer@pc',
+    '--why',
+    'post the ads',
+    '--report-to',
+    's4-abc'
+  ])
+  eq(relayed.code, 0, 'the relay runs without an app on this machine at all')
+  ok(/rob@mac/.test(relayed.out), 'it is the other desk that is asked')
+  ok(/needs-login facebook/.test(relayed.out), 'for the site that is blocked')
+  ok(/--host gamer@pc/.test(relayed.out), 'pointed back at the browser that is stuck')
+  ok(/--report-to s4-abc/.test(relayed.out), 'and told which pane to tell when it is done')
+  // With nobody to be, there is no way back: the relay refuses rather than raising a card
+  // on the other desk that could never reach this machine again. (Given a name and a
+  // tailnet address it finds its own, which is why this has to take both away.)
+  const noSelf = pf(['needs-login', 'facebook', '--url', 'https://x.com/login', '--desk', 'rob@mac'], {
+    USER: '',
+    USERNAME: '',
+    PF_SSH_SELF: ''
+  })
+  eq(noSelf.code, 1, 'a relay with no way back refuses')
+  ok(/--me/.test(noSelf.out + noSelf.err), 'and says which flag would fix it')
+  const tell = pf(['tell'])
+  eq(tell.code, 1, '`pf tell` with nothing to say refuses')
+}
 
 // ------------------------------------------------------------- asking for it again
 // Robert, 2026-09-03: "allow me to just ask, like that session who wanted it, to open

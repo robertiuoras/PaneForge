@@ -105,9 +105,31 @@ export function zoomWords(zoom: number): string {
 export const MIN_SPLIT = 380
 /** A pane narrower than this is not a pane any more, so the column stops here. */
 export const KEEP_PANE = 300
-export function clampSplit(px: number, windowWidth: number): number {
-  const most = Math.max(MIN_SPLIT, windowWidth - KEEP_PANE)
+/**
+ * The width the column is allowed to be, given the room the PANES have.
+ *
+ * `avail` is not the window: the sessions list is on the left and never gives its width
+ * up, so a column clamped against the window leaves the panes whatever is left after
+ * both. Measured 2026-09-07 in a headless copy at a 1024px window: the column sat at
+ * 480px and the terminal beside it was 165px wide - a pane in name only - because the
+ * clamp thought there were 1024px to share and there were 676.
+ */
+export function clampSplit(px: number, avail: number): number {
+  const most = Math.max(MIN_SPLIT, avail - KEEP_PANE)
   return Math.round(Math.max(MIN_SPLIT, Math.min(most, px)))
+}
+
+/**
+ * Half the room, clamped - what the column opens at, and what it falls back to when the
+ * window changes shape under it.
+ *
+ * The column used to be `50vw` in CSS and a number in the view that was written once, on
+ * the first open, and never read the window again: opened on a small window and moved to
+ * a big screen it stayed narrow, opened wide and shrunk it ate the pane. Both are the
+ * same missing sentence - the width is a function of the room, not a memory.
+ */
+export function splitFor(avail: number, chosen?: number | null): number {
+  return clampSplit(chosen && chosen > 0 ? chosen : Math.round(avail / 2), avail)
 }
 
 export function median(xs: readonly number[]): number {
@@ -592,6 +614,16 @@ export interface LoginRequest {
   step?: number
   /** The pane that asked wants this picture in front now, rather than a card to click. */
   show?: boolean
+  /** What that pane is called, so the card can name who is stuck rather than "a job". */
+  fromName?: string
+  /** The asking pane's own words for what it will do once somebody has signed in. */
+  why?: string
+  /** The pane to tell when Done is pressed. Defaults to the pane that asked. */
+  reportTo?: string
+  /** `user@address` of the desk that pane is on, when it is not this one. */
+  reportHost?: string
+  /** Set once the report has gone out, so pressing Done twice does not send it twice. */
+  reported?: boolean
 }
 
 /**
@@ -701,19 +733,122 @@ export function siteWord(site: string): string {
 }
 
 /**
+ * How long the job has been stuck, in the words a person would use.
+ *
+ * Under a minute is "just now": a card that appears saying "waiting 0 min" reads as
+ * broken. Past an hour the minutes stop mattering.
+ */
+export function waitedWords(ms: number): string {
+  const m = Math.floor(Math.max(0, ms) / 60000)
+  if (m < 1) return 'just now'
+  if (m < 60) return `waiting ${m} min`
+  const h = Math.floor(m / 60)
+  const rest = m % 60
+  return rest ? `waiting ${h}h ${rest}m` : `waiting ${h}h`
+}
+
+/**
+ * Who is stuck, in one line.
+ *
+ * A card that says "a job is waiting" tells the person nothing they can act on: with
+ * four panes and two machines, WHICH job matters. The pane's own name is the handle they
+ * already use for it in the sessions list, so it leads.
+ */
+export function stuckWords(
+  req: Pick<LoginRequest, 'machine' | 'fromName' | 'at'>,
+  now: number = Date.now()
+): string {
+  const who = req.fromName?.trim() || 'A job'
+  return `${who} on ${req.machine} - ${waitedWords(now - req.at)}`
+}
+
+/**
  * The card, for somebody who has never used a terminal. No "CDP", no "host", no "target"
  * - a website wants a password and it has to be typed on a particular computer.
+ *
+ * Robert, 2026-09-07: the card has to say who is stuck. So it names the pane, the
+ * machine, how long it has been waiting, and - when the pane said so with `--why` - what
+ * it will do once it is in, in that pane's own words.
  */
-export function loginCardText(req: Pick<LoginRequest, 'site' | 'machine'>): {
+export function loginCardText(
+  req: Pick<LoginRequest, 'site' | 'machine' | 'fromName' | 'why' | 'at'>,
+  now: number = Date.now()
+): {
   title: string
   body: string
+  who: string
+  why: string
   open: string
 } {
+  const at = typeof req.at === 'number' ? req.at : now
   return {
     title: `${siteWord(req.site)} needs you to sign in`,
-    body: `A job is waiting for ${siteWord(req.site)} on ${req.machine}. Open it and sign in - the sign-in stays on that computer.`,
+    who: stuckWords({ machine: req.machine, fromName: req.fromName, at }, now),
+    why: (req.why ?? '').trim(),
+    body: `${siteWord(req.site)} is asking for a password. Open it and sign in - the sign-in stays on ${req.machine}.`,
     open: 'Open and sign in'
   }
+}
+
+/**
+ * What the pane that asked is told once somebody has signed in.
+ *
+ * It is a sentence an agent can act on rather than a status word: it says the wall is
+ * down and that the work it stopped on is the work to carry on with.
+ */
+export function signedInWords(site: string, machine: string): string {
+  return `Signed in to ${siteWord(site)} on ${machine} - the browser is past the sign-in now, so carry on with what you were doing.`
+}
+
+/**
+ * A job on one computer asking the OTHER computer's desk to put the card up.
+ *
+ * The picture has always been able to cross machines - the app opens the ssh tunnel
+ * itself - but the ASKING never could: `pf needs-login` posts to the app on 127.0.0.1,
+ * so a job on the PC raised a card on the PC, where nobody is sitting. This is that one
+ * missing hop, and it is deliberately ssh and not the peer link: a scheduled job hits
+ * its sign-in wall whether or not the two desks happen to be paired, and often with no
+ * PaneForge running on its own machine at all.
+ *
+ * `self` is how the far desk reaches BACK - it becomes the `--host` its tunnel is opened
+ * to, and the address the "signed in" line is sent to - so a relay without one is
+ * refused rather than raising a card nobody can act on.
+ */
+export function relayCommand(a: {
+  desk: string
+  self?: string
+  url: string
+  site?: string
+  port?: number
+  machine?: string
+  why?: string
+  reportTo?: string
+  pf?: string
+}): { ok: true; argv: string[]; remote: string } | { ok: false; why: string } {
+  const desk = a.desk.trim()
+  if (!desk) return { ok: false, why: 'Say which computer should show the card, like: --desk robert@100.89.94.66' }
+  const self = a.self?.trim()
+  if (!self)
+    return {
+      ok: false,
+      why: 'The other desk has to be able to reach this machine back - pass --me user@address (or set PF_SSH_SELF)'
+    }
+  if (!/^https?:\/\//i.test(a.url))
+    return { ok: false, why: `A sign-in page starts with http:// or https:// - got "${a.url}"` }
+  const words: string[] = [a.pf ?? 'pf', 'needs-login', a.site?.trim() || siteFromUrl(a.url) || 'the website']
+  words.push('--url', a.url, '--host', self, '--open')
+  if (a.port) words.push('--port', String(a.port))
+  if (a.machine?.trim()) words.push('--machine', a.machine.trim())
+  if (a.why?.trim()) words.push('--why', a.why.trim())
+  if (a.reportTo?.trim()) words.push('--report-to', a.reportTo.trim(), '--report-host', self)
+  const remote = words.map(shellQuote).join(' ')
+  return { ok: true, remote, argv: ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', desk, remote] }
+}
+
+/** One argument, safe inside the single remote command line ssh runs through a shell. */
+export function shellQuote(word: string): string {
+  if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(word)) return word
+  return `'${word.replace(/'/g, `'"'"'`)}'`
 }
 
 /** The pane's own header, once it is open. */

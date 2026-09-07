@@ -15,6 +15,9 @@
  *   node scripts/pf-ctl.mjs open-many <plan.json>
  *   node scripts/pf-ctl.mjs devices
  *   node scripts/pf-ctl.mjs needs-login <site> --url <url> [--host user@ip] [--port N] [--machine WORDS]
+ *                                        [--why "what it will do once signed in"] [--open]
+ *                                        [--desk user@ip] [--me user@ip] [--report-to <pane>]
+ *   node scripts/pf-ctl.mjs tell <title-or-id> <text...>
  *   node scripts/pf-ctl.mjs login [url] [--site NAME] [--host user@ip] [--port N] [--machine WORDS]
  *   node scripts/pf-ctl.mjs close <title-or-id>
  *   node scripts/pf-ctl.mjs rename <title-or-id> <name...>
@@ -39,6 +42,7 @@
  *
  * Exit codes: 0 ok · 1 target not found / call failed · 2 phone server unreachable/off.
  */
+import { spawnSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -185,19 +189,78 @@ async function main() {
  * walk. It refuses here, where the mistake was made, rather than putting up a card that
  * opens a browser at nothing.
  */
+
+/** One argument, safe inside the single command line ssh hands to a shell. */
+function shellQuote(word) {
+  if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(word)) return word
+  return `'${String(word).replace(/'/g, `'"'"'`)}'`
+}
+
+/** This machine's ssh address, for the other desk to reach back on. */
+function selfAddress() {
+  const who = process.env.USER || process.env.USERNAME
+  if (!who) return undefined
+  const ts = spawnSync('tailscale', ['ip', '-4'], { encoding: 'utf8' })
+  const ip = (ts.stdout ?? '').split(/\r?\n/).map((l) => l.trim()).find(Boolean)
+  return ip ? `${who}@${ip}` : undefined
+}
+
+/**
+ * The one command that puts the card on the OTHER desk. Same shape as `relayCommand` in
+ * src/shared/remoteLogin.ts, which is where the rules are written down.
+ */
+function relayCommand(a) {
+  const desk = (a.desk ?? '').trim()
+  if (!desk) return { ok: false, why: 'Say which computer should show the card, like: --desk robert@100.89.94.66' }
+  const self = (a.me ?? selfAddress() ?? '').trim()
+  if (!self)
+    return {
+      ok: false,
+      why: 'The other desk has to be able to reach this machine back - pass --me user@address (or set PF_SSH_SELF)'
+    }
+  const words = ['pf', 'needs-login', a.site, '--url', a.url, '--host', self, '--open']
+  if (a.port) words.push('--port', String(a.port))
+  if (a.machine) words.push('--machine', a.machine)
+  if (a.why) words.push('--why', a.why)
+  if (a.reportTo) words.push('--report-to', a.reportTo, '--report-host', self)
+  const remote = words.map(shellQuote).join(' ')
+  return { ok: true, remote, argv: ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', desk, remote] }
+}
+
 let loginArgs = null
 if (cmd === 'needs-login') {
   const host = flag(rest, '--host')
   const port = flag(rest, '--port')
   const machine = flag(rest, '--machine')
   const url = flag(rest, '--url')
+  const why = flag(rest, '--why')
+  const desk = flag(rest, '--desk')
+  const me = flag(rest, '--me') ?? process.env.PF_SSH_SELF
+  // A pane that asked is the pane to tell, so `--report-to` only has to be typed by
+  // something that is not a pane (a cron job telling a pane on another machine).
+  const reportTo = flag(rest, '--report-to') ?? process.env.PF_PANE
+  const reportHost = flag(rest, '--report-host')
   const site = rest[0]
   if (!site) fail(1, 'needs-login needs a site: pf-ctl needs-login <site> --url <url> [--host user@ip]')
   if (!url) fail(1, 'needs-login needs --url <address of the sign-in page>')
   if (!/^https?:\/\//i.test(url))
     fail(1, `--url must start with http:// or https:// - got "${url}"`)
   if (port && !/^\d+$/.test(port)) fail(1, `--port must be a number - got "${port}"`)
-  loginArgs = { site, url, host, port: port ? Number(port) : undefined, machine, from: process.env.PF_PANE }
+  loginArgs = {
+    site,
+    url,
+    host,
+    port: port ? Number(port) : undefined,
+    machine,
+    why,
+    reportTo,
+    reportHost,
+    open: rest.includes('--open') || undefined,
+    from: process.env.PF_PANE,
+    // Not sent to the app: `--desk` means this ask is not for THIS app at all.
+    desk,
+    me
+  }
 }
 
 /*
@@ -306,6 +369,29 @@ if (cmd === 'hold') {
 
 // The suite drives the refusals above without an app on the machine; everything past this
 // line needs one.
+// `pf tell` refuses BEFORE it needs an app, like every other command that can be typed
+// wrong: a line with no pane to say it to is a mistake, not a message.
+if (cmd === 'tell') {
+  if (rest.length < 2 || !rest[0] || !rest.slice(1).join(' ').trim())
+    fail(1, 'tell needs a pane and one line: pf-ctl tell <title-or-id> <text...>')
+}
+
+// The card belongs on the OTHER computer, because that is where the person is - so this
+// ask never reaches the app on this machine, and runs before one is even looked for. The
+// hop is ssh and not the desk-to-desk link on purpose: a scheduled job hits its sign-in
+// wall whether or not the two desks are paired, and often with no PaneForge running on
+// its own machine at all.
+if (cmd === 'needs-login' && loginArgs?.desk) {
+  const relay = relayCommand(loginArgs)
+  if (!relay.ok) fail(1, relay.why)
+  const ssh = spawnSync(process.env.PF_SSH ?? 'ssh', relay.argv, { encoding: 'utf8' })
+  const said = `${ssh.stdout ?? ''}${ssh.stderr ?? ''}`.trim()
+  if (ssh.status !== 0)
+    fail(1, `could not ask ${loginArgs.desk} to show the sign-in card: ${said || `ssh exited ${ssh.status}`}`)
+  console.log(said || 'asked')
+  process.exit(0)
+}
+
 if (process.env.PF_CTL_NO_APP === '1') process.exit(0)
 
 await pair()
@@ -507,6 +593,14 @@ if (cmd === 'list') {
   const now = (await sessions()).find((x) => x.id === s.id)
   if (now?.title !== name) fail(1, `sessions:rename answered but ${s.id} is still "${now?.title ?? '?'}"`)
   console.log(`renamed ${s.id} (${was} -> ${name})`)
+} else if (cmd === 'tell') {
+  // One line into a pane, queued for the gap between its turns rather than typed into
+  // the middle of one - the same door the sign-in card reports back through.
+  const ref = rest.shift()
+  const text = rest.join(' ')
+  if (!ref || !text) fail(1, 'tell needs a pane and one line: pf-ctl tell <title-or-id> <text...>')
+  await send('pane:tell', [ref, text])
+  console.log(`told ${ref}`)
 } else if (cmd === 'type') {
   const ref = rest.shift()
   const text = rest.join(' ')
@@ -556,7 +650,7 @@ if (cmd === 'list') {
 } else {
   fail(
     1,
-    `unknown command "${cmd ?? ''}" - use: list | open | open-many | devices | needs-login | login | close | rename | type | hold | call | send`
+    `unknown command "${cmd ?? ''}" - use: list | open | open-many | devices | needs-login | login | tell | close | rename | type | hold | call | send`
   )
 }
 }

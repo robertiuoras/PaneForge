@@ -710,6 +710,8 @@ ok(!server.running, 'the gate test server stopped cleanly')
   const gatedSend = setLiteral('GATED_SEND')
   ok(gatedSend.has('app:relaunchAsAdmin'), 'relaunching elevated is behind the passkey')
   ok(gatedSend.has('restore:answer'), 'accepting a deskful of panes is behind the passkey')
+  ok(gatedSend.has('pane:tell'), 'handing a pane a line is typing, so it costs a passkey touch')
+  ok(gatedSend.has('login:done'), 'and so does the Done that reports it back to the pane that asked')
   // Reviewed 2026-08-16: pane geometry, visibility, bells and the stash's own text - the
   // things a phone touches constantly and none of which start anything.
   const REVIEWED_SAFE_SEND = new Set([

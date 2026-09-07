@@ -200,6 +200,8 @@ export const SURFACE: Surface = {
   needsLogin: ['invoke', 'login:need'],
   openLogin: ['invoke', 'login:open'],
   closeLogin: ['send', 'login:close'],
+  doneLogin: ['send', 'login:done'],
+  tellPane: ['send', 'pane:tell'],
   dismissLogin: ['send', 'login:dismiss'],
   loginInput: ['send', 'login:input'],
   loginPainted: ['send', 'login:ack'],

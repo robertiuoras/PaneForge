@@ -117,6 +117,13 @@ const DESK_ONLY = new Set([
  * construction rather than by a flag.
  */
 const GATED_SEND = new Set([
+  // Reviewed 2026-09-07. Both end in a line arriving in a pane's composer: `pane:tell`
+  // hands one to a named pane, and `login:done` tells whichever pane asked for the
+  // sign-in that the wall is down - over ssh, when that pane is on the other desk. The
+  // sign-in picture is a desk surface (a phone never draws it), so gating these costs a
+  // phone nothing it could have used.
+  'pane:tell',
+  'login:done',
   // It types into a browser that is signed in to somebody's accounts, on a machine the
   // person holding the phone may not be near. Strictly worse than `pty:write`.
   'login:input',
