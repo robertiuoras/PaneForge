@@ -4001,7 +4001,7 @@ app.whenReady().then(() => {
   // if the battery runs out before the next wake. Do not end or restart any agent.
   powerMonitor.on('suspend', () => {
     noteDesk(true)
-    history.flush()
+    history.flushSync()
     updateLog('power', 'suspend: desk and terminal history saved; agents left running')
   })
   // Back from sleep. Every CLI is asked to repaint (SIGWINCH) once the machine has had a

@@ -63,6 +63,7 @@ const TESTS = [
   ['headerfit', 'header-fit-test.mjs'],
   ['promptseed', 'promptseed-test.mjs'],
   ['renderwatch', 'renderwatch-test.mjs'],
+  ['mainsyncio', 'main-sync-io-test.mjs'],
   ['elapsed', 'elapsed-test.mjs'],
   ['usage', 'usage-test.mjs'],
   ['railplace', 'rail-place-test.mjs'],

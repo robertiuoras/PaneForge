@@ -43,6 +43,7 @@
 
 import { execFile, spawn } from 'node:child_process'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { app } from 'electron'
 import { spawnDetachedNoWindow } from './consoles'
@@ -291,9 +292,46 @@ export function readLedger(): Ledger {
   }
 }
 
+/**
+ * The ledger on disk, written without stopping the window.
+ *
+ * This runs from the SAMPLE_MS timer, which is the shape that froze the app on 2026-09-07:
+ * a synchronous write on the main thread has no timeout, so a machine in a disk stall stops
+ * the whole app inside one write(2). See `flush` in history.ts for the sample that proved
+ * it. Only the newest ledger is worth writing, so a request arriving while one is in flight
+ * replaces whatever was waiting rather than adding to a queue of stale ones.
+ */
+let queued: Ledger | null = null
+let writing: Promise<void> | null = null
+
 function writeLedger(ledger: Ledger): void {
+  queued = ledger
+  if (!writing) writing = drainLedger()
+}
+
+async function drainLedger(): Promise<void> {
+  try {
+    while (queued) {
+      const next = queued
+      queued = null
+      try {
+        await mkdir(dirname(file()), { recursive: true })
+        await writeFile(file(), JSON.stringify(next), 'utf8')
+      } catch {
+        /* read-only profile: see consoles.ts - a tidy-up may never be a requirement */
+      }
+    }
+  } finally {
+    writing = null
+  }
+}
+
+/** The exit path has no later turn to be written in: see `sweepOwnStraysOnExit`. */
+function writeLedgerSync(ledger: Ledger): void {
+  queued = null
   try {
     mkdirSync(dirname(file()), { recursive: true })
+    // sync-on-purpose: the app is leaving, an asynchronous write would never land
     writeFileSync(file(), JSON.stringify(ledger), 'utf8')
   } catch {
     /* read-only profile: see consoles.ts - a tidy-up may never be a requirement */
@@ -404,7 +442,7 @@ export function sweepOwnStraysOnExit(): void {
   tracked.clear()
   const ledger = readLedger()
   delete ledger.runs[String(process.pid)]
-  writeLedger(ledger)
+  writeLedgerSync(ledger)
   reapDetached(records, 900)
 }
 

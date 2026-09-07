@@ -5,8 +5,15 @@
 // truncated desk costs one set of panes, which is what it was for anyway. The
 // update path used to be the only writer (config.restoreSessions, written on the
 // way into the installer), so a PC restart, a power cut or a crash lost the lot.
+//
+// The 15 second tick and the debounce write ASYNCHRONOUSLY. 2026-09-07: a sibling
+// timer in history.ts wrote with appendFileSync and parked the entire app inside one
+// write(2) for over 50 minutes while the machine was in a disk stall. Only the paths
+// with no later turn still write synchronously - quitting, updating, going to sleep -
+// because a write handed to the thread pool on the way out never lands.
 
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdir, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { app } from 'electron'
 import type { StartSessionRequest } from '../shared/types'
@@ -70,6 +77,9 @@ let pending: Desk | null = null
  * restart that loses your panes.
  */
 let sealed = false
+/** The newest desk waiting for the disk, and the write already in flight. */
+let waiting: { desk: Desk; sig: string } | null = null
+let inflight: Promise<void> | null = null
 
 export function setDeskHold(offered: Desk | null): void {
   pending = offered
@@ -90,8 +100,8 @@ export function readDesk(): Desk | null {
   }
 }
 
-export function saveDesk(specs: StartSessionRequest[], reason: DeskReason): void {
-  if (sealed) return
+/** What the next write would be, or null when it would change nothing on disk. */
+function build(specs: StartSessionRequest[], reason: DeskReason): { desk: Desk; sig: string } | null {
   const all = deskToWrite(pending?.specs ?? null, specs)
   // While an offer stands the file stays the offered desk - same reason, so the next
   // launch asks again rather than reopening unasked as an `update` would, and the same
@@ -103,15 +113,61 @@ export function saveDesk(specs: StartSessionRequest[], reason: DeskReason): void
   const sig = JSON.stringify({ specs: all, reason: desk.reason })
   // An unchanged desk is only worth rewriting when the reason changed - "the app
   // left cleanly" is the one bit a crash cannot forge.
-  if (sig === lastWritten) return
+  if (sig === lastWritten) return null
+  return { desk, sig }
+}
+
+/**
+ * Remember the desk, without stopping the window while the disk takes it.
+ *
+ * Only the newest snapshot is worth writing, so a burst of pane changes arriving while
+ * one write is in flight collapses into a single later write rather than a queue of
+ * stale desks. `lastWritten` is set once the rename has landed, so a write that failed
+ * is retried by the next tick instead of being remembered as done.
+ */
+export function saveDesk(specs: StartSessionRequest[], reason: DeskReason): void {
+  if (sealed) return
+  const next = build(specs, reason)
+  if (!next) return
+  waiting = next
+  if (!inflight) inflight = drain()
+}
+
+async function drain(): Promise<void> {
+  try {
+    while (waiting && !sealed) {
+      const next = waiting
+      waiting = null
+      try {
+        await mkdir(dirname(file()), { recursive: true })
+        // Write-then-rename, like config: a crash mid-write must not leave a half file
+        // that reads as "no desk" on the next launch.
+        const tmp = file() + '.tmp'
+        await writeFile(tmp, JSON.stringify(next.desk, null, 2), 'utf8')
+        // The desk this run is leaving was written while this one was on its way to the
+        // disk. Renaming now would put a snapshot from before the quit back over it.
+        if (sealed) return
+        await rename(tmp, file())
+        lastWritten = next.sig
+      } catch {
+        /* read-only profile - the running app is unaffected */
+      }
+    }
+  } finally {
+    inflight = null
+  }
+}
+
+/** The same write, for the paths that have no later turn: see `saveDeskOnExit`. */
+function writeDeskSync(next: { desk: Desk; sig: string }): void {
   try {
     mkdirSync(dirname(file()), { recursive: true })
-    // Write-then-rename, like config: a crash mid-write must not leave a half file
-    // that reads as "no desk" on the next launch.
     const tmp = file() + '.tmp'
-    writeFileSync(tmp, JSON.stringify(desk, null, 2), 'utf8')
+    // sync-on-purpose: quitting, updating or going to sleep, where an asynchronous write
+    // handed to the thread pool would never land
+    writeFileSync(tmp, JSON.stringify(next.desk, null, 2), 'utf8')
     renameSync(tmp, file())
-    lastWritten = sig
+    lastWritten = next.sig
   } catch {
     /* read-only profile - the running app is unaffected */
   }
@@ -141,6 +197,9 @@ export function clearDesk(): void {
  * swarm is six of those events in a second. The tick behind it is what makes a
  * power cut survivable: without it a pane's folder or title could drift for an
  * hour with nothing written.
+ *
+ * `immediate` is the machine going to sleep, and it writes synchronously: the battery
+ * may not be there when it wakes, so this one has no later turn either.
  */
 export function startDeskAutosave(snapshot: () => StartSessionRequest[]): (immediate?: boolean) => void {
   const write = (): void => saveDesk(snapshot(), 'live')
@@ -148,7 +207,9 @@ export function startDeskAutosave(snapshot: () => StartSessionRequest[]): (immed
   return (immediate = false) => {
     if (timer) clearTimeout(timer)
     if (immediate) {
-      write()
+      if (sealed) return
+      const next = build(snapshot(), 'live')
+      if (next) writeDeskSync(next)
       return
     }
     timer = setTimeout(write, DEBOUNCE_MS)
@@ -163,8 +224,13 @@ export function startDeskAutosave(snapshot: () => StartSessionRequest[]): (immed
 export function saveDeskOnExit(specs: StartSessionRequest[], reason: DeskReason = 'quit'): void {
   if (timer) clearTimeout(timer)
   timer = null
-  saveDesk(specs, reason)
+  // Sealed FIRST, and the queue emptied: a tick's asynchronous write may already be part
+  // way to the disk, and it must not land its older snapshot on top of the desk this run
+  // is leaving. `drain` checks this again before it renames.
   sealed = true
+  waiting = null
+  const next = build(specs, reason)
+  if (next) writeDeskSync(next)
 }
 
 /** A folder that has since been deleted or renamed cannot be reopened. */
