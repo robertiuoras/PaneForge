@@ -3707,6 +3707,11 @@ function restorePanes(specs: StartSessionRequest[]): void {
             : req.laneNote
         })
         if (req.scrollbackId && wasPinned.has(req.scrollbackId)) nowPinned.push(meta.id)
+        // A prompt this pane was owed when the app went down. The pane it is replacing was
+        // named by the desk, and the ledger is keyed by that id, so this is the moment the
+        // promise is carried across - queued now if the pane came back with an agent in it,
+        // held on its new id if it came back asleep.
+        manager.deliverOwed(req.scrollbackId ?? meta.id, meta.id, !meta.asleep && meta.status !== 'exited')
       } catch {
         // Folder moved or the agent is no longer installed - skip that pane only.
       }

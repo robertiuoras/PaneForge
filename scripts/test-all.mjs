@@ -253,7 +253,8 @@ const TESTS = [
   ['qr', 'qr-test.mjs'],
   ['pairask', 'pair-ask-test.mjs'],
   ['gate', 'release-gate-test.mjs'],
-  ['conflict', 'conflict-test.mjs']
+  ['conflict', 'conflict-test.mjs'],
+  ['queuedprompt', 'queued-prompt-test.mjs']
 ]
 
 const only = process.argv.slice(2).filter((a) => !a.startsWith('-'))
