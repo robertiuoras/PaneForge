@@ -16,10 +16,11 @@
  */
 
 import { spawn, type ChildProcess } from 'node:child_process'
-import { appendFileSync, mkdirSync, readFileSync, renameSync, statSync } from 'node:fs'
+import { readFileSync, statSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { appendLog } from './logWrite'
 import { app, clipboard } from 'electron'
 // Electron 33's main process is Node 20, which has no global WebSocket - the picture is
 // a CDP stream and CDP is a socket, so this is the one dependency the feature added.
@@ -55,19 +56,10 @@ export function loginLogPath(): string {
   return join(dir, 'remote-login.log')
 }
 
+// The log must never be what breaks the sign-in it is recording, waiting for a busy disk
+// included: see logWrite.ts.
 function log(line: string): void {
-  try {
-    const file = loginLogPath()
-    mkdirSync(dirname(file), { recursive: true })
-    try {
-      if (statSync(file).size > MAX_BYTES) renameSync(file, file + '.1')
-    } catch {
-      /* first run */
-    }
-    appendFileSync(file, `[${new Date().toISOString()}] ${line}\n`)
-  } catch {
-    // The log must never be what breaks the sign-in it is recording.
-  }
+  appendLog(loginLogPath(), `[${new Date().toISOString()}] ${line}\n`, { rotateAt: MAX_BYTES })
 }
 
 export interface LoginDeps {

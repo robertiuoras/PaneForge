@@ -9,10 +9,10 @@
 // the state the sweep decided on AND the frame the pane was looking at when it said the
 // turn was over, so a false alarm can be read back afterwards instead of re-argued.
 
-import { appendFileSync, mkdirSync, renameSync, statSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { app } from 'electron'
+import { appendLog } from './logWrite'
 
 /** Two files of this size at most; older lines age out rather than growing forever. */
 const MAX_BYTES = 256 * 1024
@@ -42,17 +42,11 @@ export function plainTail(text: string, lines = 6): string {
   return rows.slice(-lines).join(' | ').slice(0, 400)
 }
 
+// The sweep raises attention from a timer, so this used to be a synchronous write on the
+// main thread from a timer callback - the exact shape that froze the app on 2026-09-07.
+// See `appendLog` in logWrite.ts.
 export function audit(kind: string, data: Record<string, unknown>): void {
-  try {
-    const file = logPath()
-    mkdirSync(dirname(file), { recursive: true })
-    try {
-      if (statSync(file).size > MAX_BYTES) renameSync(file, file + '.1')
-    } catch {
-      /* first run, or the rotate lost a race - either way keep going */
-    }
-    appendFileSync(file, JSON.stringify({ t: new Date().toISOString(), kind, ...data }) + '\n')
-  } catch {
-    // Diagnostics must never be the thing that breaks the app they are diagnosing.
-  }
+  appendLog(logPath(), JSON.stringify({ t: new Date().toISOString(), kind, ...data }) + '\n', {
+    rotateAt: MAX_BYTES
+  })
 }

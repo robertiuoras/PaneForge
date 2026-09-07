@@ -5,7 +5,7 @@
 // this exists for was read back off `autoclear-app.log` and `history/<id>.log`, and the one
 // thing missing was any record that a prompt had been accepted at all.
 
-import { appendFileSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { app } from 'electron'
@@ -22,6 +22,7 @@ import {
   type QueuedPrompt,
   type QueuedPromptStore
 } from '../shared/queuedPrompts'
+import { appendLog } from './logWrite'
 
 /** Two files of this size at most, the same cap `autoclearLog.ts` uses. */
 const MAX_BYTES = 256 * 1024
@@ -42,20 +43,9 @@ export function queuedPromptsLogPath(): string {
   return join(userDir(), 'queued-prompts.log')
 }
 
-/** One line per accepted, submitted or lost prompt. Never throws - see `acLog`. */
+/** One line per accepted, submitted or lost prompt. Never throws, never waits - see `acLog`. */
 export function qpLog(line: string): void {
-  try {
-    const file = queuedPromptsLogPath()
-    mkdirSync(dirname(file), { recursive: true })
-    try {
-      if (statSync(file).size > MAX_BYTES) renameSync(file, file + '.1')
-    } catch {
-      /* first run, or the rotate lost a race */
-    }
-    appendFileSync(file, `[${new Date().toISOString()}] ${line}\n`)
-  } catch {
-    // The ledger must never be the thing that breaks the prompt it is recording.
-  }
+  appendLog(queuedPromptsLogPath(), `[${new Date().toISOString()}] ${line}\n`, { rotateAt: MAX_BYTES })
 }
 
 let store: QueuedPromptStore | null = null
@@ -75,6 +65,9 @@ function save(next: QueuedPromptStore): void {
   try {
     const file = queuedPromptsPath()
     mkdirSync(dirname(file), { recursive: true })
+    // sync-on-purpose: the whole promise of this file is that a prompt is on disk BEFORE a
+    // single byte of it is typed, so that a crash mid-type still has it. One small file per
+    // prompt somebody submitted by hand, never a timer and never a pane's output.
     writeFileSync(file, JSON.stringify(next, null, 2))
   } catch {
     // A prompt that cannot be written down is still typed; only the safety net is lost.

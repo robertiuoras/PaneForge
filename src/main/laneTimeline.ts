@@ -9,7 +9,7 @@
 // A reading is a few hundred bytes of JSON off disk per project (laneBoard.ts caches it for
 // four seconds anyway); no git is spawned and scripts/lane.mjs is not changed.
 
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { app } from 'electron'
 import { describePlace } from '../shared/place'
@@ -20,6 +20,7 @@ import {
   type LaneEvent
 } from '../shared/laneTimeline'
 import type { LaneBoard, LaneBoardEntry } from '../shared/types'
+import { writeLatest } from './logWrite'
 
 /**
  * How often the ledger is re-read.
@@ -72,12 +73,11 @@ function load(): Store {
   return store
 }
 
+// A log that cannot be written must never be the reason a reading is not taken, and this
+// is written from the lane strip's own tick, which is the timer shape that froze the app
+// on 2026-09-07. Only the newest list matters - see `writeLatest`.
 function save(): void {
-  try {
-    writeFileSync(file(), JSON.stringify(load()))
-  } catch {
-    // A log that cannot be written must never be the reason a reading is not taken.
-  }
+  writeLatest(file(), JSON.stringify(load()))
 }
 
 /** The copy in plain words, frozen into the event at the moment it is recorded. */

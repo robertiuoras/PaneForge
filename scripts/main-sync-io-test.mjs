@@ -19,7 +19,23 @@
 import { readFileSync } from 'node:fs'
 
 /** The files converted away from synchronous writes, and kept that way. */
-const FILES = ['src/main/history.ts', 'src/main/restore.ts', 'src/main/strays.ts']
+const FILES = [
+  'src/main/history.ts',
+  'src/main/restore.ts',
+  'src/main/strays.ts',
+  'src/main/logWrite.ts',
+  'src/main/crash.ts',
+  'src/main/audit.ts',
+  'src/main/autoclearLog.ts',
+  'src/main/interventions.ts',
+  'src/main/activationLog.ts',
+  'src/main/promptArchive.ts',
+  'src/main/queuedPrompts.ts',
+  'src/main/remoteLogin.ts',
+  'src/main/updater.ts',
+  'src/main/activity.ts',
+  'src/main/laneTimeline.ts'
+]
 
 /** A call, not an import: `import { writeFileSync } from 'node:fs'` has no paren after it. */
 const SYNC_WRITE = /\b(appendFileSync|writeFileSync)\s*\(/
@@ -95,6 +111,23 @@ ok(
     /async function drainLedger\(\)/.test(strays)
 )
 ok('the exit sweep still writes the ledger synchronously', /function writeLedgerSync\(/.test(strays))
+
+// The five log files the incident listed, all of them written from a sweep, a keystroke or
+// a pane's output, all now going through one asynchronous appender.
+for (const [rel, fn] of [
+  ['src/main/audit.ts', 'appendLog'],
+  ['src/main/autoclearLog.ts', 'appendLog'],
+  ['src/main/interventions.ts', 'appendLog'],
+  ['src/main/activationLog.ts', 'appendLog'],
+  ['src/main/promptArchive.ts', 'appendLog'],
+  ['src/main/queuedPrompts.ts', 'appendLog'],
+  ['src/main/remoteLogin.ts', 'appendLog'],
+  ['src/main/updater.ts', 'appendLog'],
+  ['src/main/activity.ts', 'writeLatest'],
+  ['src/main/laneTimeline.ts', 'writeLatest']
+]) {
+  ok(`${rel} writes through logWrite.ts`, new RegExp(`\\b${fn}\\(`).test(read(rel)))
+}
 
 const index = read('src/main/index.ts')
 ok(
