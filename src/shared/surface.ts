@@ -116,6 +116,9 @@ export const SURFACE: Surface = {
   onLaneMoved: ['on', 'lane:moved'],
   onHandoffMoved: ['on', 'handoff:moved'],
   onOffloadSoon: ['on', 'offload:soon'],
+  /** Cmd-Q with panes still working: the card, and its answer. */
+  onQuitAsk: ['on', 'app:quitAsk'],
+  answerQuit: ['invoke', 'app:quitAnswer'],
   answerOffload: ['invoke', 'offload:answer'],
   pathForFile: ['local'],
   adminStatus: ['invoke', 'admin:status'],

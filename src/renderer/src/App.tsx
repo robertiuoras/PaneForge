@@ -35,6 +35,7 @@ import HandoffDialog, { type HandoffTarget } from './components/HandoffDialog'
 import Mascot, { type CloseSoon } from './components/Mascot'
 import MoveSoon, { soonKey } from './components/MoveSoon'
 import OffloadSoon from './components/OffloadSoon'
+import QuitGuard from './components/QuitGuard'
 import StopServer from './components/StopServer'
 import { chordAllowed, raiseLogin, type LoginRequest } from '../../shared/remoteLogin'
 import LoginCard from './components/LoginCard'
@@ -6958,6 +6959,7 @@ export default function App(): JSX.Element {
       />
       {/* A new pane the app decided to start on the other machine, before it does. */}
       <OffloadSoon />
+      <QuitGuard />
       {/* A pane that has just worked out whose work it is doing. */}
       <ClientToast
         named={clientNamed}

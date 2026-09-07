@@ -125,15 +125,19 @@ ok(wake.length > 200, 'found wake()')
 is(/RESET/.test(wake), false, 'waking writes no reset - the old screen IS the screen')
 ok(/resumableTranscript\(resumeCwd, resumeId, live\.meta\.agent\)/.test(wake), 'wake revalidates the saved conversation before spawning')
 ok(/live\.meta\.agent !== 'shell' && !resumable/.test(wake), 'an invalid restored agent placeholder remains asleep')
-ok(/Wake refused: this saved conversation could not be verified/.test(wake), 'the placeholder explains why wake was refused')
-ok(wake.indexOf("live.meta.agent !== 'shell' && !resumable") < wake.indexOf('live.proc = this.spawn'), 'invalid wake returns before a pty can spawn')
-ok(wake.indexOf("live.meta.agent !== 'shell' && !resumable") < wake.indexOf('live.meta.asleep = undefined'), 'invalid wake leaves the pane asleep')
+// 2026-09-07: a saved conversation the CLI would refuse no longer leaves the pane asleep
+// for ever ("Wake refused ... start a new session to replace it" on every press). It
+// wakes FRESH in its own folder, says so once, and never widens to `--continue`.
+ok(/could not be resumed, so this pane starts a new one in the same folder/.test(wake), 'an unresumable placeholder says it is starting fresh')
+ok(/resume: false, resumeId: undefined, resumeCwd: undefined/.test(wake), 'the fresh wake drops the saved id rather than adopting a sibling conversation')
+is(/Wake refused/.test(wake), false, 'nothing in wake() refuses a press any more')
+ok(wake.indexOf("live.meta.agent !== 'shell' && !resumable") < wake.indexOf('live.proc = this.spawn'), 'the resume check runs before a pty can spawn')
 ok(/live\.meta\.agent !== 'shell' && !resumable/.test(wake), 'a verified named agent session reaches the existing spawn path and shell remains allowed')
 ok(/const resumeCwd = live\.req\.resumeCwd \?\? live\.meta\.cwd/.test(wake), 'wake validates a rehomed saved conversation against its original folder')
 ok(/resumableTranscript\(resumeCwd, resumeId, live\.meta\.agent\)/.test(wake), 'the original folder is used only for exact resume validation')
 ok(/resumeCwd: s\.req\.resumeCwd/.test(sessions), 'snapshot persists the original folder that verifies the named conversation')
 ok(/resumeCwd \?\? from/.test(sessions), 'rehome preserves the original folder for a sleeping named conversation')
-ok(/noteSession\(id, resumeCwd, live\.meta\.agent/.test(wake), 'wake keeps the verified original folder bound to the named conversation')
+ok(/noteSession\(id, fresh \? live\.meta\.cwd : resumeCwd, live\.meta\.agent/.test(wake), 'wake keeps the verified original folder bound to the named conversation, and a fresh wake binds its own folder')
 
 // ---------------------------------------------------------------------------
 // Sleeping keeps its lane (lane-split 2026-09-04): the app marks the ledger asleep

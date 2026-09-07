@@ -1271,15 +1271,21 @@ export class SessionManager extends EventEmitter {
     const resumeId = live.req.resume ? live.req.resumeId : undefined
     const resumeCwd = live.req.resumeCwd ?? live.meta.cwd
     const resumable = Boolean(resumeId && resumableTranscript(resumeCwd, resumeId, live.meta.agent))
-    if (live.meta.agent !== 'shell' && !resumable) {
-      const note = '\x1b[33mWake refused: this saved conversation could not be verified, so this pane remains asleep. Start a new session to replace it.\x1b[0m\r\n'
+    // A saved conversation the CLI would refuse (transcript gone, never answered, written
+    // by a sibling lane) used to leave the pane asleep FOR EVER: every press printed "Wake
+    // refused ... start a new session to replace it", which is the app asking the person
+    // to do by hand the one thing a press means (Robert 2026-09-07, session 1, a Codex
+    // pane whose rollout had no reply yet). The pane's screen, folder and place are all
+    // still worth keeping, so it wakes FRESH in its folder and says so once. Nothing is
+    // adopted from a sibling: the resume is dropped, not widened to `--continue`.
+    const fresh = live.meta.agent !== 'shell' && !resumable
+    if (fresh) {
+      const note = '\x1b[33mThe saved conversation could not be resumed, so this pane starts a new one in the same folder. Its old screen stays above.\x1b[0m\r\n'
       this.emit('data', id, note)
       live.buffer.push(note)
-      live.meta.attention = true
-      this.emitSessions()
-      return null
+      live.req = { ...live.req, resume: false, resumeId: undefined, resumeCwd: undefined }
     }
-    noteSession(id, resumeCwd, live.meta.agent, live.req.resume ? live.req.resumeId : undefined)
+    noteSession(id, fresh ? live.meta.cwd : resumeCwd, live.meta.agent, live.req.resume ? live.req.resumeId : undefined)
     // Cleared before anything else reads the request: it is what made this pane arrive
     // asleep, and a later restart of a pane somebody has woken must not send it back.
     live.req = { ...live.req, asleep: undefined }
@@ -2114,6 +2120,23 @@ export class SessionManager extends EventEmitter {
    * frame on SIGWINCH, which is the only reliable way to fix a pane that got
    * garbled - torn box drawing, doubled lines - by a resize the app half-missed.
    */
+  /**
+   * Every live pane, after the machine comes back from sleep. A full-screen CLI that
+   * slept mid-frame paints nothing until something asks it to, and the busy/stale clocks
+   * then read a torn frame as "still working" for STALE_AFTER_MS before nudging - which
+   * is the minutes of "PaneForge takes ages to wake up" after a lid open. The SIGWINCH
+   * costs nothing on a pane that was fine.
+   */
+  redrawAll(): number {
+    let n = 0
+    for (const [id, s] of this.sessions) {
+      if (s.meta.status === 'exited' || s.meta.asleep || !s.proc) continue
+      this.redraw(id)
+      n++
+    }
+    return n
+  }
+
   redraw(id: string): void {
     const s = this.sessions.get(id)
     if (!s || s.meta.status === 'exited') return

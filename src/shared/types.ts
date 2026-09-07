@@ -2310,6 +2310,10 @@ export interface Api {
   ): () => void
   /** Answer that card: `go` false keeps the pane on this machine. */
   answerOffload(id: string, go: boolean): Promise<void>
+  /** Cmd-Q refused because panes are still working: the card's words. */
+  onQuitAsk(cb: (ask: { names: string[]; count: number }) => void): () => void
+  /** Answer that card: `go` true quits with the guard lowered, false keeps working. */
+  answerQuit(go: boolean): Promise<boolean>
   /**
    * Absolute path of a dropped File. Electron removed File.path, so the real path
    * only comes from webUtils in the preload.
