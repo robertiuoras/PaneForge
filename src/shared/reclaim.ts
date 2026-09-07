@@ -138,7 +138,14 @@ export interface ReclaimConfig {
  * 2026-08-22: two panes handed off in the morning were still holding their CLIs at
  * teatime, which is the report this number answers.
  */
-export const IDLE_CLOSE_MINUTES = 5
+/*
+ * Ten, from 2026-09-08. Five was measured against what actually happened next: reclaim.log
+ * for 2026-09-07 has manual wakes at 11:55, 12:29 and 12:36, each minutes after the pane
+ * went quiet - a person who steps away for a coffee comes back to a closed pane and presses
+ * to bring it back. Ten still empties an unattended desk within the hour and stops taking
+ * the pane somebody is in the middle of using.
+ */
+export const IDLE_CLOSE_MINUTES = 10
 
 /**
  * How long a pane may sit unused before its agent is stopped and the CARD is kept.
