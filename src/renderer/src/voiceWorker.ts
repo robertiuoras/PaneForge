@@ -7,18 +7,20 @@
 //
 // Two things are deliberate and easy to undo by accident:
 //
-//   * The wasm binaries are OURS, shipped in `out/renderer/ort/`, not the CDN
-//     transformers.js defaults to. `wasmBase` arrives in the load message rather
-//     than being computed here, because a worker's `import.meta.url` and the
-//     page's base differ in a packaged app and only the page knows the truth.
+//   * The wasm binaries are FETCHED here (voiceRuntime.ts), not shipped: they used to
+//     be copied into `out/renderer/ort/` at build time, which is how `onnxruntime-web`
+//     (130 MB) and its own transitive `onnxruntime-node` (210 MB) ended up inside
+//     every install. They are pinned by version and sha256 and cached in this
+//     worker's Cache Storage after the first clip, so a second one asks nothing.
 //     The non-asyncify build is the one the library uses on Safari - it is half
 //     the size of the default and does plain CPU inference exactly as well.
 //   * The MODEL is downloaded once from Hugging Face and kept in the browser
-//     cache. That is the only network this feature ever does, and it is why
-//     index.html's connect-src names huggingface.co.
+//     cache. That is the SECOND network call this feature makes, after the
+//     runtime above, and is why index.html's connect-src names huggingface.co.
 
 import { pipeline, env, type AutomaticSpeechRecognitionPipeline } from '@huggingface/transformers'
 import { modelId, type VoiceWorkerIn, type VoiceWorkerLoad, type VoiceWorkerOut } from '@shared/voiceModels'
+import { ensureRuntime } from './voiceRuntime'
 
 /**
  * Which weights to load, measured on this ONNX Runtime rather than chosen from a
@@ -48,12 +50,14 @@ async function load(msg: VoiceWorkerLoad): Promise<AutomaticSpeechRecognitionPip
   // Local model files are a packaged-app concept we do not use; without this the
   // library probes for /models/... first and every load eats a 404 round trip.
   env.allowLocalModels = false
+
+  post({ type: 'progress', pct: 0, note: 'Fetching the voice runtime, once' })
+  const runtime = await ensureRuntime((pct) =>
+    post({ type: 'progress', pct, note: 'Fetching the voice runtime, once' })
+  )
   const wasm = env.backends.onnx.wasm
   if (wasm) {
-    wasm.wasmPaths = {
-      mjs: `${msg.wasmBase}ort-wasm-simd-threaded.mjs`,
-      wasm: `${msg.wasmBase}ort-wasm-simd-threaded.wasm`
-    }
+    wasm.wasmPaths = { mjs: runtime.mjs, wasm: runtime.wasm }
   }
 
   loadedId = id

@@ -293,12 +293,12 @@
     "test:issues": "node scripts/issues-dialog-test.mjs"
   },
   "dependencies": {
-    "@huggingface/transformers": "^4.2.0",
     "@lydell/node-pty": "1.2.0-beta.12",
     "electron-updater": "^6.8.9",
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@huggingface/transformers": "^4.2.0",
     "@types/node": "^22.10.2",
     "@types/react": "^18.3.17",
     "@types/react-dom": "^18.3.5",
@@ -323,7 +323,15 @@
     "productName": "PaneForge",
     "files": [
       "out/**/*",
-      "package.json"
+      "package.json",
+      "!node_modules/@huggingface/transformers/**",
+      "!node_modules/onnxruntime-web/**",
+      "!node_modules/onnxruntime-node/**",
+      "!node_modules/sharp/**",
+      "!node_modules/@img/**",
+      "!node_modules/protobufjs/**",
+      "!node_modules/@protobufjs/**",
+      "!node_modules/global-agent/**"
     ],
     "asarUnpack": [
       "**/electron-liquid-glass/**"

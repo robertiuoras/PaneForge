@@ -187,6 +187,7 @@ const TESTS = [
   ['blurbs', 'blurb-test.mjs'],
   ['sounds', 'sound-test.mjs'],
   ['voice', 'voice-test.mjs'],
+  ['voicefetch', 'voice-fetch-test.mjs'],
   ['busy', 'busy-test.mjs'],
   ['fleet', 'fleet-test.mjs'],
   ['crlf', 'crlf-test.mjs'],
