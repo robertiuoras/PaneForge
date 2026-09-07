@@ -143,17 +143,20 @@ if (process.platform === 'win32') {
   console.log('  skip real pty - POSIX only; Windows reads jobFromTable, asserted above')
 } else {
   const { spawn } = require('@lydell/node-pty')
-  const shell = process.platform === 'win32' ? 'powershell' : process.env.SHELL || '/bin/zsh'
-  const p = spawn(shell, [], { name: 'xterm-256color', cols: 80, rows: 24, cwd: root, env: process.env })
-  // The shell has printed its prompt, rather than "1500ms have passed". A fixed wait was
-  // the bug: this machine's zsh sources five profile files and on a loaded box it was
-  // still starting up when the test typed at it, so `sleep` had not reached the front of
-  // the tty and the reading came back as the SHELL - a red suite about nothing. Measured
-  // 2026-08-26: 3 of 3 runs red at one commit and 1 of 3 at the next, with no change
-  // between them that paneJob can see.
-  let printed = false
-  p.onData(() => {
-    printed = true
+  const shell = '/bin/sh'
+  const prompt = `__pf_panejob_ready_${process.pid}_${Date.now()}__ `
+  // Keep this live check independent of a user's interactive shell files. `sh -i` has a
+  // known prompt and an environment without ENV, so the marker proves it is ready to read.
+  const p = spawn(shell, ['-i'], {
+    name: 'xterm-256color',
+    cols: 80,
+    rows: 24,
+    cwd: root,
+    env: { PATH: process.env.PATH || '/usr/bin:/bin', PS1: prompt }
+  })
+  let output = ''
+  p.onData((data) => {
+    output += data
   })
   const wait = (ms) => new Promise((r) => setTimeout(r, ms))
   /** Poll `read` until it answers something truthy, or give up after `budgetMs`. */
@@ -166,19 +169,20 @@ if (process.platform === 'win32') {
       await wait(100)
     }
   }
-  await until(() => printed)
-  // And then a beat for the prompt to be the foreground process rather than the tail of
-  // the startup it was drawn by.
-  await wait(400)
-  is(paneJob(p.process, shell), null, 'a real shell sitting at its prompt reports no job')
-  p.write(process.platform === 'win32' ? 'Start-Sleep -Seconds 20\r' : 'sleep 20\r')
-  const job = await until(() => paneJob(p.process, shell))
-  assert.ok(job, `a real command in front of a real pty is named (got ${JSON.stringify(p.process)})`)
-  checks++
   try {
-    p.kill()
-  } catch {
-    /* already gone */
+    const ready = await until(() => output.includes(prompt))
+    assert.ok(ready, `the clean interactive shell printed its prompt (got ${JSON.stringify(output)})`)
+    is(paneJob(p.process, shell), null, 'a real shell sitting at its prompt reports no job')
+    p.write('sleep 60\r')
+    const job = await until(() => paneJob(p.process, shell))
+    assert.ok(job, `a real command in front of a real pty is named (got ${JSON.stringify(p.process)})`)
+    checks++
+  } finally {
+    try {
+      p.kill()
+    } catch {
+      /* already gone */
+    }
   }
 }
 
