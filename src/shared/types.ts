@@ -2314,12 +2314,6 @@ export interface Api {
   onQuitAsk(cb: (ask: { names: string[]; count: number }) => void): () => void
   /** Answer that card: `go` true quits with the guard lowered, false keeps working. */
   answerQuit(go: boolean): Promise<boolean>
-  /** The Obsidian vault for a folder (walks up for `.obsidian`), or null. */
-  vaultInfo(cwd: string): Promise<VaultInfo | null>
-  /** Notes and their [[wikilinks]] as a graph, read off disk. */
-  vaultGraph(vault: string): Promise<VaultGraph>
-  /** Open a note (or the vault) in the Obsidian app via `obsidian://`. */
-  vaultOpen(vault: string, note?: string): Promise<boolean>
   /**
    * Absolute path of a dropped File. Electron removed File.path, so the real path
    * only comes from webUtils in the preload.
@@ -2720,26 +2714,4 @@ export interface Api {
    * Shown as a line in the footer instead; the detail is in paneforge-errors.log.
    */
   onAppError(cb: (message: string) => void): () => void
-}
-
-/** An Obsidian vault found beside a project. `name` is the folder's own name. */
-export interface VaultInfo {
-  path: string
-  name: string
-  notes: number
-  /** Whether the Obsidian app is installed here (the `obsidian://` scheme has a handler). */
-  appInstalled: boolean
-}
-export interface VaultNode {
-  id: string
-  title: string
-  /** Number of links in + out; the graph draws size off it. */
-  degree: number
-  folder: string
-}
-export interface VaultGraph {
-  nodes: VaultNode[]
-  /** [from id, to id] pairs; unresolved links are dropped, not drawn. */
-  links: [string, string][]
-  readAt: number
 }
