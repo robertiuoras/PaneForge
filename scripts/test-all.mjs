@@ -76,6 +76,7 @@ const TESTS = [
   ['interventions', 'interventions-test.mjs'],
   ['choices', 'choices-test.mjs'],
   ['handoffsteps', 'handoff-steps-test.mjs'],
+  ['handoffstatthrottle', 'handoff-stat-throttle-test.mjs'],
   ['panemodel', 'panemodel-test.mjs'],
   ['effort', 'effort-test.mjs'],
   ['staleframe', 'stale-frame-test.mjs'],

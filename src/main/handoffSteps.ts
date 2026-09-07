@@ -14,6 +14,18 @@ import { actionableNextSteps, handoffCandidates } from '../shared/handoffSteps'
 /** How stale a cached reading may be. A handoff is rewritten once a session, not once a second. */
 const CACHE_MS = 30_000
 
+/**
+ * How often the mtime re-check itself may run, independent of CACHE_MS.
+ *
+ * `handoffFor` is asked several times per pane inside the same sweepIdle tick (sessions.ts
+ * reads it for the chip, the countdown and the clear decision separately), so a cache that
+ * re-stats on every hit was paying one syscall PER CALL rather than per tick - the same
+ * shape of bug as the 402-reads/s sweepIdle fix (memory 2026-09-06), just cheaper per read.
+ * 250ms keeps every one of those calls inside a tick on one stat while staying far inside
+ * the "same second" freshness the clear-hook race needs (2026-09-04, s10-mtm6ccmk).
+ */
+const STAT_THROTTLE_MS = 250
+
 function symlinked(path: string): boolean {
   try {
     return lstatSync(path).isSymbolicLink()
@@ -36,7 +48,7 @@ export interface HandoffReading {
 
 const NONE: HandoffReading = { path: null, open: 0, steps: [], mtimeMs: 0 }
 
-const cache = new Map<string, { at: number; reading: HandoffReading }>()
+const cache = new Map<string, { at: number; reading: HandoffReading; statAt: number }>()
 
 // Match the transcript reader's state-directory override, including custom folder names.
 function claudeHome(): string {
@@ -60,8 +72,12 @@ export function handoffFor(cwd: string, paneId: string, now = Date.now()): Hando
   // stat is the cheap half; the absent-file case still costs nothing for CACHE_MS.
   if (hit && now - hit.at < CACHE_MS) {
     if (!hit.reading.path) return hit.reading
+    if (now - hit.statAt < STAT_THROTTLE_MS) return hit.reading
     try {
-      if (statSync(hit.reading.path).mtimeMs === hit.reading.mtimeMs) return hit.reading
+      if (statSync(hit.reading.path).mtimeMs === hit.reading.mtimeMs) {
+        hit.statAt = now
+        return hit.reading
+      }
     } catch {
       /* gone - read again */
     }
@@ -83,7 +99,7 @@ export function handoffFor(cwd: string, paneId: string, now = Date.now()): Hando
       /* absent, or unreadable - neither is evidence about the work */
     }
   }
-  cache.set(key, { at: now, reading: best })
+  cache.set(key, { at: now, reading: best, statAt: now })
   return best
 }
 
