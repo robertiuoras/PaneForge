@@ -6043,7 +6043,8 @@ export default function App(): JSX.Element {
                     the row of six that all act on the pane in front of you. */}
                 {!s.remote && s.status !== 'exited' && (
                   <button
-                    className="ghost small desk-only pt-handoff"
+                    className="icon desk-only pt-handoff"
+                    aria-label="Where this agent runs"
                     title={
                       s.status === 'starting'
                         ? `Move ${s.lane ? `lane ${s.lane}` : s.title} to another machine. It is still starting here, so the move waits until it is ready.`
@@ -6073,7 +6074,11 @@ export default function App(): JSX.Element {
                       })
                     }}
                   >
-                    Remote
+                    {/* A glyph, not the word `Remote`: it sat in a bordered pill among
+                        eight flat 24px icons, which is what made the row look assembled
+                        from two different toolbars, and the word cost the width that
+                        dropped it first in a grid. The title still says it in full. */}
+                    ⇄
                   </button>
                 )}
                 {/* The same question from the other side of it. Drawn in the same slot as
@@ -6081,14 +6086,15 @@ export default function App(): JSX.Element {
                     and a mirrored pane had no answer to it at all until now. */}
                 {s.remote && s.status !== 'exited' && (
                   <button
-                    className="ghost small desk-only pt-handoff"
+                    className="icon desk-only pt-handoff"
+                    aria-label="Bring this pane back to this machine"
                     title={`Bring ${s.title} back from ${s.remote.name}: its repo goes up as an auto-sync commit, the conversation and screen come over the link, and the pane reopens here. Mid-turn it comes back when the turn ends.`}
                     onClick={(e) => {
                       e.stopPropagation()
                       bringHere(s)
                     }}
                   >
-                    Bring here
+                    ⇤
                   </button>
                 )}
                 {/* One target instead of six. Everything below is still rendered on a

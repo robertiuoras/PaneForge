@@ -63,9 +63,13 @@ export function climbLevel(probe: (level: number) => boolean, max: number): numb
  */
 export const TIGHT_GROUPS: ReadonlyArray<readonly string[]> = [
   ['.pt-path', '.chip.res', '.pt-open'],
-  ['.git-badge', '.pt-handoff', '.pt-zoom', "[data-pt='editor']", '.icon.fix', '.pt-restart'],
+  ['.git-badge', '.pt-zoom', "[data-pt='editor']", '.icon.fix', '.pt-restart'],
   ['.agent-pick'],
-  ['.pt-clear', '.pt-reveal'],
+  // Where this pane RUNS stays with them, from 2026-09-08. It sat with the git badge, so
+  // it went at the second rung - and a pane in a grid is at that rung nearly always, which
+  // is how the whole reason for a second machine left the header without ever being
+  // pressed (Robert, looking at his own pane: "lost remote button").
+  ['.pt-clear', '.pt-reveal', '.pt-handoff'],
   ['.agent-logo']
 ]
 

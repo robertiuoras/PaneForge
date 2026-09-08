@@ -1906,25 +1906,21 @@ body.sizing * { user-select: none !important; }
 .pane-title[data-tight='5'] .pt-open { display: none }
 
 .pane-title[data-tight='2'] .git-badge,
-.pane-title[data-tight='2'] .pt-handoff,
 .pane-title[data-tight='2'] .pt-zoom,
 .pane-title[data-tight='2'] [data-pt='editor'],
 .pane-title[data-tight='2'] .icon.fix,
 .pane-title[data-tight='2'] .pt-restart,
 .pane-title[data-tight='3'] .git-badge,
-.pane-title[data-tight='3'] .pt-handoff,
 .pane-title[data-tight='3'] .pt-zoom,
 .pane-title[data-tight='3'] [data-pt='editor'],
 .pane-title[data-tight='3'] .icon.fix,
 .pane-title[data-tight='3'] .pt-restart,
 .pane-title[data-tight='4'] .git-badge,
-.pane-title[data-tight='4'] .pt-handoff,
 .pane-title[data-tight='4'] .pt-zoom,
 .pane-title[data-tight='4'] [data-pt='editor'],
 .pane-title[data-tight='4'] .icon.fix,
 .pane-title[data-tight='4'] .pt-restart,
 .pane-title[data-tight='5'] .git-badge,
-.pane-title[data-tight='5'] .pt-handoff,
 .pane-title[data-tight='5'] .pt-zoom,
 .pane-title[data-tight='5'] [data-pt='editor'],
 .pane-title[data-tight='5'] .icon.fix,
@@ -1934,11 +1930,13 @@ body.sizing * { user-select: none !important; }
 .pane-title[data-tight='4'] .agent-pick,
 .pane-title[data-tight='5'] .agent-pick { display: none }
 
-/* Clear and open-the-folder are the last two controls to go. */
+/* Clear, open-the-folder and where-this-runs are the last three controls to go. */
 .pane-title[data-tight='4'] .pt-clear,
 .pane-title[data-tight='4'] .pt-reveal,
+.pane-title[data-tight='4'] .pt-handoff,
 .pane-title[data-tight='5'] .pt-clear,
-.pane-title[data-tight='5'] .pt-reveal { display: none }
+.pane-title[data-tight='5'] .pt-reveal,
+.pane-title[data-tight='5'] .pt-handoff { display: none }
 
 .pane-title[data-tight='5'] .agent-logo { display: none }
 
@@ -1947,6 +1945,11 @@ body.sizing * { user-select: none !important; }
 .pt-actions .pt-more { display: none }
 .pane-title[data-more='on'] .pt-more { display: inline-flex }
 
+/* Where this pane runs, in the same box as every other control on the row. It used to be
+   a `.ghost` pill - border, inset highlight, 7px/10px padding - beside eight flat icons,
+   and at 11px type that one control was wider than three of them (Robert 2026-09-08:
+   "other button format better"). Arrow glyphs sit a shade small at the shared size. */
+.pt-actions .icon.pt-handoff { font-size: 14px; }
 .pt-actions .icon.pt-close {
   color: var(--danger); opacity: 0.8; font-size: 15px;
 }

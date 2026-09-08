@@ -78,7 +78,7 @@ function page(width, undo = '') {
           <button class="icon desk-only pt-reveal">F</button>
           <button class="icon desk-only">E</button>
           <button class="icon pt-zoom">Z</button>
-          <button class="ghost small desk-only pt-handoff">Remote</button>
+          <button class="icon desk-only pt-handoff">⇄</button>
           <button class="icon pt-more">&#8943;</button>
           <button class="icon pt-close">&#215;</button>
         </span>
@@ -346,7 +346,11 @@ try {
 
   const at536 = await thresholdCase(536, false)
   ok(!at536.gitBadge, '536px grid cell: the git badge is behind ⋯', JSON.stringify(at536))
-  ok(!at536.handoff, '536px grid cell: hand-off is behind ⋯', JSON.stringify(at536))
+  // Where this pane RUNS stays on the line here, from 2026-09-08: a grid cell is the width
+  // it is nearly always, and dropping it there took the whole point of a second machine off
+  // the header. It goes with clear and open-the-folder at the last rung, proved below at
+  // 320px.
+  ok(at536.handoff, '536px grid cell: where this pane runs is still on the line', JSON.stringify(at536))
   ok(at536.more, '536px grid cell: ⋯ holds what the line dropped', JSON.stringify(at536))
   ok(!at536.nameClipped, '536px grid cell: the name is not clipped', JSON.stringify(at536))
 
