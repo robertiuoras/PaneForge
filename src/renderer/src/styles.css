@@ -2220,6 +2220,15 @@ body.sizing * { user-select: none !important; }
      thing the comment above says it must not be. */
   background: var(--surface-2); border: 1px solid var(--line);
 }
+/* A sleeping pane says so in the same spot, and reuses `.pane-booting.over` wholesale so
+   the press that wakes the pane swaps one line for another in one place instead of moving
+   the words. Only the width is its own: the sentence is longer than "Starting Codex…" and
+   must not run under the mascot's corner. No animation - `npm run test:anim` refuses a
+   looping decoration and this one can be on screen all night. */
+.pane-asleep {
+  max-width: calc(100% - 24px);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 
 /* The receipt for a dropped picture: what went, drawn small, bottom-right of the pane.
    Bottom-LEFT is where Codex draws its own `>` marker and where `.pane-booting.over`

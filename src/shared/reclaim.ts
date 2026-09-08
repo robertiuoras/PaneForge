@@ -335,6 +335,10 @@ export interface ReclaimPane {
    * who said "keep this one" did not mean "unless memory is tight" - the ladder still has
    * three rungs above closing, and the honest thing under real pressure is to move or to
    * say so rather than to overrule them.
+   *
+   * It is the app's ONE per-pane "leave this alone": no close, no move, and no sleep
+   * CLOCK either (`sleepable`). The single exception is sleeping under measured pressure,
+   * which gives the agent back and takes nothing else away.
    */
   pinned?: boolean
   /**
@@ -349,7 +353,8 @@ export interface ReclaimPane {
    * restart most panes come back asleep (`restoreAsleep`) - measured 2026-09-02: 5 of 7
    * panes on the desk asleep since a 04:37 restart, none ever closing. Robert: "sessions
    * aren't closing by themselves ... id rather them to close than sleep". A pane somebody
-   * KEPT (`pinned`) is the one that sleeps instead of closing.
+   * KEPT (`pinned`) is off both clocks and sleeps only under measured memory pressure -
+   * see `sleepable`.
    */
   asleep?: number
   /**
@@ -654,7 +659,7 @@ export function idleSleepPlan(
   if (!minutes) return []
   const minIdle = pressureSleepMs(minutes, pressure)
   return panes
-    .filter((p) => sleepable(p, personHere))
+    .filter((p) => sleepable(p, personHere, pressure))
     .filter((p) => now - quietSince(p) >= minIdle)
     .sort((a, b) => quietSince(a) - quietSince(b))
     .map((p) => ({ id: p.id, idleMs: now - quietSince(p), hadAgent: p.state !== 'exited' }))
@@ -729,23 +734,34 @@ function onTheClock(p: ReclaimPane, personHere = true, now = 0, idleMs = 0): boo
  * eligible panes, quiet 126s against a 60s clock, neither slept.
  */
 /**
- * The refusals the SLEEP clock keeps, which is `keepable` minus exactly one of them.
+ * The refusals the SLEEP clock keeps, which is `keepable` plus one of its own.
  *
- * `pinned` - "keep this one open" - is an instruction about the CARD. Somebody who said it
- * meant that the pane must still be there when they come back, and a slept pane is: its
- * card, its place, its screen and its conversation are all exactly where they were, and a
- * press wakes it in the same chat. What sleeping gives back is the agent, which is the
- * ~190 MB that made the pane worth a rule in the first place.
+ * `pinned` - "keep this pane open" - is the app's ONE per-pane "leave this alone", and it
+ * means the whole ladder: not closed, not moved, and not put to sleep by the clock. There
+ * is no second control for staying awake, and there is not going to be one (Robert,
+ * 2026-09-08: "allow option to select pane and not sleep ... i dont want 2 buttons for
+ * keep open and not sleep"). The card's own menu has said `no idle clock sleeps or closes
+ * it` since it was written; this is the code catching up with the words on screen.
  *
- * So a kept pane is exempt from closing and NOT from sleeping, which is what makes "keep
- * it open" cost nothing to say. Robert, 2026-08-31: "sessions even if kept open should
- * still sleep ... otherwise uses lots of resources". Every other refusal is shared
- * verbatim, `asleep` included - a sleeping pane is the outcome, not a candidate.
+ * It is refused by the CLOCK only. Under measured memory pressure a kept pane sleeps like
+ * any other, which is the older reading of the same instruction and still the right one:
+ * Robert, 2026-08-31, "sessions even if kept open should still sleep ... otherwise uses
+ * lots of resources". Sleeping takes nothing away - card, place, screen and conversation
+ * all stay, and a press brings the agent back in the same chat - so under real pressure
+ * it is the honest answer, while closing a kept pane never is (`keepable` still refuses
+ * that at every level).
+ *
+ * Every other refusal is shared verbatim, `asleep` included - a sleeping pane is the
+ * outcome, not a candidate.
  */
-function sleepable(p: ReclaimPane, personHere = true): boolean {
+function sleepable(p: ReclaimPane, personHere = true, pressure: SleepPressure = 'ok'): boolean {
   // A sleeping pane is the OUTCOME of this clock, never a candidate for it. `keepable`
   // no longer refuses one - the close clock takes it - so the refusal lives here.
-  return !p.asleep && keepable({ ...p, pinned: false }, personHere)
+  if (p.asleep) return false
+  // Held off the clock, handed back under pressure. `keepable` reads `pinned` itself, so
+  // the pressure case has to blank it to get the rest of the refusal set.
+  if (pressure !== 'ok') return keepable({ ...p, pinned: false }, personHere)
+  return keepable(p, personHere)
 }
 
 /**

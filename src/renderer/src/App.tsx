@@ -4871,7 +4871,7 @@ export default function App(): JSX.Element {
                 className="keep-open-check"
                 type="checkbox"
                 aria-label={`Keep ${s.title} open`}
-                title={s.remote ? `Set keep-open on ${s.remote.name}, where this session runs` : 'Keep this session open until unchecked'}
+                title={s.remote ? `Set keep-open on ${s.remote.name}, where this session runs` : 'Keep this session open and its agent running until unchecked. Only a machine short of memory sleeps it.'}
                 disabled={savingPins || Boolean(s.remote)}
                 checked={!s.remote && Boolean(pinned[s.id])}
                 onChange={() => togglePin(s.id)}
@@ -6713,7 +6713,7 @@ export default function App(): JSX.Element {
                 label: pinned[s.id] ? 'Let it close when idle' : 'Keep this pane open',
                 hint: pinned[s.id]
                   ? 'the idle clocks may sleep or close it again'
-                  : 'no idle clock sleeps or closes it'
+                  : 'no idle clock sleeps or closes it - only a machine short of memory does'
                 ,
                 run: () => togglePin(s.id)
               },

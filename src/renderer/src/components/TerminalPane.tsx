@@ -238,6 +238,22 @@ function PaneBooting({ agent, over }: { agent?: string; over?: boolean }): React
 }
 
 /**
+ * The line a SLEEPING pane wears, in the same place and the same shape as the booting one
+ * - so waking is one line replaced by another, in one spot, rather than a row of dashes
+ * scrolling the old screen and a second row of dashes scrolling it again.
+ *
+ * The terminal caption underneath it is now only `· asleep ·`: the sentence belongs here,
+ * where it is drawn in the app's own type at the app's own contrast, and where it goes
+ * away on the press instead of staying in the scrollback for ever.
+ *
+ * `pointer-events: none` on purpose: the press that wakes the pane is the press ON the
+ * pane (App.tsx), and a line that swallowed it would make the pane look dead.
+ */
+function PaneAsleep(): React.JSX.Element {
+  return <div className="pane-booting over pane-asleep">Asleep — press to start it again</div>
+}
+
+/**
  * "This will be answered for you in N seconds."
  *
  * Its own component so the second timer only runs while a countdown is on screen: `useNow`
@@ -4784,7 +4800,10 @@ function TerminalPane({
           pane that would otherwise be an empty black box for the seconds the CLI spends
           starting up. It goes on the first byte, whether that byte is the agent's banner
           or a replayed transcript. */}
-      {(blank || booting) && !mirror && <PaneBooting agent={agent} over={!blank} />}
+      {(blank || booting) && !mirror && !asleep && <PaneBooting agent={agent} over={!blank} />}
+      {/* ...and the same line, in the same spot, while the agent is stopped. A mirror is
+          told nothing: the pane is asleep on the machine that owns it, not on this one. */}
+      {asleep && !mirror && <PaneAsleep />}
       {/* What was just attached, as a picture. Bottom-RIGHT: bottom-left is Codex's own
           `>` marker (the mic was moved off it for the same reason) and the header row is
           already the thing `headerFit` is fighting over. Goes on its own after
