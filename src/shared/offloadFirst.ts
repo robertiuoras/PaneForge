@@ -273,8 +273,17 @@ export function placeNewPane(i: PlaceInput): Placement {
   // pane that is already running: the ladder in shared/autoHandoff.ts and shared/reclaim.ts
   // pauses finished panes and moves the dearest one, mid-session, with its countdown card.
   // Remote at start is only ever asked for: the dialog's pick, `always`, or `pf open`.
+  //
+  // One reading reaches past that, since 2026-09-08: a desk MEASURED out of memory -
+  // `critical`, the kernel's own verdict or a load past LAG_HARD, never a pane count or
+  // the battery. Robert, with the Mac at pressure 2 and 10 GB in one pane: "this should
+  // never happen as we have remote pc available ... automatically or after a countdown".
+  // The countdown is `OffloadSoon` (`OFFLOAD_ASK_MS`, "Keep it here"), which every
+  // app-decided remote start gets; the refusals above still hold, so a bare +, a resume, a
+  // prompt about this screen or a project kept here never leave. `warn` is the everyday
+  // reading of a 16 GB desk and still starts here.
   const pressure = i.pressure ?? 'normal'
-  if (pressure === 'critical') return local('this machine is short of memory, but a new pane still starts here; running panes are what get paused or moved')
+  if (pressure === 'critical') return { where: 'remote', reason: 'this machine is out of memory' }
   if (pressure === 'warn') return local('this machine is getting low on memory, but idle panes are being paused to make room')
   return local('this machine has room for it')
 }

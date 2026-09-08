@@ -2789,6 +2789,9 @@ function runHandoff(device: string, request: HandoffRequest): Promise<HandoffIte
       list: () => manager.list(),
       snapshot: () => manager.snapshot(),
       kill: (id) => manager.kill(id),
+      sleep: (id) => {
+        manager.sleep(id, 'handoff', { source: 'handoff' })
+      },
       tailOf: (id, bytes) => history.tail(id, bytes),
       tailColsOf: (id) => history.colsOf(id),
       transcriptFileFor: (cwd, resumeId, agent) => agent === 'codex' ? codexTranscriptPath(cwd, resumeId) : transcriptPath(cwd, resumeId),

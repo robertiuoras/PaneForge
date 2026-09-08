@@ -117,9 +117,8 @@ export interface AutoHandoffConfig {
    * work running on the PC's 64 GB rather than the MacBook, and a threshold no pane reaches
    * is a policy that only exists in the settings screen.
    *
-   * 180 sits just under an ordinary Claude Code pane and well above a Codex one (16-17 MB).
-   * It remains a useful shell-cost floor, but automatic plans deliberately do not move
-   * agents until their conversations have a portable, confirmed resume path.
+   * 180 sits just under an ordinary Claude Code pane and well above a Codex one (16-17 MB),
+   * so an ordinary agent pane IS expensive - that is the whole point of the rung.
    */
   budgetMinMb: number
   /** ...or this much of one core, which is what a build or a dev server looks like. */
@@ -220,6 +219,13 @@ export interface AutoPane {
   id: string
   /** Actual local agent kind. Automatic plans fail closed unless this is `shell`. */
   agent?: string
+  /**
+   * The conversation this pane can be resumed into on another machine. A Claude or Codex
+   * pane travels ONLY when it carries one: the far end starts the CLI with `--resume <id>`
+   * against the transcript sent alongside, and a pane with no id has nothing to resume
+   * and would arrive as a fresh agent wearing the old title. See `travels`.
+   */
+  resumeId?: string
   state: FleetState
   /** epoch ms of the last thing a person typed into it */
   lastKeyboard: number
@@ -338,6 +344,25 @@ export interface AutoHandoff {
   idleMs: number
 }
 
+/**
+ * Whether this pane's WORK can exist on the other machine at all.
+ *
+ * A shell pane carries a folder and a screen, and both travel. A Claude or Codex pane
+ * carries a conversation, which travels only as a transcript plus the id to resume it
+ * (`main/handoff.ts` sends both, the far end starts `--resume <id>`, proven on both CLIs
+ * 2026-09-05). A pane with no `resumeId` has nothing to resume and stays.
+ *
+ * From 2026-09-05 to 2026-09-08 every automatic rung refused everything but a shell, and
+ * on a desk where every pane is an agent that was every pane: 0 automatic moves in
+ * offload.log and handoff.log while the machine sat at memory pressure 2 with 10 GB in
+ * one pane (2026-09-08: "this should never happen as we have remote pc available").
+ */
+export function travels(p: Pick<AutoPane, 'agent' | 'resumeId'>): boolean {
+  if (p.agent === 'shell') return true
+  if (p.agent === 'claude' || p.agent === 'codex') return !!p.resumeId
+  return false
+}
+
 /** States a pane may be moved out of. Everything else is a turn in flight. */
 export function movable(p: Pick<AutoPane, 'state' | 'asking' | 'backJob' | 'machineBound' | 'shareable'>): boolean {
   if (p.asking) return false
@@ -442,8 +467,8 @@ export function autoHandoffPlan(
  * - and because a moved pane comes straight back as a mirror, so what is on screen stays
  * on screen. And the idle wait, because a budget is not a statement about idleness.
  *
- * Only shell panes are eligible. The sort still prefers quiet-and-offscreen work, but no
- * automatic path queues an agent or treats a process start as a completed transfer.
+ * Only a pane whose work can get there is eligible (`travels`): a shell, or an agent with
+ * a conversation to resume. The sort still prefers quiet-and-offscreen work.
  */
 /**
  * What this pane costs, as one number, for ordering only.
@@ -503,7 +528,7 @@ export function budgetPlan(
 ): AutoHandoff[] {
   if (!cfg.enabled || over <= 0) return []
   const eligible = panes
-    .filter((p) => p.agent === 'shell' && !p.focused && !p.remote && !p.handingOff && queueable(p))
+    .filter((p) => travels(p) && !p.focused && !p.remote && !p.handingOff && queueable(p))
     // Mac-only work, per `AutoHandoffConfig.keepHere`. Before the cost gate on purpose: the
     // dearest pane on the desk is exactly the one this list exists to hold back.
     .filter((p) => !staysHere(cfg, p.projectName))
@@ -581,7 +606,7 @@ export function suggestMove(
 ): AutoHandoff | null {
   if (!cfg.enabled) return null
   const eligible = panes
-    .filter((p) => p.agent === 'shell' && !p.focused && !p.remote && !p.handingOff && queueable(p))
+    .filter((p) => travels(p) && !p.focused && !p.remote && !p.handingOff && queueable(p))
     .filter((p) => !staysHere(cfg, p.projectName))
     .filter((p) => !((blocked[p.id] ?? 0) > now))
     .sort(
@@ -647,7 +672,7 @@ function pick(
 
   const out: AutoHandoff[] = []
   const eligible = panes
-    .filter((p) => p.agent === 'shell' && !p.focused && !p.remote && !p.handingOff && movable(p))
+    .filter((p) => travels(p) && !p.focused && !p.remote && !p.handingOff && movable(p))
     .filter((p) => !staysHere(cfg, p.projectName))
     .filter((p) => !(screen && p.visible))
     .filter((p) => now - quietSince(p) >= minIdle)

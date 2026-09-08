@@ -93,7 +93,8 @@ is(
   '...even out of memory, set to always'
 )
 ok(/yourself/.test(placeNewPane(at({ prompt: undefined })).reason), '...and says whose pane it is')
-is(placeNewPane(at({ pressure: 'critical' })).where, 'local', 'the same desk with a brief keeps it too: auto never starts a pane elsewhere')
+is(placeNewPane(at({ pressure: 'critical' })).where, 'remote', 'the same desk with a brief, measured OUT of memory, starts it on the other machine (2026-09-08)')
+ok(/out of memory/.test(placeNewPane(at({ pressure: 'critical' })).reason), '...and says which reading sent it')
 // 2026-09-03: 'warn' is the everyday reading of a 16 GB desk, and moving on it sent every
 // briefed pane to the PC. Only a desk measured OUT of memory moves work at start; at
 // 'warn' the sleep rung is making room here.
@@ -194,9 +195,9 @@ ok(
 is(placeNewPane(at({ pressure: 'normal' })).where, 'local', 'a desk with room keeps its new pane')
 is(placeNewPane(at({ pressure: undefined })).where, 'local', '...and an unmeasured desk is a desk with room')
 is(placeNewPane(at({ pressure: 'warn' })).where, 'local', 'a desk the kernel is merely warning about keeps it - the sleep rung is making room')
-is(placeNewPane(at({ pressure: 'critical' })).where, 'local', '...and a struggling one keeps it: pressure is answered on running panes, never at start')
+is(placeNewPane(at({ pressure: 'critical' })).where, 'remote', '...and one measured OUT of memory starts new work over there, behind the countdown card')
 ok(/memory|lagging/.test(placeNewPane(at({ pressure: 'warn' })).reason), '...and says which reading')
-ok(/paused|moved/.test(placeNewPane(at({ pressure: 'critical' })).reason), '...and a struggling desk says what WILL move instead')
+ok(/out of memory/.test(placeNewPane(at({ pressure: 'critical' })).reason), '...and the struggling desk names its reading')
 // The 2026-09-02 rule, pinned dead: a MacBook that is the desk has many panes and is on
 // battery all day, and neither is a measurement of anything.
 is(placeNewPane(at({ pressure: 'normal', localPanes: 9 })).where, 'local', 'nine panes with room is not a reason')
