@@ -130,6 +130,7 @@ import { stripAnsi as strip } from '../shared/ansi'
 import { silenceMs, stalledNow } from '../shared/alerts'
 import { DEFAULT_RECOVER, recover, TAIL_CHARS } from '../shared/recover'
 import { stoppedLine } from '../shared/paneError'
+import { wakeBytes } from '../shared/wakeScreen'
 import { getConfig } from './config'
 import { spawnQuiet } from './spawnQuiet'
 import type {
@@ -277,8 +278,7 @@ const RESTORE_MARK = `\x1b[0m\r\n\x1b[2m${RESTORE_MARK_TEXT}\x1b[0m\r\n`
  * `RESTORE_MARK`: dim, one line, attributes reset first because the pane is cut mid-frame.
  * Nothing else marks the seam - the screen above it is genuinely the screen it had.
  */
-const SLEEP_MARK = '\x1b[0m\r\n\x1b[2m--- asleep: the agent has been stopped, press to wake it ---\x1b[0m\r\n'
-const WAKE_MARK = '\x1b[0m\r\n\x1b[2m--- awake ---\x1b[0m\r\n'
+const SLEEP_MARK = '\x1b[0m\r\n\x1b[2m\u00b7 asleep \u00b7\x1b[0m\r\n'
 
 /**
  * What a restored pane replays, or '' when there is nothing honest to put back.
@@ -1385,8 +1385,12 @@ export class SessionManager extends EventEmitter {
     live.meta.lastOutput = Date.now()
     live.meta.lastKeyboard = Date.now()
     live.repaintUntil = 0
-    this.emit('data', id, WAKE_MARK)
-    live.buffer.push(WAKE_MARK)
+    // Not a caption: the pane says "Starting <agent>..." over the terminal already
+    // (`PaneBooting`), and what the CLI needs here is rows nobody has painted on. See
+    // shared/wakeScreen.ts - this scrolls, it never erases.
+    const clean = wakeBytes(live.rows)
+    this.emit('data', id, clean)
+    live.buffer.push(clean)
     this.attach(live)
     recordStart(live.meta)
     this.emitSessions()
