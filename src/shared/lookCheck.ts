@@ -59,6 +59,7 @@ export function spotFits(box: { width: number; height: number }, win: { width: n
 /** A control this small is not something a person can be pointed at. */
 export const MIN_SPOT = 8
 
+
 /**
  * The one line the card prints about what it can see.
  *

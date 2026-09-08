@@ -63,5 +63,6 @@ console.log('a pane step also proves the pane is RUNNING, not just drawn')
   ok('a step that opens no pane says nothing about one', other.ok && !/pane/.test(other.says))
 }
 
+
 console.log(failed ? `\n${failed} failed` : '\nlook: all good')
 process.exit(failed ? 1 : 0)

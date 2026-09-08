@@ -3276,10 +3276,21 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
 }
 /* The ring around the control a step is about: a static accent outline over the whole
    window, under every card, taking no clicks. Nothing animates - see test:anim. */
+/* The ring, and the rest of the window dimmed behind it. The dim is the same element's
+   third shadow, spread far enough to cover any screen, so the spotlight costs no extra
+   node and still lets every click through (`pointer-events: none`). Before it, the ring
+   was a 2px accent line on a busy desk and there was no finding what a step pointed at.
+   Nothing animates - see `test:anim`. */
 .tour-spot {
   position: fixed; z-index: 44; pointer-events: none; border-radius: 8px;
-  box-shadow: 0 0 0 2px var(--accent), 0 0 0 6px color-mix(in oklab, var(--accent) 30%, transparent);
+  box-shadow:
+    0 0 0 2px var(--accent),
+    0 0 0 6px color-mix(in oklab, var(--accent) 30%, transparent),
+    0 0 0 9999px color-mix(in oklab, var(--bg) 62%, transparent);
 }
+
+/* Said on the card when a step names a control and nothing on screen matches it. */
+.tour-nospot { color: var(--muted); font-size: 12px; }
 
 /* A pane that has just named itself, and the three seconds in which that can be undone.
    One step above the countdown cards: it is the shortest-lived thing in this corner and

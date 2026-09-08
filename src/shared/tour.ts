@@ -249,7 +249,7 @@ export function whereWords(places: string[]): string {
  */
 export const MAX_SEE = 2
 
-export function trailersOf(body: string): { see: string[]; tryIt: string } {
+export function trailersOf(body: string): { see: string[]; tryIt: string; ring: string } {
   const see: string[] = []
   // `Try:` is the AUTHOR'S OWN hands-on test for this change - "open a session, ask the
   // agent for a folder path, click it". It outranks every sentence this file can work out
@@ -260,9 +260,18 @@ export function trailersOf(body: string): { see: string[]; tryIt: string } {
   //
   // ONE, and it is the first: a step with a list of things to do is a step nobody does.
   let tryIt = ''
+  // `Ring: <css selector>` is the author saying WHICH control the change is about. It
+  // outranks the surface table, which knows only the FILE that changed and so can point
+  // at nothing narrower than the head of a dialog or a whole row of header buttons - a
+  // band across the top of the window that is drawn on most steps and is true of none of
+  // them. Measured in the live tour 2026-09-08: of six steps, three ringed a band
+  // (616x43, 351x36, 648x32) and two ringed nothing at all. One per commit, first wins.
+  let ring = ''
   for (const raw of body.split('\n')) {
     const t = /^Try:\s*(.+)$/i.exec(raw.trim())
     if (t && !tryIt) tryIt = t[1].trim()
+    const g = /^Ring:\s*(.+)$/i.exec(raw.trim())
+    if (g && !ring) ring = g[1].trim()
     const m = /^See:\s*(.+)$/i.exec(raw.trim())
     if (m && !see.includes(m[1].trim())) see.push(m[1].trim())
   }
@@ -270,7 +279,7 @@ export function trailersOf(body: string): { see: string[]; tryIt: string } {
   // to the end - Robert, 2026-09-04, looking at a three-bullet step: "too much fluff just
   // 1 or 2 points to check". The bullets are written most-important-first, so the tail is
   // what goes.
-  return { see: see.slice(0, MAX_SEE), tryIt }
+  return { see: see.slice(0, MAX_SEE), tryIt, ring }
 }
 
 /**
@@ -518,8 +527,9 @@ export function stepFrom(c: TourCommit): TourStep {
   const text = c.subject.trim()
   const { where, open: fileOpen, spot: fileSpot } = placesFor(c.files, c.scope ?? '')
   const open = fileOpen !== 'none' ? fileOpen : surfaceFor(text)
-  const spot = fileSpot ?? SURFACE_SPOT[open]
-  const { see, tryIt } = trailersOf(c.body)
+  const { see, tryIt, ring } = trailersOf(c.body)
+  // The author's own selector first: see `trailersOf`.
+  const spot = ring || fileSpot || SURFACE_SPOT[open]
   const checks: string[] = []
   const byHand: string[] = []
   for (const f of c.files) {
