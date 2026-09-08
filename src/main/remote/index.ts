@@ -300,12 +300,12 @@ export class Remote extends EventEmitter {
    * see `RemoteClient.takeBack` - so everything that decides whether a pane may move is
    * decided over there, where the pty is.
    */
-  bringHere(id: string): Promise<HandoffItem[]> {
+  bringHere(id: string, now = false): Promise<HandoffItem[]> {
     const cut = splitId(id)
     const client = cut && this.clients.get(cut.peer)
     if (!cut || !client) return Promise.reject(new Error('That pane is not on a paired device'))
     if (client.status !== 'online') return Promise.reject(new Error('That device is not connected'))
-    return client.takeBack(cut.local)
+    return client.takeBack(cut.local, now)
   }
 
   /** Keep a pick the link made on its own (a launch, a handoff) across restarts. */

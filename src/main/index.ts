@@ -127,7 +127,7 @@ import { clearCommandFor, hasFreshPaneHandoff, readAsk as readAutoClearAsk, resu
 import { handoffFor, verifiedPaneHandoff } from './handoffSteps'
 import { briefForTask } from './backlogStore'
 import { startAutoClearWatch, stopAutoClearWatch } from './autoclearWatch'
-import { handoffReceiverCanQuit, type HandoffItem, type HandoffRequest } from '../shared/handoff'
+import { handoffReceiverCanQuit, INTERRUPT_WAIT_MS, type HandoffItem, type HandoffRequest } from '../shared/handoff'
 import { HandoffQueue } from './handoffQueue'
 import { devServersOf, listRunningDevs, localDevCommand, stopDevServer } from './devServers'
 import { keepDevServer, stopNow, watchDeadDevs } from './deadDev'
@@ -1130,7 +1130,7 @@ const remote = new Remote({
   // A device that mirrors one of our panes asking for it back. It is the ordinary
   // outward handoff, aimed at the device that asked - so a mid-turn pane is queued and
   // travels when its turn ends, exactly as it would had somebody pressed Hand off here.
-  handBack: (id, device) => runHandoff(device, { ids: [id], waitForTurn: true }),
+  handBack: (id, device, now) => runHandoff(device, { ids: [id], waitForTurn: now !== true, now: now === true }),
   projects: () => Promise.resolve(listProjects()),
   agents: () => Promise.resolve(listAgents()),
   jobs: () => ownJobs(),
@@ -2757,6 +2757,41 @@ function paneBusy(s: Session): boolean {
 }
 
 /**
+ * Stop the turn a pane is on so it can be moved NOW (`HandoffRequest.now`).
+ *
+ * The CLI's own Escape - what a person presses to interrupt Claude Code or Codex - and
+ * nothing else: no signal, no kill. Both CLIs write the interrupted turn to their
+ * transcript on it, which is what the far end then resumes from. A pane holding a
+ * question gets the same key, which dismisses the question. Written as `app`, so the
+ * intervention count does not bill a person for it. Resolves once the pane reads idle
+ * again (`paneBusy` false, the same reading the queue waits on, minus `bell`, which is
+ * "finished and unread" and not a reason to wait), or false after `INTERRUPT_WAIT_MS`.
+ * A pane still starting is never sent a key - it is waited on.
+ */
+async function interruptTurn(id: string): Promise<boolean> {
+  const idle = (): boolean => {
+    const s = manager.list().find((x) => x.id === id)
+    return !s || (s.status !== 'working' && s.status !== 'starting' && s.stalledSince === undefined && !s.ask)
+  }
+  if (idle()) return true
+  const deadline = Date.now() + INTERRUPT_WAIT_MS
+  let sent = 0
+  while (Date.now() < deadline) {
+    const s = manager.list().find((x) => x.id === id)
+    if (!s) return false
+    // One Escape per 4s, at most three: Claude Code needs a second one when the first
+    // landed on a menu, and a fourth would only be typing into a composer.
+    if (s.status !== 'starting' && sent < 3 && Date.now() >= deadline - INTERRUPT_WAIT_MS + sent * 4000) {
+      manager.write(id, '\x1b', 'app')
+      sent++
+    }
+    await new Promise((r) => setTimeout(r, 250))
+    if (idle()) return true
+  }
+  return idle()
+}
+
+/**
  * Start a dev server a handoff brought over, in a pane of its own.
  *
  * The command is rebuilt HERE from this machine's package.json and lockfile - the payload
@@ -2801,6 +2836,7 @@ function runHandoff(device: string, request: HandoffRequest): Promise<HandoffIte
       selfDevice: () => getConfig().remote.id,
       busy: paneBusy,
       queue: (id, dev, closeAfter) => handoffQueue.add(id, dev, closeAfter),
+      interrupt: (id) => interruptTurn(id),
       stage: (id, stage) => manager.setHandoffStage(id, stage),
       log: logHandoff,
       devServersOf: (id, cwd) => {
@@ -2846,7 +2882,7 @@ const handoffQueue = new HandoffQueue({
 
 ipcMain.handle(
   'remote:handoff',
-  (_e, device: string, ids?: string[], closeReceiverWhenDone?: boolean, waitForTurn?: boolean) => {
+  (_e, device: string, ids?: string[], closeReceiverWhenDone?: boolean, waitForTurn?: boolean, now?: boolean) => {
     // A script that packs every argument into one array reaches here with `device` as
     // that array. `String()` turned it into "id,pane,false,true", which queued a pane for
     // a machine that does not exist and tried every other pane on the desk (ids undefined
@@ -2856,13 +2892,14 @@ ipcMain.handle(
     return runHandoff(device, {
       ids: Array.isArray(ids) && ids.length ? ids.map(String) : undefined,
       closeReceiverWhenDone: closeReceiverWhenDone === true,
-      waitForTurn: waitForTurn !== false
+      waitForTurn: waitForTurn !== false && now !== true,
+      now: now === true
     })
   }
 )
 // One press on a mirrored pane's own card. The answer is the far end's report, so a
 // refusal ("dirty checkout over there") arrives as a sentence naming the pane.
-ipcMain.handle('remote:bringHere', (_e, id: string) => remote.bringHere(String(id)))
+ipcMain.handle('remote:bringHere', (_e, id: string, now?: boolean) => remote.bringHere(String(id), now === true))
 ipcMain.handle('remote:handoffPending', () =>
   handoffQueue.pending().map((q) => ({ id: q.id, device: q.device, deviceName: remote.peerName(q.device), since: q.since }))
 )

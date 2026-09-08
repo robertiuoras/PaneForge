@@ -394,8 +394,10 @@ export class RemoteClient extends EventEmitter {
    * timeout rather than a refusal - which is why the sentence the caller shows says the
    * machine did not answer rather than that it said no.
    */
-  takeBack(localId: string): Promise<HandoffItem[]> {
-    return this.ask<HandoffItem[]>({ t: 'takeback', id: localId }, HANDOFF_ASK_MS)
+  takeBack(localId: string, now = false): Promise<HandoffItem[]> {
+    // `now` is dropped on the floor by a host older than it, which then queues the pane
+    // as before - the report says so, and nothing is killed either way.
+    return this.ask<HandoffItem[]>(now ? { t: 'takeback', id: localId, now: true } : { t: 'takeback', id: localId }, HANDOFF_ASK_MS)
   }
 
   handoff(payload: HandoffPayload, file: Buffer | null): Promise<HandoffResult> {
