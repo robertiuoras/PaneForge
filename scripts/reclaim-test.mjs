@@ -241,6 +241,18 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
     eq('a pane holding a question is never paused', idleSleepPlan([pane({ id: 'a', asking: true, lastKeyboard: NOW - HOUR })], cfg, NOW, true, 'over').length, 0)
     eq('sleep switched off stays off under pressure', idleSleepPlan(quiet2m(), { ...cfg, idleSleepMinutes: 0 }, NOW, true, 'over').length, 0)
     eq('a setting shorter than the pressure wait wins', pressureSleepMs(0.25, 'tight'), 15_000)
+    // ONE per-pane control. "Keep this pane open" is the app's only "leave this alone",
+    // and it now means the sleep clock too - the card's menu has said `no idle clock
+    // sleeps or closes it` all along (Robert 2026-09-08: "i dont want 2 buttons for keep
+    // open and not sleep"). Under measured pressure it still sleeps: that gives the agent
+    // back and takes nothing else away, and closing a kept pane is refused at every level.
+    const kept = () => [pane({ id: 'k', pinned: true, lastKeyboard: NOW - 9 * HOUR })]
+    eq('a kept pane is off the sleep clock', idleSleepPlan(kept(), cfg, NOW, true, 'ok').length, 0)
+    eq('CONTROL: the same pane unpinned is slept', ids(idleSleepPlan([pane({ id: 'k', lastKeyboard: NOW - 9 * HOUR })], cfg, NOW, true, 'ok')), 'k')
+    eq('...and it sleeps once the desk is tight', ids(idleSleepPlan(kept(), cfg, NOW, true, 'tight')), 'k')
+    eq('...and when it is over', ids(idleSleepPlan(kept(), cfg, NOW, true, 'over')), 'k')
+    eq('a kept pane under pressure keeps every OTHER refusal', idleSleepPlan([pane({ id: 'k', pinned: true, busy: true, lastKeyboard: NOW - 9 * HOUR })], cfg, NOW, true, 'over').length, 0)
+    eq('and closing a kept pane stays refused under pressure', idleClosePlan(kept(), { ...cfg, idleCloseMinutes: 5 }, NOW).length, 0)
   }
   // A pane that fell asleep (or came back asleep after a restart) is on the close clock
   // like any other: 5 of 7 panes sat asleep for ten hours on 2026-09-02 because this
@@ -819,17 +831,21 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
     const p = [pane({ id: 'x', lastKeyboard: NOW - 9 * HOUR, ...extra }), pane({ id: 'pad', lastKeyboard: NOW })]
     check(`never a pane that ${what}`, !idleSleepPlan(p, SLEEPY, NOW).some((r) => r.id === 'x'), ids(idleSleepPlan(p, SLEEPY, NOW)))
   }
-  // ...and the refusal it deliberately does NOT share with the close clock. "Keep this one
-  // open" is an instruction about the CARD, and a slept pane keeps its card, its place, its
-  // screen and its conversation - so a kept pane still gives its agent back, which is what
-  // makes saying "keep it open" free. Robert, 2026-08-31: "sessions even if kept open
-  // should still sleep". The close clock's own refusal is asserted above and unchanged.
+  // ...and the refusal it now SHARES with the close clock. "Keep this pane open" is the
+  // app's one per-pane "leave this alone", and it holds the sleep clock off too - Robert,
+  // 2026-09-08: "allow option to select pane and not sleep ... i dont want 2 buttons for
+  // keep open and not sleep". The older reading (2026-08-31, "sessions even if kept open
+  // should still sleep ... otherwise uses lots of resources") survives as the pressure
+  // case, asserted with the pause tests above: a desk short of memory sleeps a kept pane,
+  // an idle clock on a desk with room does not.
   {
     const kept = [
       pane({ id: 'x', pinned: true, lastKeyboard: NOW - 9 * HOUR }),
       pane({ id: 'pad', lastKeyboard: NOW })
     ]
-    eq('a pane kept open still sleeps', ids(idleSleepPlan(kept, SLEEPY, NOW)), 'x')
+    eq('a pane kept open is off the sleep clock', ids(idleSleepPlan(kept, SLEEPY, NOW)), '')
+    eq('CONTROL: the same pane unpinned sleeps', ids(idleSleepPlan([pane({ id: 'x', lastKeyboard: NOW - 9 * HOUR }), pane({ id: 'pad', lastKeyboard: NOW })], SLEEPY, NOW)), 'x')
+    eq('...and a short machine still sleeps the kept one', ids(idleSleepPlan(kept, SLEEPY, NOW, true, 'tight')), 'x')
     eq(
       'CONTROL: and is never closed',
       idleCloseAt(kept[0], { ...DEFAULT_RECLAIM, idleCloseMinutes: 5 }, NOW),

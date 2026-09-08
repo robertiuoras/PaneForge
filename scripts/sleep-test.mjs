@@ -109,7 +109,11 @@ ok(/asleep\?: number/.test(reclaim), 'reclaim reads the sleeping flag')
 // after a restart closes like any other, or it sits on the desk for ever.
 const body = (name) => reclaim.slice(reclaim.indexOf(`function ${name}(`)).split('\n}')[0]
 ok(/!p\.asleep &&/.test(body('reclaimPlan')), 'the pressure sweep refuses a sleeping pane')
-ok(/!p\.asleep &&/.test(body('sleepable')), 'and so does the sleep clock')
+ok(/if \(p\.asleep\) return false/.test(body('sleepable')), 'and so does the sleep clock')
+// One per-pane control, not two (Robert 2026-09-08). `pinned` is "leave this pane alone":
+// off the sleep CLOCK as well as the close one, and handed back only under measured pressure.
+ok(/pressure !== 'ok'/.test(body('sleepable')), 'a kept pane sleeps only when the machine is short')
+ok(/return keepable\(p, personHere\)/.test(body('sleepable')), 'and keeps its pin against the clock')
 ok(!/!p\.asleep &&/.test(body('keepable')), 'but the idle close clock takes one')
 
 const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
