@@ -26,7 +26,16 @@ buildSync({
   platform: 'node',
   outfile
 })
-const { promptEcho, seedPrompts, completedSlash } = createRequire(import.meta.url)(outfile)
+const { promptEcho, promptRow, seedPrompts, completedSlash } = createRequire(import.meta.url)(outfile)
+
+// Real Codex 0.153.4 logs: the chevron is bold and prompt text regular. Backgrounds
+// are default in dev-h and RGB(40,36,35) on the installed desk, not palette 235.
+for (const background of [-1, 2630691]) {
+  assert.deepEqual(seedPrompts([
+    { text: '' }, { text: '› restore the actual conversation', background, boldChevron: true },
+    { text: '' }, { text: '› an unsubmitted draft', background, boldChevron: true, active: true }
+  ], 'codex'), [{line: 1, text: 'restore the actual conversation'}])
+}
 
 // Captured verbatim, trailing padding included - the terminal pads every row to the pane's
 // width, and a reader written against a trimmed line passes here and finds nothing live.
@@ -77,7 +86,7 @@ assert.equal(promptEcho('› y', 'codex'), '', 'a Codex menu key is not a prompt
 const pane = readFileSync(join(root, 'src/renderer/src/components/TerminalPane.tsx'), 'utf8')
 const reset = pane.slice(pane.indexOf('api.onPaneReset('))
 const body = reset.slice(0, reset.indexOf('\n    const off = api.onData('))
-assert.ok(body.length > 100 && body.length < 2000, 'could not isolate the pane-reset handler')
+assert.ok(body.length > 100 && body.length < 5000, 'could not isolate the pane-reset handler')
 assert.ok(
   body.includes('seedMarks()'),
   'the pane-reset handler must seed the rail: it is the only place a MIRRORED pane ever gets its prompts'
@@ -158,8 +167,17 @@ console.log('promptecho: ok')
 // The same scrubbed shape through a real xterm buffer. Codex paints the submitted line
 // with background colour 235 and a long prompt wraps into buffer rows; the seed still
 // gets one label at the first row. This is intentionally synthetic, never a saved prompt.
-try {
+{
   const { Terminal } = createRequire(import.meta.url)('@xterm/headless')
+  for (const paint of ['', '\x1b[48;2;40;36;35m']) {
+    const current = new Terminal({ cols: 80, rows: 8, allowProposedApi: true })
+    await new Promise(resolve => current.write(`\r\n${paint}\x1b[1m›\x1b[22m restore the actual conversation\x1b[0m\r\n`, resolve))
+    const row = promptRow(current.buffer.active.getLine(1))
+    assert.equal(row.boldChevron, true, 'the actual xterm cell styling identifies the Codex echo')
+    assert.deepEqual(seedPrompts([{ text: '' }, row], 'codex'), [{ line: 1, text: 'restore the actual conversation' }])
+    assert.deepEqual(seedPrompts([{ text: '' }, { ...row, active: true }], 'codex'), [])
+    current.dispose()
+  }
   const t = new Terminal({ cols: 42, rows: 10, scrollback: 100, allowProposedApi: true })
   const write = (text) => new Promise((resolve) => t.write(text, resolve))
   const ask = 'can you keep the complete wrapped Codex prompt on one accurate rail tag'
@@ -203,9 +221,7 @@ try {
   }
   assert.deepEqual(seedPrompts(quotedRows, 'codex'), [], 'an uncoloured tool chevron is never seeded')
   quote.dispose()
-  console.log('promptecho xterm: 4 ok')
-} catch {
-  console.log('promptecho xterm: SKIPPED - @xterm/headless is not installed')
+  console.log('promptecho xterm: palette, default/RGB paint, draft and quote checks passed')
 }
 
 

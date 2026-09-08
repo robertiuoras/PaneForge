@@ -50,6 +50,8 @@ export interface RevealTarget {
   /** absolute path, resolved against the pane's cwd */
   abs: string
   kind: 'file' | 'dir'
+  /** A containing folder inferred from an incomplete spaced path. */
+  ancestor?: true
   /** the `:1059` an agent appended, kept so a future "open at line" has it */
   line?: number
 }

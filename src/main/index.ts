@@ -415,7 +415,7 @@ function createWindow(): void {
   )
   if (snap) updateLog('window', `snapped ${snap.side} half of the external screen`)
   // A snapped window is a placed window, so it must not also open filling a display.
-  pseudoMax = cfg.window.maximized && mode !== 'normal' && !snap
+  pseudoMax = cfg.window.maximized && mode !== 'normal' && !snap && !headlessMode()
   const area = snap?.bounds ?? (pseudoMax ? workAreaFor(cfg) : null)
   // Asked BEFORE the window exists: `transparent` is a constructor option and cannot be
   // set afterwards, so a machine that cannot draw glass has to be known by now.
@@ -490,7 +490,7 @@ function createWindow(): void {
     })
   }
 
-  if (cfg.window.maximized && !pseudoMax && !snap) win.maximize()
+  if (cfg.window.maximized && !pseudoMax && !snap && !headlessMode()) win.maximize()
   // Clicking it is permission to behave like a normal maximized window.
   if (pseudoMax)
     win.once('focus', () => {
@@ -818,6 +818,8 @@ function rememberBounds(): void {
  * kind of interruption.
  */
 function focusWindow(asked = false): void {
+  // Offscreen copies stay offscreen even on Dock activation or a notification click.
+  if (headlessMode()) return
   if (!asked && isGameActive()) return
   if (!alive()) return createWindow()
   const w = win!

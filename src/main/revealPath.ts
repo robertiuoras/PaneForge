@@ -56,7 +56,7 @@ export function resolveRevealTarget(cwd: string, token: string): RevealTarget | 
     // ...and never the pane's own folder: that is where the pane already is.
     while (dir.length > floor.length && dir !== cwd) {
       try {
-        if (statSync(dir).isDirectory()) return { abs: dir, kind: 'dir' }
+        if (statSync(dir).isDirectory()) return { abs: dir, kind: 'dir', ancestor: true }
       } catch {
         /* keep climbing */
       }
