@@ -165,11 +165,16 @@ buildSync({
   const req = createRequire(join(work, 'x.cjs'))
   const Module = req('node:module')
   const load = Module._load
+  const promises = req('node:fs/promises')
+  let loggedResolve
+  const logWritten = new Promise(resolve => { loggedResolve = resolve })
   // The real module needs `app.getPath`; crash.ts is written to survive it throwing.
   Module._load = (name, ...rest) =>
     name === 'electron'
       ? { app: { getPath: () => join(work, 'ud'), isPackaged: false } }
-      : load(name, ...rest)
+      : name === 'node:fs/promises'
+        ? { ...promises, appendFile: async (...args) => { await promises.appendFile(...args); loggedResolve() } }
+        : load(name, ...rest)
   const C = req('./crash.cjs')
   const heard = []
   C.onProblem((kind, detail) => heard.push([kind, detail]))
@@ -177,6 +182,7 @@ buildSync({
   Module._load = load
   ok('crash.ts really calls the listener', heard.length === 1, JSON.stringify(heard))
   ok('...with the kind and detail unchanged', heard[0] && heard[0][0] === 'renderer' && /^reload \(/.test(heard[0][1]))
+  await logWritten
   const logged = readFileSync(join(work, 'ud', 'paneforge-errors.log'), 'utf8')
   ok('...and the log line was written all the same', /renderer: reload \(/.test(logged), logged.slice(0, 120))
 }
@@ -185,8 +191,8 @@ buildSync({
 
 const crashSrc = readFileSync(join(root, 'src/main/crash.ts'), 'utf8')
 ok(
-  'crash.ts writes the log BEFORE it tells any listener',
-  crashSrc.indexOf('appendFileSync') < crashSrc.indexOf('problem?.('),
+  'crash.ts queues the log before it tells any listener',
+  crashSrc.indexOf('appendLog(p,') >= 0 && crashSrc.indexOf('appendLog(p,') < crashSrc.indexOf('problem?.('),
   'the record may never depend on the alarm'
 )
 ok(

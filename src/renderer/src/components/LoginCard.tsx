@@ -28,11 +28,17 @@ export default function LoginCard({
   return (
     <div className="login-card" role="status">
       <div className="login-card-title">{words.title}</div>
+      {/* Who is stuck, before what is stuck: with four panes and two machines, the pane's
+          own name is the only handle a person can act on. */}
+      <div className="login-card-who">{words.who}</div>
       <div className="login-card-body">
         {req.state === 'failed'
           ? `PaneForge could not reach the browser on ${req.machine}. ${req.error ?? ''}`
           : words.body}
       </div>
+      {words.why && !req.state.startsWith('failed') && (
+        <div className="login-card-why">Once you are in: {words.why}</div>
+      )}
       <div className="login-card-row">
         <button className="login-btn primary" onClick={() => onOpen(req.id)}>
           {req.state === 'failed' ? 'Try again' : words.open}

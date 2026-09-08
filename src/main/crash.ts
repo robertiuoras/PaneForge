@@ -11,10 +11,11 @@
 // up. Nothing is swallowed silently - `paneforge-errors.log` next to the config is the
 // record, and the app says so in the pane footer when a window exists to say it in.
 
-import { appendFileSync, mkdirSync, renameSync, statSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { app } from 'electron'
+import { appendLog } from './logWrite'
+import { diagnosticMeta } from './diagnosticMeta'
 
 /** paneforge-errors.log is rotated past this size. 20 MB is months of normal faults. */
 const LOG_MAX_BYTES = 20 * 1024 * 1024
@@ -39,19 +40,14 @@ function logPath(): string {
 function write(kind: string, err: unknown): void {
   const at = new Date().toISOString()
   const detail = err instanceof Error ? (err.stack || err.message) : String(err)
+  const context = ` [pf ${JSON.stringify(diagnosticMeta())}]`
   // The console line is what an agent running `npm run try` sees, so it is the same text.
-  console.error(`[${at}] ${kind}: ${detail}`)
+  console.error(`[${at}] ${kind}: ${detail}${context}`)
   try {
     const p = logPath()
-    mkdirSync(dirname(p), { recursive: true })
     // 2026-09-04: this file had reached 7.8 GB - a renderer wedge logs a line every few
     // seconds and nothing ever trimmed it. Keep one previous generation and start over.
-    try {
-      if (statSync(p).size > LOG_MAX_BYTES) renameSync(p, `${p}.1`)
-    } catch {
-      /* no file yet, or rename lost a race - appending is still right */
-    }
-    appendFileSync(p, `[${at}] ${kind}: ${detail}\n`)
+    appendLog(p, `[${at}] ${kind}: ${detail}${context}\n`, { rotateAt: LOG_MAX_BYTES })
   } catch {
     /* the console line above is the fallback */
   }
@@ -79,7 +75,7 @@ export function logProblem(kind: string, detail: string): void {
  * `faultNotify.ts` is the one caller. It is a listener rather than a call inside `write`
  * for the same reason `notify` above is: this module is loaded before the profile, before
  * config and before the window, and it is the thing that catches faults in all of those -
- * so it may not import any of them. The log line is written FIRST and unconditionally; a
+ * so it may not import any of them. The log line is queued first and unconditionally; a
  * listener that throws must not lose it.
  */
 export function onProblem(fn: (kind: string, detail: string) => void): void {

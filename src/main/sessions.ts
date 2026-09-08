@@ -18,6 +18,8 @@ import { colsOf, endAll, gistFor, noteCols, recordData, recordEnd, recordStart, 
 import { jobTable } from './backJobs'
 import { backJobInfo } from './usage'
 import { forgetHandoff, handoffFor } from './handoffSteps'
+import { workShot } from './changedNothing'
+import { changedNothingWhy, changedNothingWords } from '../shared/changedNothing'
 import { clientForCwd, clientForTexts } from './clients'
 import { trustAgyWorkspace } from './agyTrust'
 import {
@@ -40,14 +42,16 @@ import type { ClientNamed } from '../shared/types'
  */
 export const NOTHING_OPEN = 'the handoff lists nothing still open'
 import { jobFromTable, paneJob, programName, SHELLS } from '../shared/paneJob'
-import { canSleep } from '../shared/sleep'
+import { canSleep, sleepRefusal } from '../shared/sleep'
 import { doneEnough } from '../shared/closeWhenDone'
 import { folderName, laneOfCheckout, projectOf } from '../shared/place'
 import { dropStale, lentGrid, watchedBorrow, type Borrow } from '../shared/paneSize'
 import { START_COLS, START_ROWS } from '../shared/paneGrid'
 import { RESTORE_MARK_TEXT } from '../shared/replayWidth'
-import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, SUBMIT_GAP_MS, armDecision, clearChunks, hasFreshPaneHandoff, resumeOf, dropFor, dropWords, expiryDecision, queuedPromptDecision, quietEnoughToArm, type DropReason, type QueuedPromptVerdict } from '../shared/autoclear'
+import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, SUBMIT_GAP_MS, armDecision, clearChunks, hasFreshPaneHandoff, resumeOf, dropFor, dropWords, expiryDecision, queuedPromptDecision, quietEnoughToArm, standDownFor, type DropReason, type QueuedPromptVerdict } from '../shared/autoclear'
 import { acLog } from './autoclearLog'
+import { dropAllFor, noteAccepted, noteDropped, noteSubmitted, owedAfterRestore } from './queuedPrompts'
+import type { QueueDrop } from '../shared/queuedPrompts'
 import { logReclaim } from './activationLog'
 import { ledgerSleep, ledgerWake } from './laneLedger'
 import type { SleepReason } from '../shared/types'
@@ -121,7 +125,7 @@ import { nextCwdGone, reapForMissingCwd } from '../shared/cwdGone'
 import { askKeyOf, autoAnswerAt, DEFAULT_AUTO_ANSWER, dueForAuto, pickAnswer } from '../shared/autoAnswer'
 import { countIntervention } from './interventions'
 import { deskFocused } from './gameMode'
-import { askSignature, CHOOSE_GAP_MS, keysForChoice, readAsk, sameAsk } from '../shared/choices'
+import { askSignature, CHOOSE_GAP_MS, keysForChoice, readAsk, sameAsk , stampMatches} from '../shared/choices'
 import { stripAnsi as strip } from '../shared/ansi'
 import { silenceMs, stalledNow } from '../shared/alerts'
 import { DEFAULT_RECOVER, recover, TAIL_CHARS } from '../shared/recover'
@@ -236,6 +240,17 @@ const PROMPT_ENTER_TRIES = ms('PF_PROMPT_ENTER_TRIES', 6)
  * away. Nothing waits on this timer: the pane is usable throughout.
  */
 const CLEAR_RESUME_BUDGET_MS = ms('PF_CLEAR_RESUME_BUDGET_MS', 180_000)
+/**
+ * How long a queued prompt waits BEHIND a person before giving up on them.
+ *
+ * A different question from `CLEAR_RESUME_BUDGET_MS`, which sizes a CLI booting. This one
+ * sizes somebody's own turn in the pane they just typed into, and those run long: on this
+ * desk a turn started in a freshly cleared session regularly passes ten minutes. It has to
+ * be generous, because expiring here is the failure Robert reported - the handoff prompt
+ * silently never delivered - and waiting costs nothing at all: the pane is his throughout,
+ * the curtain is down, and the prompt goes in the moment the composer is idle and empty.
+ */
+const PERSON_WAIT_MAX_MS = ms('PF_PERSON_WAIT_MAX_MS', 45 * 60_000)
 /**
  * The hard ceiling on the handover curtain.
  *
@@ -392,6 +407,19 @@ interface Live {
   effortHold?: { tail: string; since: number }
   /** The one write that must not be looked at again: the held return, on its way out. */
   effortPassThrough?: boolean
+  /**
+   * The folder as it was when this turn started, and as it was when the turn ended -
+   * `shared/changedNothing.ts`. Both are read once per turn on the turn's own boundaries,
+   * so a desk of eight panes costs two `git status` calls per turn and nothing per tick.
+   *
+   * `undefined` on either side is a reading that FAILED, and the verdict refuses on it.
+   * The pair is cleared the moment the sweep has read it, so a stale after-shot cannot be
+   * compared against the next turn's before-shot.
+   */
+  workBefore?: string
+  workAfter?: string
+  /** The finished turn waiting to be judged, or absent when there is nothing pending. */
+  workTurn?: { startedAt: number; endedAt: number }
   /** the last few things asked at this pane, for `repeatedTopic` - see `topicFor` */
   topicAsks?: string[]
   /** a phone is holding the pty at its own shape, and owes the desk its size back */
@@ -786,6 +814,12 @@ export class SessionManager extends EventEmitter {
     if (born) {
       meta.status = 'exited'
       meta.asleep = Date.now()
+      // Which sleep this is, and not decoration: a pane born asleep is the ONE sleeping
+      // pane whose "nobody has read this" reading is a lie, because `lastOutput` above is
+      // stamped now while its screen is bytes from before the restart. `shared/reclaim.ts`
+      // reads this to tell it apart from a pane that printed a turn and then fell asleep
+      // with nobody having looked at it.
+      meta.asleepReason = 'restored'
     }
     const live: Live = {
       meta,
@@ -1131,6 +1165,11 @@ export class SessionManager extends EventEmitter {
     this.attach(live)
     recordStart(live.meta)
     this.queuePrompt(id, live.req.prompt, live.req.promptDelay)
+    // A prompt this pane was owed when its process went away. The pane keeps its id
+    // through sleep and restart, so the ledger row is simply re-queued into the composer
+    // that is about to appear - a prompt accepted at 05:19 and never typed is still owed
+    // at 05:45, which is the whole reason it is written down.
+    this.deliverOwed(id, id)
     this.emitSessions()
     return live.meta
   }
@@ -1148,21 +1187,39 @@ export class SessionManager extends EventEmitter {
    * `status` goes to `exited` alongside `asleep` on purpose: every guard in this app that
    * asks whether a pane has a live process already reads that word.
    */
-  sleep(id: string, reason: SleepReason = 'manual'): Session | null {
+  sleep(id: string, reason: SleepReason = 'unknown', evidence?: import('../shared/types').SleepEvidence): Session | null {
+    if (!['manual', 'idle', 'pressure', 'queued', 'unknown', 'continuation', 'tour'].includes(reason)) reason = 'unknown'
     const live = this.sessions.get(id)
-    if (!live) return null
-    if (
-      !canSleep({
-        status: live.meta.status,
-        asleep: live.meta.asleep,
-        busy: Boolean(live.meta.runSince) || live.busyUntil > Date.now(),
-        asking: Boolean(live.meta.ask),
-        drafting: Boolean(live.meta.drafting),
-        job: live.meta.job,
-        backJob: live.meta.backJob
-      })
-    )
+    if (!live) {
+      logReclaim({ action: 'sleep-refused', pane: id, reason, refusal: 'pane-missing' })
       return null
+    }
+    const reading = {
+      status: live.meta.status,
+      asleep: live.meta.asleep,
+      busy: Boolean(live.meta.runSince) || live.busyUntil > Date.now(),
+      asking: Boolean(live.meta.ask),
+      drafting: Boolean(live.meta.drafting),
+      job: live.meta.job,
+      backJob: live.meta.backJob
+    }
+    // These are measured before killing the process. Explicit fields keep caller-supplied
+    // data out of the log: never spread an IPC payload which could contain prompt text.
+    const decision = {
+      reason,
+      source: ['renderer-idle-sweep', 'tour', 'continuation', 'renderer', 'api', 'internal'].includes(evidence?.source ?? '') ? evidence!.source : 'internal',
+      pressure: ['ok', 'tight', 'over'].includes(evidence?.pressure ?? '') ? evidence!.pressure : undefined,
+      idleMs: Number.isFinite(evidence?.idleMs) ? evidence!.idleMs : undefined,
+      thresholdMs: Number.isFinite(evidence?.thresholdMs) ? evidence!.thresholdMs : undefined,
+      status: live.meta.status, processPid: live.proc?.pid, agent: live.meta.agent,
+      busy: reading.busy, asking: reading.asking, drafting: reading.drafting,
+      job: Boolean(reading.job), backJob: Boolean(reading.backJob),
+      lastKeyboard: live.meta.lastKeyboard, lastOutput: live.meta.lastOutput
+    }
+    if (!canSleep(reading)) {
+      logReclaim({ action: 'sleep-refused', pane: id, ...decision, refusal: sleepRefusal({ ...reading, job: reading.job ? 'a job' : undefined, backJob: reading.backJob ? 'a job' : undefined }) })
+      return null
+    }
     // An unnamed provider resume selects some other conversation. Do this before the
     // ledger or process tree changes: a pane without an exact answered conversation
     // remains running until its own conversation can be identified. Shell panes have no
@@ -1173,6 +1230,7 @@ export class SessionManager extends EventEmitter {
     if (live.meta.agent !== 'shell' && !resumable) {
       if (live.sleepRefusalShown) return null
       live.sleepRefusalShown = true
+      logReclaim({ action: 'sleep-refused', pane: id, ...decision, resumeId, refusal: 'conversation-unverified' })
       const note = '\x1b[33mSleep refused: this conversation could not be verified, so this pane remains running.\x1b[0m\r\n'
       this.emit('data', id, note)
       live.buffer.push(note)
@@ -1186,6 +1244,7 @@ export class SessionManager extends EventEmitter {
       return null
     }
     live.sleepRefusalShown = false
+    logReclaim({ action: 'sleep-request', pane: id, ...decision, resumeId })
     // Before the CLI dies, so the SessionEnd hook it fires on the way out reads the lane
     // ledger already marked - the whole point being that it PARKS this hold instead of
     // releasing it (see scripts/lane.mjs `releaseClaim`). Never blocks: worst case the
@@ -1221,7 +1280,7 @@ export class SessionManager extends EventEmitter {
     this.emit('data', id, SLEEP_MARK)
     live.buffer.push(SLEEP_MARK)
     this.emitSessions()
-    logReclaim({ at: Date.now(), action: 'sleep', pane: id, reason, folder: basename(live.meta.cwd) })
+    logReclaim({ at: Date.now(), action: 'sleep', pane: id, ...decision, resumeId, folder: basename(live.meta.cwd) })
     return live.meta
   }
 
@@ -1263,7 +1322,10 @@ export class SessionManager extends EventEmitter {
 
   wake(id: string): Session | null {
     const live = this.sessions.get(id)
-    if (!live || !live.meta.asleep) return null
+    if (!live || !live.meta.asleep) {
+      logReclaim({ action: 'wake-refused', pane: id, refusal: live ? 'not-asleep' : 'pane-missing' })
+      return null
+    }
     const reason = live.meta.asleepReason
     // Restore can deliberately leave an unavailable saved conversation asleep. Never
     // turn that placeholder into an unnamed provider resume or a fresh replacement.
@@ -1279,6 +1341,7 @@ export class SessionManager extends EventEmitter {
     // still worth keeping, so it wakes FRESH in its folder and says so once. Nothing is
     // adopted from a sibling: the resume is dropped, not widened to `--continue`.
     const fresh = live.meta.agent !== 'shell' && !resumable
+    logReclaim({ action: 'wake-request', pane: id, previousSleepReason: reason, resumeId, resumable, fresh, agent: live.meta.agent })
     if (fresh) {
       const note = '\x1b[33mThe saved conversation could not be resumed, so this pane starts a new one in the same folder. Its old screen stays above.\x1b[0m\r\n'
       this.emit('data', id, note)
@@ -1289,7 +1352,12 @@ export class SessionManager extends EventEmitter {
     // Cleared before anything else reads the request: it is what made this pane arrive
     // asleep, and a later restart of a pane somebody has woken must not send it back.
     live.req = { ...live.req, asleep: undefined }
-    live.proc = this.spawn(live.req, live.meta.agent, live.cols, live.rows, live.meta.id)
+    try {
+      live.proc = this.spawn(live.req, live.meta.agent, live.cols, live.rows, live.meta.id)
+    } catch (error) {
+      logReclaim({ action: 'wake-failed', pane: id, resumeId, fresh, failure: 'spawn-failed' })
+      throw error
+    }
     live.runner = specFor(live.meta.agent).bin
     live.meta.asleep = undefined
     live.meta.asleepReason = undefined
@@ -1297,7 +1365,7 @@ export class SessionManager extends EventEmitter {
     // conversation state it needs - so the ledger reads asleep for the whole gap between
     // "the app decided to wake this pane" and "the CLI is actually running again".
     ledgerWake(live.meta.cwd, id)
-    logReclaim({ at: Date.now(), action: 'wake', pane: id, reason: reason ?? 'manual', folder: basename(live.meta.cwd) })
+    logReclaim({ at: Date.now(), action: 'wake', pane: id, previousSleepReason: reason ?? 'unknown', resumeId: live.req.resumeId, fresh, processPid: live.proc?.pid, agent: live.meta.agent, folder: basename(live.meta.cwd) })
     // Stamped for the `wake-printed` line further down, which is where the seconds are.
     live.wokeAt = Date.now()
     live.meta.status = 'starting'
@@ -1458,6 +1526,26 @@ export class SessionManager extends EventEmitter {
   sendPrompt(id: string, text: string): void {
     if (!this.sessions.has(id)) return
     this.queuePrompt(id, text)
+  }
+
+  /**
+   * Type the prompts a pane is still owed, from the ledger rather than from memory.
+   *
+   * `oldId` is the pane the prompt was accepted for - the same pane after a restart or a
+   * wake, and the pane this one is REPLACING after a restore, which is issued a new id.
+   * Each row is re-queued under its own key, so nothing is accepted twice and a prompt
+   * still waiting when the app goes down is still waiting when it comes back.
+   */
+  deliverOwed(oldId: string, newId: string, queue = true): number {
+    const owed = owedAfterRestore(oldId, newId)
+    // A pane that came back ASLEEP has no composer to type into, so the rows are carried
+    // onto its new id and left there: `wake()` calls this again with `queue` on. Typing
+    // into a pane with no process is how a recovered prompt would be lost a second time.
+    if (queue) {
+      for (const row of owed)
+        this.queuePrompt(newId, row.text, 0, PROMPT_START_MS, undefined, PROMPT_WAIT_MAX_MS, 'turn', row.key)
+    }
+    return owed.length
   }
 
   /**
@@ -1642,6 +1730,11 @@ export class SessionManager extends EventEmitter {
     const asked = submitted ? live.typed : ''
     if (submitted) {
       live.meta.lastKeyboard = Date.now()
+      // A person sending a line owns the pane, so an armed countdown stands down for it -
+      // and an `app` write never does. `standDownFor` is the whole decision; without it
+      // this app's own queued prompt cancelled the clear and the log blamed the person.
+      const stand = standDownFor(origin)
+      if (stand) this.cancelAutoClear(id, stand)
       const slash = isSlashCommand(live.typed)
       cleared = slash && clearsConversation(live.typed)
       bare = !slash && isBareReturn(live.submitLine)
@@ -1748,6 +1841,23 @@ export class SessionManager extends EventEmitter {
     // count from now and report a fraction of the real time.
     live.meta.runSince = Date.now() - (clock?.ms ?? 0)
     live.meta.lastRunMs = undefined
+    // Whatever the last turn left on the card belongs to the last turn. A new one clears
+    // it and reads the folder once, so the end of THIS turn has something to compare
+    // against - see `shared/changedNothing.ts`.
+    live.meta.changedNothing = undefined
+    live.meta.changedNothingWhy = undefined
+    live.workAfter = undefined
+    live.workTurn = undefined
+    live.workBefore = undefined
+    // The turn may already have ended by the time git answers. A before-shot that arrives
+    // late is still the right one - it was taken from this turn's own start - but it must
+    // not overwrite a reading taken for a LATER turn, and `runSince` moving is how this
+    // knows another one started.
+    const startedThis = live.meta.runSince
+    void workShot(live.meta.cwd).then((shot) => {
+      if (live.meta.runSince === startedThis || live.workTurn?.startedAt === startedThis)
+        live.workBefore = shot
+    })
     // The bell belongs to the turn that rang it. Nothing clears it but a person looking at
     // the pane, so one left unacknowledged used to follow the pane into its next turn and
     // claim a running agent was waiting on an answer. Only on a genuinely NEW turn - the
@@ -1783,6 +1893,14 @@ export class SessionManager extends EventEmitter {
   private endRun(live: Live): boolean {
     if (!live.meta.runSince) return false
     live.meta.lastRunMs = Date.now() - live.meta.runSince
+    // Read the folder a second time, and hand the pair to the sweep to judge. The verdict
+    // is not taken here because git has not answered yet and this method is synchronous;
+    // it is taken beside `handoffOpen`, on the same seam and under the same contract.
+    live.workTurn = { startedAt: live.meta.runSince, endedAt: Date.now() }
+    const endedThis = live.workTurn.startedAt
+    void workShot(live.meta.cwd).then((shot) => {
+      if (live.workTurn?.startedAt === endedThis) live.workAfter = shot
+    })
     live.meta.runSince = undefined
     live.runEndedAt = Date.now()
     // The turn is over, however it ended: a pane cannot still be "stuck mid-turn"
@@ -1808,6 +1926,22 @@ export class SessionManager extends EventEmitter {
    * line lands between that pane's own turns instead of inside one. It is sent BEFORE the
    * kill: `kill()` deletes this session, and with it the request that names who to tell.
    */
+  /**
+   * Say one line to a pane, between its own turns.
+   *
+   * `queuePrompt` is the difference between this and a raw write: it waits for an idle
+   * composer, so a line that arrives while the agent is mid-answer is not typed into the
+   * middle of it. The sign-in card uses it to tell the pane that asked that the wall is
+   * down; `false` means no such pane, which the caller logs rather than retries.
+   */
+  tellPane(ref: string, text: string): boolean {
+    const live =
+      this.sessions.get(ref) ?? [...this.sessions.values()].find((l) => l.meta.title === ref)
+    if (!live) return false
+    this.queuePrompt(live.meta.id, text)
+    return true
+  }
+
   private sweepCloseWhenDone(live: Live, now: number, quiet: number): void {
     const { meta } = live
     if (!doneEnough({ ...meta, busyUntil: live.busyUntil }, quiet, now)) return
@@ -2169,10 +2303,13 @@ export class SessionManager extends EventEmitter {
    * that gap somebody at the desk may have answered it - at which point the keys would
    * land in a composer, as an arrow through history and a return that submits it.
    */
-  choose(id: string, n: number, hand: WriteOrigin = 'desk'): boolean {
+  choose(id: string, n: number, hand: WriteOrigin = 'desk', want?: string): boolean {
     const live = this.sessions.get(id)
     const ask = live?.meta.ask
     if (!live || !ask) return false
+    // A press that names the question it was drawn against, and names a different one:
+    // it came from a button that outlived its question. Refusing IS the feature.
+    if (!stampMatches(ask, want)) return false
     const keys = keysForChoice(ask, n)
     if (!keys) return false
     // Answering is engaging with the pane, the same as typing in it: the turn that
@@ -2787,6 +2924,8 @@ export class SessionManager extends EventEmitter {
   kill(id: string): void {
     const s = this.sessions.get(id)
     if (!s) return
+    logReclaim({ action: 'close-request', pane: id, processPid: s.proc?.pid,
+      status: s.meta.status, asleep: Boolean(s.meta.asleep), quitting: this.down })
     // Before the pty dies, while its pid still names a group and a tree. What the pane
     // started detached is not reachable from either, which is what strays.ts is for.
     if (s.proc) killPaneStrays(id, s.proc.pid)
@@ -2797,6 +2936,10 @@ export class SessionManager extends EventEmitter {
     }
     stopPipe(id)
     recordEnd(id, resumeIdFor(id))
+    // A prompt this pane was owed dies with it, and SAYS so: the card is gone, so nothing
+    // will ever restore that id, and a row left behind would be a promise the app cannot
+    // keep. The line in `queued-prompts.log` carries enough of the text to find it again.
+    dropAllFor(id, 'gone')
     forgetSession(id)
     this.sessions.delete(id)
     forgetHandoff(id)
@@ -2828,6 +2971,11 @@ export class SessionManager extends EventEmitter {
     this.down = true
     const live = [...this.sessions.values()]
     const ids = [...this.sessions.keys()]
+    for (const s of live) {
+      logReclaim({ action: 'shutdown-request', pane: s.meta.id, processPid: s.proc?.pid,
+        agent: s.meta.agent, folder: basename(s.meta.cwd), status: s.meta.status,
+        asleep: Boolean(s.meta.asleep), quitting: true })
+    }
     this.sessions.clear()
     // Before the early return: a pane that was teed and then closed by hand is gone
     // from the map, but its stream is only closed here if anything went wrong above.
@@ -2922,6 +3070,9 @@ export class SessionManager extends EventEmitter {
     const proc = live.proc
     // A pane with no process: `wake()` calls this again once there is one.
     if (!proc) return
+    const processIdentity = { pane: id, processPid: proc.pid, agent: meta.agent,
+      resumeId: live.req.resumeId, folder: basename(meta.cwd) }
+    logReclaim({ action: 'process-start', ...processIdentity })
 
     proc.onData((data) => {
       // A late event from the previous process of a restarted session would append
@@ -2994,6 +3145,9 @@ export class SessionManager extends EventEmitter {
     })
 
     proc.onExit(({ exitCode }) => {
+      logReclaim({ action: 'process-exit', ...processIdentity, exitCode,
+        superseded: live.proc !== proc, asleep: Boolean(meta.asleep),
+        sleepReason: meta.asleepReason, quitting: this.down, currentStatus: meta.status })
       if (live.proc !== proc) return
       meta.status = 'exited'
       // A pane put to sleep killed this process itself and has already said everything
@@ -3060,15 +3214,18 @@ export class SessionManager extends EventEmitter {
   /**
    * A person taking the pane back mid-handover.
    *
-   * Moving `lastKeyboard` is what actually cancels the queued resume prompt: `queuePrompt`
-   * compares it against the mark it took when the prompt was queued, and anything later
-   * reads as somebody owning the pane. Doing it this way rather than with a second flag
-   * means the take-over and a real keystroke cannot disagree.
+   * `tookOverAt` is what actually cancels the queued resume prompt, and it is a SECOND
+   * flag on purpose. It used to be `lastKeyboard` alone, on the reasoning that a take-over
+   * and a keystroke cannot disagree - but they mean opposite things, and reading them as
+   * one is what lost the hands-off flow every time Robert typed into a pane mid-handover
+   * (2026-09-07; see `queuedPromptDecision`). A press here says the pane is yours. Typing
+   * only says you got to it first, and now merely makes the prompt wait its turn.
    */
   takeOver(id: string): boolean {
     const live = this.sessions.get(id)
     if (!live) return false
     live.meta.lastKeyboard = Date.now()
+    live.meta.tookOverAt = Date.now()
     this.setHandover(id, 0)
     return true
   }
@@ -3105,16 +3262,29 @@ export class SessionManager extends EventEmitter {
     startMs = PROMPT_START_MS,
     onSettled?: () => void,
     budgetMs = PROMPT_WAIT_MAX_MS,
-    proof: PromptProof = 'turn'
+    proof: PromptProof = 'turn',
+    known?: string
   ): void {
     if (!prompt) return onSettled?.()
+    // ON DISK BEFORE A BYTE OF IT IS TYPED. Everything below is a wait, and a wait that
+    // lives only in memory is a prompt the app forgets when the pane is recreated - which
+    // is exactly what happened to two briefs on 2026-09-07 (see `shared/queuedPrompts.ts`).
+    // `known` is a prompt already in the ledger being re-queued after a restart, so it is
+    // not accepted a second time.
+    const key = known ?? noteAccepted(id, prompt, this.sessions.get(id)?.meta.cwd)
     // Called exactly once, however this ends - typed and submitted, dropped, or the pane
     // gone. The handover curtain is raised on it, and a curtain with an exit this does not
     // reach is a pane nobody can type into: every `return` below goes through `settle`.
+    //
+    // It is also the one place the ledger row is closed: 'sent' means a turn (or, for a
+    // command, an idle composer) PROVED the text went in; every other word is a prompt
+    // nobody typed, and says so in `queued-prompts.log`.
     let settled = false
-    const settle = (): void => {
+    const settle = (end: QueueDrop | 'sent'): void => {
       if (settled) return
       settled = true
+      if (end === 'sent') noteSubmitted(key)
+      else noteDropped(key, end)
       onSettled?.()
     }
     const deadline = Date.now() + Math.max(0, budgetMs) + Math.max(0, extraDelay)
@@ -3124,6 +3294,13 @@ export class SessionManager extends EventEmitter {
     // rather than delivering it into the turn that person just started. Our own writes
     // re-stamp the mark so the confirm returns never read as somebody else.
     let mark = this.sessions.get(id)?.meta.lastKeyboard ?? Date.now()
+    const takenMark = this.sessions.get(id)?.meta.tookOverAt ?? 0
+    // The far ceiling for a prompt that is waiting BEHIND a person. The ordinary budget
+    // sizes "how long can a CLI take to boot"; this one sizes "how long is somebody's own
+    // turn", which is a different question and a much longer answer - a turn Robert starts
+    // in a freshly cleared pane routinely runs ten minutes. Below it the prompt waits; at
+    // it, it gives up and says so, rather than sitting owed for ever.
+    const personDeadline = Date.now() + PERSON_WAIT_MAX_MS + Math.max(0, extraDelay)
     const ourWrite = (data: string): void => {
       this.write(id, data, 'app')
       const after = this.sessions.get(id)
@@ -3136,7 +3313,9 @@ export class SessionManager extends EventEmitter {
         mark,
         drafting: Boolean(live.meta.drafting) || (!!live.typed && !!live.typed.trim()),
         composerIdle,
-        expired: Date.now() >= deadline
+        expired: Date.now() >= deadline,
+        tookOver: (live.meta.tookOverAt ?? 0) > takenMark,
+        personExpired: Date.now() >= personDeadline
       })
     // The busy read is of the LAST THING PAINTED, never of a window of scrollback:
     // `esc to interrupt` printed during the boot stays in the buffer for ever, so a
@@ -3169,32 +3348,49 @@ export class SessionManager extends EventEmitter {
     let confirmUntil = 0
     const submit = (tries: number): void => {
       const live = this.sessions.get(id)
-      if (!live) return settle()
+      if (!live) return settle('gone')
       // A confirm return is still a keystroke into a live CLI. If somebody has sent their
       // own message since the prompt went in, that return would land on THEIR turn.
       if ((live.meta.lastKeyboard ?? 0) > mark) {
         acLog(`${id} prompt left UNSENT: the pane was typed into by hand before the return`)
-        return settle()
+        return settle('unsent')
       }
       ourWrite('\r')
       noteSubmittedPrompt(id, prompt)
       acLog(`${id} return sent (try ${tries + 1}/${PROMPT_ENTER_TRIES})`)
       const typedAt = Date.now()
+      // AN IDLE COMPOSER IS ONLY PROOF IF SOMETHING WAS PRINTED. A command that ran answers
+      // with at least one line ("Set model to Opus 5..."); a swallowed return prints nothing
+      // at all. Both leave a quiet composer, and reading the quiet alone as proof is what
+      // broke the clear on 2026-09-07, pane s2-mtqmyvnv: `/clear` restarted the CLI, the
+      // `/model opus` return went in 13s later and was eaten by Claude Code's completion
+      // menu (the same menu that eats the first return of a `/clear` - see `write()`), the
+      // confirm settled 1.2s afterwards as "command landed", and the 721-character resume
+      // prompt was then typed onto a composer still holding `/model opus`. Claude Code read
+      // the pair as one slash command and answered `Model 'opus\n\nContinue the handoff...'
+      // not found` - the clear happened, the handover did not.
+      //
+      // `lastOutput` is the pty's own stamp, so it cannot be moved by the return this sends.
+
       if (!confirmUntil) confirmUntil = typedAt + PROMPT_CONFIRM_MS * PROMPT_ENTER_TRIES
       const confirm = (): void => {
         setTimeout(() => {
           const still = this.sessions.get(id)
-          if (!still) return settle()
+          if (!still) return settle('gone')
           // A TURN is the only proof the return went in. `runSince` is set when one starts
           // - by this submit or by the agent's own busy footer - so a value newer than the
           // return is the answer being written.
-          if ((still.meta.runSince ?? 0) >= typedAt) {
+          // ...for a PROMPT. `write()` stamps `runSince` on any return it sends, so for a
+          // slash command - which starts no turn of its own - that stamp is this app's own
+          // bookkeeping coming back as evidence. Proof 'idle' therefore ignores it and
+          // waits for the pane to actually print something.
+          if (proof !== 'idle' && (still.meta.runSince ?? 0) >= typedAt) {
             acLog(`${id} prompt submitted - a turn started`)
-            return settle()
+            return settle('sent')
           }
           if ((still.meta.lastKeyboard ?? 0) > mark) {
             acLog(`${id} prompt left UNSENT: the pane was typed into by hand while confirming`)
-            return settle()
+            return settle('unsent')
           }
           // A SLASH COMMAND STARTS NO TURN. `/model opus` prints one line ("Set model to
           // Opus 5 and saved as your default") and hands the composer straight back, so
@@ -3206,9 +3402,19 @@ export class SessionManager extends EventEmitter {
           // painting" - 24s and two stray keystrokes on every clear, before the resume
           // prompt was even queued. For a command, the composer coming back idle IS the
           // proof, read at the poll cadence rather than the confirm's.
-          if (proof === 'idle' && idle(still)) {
+          if (proof === 'idle' && idle(still) && (still.meta.lastOutput ?? 0) > typedAt) {
             acLog(`${id} command landed - the composer is idle again (no turn expected)`)
-            return settle()
+            return settle('sent')
+          }
+          // Quiet, and nothing printed since the return. Either the command has not
+          // answered yet or the return was eaten, and the two look identical from here - so
+          // WAIT rather than guess. Waiting costs time; guessing costs a stray keystroke in
+          // a live session, which is the thing this path spent 2026-09-02 removing. Only
+          // when the whole confirm window has gone by with the pane silent does this fall
+          // through to the retry below and send another return.
+          if (proof === 'idle' && (still.meta.lastOutput ?? 0) <= typedAt && Date.now() < confirmUntil) return confirm()
+          if (proof === 'idle' && (still.meta.lastOutput ?? 0) <= typedAt) {
+            acLog(`${id} return swallowed - nothing was printed in ${PROMPT_CONFIRM_MS * PROMPT_ENTER_TRIES}ms`)
           }
           if (!idle(still)) {
             // PAINTING IS NOT PROGRESS, and reading it as progress is what stranded pane
@@ -3223,14 +3429,14 @@ export class SessionManager extends EventEmitter {
               acLog(
                 `${id} prompt left UNSENT: still painting ${PROMPT_CONFIRM_MS * PROMPT_ENTER_TRIES}ms after the return`
               )
-              return settle()
+              return settle('unsent')
             }
             return confirm()
           }
           // Idle at the composer with no turn behind it: the return was eaten. Send another.
           if (tries + 1 >= PROMPT_ENTER_TRIES) {
             acLog(`${id} prompt left UNSENT: ${PROMPT_ENTER_TRIES} returns were swallowed`)
-            return settle()
+            return settle('unsent')
           }
           submit(tries + 1)
         }, proof === 'idle' ? PROMPT_POLL_MS : PROMPT_CONFIRM_MS)
@@ -3238,21 +3444,34 @@ export class SessionManager extends EventEmitter {
       confirm()
     }
 
+    let saidWaiting = false
     const tick = (): void => {
       const live = this.sessions.get(id)
-      if (!live) return settle()
+      if (!live) return settle('gone')
       const what = verdict(live, idle(live))
       if (what === 'wait') {
+        // Somebody is typing in there. The curtain says "Keys are held" and they are
+        // plainly not, so it comes down: this prompt is now waiting its turn behind a
+        // person rather than holding the pane off them. Said once, not once a poll.
+        if ((live.meta.lastKeyboard ?? 0) > mark || live.meta.drafting) {
+          if (live.meta.handoverUntil) this.setHandover(id, 0)
+          if (!saidWaiting) {
+            saidWaiting = true
+            acLog(`${id} queued prompt waiting behind you - it goes in when your turn ends`)
+          }
+        }
         setTimeout(tick, PROMPT_POLL_MS)
         return
       }
       if (what === 'abandon') {
         acLog(
           `${id} queued prompt dropped - ${
-            (live.meta.lastKeyboard ?? 0) > mark ? 'the pane was used by hand' : 'an unsent draft outlasted the wait'
+            (live.meta.tookOverAt ?? 0) > takenMark
+              ? 'you took the pane over'
+              : `nobody handed the composer back in ${Math.round(PERSON_WAIT_MAX_MS / 60_000)} min`
           }`
         )
-        return settle()
+        return settle('abandoned')
       }
       ourWrite(prompt)
       acLog(`${id} prompt typed (${prompt.length} chars), return in ${PROMPT_ENTER_MS}ms`)
@@ -3576,6 +3795,34 @@ export class SessionManager extends EventEmitter {
       if (open !== meta.handoffOpen) {
         meta.handoffOpen = open
         changed = true
+      }
+      // ...and whether the turn that just ended changed anything at all in this pane's
+      // folder. Same seam, same contract: it decorates, and reaches no busy reading.
+      //
+      // The verdict is taken HERE rather than in `endRun` because both readings are git
+      // calls and `endRun` is synchronous - the after-shot lands a tick or two later. The
+      // pair is cleared once judged, whatever the answer, so a reading kept over into the
+      // next turn cannot be compared against the wrong start.
+      if (live.workTurn && live.workAfter !== undefined) {
+        const words = changedNothingWords({
+          before: live.workBefore,
+          after: live.workAfter,
+          startedAt: live.workTurn.startedAt,
+          endedAt: live.workTurn.endedAt,
+          agent: meta.agent !== 'shell',
+          asking: Boolean(meta.ask)
+        })
+        // A mirror never reaches this sweep at all - a pane drawn from the other desk has
+        // no `Live` here, so there is nothing to read and nothing to say. That is the
+        // `mirror` refusal in `shared/changedNothing.ts`, satisfied by construction.
+        if ((words ?? undefined) !== meta.changedNothing) {
+          meta.changedNothing = words ?? undefined
+          meta.changedNothingWhy = words ? changedNothingWhy(projectOf(meta.cwd)) : undefined
+          changed = true
+        }
+        live.workTurn = undefined
+        live.workAfter = undefined
+        live.workBefore = undefined
       }
       // ...and what model the pane is REALLY running, which the launch flag stops being
       // true about the moment somebody types `/model` inside the CLI - that changes

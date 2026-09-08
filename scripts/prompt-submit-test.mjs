@@ -203,14 +203,13 @@ ok(
 manager.write(hijack.id, 'it broke again do you have logs')
 manager.write(hijack.id, '\r')
 const humanAt = manager.sessions.get(hijack.id).meta.lastKeyboard
-// Their turn runs and then the composer goes quiet again - which is the exact window
-// the old code typed into.
-hijackProc.say(COMPOSER)
-await sleep(900)
-const afterHuman = hijackProc.writes.join('')
+// Their turn is running. This is the window the 2026-08-30 bug typed into, and nothing
+// may go in here - not at any deadline.
+hijackProc.say(BOOTING)
+await sleep(700)
 ok(
-  !afterHuman.includes('Continue the handoff'),
-  'a prompt queued before a HUMAN sent one is dropped, never typed into their turn',
+  !hijackProc.writes.join('').includes('Continue the handoff'),
+  'the queued prompt is never typed into the turn a person just started',
   JSON.stringify(hijackProc.writes)
 )
 ok(
@@ -218,13 +217,15 @@ ok(
   'the human submit is what moves lastKeyboard, and it is recorded',
   String(humanAt)
 )
-// ...and no stray confirm return goes out either. An Enter into a turn that is already
-// answering is a keystroke at a live CLI, harmless at a composer and not at a chooser.
-const straysBefore = hijackProc.writes.filter((w) => w === '\r').length
-await sleep(700)
+// ...and their turn ends. Until 2026-09-07 the prompt was DROPPED the moment they typed, so
+// the session was cleared and then never told to carry on - Robert: "we lost the hands off
+// autoclear flow now its getting messed up if i type while thats happening". It waits behind
+// them instead, and goes in at the composer they hand back. Late is right; never is not.
+hijackProc.say(COMPOSER)
+await sleep(900)
 ok(
-  hijackProc.writes.filter((w) => w === '\r').length === straysBefore,
-  'and no confirm returns are fired after the person took the pane',
+  hijackProc.writes.join('').includes('Continue the handoff'),
+  'and lands after their turn ends, rather than being lost because they typed',
   JSON.stringify(hijackProc.writes)
 )
 
@@ -260,7 +261,7 @@ curtainProc.say(COMPOSER)
 await sleep(700)
 ok(
   !curtainProc.writes.join('').includes('a queued resume prompt'),
-  'takeOver drops the queued prompt as a real keystroke would',
+  'takeOver drops the queued prompt - the one deliberate cancel, unlike ordinary typing',
   JSON.stringify(curtainProc.writes)
 )
 ok(manager.takeOver('no-such-pane') === false, 'takeOver on a dead id is false, not a throw')
@@ -319,6 +320,30 @@ ok(cmdProc.writes.filter((w) => w === '\r').length === 1, 'and it got exactly on
 ok(cmdSettledAt - cmdAt < Number(process.env.PF_PROMPT_CONFIRM_MS) * Number(process.env.PF_PROMPT_ENTER_TRIES) + 500, 'and it settled at the poll cadence, not after the whole confirm budget', String(cmdSettledAt - cmdAt))
 manager.kill(cmd.id)
 
+// ...and a QUIET composer that printed NOTHING is a swallowed return, not a landed command.
+// 2026-09-07, pane s2-mtqmyvnv: `/clear` restarted the CLI, the `/model opus` return went in
+// during a gap in the boot paint and was eaten, and the confirm settled 1.2s later as
+// "command landed". The 721-character resume prompt was then typed onto a composer still
+// holding `/model opus`, and Claude Code read the pair as one slash command:
+// `Model 'opus\n\nContinue the handoff...' not found`. The clear happened, the handover did
+// not. So the proof is the command's ANSWER, not the silence around it.
+const eaten = manager.start({ cwd: root, agent: 'shell' })
+const eatenProc = manager.sessions.get(eaten.id).proc
+let eatenDone = 0
+manager.queuePrompt(eaten.id, '/model opus', 0, 40, () => eatenDone++, 5000, 'idle')
+await sleep(120)
+eatenProc.say(COMPOSER)
+// The return goes in and the pane stays exactly as it was - quiet at its composer, with
+// nothing printed. The old code settled on that silence within one poll (40ms here).
+await sleep(400)
+ok(eatenDone === 0, 'a command that printed nothing has not landed', String(eatenDone))
+ok(
+  eatenProc.writes.some((w) => w === '\r'),
+  'and the return really was sent, so the silence is the pane\'s answer and not a missing keystroke',
+  JSON.stringify(eatenProc.writes)
+)
+manager.kill(eaten.id)
+
 // A pane that closes mid-wait settles too - otherwise the curtain outlives the pty.
 const dying = manager.start({ cwd: root, agent: 'shell' })
 let dead2 = 0
@@ -353,6 +378,12 @@ rmSync(work, { recursive: true, force: true })
   const src = readFileSync(new URL('../src/main/sessions.ts', import.meta.url), 'utf8')
   const fn = src.slice(src.indexOf('const submit = (tries: number)'), src.indexOf('const tick = ()'))
   ok(/runSince \?\? 0\) >= typedAt/.test(fn), 'a turn newer than the return is the only proof it went in')
+  // ...for a PROMPT. `write()` stamps `runSince` on every return it sends, so a slash
+  // command - which starts no turn - would otherwise be proven by this app's own keystroke.
+  ok(/proof !== 'idle' && \(still\.meta\.runSince/.test(fn),
+    'and a command ignores that stamp, because the return this sends is what set it')
+  ok(/proof === 'idle' && idle\(still\) && \(still\.meta\.lastOutput \?\? 0\) > typedAt/.test(fn),
+    'a command is proven by the pane PRINTING something, never by silence')
   ok(/if \(!idle\(still\)\) \{[\s\S]*?return confirm\(\)/.test(fn), 'a painting pane must be waited out, not settled')
   // ...AND THE CONFIRM IS BOUNDED BY ITS OWN CLOCK, NOT THE WAIT'S.
   // 2026-09-01, pane s31-mti4yatg: the composer only read idle 181s into a 180s budget,

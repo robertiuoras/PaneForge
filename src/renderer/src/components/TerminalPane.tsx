@@ -66,6 +66,7 @@ import { completedSlash, seedPrompts } from '../../../shared/promptEcho'
 import { START_COLS, START_ROWS } from '../../../shared/paneGrid'
 import { fixSignature } from '../../../shared/fixSign'
 import { splitReplay } from '../../../shared/replayWidth'
+import { isTerminalReply, withoutReplayQueries } from '../../../shared/terminalProtocol'
 import { placeRail } from '../../../shared/rail'
 import type { RevealTarget } from '../../../shared/pathToken'
 import { cleanReply, draftBlock, previewOf } from '../../../shared/replyText'
@@ -2722,7 +2723,17 @@ function TerminalPane({
       refreshSelChip()
     })
 
+    // onKey precedes onData synchronously. Modified F3 shares the cursor-report
+    // encoding, so a real key must win over protocol classification.
+    let keyboardData: string | null = null
+    t.onKey(({ key }) => { keyboardData = key })
     t.onData((d) => {
+      const fromKeyboard = keyboardData === d
+      keyboardData = null
+      if (!fromKeyboard && isTerminalReply(d)) {
+        if (!asleepRef.current) api.write(sessionId, d)
+        return
+      }
       // The curtain is up: the app is mid-handover and the resume prompt has not landed.
       // A keystroke here is the collision this whole thing exists to stop - it would be
       // typed into a session that is about to be handed a prompt, and it moves
@@ -3511,6 +3522,7 @@ function TerminalPane({
     })
 
     const replayBuffer = (b: string, settle: () => void): void => {
+      b = withoutReplayQueries(b)
       sawOutput = true
       // There is history on this pane, so it was drawn somewhere else first. See
       // `needRestoreFix`.
@@ -3519,7 +3531,7 @@ function TerminalPane({
       const done = (): void => {
         settle()
         // Land on the newest line, not wherever 20k replayed lines happen to leave the view.
-        t.scrollToBottom()
+        if (pinned.current) t.scrollToBottom()
         // Held until here rather than dropped before the write: a staged replay resizes
         // the terminal twice, and the dim "Starting…" line is what covers that.
         setBlank(false)
@@ -3821,7 +3833,7 @@ function TerminalPane({
       readingSnapshot = true
       let bytes: string
       try {
-        bytes = keep(snapshot)
+        bytes = keep(withoutReplayQueries(snapshot))
       } finally {
         readingSnapshot = false
       }

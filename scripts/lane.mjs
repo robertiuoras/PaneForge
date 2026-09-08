@@ -885,6 +885,14 @@ function park(session) {
     c.parked = now()
     parked.push(id)
   }
+  // A Stop hook is a chat finishing a turn: it was heard from, and it is not asleep. Not
+  // bumping `seen` here is what let a hold read "last heard from 64h ago" under a pane
+  // that had parked two minutes earlier.
+  for (const c of Object.values(state.lanes)) {
+    if (c.session !== session) continue
+    c.seen = now()
+    delete c.asleep
+  }
   // A turn ending is the heartbeat. Only the trunk is ever published, and only once the
   // last thing we said is old enough that the other desk is about to stop believing it -
   // so an ordinary turn pushes nothing and a chat that works all afternoon keeps its
@@ -1546,6 +1554,13 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
       // decides that from where the chat LIVES, so a home chat is never marked down for
       // one prompt sent from somewhere else.
       delete c.parked
+      // A chat that is TALKING is awake, whatever the app said. `wake` is run by pane id
+      // from the app's own resume path, and a pane that came back some other way (a
+      // relaunch that restored the desk, a resume from outside the app) never gets it -
+      // measured on toolstash 2026-09-07: `main` asleep for 55h, its chat parking every
+      // turn, the lane immune to every sweep for the 7-day ASLEEP_MAX_MS and the next
+      // toolstash chat sent to copy 4.
+      delete c.asleep
       if (!visitor) delete c.visitor
       // A lane can stop being a checkout while its own chat is sitting in it - a pruned
       // worktree, an interrupted install, a folder deleted from underneath, a node_modules
@@ -1708,23 +1723,38 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
       free = 'main'
     }
   }
-  // Nothing free: before refusing, look for a lane that is being held and not used. The
-  // oldest one goes, so a chat that has at least been seen recently keeps its checkout.
-  if (!free) {
-    const idle = Object.entries(state.lanes)
+  // A lane that is being held and not used: given up by the evidence (`holdGivenUp`, or
+  // only ever reserved by a mention), nothing in it, not waiting on anything. The oldest
+  // one first, so a chat that has at least been seen recently keeps its checkout.
+  const idleEmpty = (mentionsToo) =>
+    Object.entries(state.lanes)
       .filter(([id, c]) => {
-        // A lane only reserved by a mention is idle the moment anyone actually needs one.
-        if (!c.tentative && !holdGivenUp(c)) return false
+        if (!holdGivenUp(c) && !(mentionsToo && c.tentative)) return false
         if (state.ready[id] || state.conflicts[id]) return false
+        if (squatted.has(id)) return false
         const w = laneWork(id)
         return !w.dirty && w.ahead === 0
       })
-      .sort((a, b) => (a[1].seen ?? 0) - (b[1].seen ?? 0))[0]
-    if (idle) {
-      delete state.lanes[idle[0]]
-      closeLaneApps(laneDir(idle[0]))
-      free = idle[0]
-    }
+      .sort((a, b) => (a[1].seen ?? 0) - (b[1].seen ?? 0))[0]?.[0]
+  // Nothing free: before refusing, take one of those.
+  if (!free) free = idleEmpty(true)
+  // Something free, but it is a copy that does not exist yet. Until 2026-09-07 this went
+  // straight to `ensureWorktree` and the idle sweep ran only when the pool was full, so a
+  // repo whose chats had all gone home - every lane at the same commit as main, nothing
+  // in any of them - still handed the next chat copy 4, then copy 5, each a fresh worktree
+  // beside three empty ones nobody was in. Robert, on toolstash: "session 1 is copy 4,
+  // wouldn't the other copies all be merged already?" They were. Reusing an abandoned
+  // empty copy costs nothing (its chat had left by the same evidence that would have let
+  // a full pool take it) and keeps the numbers on the board meaning something. A copy
+  // that already exists on disk and is unheld is still taken first: nobody at all beats
+  // somebody who has probably left.
+  // Not for a chat that asked for the folder it is standing in (`gotPrefer`), and not for
+  // a mention: a tentative reservation evicts nobody, and a hold that is only tentative is
+  // not "abandoned" - it is a chat that was told where to work twenty minutes ago.
+  else if (free !== 'main' && !gotPrefer && !tentative && !existsSync(laneDir(free))) free = idleEmpty(false) ?? free
+  if (free && state.lanes[free]) {
+    delete state.lanes[free]
+    closeLaneApps(laneDir(free))
   }
   // The other desk. `main` is the one lane that is not this machine's alone - it IS the
   // shared branch - so a chat about to be handed it asks whether the other device is
@@ -2213,10 +2243,12 @@ function cannotRun(out) {
 
 /** Does this checkout declare dependencies it has not got? */
 function dependenciesMissing(pkg) {
-  if (!Object.keys({ ...pkg.dependencies, ...pkg.devDependencies }).length) return false
+  const required = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies })
+    .filter((name) => !Object.hasOwn(pkg.optionalDependencies ?? {}, name))
+  if (!required.length) return false
   const mods = join(MAIN, 'node_modules')
   try {
-    return !existsSync(mods) || readdirSync(mods).length === 0
+    return required.some((name) => !existsSync(join(mods, name, 'package.json')))
   } catch {
     return true
   }
@@ -2241,7 +2273,7 @@ function installDeps() {
   const r = spawnSync(cmd, { cwd: MAIN, encoding: 'utf8', timeout: 900_000, shell: true })
   if (r.status === 0) return null
   return (
-    `${basename(MAIN)} has no dependencies installed and \`${cmd}\` could not install them, so nothing was ` +
+    `${basename(MAIN)} is missing declared dependencies and \`${cmd}\` could not install them, so nothing was ` +
     `released - ${firstLine(`${r.stdout ?? ''}${r.stderr ?? ''}`)}. The code is not the problem; the checkout is.`
   )
 }

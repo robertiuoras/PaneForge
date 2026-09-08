@@ -31,7 +31,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { devProfile } from './dev-profile.mjs'
-import { closeTestApps, dropTestAppKeep, keepTestApp, waitTestAppsGone } from './test-app.mjs'
+import { closeTestApps, dropTestAppKeep, keepTestApp, keptTestAppInfo, launchTakesKept, waitTestAppsGone } from './test-app.mjs'
 import { report } from './try-diff.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -48,7 +48,9 @@ const pull = args.includes('--pull')
 // `npm run try -- --close` shuts the test copy without touching the live app. Lane
 // release calls the same thing, so this is only for closing one by hand mid-session.
 if (close) {
-  closeTestApps(root, { force: true })
+  // Only this profile's window is asked to go; a shown window of another profile stays.
+  const verdict = launchTakesKept(keptTestAppInfo(), profileOf(args, root))
+  closeTestApps(root, { force: verdict !== 'spare' })
   console.log('Test copy closed. Your live app is untouched.')
   process.exit(0)
 }
@@ -63,7 +65,10 @@ if (close) {
 // The naming itself is in scripts/dev-profile.mjs, so the probes that have to FIND this
 // copy's settings folder cannot drift from the script that launches it. `--profile=x`
 // still overrides it for a test that genuinely needs a second, throwaway profile.
-const profile = (args.find((a) => a.startsWith('--profile='))?.split('=')[1] ?? devProfile(root)).trim()
+function profileOf(args, root) {
+  return (args.find((a) => a.startsWith('--profile='))?.split('=')[1] ?? devProfile(root)).trim()
+}
+const profile = profileOf(args, root)
 
 // Anything this script does not use is Electron's. The one that matters is
 // --remote-debugging-port=<n>: with it, a change to how a pane handles the mouse or lays
@@ -147,8 +152,20 @@ console.log(`== Launching the ${profile} copy`)
 // A copy left over from an earlier run holds this profile's single-instance lock, so the
 // new launch would raise the OLD window - running OLD code - and exit. That reads as "my
 // change did not apply". Close it first; only this checkout's Electron is matched.
-// `force`: this launch IS somebody asking for the old window to go, kept or not.
-closeTestApps(root, { force: true })
+// `force` only for THIS profile's window: that launch IS somebody asking for the old
+// window to go. A window another profile has on screen is spared, and a quiet launch
+// onto a profile whose window a person is watching refuses rather than take it.
+const kept = keptTestAppInfo()
+const verdict = launchTakesKept(kept, profile, { quiet: minimized })
+if (verdict === 'refuse') {
+  console.error(
+    `The "${profile}" copy is open on screen (pid ${kept.pid}) and somebody is looking at it.\n` +
+      `A minimized or headless launch will not take it: pass --show to replace it, ` +
+      `--profile=<name> for a copy of your own, or --close first.`
+  )
+  process.exit(1)
+}
+closeTestApps(root, { force: verdict !== 'spare' })
 // And wait for it to be gone rather than only asked to go: the lock outlives the ask by a
 // moment, and a launch into that moment exits silently with no window and no message.
 if (!(await waitTestAppsGone(root)))
@@ -172,8 +189,9 @@ child.unref()
 // A window ON SCREEN is one a person opened to look at, and nothing else may close it -
 // not another chat's `npm test`, not a lane release. A minimized one is an agent's own
 // probe and stays disposable. `--close` and the next launch still take it.
-if (minimized) dropTestAppKeep()
-else if (child.pid) keepTestApp(child.pid)
+if (minimized) {
+  if (verdict !== 'spare') dropTestAppKeep()
+} else if (child.pid) keepTestApp(child.pid, profile)
 
 const dockOrTaskbar = process.platform === 'darwin' ? 'Dock' : 'taskbar'
 console.log(`A second PaneForge is opening, marked "${profile}" next to the version number.

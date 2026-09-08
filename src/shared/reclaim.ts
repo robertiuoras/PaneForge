@@ -37,6 +37,7 @@
 
 import { SESSION_MB, type Verdict } from './capacity'
 import type { FleetState } from './fleet'
+import type { SleepReason } from './types'
 
 /**
  * States that may be closed to reclaim memory. Everything else is somebody's business.
@@ -137,7 +138,14 @@ export interface ReclaimConfig {
  * 2026-08-22: two panes handed off in the morning were still holding their CLIs at
  * teatime, which is the report this number answers.
  */
-export const IDLE_CLOSE_MINUTES = 5
+/*
+ * Ten, from 2026-09-08. Five was measured against what actually happened next: reclaim.log
+ * for 2026-09-07 has manual wakes at 11:55, 12:29 and 12:36, each minutes after the pane
+ * went quiet - a person who steps away for a coffee comes back to a closed pane and presses
+ * to bring it back. Ten still empties an unattended desk within the hour and stops taking
+ * the pane somebody is in the middle of using.
+ */
+export const IDLE_CLOSE_MINUTES = 10
 
 /**
  * How long a pane may sit unused before its agent is stopped and the CARD is kept.
@@ -344,19 +352,40 @@ export interface ReclaimPane {
    * KEPT (`pinned`) is the one that sleeps instead of closing.
    */
   asleep?: number
+  /**
+   * WHY it is asleep, which decides whether its screen is a turn anybody could have read.
+   *
+   * Only `restored` is read here, and only by `bornAsleep`. See it for the day every
+   * sleeping pane was treated as read.
+   */
+  asleepReason?: SleepReason
 }
 
 /**
- * When this pane last did anything at all - the latest of a keystroke, a printed byte and
- * the moment the keyboard left it.
+ * When this pane last did anything at all - the latest of a keystroke, a printed byte, the
+ * moment the keyboard left it, and the moment it was PUT TO SLEEP.
  *
  * The whole idle reading in both sweeps below. See `ReclaimPane.lastOutput` for why it is
  * not `lastKeyboard` on its own.
+ *
+ * Sleeping counts because it is a thing that happened to the pane, and leaving it out made
+ * the rung below closing worthless. Both clocks read this one number: a pane goes to sleep
+ * at minute 30 with `quietSince` already half an hour old, so the five-minute close clock
+ * was long past before the sleep had finished - and the pane was closed seconds later.
+ * Measured 2026-09-07 in `reclaim.log`: 33 panes armed for closing while asleep, 20 of them
+ * closed; `s10-mtqtgzjd` slept at 07:05:42 and was gone at 07:06:02, twenty seconds of
+ * sleep. On the desk that is a row wearing `asleep 1m` and `closes now` at the same time,
+ * which is what Robert reported ("session 1 shows closes now asleep 1m all the logic dosnt
+ * make sense there") - and both chips were telling the truth.
+ *
+ * The ladder is meant to be a ladder: sleeping gives the ~190 MB back, and only a pane that
+ * is STILL untouched a close-window later is worth the conversation it costs to close. So
+ * the close clock starts again when the pane sleeps.
  */
 export function quietSince(
-  p: Pick<ReclaimPane, 'lastKeyboard' | 'lastOutput' | 'lastFocus'>
+  p: Pick<ReclaimPane, 'lastKeyboard' | 'lastOutput' | 'lastFocus'> & { asleep?: number }
 ): number {
-  return Math.max(p.lastKeyboard, p.lastOutput ?? 0, p.lastFocus ?? 0)
+  return Math.max(p.lastKeyboard, p.lastOutput ?? 0, p.lastFocus ?? 0, p.asleep ?? 0)
 }
 
 /**
@@ -377,6 +406,26 @@ export function quietSince(
  */
 export function unread(p: Pick<ReclaimPane, 'lastOutput' | 'lastFocus'>): boolean {
   return (p.lastOutput ?? 0) > (p.lastFocus ?? 0)
+}
+
+/**
+ * A pane the restore brought back with no agent in it - card, place and old screen, and
+ * nothing spawned (`req.asleep`, `sessions.ts`).
+ *
+ * It is the one sleeping pane whose `unread` reading is a LIE, and the only reason this
+ * function exists. It is born wearing `lastOutput: Date.now()` and no `lastFocus` at all,
+ * so bytes it printed BEFORE the restart - which somebody may well have read then - count
+ * as a turn nobody has seen, and count that way for ever.
+ *
+ * Every OTHER sleeping pane printed what is on its screen during this run, and whether
+ * anybody looked is exactly what `lastFocus` answers. `onTheClock` used to refuse the
+ * question for all of them (`!p.asleep`), which read a pane that finished a turn nobody
+ * saw and then fell asleep as read, and started the close clock on it. Robert, 2026-09-07:
+ * "when a session sleeping it thinks ive read its output ... make sure it doesnt start
+ * closing unless ive actually read its output".
+ */
+function bornAsleep(p: Pick<ReclaimPane, 'asleep' | 'asleepReason'>): boolean {
+  return p.asleep !== undefined && p.asleepReason === 'restored'
 }
 
 /**
@@ -659,11 +708,12 @@ function onTheClock(p: ReclaimPane, personHere = true, now = 0, idleMs = 0): boo
     // the second desk this clock exists for: nothing there is ever read, so an unread
     // refusal would switch the feature off on the one machine that needs it - once a
     // pane has had a real chance to be seen.
-    // ...and never for a SLEEPING pane. Nothing has printed since it slept - what is on
-    // its screen was there when it was put to sleep - and a restored pane comes back
-    // asleep wearing a fresh `lastOutput` and no `lastFocus` at all, so `unread` would
-    // hold it on the desk for ever, exactly as the `asleep` refusal used to.
-    !(!p.asleep && unread(p) && (personHere || freshlyRestored)) && keepable(p, personHere)
+    // ...and never for a pane BORN asleep, whose screen is bytes from before the restart
+    // and whose `unread` reading is a lie about them. Every other sleeping pane is asked
+    // the question like any other pane: it printed what is on its screen during this run,
+    // and a turn nobody looked at is not taken off the desk for going quiet. See
+    // `bornAsleep`.
+    !(!bornAsleep(p) && unread(p) && (personHere || freshlyRestored)) && keepable(p, personHere)
   )
 }
 

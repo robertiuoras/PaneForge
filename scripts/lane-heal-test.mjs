@@ -236,6 +236,19 @@ ok('missing dependencies are installed instead of reported', existsSync(join(rep
 ok('and the release then happens', /merged into master/i.test(installed), installed)
 ok('nothing claimed the code does not typecheck', !/does not typecheck/i.test(installed), installed)
 
+// A nonempty node_modules can still miss a newly declared dependency.
+makeRepo({
+  typecheck: 'node -e "process.exit(require(\'node:fs\').existsSync(\'node_modules/installed-by-stub\') ? 0 : 1)"',
+  deps: { typescript: '^5.5.0', '@types/react-test-renderer': '18.3.1' }
+})
+mkdirSync(join(repo, 'node_modules', 'typescript'), { recursive: true })
+writeFileSync(join(repo, 'node_modules', 'typescript', 'package.json'), '{}')
+claimLaneA('s1')
+workInLaneA()
+const partial = lane('ready', '--session', 's1')
+ok('a partially installed dependency tree is repaired', existsSync(join(repo, 'node_modules', 'installed-by-stub')), partial)
+ok('the repaired checkout then merges', /merged into master/i.test(partial), partial)
+
 // ---------------------------------------------------------------- 7: cannot run vs found errors
 
 makeRepo({ typecheck: 'definitely-not-a-real-binary --noEmit' })

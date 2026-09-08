@@ -16,7 +16,9 @@ runInNewContext(registration, {
     pendingDesk = false
     writes.push('desk')
   },
-  history: { flush() { pendingHistory = false; writes.push('history') } },
+  // flushSync, not flush: going to sleep has no later turn to write in, so this is one of
+  // the paths deliberately left synchronous when the timers stopped blocking the main thread.
+  history: { flushSync() { pendingHistory = false; writes.push('history') } },
   updateLog() { writes.push('receipt') }
 })
 assert.equal(pendingDesk, true, 'registering does not prematurely save the desk')

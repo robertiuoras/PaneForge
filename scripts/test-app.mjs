@@ -57,9 +57,9 @@ function alive(pid) {
 }
 
 /** Remember the dev window a person is watching, so no other lane's close touches it. */
-export function keepTestApp(pid) {
+export function keepTestApp(pid, profile) {
   try {
-    writeFileSync(KEEP_FILE, JSON.stringify({ pid, at: Date.now() }))
+    writeFileSync(KEEP_FILE, JSON.stringify({ pid, at: Date.now(), profile }))
   } catch {
     /* the marker is an optimisation, never a requirement */
   }
@@ -76,14 +76,40 @@ export function dropTestAppKeep() {
 
 /** The pid of the window being watched, or 0 - a dead pid answers 0 and clears itself. */
 export function keptTestApp() {
+  return keptTestAppInfo()?.pid ?? 0
+}
+
+/** The watched window with the profile it was opened as, or null. */
+export function keptTestAppInfo() {
   try {
-    const pid = JSON.parse(readFileSync(KEEP_FILE, 'utf8')).pid
-    if (typeof pid === 'number' && pid > 0 && alive(pid)) return pid
+    const { pid, profile } = JSON.parse(readFileSync(KEEP_FILE, 'utf8'))
+    if (typeof pid === 'number' && pid > 0 && alive(pid))
+      return { pid, profile: typeof profile === 'string' ? profile : '' }
   } catch {
-    return 0
+    return null
   }
   dropTestAppKeep()
-  return 0
+  return null
+}
+
+/**
+ * What a launch may do about the window somebody is watching. A launch only ever needs
+ * the window holding ITS OWN profile's single-instance lock out of the way; the shown
+ * window of another profile is a different app to Electron and stays. Three chats
+ * launched through three profiles inside two minutes on 2026-09-07 06:10-06:13 and each
+ * `force` shot the window Robert was testing in, logged as `quit nothing in the app
+ * asked`. A marker written before the profile was recorded names none, and is spared.
+ *
+ *   'none'   nothing is kept - close as before
+ *   'spare'  another profile's window - housekeeping close, it survives
+ *   'take'   this profile's window - the launch replaces it (a shown launch, or --close)
+ *   'refuse' this profile's window and a QUIET launch (minimized/headless) - a probe may
+ *            not take a window a person is looking at; it says so and exits
+ */
+export function launchTakesKept(kept, profile, { quiet = false } = {}) {
+  if (!kept) return 'none'
+  if (kept.profile !== profile) return 'spare'
+  return quiet ? 'refuse' : 'take'
 }
 
 /** `pgrep -f` takes an extended regex, so a path's own metacharacters must be quoted. */

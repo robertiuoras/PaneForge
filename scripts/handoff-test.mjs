@@ -9,7 +9,7 @@
 
 import { buildSync } from 'esbuild'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -50,7 +50,7 @@ function bundle() {
       `export { RemoteHost } from ${p('src/main/remote/host.ts')}`,
       `export { RemoteClient } from ${p('src/main/remote/client.ts')}`,
       `export { newCode } from ${p('src/main/remote/wire.ts')}`,
-      `export { sendHandoff, receiveHandoff } from ${p('src/main/handoff.ts')}`,
+      `export { sendHandoff, receiveHandoff, writeConversation } from ${p('src/main/handoff.ts')}`,
       `export { handoffReceiverCanQuit, mapCwd, handoffReport, handoffConversationError } from ${p('src/shared/handoff.ts')}`
     ].join('\n'),
     'utf8'
@@ -96,7 +96,7 @@ function inertBackend() {
 }
 
 const mod = await import(pathToFileURL(bundle()).href)
-const { RemoteHost, RemoteClient, newCode, sendHandoff, receiveHandoff, mapCwd, handoffReceiverCanQuit, handoffReport, handoffConversationError } = mod
+const { RemoteHost, RemoteClient, newCode, sendHandoff, receiveHandoff, writeConversation, mapCwd, handoffReceiverCanQuit, handoffReport, handoffConversationError } = mod
 
 // ---------------------------------------------------------------- mapCwd
 console.log('mapCwd')
@@ -122,6 +122,35 @@ console.log('conversation transfer contract')
 ok('Claude needs both a resume flag and id', Boolean(handoffConversationError({ agent: 'claude', resumeId: 'c1' })))
 ok('Codex uses the same explicit resume contract', handoffConversationError({ agent: 'codex', resume: true, resumeId: 'c1' }, { name: 'c1.jsonl', size: 1 }, 1) === null)
 ok('a plain shell has explicit fresh-shell semantics', handoffConversationError({ agent: 'shell' }) === null)
+
+// A pane that came from here and is coming back. Its transcript is the SAME conversation
+// with more turns on the end, so the copy this disk still holds is a byte prefix of the
+// incoming one - the round trip Mac -> PC -> Mac, which refused and lost the far end's
+// turns until 2026-09-08.
+const convDir = join(out, 'writeconv')
+mkdirSync(convDir, { recursive: true })
+const older = Buffer.from('{"a":1}\n')
+const newer = Buffer.from('{"a":1}\n{"b":2}\n')
+const fresh = join(convDir, 'fresh.jsonl')
+ok('a conversation that is not here yet is written', writeConversation(fresh, newer) === null && readFileSync(fresh).equals(newer))
+ok('the same conversation twice is a no-op', writeConversation(fresh, newer) === null && readFileSync(fresh).equals(newer))
+const back = join(convDir, 'back.jsonl')
+writeFileSync(back, older)
+ok(
+  'the same conversation with more turns replaces the older copy',
+  writeConversation(back, newer) === null && readFileSync(back).equals(newer)
+)
+const other = join(convDir, 'other.jsonl')
+writeFileSync(other, Buffer.from('{"z":9}\n'))
+ok(
+  'a genuinely different conversation is still refused, bytes untouched',
+  typeof writeConversation(other, newer) === 'string' && readFileSync(other).toString() === '{"z":9}\n'
+)
+ok(
+  'a SHORTER incoming conversation is refused - it is not this one grown',
+  typeof writeConversation(back, older) === 'string' && readFileSync(back).equals(newer)
+)
+ok('no temp file is left behind', readdirSync(convDir).every((f) => !f.includes('.tmp')))
 
 // ---------------------------------------------------------------- the link
 const senderRoot = join(out, 'sender')

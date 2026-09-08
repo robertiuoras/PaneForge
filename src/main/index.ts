@@ -1,3 +1,4 @@
+import { flushLogsOnExit } from './logWrite'
 import { execFile, spawn } from 'node:child_process'
 import { existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
@@ -18,6 +19,7 @@ import {
   protocol,
   screen,
   shell } from 'electron'
+import { startMainWatch, stopMainWatch } from './mainWatch'
 import { SessionManager, setSilenceAlert, type WriteOrigin } from './sessions'
 import { DataPump } from './dataPump'
 import { DiscordPresence } from './discordPresence'
@@ -29,6 +31,8 @@ import { clientForText, rosterRoot } from './clients'
 import { createProject, listProjects } from './projects'
 import { routeCandidates } from './projectAliases'
 import { routePrompt } from '../shared/projectRoute'
+import { sendOrOpen } from '../shared/sendOrOpen'
+import { owedCount } from './queuedPrompts'
 import type { RouteResult } from '../shared/projectRoute'
 import { DEFAULT_PHONE_PORT, getConfig, projectsRoot, setConfig } from './config'
 import { whatsNew } from './whatsNew'
@@ -39,7 +43,7 @@ import { writeAttachments, readAttachIns, withShots } from './attach'
 import { AskNotifier, askMessage, postAsk, telegramCreds } from './askNotify'
 import { askKeyOf } from '../shared/autoAnswer'
 import { ATTACH_MAX_BYTES, THUMB_KEEP, type AttachIn, type AttachResult } from '../shared/attach'
-import { CHOOSE_GAP_MS, keysForChoice, sameAsk } from '../shared/choices'
+import { CHOOSE_GAP_MS, keysForChoice, sameAsk, stampMatches } from '../shared/choices'
 import { Remote } from './remote'
 import { readInvite } from './remote/invite'
 import { PhoneServer, newPhoneCode } from './phone'
@@ -55,10 +59,11 @@ import { isOutdated, versionOf } from '../shared/codexCatalogue'
 import { gitInfo } from './git'
 import { projectRoot } from './projectRoot'
 import { diffFiles, diffPatch } from './diff'
-import type { ClientNamed, DiffScope, EffortChoice, PhoneState } from '../shared/types'
+import type { ClientNamed, DiffScope, EffortChoice, PhoneState , LaneBoard} from '../shared/types'
 import { detectLane, laneExtras, resolveLane } from './lanes'
 import { inspectLaneFolders, laneWork, mergeLaneBack, repoOf, returnToBase, sweepLanes, trackTyped } from './laneWork'
 import { attachLaneOwners, laneBoards, laneReclaim, laneRetry, markGone } from './laneBoard'
+import { listLaneTimeline, onLaneTimelineChange, watchLaneTimeline } from './laneTimeline'
 import type { LanePane } from './laneBoard'
 import { resolveRevealTarget } from './revealPath'
 import { which } from './which'
@@ -128,6 +133,7 @@ import { keepDevServer, stopNow, watchDeadDevs } from './deadDev'
 import {
   closeLogin,
   dismissLogin,
+  doneLogin,
   initRemoteLogin,
   listLogins,
   loginInput,
@@ -137,7 +143,7 @@ import {
   resizeLogin,
   shutdownLogins
 } from './remoteLogin'
-import type { LoginInput } from '../shared/remoteLogin'
+import { shellQuote, type LoginInput } from '../shared/remoteLogin'
 import { DEFAULT_DEAD_DEV } from '../shared/deadDev'
 import { listBackJobs, type BackJob } from './backJobs'
 import { DEFAULT_AUTO_HANDOFF } from '../shared/autoHandoff'
@@ -1242,12 +1248,38 @@ ipcMain.handle('owner:stats', (e) => {
  */
 initRemoteLogin({
   publish: (reqs) => send('login:changed', reqs),
-  frame: (id, data, meta, ack) => send('login:frame', { id, data, meta, ack })
+  frame: (id, data, meta, ack) => send('login:frame', { id, data, meta, ack }),
+  paneName: (id) => allSessions().find((s) => s.id === id || s.title === id)?.title,
+  // Telling the pane that asked is the only half of this feature that can cross a
+  // machine boundary without a picture: on this desk it is the ordinary prompt queue,
+  // and on the other one it is the same `pf tell` over the ssh the asker named.
+  tell: (req, text) => {
+    if (!req.reportTo) return
+    if (req.reportHost) {
+      const remote = ['pf', 'tell', req.reportTo, text].map(shellQuote).join(' ')
+      const ssh = spawn('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', req.reportHost, remote], {
+        windowsHide: true,
+        stdio: 'ignore'
+      })
+      ssh.on('error', () => {
+        /* the far desk is unreachable; the sign-in still happened */
+      })
+      ssh.unref()
+      return
+    }
+    manager.tellPane(req.reportTo, text)
+  }
 })
 ipcMain.handle('login:list', () => listLogins())
 ipcMain.handle('login:need', (_e, req: Parameters<typeof requestLogin>[0]) => requestLogin(req))
 ipcMain.handle('login:open', (_e, id: string) => openLogin(String(id)))
 ipcMain.on('login:close', (_e, id: string) => closeLogin(String(id)))
+ipcMain.on('login:done', (_e, id: string) => doneLogin(String(id)))
+// Anything that can reach the app can hand a pane one line, queued for the gap between
+// its turns - which is how the far desk says "signed in" to the pane that asked.
+ipcMain.on('pane:tell', (_e, ref: string, text: string) => {
+  manager.tellPane(String(ref), String(text))
+})
 ipcMain.on('login:dismiss', (_e, id: string) => dismissLogin(String(id)))
 ipcMain.on('login:input', (_e, id: string, ev: LoginInput) => loginInput(String(id), ev))
 ipcMain.on('login:ack', (_e, id: string, ack: number) => paintedFrame(String(id), Number(ack)))
@@ -1395,7 +1427,7 @@ ipcMain.handle('sessions:continueFresh', (_e, id: string) => {
   const source = manager.list().find((s) => s.id === id)
   if (!source || !['codex', 'claude'].includes(source.agent) || backJobOf(id)) return { ok: false, reason: 'No supported, safe source conversation.' }
   if (continuationOwnsSource(id)) return { ok: false, reason: 'This source already has a live continuation.' }
-  const result = startContinuation({ sleep: (key) => manager.sleep(key), wake: (key) => manager.wake(key), session: (key) => manager.list().find((s) => s.id === key), snapshot: () => manager.snapshot(), start: (req) => manager.start(req) }, id)
+  const result = startContinuation({ sleep: (key) => manager.sleep(key, 'continuation', { source: 'continuation' }), wake: (key) => manager.wake(key), session: (key) => manager.list().find((s) => s.id === key), snapshot: () => manager.snapshot(), start: (req) => manager.start(req) }, id)
   if (result.ok && result.id && result.digest) {
     continuationReceipts.set(result.id, { cwd: source.cwd, digest: result.digest, sourceId: id, deadline: Date.now() + 5 * 60_000 })
     return { ok: true, id: result.id, reason: 'Fresh pane opened; delivery is being checked. Your source is saved asleep.' }
@@ -1534,7 +1566,10 @@ ipcMain.handle('offload:answer', (_e, id: string, go: boolean) => {
   offloadAsks.get(String(id))?.(!!go)
 })
 
-async function startOrSend(req: StartSessionRequest, claimed?: string[]): Promise<Session> {
+async function startOrSend(
+  req: StartSessionRequest,
+  claimed?: string[]
+): Promise<Session & { startAction?: 'send' | 'open'; startWhy?: string }> {
   // A conversation the CLI would refuse is not resumed by name: History's `Open again`
   // on a session that never got an answer put `No conversation found with session ID`
   // on the pane instead of a composer (2026-09-04). The pane opens fresh in its folder.
@@ -1555,16 +1590,37 @@ async function startOrSend(req: StartSessionRequest, claimed?: string[]): Promis
   // asks for that one back. Never a mirror, whose pty belongs to the other desk.
   if (req.reuse) {
     const open = manager.list().find((s) => s.cwd === req.cwd && s.status !== 'exited')
-    if (open) return open
+    // ...but a PROMPT only goes to a pane that can take it this moment. Queueing a brief
+    // behind a twenty-minute turn is how two of them were lost on 2026-09-07: the request
+    // was answered with "that pane will get to it", and the pane was recreated first.
+    // `shared/sendOrOpen.ts` holds the refusals; anything it refuses opens its own pane.
+    const verdict = sendOrOpen({
+      prompt: req.prompt,
+      pane: open ? { ...open, queued: owedCount(open.id) } : null
+    })
+    if (open && verdict.action === 'send') {
+      // The prompt is DELIVERED here rather than left on the request: `queuePrompt` is
+      // what writes it to the ledger, waits for an idle composer and proves the return.
+      if (req.prompt) manager.sendPrompt(open.id, req.prompt)
+      return { ...open, startAction: 'send', startWhy: verdict.why }
+    }
+    if (open) console.info(`start: opening a second pane in ${req.cwd} - ${verdict.why}`)
   }
   // `claimed` is the batch's own list of folders already taken, and it holds the RESOLVED
   // lane rather than what was asked for: two panes launched together for one project must
   // land in different lanes, and it is `laneFor` that decides which. A pane that goes to
   // the other machine claims nothing here - it takes no folder on this disk.
   const here = async (): Promise<Session> => {
+    // How long the press took to become a pane, in two halves. "Making a new session
+    // lags" (Robert, 2026-09-08) had no number anywhere: deciding the folder walks the
+    // lane ledger and the worktrees on disk, and on a machine short of memory those reads
+    // are the wait. One line per start, in the log that already answers where a pane went.
+    const began = Date.now()
     const lane = await laneFor(req, claimed)
-    claimed?.push(lane.cwd)
-    return manager.start(lane)
+    const decided = Date.now() - began
+    const session = await manager.start(lane)
+    logOffload({ event: 'started', id: session.id, cwd: lane.cwd, decidedMs: decided, openMs: Date.now() - began })
+    return session
   }
   const cfg = getConfig()
   const mode = preferRemoteOf(cfg.autoHandoff)
@@ -1673,7 +1729,13 @@ async function startOrSend(req: StartSessionRequest, claimed?: string[]): Promis
 // `backlog.mjs done --gate` already close at both ends. Reading only: this app never
 // writes to the backlog, which has one writer.
 ipcMain.handle('backlog:task', (_e, ref: string) => briefForTask(String(ref ?? '')))
-ipcMain.handle('sessions:start', (_e, req: StartSessionRequest) => startOrSend(req))
+ipcMain.handle('sessions:start', async (_e, req: StartSessionRequest) => {
+  const s = await startOrSend(req)
+  // `startAction` says whether this is a pane that was opened or one that was already
+  // there and took the prompt - `pf open` prints it, so automation can tell the two apart
+  // instead of assuming a fresh pane every time.
+  return { ...s, startAction: s.startAction ?? 'open' }
+})
 ipcMain.handle('sessions:startMany', async (_e, reqs: StartSessionRequest[]) => {
   const out: StartedPane[] = []
   // Folders claimed earlier in this same batch count as taken: two panes launched
@@ -1701,11 +1763,17 @@ ipcMain.handle('sessions:restart', (_e, id: string) => {
   if (continuationOwnsSource(id)) return null
   return manager.restart(id)
 })
-ipcMain.handle('sessions:sleep', (_e, id: string) => {
+ipcMain.handle('sessions:sleep', (_e, id: string, reason?: import('../shared/types').SleepReason, evidence?: import('../shared/types').SleepEvidence) => {
   // A mirrored pane's pty is the other machine's, and sleeping it there is that desk's
   // decision to make - `canSleep` refuses a mirror at the renderer end too.
   if (remote.owns(id)) return null
-  return manager.sleep(id)
+  if (!_e?.processId) return manager.sleep(id, 'unknown', { source: 'api' })
+  if (evidence?.source === 'renderer-idle-sweep' &&
+      ['ok', 'tight', 'over'].includes(evidence.pressure ?? '')) {
+    return manager.sleep(id, evidence.pressure === 'ok' ? 'idle' : 'pressure', evidence)
+  }
+  if (reason === 'tour') return manager.sleep(id, 'tour', { source: 'tour' })
+  return manager.sleep(id, reason === 'manual' ? 'manual' : 'unknown', { source: 'renderer' })
 })
 ipcMain.handle('sessions:wake', async (_e, id: string) => {
   if (remote.owns(id)) return null
@@ -2278,7 +2346,15 @@ const lanePanes = (): LanePane[] =>
     .filter((s) => s.status !== 'exited' || s.asleep)
     .map((s) => ({ id: s.id, cwd: s.cwd, resumeId: resumeIdFor(s.id) }))
 
-ipcMain.handle('lanes:board', () => {
+/**
+ * Every project's lanes as the strip draws them.
+ *
+ * Named rather than inlined into the handler because two things read it now: the window's
+ * own five-second poll, and the lane-timeline sweep in main - which has to keep taking
+ * readings while the window is off screen, since that is the stretch its log is asked
+ * about. One reader, so the two can never disagree about what a lane looked like.
+ */
+const boardsNow = (): LaneBoard[] => {
   const panes = lanePanes()
   return laneBoards(panes)
     .map((b) => markGone(attachLaneOwners(b, panes)))
@@ -2297,7 +2373,12 @@ ipcMain.handle('lanes:board', () => {
           }
         : b
     )
-})
+    .filter((b): b is LaneBoard => Boolean(b))
+}
+
+ipcMain.handle('lanes:board', () => boardsNow())
+// The readings are taken in main, on a timer, for the reason above.
+watchLaneTimeline(boardsNow)
 
 // What the agent in a folder has actually changed. Read-only, and the file list and the
 // patches are separate calls on purpose - a 300-file diff is 300 patches nobody opened.
@@ -2872,9 +2953,11 @@ ipcMain.handle('clipboard:fixtureActive', () => clipboardFixtureActive())
  * with the session list, so a stale button on this side is refused by `keysForChoice`
  * rather than typed into whatever replaced the chooser.
  */
-ipcMain.handle('pty:choose', (_e, id: string, n: number): boolean => {
-  if (!remote.owns(id)) return manager.choose(id, n)
+ipcMain.handle('pty:choose', (_e, id: string, n: number, want?: string): boolean => {
+  if (!remote.owns(id)) return manager.choose(id, n, 'desk', want)
   const ask = remote.sessions().find((s) => s.id === id)?.ask
+  // The same refusal for a pane on the other desk: the button is just as old over there.
+  if (!stampMatches(ask, want)) return false
   const keys = ask ? keysForChoice(ask, n) : null
   if (!keys) return false
   // Re-read before every key, exactly as `SessionManager.choose` does: the question can
@@ -3424,6 +3507,9 @@ ipcMain.on('reclaim:log', (_e, entry: Record<string, unknown>) => {
 
 // --- what the app did on its own -------------------------------------------
 
+ipcMain.handle('lanes:timeline', () => listLaneTimeline())
+onLaneTimelineChange((items) => send('lanes:timeline-changed', items))
+
 ipcMain.handle('activity:list', () => listActivity())
 ipcMain.on('activity:seen', () => markActivitySeen())
 onActivityChange((s) => send('activity:changed', s))
@@ -3724,6 +3810,11 @@ function restorePanes(specs: StartSessionRequest[]): void {
             : req.laneNote
         })
         if (req.scrollbackId && wasPinned.has(req.scrollbackId)) nowPinned.push(meta.id)
+        // A prompt this pane was owed when the app went down. The pane it is replacing was
+        // named by the desk, and the ledger is keyed by that id, so this is the moment the
+        // promise is carried across - queued now if the pane came back with an agent in it,
+        // held on its new id if it came back asleep.
+        manager.deliverOwed(req.scrollbackId ?? meta.id, meta.id, !meta.asleep && meta.status !== 'exited')
       } catch {
         // Folder moved or the agent is no longer installed - skip that pane only.
       }
@@ -3938,11 +4029,14 @@ ipcMain.on('restore:answer', (_e, answer: RestoreAnswer) => {
 })
 
 app.whenReady().then(() => {
+  // The watchdog marks a stalled desk as an update, following the same restore settings.
+  // Its child is outside the main thread and can still act during disk I/O.
+  startMainWatch()
   // OS sleep preserves processes, but pending app buffers must also be recoverable
   // if the battery runs out before the next wake. Do not end or restart any agent.
   powerMonitor.on('suspend', () => {
     noteDesk(true)
-    history.flush()
+    history.flushSync()
     updateLog('power', 'suspend: desk and terminal history saved; agents left running')
   })
   // Back from sleep. Every CLI is asked to repaint (SIGWINCH) once the machine has had a
@@ -4073,6 +4167,7 @@ app.whenReady().then(() => {
 // Agents are child processes of this app: leaving them running after the window
 // closes would strand invisible `claude` processes holding file locks.
 app.on('window-all-closed', () => {
+  stopMainWatch()
   // Only when this really IS the cause. On Cmd-Q `before-quit` has already run and
   // already said what it knew; the windows closing after it is what a quit DOES.
   if (!quitLogged) quitting('the last window was closed')
@@ -4127,7 +4222,10 @@ function installStagedMacUpdateOnQuit(): void {
   if (swapAndRelaunch(false)) updateLog('exit', 'installing the staged mac update on quit')
 }
 
+let hardExiting = false
 function hardExit(): void {
+  if (hardExiting) return
+  hardExiting = true
   // The quit line first, for the paths that reach here without `before-quit` ever
   // running; a no-op when it already did.
   logQuit()
@@ -4140,7 +4238,7 @@ function hardExit(): void {
   // The other thing shutdown()'s taskkill cannot reach: whatever the panes started that is
   // no longer linked to them. Detached, so it runs once we are not here to be its parent.
   sweepOwnStraysOnExit()
-  process.exit(0)
+  void flushLogsOnExit().finally(() => process.exit(0))
 }
 
 app.on('browser-window-focus', () => {
@@ -4167,6 +4265,8 @@ app.on('before-quit', (e) => {
       return
     }
   }
+  // The quit was accepted. Stop the watchdog before terminal disk writes can stall.
+  stopMainWatch()
   // Written FIRST, before anything below can throw: the whole value of this line is that
   // it exists for a quit nobody in the app asked for, which is the one that gets reported
   // as "it closed by itself".
@@ -4193,7 +4293,8 @@ app.on('before-quit', (e) => {
   // A driven lane's agent is a detached process in its own group - nothing joins it to
   installStagedMacUpdateOnQuit()
 })
-app.on('will-quit', () => {
+app.on('will-quit', (e) => {
+  e.preventDefault()
   globalShortcut.unregisterAll()
   displayAwake.stop()
   // Dropping the pipe is enough - Discord clears the presence when the client goes.
@@ -4203,4 +4304,5 @@ app.on('will-quit', () => {
   stopAutoClearWatch()
   stopUsage()
   removeTestClipboard()
+  hardExit()
 })

@@ -30,6 +30,7 @@
  *    position that has since moved.
  */
 import { readFileSync } from 'node:fs'
+import { askStamp } from './ask-stamp.mjs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -138,16 +139,20 @@ async function tg(method, body) {
  * mirrored pane's id carries a device name (`@desk/s1-x`), so the check is real rather
  * than decorative: past the limit the button is posted and every tap is silently ignored.
  */
-function callbackData(id, n) {
-  const data = `c|${id}|${n}`
+function callbackData(id, n, stamp) {
+  const data = `c|${id}|${n}|${stamp}`
   return Buffer.byteLength(data) <= 64 ? data : ''
 }
 
 /** One button per row: an option's label is a sentence, not a word. */
 function keyboard(id, ask) {
   const rows = []
+  // The button carries the question it was drawn for. A message stays in the chat after
+  // its question is answered - the buttons are stripped on the next sweep, and a tap that
+  // beats the sweep would otherwise press an option of whatever the pane is asking NOW.
+  const want = askStamp(ask)
   for (const o of ask.options) {
-    const data = callbackData(id, o.n)
+    const data = callbackData(id, o.n, want)
     if (!data) continue
     rows.push([{ text: `${o.n}. ${o.label}`.slice(0, 60), callback_data: data }])
   }
@@ -237,10 +242,12 @@ let offset = 0
 
 /** Act on one callback, whoever handed it over. Answers nothing on its own. */
 async function actOn(data) {
-  const [tag, id, n] = String(data ?? '').split('|')
+  // The stamp is the fourth field and may be absent: a button posted by an older copy of
+  // this script is still a real press, and the app treats "nobody said" as no check.
+  const [tag, id, n, want] = String(data ?? '').split('|')
   if (tag !== 'c' || !id) return false
   try {
-    return await call('pty:choose', [id, Number(n)])
+    return await call('pty:choose', [id, Number(n), want || undefined])
   } catch (e) {
     console.error(`pf-telegram: choose failed - ${e.message}`)
     return false

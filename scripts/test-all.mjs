@@ -21,7 +21,7 @@
 //   node scripts/test-all.mjs             every test below
 //   node scripts/test-all.mjs rail theme  only the ones whose name contains one of these
 
-import { execFileSync, spawn } from 'node:child_process'
+import { execFileSync, spawn, execSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { cpus, loadavg, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -33,6 +33,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 // build should say so in a second rather than after the slow ones.
 const TESTS = [
   ['copylogic', 'copy-logic-test.mjs'],
+  ['changednothing', 'changed-nothing-test.mjs'],
   ['laneheartbeat', 'lane-heartbeat-test.mjs'],
   ['shipimports', 'ship-imports-test.mjs'],
   ['guarddeckhold', 'guarddeck-hold-test.mjs'],
@@ -59,10 +60,16 @@ const TESTS = [
   ['devkeep', 'devkeep-test.mjs'],
   ['devlayout', 'dev-layout-test.mjs'],
   ['remotereset', 'remote-reset-test.mjs'],
+  ['terminalprotocol', 'terminal-protocol-test.mjs'],
   ['exitclose', 'exitclose-test.mjs'],
   ['headerfit', 'header-fit-test.mjs'],
   ['promptseed', 'promptseed-test.mjs'],
   ['renderwatch', 'renderwatch-test.mjs'],
+  ['mainwatch', 'main-watch-test.mjs'],
+  ['logwrite', 'log-write-test.mjs'],
+  ['sleepcause', 'sleep-cause-test.mjs'],
+  ['mainasyncio', 'main-async-io-test.mjs'],
+  ['mainsyncio', 'main-sync-io-test.mjs'],
   ['elapsed', 'elapsed-test.mjs'],
   ['usage', 'usage-test.mjs'],
   ['railplace', 'rail-place-test.mjs'],
@@ -77,6 +84,7 @@ const TESTS = [
   ['interventions', 'interventions-test.mjs'],
   ['choices', 'choices-test.mjs'],
   ['handoffsteps', 'handoff-steps-test.mjs'],
+  ['handoffstatthrottle', 'handoff-stat-throttle-test.mjs'],
   ['panemodel', 'panemodel-test.mjs'],
   ['effort', 'effort-test.mjs'],
   ['staleframe', 'stale-frame-test.mjs'],
@@ -109,6 +117,8 @@ const TESTS = [
   ['quitwords', 'quit-words-test.mjs'],
   ['reclaim', 'reclaim-test.mjs'],
   ['activity', 'activity-test.mjs'],
+  ['lanetimeline', 'lane-timeline-test.mjs'],
+  ['askstamp', 'ask-stamp-test.mjs'],
   ['hookdeny', 'hookdeny-test.mjs'],
   ['deaddev', 'deaddev-test.mjs'],
   ['sleep', 'sleep-test.mjs'],
@@ -188,6 +198,7 @@ const TESTS = [
   ['blurbs', 'blurb-test.mjs'],
   ['sounds', 'sound-test.mjs'],
   ['voice', 'voice-test.mjs'],
+  ['voicefetch', 'voice-fetch-test.mjs'],
   ['busy', 'busy-test.mjs'],
   ['fleet', 'fleet-test.mjs'],
   ['crlf', 'crlf-test.mjs'],
@@ -253,7 +264,8 @@ const TESTS = [
   ['qr', 'qr-test.mjs'],
   ['pairask', 'pair-ask-test.mjs'],
   ['gate', 'release-gate-test.mjs'],
-  ['conflict', 'conflict-test.mjs']
+  ['conflict', 'conflict-test.mjs'],
+  ['queuedprompt', 'queued-prompt-test.mjs']
 ]
 
 const only = process.argv.slice(2).filter((a) => !a.startsWith('-'))
@@ -357,7 +369,13 @@ const started = Date.now()
  * the 193 scripts changes.
  */
 const TMP_ROOT = mkdtempSync(join(tmpdir(), 'pf-test-run-'))
-const dropTmp = () => rmSync(TMP_ROOT, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+// A suite's headless Chrome outlives a killed run (ppid 1) and then blocks the real Chrome
+// from opening: macOS activates the running bundle instead of launching a window. Kill any
+// Chrome whose profile lives under this run's root before dropping the root.
+const dropTmp = () => {
+  try { execSync(`pkill -9 -f -- "--user-data-dir=${TMP_ROOT}"`, { stdio: 'ignore' }) } catch {}
+  rmSync(TMP_ROOT, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+}
 // `exit` alone leaks the root on every Ctrl-C, and this name is unique per run, so nothing
 // later reclaims it. A signal has to drop it itself, then die of that signal.
 process.on('exit', dropTmp)

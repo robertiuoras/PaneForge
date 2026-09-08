@@ -10,7 +10,19 @@
    simpler: an approximation here is a visible flash of a different-coloured window on
    every launch. They are Forge at its defaults, and scripts/theme-test.mjs pins the
    derived ladder to the same lightnesses. */
+/* Self-hosted so a heading never depends on the network: Manrope (OFL), one variable
+   file, weight axis 200-800. Body text stays the system font - this is for headings
+   only, the way linear.app spends its one custom face on display type and nothing
+   else (design-vault/linear.app.md). */
+@font-face {
+  font-family: 'PF Display';
+  src: url('./assets/fonts/Manrope-Variable.ttf') format('truetype-variations');
+  font-weight: 200 800;
+  font-display: swap;
+}
+
 :root {
+  --font-heading: 'PF Display', 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
   --bg: #0a0a0d;
   --surface: #101014;
   --surface-2: #16161d;
@@ -851,7 +863,10 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 /* `.row-tags` gaps them now. */
 .row.preset { background: #ffffff07; }
 .row-text { flex: 1; min-width: 0; }
-.row-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row-title {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-family: var(--font-heading); font-weight: 620; letter-spacing: -0.01em;
+}
 /* The pane's title line, when it carries a Ctrl-N key. Flex rather than inline text: the
    key is a 16px pill of 10px type and the name is 13px type, and on a shared baseline the
    pill's centre rode 2.45px above the name's (measured). Centring the two boxes puts them
@@ -931,7 +946,7 @@ button.chip.closing:hover { filter: brightness(1.3); }
 .row-sub {
   color: var(--muted); font-size: 11px; display: flex; align-items: center; gap: 5px;
   flex-wrap: wrap; row-gap: 2px;
-  white-space: nowrap; overflow: hidden;
+  white-space: nowrap; overflow: hidden; margin-top: 1px;
 }
 /* This line overflows the moment a card carries a model, a lane chip and a running
    clock - and `overflow: hidden` clips the RIGHT end, which is where the clock is. So
@@ -955,6 +970,11 @@ button.chip.closing:hover { filter: brightness(1.3); }
   padding: 0 5px; font-size: 10px; color: var(--muted);
   box-shadow: inset 0 1px 0 var(--glass-hi);
 }
+.row .chip { line-height: 16px; }
+.chip.card-status { flex: none; font-weight: 600; }
+.chip.card-status.working { color: var(--ok); border-color: #35d07f33; background: #35d07f10; }
+.chip.card-status.starting { color: var(--warn); border-color: #f0b42933; background: #f0b42910; }
+.chip.card-status.idle { color: var(--muted); border-color: var(--line); background: transparent; }
 .row-sub .chip { flex: 0 9 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .chip.handoff-queued {
   display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
@@ -988,6 +1008,18 @@ button.chip.closing:hover { filter: brightness(1.3); }
   color: var(--accent);
   border-color: var(--line-strong);
   background: transparent;
+  white-space: nowrap;
+}
+
+/* A turn that finished having changed no file in the pane's folder
+   (src/shared/changedNothing.ts). Deliberately the QUIETEST chip on the line - muted text
+   on a hairline, no fill and no colour of its own - because nothing is broken and nothing
+   is waiting: the pane is finished, it simply produced nothing. Amber or red here would
+   read as an error the app had detected, and this is a reading offered to a person, not a
+   verdict. Same restraint as `.chip.asleep`, which says the other quiet thing. */
+.chip.nowork {
+  flex: none;
+  color: var(--muted); border-color: var(--line); background: transparent;
   white-space: nowrap;
 }
 
@@ -1134,11 +1166,8 @@ button.chip.closing:hover { filter: brightness(1.3); }
    reading `glowBreath` with `app-blurred` set. */
 html.app-blurred .num-wrap:has(> .num.live)::before,
 html.app-blurred .num-wrap:has(> .num.attn)::before { animation: none; opacity: 1; }
-/* The sheen and the working dot stop too. Stopping them is safe in a way that pausing
-   them would not be: both rest in their "on" state - the band sits off the left edge
-   where the key's own `overflow: hidden` swallows it, and the dot returns to full
-   opacity - so an unfocused sidebar loses the motion and keeps every state it was
-   telling you about. */
+/* The working dot stops too. Stopping it is safe in a way that pausing it would not be:
+   it returns to full opacity, so an unfocused sidebar keeps the state without the motion. */
 html.app-blurred .num.live::after { animation: none; }
 html.app-blurred .dot.working { animation: none; }
 /* The waiting ring needs no rule here any more. It used to be the one loop with no
@@ -1198,7 +1227,6 @@ html:is(.hi-refresh, .on-battery) .num.live::after,
 html:is(.hi-refresh, .on-battery) .row.asking::before,
 html:is(.hi-refresh, .on-battery) .dot.working,
 html:is(.hi-refresh, .on-battery) .dot.connecting,
-html:is(.hi-refresh, .on-battery) .elapsed::after,
 html:is(.hi-refresh, .on-battery) .chip.pf-lane.stuck,
 html:is(.hi-refresh, .on-battery) .chip.pf-lane.busy,
 html:is(.hi-refresh, .on-battery) .chip.place.lane-chip.stuck,
@@ -1221,6 +1249,31 @@ html:is(.hi-refresh, .on-battery) .mascot-ball { animation: none !important; }
 .row:hover .x, .row.active .x { opacity: 1; }
 .x:hover { background: #ff8f8f1f; color: var(--danger); }
 .empty { color: var(--muted); padding: 10px 2px; }
+
+/* The welcome card: a hairline border and a one-step-up surface, no shadow, no gradient -
+   linear.app's card recipe (design-vault/linear.app.md, "Card (feature)"). One accent verb
+   (the + button already used everywhere else), two hairline chips for the two things a
+   person does right after: find something they already had open, or see what is asking
+   for them. Nothing here is a colour literal - every value is a token from paletteFor. */
+.welcome {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 10px;
+  padding: 18px 16px; margin: 4px 0;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg);
+}
+.welcome-h {
+  margin: 0; font-family: var(--font-heading); font-weight: 650;
+  font-size: 19px; line-height: 1.15; letter-spacing: -0.02em; color: var(--text);
+}
+.welcome-sub { margin: 0; font-size: 12px; color: var(--muted); }
+.welcome-start { margin-top: 4px; }
+.welcome-row { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 2px; }
+.welcome-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: none; border: 1px solid var(--line); border-radius: var(--r);
+  padding: 6px 11px; font-size: 12px; color: var(--muted); cursor: pointer;
+  transition: background var(--fast), border-color var(--fast), color var(--fast);
+}
+.welcome-chip:hover { background: var(--surface-2); border-color: var(--line-strong); color: var(--text); }
 /* The one empty state that is a first-run instruction rather than "nothing matched". */
 .empty.first-run { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 16px 2px; }
 .empty.first-run code { color: var(--text); word-break: break-all; }
@@ -1273,54 +1326,27 @@ html:is(.hi-refresh, .on-battery) .mascot-ball { animation: none !important; }
 
 /* Length of the turn a session is running, ticking once a second. Tabular
    figures so the row does not jitter as the digits change. */
-/* The turn clock. A running number is the one thing in a row that is actually moving, so
-   it is given a small piece of glass to sit on: a tinted capsule with a lit top edge and
-   a slow sheen crossing it. The sheen is what reads as "live" without a spinner. */
+/* The turn clock stays a compact, static capsule. The state word and dot say it is live;
+   moving decoration only makes a small, frequently changing number harder to read. */
 .elapsed {
-  margin-left: auto; flex: none; position: relative; overflow: hidden;
+  margin-left: auto; flex: none;
   padding: 1px 7px; border-radius: 999px;
-  border: 1px solid #ffffff1a;
-  background: linear-gradient(180deg, #ffffff14, #ffffff05 60%, #ffffff00);
-  box-shadow: 0 1px 0 #ffffff12 inset, 0 1px 3px #00000040;
-  color: var(--text); font-size: 10.5px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface-2);
+  box-shadow: none;
+  color: var(--text); font-size: 10.5px; font-weight: 600;
   font-variant-numeric: tabular-nums; font-feature-settings: 'tnum';
-  letter-spacing: 0.01em; opacity: 0.92;
+  letter-spacing: 0.01em;
 }
-.elapsed::after {
-  content: ''; position: absolute; inset: 0;
-  background: linear-gradient(105deg, #fff0 38%, #ffffff2e 50%, #fff0 62%);
-  transform: translateX(-120%);
-  animation: sheen 3.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
-}
-@keyframes sheen { 0% { transform: translateX(-120%); } 55%, 100% { transform: translateX(120%); } }
-/* There is NO second copy of the digits. There used to be: `data-t` was painted again in
-   a gradient clipped to the glyphs and laid over the real text, so the light travelled
-   THROUGH the numbers. Two copies of the same glyphs can only ever line up to the pixel
-   while both are laid out identically, and they are not - the copy is a transparent-colour
-   background-clip layer, which Chromium antialiases differently from ordinary text, so at
-   every opacity between the breath's 0.12 and its 1.0 the number read as doubled. That is
-   the ghosting: a fringe on every digit, on the one element in the sidebar that is moving.
-   The pill's own sheen (::after, above) already says "live" and travels over the capsule
-   rather than the text, so the glimmer bought nothing the sheen was not already saying. */
-html.app-blurred .elapsed::after { animation: none; }
-/* The same slot once the turn is over: frozen, flat, and dim enough that a still number
-   never reads as a running one. No glass, no sheen - that is the whole tell. */
-/* A clock that has stopped because this screen is no longer hearing from the desk. The
-   sheen is the "live" signal, so it goes first: a number that shimmers while nothing is
-   running is the lie this styling exists to stop. */
+/* A stopped or stale clock is quieter than the current turn without becoming illegible. */
 .elapsed.stale {
   color: var(--muted, #a8a8a8);
   opacity: 0.55;
   border-style: dashed;
 }
-.elapsed.stale::after { content: none; }
 .elapsed.done {
   padding: 0; border-color: transparent; background: none; box-shadow: none;
   color: var(--muted); opacity: 0.42;
-}
-.elapsed.done::after { content: none; }
-@media (prefers-reduced-motion: reduce) {
-  .elapsed::after { animation: none; opacity: 0.5; }
 }
 /* Auto-created worktree lane, so two agents in one project are visibly apart. It is a
    button - a lane has an end now, and this is the way to it - so it also has to unlearn
@@ -1880,25 +1906,21 @@ body.sizing * { user-select: none !important; }
 .pane-title[data-tight='5'] .pt-open { display: none }
 
 .pane-title[data-tight='2'] .git-badge,
-.pane-title[data-tight='2'] .pt-handoff,
 .pane-title[data-tight='2'] .pt-zoom,
 .pane-title[data-tight='2'] [data-pt='editor'],
 .pane-title[data-tight='2'] .icon.fix,
 .pane-title[data-tight='2'] .pt-restart,
 .pane-title[data-tight='3'] .git-badge,
-.pane-title[data-tight='3'] .pt-handoff,
 .pane-title[data-tight='3'] .pt-zoom,
 .pane-title[data-tight='3'] [data-pt='editor'],
 .pane-title[data-tight='3'] .icon.fix,
 .pane-title[data-tight='3'] .pt-restart,
 .pane-title[data-tight='4'] .git-badge,
-.pane-title[data-tight='4'] .pt-handoff,
 .pane-title[data-tight='4'] .pt-zoom,
 .pane-title[data-tight='4'] [data-pt='editor'],
 .pane-title[data-tight='4'] .icon.fix,
 .pane-title[data-tight='4'] .pt-restart,
 .pane-title[data-tight='5'] .git-badge,
-.pane-title[data-tight='5'] .pt-handoff,
 .pane-title[data-tight='5'] .pt-zoom,
 .pane-title[data-tight='5'] [data-pt='editor'],
 .pane-title[data-tight='5'] .icon.fix,
@@ -1908,11 +1930,13 @@ body.sizing * { user-select: none !important; }
 .pane-title[data-tight='4'] .agent-pick,
 .pane-title[data-tight='5'] .agent-pick { display: none }
 
-/* Clear and open-the-folder are the last two controls to go. */
+/* Clear, open-the-folder and where-this-runs are the last three controls to go. */
 .pane-title[data-tight='4'] .pt-clear,
 .pane-title[data-tight='4'] .pt-reveal,
+.pane-title[data-tight='4'] .pt-handoff,
 .pane-title[data-tight='5'] .pt-clear,
-.pane-title[data-tight='5'] .pt-reveal { display: none }
+.pane-title[data-tight='5'] .pt-reveal,
+.pane-title[data-tight='5'] .pt-handoff { display: none }
 
 .pane-title[data-tight='5'] .agent-logo { display: none }
 
@@ -1921,6 +1945,11 @@ body.sizing * { user-select: none !important; }
 .pt-actions .pt-more { display: none }
 .pane-title[data-more='on'] .pt-more { display: inline-flex }
 
+/* Where this pane runs, in the same box as every other control on the row. It used to be
+   a `.ghost` pill - border, inset highlight, 7px/10px padding - beside eight flat icons,
+   and at 11px type that one control was wider than three of them (Robert 2026-09-08:
+   "other button format better"). Arrow glyphs sit a shade small at the shared size. */
+.pt-actions .icon.pt-handoff { font-size: 14px; }
 .pt-actions .icon.pt-close {
   color: var(--danger); opacity: 0.8; font-size: 15px;
 }
@@ -2108,6 +2137,9 @@ body.sizing * { user-select: none !important; }
 /* A finger, not a pointer: 30px is a comfortable target for a mouse and a miss for a
    thumb, and answering from the phone is most of why this exists. */
 @media (pointer: coarse) {
+  /* A finger needs 44px: the welcome card chips and the settings rail rows. */
+  .welcome-chip { min-height: 44px; }
+  .nav-item { min-height: 44px; justify-content: center; }
   .pane-ask-btn { min-height: 44px; padding: 8px 14px; font-size: 13px; }
   /* A finger cannot hover, so a control revealed BY hover is a control a phone does not
      have: the card's close button sat at `opacity: 0` unless the row was already the
@@ -3669,11 +3701,12 @@ button.ghost.active { background: var(--accent-dim); border-color: var(--accent)
 .nav-find { margin-bottom: 6px; }
 .nav-item {
   display: flex; flex-direction: column; gap: 1px; align-items: flex-start;
-  background: none; border: 1px solid transparent; border-radius: var(--r-sm);
+  background: none; border: 1px solid transparent; border-radius: 999px;
   padding: var(--row-pad); cursor: pointer; text-align: left; width: 100%;
-  color: var(--text); transition: background var(--fast), border-color var(--fast);
+  color: var(--text); transition: background var(--fast), border-color var(--fast), color var(--fast);
 }
 .nav-item:hover { background: var(--surface-3); }
+.nav-item:active { background: var(--surface-2); }
 /* The selected rail entry is a filled block rather than a coloured word: with eight of
    them stacked, a tinted label alone is not findable without reading all eight. */
 .nav-item.on { background: var(--accent-dim); border-color: var(--accent); }
@@ -4731,6 +4764,16 @@ html.handheld .card-x { width: 44px; height: 44px; top: 0; right: 0; font-size: 
 /* The one kind that took something away reads in the accent, so a list of eight rows
    answers "did it close anything" without being read word by word. */
 .act-kind.k-closed, .act-kind.k-cleared { color: var(--accent); }
+/* The copy's own log, in the same three colours the lane strip already uses for the same
+   three facts: red for work being left out, green for work that is finished or has gone
+   out, blue for somebody being in there. A fourth colour would be a fourth thing to learn
+   for facts the row beside it already draws. */
+.act-kind.lane-k-stuck { color: var(--danger); }
+.act-kind.lane-k-ready, .act-kind.lane-k-shipped, .act-kind.lane-k-unstuck { color: var(--ok); }
+.act-kind.lane-k-taken { color: var(--info); }
+/* A row that opens something says so on hover, the way the session cards do. */
+.lane-row.readable { cursor: pointer; }
+.lane-row.readable:hover { border-color: var(--line-strong); }
 
 /* ---- signing in to a browser on another machine ----------------------------
    The chat keeps the left half of the pane column and the far machine's browser
@@ -4750,11 +4793,20 @@ html.login-open .panes { padding-right: calc(var(--login-w, 50vw) + 6px); }
   border-left: 1px solid var(--line);
 }
 .login-head {
-  display: flex; align-items: center; gap: 8px;
+  /* Wrapping is load-bearing, not a nicety: measured 2026-09-07 the row was 32px wider
+     than the column at every window size, so Close sat off the right edge with nothing
+     to scroll it back. */
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px; row-gap: 5px;
   padding: 7px 9px;
   background: var(--surface);
   border-bottom: 1px solid var(--line);
   font-size: 12px;
+}
+.login-site, .login-where, .login-who { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.login-who { color: var(--muted); }
+.login-typing {
+  padding: 0 7px; border-radius: 99px;
+  border: 1px solid var(--accent); color: var(--accent-text); background: var(--accent-dim);
 }
 .login-site { font-weight: 600; color: var(--text); text-transform: capitalize; }
 .login-where { color: var(--muted); }
@@ -4811,7 +4863,9 @@ html.login-open .panes { padding-right: calc(var(--login-w, 50vw) + 6px); }
   pointer-events: auto;
 }
 .login-card-title { font-size: 13px; font-weight: 600; color: var(--text); }
+.login-card-who { margin-top: 3px; font-size: 12px; color: var(--text); }
 .login-card-body { margin: 5px 0 9px; font-size: 12px; color: var(--muted); line-height: 1.45; }
+.login-card-why { margin: -5px 0 9px; font-size: 12px; color: var(--muted); line-height: 1.45; }
 .login-card-row { display: flex; gap: 7px; }
 
 /* A phone is not a second desk here: the picture is a desk-sized browser and the
@@ -4827,6 +4881,12 @@ html.login-open .panes { padding-right: calc(var(--login-w, 50vw) + 6px); }
 .tour-look.bad { color: var(--danger, var(--text)); }
 
 .session-clock { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+/* The sidebar's state box is one metadata group. Its labels stay quiet while values keep
+   enough contrast to distinguish the current turn from the session age. */
+.row-tags .session-clock { flex: none; }
+.row-tags .elapsed { margin-left: 0; }
+.row-tags .elapsed.done { color: var(--text); opacity: 0.76; }
+.row-tags .session-last { color: var(--muted); }
 
 .keep-open-toggle { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; margin: 6px 0; }
 .keep-open-toggle.active { color: var(--text); border-color: var(--text); }

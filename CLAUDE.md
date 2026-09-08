@@ -1087,6 +1087,13 @@ is the CLI inside (~190 MB each, vs 16-17 MB Codex). `npm run test:reclaim`.
 - `unread` refuses `onTheClock`, holds CLOCK only, gated on `sawPerson`.
 - `idleSleepPlan` (`reclaim.idleSleepMinutes`, 30 min) stops agent, keeps card/place/screen/conversation;
   drops closing-only rules. No countdown; card says `asleep 3m`.
+- Sleep diagnostics: `reclaim.log` records the initiating source, idle/pressure reason, measured
+  quiet duration and threshold, request/refusal/completion, process start/exit and wake outcome.
+  Older builds could label automatic sleeps `manual`; that label is not proof of a click.
+  Structured diagnostics share `pid`, `version`, and a process-local `seq`; text logs append the
+  same metadata. Shutdown gives async diagnostics up to 250 ms to finish, so a stalled disk or
+  forced kill can still lose terminal records. `node scripts/sleep-cause-live.mjs` verifies a
+  real automatic sweep, wake and normal quit in an isolated shell-only Electron profile.
 - `reclaim.idleCloseMinutes` 0 by default, switch sets 5 min.
 
 Restore: `restorePlan` starts all at normal, two at warn, one at critical, never zero while a pane is

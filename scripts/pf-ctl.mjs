@@ -15,6 +15,9 @@
  *   node scripts/pf-ctl.mjs open-many <plan.json>
  *   node scripts/pf-ctl.mjs devices
  *   node scripts/pf-ctl.mjs needs-login <site> --url <url> [--host user@ip] [--port N] [--machine WORDS]
+ *                                        [--why "what it will do once signed in"] [--open]
+ *                                        [--desk user@ip] [--me user@ip] [--report-to <pane>]
+ *   node scripts/pf-ctl.mjs tell <title-or-id> <text...>
  *   node scripts/pf-ctl.mjs login [url] [--site NAME] [--host user@ip] [--port N] [--machine WORDS]
  *   node scripts/pf-ctl.mjs close <title-or-id>
  *   node scripts/pf-ctl.mjs rename <title-or-id> <name...>
@@ -39,7 +42,8 @@
  *
  * Exit codes: 0 ok · 1 target not found / call failed · 2 phone server unreachable/off.
  */
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -171,7 +175,9 @@ export function readOpenManyPlan(path) {
   })
 }
 
-const isMain = import.meta.url === pathToFileURL(process.argv[1] ?? '').href
+// realpath: ~/.local/bin/pf is a symlink, and a symlinked argv[1] never equals import.meta.url,
+// so every `pf ...` call silently did nothing and exited 0 (2026-09-07).
+const isMain = import.meta.url === pathToFileURL(realpathSync(process.argv[1] ?? "/")).href
 const [cmd, ...rest] = isMain ? process.argv.slice(2) : []
 if (isMain) await main()
 
@@ -185,19 +191,91 @@ async function main() {
  * walk. It refuses here, where the mistake was made, rather than putting up a card that
  * opens a browser at nothing.
  */
+
+/** One argument, safe inside the single command line ssh hands to a shell. */
+function shellQuote(word) {
+  if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(word)) return word
+  return `'${String(word).replace(/'/g, `'"'"'`)}'`
+}
+
+/** This machine's ssh address, for the other desk to reach back on. */
+function selfAddress() {
+  const who = process.env.USER || process.env.USERNAME
+  if (!who) return undefined
+  const ts = spawnSync('tailscale', ['ip', '-4'], { encoding: 'utf8' })
+  const ip = (ts.stdout ?? '').split(/\r?\n/).map((l) => l.trim()).find(Boolean)
+  return ip ? `${who}@${ip}` : undefined
+}
+
+/**
+ * The one command that puts the card on the OTHER desk. Same shape as `relayCommand` in
+ * src/shared/remoteLogin.ts, which is where the rules are written down.
+ */
+function relayCommand(a) {
+  const desk = (a.desk ?? '').trim()
+  if (!desk) return { ok: false, why: 'Say which computer should show the card, like: --desk robert@100.89.94.66' }
+  const self = (a.me ?? selfAddress() ?? '').trim()
+  if (!self)
+    return {
+      ok: false,
+      why: 'The other desk has to be able to reach this machine back - pass --me user@address (or set PF_SSH_SELF)'
+    }
+  const words = ['needs-login', a.site, '--url', a.url, '--host', self, '--open']
+  if (a.port) words.push('--port', String(a.port))
+  if (a.machine) words.push('--machine', a.machine)
+  if (a.why) words.push('--why', a.why)
+  if (a.reportTo) words.push('--report-to', a.reportTo, '--report-host', self)
+  const args = words.map(shellQuote).join(' ')
+  // An ssh command reads no profile, so neither `pf` nor `node` is on the PATH over
+  // there; a LOGIN shell has the paths a person's own terminal has.
+  // The checkout first, the `pf` link second: running the link through a login shell
+  // printed nothing and exited 0 on this Mac, which looks exactly like success.
+  const inner = `node "$HOME/Projects/PaneForge/scripts/pf-ctl.mjs" ${args} || pf ${args}`
+  const remote = a.pf ? `${a.pf} ${args}` : `bash -lc ${shellQuote(inner)}`
+  return {
+    ok: true,
+    remote,
+    // `-n`: ssh reads its own stdin, and a spawn that hands it a pipe nobody closes hangs.
+    argv: ['-n', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-o', 'StrictHostKeyChecking=accept-new', desk, remote]
+  }
+}
+
 let loginArgs = null
 if (cmd === 'needs-login') {
   const host = flag(rest, '--host')
   const port = flag(rest, '--port')
   const machine = flag(rest, '--machine')
   const url = flag(rest, '--url')
+  const why = flag(rest, '--why')
+  const desk = flag(rest, '--desk')
+  const pf = flag(rest, '--pf')
+  const me = flag(rest, '--me') ?? process.env.PF_SSH_SELF
+  // A pane that asked is the pane to tell, so `--report-to` only has to be typed by
+  // something that is not a pane (a cron job telling a pane on another machine).
+  const reportTo = flag(rest, '--report-to') ?? process.env.PF_PANE
+  const reportHost = flag(rest, '--report-host')
   const site = rest[0]
   if (!site) fail(1, 'needs-login needs a site: pf-ctl needs-login <site> --url <url> [--host user@ip]')
   if (!url) fail(1, 'needs-login needs --url <address of the sign-in page>')
   if (!/^https?:\/\//i.test(url))
     fail(1, `--url must start with http:// or https:// - got "${url}"`)
   if (port && !/^\d+$/.test(port)) fail(1, `--port must be a number - got "${port}"`)
-  loginArgs = { site, url, host, port: port ? Number(port) : undefined, machine, from: process.env.PF_PANE }
+  loginArgs = {
+    site,
+    url,
+    host,
+    port: port ? Number(port) : undefined,
+    machine,
+    why,
+    reportTo,
+    reportHost,
+    open: rest.includes('--open') || undefined,
+    from: process.env.PF_PANE,
+    // Not sent to the app: `--desk` means this ask is not for THIS app at all.
+    desk,
+    me,
+    pf
+  }
 }
 
 /*
@@ -306,6 +384,42 @@ if (cmd === 'hold') {
 
 // The suite drives the refusals above without an app on the machine; everything past this
 // line needs one.
+// `pf tell` refuses BEFORE it needs an app, like every other command that can be typed
+// wrong: a line with no pane to say it to is a mistake, not a message.
+if (cmd === 'tell') {
+  if (rest.length < 2 || !rest[0] || !rest.slice(1).join(' ').trim())
+    fail(1, 'tell needs a pane and one line: pf-ctl tell <title-or-id> <text...>')
+}
+
+// The card belongs on the OTHER computer, because that is where the person is - so this
+// ask never reaches the app on this machine, and runs before one is even looked for. The
+// hop is ssh and not the desk-to-desk link on purpose: a scheduled job hits its sign-in
+// wall whether or not the two desks are paired, and often with no PaneForge running on
+// its own machine at all.
+if (cmd === 'needs-login' && loginArgs?.desk) {
+  const relay = relayCommand(loginArgs)
+  if (!relay.ok) fail(1, relay.why)
+  // `PF_SSH` stands in for the ssh binary when this is being tested. Windows has no `echo`
+  // binary to point it at and cannot spawn a `.cmd` without a shell, so the JSON form
+  // `["<binary>", "<leading arg>"]` lets a test name an interpreter and the script it runs.
+  const sshCmd = process.env.PF_SSH ?? 'ssh'
+  const [sshBin, ...sshLead] = sshCmd.startsWith('[') ? JSON.parse(sshCmd) : [sshCmd]
+  const ssh = spawnSync(sshBin, [...sshLead, ...relay.argv], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+  const said = `${ssh.stdout ?? ''}${ssh.stderr ?? ''}`.trim()
+  if (ssh.status !== 0)
+    fail(1, `could not ask ${loginArgs.desk} to show the sign-in card: ${said || `ssh exited ${ssh.status}`}`)
+  // The far desk answers with the request's own id. Nothing at all is a FAILED ask - a
+  // silent exit 0 is what a missing command over ssh looks like, and reporting that as a
+  // card being up leaves a job waiting on something nobody can see.
+  if (!/login-\S+/.test(said) && !process.env.PF_SSH)
+    fail(1, `${loginArgs.desk} did not put a sign-in card up${said ? `: ${said}` : ' and said nothing'}`)
+  console.log(said || 'asked')
+  process.exit(0)
+}
+
 if (process.env.PF_CTL_NO_APP === '1') process.exit(0)
 
 await pair()
@@ -426,7 +540,12 @@ if (cmd === 'list') {
     }
   ])
   const landed = s?.cwd ?? cwd
-  console.log(`opened ${s?.id ?? '?'} in ${landed}`)
+  // Which of the two things happened: a new pane, or a prompt handed to the pane that was
+  // already open on that folder. Only an IDLE pane with nothing queued takes a send - see
+  // `shared/sendOrOpen.ts` - and a caller that cannot tell them apart cannot tell whether
+  // its brief is being worked on now or behind somebody else's turn.
+  if (s?.startAction === 'send') console.log(`sent to ${s?.id ?? '?'} (idle) in ${landed}`)
+  else console.log(`opened ${s?.id ?? '?'} in ${landed}`)
   // The pane may have been placed in a lane copy, which is a different folder and so a
   // different set of conversations. Put the transcript there and start the agent again -
   // a pane seconds old has nothing to lose, and this is the only moment the id is known.
@@ -507,6 +626,14 @@ if (cmd === 'list') {
   const now = (await sessions()).find((x) => x.id === s.id)
   if (now?.title !== name) fail(1, `sessions:rename answered but ${s.id} is still "${now?.title ?? '?'}"`)
   console.log(`renamed ${s.id} (${was} -> ${name})`)
+} else if (cmd === 'tell') {
+  // One line into a pane, queued for the gap between its turns rather than typed into
+  // the middle of one - the same door the sign-in card reports back through.
+  const ref = rest.shift()
+  const text = rest.join(' ')
+  if (!ref || !text) fail(1, 'tell needs a pane and one line: pf-ctl tell <title-or-id> <text...>')
+  await send('pane:tell', [ref, text])
+  console.log(`told ${ref}`)
 } else if (cmd === 'type') {
   const ref = rest.shift()
   const text = rest.join(' ')
@@ -556,7 +683,7 @@ if (cmd === 'list') {
 } else {
   fail(
     1,
-    `unknown command "${cmd ?? ''}" - use: list | open | open-many | devices | needs-login | login | close | rename | type | hold | call | send`
+    `unknown command "${cmd ?? ''}" - use: list | open | open-many | devices | needs-login | login | tell | close | rename | type | hold | call | send`
   )
 }
 }

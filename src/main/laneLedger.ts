@@ -64,7 +64,24 @@ function projectRoots(): string[] {
     : [join(homedir(), 'Desktop', 'Projects'), join(homedir(), 'Projects')]
 }
 
+/**
+ * ...cached for a beat. Every call reads a whole projects folder and asks each name
+ * whether it has a ledger - 40-odd sync fs calls on this machine - and it is asked once
+ * per pane in a batch, from main, while somebody waits for a pane to appear. Repos do not
+ * come and go inside five seconds.
+ */
+let repoCache: { at: number; repos: string[] } | null = null
+const REPOS_FRESH_MS = 5_000
+
 function ledgerRepos(): string[] {
+  const now = Date.now()
+  if (repoCache && now - repoCache.at < REPOS_FRESH_MS) return repoCache.repos
+  const repos = scanLedgerRepos()
+  repoCache = { at: now, repos }
+  return repos
+}
+
+function scanLedgerRepos(): string[] {
   const found: string[] = []
   for (const root of projectRoots()) {
     let names: string[] = []

@@ -447,6 +447,48 @@ export function askSignature(text: string): string {
   return `${ask.selected}|${ask.question}|${ask.options.map((o) => `${o.n}.${o.label}`).join('|')}`
 }
 
+/**
+ * The question's identity, short enough to travel on a button.
+ *
+ * `sameAsk` answers "are these two readings the same question" when you are holding both.
+ * A button on a phone is holding NEITHER: it was drawn minutes ago against a question the
+ * app has since finished with, and all it carries back is a pane id and an option number.
+ * Between the moment a question is answered and the sweep that strips the buttons off the
+ * old message, a tap lands on whatever the pane is asking NOW and presses option 2 of a
+ * question nobody read - which is worse than a button that does nothing, because it is
+ * silent and it types.
+ *
+ * So the button carries this, and the app refuses a press that does not match. The arrow's
+ * position is deliberately NOT in it (unlike `askSignature`): somebody moving the selection
+ * at the desk does not make it a different question, and `keysForChoice` already navigates
+ * from wherever the arrow actually is.
+ *
+ * FNV-1a, 32-bit, hex - not crypto. This is a mismatch check between two readings taken by
+ * the same program seconds apart, it has to run in a renderer that imports nothing from
+ * node, and it has to fit inside Telegram's 64-byte callback_data beside a pane id.
+ */
+export function askStamp(ask: PaneAsk | null | undefined): string {
+  if (!ask) return ''
+  const text = `${ask.question}|${ask.options.map((o) => `${o.n}.${o.label}`).join('|')}`
+  let h = 0x811c9dc5
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i)
+    h = Math.imul(h, 0x01000193) >>> 0
+  }
+  return h.toString(16).padStart(8, '0')
+}
+
+/**
+ * Is this press still for the question it was drawn against?
+ *
+ * `want` empty means nobody said, and nothing changes: every caller that can see the live
+ * pane - the desk, the phone watching it - is in that case.
+ */
+export function stampMatches(ask: PaneAsk | null | undefined, want?: string): boolean {
+  if (!want) return true
+  return Boolean(ask) && askStamp(ask) === want
+}
+
 /** True when two readings are the same question, so a re-read does not re-notify. */
 export function sameAsk(a: PaneAsk | null | undefined, b: PaneAsk | null | undefined): boolean {
   if (!a || !b) return !a && !b

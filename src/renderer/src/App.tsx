@@ -28,6 +28,7 @@ import DiffDialog from './components/DiffDialog'
 import LaneDialog from './components/LaneDialog'
 import LaneHelp from './components/LaneHelp'
 import { PaneMenu } from './components/PaneMenu'
+import Welcome from './components/Welcome'
 import CopyMenu, { type CopyChoice } from './components/CopyMenu'
 import SessionMenu from './components/SessionMenu'
 import SessionInfo from './components/SessionInfo'
@@ -67,7 +68,8 @@ import {
   GearIcon,
   SidebarIcon,
   RestartIcon,
-  FolderIcon
+  FolderIcon,
+  HelpIcon
 } from './components/Icons'
 import RemoteDialog from './components/RemoteDialog'
 import { PairAsk } from './components/PairAsk'
@@ -116,6 +118,7 @@ import {
   DEFAULT_RECLAIM,
   idleClosePlan,
   idleSleepPlan,
+  pressureSleepMs,
   type SleepPressure,
   sameDeadline,
   idleCloseAt,
@@ -157,7 +160,7 @@ import RestoreDialog from './components/RestoreDialog'
 import { measureRefreshRate } from './refreshRate'
 import SettingsDialog from './components/SettingsDialog'
 import ShortcutsDialog from './components/ShortcutsDialog'
-import LaneStrip, { useLaneBoards } from './components/LaneStrip'
+import LaneStrip, { useLaneBoards, useLaneTimeline } from './components/LaneStrip'
 import SessionCopies from './components/SessionCopies'
 import StatusDot from './components/StatusDot'
 import SwarmDialog, { type SwarmStart } from './components/SwarmDialog'
@@ -174,6 +177,7 @@ import { TOUR_ASLEEP_MS, TOUR_SIDE_BACK_MS } from '../../shared/tour'
 function sayMs(ms: number): string {
   return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`
 }
+
 import Tips from './components/Tips'
 import { DEFAULT_TIPS } from '../../shared/tips'
 import { folderLabel } from '../../shared/revealPane'
@@ -326,7 +330,10 @@ function reclaimPaneOf(
     pinned,
     // A sleeping pane has already given its agent back and the card is the thing being
     // kept - closing it buys nothing and loses the pane. See `shared/sleep.ts`.
-    asleep: s.asleep
+    asleep: s.asleep,
+    // ...and WHY, which is what tells a pane that finished a turn nobody read from one the
+    // restore brought back wearing an old screen. See `bornAsleep` in shared/reclaim.ts.
+    asleepReason: s.asleepReason
   }
 }
 
@@ -2872,7 +2879,10 @@ export default function App(): JSX.Element {
         // HERE rather than on the other machine. See `pressureSleepMs`.
         pressure
       )
-      for (const p of plan) void api.sleepSession(p.id)
+      for (const p of plan) void api.sleepSession(p.id, pressure === 'ok' ? 'idle' : 'pressure', {
+        source: 'renderer-idle-sweep', pressure, idleMs: p.idleMs,
+        thresholdMs: pressureSleepMs(cfg.idleSleepMinutes ?? DEFAULT_RECLAIM.idleSleepMinutes!, pressure)
+      })
     }
     // A verdict turning tight is the moment to act, not up to a minute later.
     if (pressure !== 'ok') sweep()
@@ -3841,6 +3851,7 @@ export default function App(): JSX.Element {
   // The dev lanes of every repo an open pane is in - one board per repo. Empty on a
   // machine with no lane-using checkout, and then nothing below draws anything.
   const laneBoards = useLaneBoards()
+  const laneTimeline = useLaneTimeline()
   // The worktree lane whose contents are open on screen, by folder.
   const [laneCwd, setLaneCwd] = useState<string | null>(null)
   const [laneHelp, setLaneHelp] = useState(false)
@@ -4043,7 +4054,14 @@ export default function App(): JSX.Element {
   const stillCloseable = useCallback((id: string): boolean => {
     const s = sessionsRef.current.find((x) => x.id === id)
     if (!s) return false
-    if (s.ask || s.bell) return false
+    // `s.ask` only, deliberately. A BELL is not a question: it is a noise the CLI made at
+    // some point, it is never cleared by anything the app does, and `reclaimPaneOf` - the
+    // reading the idle plan is built from - has never refused one. Two predicates for one
+    // clock is how eight panes logged `armed` and only two ever logged `closed`: the sweep
+    // armed a belled pane every five seconds, the effect below dropped the card, and
+    // nothing anywhere said so (measured 2026-09-07: s5-mtr24wj7 armed 76 times, never
+    // closed). Same failure as the two readings of the close clock on 2026-09-01.
+    if (s.ask) return false
     if (s.drafting) return false
     if (s.runSince !== undefined) return false
     if (s.handingOff) return false
@@ -4328,6 +4346,15 @@ export default function App(): JSX.Element {
     const woke = closeSoons.filter((s) => !s.move && !s.ids.every((id) => stillCloseable(id)))
     if (!woke.length) return
     console.info('reclaim: countdown dropped - a pane it named went back to work')
+    // ...and on disk, next to the `armed` line that started it. A drop that only reaches
+    // DevTools is a countdown that vanishes for no readable reason, and a sweep that
+    // re-arms the same pane every five seconds looks exactly like one that works.
+    for (const s of woke) {
+      for (const id of s.ids) {
+        if (stillCloseable(id)) continue
+        api.logReclaim({ event: 'spared', id, name: paneWordRef.current(id), why: 'it went back to work' })
+      }
+    }
     const gone = new Set(woke.map((s) => soonKey(s)))
     setCloseSoons((list) => list.filter((s) => !gone.has(soonKey(s))))
   }, [closeSoons, sessions, stillCloseable])
@@ -4963,6 +4990,17 @@ export default function App(): JSX.Element {
                         row). One box wraps whole, keeps its chips together, and is the
                         only thing on the line that may be pushed to the right. */}
                     <span className="row-tags">
+                      {/* The dot gives the state its quickest possible scan, but it cannot
+                          be the only reading. Keep the word beside the actual timers so a
+                          green dot never has to be decoded from memory. A question already
+                          has its stronger, more specific "asks you" state below. */}
+                      {!s.ask && s.status !== 'exited' && (
+                        <span className={'chip card-status ' + s.status}>
+                          {s.status === 'idle'
+                            ? (s.engaged !== false ? 'waiting for you' : 'ready')
+                            : s.status === 'working' ? 'running' : s.status}
+                        </span>
+                      )}
                       {s.ask && (
                         <span
                           className="chip asks"
@@ -5090,7 +5128,7 @@ export default function App(): JSX.Element {
                       ) : s.runSince ? (
                         <span className="session-clock">turn <Elapsed since={s.runSince} title="This turn" /></span>
                       ) : s.lastRunMs !== undefined ? (
-                        <span className="elapsed done" title="Last turn">
+                        <span className="session-clock session-last" title="Last turn">
                           last {formatElapsed(s.lastRunMs)}
                         </span>
                       ) : null}
@@ -5179,6 +5217,17 @@ export default function App(): JSX.Element {
                       {stepsWord(s.handoffOpen)}
                     </span>
                   ) : null}
+                  {/* ...and a turn that ended having written nothing at all. Decided in
+                      main off two readings of the folder taken on the turn's own
+                      boundaries (`shared/changedNothing.ts`); the words are already
+                      chosen there, so this only draws them. Static, unpressable, no
+                      clock: it says something about one finished turn, and the next turn
+                      starting clears it. */}
+                  {s.changedNothing ? (
+                    <span className="chip nowork" title={s.changedNothingWhy}>
+                      {s.changedNothing}
+                    </span>
+                  ) : null}
                   <SessionCopies session={s} boards={laneBoards} onOpen={cwd => {
                     setActiveId(s.id)
                     handheld.showPane()
@@ -5247,7 +5296,7 @@ export default function App(): JSX.Element {
               title={keyLabel('Every shortcut and what it does (F1 or Ctrl /)')}
               onClick={() => setHelp(true)}
             >
-              ?
+              <HelpIcon size={15} />
             </button>
           </span>
         </div>
@@ -5376,6 +5425,7 @@ export default function App(): JSX.Element {
         <LaneStrip
           boards={laneBoards}
           sessions={sessions}
+          timeline={laneTimeline}
           onFocus={setActiveId}
           onHelp={() => setLaneHelp(true)}
         />
@@ -5481,7 +5531,11 @@ export default function App(): JSX.Element {
             </Fragment>
           ))}
           {deskRows.length === 0 && (
-            <div className="empty">{keyLabel('No sessions. Ctrl T to start one.')}</div>
+            <Welcome
+              onStart={() => setPicking(true)}
+              onSearch={() => setPalette(true)}
+              onTools={() => setToolsOpen(true)}
+            />
           )}
         </div>
 
@@ -5989,7 +6043,8 @@ export default function App(): JSX.Element {
                     the row of six that all act on the pane in front of you. */}
                 {!s.remote && s.status !== 'exited' && (
                   <button
-                    className="ghost small desk-only pt-handoff"
+                    className="icon desk-only pt-handoff"
+                    aria-label="Where this agent runs"
                     title={
                       s.status === 'starting'
                         ? `Move ${s.lane ? `lane ${s.lane}` : s.title} to another machine. It is still starting here, so the move waits until it is ready.`
@@ -6019,7 +6074,11 @@ export default function App(): JSX.Element {
                       })
                     }}
                   >
-                    Remote
+                    {/* A glyph, not the word `Remote`: it sat in a bordered pill among
+                        eight flat 24px icons, which is what made the row look assembled
+                        from two different toolbars, and the word cost the width that
+                        dropped it first in a grid. The title still says it in full. */}
+                    ⇄
                   </button>
                 )}
                 {/* The same question from the other side of it. Drawn in the same slot as
@@ -6027,14 +6086,15 @@ export default function App(): JSX.Element {
                     and a mirrored pane had no answer to it at all until now. */}
                 {s.remote && s.status !== 'exited' && (
                   <button
-                    className="ghost small desk-only pt-handoff"
+                    className="icon desk-only pt-handoff"
+                    aria-label="Bring this pane back to this machine"
                     title={`Bring ${s.title} back from ${s.remote.name}: its repo goes up as an auto-sync commit, the conversation and screen come over the link, and the pane reopens here. Mid-turn it comes back when the turn ends.`}
                     onClick={(e) => {
                       e.stopPropagation()
                       bringHere(s)
                     }}
                   >
-                    Bring here
+                    ⇤
                   </button>
                 )}
                 {/* One target instead of six. Everything below is still rendered on a
@@ -6218,7 +6278,9 @@ export default function App(): JSX.Element {
               req={req}
               onToast={flash}
               onDone={() => {
-                api.closeLogin(req.id)
+                // Done is not Close: main tells the pane that asked - on this desk or the
+                // other one - that the wall is down, and closes the view itself.
+                api.doneLogin(req.id)
                 setLoginOpen(null)
                 flash(`Signed in on ${req.machine}. The job can carry on.`)
               }}
@@ -7007,7 +7069,7 @@ export default function App(): JSX.Element {
           setActiveId(pane.id)
           say('Putting this session to sleep\u2026')
           const t0 = Date.now()
-          await api.sleepSession(pane.id)
+          await api.sleepSession(pane.id, 'tour', { source: 'tour' })
           say(`Asleep in ${sayMs(Date.now() - t0)} - the card says asleep and the agent is gone.`)
           await new Promise((r) => setTimeout(r, TOUR_ASLEEP_MS))
           say('Waking it up again\u2026')

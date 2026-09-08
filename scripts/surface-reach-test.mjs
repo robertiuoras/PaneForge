@@ -35,6 +35,7 @@ const surfaceFile = path.join(root, 'src', 'shared', 'surface.ts')
  * it real. Anything not on this list and not called from the window is a finding.
  */
 const DESK_SIDE = {
+  tellPane: 'pf tell <pane> "..." - how the far desk says "signed in" to the pane that asked',
   // Armed by the `autoclear` Stop hook through the phone server (`pane-clear.mjs`), never
   // from this window: the decision needs the transcript's token count and the handoff on
   // disk, neither of which the renderer has. Its CANCEL half is a real button on the card.

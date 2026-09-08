@@ -10,6 +10,7 @@ import type { LinkState } from './linkState'
 // Keep this file dependency-free: it is imported from both sides of the IPC bridge.
 
 import type { ActivityEntry } from './activity'
+import type { LaneEvent } from './laneTimeline'
 import type { AttachIn, AttachResult } from './attach'
 import type { BackJob } from './backJobs'
 import type { Verdict } from './capacity'
@@ -167,6 +168,15 @@ export interface Session {
   lastKeyboard: number
   /** An unsent prompt exists, or the app cannot prove that the composer is empty. */
   drafting?: boolean
+  /**
+   * epoch ms of the last deliberate `Take over` on the handover curtain.
+   *
+   * Separate from `lastKeyboard` because the two mean different things and were read as
+   * one until 2026-09-07: typing into a pane mid-handover is somebody getting there first,
+   * pressing `Take over` is somebody claiming the pane. Only the second cancels a queued
+   * prompt - see `queuedPromptDecision`.
+   */
+  tookOverAt?: number
   createdAt: number
   /**
    * When this PANE first appeared on the desk, across every restart since - which is not
@@ -451,6 +461,19 @@ export interface Session {
   /** Epoch ms that job started, so the row's clock counts the job and not the silence. */
   backJobSince?: number
   /**
+   * The last turn ended having changed no file in this pane's folder - `changed no files`,
+   * or absent when there is nothing to say. See `shared/changedNothing.ts`.
+   *
+   * Same contract as `backJob` and `handoffOpen`: it DECORATES. It reaches no busy
+   * reading, no clock and nothing that could close a pane, because it is a statement about
+   * one finished turn and not about whether the pane is finished with. Absent is the
+   * answer whenever the folder could not be read at both ends of the turn - a failed
+   * reading must never be drawn as a wasted turn.
+   */
+  changedNothing?: string
+  /** The words the chip carries on hover, built once in main so the renderer only draws. */
+  changedNothingWhy?: string
+  /**
    * A phone or the other desk's mirror is drawing this pane right now - a live size borrow
    * (`shared/paneSize.ts`), renewed every 30s and dropped at `BORROW_TTL_MS`. The idle
    * sweeps refuse it (`ReclaimPane.watched`): on a desk nobody sits at it is the only
@@ -497,7 +520,31 @@ export interface Session {
   asleepReason?: SleepReason
 }
 
-export type SleepReason = 'manual' | 'idle' | 'pressure' | 'queued'
+/**
+ * Why a pane is asleep.
+ *
+ * `restored` is the one nobody chose: the restore brought the card, its place and its
+ * old screen back and spawned nothing, so the pane has never had an agent in it this
+ * run. It reads as the plain `asleep 3m` chip like `manual` and `idle` do - the reader
+ * does not need the word - and `shared/reclaim.ts` is what it exists for.
+ */
+export type SleepReason =
+  | 'manual'
+  | 'idle'
+  | 'pressure'
+  | 'queued'
+  | 'restored'
+  | 'unknown'
+  | 'continuation'
+  | 'tour'
+
+/** Decision evidence, without terminal text, prompts or filesystem paths. */
+export interface SleepEvidence {
+  source: 'renderer-idle-sweep' | 'tour' | 'continuation' | 'renderer' | 'api' | 'internal'
+  pressure?: 'ok' | 'tight' | 'over'
+  idleMs?: number
+  thresholdMs?: number
+}
 
 /**
  * A live tee of one pane's output. Rides on the session list rather than an event of
@@ -2071,7 +2118,7 @@ export interface Api {
    * stays where it is wearing an `asleep` chip, and what is on screen is untouched.
    * See `shared/sleep.ts`.
    */
-  sleepSession(id: string): Promise<Session | null>
+  sleepSession(id: string, reason?: SleepReason, evidence?: SleepEvidence): Promise<Session | null>
   /** Start a sleeping pane's agent again, back in the conversation it was in. */
   wakeSession(id: string): Promise<Session | null>
   /**
@@ -2219,6 +2266,12 @@ export interface Api {
   setConfig(patch: Partial<Config>): Promise<Config>
   pickRoot(): Promise<string | null>
   pickVault(): Promise<string | null>
+  /** The Obsidian vault for a folder (walks up for `.obsidian`), or null. */
+  vaultInfo(cwd: string): Promise<VaultInfo | null>
+  /** Notes and their [[wikilinks]] as a graph, read off disk. */
+  vaultGraph(vault: string): Promise<VaultGraph>
+  /** Open a note (or the vault) in the Obsidian app via `obsidian://`. */
+  vaultOpen(vault: string, note?: string): Promise<boolean>
   /** file dialog, then a copy into userData. `error` is a sentence to put on screen. */
   addSound(): Promise<{ ok: boolean; sound?: CustomSound; error?: string }>
   /** the bytes of an uploaded sound, for decodeAudioData. Null = gone or unreadable. */
@@ -2265,7 +2318,15 @@ export interface Api {
    * that question any more - a chooser that has been answered from the desk in the
    * meantime must not have a stale button press land on whatever replaced it.
    */
-  chooseOption(sessionId: string, n: number): Promise<boolean>
+  /**
+   * Press one of an agent's options.
+   *
+   * `want` is the question's own stamp (`askStamp`), carried by a button that may outlive
+   * the question it was drawn for - a Telegram message, a notification. Left out by every
+   * caller looking at the live pane. A press naming a question the pane has moved on from
+   * is refused rather than landing on whatever replaced it.
+   */
+  chooseOption(sessionId: string, n: number, want?: string): Promise<boolean>
   attachFiles(sessionId: string, files: AttachIn[]): Promise<AttachResult>
   /**
    * The same for paths on the device the window is on, read there - a `file://` drop
@@ -2304,6 +2365,16 @@ export interface Api {
   diffPatch(cwd: string, scope: DiffScope, path: string, untracked: boolean): Promise<DiffPatch>
   /** one board per lane-using repo the open panes are in; empty on a machine without one */
   laneBoard(): Promise<LaneBoard[]>
+  /**
+   * What has HAPPENED to each copy of each project, newest first.
+   *
+   * The board above is the present tense - who has it, is it finished, will it go in.
+   * This is the past one, and it is the only place a copy that was stuck for an hour and
+   * then settled leaves any trace. See `shared/laneTimeline.ts`.
+   */
+  laneTimeline(): Promise<LaneEvent[]>
+  /** The log gained an entry. Carries the whole list, newest first. */
+  onLaneTimeline(fn: (items: LaneEvent[]) => void): () => void
   /** what is in a pane's worktree lane; null when the folder is not a lane */
   laneWork(cwd: string): Promise<LaneWork | null>
   /** physical worktree lanes of a known repository, including copies absent from its ledger */
@@ -2324,12 +2395,6 @@ export interface Api {
   onQuitAsk(cb: (ask: { names: string[]; count: number }) => void): () => void
   /** Answer that card: `go` true quits with the guard lowered, false keeps working. */
   answerQuit(go: boolean): Promise<boolean>
-  /** The Obsidian vault for a folder (walks up for `.obsidian`), or null. */
-  vaultInfo(cwd: string): Promise<VaultInfo | null>
-  /** Notes and their [[wikilinks]] as a graph, read off disk. */
-  vaultGraph(vault: string): Promise<VaultGraph>
-  /** Open a note (or the vault) in the Obsidian app via `obsidian://`. */
-  vaultOpen(vault: string, note?: string): Promise<boolean>
   /**
    * Absolute path of a dropped File. Electron removed File.path, so the real path
    * only comes from webUtils in the preload.
@@ -2374,6 +2439,10 @@ export interface Api {
   openLogin(id: string): Promise<{ ok: boolean; error?: string }>
   /** Done, or Close. The sign-in stays on the machine it was typed into. */
   closeLogin(id: string): void
+  /** Signed in: tell the pane that asked, then close the view. */
+  doneLogin(id: string): void
+  /** Hand one line to a pane, queued for the gap between its own turns. */
+  tellPane(ref: string, text: string): void
   /** Not now. */
   dismissLogin(id: string): void
   /** A pointer or a key, on the remote page. */

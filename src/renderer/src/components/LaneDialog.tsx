@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { LaneBoard, LaneBoardEntry, LaneMergeResult, LaneWork, Session } from '@shared/types'
-import { describePlace, paneRef } from '@shared/place'
+import { copyNumber, describePlace, paneRef } from '@shared/place'
 import Blurb from './Blurb'
 import { ago, laneBusy, laneDoing, laneState, samePath } from '../laneWords'
 
@@ -56,19 +56,19 @@ interface Props {
 
 function summary(w: LaneWork): string {
   const bits = [
-    w.ahead ? `${w.ahead} commit${w.ahead === 1 ? '' : 's'} not in ${w.base}` : `nothing ${w.base} does not have`,
-    w.dirty ? `${w.dirty} uncommitted file${w.dirty === 1 ? '' : 's'}` : 'nothing uncommitted'
+    w.ahead ? `${w.ahead} saved change${w.ahead === 1 ? '' : 's'} to bring back` : 'nothing to bring back',
+    w.dirty ? `${w.dirty} file${w.dirty === 1 ? '' : 's'} still being edited` : 'nothing half-finished'
   ]
   return bits.join(' · ')
 }
 
 /** Why the merge button is off, in the words the person needs to act on. */
 function blocker(w: LaneWork): string | null {
-  if (w.dirty) return `Commit or discard the ${w.dirty} changed file${w.dirty === 1 ? '' : 's'} in the lane first - a merge will not take uncommitted work with it.`
-  if (!w.ahead) return `Nothing to merge. This lane will be removed on its own once no pane is in it.`
-  if (w.baseDirty) return `${w.repo.split(/[\\/]/).pop()} has uncommitted changes of its own. Commit or stash them, then merge.`
+  if (w.dirty) return `${w.dirty} file${w.dirty === 1 ? '' : 's'} in this copy ${w.dirty === 1 ? 'is' : 'are'} still half-edited. The chat here has to finish and save that work before it can go back.`
+  if (!w.ahead) return `Nothing to bring back - it is all in the main copy already. This copy is tidied away on its own once no pane is left in it.`
+  if (w.baseDirty) return `The main copy has half-finished edits of its own. Those have to be saved or dropped first.`
   if (w.conflicts.length)
-    return `This lane and ${w.base} both changed ${w.conflicts.slice(0, 4).join(', ')}${w.conflicts.length > 4 ? ` and ${w.conflicts.length - 4} more` : ''}. Merge it in the lane's own agent (git merge ${w.base}), resolve, commit - then this button will work.`
+    return `This copy and the main copy both changed ${w.conflicts.slice(0, 4).join(', ')}${w.conflicts.length > 4 ? ` and ${w.conflicts.length - 4} more` : ''}. Ask the chat working in this copy to settle which version wins - then this button works.`
   return null
 }
 
@@ -242,19 +242,19 @@ export default function LaneDialog({
       setBusy(false)
       if (r.ok) {
         setSaid(
-          `Merged ${r.commits} commit${r.commits === 1 ? '' : 's'} into ${r.base}.` +
-            (r.removed ? ' The lane folder is gone.' : ' The folder goes when this pane leaves it.')
+          `Brought ${r.commits} saved change${r.commits === 1 ? '' : 's'} back into the main copy.` +
+            (r.removed ? ' This copy is gone.' : ' This copy goes when the pane leaves it.')
         )
       } else if (r.reason === 'conflict') {
-        setSaid(`Conflicts in ${r.conflicts?.join(', ')} - nothing was merged, and ${work?.base} is untouched.`)
+        setSaid(`Both copies changed ${r.conflicts?.join(', ')}, so nothing moved and the main copy is untouched.`)
       } else {
-        setSaid(r.detail ?? 'Nothing to merge.')
+        setSaid(r.detail ?? 'Nothing to bring back.')
       }
       load()
     }).catch(() => {
       if (request !== reading.current) return
       setBusy(false)
-      setSaid('The merge result could not be confirmed. Inspect the copy again before retrying.')
+      setSaid('There is no telling whether that worked. Look at the copy again before pressing it a second time.')
       load()
     })
   }
@@ -339,21 +339,21 @@ export default function LaneDialog({
       <div className="dialog confirm lane-dialog" onMouseDown={(e) => e.stopPropagation()}>
         <div className="dialog-head">
           <strong>
-            {work ? `Lane ${work.lane}` : 'Lane'}
+            {work ? (work.lane === 'main' ? 'The main copy' : `Copy ${copyNumber(work.lane) ?? work.lane}`) : 'This copy'}
             {project ? ` of ${project}` : ''}
           </strong>
-          <button className="ghost small lane-what" onClick={onHelp} title="How lanes work">
+          <button className="ghost small lane-what" onClick={onHelp} title="How copies work">
             what is this?
           </button>
         </div>
         <Blurb id="lane" />
         {work === undefined && <div className="confirm-body">Reading the lane…</div>}
         {work === null && <div className="confirm-body" role="alert">
-          This copy could not be inspected. Its changes are unknown; no merge is available.
+          This copy could not be read, so there is no telling what is in it. Nothing can be brought back until it can.
           <div className="lane-dialog-sub"><code>{cwd}</code></div>
           <button className="ghost small" onClick={load}>Retry</button>
         </div>}
-        {folderError && <div className="confirm-body" role="alert">Some copies could not be listed. The list may be incomplete.</div>}
+        {folderError && <div className="confirm-body" role="alert">Some copies could not be listed, so this list may be missing one.</div>}
         {work && (
           <div className="confirm-body">
             {/* Plain words first, git words second. Every noun in `lane-a → main` is a git
@@ -361,14 +361,12 @@ export default function LaneDialog({
                 lane at all - the app made it for them when a second chat opened the same
                 project. */}
             <div className="lane-plain">
-              This pane is typing in <code>{work.dir}</code>, a second copy of{' '}
-              <strong>{project}</strong> on its own branch. Finishing means putting its
-              commits back into the main copy, <code>{work.repo}</code>.
+              This pane is typing in <code>{work.dir}</code>, its own copy of{' '}
+              <strong>{project}</strong>. Its work goes back into the main copy,{' '}
+              <code>{work.repo}</code>, on its own once this chat finishes - the button
+              below only does it sooner.
             </div>
-            <div className="lane-git">
-              <code>{work.branch}</code> → <code>{work.base}</code>
-              <span className="lane-dialog-sub"> {summary(work)}</span>
-            </div>
+            <div className="lane-git">{summary(work)}</div>
             {laneDoing(work) && <div className="lane-dialog-sub">{laneDoing(work)}</div>}
             {work.conflicts.length > 0 && (
               <div className="lane-dialog-warn">
@@ -405,7 +403,7 @@ export default function LaneDialog({
             disabled={!work || busy || Boolean(blocker(work))}
             onClick={merge}
           >
-            {busy ? 'Merging…' : `Merge into ${work?.base ?? 'main'}`}
+            {busy ? 'Bringing it back…' : 'Bring it back now'}
           </button>
         </div>
       </div>
@@ -436,13 +434,13 @@ function CopyRow({ copy, onFocus }: { copy: Copy; onFocus: (id: string) => void 
   const counts =
     work === undefined
       ? trunk
-        ? 'the copy every lane merges back into'
+        ? 'the copy everything goes back into'
         : 'reading…'
       : work
         ? summary(work)
         : trunk
-          ? 'the copy every lane merges back into'
-          : 'could not be inspected; changes unknown'
+          ? 'the copy everything goes back into'
+          : 'could not be read, so what is in it is unknown'
 
   return (
     <div
@@ -461,10 +459,10 @@ function CopyRow({ copy, onFocus }: { copy: Copy; onFocus: (id: string) => void 
         (entry?.seen ? `\nIts chat was last heard from ${ago(entry.seen)} ago.` : '')
       }
     >
-      <span className="lane-copy-tag">{slot}</span>
+      <span className="lane-copy-tag">{trunk ? 1 : (copyNumber(slot) ?? slot)}</span>
       <div className="lane-copy-text">
         <div className="lane-copy-title">
-          {trunk ? 'main checkout' : `lane ${slot}`}
+          {trunk ? 'the main copy' : `copy ${copyNumber(slot) ?? slot}`}
           {self ? ' - this pane' : ''}
           <span className="lane-copy-held"> {held}</span>
         </div>

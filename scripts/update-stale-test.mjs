@@ -138,7 +138,11 @@ writeFileSync(
   join(work, 'drive.cjs'),
   `const path=require('node:path'),fs=require('node:fs'),Module=require('node:module')
 const orig=Module._resolveFilename, load=Module._load
+const promises=require('node:fs/promises')
+let staleResolve
+const staleWritten=new Promise(resolve=>{staleResolve=resolve})
 Module._load=function(r,...a){
+  if(r==='node:fs/promises')return {...promises,appendFile:async(...args)=>{await promises.appendFile(...args);if(String(args[1]).includes('stale'))staleResolve()}}
   if(r==='node:https')return require('./https-stub.cjs')
   if(r==='node:child_process')return require('./child-process-stub.cjs')
   return load.call(this,r,...a)}
@@ -182,6 +186,7 @@ const health=()=>JSON.parse(fs.readFileSync(path.join(el.__dir,'update-health.js
   h['update-downloaded']({version:'0.8.188'})
   ok(u.getUpdateState().ignored===true,'the second one says the app has stopped being noticed')
   ok(told===1,'and the restart-when-idle path is told, exactly once')
+  await staleWritten
   ok(/stale/.test(fs.readFileSync(path.join(el.__dir,'updater.log'),'utf8')),'and it is written down for whoever reads the log a week later')
   ok(health().superseded===2,'the count survives a restart, because the app it is about keeps running')
 

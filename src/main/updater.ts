@@ -8,11 +8,9 @@
 
 import { execFile } from 'node:child_process'
 import {
-  appendFileSync,
   existsSync,
   readFileSync,
   statSync,
-  truncateSync,
   unlinkSync,
   writeFileSync
 } from 'node:fs'
@@ -34,6 +32,8 @@ import {
   staged,
   swapAndRelaunch
 } from './macUpdate'
+import { appendLog } from './logWrite'
+import { diagnosticMeta } from './diagnosticMeta'
 
 type Emit = (s: UpdateState) => void
 
@@ -98,15 +98,14 @@ export function bootMs(): number {
   return Math.round(process.uptime() * 1000)
 }
 
+// Logging must never be the thing that breaks an update, and on 2026-09-07 a synchronous
+// append on the main thread was exactly the thing that broke the app. This one is called
+// from power events, the desk and every launch step, so it goes through logWrite.ts.
+// 256 KB is dozens of update cycles; past that the head is worthless anyway.
 function log(...parts: unknown[]): void {
-  try {
-    const file = LOG()
-    // 256 KB is dozens of update cycles; past that the head is worthless anyway.
-    if (existsSync(file) && statSync(file).size > 256_000) truncateSync(file, 0)
-    appendFileSync(file, `${new Date().toISOString()} ${parts.map(String).join(' ')}\n`)
-  } catch {
-    // Logging must never be the thing that breaks an update.
-  }
+  appendLog(LOG(), `${new Date().toISOString()} ${parts.map(String).join(' ')} [pf ${JSON.stringify(diagnosticMeta())}]\n`, {
+    truncateAt: 256_000
+  })
 }
 
 // Typed loosely on purpose: electron-updater is a runtime dependency of the
@@ -317,6 +316,8 @@ function readHealth(): Health {
 
 function writeHealth(h: Health): void {
   try {
+    // sync-on-purpose: written around an install that replaces this process, and on a
+    // path that runs a handful of times per update rather than from a timer
     writeFileSync(HEALTH(), JSON.stringify(h), 'utf8')
   } catch {
     /* best-effort: this file is evidence, never a dependency */
@@ -426,6 +427,8 @@ function recordInstallAttempt(version: string): void {
   const prior = readAttempt()
   const tries = (prior?.version === version ? prior.tries : 0) + 1
   try {
+    // sync-on-purpose: the marker has to be on disk before quitAndInstall() takes the
+    // process away, and this runs once per install attempt
     writeFileSync(ATTEMPT(), JSON.stringify({ version, tries }), 'utf8')
   } catch {
     /* best-effort: without the marker the worst case is the old behaviour */

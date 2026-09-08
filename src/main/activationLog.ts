@@ -3,8 +3,8 @@
 // This is the one piece of instrumentation that stayed in after the measurement, and it
 // stayed for a reason: "the Stash pulls PaneForge over what I am typing in" has now been
 // reported three times and fixed twice, because both earlier fixes were reasoned about
-// rather than measured. The thing that finally settled it was a timestamp — the activation
-// notification lands 107ms after a click and 2882ms after a drag — and nothing in the app
+// rather than measured. The thing that finally settled it was a timestamp: the activation
+// notification lands 107ms after a click and 2882ms after a drag, and nothing in the app
 // recorded that, so it had to be built from scratch each time.
 //
 // One line per activation decision, which on a normal day is a handful. Bounded, so it can
@@ -12,9 +12,10 @@
 // is already on disk: read `activation.log` under userData and compare `delta` against the
 // windows in `shared/activation.ts`.
 
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { app } from 'electron'
+import { appendLog } from './logWrite'
+import { diagnosticMeta } from './diagnosticMeta'
 
 /** Big enough to hold days of ordinary use, small enough to never matter. */
 const MAX_BYTES = 64 * 1024
@@ -25,11 +26,6 @@ function file(name: string): string {
   let path = paths.get(name)
   if (!path) {
     const dir = app.getPath('userData')
-    try {
-      mkdirSync(dir, { recursive: true })
-    } catch {
-      /* it is the app's own data dir */
-    }
     path = join(dir, name)
     paths.set(name, path)
   }
@@ -96,18 +92,14 @@ export function logActivation(entry: Record<string, unknown>): void {
   write('activation.log', entry)
 }
 
+// A log that cannot be written must never be the reason a window does not appear - and
+// waiting for the disk is one way for it to be exactly that, so the line is handed over
+// rather than written here. `reclaim.log` comes off the 15 second wake sweep, which is the
+// timer shape that froze the app on 2026-09-07. Trimming happens on the way past rather
+// than on a timer: these files are written a few times a day.
 function write(name: string, entry: Record<string, unknown>): void {
-  try {
-    const f = file(name)
-    appendFileSync(f, JSON.stringify({ t: new Date().toISOString(), ...entry }) + '\n')
-    // Trimmed on the way past rather than on a timer: this is called a few times a day, so
-    // the read only happens when the file has genuinely grown.
-    const raw = readFileSync(f, 'utf8')
-    if (raw.length > MAX_BYTES) {
-      const lines = raw.split('\n').filter(Boolean)
-      writeFileSync(f, lines.slice(-Math.floor(lines.length / 2)).join('\n') + '\n')
-    }
-  } catch {
-    // A log that cannot be written must never be the reason a window does not appear.
-  }
+  appendLog(file(name), JSON.stringify({ ...entry, t: new Date().toISOString(),
+    ...diagnosticMeta() }) + '\n', {
+    halveAt: MAX_BYTES
+  })
 }

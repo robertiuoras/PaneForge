@@ -28,7 +28,7 @@
 
 import { app } from 'electron'
 import { createHash } from 'node:crypto'
-import { appendFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   IDF_MIN_CORPUS,
@@ -40,6 +40,7 @@ import {
   QUIET_MS
 } from '../shared/promptKey'
 import type { PriorPrompt } from '../shared/types'
+import { appendLog, rewriteLog } from './logWrite'
 
 /**
  * One archived ask. Single letters because this file is appended to on every prompt anyone
@@ -80,11 +81,6 @@ let external: Entry[] = []
 
 function archivePath(): string {
   const dir = app.getPath('userData')
-  try {
-    mkdirSync(dir, { recursive: true })
-  } catch {
-    /* it is the app's own data dir; if this fails nothing else works either */
-  }
   return join(dir, 'prompt-archive.jsonl')
 }
 
@@ -139,25 +135,23 @@ function load(): Map<string, Entry> {
   return byHash
 }
 
+// An archive that cannot be written is a feature that does nothing, not a broken app - and
+// on 2026-09-07 an app that waits for a busy disk on the main thread WAS a broken app, so
+// the line is handed to logWrite.ts and this returns. `lines` counts what has been handed
+// over, which is what the compaction threshold below is asking about.
 function append(e: Entry): void {
-  try {
-    appendFileSync(archivePath(), JSON.stringify(e) + '\n')
-    lines++
-  } catch {
-    /* an archive that cannot be written is a feature that does nothing, not a broken app */
-  }
+  appendLog(archivePath(), JSON.stringify(e) + '\n')
+  lines++
 }
 
 /** Rewrite as one line per hash, newest MAX_ENTRIES kept. */
 function compact(byHash: Map<string, Entry>): void {
   const all = [...byHash.values()].sort((a, b) => String(a.l).localeCompare(String(b.l)))
   const keep = all.slice(-MAX_ENTRIES)
-  try {
-    writeFileSync(archivePath(), keep.map((e) => JSON.stringify(e)).join('\n') + '\n')
-    lines = keep.length
-  } catch {
-    /* next time */
-  }
+  // On the same chain as the appends above, so a compaction cannot drop a line that was
+  // still on its way to the disk.
+  rewriteLog(archivePath(), keep.map((e) => JSON.stringify(e)).join('\n') + '\n')
+  lines = keep.length
 }
 
 /**
