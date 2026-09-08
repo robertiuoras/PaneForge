@@ -915,6 +915,56 @@ where ours derives every one of them from a single accent.
 
 ---
 
+## L. Re-scan 2026-09-08 — t3code, omnara, happy
+
+`npm run competitors` said 8 of 16 moved; three had a README worth re-reading. Only what is
+NEW against the sections above is here. Two sites were behind a bot check and were not read.
+
+**T3 Code (v0.0.33 -> v0.0.40, 19.8k -> 22.0k stars).** Still the same shape as section
+A/B/C: a local server the phone, web and desktop clients all talk to. What it now lists
+that this app does not have:
+
+- **L1** — six agent CLIs, not two: Claude Code, Codex, Cursor, Grok Build, OpenCode and
+  Antigravity, each logging in through its own CLI. This app has the machinery already
+  (`shared/agents.ts`, one binary pointed elsewhere) and is missing the entries. The
+  cheapest item on this page.
+- **L2** — settings that belong to a PROJECT, not the app. Every switch here is global; a
+  folder that always wants the same agent, model and idle rule has nowhere to say so.
+- **L3** — keyboard shortcuts the user can change. Ours are fixed, and `settingsIndex`
+  already knows how to describe a setting, so this is a keymap and a picker.
+- **L4** — running as a background service, so panes outlive the window being open. Sits
+  against B1 (the headless host) and should not be built twice.
+- **L5** — Homebrew / Winget / AUR. B6 already says "package managers, when signing is paid
+  for"; T3 shipping them is the evidence that it matters, not a new job.
+
+**Omnara (cluster-v0.1.14 -> cli-v1.0.6).** A platform, not a desk: agents live in Postgres
+and run on rented sandboxes (Blaxel, Daytona, Unikraft). Most of it is the wrong shape for
+an app that runs on the machine you are sitting at, and is deliberately NOT taken. Two
+readings are worth keeping:
+
+- **L6** — state committed as it goes, so a crash resumes rather than restarts. We have the
+  weak half (`desk.json`, `--resume`, the restore path); what Omnara has is every turn
+  durable. Worth wanting for the pane that dies mid-turn, not worth a database.
+- **L7** — roles: manage / configure / operate / view-only. Only interesting the day a
+  second person watches this desk, which is not a thing Robert has asked for. Parked.
+
+**Happy (cli-1.1.10 -> cli-1.2.3).** Closest to section H, and it is a WRAPPER: you run
+`happy claude` instead of `claude`, and asking for the phone restarts that session in
+remote mode, end-to-end encrypted through their server.
+
+- **L8** — "switch devices instantly", one keypress to take the session over from the
+  phone or back. We have handoff (a move, with an ack and a queue) and mirroring (a
+  borrow). What we do not have is the single press that says "I am on this one now".
+- **L9** — a push when the agent needs a permission or hits an ERROR. `askNotify.ts`
+  already sends the question; an error is not sent, and an error is the one a person
+  actually misses.
+- **L10** — the wrapper as an alternative to the app: no window, no desk, one CLI. It is
+  how they reach people who will not install a desktop app, and it is B1 again from the
+  other end.
+
+Nothing in L is started. **L1 is the one to do first** — the machinery exists, it is a
+table, and it is the only item here a person would notice the same day.
+
 ## Order to build in
 
 1. ~~**D2, D4, D5**~~ — shipped in v0.4.0: find in a pane, zoom one pane, five layouts.
