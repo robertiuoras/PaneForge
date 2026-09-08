@@ -12,6 +12,7 @@ export interface SettingEntry {
 
 export const SETTINGS: SettingEntry[] = [
   { tab: 'general', label: "Projects folder", find: "Projects folder" },
+  { tab: 'general', label: "Obsidian vault", find: "Obsidian vault" },
   { tab: 'general', label: "Default agent", find: "Default agent" },
   { tab: 'general', label: "Terminal font size", find: "Terminal font size" },
   { tab: 'general', label: "Selecting text in a pane copies it", find: "Selecting text in a pane copies it Ctrl+C copies while something is highlighted and interrupts the agent once nothing is. Ctrl+V pastes." },

@@ -1930,6 +1930,8 @@ export interface Config {
    */
   restoreSessions?: StartSessionRequest[]
   window: WindowBounds
+  /** Obsidian vault folder, opened by `vault:info`/`vault:graph`/`vault:open`. '' = unset. */
+  vaultPath: string
 }
 
 /** @see Config.restoreAfterRestart */
@@ -2216,6 +2218,7 @@ export interface Api {
   getConfig(): Promise<Config>
   setConfig(patch: Partial<Config>): Promise<Config>
   pickRoot(): Promise<string | null>
+  pickVault(): Promise<string | null>
   /** file dialog, then a copy into userData. `error` is a sentence to put on screen. */
   addSound(): Promise<{ ok: boolean; sound?: CustomSound; error?: string }>
   /** the bytes of an uploaded sound, for decodeAudioData. Null = gone or unreadable. */
@@ -2736,6 +2739,11 @@ export interface VaultInfo {
   notes: number
   /** Whether the Obsidian app is installed here (the `obsidian://` scheme has a handler). */
   appInstalled: boolean
+  /**
+   * Set when `path` doesn't exist, isn't a directory, or holds no `.md` files - so an
+   * empty/broken vault reads as "here's why", never as a silent empty graph.
+   */
+  error?: string
 }
 export interface VaultNode {
   id: string
@@ -2746,7 +2754,11 @@ export interface VaultNode {
 }
 export interface VaultGraph {
   nodes: VaultNode[]
-  /** [from id, to id] pairs; unresolved links are dropped, not drawn. */
+  /**
+   * [from id, to id] pairs. A link to a note that doesn't exist yet keeps its target id as
+   * an unresolved node (see `folder: ''`) rather than being dropped, so a link written
+   * before its note still draws.
+   */
   links: [string, string][]
   readAt: number
 }

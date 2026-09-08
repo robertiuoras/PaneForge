@@ -6671,6 +6671,23 @@ export default function App(): JSX.Element {
                   ]
                 : []),
               { key: 'rename', label: 'Rename…', hint: 'or double-click the card', run: () => setRenaming(s.id) },
+              {
+                key: 'notes',
+                label: 'Notes',
+                hint: 'open this project in Obsidian',
+                run: () => {
+                  void api.vaultInfo(s.cwd).then((info) => {
+                    if (!info || info.error) {
+                      setSettings(true)
+                      return
+                    }
+                    // No match is not a refusal: Obsidian's own "open" URI offers to create
+                    // the note when the file it names doesn't exist yet.
+                    const name = s.cwd.split(/[/\\]/).filter(Boolean).pop() ?? s.cwd
+                    void api.vaultOpen(info.path, name)
+                  })
+                }
+              },
               { key: 'info', label: 'Session info', hint: 'how long it has been open, what it costs', run: () => setInfo(s.id) },
               // How hard this Codex pane thinks. Codex is the only CLI that can be told
               // between turns, so the rows are only offered on one. The level rows come

@@ -177,6 +177,7 @@ import * as history from './history'
 import { clashingRestores, takenFolders } from '../shared/laneTaken'
 import { copyNumber } from '../shared/place'
 import { readBoard, writeMemory, writeTasks } from './board'
+import { vaultGraph, vaultInfo, vaultOpen } from './vault'
 import * as voice from './voice'
 import { installCommand, uninstallCommand, updateCommand } from '../shared/agents'
 import { installLaneHooks } from './laneHooks'
@@ -2114,6 +2115,15 @@ ipcMain.handle('config:pickRoot', async () => {
   return r.canceled ? null : r.filePaths[0]
 })
 
+ipcMain.handle('config:pickVault', async () => {
+  const r = await dialog.showOpenDialog({
+    title: 'Choose your Obsidian vault folder',
+    defaultPath: getConfig().vaultPath || undefined,
+    properties: ['openDirectory']
+  })
+  return r.canceled ? null : r.filePaths[0]
+})
+
 // The sound picker's four jobs. Everything that touches the sounds folder is here, so
 // the renderer never learns where it is - it asks for bytes by id.
 ipcMain.handle('sounds:add', () => addSound(win))
@@ -3421,6 +3431,13 @@ onActivityChange((s) => send('activity:changed', s))
 // The refusal counter holds pane ids and nothing else; the words come from the list that
 // already knows what a pane is called.
 hookDenyNames((id) => manager.list().find((x) => x.id === id)?.title ?? 'a pane')
+// --- Obsidian vault ---------------------------------------------------------
+
+// `cwd` is unused for now: one vault per machine (`config.vaultPath`), not one per project.
+ipcMain.handle('vault:info', (_e, _cwd: string) => vaultInfo(getConfig().vaultPath))
+ipcMain.handle('vault:graph', (_e, vault: string) => vaultGraph(vault))
+ipcMain.handle('vault:open', (_e, vault: string, note?: string) => vaultOpen(vault, note))
+
 ipcMain.handle('history:list', () => history.list())
 ipcMain.handle('history:search', (_e, q: string) => history.search(q))
 ipcMain.handle('history:read', (_e, id: string) => history.read(id))

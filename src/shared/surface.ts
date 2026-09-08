@@ -86,6 +86,7 @@ export const SURFACE: Surface = {
   getConfig: ['invoke', 'config:get'],
   setConfig: ['invoke', 'config:set'],
   pickRoot: ['invoke', 'config:pickRoot'],
+  pickVault: ['invoke', 'config:pickVault'],
   addSound: ['invoke', 'sounds:add'],
   soundData: ['invoke', 'sounds:data'],
   removeSound: ['invoke', 'sounds:remove'],
