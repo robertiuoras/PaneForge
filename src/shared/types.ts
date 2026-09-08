@@ -1733,7 +1733,9 @@ export interface Config {
   /** soft chime when a session finishes its turn or asks you something */
   soundOnIdle: boolean
   /**
-   * Send a pane's question to Telegram, so an answer is not waiting on somebody being at
+   * Send a pane's question - and an error that STOPPED it (`shared/paneError.ts`: a usage
+   * limit, a credit balance, an expired login, the ones nothing retries) - to Telegram, so
+   * neither is waiting on somebody being at
    * this desk. Off by construction on a machine with no bot credentials (`main/askNotify.ts`
    * reads `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` from the environment or from
    * `~/.claude/usage-notify.env`); this switch is for turning it off on a machine that has

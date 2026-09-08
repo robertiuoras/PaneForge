@@ -924,10 +924,15 @@ NEW against the sections above is here. Two sites were behind a bot check and we
 A/B/C: a local server the phone, web and desktop clients all talk to. What it now lists
 that this app does not have:
 
-- **L1** — six agent CLIs, not two: Claude Code, Codex, Cursor, Grok Build, OpenCode and
-  Antigravity, each logging in through its own CLI. This app has the machinery already
-  (`shared/agents.ts`, one binary pointed elsewhere) and is missing the entries. The
-  cheapest item on this page.
+- ~~**L1**~~ — six agent CLIs, not two. **Already shipped, and the entry above was wrong
+  about it**: `shared/agents.ts` has carried `cursor` (Cursor Agent), `grok` (Grok Build)
+  and `opencode` for some time, alongside Claude Code, Codex, Antigravity and ten more.
+  What the re-read did buy is two corrections, measured against the installed binaries on
+  2026-09-08: `cursor-agent --resume [chatId]` takes an id, so the entry gained
+  `resumeIdArgs`; `grok` has `-c/--continue` and `-r/--resume [id]` and the entry had
+  neither, so a Grok pane could never be resumed at all. `grok -p` still answers nothing
+  on this machine, so it stays out of `splitPrompt.ts`'s `HEADLESS`, exactly as that
+  file's comment says.
 - **L2** — settings that belong to a PROJECT, not the app. Every switch here is global; a
   folder that always wants the same agent, model and idle rule has nowhere to say so.
 - **L3** — keyboard shortcuts the user can change. Ours are fixed, and `settingsIndex`
@@ -955,9 +960,14 @@ remote mode, end-to-end encrypted through their server.
 - **L8** — "switch devices instantly", one keypress to take the session over from the
   phone or back. We have handoff (a move, with an ack and a queue) and mirroring (a
   borrow). What we do not have is the single press that says "I am on this one now".
-- **L9** — a push when the agent needs a permission or hits an ERROR. `askNotify.ts`
-  already sends the question; an error is not sent, and an error is the one a person
-  actually misses.
+- ~~**L9**~~ — a push when the agent hits an ERROR. Shipped 2026-09-08:
+  `shared/paneError.ts` reads the line that STOPPED a run - a usage limit, a credit
+  balance, an expired login, a 429 - and it is the line `recover.ts` already REFUSES to
+  continue, imported from there rather than copied so the two can never disagree. Sent on
+  the channel `askNotify.ts` already opened, under the same switch, with the same settle
+  and repeat window. The permission half of this item is not built: Claude Code's
+  permission prompt carries no `Enter to select` footer, so `choices.ts` does not read it
+  as a question and there is nothing to send yet.
 - **L10** — the wrapper as an alternative to the app: no window, no desk, one CLI. It is
   how they reach people who will not install a desktop app, and it is B1 again from the
   other end.

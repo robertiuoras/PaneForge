@@ -41,6 +41,7 @@ import { addSample, dropSample } from './tourSample'
 import { addSound, pruneCustomSounds, removeSound, renameSound, soundData } from './sounds'
 import { writeAttachments, readAttachIns, withShots } from './attach'
 import { AskNotifier, askMessage, postAsk, telegramCreds } from './askNotify'
+import { errorMessage } from '../shared/paneError'
 import { askKeyOf } from '../shared/autoAnswer'
 import { ATTACH_MAX_BYTES, THUMB_KEEP, type AttachIn, type AttachResult } from '../shared/attach'
 import { CHOOSE_GAP_MS, keysForChoice, sameAsk, stampMatches } from '../shared/choices'
@@ -919,6 +920,39 @@ const askNotifier = new AskNotifier({
       if (!sent && telegramCreds()) console.log("telegram: could not post a pane question")
       return sent
     })
+})
+
+/**
+ * The same machinery for a pane that STOPPED rather than asked.
+ *
+ * A second `AskNotifier` rather than a second implementation: what it does - wait for the
+ * frames to stop, then send once, then hold the same message for five minutes - is exactly
+ * what an error needs, and for the same reason. A CLI paints its error line in pieces too,
+ * and a limit that has been hit is hit again on every retry the CLI makes by itself, which
+ * is a phone buzzing four times for one wall.
+ *
+ * Separate instance, not a shared one, so a pane that hits a limit AND then asks a question
+ * sends both: the keys are per pane, and one map would let the first swallow the second.
+ */
+const errorNotifier = new AskNotifier({
+  post: (text: string) =>
+    postAsk(text).then((sent) => {
+      if (!sent && telegramCreds()) console.log('telegram: could not post a pane error')
+      return sent
+    })
+})
+
+/**
+ * A pane whose run was ended by something nothing is going to retry.
+ *
+ * Only the message half, deliberately: the desk already has this on screen - the pane
+ * printed the error itself - and the failure this covers is nobody being at the desk. So
+ * there is no toast, no flash and no sound, and it is skipped for a mirror for the same
+ * reason a question is: that pane's own machine is raising it too.
+ */
+manager.on('paneError', (s: Session, line: string) => {
+  if (s.remote || !getConfig().telegramAsk) return
+  errorNotifier.schedule(s.id, () => ({ key: line, text: errorMessage(s.title, line, undefined) }))
 })
 
 /**

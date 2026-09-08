@@ -381,6 +381,15 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
     id: 'grok',
     label: 'Grok Build',
     bin: 'grok',
+    // Measured off `grok --help` on 2026-09-08 (the binary on this machine): `-c,
+    // --continue` is the most recent session for this folder and `-r, --resume
+    // [SESSION_ID_OR_TITLE]` is a named one. Without these the entry could not be resumed
+    // at all - every restored Grok pane started a fresh conversation, silently, which is
+    // the failure a restore is written to prevent. `--restore-code` is deliberately not
+    // passed: resuming here means the CONVERSATION, and that flag checks out a repository
+    // snapshot over the pane's own folder.
+    resumeArgs: ['--continue'],
+    resumeIdArgs: ['--resume'],
     modelFlag: '--model',
     models: [{ value: 'grok-4.6', label: 'Grok 4.6', hint: 'coding and agentic work' }],
     // Offered rather than required: the CLI signs in on its own as well, so a blank
@@ -523,7 +532,12 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
     id: 'cursor',
     label: 'Cursor Agent',
     bin: 'cursor-agent',
+    // `--resume [chatId]`, measured off `cursor-agent --help` on 2026-09-08: bare it is
+    // the last chat, with an id it is that one. So the same flag serves both, and a
+    // restored pane can name the conversation it was in rather than taking whichever
+    // chat this folder touched last.
     resumeArgs: ['--resume'],
+    resumeIdArgs: ['--resume'],
     modelFlag: '--model',
     color: '#a78bfa',
     installWin: 'powershell -NoProfile -Command "irm https://cursor.com/install.ps1 | iex"',
