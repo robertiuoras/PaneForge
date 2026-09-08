@@ -66,7 +66,8 @@ export interface HostBackend {
    *
    * Optional so a backend that cannot do it refuses in a sentence rather than throwing.
    */
-  handBack?(id: string, device: string): Promise<HandoffItem[]>
+  /** `now` interrupts a mid-turn pane and sends it at once - see `HandoffRequest.now`. */
+  handBack?(id: string, device: string, now?: boolean): Promise<HandoffItem[]>
   projects(): Promise<Project[]>
   agents(): Promise<AgentInfo[]>
   /**
@@ -536,7 +537,7 @@ export class RemoteHost extends EventEmitter {
             return
           }
           void this.backend
-            .handBack(id, device)
+            .handBack(id, device, m.now === true)
             .then((items) => conn.send({ t: 'takebackdone', rid, items }))
             .catch((err: Error) => conn.send({ t: 'failed', rid, error: err.message }))
           return

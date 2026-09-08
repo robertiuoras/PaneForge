@@ -87,6 +87,12 @@ export interface HandoffPayload {
    * move (a hard-coded port, and a node_modules the far end may not have).
    */
   dev?: DevServer[]
+  /**
+   * A prompt for the far end to send once the conversation has resumed - only set when the
+   * sender interrupted the turn to move it (`HandoffRequest.now`). Never a launch prompt:
+   * the snapshot's own `prompt` is deliberately not carried, since it has been sent once.
+   */
+  continueWith?: string
 }
 
 /** What the handoff chooser is allowed to move. No ids is the deliberate bulk action. */
@@ -102,6 +108,26 @@ export interface HandoffRequest {
    * decided the turn does not matter.
    */
   waitForTurn?: boolean
+  /**
+   * Move a mid-turn pane NOW: interrupt the turn first, then hand it off.
+   *
+   * The person has decided the machine matters more than the half-written answer - "I
+   * know session 4 can run on the PC, it is just checking domain names" (Robert,
+   * 2026-09-08). The CLI is sent its own Escape, which makes it flush an interrupted
+   * turn to the transcript; only once the pane reads idle does the ordinary handoff run,
+   * and the far end is asked to carry on (`continuePrompt`). A turn that does not stop
+   * within `INTERRUPT_WAIT_MS` is a refusal by name, never a kill. Implies
+   * `waitForTurn: false`.
+   */
+  now?: boolean
+}
+
+/** How long an interrupted turn gets to reach the composer before the move is refused. */
+export const INTERRUPT_WAIT_MS = 20_000
+
+/** What the far end is asked once it has resumed a conversation cut short by `now`. */
+export function continuePrompt(deviceName: string): string {
+  return `Carry on where you left off. Your previous turn was interrupted to move this session from ${deviceName} to this machine; nothing else changed.`
 }
 
 export interface HandoffResult {

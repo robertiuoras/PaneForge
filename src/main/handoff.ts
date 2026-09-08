@@ -22,6 +22,8 @@ import {
   handoffConversationError,
   handoffAgentError,
   mapCwd,
+  continuePrompt,
+  INTERRUPT_WAIT_MS,
   type HandoffItem,
   type HandoffRequest,
   type HandoffPayload,
@@ -260,6 +262,12 @@ export interface SendDeps {
   busy?(s: Session): boolean
   /** Take this pane, to be moved to `device` once it goes quiet. */
   queue?(id: string, device: string, closeReceiverWhenDone: boolean): void
+  /**
+   * Stop the turn this pane is on and wait for its composer to come back - the CLI's own
+   * Escape, then `busy` polled up to `INTERRUPT_WAIT_MS`. Resolves true once the pane
+   * reads idle, false when it never did. Absent means `now` cannot be honoured.
+   */
+  interrupt?(id: string): Promise<boolean>
   /** The dev servers this pane has running, as script names its repo really has. */
   devServersOf?(id: string, cwd: string): Promise<{ servers: DevServer[]; notes: string[] }>
 }
@@ -294,9 +302,28 @@ export async function sendHandoff(deps: SendDeps, device: string, request: Hando
       out.push({ id: pane.id, title: pane.title, ok: false, error, notes: [] })
       continue
     }
+    // Mid-turn and asked for NOW: the turn is stopped first, so the transcript the far end
+    // resumes from holds the interrupted turn rather than half of a flushed one, and the
+    // far end is asked to carry on. A turn that will not stop is a refusal, not a kill.
+    let continueWith: string | undefined
+    if (request.now === true && deps.busy?.(pane)) {
+      if (!deps.interrupt) {
+        out.push({ id: pane.id, title: pane.title, ok: false, error: 'This build cannot interrupt a turn to move it - hand it off after the turn instead', notes: [] })
+        continue
+      }
+      deps.log?.(`${pane.id} -> ${deps.deviceName(device)}: interrupting the turn to move it now`)
+      const stopped = await deps.interrupt(pane.id)
+      if (!stopped) {
+        const error = `${pane.title} did not stop within ${Math.round(INTERRUPT_WAIT_MS / 1000)}s, so it stayed here - hand it off after the turn instead`
+        deps.log?.(`${pane.id} -> ${deps.deviceName(device)}: refused - ${error}`)
+        out.push({ id: pane.id, title: pane.title, ok: false, error, notes: [] })
+        continue
+      }
+      continueWith = continuePrompt(deps.selfDevice ? deps.deviceName(deps.selfDevice()) : 'the other machine')
+    }
     // Mid-turn: queued, never killed. `waitForTurn` defaults on - the caller has to say
     // out loud that an unfinished answer is expendable.
-    if (request.waitForTurn !== false && deps.busy?.(pane) && deps.queue) {
+    if (request.now !== true && request.waitForTurn !== false && deps.busy?.(pane) && deps.queue) {
       deps.queue(pane.id, device, closeAfter)
       out.push({
         id: pane.id,
@@ -309,7 +336,7 @@ export async function sendHandoff(deps: SendDeps, device: string, request: Hando
       continue
     }
     try {
-      out.push(await sendOne(deps, device, pane, closeAfter))
+      out.push(await sendOne(deps, device, pane, closeAfter, continueWith))
     } catch (err) {
       out.push({ id: pane.id, title: pane.title, ok: false, error: (err as Error).message, notes: [] })
     }
@@ -317,7 +344,7 @@ export async function sendHandoff(deps: SendDeps, device: string, request: Hando
   return out
 }
 
-async function sendOne(deps: SendDeps, device: string, pane: Session, closeReceiverWhenDone: boolean): Promise<HandoffItem> {
+async function sendOne(deps: SendDeps, device: string, pane: Session, closeReceiverWhenDone: boolean, continueWith?: string): Promise<HandoffItem> {
   const spec = deps.snapshot().find((r) => r.scrollbackId === pane.id)
   if (!spec) return { id: pane.id, title: pane.title, ok: false, error: 'Pane has already closed', notes: [] }
   const notes: string[] = []
@@ -398,6 +425,8 @@ async function sendOne(deps: SendDeps, device: string, pane: Session, closeRecei
   }
   if (handoffSpec.agent !== 'shell') payload.sourceRetained = true
   if (transcript) payload.transcript = transcript
+  // Only a conversation can carry on; a shell that was interrupted simply starts fresh.
+  if (continueWith && transcript) payload.continueWith = continueWith
 
   deps.stage?.(pane.id, `sending to ${where}`)
   const t1 = Date.now()
@@ -583,6 +612,13 @@ export async function receiveHandoff(
     if (conflict) return { ok: false, error: conflict, notes }
     req.resume = true
     req.resumeId = spec.resumeId
+    // The sender cut a turn short to move this: ask the resumed conversation to carry on.
+    // Through the same `queuePrompt` a `pf open --prompt` uses, so it waits for an idle
+    // composer and is confirmed by a turn. Only ever on a conversation that resumed.
+    if (typeof payload.continueWith === 'string' && payload.continueWith.trim()) {
+      req.prompt = payload.continueWith.trim().slice(0, 400)
+      notes.push('Its turn was interrupted to move it, so it has been asked to carry on')
+    }
   } else if (spec.resumeId) {
     notes.push('Conversation did not travel - the agent starts fresh in the right folder')
   }

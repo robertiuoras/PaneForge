@@ -3875,6 +3875,28 @@ export default function App(): JSX.Element {
    * below is its report rather than a guess made here. A pane mid-turn is QUEUED by the
    * far end and comes back when the turn ends; nothing is killed to make it travel.
    */
+  /**
+   * The mirror's side of the machine question. Idle: one press, it comes back. Mid-turn
+   * or on a question: the same box the outward move uses, in its "back" shape, so the
+   * press says whether the turn is stopped (`now`) or waited for.
+   */
+  const askBringBack = useCallback(
+    (s: Session) => {
+      const held = s.status === 'working' || s.status === 'starting' || Boolean(s.ask)
+      if (!held) return bringHere(s)
+      setHandoff({
+        ids: [s.id],
+        title: s.title,
+        busy: held,
+        starting: s.status === 'starting',
+        asking: Boolean(s.ask),
+        back: { deviceName: s.remote?.name ?? 'that machine' }
+      })
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  )
+
   const bringHere = useCallback(
     (s: Session) => {
       const where = s.remote?.name ?? 'that machine'
@@ -6051,19 +6073,17 @@ export default function App(): JSX.Element {
                       s.status === 'starting'
                         ? `Move ${s.lane ? `lane ${s.lane}` : s.title} to another machine. It is still starting here, so the move waits until it is ready.`
                         : s.status === 'working'
-                          ? `Move ${s.lane ? `lane ${s.lane}` : s.title} to another machine. It is mid-turn, so the move is queued until the turn ends - never killed.`
-                          : 'Where this agent runs: your paired machines, and what each of them is doing.'
+                          ? `Move ${s.lane ? `lane ${s.lane}` : s.title} to another machine now, or once this turn ends.`
+                          : `Move ${s.lane ? `lane ${s.lane}` : s.title} to another machine.`
                     }
                     onClick={(e) => {
                       e.stopPropagation()
-                      // Robert, 2026-08-28: "instead of handoff button in header it should
-                      // be remote, which if session is not started then normal remote, if
-                      // session mid turn then just asks like handoff". A pane between turns
-                      // has nothing to queue, so the question the button used to ask is one
-                      // nobody needed - it goes straight to Devices. Mid-turn is the one
-                      // case where the answer matters, and that keeps today's ask.
+                      // Always the machine question, never the Devices screen. It went to
+                      // Devices between turns from 2026-08-28, and that read as a button
+                      // that "only shows the remote popup, not actually moves it" (Robert,
+                      // 2026-09-08). The box lists the machines, moves on one press, and
+                      // has its own Devices… button for pairing.
                       const busy = s.status === 'working' || s.status === 'starting'
-                      if (!busy && !s.ask) return setDevices(true)
                       const ids = s.lane
                         ? sessions.filter((x) => !x.remote && x.lane === s.lane && x.cwd === s.cwd).map((x) => x.id)
                         : [s.id]
@@ -6090,10 +6110,10 @@ export default function App(): JSX.Element {
                   <button
                     className="icon desk-only pt-handoff"
                     aria-label="Bring this pane back to this machine"
-                    title={`Bring ${s.title} back from ${s.remote.name}: its repo goes up as an auto-sync commit, the conversation and screen come over the link, and the pane reopens here. Mid-turn it comes back when the turn ends.`}
+                    title={`Bring ${s.title} back from ${s.remote.name}: its repo goes up as an auto-sync commit, the conversation and screen come over the link, and the pane reopens here. Mid-turn you choose: now, or once the turn ends.`}
                     onClick={(e) => {
                       e.stopPropagation()
-                      bringHere(s)
+                      askBringBack(s)
                     }}
                   >
                     ⇤
@@ -6549,7 +6569,7 @@ export default function App(): JSX.Element {
                       label: 'Bring it here',
                       hint: 'move it back from that machine',
                       icon: '⤵',
-                      run: () => bringHere(s)
+                      run: () => askBringBack(s)
                     }
                   ]
                 : []),
@@ -6818,7 +6838,7 @@ export default function App(): JSX.Element {
                       key: 'bring',
                       label: 'Bring it here',
                       hint: `move it back from ${s.remote?.name ?? 'that machine'}`,
-                      run: () => bringHere(s)
+                      run: () => askBringBack(s)
                     }
                   ]
                 : []),

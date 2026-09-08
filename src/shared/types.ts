@@ -2635,7 +2635,12 @@ export interface Api {
     ids?: string[],
     closeReceiverWhenDone?: boolean,
     /** false moves a pane mid-turn and loses the answer being written. Default true. */
-    waitForTurn?: boolean
+    waitForTurn?: boolean,
+    /**
+     * true INTERRUPTS a mid-turn pane (the CLI's own Escape) and moves it at once; the far
+     * end resumes the conversation and is asked to carry on. See `HandoffRequest.now`.
+     */
+    now?: boolean
   ): Promise<HandoffItem[]>
   /**
    * Bring a MIRRORED pane back to this device - the other direction of the same move.
@@ -2644,7 +2649,7 @@ export interface Api {
    * run its own handoff at us. Every refusal and the mid-turn queue are therefore the far
    * end's, and the report is the same `HandoffItem[]` a local hand-off gives.
    */
-  bringPaneHere(id: string): Promise<HandoffItem[]>
+  bringPaneHere(id: string, now?: boolean): Promise<HandoffItem[]>
   /** Panes waiting for their turn to end before they move - see shared/autoHandoff.ts. */
   handoffPending(): Promise<{ id: string; device: string; deviceName: string; since: number }[]>
   /** Stop waiting on one. The pane stays here, unmarked. */
