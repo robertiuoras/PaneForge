@@ -1305,6 +1305,13 @@ export interface RemotePeerState extends RemotePeer {
   since?: number
   /** it is announcing itself on this network right now */
   seen?: boolean
+  /**
+   * whether somebody is at that device's screen, while it is connected
+   *
+   * `undefined` is "nobody has said", which is what an older build over there leaves and
+   * what every disconnected row reads as. Only `true`/`false` are an answer.
+   */
+  person?: boolean
 }
 
 /** A PaneForge seen broadcasting on the LAN that this device has not paired with. */
