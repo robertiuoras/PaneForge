@@ -536,5 +536,25 @@ console.log('a History step has a chat to look at')
   ok('no jargon in the example prompts', !/\b(lane|worktree|trunk|commit-ish|idempotent|hydrate|pty)\b/i.test(words), words)
 }
 
+// A commit that names the control it is about - the one thing the surface table can never
+// know, since it only ever sees which FILE changed.
+{
+  const body = [
+    'The Devices row says whether somebody is at that screen.',
+    '',
+    'See: the Devices dialog, a paired row',
+    'Ring: .dev-row .chip',
+    'Ring: .ignored-second-one'
+  ].join('\n')
+  const t = trailersOf(body)
+  ok('a commit can name what to ring', t.ring === '.dev-row .chip', t.ring)
+  ok('one ring per commit, the first wins', trailersOf(body).ring !== '.ignored-second-one')
+  ok('a body with no Ring line asks for none', trailersOf('nothing here\n\nSee: a thing').ring === '')
+  const step = stepFrom({ subject: 'fix(devices): a chip', body, files: ['src/main/remote/host.ts'], scope: 'devices' })
+  ok("the author's selector beats the surface table", step.spot === '.dev-row .chip', step.spot)
+  const plain = stepFrom({ subject: 'fix(devices): a chip', body: 'no trailer', files: ['src/renderer/src/components/SettingsDialog.tsx'], scope: '' })
+  ok('...and without one the table still answers', plain.spot === '.dialog.settings .dialog-head', plain.spot)
+}
+
 console.log(failed ? `\n${failed} failed` : '\ntour: all good')
 process.exit(failed ? 1 : 0)
