@@ -110,6 +110,7 @@ interface RawLane {
   cwd?: string | null
   claimed?: number
   seen?: number
+  asleep?: number
   /** Reserved by a chat that only mentioned PaneForge and has not written in the lane. */
   tentative?: boolean
   /** The desk that claimed it, written since lane.mjs started stamping claims. */
@@ -622,6 +623,9 @@ export function goneLanes(board: LaneBoard | null, living: Set<string>, now = Da
     // no pane here by definition, so every test below would pass and this would run
     // `lane.mjs release` on a lane somebody is typing in at the other desk.
     .filter((l) => !l.peer)
+    // SessionEnd deliberately preserves a sleeping hold. Releasing it every minute
+    // cannot make progress and used to prevent every later lane from being visited.
+    .filter((l) => !l.asleep)
     .filter((l) => l.held && l.session && !l.ownerPane && !living.has(l.session))
     .filter((l) => now - l.seen > GONE_MS)
     .map((l) => l.session as string)
@@ -745,6 +749,8 @@ async function publishHeartbeat(main: string, chats: string[]): Promise<Set<stri
 
 let reclaiming = false
 let checkingInventories = false
+const reclaimAttempts = new Map<string, number>()
+let reclaimAttempt = 0
 
 /** What the last reclaim sweep learned about which chats are alive, for `markGone`. */
 let lastLiving: Set<string> | null = null
@@ -776,8 +782,8 @@ export function markGone(board: LaneBoard | null, now = Date.now(), living = las
  * than closed, so the lane stayed held for the full 12h staleness window - visible to every
  * other chat as "a chat has it", and blocking the automatic release the whole time.
  *
- * One lane per tick: each release ends in an autoship, and there is no reason to run two at
- * once when the tick comes round every minute.
+ * One lane per tick, least recently attempted first across all repositories. A failed
+ * or no-op release must not keep every later lane waiting forever.
  */
 export async function laneReclaim(panes: LanePane[]): Promise<void> {
   if (reclaiming || checkingInventories) return
@@ -832,6 +838,7 @@ export async function laneReclaim(panes: LanePane[]): Promise<void> {
     }
     lastLiving = living
 
+    const candidates: { key: string; repo: string; engine: string; session: string }[] = []
     for (const [main, own] of groups) {
       const board = attachLaneOwners(readRepo(main), own)
       if (!board) continue
@@ -839,12 +846,19 @@ export async function laneReclaim(panes: LanePane[]): Promise<void> {
       if (!gone.length) continue
       const engine = laneEngine(board.repo)
       if (!engine) continue
+      for (const session of gone) candidates.push({ key: JSON.stringify([board.repo, session]), repo: board.repo, engine, session })
+    }
+    const current = new Set(candidates.map((c) => c.key))
+    for (const key of reclaimAttempts.keys()) if (!current.has(key)) reclaimAttempts.delete(key)
+    const next = candidates.sort((a, b) => (reclaimAttempts.get(a.key) ?? 0) - (reclaimAttempts.get(b.key) ?? 0))[0]
+    if (next) {
+      reclaimAttempts.set(next.key, ++reclaimAttempt)
       reclaiming = true
-      execFile(
+      await new Promise<void>((done) => execFile(
         process.execPath,
-        [engine, 'release', '--repo', board.repo, '--session', gone[0]],
+        [next.engine, 'release', '--repo', next.repo, '--session', next.session],
         {
-          cwd: board.repo,
+          cwd: next.repo,
           windowsHide: true,
           timeout: RETRY_TIMEOUT,
           env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
@@ -852,16 +866,15 @@ export async function laneReclaim(panes: LanePane[]): Promise<void> {
         () => {
           reclaiming = false
           dropCaches()
+          done()
         }
-      )
-      // One lane per tick: each release ends in an autoship, and the tick comes round every
-      // minute. The repo that did not get its turn gets the next one.
-      return
+      ))
     }
   } catch {
     // Failed collection is unknown, never proof that a peer is gone.
     lastLiving = null
   } finally {
+    reclaiming = false
     checkingInventories = false
   }
 }
@@ -936,6 +949,7 @@ function readRepo(main: string): LaneBoard | null {
       // Filled in by attachLaneOwners, which is the only place that knows what panes exist.
       ownerPane: null,
       held: Boolean(held),
+      asleep: held?.asleep,
       seen,
       ready,
       conflicted: Boolean(conflict),
