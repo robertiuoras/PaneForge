@@ -38,6 +38,7 @@ const TESTS = [
   ['shipimports', 'ship-imports-test.mjs'],
   ['guarddeckhold', 'guarddeck-hold-test.mjs'],
   ['power', 'power-test.mjs'],
+  ['vault', 'vault-test.mjs'],
   ['killguard', 'kill-guard-test.mjs'],
   ['release', 'release-guard-test.mjs'],
   ['grid', 'grid-layout-test.mjs'],

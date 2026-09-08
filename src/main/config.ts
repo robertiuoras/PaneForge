@@ -287,7 +287,8 @@ function defaults(): Config {
       keys: []
     },
     theme: { ...DEFAULT_THEME },
-    window: { width: 1500, height: 940, maximized: false }
+    window: { width: 1500, height: 940, maximized: false },
+    vaultPath: ''
   }
 }
 

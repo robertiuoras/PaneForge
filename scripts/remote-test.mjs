@@ -286,6 +286,21 @@ async function main() {
   ok('the host lists the guest', await until(() => host.list().length === 1))
   ok('the guest is named', host.list()[0]?.name === 'Laptop', JSON.stringify(host.list()[0]))
 
+  // ------------------------------------------------- is anybody at that machine
+  // The Devices row says whether somebody is in front of the paired desk. An identity that
+  // never mentioned it is an OLDER build, and an older build is not evidence of an empty
+  // desk - the row says nothing until the device says something.
+  ok('a device that never said is not called empty', client.peerPerson === undefined, String(client.peerPerson))
+  host.tellPresence(false)
+  ok('the desk saying nobody is there reaches the other machine', await until(() => client.peerPerson === false), String(client.peerPerson))
+  host.tellPresence(true)
+  ok('and so does somebody coming back', await until(() => client.peerPerson === true), String(client.peerPerson))
+  // The same answer travels the other way, so the machine being connected TO can say it
+  // about its guest as well.
+  client.sendPresence(false)
+  const guestOf = () => [...(host.guests ?? [])][0]?.conn?.peer
+  ok('a guest desk going empty reaches the host', await until(() => guestOf()?.person === false), JSON.stringify(guestOf()))
+
   // Connecting is permission to watch, not a decision to watch everything.
   ok('both panes are offered', await until(() => client.panes().length === 2))
   ok('nothing is mirrored until it is picked', client.list().length === 0, JSON.stringify(client.list()))

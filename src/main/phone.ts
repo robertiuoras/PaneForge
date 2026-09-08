@@ -102,7 +102,13 @@ const DESK_ONLY = new Set([
   'phone:typeGate',
   'phone:forgetKey',
   'phone:clearMark',
-  'sessions:closing'
+  'sessions:closing',
+  // A vault is opened from a folder dialog and the Obsidian app on THIS machine - a
+  // phone has neither.
+  'config:pickVault',
+  'vault:info',
+  'vault:graph',
+  'vault:open'
 ])
 
 /**

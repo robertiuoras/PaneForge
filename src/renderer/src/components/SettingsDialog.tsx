@@ -52,6 +52,7 @@ import AgentLogo from './AgentLogo'
 import AppearanceTab from './AppearanceTab'
 import SoundsTab from './SoundsTab'
 import InstallConsole from './InstallConsole'
+import VaultDialog from './VaultDialog'
 import { BLURBS } from '@shared/blurbs'
 import Select from './Select'
 import { Segmented, Switch } from './Controls'
@@ -196,6 +197,12 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
   const pickRoot = async (): Promise<void> => {
     const dir = await api.pickRoot()
     if (dir) onChange({ root: dir })
+  }
+
+  const [showVault, setShowVault] = useState(false)
+  const pickVault = async (): Promise<void> => {
+    const dir = await api.pickVault()
+    if (dir) onChange({ vaultPath: dir })
   }
 
   const onInstalled = useCallback(
@@ -361,6 +368,28 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                   </button>
                 </div>
               </div>
+
+              <div className="setting">
+                <label>Obsidian vault</label>
+                <div className="setting-row">
+                  <input
+                    className="search"
+                    readOnly
+                    value={config.vaultPath}
+                    placeholder="No vault set"
+                  />
+                  <button className="ghost" onClick={pickVault}>
+                    Browse
+                  </button>
+                  {config.vaultPath && (
+                    <button className="ghost" onClick={() => setShowVault(true)}>
+                      Open graph
+                    </button>
+                  )}
+                </div>
+                <div className="hint">The vault's notes and [[links]], as a graph you can click into.</div>
+              </div>
+              {showVault && <VaultDialog onClose={() => setShowVault(false)} />}
 
               <div className="setting">
                 <label>Default agent</label>

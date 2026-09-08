@@ -1352,6 +1352,13 @@ export interface RemotePeerState extends RemotePeer {
   since?: number
   /** it is announcing itself on this network right now */
   seen?: boolean
+  /**
+   * whether somebody is at that device's screen, while it is connected
+   *
+   * `undefined` is "nobody has said", which is what an older build over there leaves and
+   * what every disconnected row reads as. Only `true`/`false` are an answer.
+   */
+  person?: boolean
 }
 
 /** A PaneForge seen broadcasting on the LAN that this device has not paired with. */
@@ -1970,6 +1977,8 @@ export interface Config {
    */
   restoreSessions?: StartSessionRequest[]
   window: WindowBounds
+  /** Obsidian vault folder, opened by `vault:info`/`vault:graph`/`vault:open`. '' = unset. */
+  vaultPath: string
 }
 
 /** @see Config.restoreAfterRestart */
@@ -2256,6 +2265,13 @@ export interface Api {
   getConfig(): Promise<Config>
   setConfig(patch: Partial<Config>): Promise<Config>
   pickRoot(): Promise<string | null>
+  pickVault(): Promise<string | null>
+  /** The Obsidian vault for a folder (walks up for `.obsidian`), or null. */
+  vaultInfo(cwd: string): Promise<VaultInfo | null>
+  /** Notes and their [[wikilinks]] as a graph, read off disk. */
+  vaultGraph(vault: string): Promise<VaultGraph>
+  /** Open a note (or the vault) in the Obsidian app via `obsidian://`. */
+  vaultOpen(vault: string, note?: string): Promise<boolean>
   /** file dialog, then a copy into userData. `error` is a sentence to put on screen. */
   addSound(): Promise<{ ok: boolean; sound?: CustomSound; error?: string }>
   /** the bytes of an uploaded sound, for decodeAudioData. Null = gone or unreadable. */
@@ -2783,4 +2799,35 @@ export interface Api {
    * Shown as a line in the footer instead; the detail is in paneforge-errors.log.
    */
   onAppError(cb: (message: string) => void): () => void
+}
+
+/** An Obsidian vault found beside a project. `name` is the folder's own name. */
+export interface VaultInfo {
+  path: string
+  name: string
+  notes: number
+  /** Whether the Obsidian app is installed here (the `obsidian://` scheme has a handler). */
+  appInstalled: boolean
+  /**
+   * Set when `path` doesn't exist, isn't a directory, or holds no `.md` files - so an
+   * empty/broken vault reads as "here's why", never as a silent empty graph.
+   */
+  error?: string
+}
+export interface VaultNode {
+  id: string
+  title: string
+  /** Number of links in + out; the graph draws size off it. */
+  degree: number
+  folder: string
+}
+export interface VaultGraph {
+  nodes: VaultNode[]
+  /**
+   * [from id, to id] pairs. A link to a note that doesn't exist yet keeps its target id as
+   * an unresolved node (see `folder: ''`) rather than being dropped, so a link written
+   * before its note still draws.
+   */
+  links: [string, string][]
+  readAt: number
 }

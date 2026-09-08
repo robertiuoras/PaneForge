@@ -2426,6 +2426,7 @@ body.sizing * { user-select: none !important; }
    two halves rather than as a whole - a file list that scrolled with the patch would
    leave nothing to click on halfway down a long file. */
 .dialog > .diff-body { flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.dialog > .vault-body { flex: 1 1 auto; min-height: 0; overflow: hidden; }
 /* With a dedicated body present the shell must not scroll too, or the head and the
    button row drift out of view while the body is being read. */
 .dialog:has(> .tab-body),
@@ -2433,6 +2434,7 @@ body.sizing * { user-select: none !important; }
 .dialog:has(> .keys),
 .dialog:has(> .hist-list),
 .dialog:has(> .diff-body),
+.dialog:has(> .vault-body),
 .dialog:has(> .dev-cols),
 .dialog:has(> .transcript) { overflow: hidden; }
 /* In the fallback case above the button row would scroll away with everything else;
@@ -3853,6 +3855,12 @@ button.ghost.active { background: var(--accent-dim); border-color: var(--accent)
 .diff-counts { flex: none; font-size: 10.5px; display: flex; gap: 5px; }
 .diff-plus { color: var(--diff-add); }
 .diff-minus { color: var(--diff-del); }
+.vault-body { height: 100%; display: flex; }
+.vault-canvas {
+  flex: 1 1 auto; width: 100%; height: 100%;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-sm);
+  cursor: grab;
+}
 .diff-patch {
   overflow: auto; overscroll-behavior: contain;
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-sm);

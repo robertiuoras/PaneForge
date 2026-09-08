@@ -1075,6 +1075,13 @@ export default function RemoteDialog({ state, onState, onClose, flash }: Props):
                           {p.sessions ? `mirroring ${p.sessions} of ${p.panes.length}` : `${p.panes.length} panes there`}
                         </span>
                       )}
+                      {/* Whether anybody is in front of that machine. Absent means the
+                          device has not said - an older build over there, or a link that
+                          is down - and an unknown answer is drawn as nothing at all
+                          rather than as an empty desk. */}
+                      {p.status === 'online' && p.person !== undefined && (
+                        <span className="chip">{p.person ? 'somebody is there' : 'nobody is there'}</span>
+                      )}
                       {p.status !== 'online' && p.seen && <span className="chip">on this network</span>}
                       {p.status === 'connecting' && <span className="chip">connecting</span>}
                       {gap && (
