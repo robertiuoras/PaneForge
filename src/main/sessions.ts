@@ -1268,6 +1268,7 @@ export class SessionManager extends EventEmitter {
     // reason - waking would otherwise re-run the work the pane was opened to do - except
     // `queued`: a pane put to sleep before it ever ran is woken to do exactly that.
     live.req = { ...live.req, resume: true, resumeId, prompt: reason === 'queued' ? live.req.prompt : undefined }
+    live.meta.resumeId = resumeId
     this.endRun(live)
     live.jobName = null
     live.meta.job = undefined
@@ -1350,6 +1351,7 @@ export class SessionManager extends EventEmitter {
       live.req = { ...live.req, resume: false, resumeId: undefined, resumeCwd: undefined }
     }
     noteSession(id, fresh ? live.meta.cwd : resumeCwd, live.meta.agent, live.req.resume ? live.req.resumeId : undefined)
+    live.meta.resumeId = live.req.resume ? live.req.resumeId : undefined
     // Cleared before anything else reads the request: it is what made this pane arrive
     // asleep, and a later restart of a pane somebody has woken must not send it back.
     live.req = { ...live.req, asleep: undefined }
@@ -1903,6 +1905,10 @@ export class SessionManager extends EventEmitter {
       if (live.workTurn?.startedAt === endedThis) live.workAfter = shot
     })
     live.meta.runSince = undefined
+    // The turn is over, so the CLI has flushed it: this is when the conversation id
+    // becomes something another machine could resume (`Session.resumeId`, read by the
+    // automatic move). A Map lookup for Claude; Codex checks its claimed rollout file.
+    live.meta.resumeId = resumeIdFor(live.meta.id)
     live.runEndedAt = Date.now()
     // The turn is over, however it ended: a pane cannot still be "stuck mid-turn"
     // while the chime is announcing that its turn finished.

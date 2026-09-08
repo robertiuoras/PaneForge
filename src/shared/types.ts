@@ -148,6 +148,13 @@ export interface Session {
   title: string
   cwd: string
   agent: Agent
+  /**
+   * The conversation this pane can be resumed into, once known. Stamped by main when a
+   * turn ends (the transcript is flushed by then) and when a pane sleeps or wakes; absent
+   * until the CLI has written one. Read by the automatic move (`shared/autoHandoff.ts`
+   * `travels`): an agent pane with no id has nothing another machine could resume.
+   */
+  resumeId?: string
   /** model passed to the agent, empty/undefined = the CLI's own default */
   model?: string
   status: SessionStatus
@@ -537,10 +544,12 @@ export type SleepReason =
   | 'unknown'
   | 'continuation'
   | 'tour'
+  /** its conversation was handed to another machine and runs there now */
+  | 'handoff'
 
 /** Decision evidence, without terminal text, prompts or filesystem paths. */
 export interface SleepEvidence {
-  source: 'renderer-idle-sweep' | 'tour' | 'continuation' | 'renderer' | 'api' | 'internal'
+  source: 'renderer-idle-sweep' | 'tour' | 'continuation' | 'renderer' | 'api' | 'internal' | 'handoff'
   pressure?: 'ok' | 'tight' | 'over'
   idleMs?: number
   thresholdMs?: number

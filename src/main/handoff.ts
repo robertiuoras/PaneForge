@@ -225,6 +225,15 @@ export interface SendDeps {
   /** the same specs a desk restore uses - resumeId and scrollbackId included */
   snapshot(): StartSessionRequest[]
   kill(id: string): void
+  /**
+   * Stop the agent in this pane and keep everything else - card, screen, conversation -
+   * so a press wakes it here in the same conversation. What an AGENT handoff does to its
+   * source once the far end is running: the pane is not killed (the remote resume is
+   * started, not confirmed, and the conversation must stay reachable from this desk),
+   * but a CLI left running here gives nothing back, and giving memory back is the only
+   * reason an automatic move exists. Absent means the source is left running.
+   */
+  sleep?(id: string): void
   /** the pane's screen, from its history file - raw bytes, ANSI intact */
   tailOf(id: string, bytes: number): string
   /**
@@ -401,8 +410,15 @@ async function sendOne(deps: SendDeps, device: string, pane: Session, closeRecei
     return { id: pane.id, title: pane.title, ok: false, error: result.error || 'Refused over there', notes }
   }
   if (handoffSpec.agent !== 'shell') {
-    const kept = 'Remote conversation opened, but this original pane stays open because PaneForge cannot yet confirm the remote agent accepted the resume.'
-    deps.log?.(`${pane.id} -> ${where}: remote process started after ${Date.now() - t1} ms; original kept - resume acceptance is not confirmed`)
+    // The conversation now runs over there. This pane is not killed - the remote resume
+    // is started, not confirmed - but its agent is stopped, so the ~190 MB+ it held comes
+    // back; the card, screen and conversation stay, and a press wakes it here.
+    const slept = !!deps.sleep
+    deps.sleep?.(pane.id)
+    const kept = slept
+      ? `Remote conversation opened on ${where}. This original pane stays open but asleep - its agent was stopped here to give the memory back, and a press wakes it in the same conversation.`
+      : 'Remote conversation opened, but this original pane stays open because PaneForge cannot yet confirm the remote agent accepted the resume.'
+    deps.log?.(`${pane.id} -> ${where}: remote process started after ${Date.now() - t1} ms; original ${slept ? 'put to sleep' : 'kept running'} - resume acceptance is not confirmed`)
     return { id: pane.id, title: pane.title, ok: true, sourceKept: true, notes: [...notes, ...result.notes, kept] }
   }
   deps.log?.(`${pane.id} -> ${where}: running there after ${Date.now() - t1} ms (${Date.now() - t0} ms in all)`)

@@ -2578,6 +2578,8 @@ export default function App(): JSX.Element {
         busy: s.runSince !== undefined,
         // The device that handed it here, so the budget never hands it straight back.
         arrivedFrom: s.arrivedFrom,
+        // What the far end would resume. An agent pane without one never travels.
+        resumeId: s.resumeId,
         projectName: projectNameOf(s.cwd),
         // What it is actually costing. `undefined` when the sampler has no answer - it
         // does not read the process table behind a hidden window - and `expensive` reads
