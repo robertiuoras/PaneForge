@@ -127,7 +127,7 @@ export const MAX_SPACE_WORDS = 8
  */
 export const MAX_ROOTED_WORDS = 14
 /** A word that can only be the START of a path: home, the root, here, or a drive. */
-export const ROOTED = /^[('"`[{<]*(?:~[\/]|[\/]|\.{1,2}[\/]|[A-Za-z]:[\/])/
+export const ROOTED = /^[('"`[{<]*(?:~[\\/]|[\\/]|\.{1,2}[\\/]|[A-Za-z]:[\\/])/
 
 /** A run's final word carries a real-looking extension - the anchor a spaced path needs. */
 const ENDS_WITH_EXTENSION = /\.[A-Za-z][A-Za-z0-9]{0,7}$/

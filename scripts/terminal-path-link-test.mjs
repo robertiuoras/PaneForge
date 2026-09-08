@@ -4,17 +4,18 @@ import { readFileSync, mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
+import { fileURLToPath } from 'node:url'
 import { buildSync, transformSync } from 'esbuild'
 const require = createRequire(import.meta.url)
 const { Terminal } = require('@xterm/headless')
 const scratch = mkdtempSync(join(tmpdir(), 'pf-terminal-path-'))
 const load = (entry) => {
-  const out = buildSync({entryPoints:[new URL(entry, import.meta.url).pathname],bundle:true,write:false,platform:'node',format:'cjs'})
+  const out = buildSync({entryPoints:[fileURLToPath(new URL(entry, import.meta.url))],bundle:true,write:false,platform:'node',format:'cjs'})
   const m = {exports:{}};new Function('module','exports','require',out.outputFiles[0].text)(m,m.exports,require);return m.exports
 }
 const {findPathTokens} = load('../src/shared/pathToken.ts')
 const {resolveRevealTarget} = load('../src/main/revealPath.ts')
-const source = readFileSync(new URL('../src/renderer/src/components/TerminalPane.tsx', import.meta.url), 'utf8')
+const source = readFileSync(fileURLToPath(new URL('../src/renderer/src/components/TerminalPane.tsx', import.meta.url)), 'utf8')
 const start = source.indexOf('    const KIND_TTL = ')
 const end = source.indexOf('\n    /**', source.indexOf('t.registerLinkProvider({',start))
 assert(start>0&&end>start)
@@ -44,7 +45,8 @@ try {
   await write(`\x1bc📎 ${file}\r\n`)
   const soft=(await links(2)).find(l=>l.text===file)
   assert(soft,'soft-wrapped path is linked from its continuation row')
-  let pathCell=0;for(let x=0;x<t.cols;x++)if(t.buffer.active.getLine(0).getCell(x).getChars()==='/'){pathCell=x+1;break}
+  let pathCell=0;for(let x=0;x<t.cols;x++)if(t.buffer.active.getLine(0).getCell(x).getChars()===file[0]){pathCell=x+1;break}
+  assert(pathCell > 0, 'the path start is present on the first row on either platform')
   assert.equal(soft.range.start.x,pathCell,'emoji prefix maps UTF-16 offsets to the measured terminal cells')
   await write(`\x1bc${scratch}/absent-\r\n    made-up.png\r\n`)
   assert.equal((await links(1)).length,0,'unwritten path is not falsely linked to an ancestor folder')
