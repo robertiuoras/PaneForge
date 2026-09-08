@@ -125,6 +125,7 @@
     "test:settingsearch": "node scripts/settings-search-test.mjs",
     "test:asknotify": "node scripts/ask-notify-test.mjs",
     "test:recover": "node scripts/recover-test.mjs",
+    "test:paneerror": "node scripts/pane-error-test.mjs",
     "test:sleep": "node scripts/sleep-test.mjs",
     "test:reclaim": "node scripts/reclaim-test.mjs",
     "test:activity": "node scripts/activity-test.mjs",

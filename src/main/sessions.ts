@@ -129,6 +129,7 @@ import { askSignature, CHOOSE_GAP_MS, keysForChoice, readAsk, sameAsk , stampMat
 import { stripAnsi as strip } from '../shared/ansi'
 import { silenceMs, stalledNow } from '../shared/alerts'
 import { DEFAULT_RECOVER, recover, TAIL_CHARS } from '../shared/recover'
+import { stoppedLine } from '../shared/paneError'
 import { getConfig } from './config'
 import { spawnQuiet } from './spawnQuiet'
 import type {
@@ -3493,15 +3494,20 @@ export class SessionManager extends EventEmitter {
    */
   private sweepRecover(live: Live): void {
     const cfg = getConfig().recover ?? DEFAULT_RECOVER
-    if (!cfg.enabled) return
     const text = strip(live.buffer.read())
     if (text.length < live.recoverSeen) live.recoverSeen = 0
     if (text.length <= live.recoverSeen) return
-    const fresh = text.slice(live.recoverSeen)
-    const found = recover(
-      { painted: fresh.slice(-TAIL_CHARS), busy: false, tries: live.recoverTries },
-      cfg
-    )
+    const painted = text.slice(live.recoverSeen).slice(-TAIL_CHARS)
+    // A run STOPPED by something nothing here retries - a usage limit, a credit balance,
+    // an auth failure. Read before the continue decision and NOT behind `cfg.enabled`:
+    // they are different features and share only this cursor. Turning the automatic
+    // continue off must not also silence the pane that has given up, which is the one a
+    // person misses (`shared/paneError.ts`).
+    const stopped = stoppedLine(painted)
+    if (stopped) this.emit('paneError', live.meta, stopped)
+    const found = cfg.enabled
+      ? recover({ painted, busy: false, tries: live.recoverTries }, cfg)
+      : null
     // Everything from here has been read, whichever way it went: a turn that ended whole
     // gives the budget back, so a pane that drops once an hour never runs out of tries.
     live.recoverSeen = text.length

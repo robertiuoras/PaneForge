@@ -108,6 +108,7 @@ const TESTS = [
   ['updatecompletion', 'update-completion-test.mjs'],
   ['tokens', 'tokens-test.mjs'],
   ['recover', 'recover-test.mjs'],
+  ['paneerror', 'pane-error-test.mjs'],
   ['restoreturn', 'restore-turn-test.mjs'],
   ['restore', 'restore-context-test.mjs'],
   ['contextusage', 'context-usage-test.mjs'],
