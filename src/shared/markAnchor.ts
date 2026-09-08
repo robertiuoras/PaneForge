@@ -51,15 +51,9 @@
 //
 // `npm run test:markanchor`.
 
-import { promptEcho } from './promptEcho'
+import { promptEcho, codexPromptPaint, type PromptEchoLine } from './promptEcho'
 
-export interface EchoRow {
-  text: string
-  /** Codex's own submitted-prompt paint is indexed background 235. */
-  background?: number
-  /** A live composer may wrap above its cursor; it is never a submitted prompt. */
-  active?: boolean
-}
+export type EchoRow = PromptEchoLine
 
 type EchoRowInput = string | EchoRow
 type EchoAgent = 'claude' | 'codex'
@@ -85,7 +79,7 @@ export function echoKey(text: string): string {
 /** Whether this buffer row is the CLI's echo of the prompt `key` came from. */
 export function onEchoRow(row: EchoRowInput | undefined, key: string, agent: EchoAgent = 'claude'): boolean {
   if (!row || !key) return false
-  if (agent === 'codex' && (typeof row === 'string' || row.background !== 235 || row.active)) return false
+  if (agent === 'codex' && (typeof row === 'string' || !codexPromptPaint(row))) return false
   const e = promptEcho(rowText(row), agent)
   return e.length > 0 && e.replace(/\s+/g, ' ').startsWith(key)
 }
@@ -232,7 +226,7 @@ export const LANDING_LEAD_ROWS = 2
 export function rowShowsPrompt(row: EchoRowInput | undefined, key: string, agent: EchoAgent = 'claude'): boolean {
   if (!row || !key) return false
   if (onEchoRow(row, key, agent)) return true
-  if (agent === 'codex' && (typeof row === 'string' || row.background !== 235 || row.active)) return false
+  if (agent === 'codex' && (typeof row === 'string' || !codexPromptPaint(row))) return false
   return rowText(row).replace(/\s+/g, ' ').trim().startsWith(key)
 }
 

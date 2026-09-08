@@ -53,7 +53,7 @@ if (!CHROME) {
  * The controls are the ones a desk pane really carries; the widths that matter are the
  * agent picker (the fat one) and the three the container queries leave on the line.
  */
-function page(width, undo = '') {
+function page(width, undo = '', forceTight = null, runningClock = false) {
   return `<!doctype html><meta charset="utf-8"><style>
   html,body{margin:0;background:#111;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:13px}
   ${css}
@@ -67,7 +67,7 @@ function page(width, undo = '') {
         <span class="pt-name">manic-s-auction-house</span>
         <button class="git-badge pressable">master</button>
         <span class="elapsed pt-open">20h 44m</span>
-        <span class="elapsed done pt-clock">11s</span>
+        ${runningClock ? '<span class="session-clock pt-clock">turn 11s</span>' : '<span class="elapsed done pt-clock">11s</span>'}
         <span class="pt-path">/Users/robertiuoras/Projects/manic-s-auction-house</span>
         <span class="pt-actions">
           <button class="icon pt-find">&#8981;</button>
@@ -107,6 +107,7 @@ function page(width, undo = '') {
     h.dataset.tight = String(level)
     h.dataset.more = level >= 2 ? 'on' : 'off'
   }
+  ${forceTight === null ? '' : `document.querySelector('.pane-title').dataset.tight = '${forceTight}'`}
   </script>`
 }
 
@@ -367,6 +368,29 @@ try {
   const tight = await thresholdCase(320, false)
   ok(!tight.agentPick, '320px content: the picker goes when the row cannot hold it', JSON.stringify(tight))
   ok(tight.more, 'and the ⋯ carries it instead', JSON.stringify(tight))
+
+  // Once the path is hidden, it cannot be the flexible item that holds the action row at
+  // the pane edge. This is the desktop shape from the report: controls stranded well left
+  // of a wide pane although every remaining control fits and is reachable.
+  await send(
+    'Page.navigate',
+    { url: 'data:text/html;charset=utf-8,' + encodeURIComponent(page(655, '', 2, true)) },
+    sessionId
+  )
+  await evaluate('document.fonts.ready.then(() => 1)')
+  const pathHidden = await evaluate(`(() => {
+    const pane = document.querySelector('.pane').getBoundingClientRect()
+    const bar = document.querySelector('.pane-title')
+    const actions = bar.querySelector('.pt-actions').getBoundingClientRect()
+    return {
+      pathHidden: getComputedStyle(bar.querySelector('.pt-path')).display === 'none',
+      paneRight: pane.right,
+      actionsRight: actions.right,
+      gap: pane.right - actions.right
+    }
+  })()`)
+  ok(pathHidden.pathHidden, 'path-hidden desktop control measures the reported state', JSON.stringify(pathHidden))
+  ok(pathHidden.gap <= 6, 'path-hidden desktop actions fill the header to its right edge', JSON.stringify(pathHidden))
 } finally {
   await closeTestChrome(chrome, profile, ws)
 }

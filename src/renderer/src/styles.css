@@ -1861,7 +1861,7 @@ body.sizing * { user-select: none !important; }
    linear.app.md's own toolbar (`--button-height: 24px`, `--button-gap: 4px`, 12px icons):
    at 11px type these were 28px boxes with 7px of side padding each, which is 9 controls
    worth of padding on a line that had none to give. */
-.pt-actions { display: flex; gap: 2px; flex: none; align-items: center; }
+.pt-actions { margin-inline-start: auto; display: flex; gap: 2px; flex: none; align-items: center; }
 .pt-actions .icon { padding: 0 5px; min-width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; }
 /* Close is the one control in this row that ends something, and it was a lowercase `x`
    in the same grey as the six icons beside it - the same reading `.icon.danger` already
