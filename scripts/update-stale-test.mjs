@@ -26,8 +26,14 @@ buildSync({
   format: 'esm',
   platform: 'node'
 })
-const { STALE_SUPERSEDES, updateIgnored } =
-  await import(pathToFileURL(outfile).href)
+const {
+  STALE_SUPERSEDES,
+  STAGED_NAG_MS,
+  updateIgnored,
+  stagedHours,
+  stagedTooLong,
+  stagedWaitingWords
+} = await import(pathToFileURL(outfile).href)
 
 const fail = []
 const ok = (c, n) => {
@@ -209,6 +215,91 @@ try {
   process.stdout.write(String(e.stdout ?? ''))
   process.stderr.write(String(e.stderr ?? ''))
   fail.push('the wired rule')
+}
+
+// --- a build that has been ready for hours, with nobody told -------------------------
+//
+// 0.8.207 reached `state ready` at 2026-09-08T02:28:31 and the app was still running the
+// old build when it was relaunched by hand at 2026-09-09T02:30:34. Nothing installed it
+// because nothing may: this app takes a staged build on Restart now or on a quit, and no
+// timer is allowed to tear down a working desk. What was missing is that the screen said
+// the same sentence on hour one and on hour twenty-four, and Later had hidden it for good.
+{
+  const NOW = 1_800_000_000_000
+  const HOUR = 3_600_000
+  ok(!stagedTooLong(undefined, NOW), 'a build that never became ready has waited for nothing')
+  ok(!stagedTooLong(NOW - HOUR, NOW), 'an hour is an ordinary wait and is not mentioned')
+  ok(stagedTooLong(NOW - STAGED_NAG_MS, NOW), `past ${STAGED_NAG_MS / HOUR}h it is worth saying`)
+  ok(stagedTooLong(NOW - 24 * HOUR, NOW), 'and a full day certainly is')
+  ok(stagedHours(NOW - 24 * HOUR, NOW) === 24, 'the sentence counts whole hours')
+  ok(stagedHours(NOW - HOUR - 1000, NOW) === 1, '...and never says nought hours')
+
+  const words = stagedWaitingWords('0.8.206', '0.8.207', 24)
+  ok(words.includes('24 hours') && words.includes('0.8.207'), 'the card names the build and the wait')
+  ok(words.includes('Restart now'), '...and what ends the wait, in the words of the button underneath it')
+  ok(
+    !/staged|supersede|feed|installer/i.test(words),
+    'and says none of it to somebody who has never used git'
+  )
+  ok(
+    /never on its own while you are working/.test(words),
+    'it also says what the app will NOT do, because that is the promise being kept'
+  )
+}
+
+// Render the actual card with controlled hook state and clock, then invoke its buttons.
+// This catches a reminder whose Later button stops hiding it after the age threshold.
+{
+  const { build } = await import('esbuild')
+  const cardFile = join(OUT, 'update-toast-dismiss.mjs')
+  const fixture = { values: [], cursor: 0, now: 1_800_000_000_000, update: null }
+  globalThis.__updateToastFixture = fixture
+  const previousWindow = globalThis.window
+  globalThis.window = { api: {} }
+  try {
+    await build({
+      entryPoints: [join(ROOT, 'src/renderer/src/components/UpdateToast.tsx')],
+      outfile: cardFile, bundle: true, format: 'esm', platform: 'node', jsx: 'automatic',
+      alias: { '@shared': join(ROOT, 'src/shared') },
+      external: ['react/jsx-runtime'],
+      plugins: [{ name: 'card-fixture', setup(b) {
+        b.onResolve({ filter: /^react$/ }, () => ({ path: 'hooks', namespace: 'fixture' }))
+        b.onResolve({ filter: /^\.\/Elapsed$/ }, () => ({ path: 'clock', namespace: 'fixture' }))
+        b.onLoad({ filter: /.*/, namespace: 'fixture' }, ({ path }) => ({ contents: path === 'clock'
+          ? 'export const useNow = () => globalThis.__updateToastFixture.now'
+          : `export default {}; export const useEffect = () => {};
+             export function useState(initial) {
+               const f = globalThis.__updateToastFixture, i = f.cursor++;
+               if (!(i in f.values)) f.values[i] = initial;
+               return [i === 0 ? f.update : f.values[i], value => { f.values[i] = value }];
+             }`
+        }))
+      } }]
+    })
+    const { default: Card } = await import(pathToFileURL(cardFile).href)
+    const render = () => { fixture.cursor = 0; return Card() }
+    const later = card => card.props.children[2].props.children[0].props.onClick()
+    fixture.update = { phase: 'ready', current: '0.8.206', version: '0.8.207', readyAt: fixture.now }
+    let card = render()
+    ok(!!card, 'a newly ready build displays its card')
+    later(card)
+    ok(render() === null, 'Later hides the initial card')
+    fixture.now += STAGED_NAG_MS
+    card = render()
+    ok(!!card, 'the dismissed card returns when its wait reaches the reminder threshold')
+    later(card)
+    ok(render() === null, 'Later also hides the aged reminder')
+    fixture.now += STAGED_NAG_MS
+    ok(render() === null, 'a dismissed aged reminder stays hidden on later clock ticks')
+    fixture.update = { ...fixture.update, version: '0.8.208' }
+    card = render()
+    ok(!!card, 'a different build is still allowed to show its own reminder')
+    card.props.children[0].props.onDismiss()
+    ok(render() === null, 'the close button also dismisses an aged reminder')
+  } finally {
+    globalThis.window = previousWindow
+    delete globalThis.__updateToastFixture
+  }
 }
 
 console.log(fail.length ? `\n${fail.length} failed` : '\nall good')

@@ -39,6 +39,26 @@ export const RELOAD_COOLDOWN_MS = 60_000
 export const MAX_RELOADS = 3
 
 /**
+ * How many self-healing wedges make a leak rather than a busy moment.
+ *
+ * 2026-09-05: one renderer went unresponsive eight times between 01:03 and 03:11, each
+ * time answering again 19-55s later, with cpu pinned at 10.1-10.4% the whole while and
+ * its working set climbing 161MB -> 286MB. Every single cycle read as "it came back", so
+ * nothing was ever done about it. A renderer that recovers on its own once was busy; one
+ * that does it twice is a stuck event loop with a growing heap behind it, and waiting for
+ * the third is waiting for the machine.
+ */
+export const STUCK_WEDGES = 2
+
+/**
+ * Two wedges further apart than this are two incidents, not one leak.
+ *
+ * The cadence that produced the rule was one wedge every ~27 minutes for three hours, so
+ * the window has to be wider than that or the count is reset before it can ever reach two.
+ */
+export const WEDGE_WINDOW_MS = 60 * 60 * 1000
+
+/**
  * A wedge that ends on its own, and the day counting them started mattering.
  *
  * 2026-09-05, this Mac: the same renderer (pid 5075) went unresponsive eight times between
@@ -71,6 +91,10 @@ export interface Watch {
   gone: boolean
   reloads: number
   lastReloadAt: number
+  /** Wedges seen since the last reload, within `WEDGE_WINDOW_MS` of each other. */
+  wedges: number
+  /** When the most recent wedge started, so a stale count can be dropped. */
+  lastWedgeAt: number
   /** Spins this renderer has recovered from by itself inside `SPIN_WINDOW_MS`. */
   spins: number
   /** When the oldest spin in that tally happened. 0 = the tally is empty. */
@@ -100,6 +124,9 @@ export function decide(w: Watch, now: number): Act {
   if (w.gone) return spent ? 'give-up' : 'recreate'
   if (spent) return 'give-up'
   if (w.lastReloadAt && now - w.lastReloadAt < RELOAD_COOLDOWN_MS) return 'wait'
+  // A renderer wedging again after healing itself is not waited out: the grace period is
+  // there to let a busy frame finish, and this one has already proved it does not.
+  if (w.unresponsiveSince && w.wedges >= STUCK_WEDGES) return 'reload'
   // A renderer that keeps wedging and un-wedging gets the same reload the hard wedges get.
   // Asked BEFORE the two clocks below, because by construction neither of them is running:
   // the spin has already ended, which is exactly how this one escaped for two hours.
@@ -111,10 +138,63 @@ export function decide(w: Watch, now: number): Act {
 
 /** A fresh watch, and what a reload leaves behind. */
 export function fresh(): Watch {
-  return { unresponsiveSince: 0, probeSentAt: 0, gone: false, reloads: 0, lastReloadAt: 0, spins: 0, firstSpinAt: 0 }
+  return {
+    unresponsiveSince: 0,
+    probeSentAt: 0,
+    gone: false,
+    reloads: 0,
+    lastReloadAt: 0,
+    wedges: 0,
+    lastWedgeAt: 0,
+    spins: 0,
+    firstSpinAt: 0
+  }
+}
+
+/**
+ * Chromium said the renderer stopped answering. Counts it, and forgets a count that is
+ * older than one incident - so a window that wedges once a day is never reloaded for it.
+ */
+export function noteWedge(w: Watch, now: number): Watch {
+  const stale = w.lastWedgeAt !== 0 && now - w.lastWedgeAt > WEDGE_WINDOW_MS
+  return {
+    ...w,
+    unresponsiveSince: w.unresponsiveSince || now,
+    wedges: (stale ? 0 : w.wedges) + 1,
+    lastWedgeAt: now
+  }
+}
+
+/**
+ * How many times a window the watchdog gave up on is REBUILT before it is left alone.
+ *
+ * Giving up used to be the end of it: `still wedged after 3 reload(s) - leaving it alone`
+ * (2026-09-05 00:48:17, pid 97494) is the last line about that window anywhere in the log.
+ * The watch was stopped with it, so nothing watched the app from then on, and the person in
+ * front of it was told nothing - a desk that had stopped answering, with no notice and no
+ * way back but killing PaneForge by hand.
+ *
+ * A rebuild is the recovery a DEAD renderer already gets: the window is destroyed and
+ * `createWindow` runs, panes coming back from desk.json and `--resume`. One is allowed,
+ * because a rebuild that wedges again is not a rescue, it is a loop.
+ */
+export const MAX_GIVE_UP_REBUILDS = 1
+
+/**
+ * What to do with a window the watchdog has run out of reloads for.
+ *
+ * `sinceLastMs` is how long ago the last give-up rebuild was, `Infinity` when there has not
+ * been one - an app left running for days earns its rebuild back, the same way the wedge
+ * count is forgotten after an hour of quiet.
+ */
+export function afterGiveUp(rebuilds: number, sinceLastMs: number): 'recreate' | 'leave' {
+  if (sinceLastMs > WEDGE_WINDOW_MS) return 'recreate'
+  return rebuilds < MAX_GIVE_UP_REBUILDS ? 'recreate' : 'leave'
 }
 
 export function afterAct(w: Watch, now: number): Watch {
+  // The wedge count goes with it: the reload is the answer to those wedges, and the next
+  // two are what say whether it worked.
   return {
     ...w,
     unresponsiveSince: 0,
@@ -122,6 +202,8 @@ export function afterAct(w: Watch, now: number): Watch {
     gone: false,
     reloads: w.reloads + 1,
     lastReloadAt: now,
+    wedges: 0,
+    lastWedgeAt: 0,
     // The tally is about THIS page. A reload replaces it, so the count starts again -
     // otherwise the second reload would fire the instant the cooldown lifted.
     spins: 0,

@@ -66,6 +66,7 @@ const TESTS = [
   ['headerfit', 'header-fit-test.mjs'],
   ['promptseed', 'promptseed-test.mjs'],
   ['renderwatch', 'renderwatch-test.mjs'],
+  ['updateretry', 'update-retry-test.mjs'],
   ['mainwatch', 'main-watch-test.mjs'],
   ['logwrite', 'log-write-test.mjs'],
   ['sleepcause', 'sleep-cause-test.mjs'],

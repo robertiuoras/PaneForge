@@ -7,12 +7,30 @@
 import { execFile } from 'node:child_process'
 import { app, type BrowserWindow } from 'electron'
 import { logProblem } from './crash'
-import { MAX_SPINS, PROBE_EVERY_MS, afterAct, decide, fresh, noteRecovered, type Watch } from '../shared/renderWatch'
+import {
+  MAX_SPINS,
+  PROBE_EVERY_MS,
+  WEDGE_WINDOW_MS,
+  afterAct,
+  afterGiveUp,
+  decide,
+  fresh,
+  noteWedge,
+  noteRecovered,
+  type Watch
+} from '../shared/renderWatch'
 
 let timer: NodeJS.Timeout | null = null
 let state: Watch = fresh()
 /** A `render-process-gone` this watch asked for, so it is answered with a reload. */
 let killing = false
+/**
+ * Give-up rebuilds, and when the last one was. Deliberately NOT reset by `watchRenderer`:
+ * the rebuilt window is the one that calls it, and a counter that window can clear is a
+ * rebuild loop.
+ */
+let giveUpRebuilds = 0
+let lastGiveUpAt = 0
 
 /** What the renderer's own OS process is costing, for the log line that names the spin. */
 function metricsFor(pid: number): string {
@@ -69,15 +87,18 @@ export function watchRenderer(win: BrowserWindow, recreate: () => void): void {
 
   wc.on('unresponsive', () => {
     if (state.unresponsiveSince) return
-    state.unresponsiveSince = Date.now()
+    state = noteWedge(state, Date.now())
     const pid = pidOf(win)
-    logProblem('renderer', `unresponsive - ${metricsFor(pid)}`)
+    logProblem('renderer', `unresponsive (wedge ${state.wedges}) - ${metricsFor(pid)}`)
     logCpuTime(pid)
   })
   wc.on('responsive', () => {
     if (!state.unresponsiveSince) return
     const now = Date.now()
     const forMs = now - state.unresponsiveSince
+    // The wedge itself is NOT forgotten here. A renderer that heals itself and wedges
+    // again is the leak this counts (2026-09-05, eight cycles, none of them acted on);
+    // only a reload, or an hour of quiet, clears the count.
     state.unresponsiveSince = 0
     // Counted, not just reported. See SPIN_MS in shared/renderWatch.ts for the two hours
     // of this exact line that never added up to anything.
@@ -132,7 +153,25 @@ export function watchRenderer(win: BrowserWindow, recreate: () => void): void {
       return
     }
     if (act === 'give-up') {
-      logProblem('renderer', `still wedged after ${state.reloads} reload(s) - leaving it alone`)
+      // Abandoning the window used to be the whole of this branch, and it took the watch
+      // with it - no further line about that window, and nobody told (2026-09-05, pid
+      // 97494). A rebuild is the same recovery a dead renderer gets, and it is visible:
+      // the desk comes back instead of staying dead behind a window nobody can draw in.
+      const since = lastGiveUpAt ? now - lastGiveUpAt : Infinity
+      if (afterGiveUp(giveUpRebuilds, since) === 'recreate') {
+        giveUpRebuilds = since > WEDGE_WINDOW_MS ? 1 : giveUpRebuilds + 1
+        lastGiveUpAt = now
+        logProblem(
+          'renderer',
+          `still wedged after ${state.reloads} reload(s) - rebuilding the window (${metricsFor(pidOf(win))})`
+        )
+        stopRenderWatch()
+        return recreate()
+      }
+      logProblem(
+        'renderer',
+        `still wedged after ${state.reloads} reload(s) and a rebuild - leaving it alone`
+      )
       return stopRenderWatch()
     }
     const why = state.gone

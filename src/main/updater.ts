@@ -17,7 +17,7 @@ import {
 import { get } from 'node:https'
 import { join } from 'node:path'
 import { BrowserWindow, app, net } from 'electron'
-import { updateIgnored } from '../shared/updateStale'
+import { stagedTooLong, updateIgnored } from '../shared/updateStale'
 import { freshRun, noteAnswer, noteTimeout, probeStuck, stuckWords, type ProbeRun } from '../shared/updateProbe'
 import { applyAtLaunch } from '../shared/launchInstall'
 import { pickRelease } from '../shared/pickRelease'
@@ -36,6 +36,7 @@ import {
 } from './macUpdate'
 import { appendLog } from './logWrite'
 import { diagnosticMeta } from './diagnosticMeta'
+import { probeRetryMs, probeStalled } from '../shared/updateRetry'
 
 type Emit = (s: UpdateState) => void
 
@@ -148,8 +149,16 @@ function set(patch: Partial<UpdateState>): void {
   // one nobody is going to press Restart for. Decided here rather than at each of the
   // three places that reach 'ready' (adopt at launch, mac stage, update-downloaded).
   if (state.phase !== before) {
-    if (state.phase === 'ready') noteReady()
-    else if (state.ignored) state = { ...state, ignored: false }
+    if (state.phase === 'ready') {
+      // The one moment this process can honestly measure the wait from. Read by the card
+      // and by the line below, both of which only describe it - nothing installs on it.
+      state = { ...state, readyAt: Date.now() }
+      stagedNagged = false
+      noteReady()
+    } else {
+      if (state.ignored) state = { ...state, ignored: false }
+      if (state.readyAt) state = { ...state, readyAt: undefined }
+    }
     phaseNet = budgetFor(state.phase) ? netWord() : ''
     armUnwedge()
   }
@@ -1253,6 +1262,19 @@ export function setAutoCheck(enabled: boolean): void {
   arm(8_000)
 }
 
+/** Probe failures re-arm sooner; probeRun separately records timeout health. */
+let probeFails = 0
+
+/** The "it has been waiting this long" line is written once per staged build, not per poll. */
+let stagedNagged = false
+
+/** A failed probe gets another chance sooner, without ever delaying the normal poll. */
+function nextPollDelay(): number {
+  const usual = pollDelay()
+  if (!probeFails) return usual
+  return Math.min(probeRetryMs(probeFails), usual)
+}
+
 /** One self-rescheduling timer, so the gap can change with what is going on. */
 function arm(ms: number): void {
   if (timer) clearTimeout(timer)
@@ -1280,10 +1302,21 @@ export async function pollOnce(): Promise<void> {
     // newer release that went out in the meantime was only found AFTER restarting into
     // the stale one - one version per restart, which is what "I have to restart it
     // several times" was. Keep looking, and swap the pending build for a newer one.
-    if (state.phase === 'ready') await supersede()
+    if (state.phase === 'ready') {
+      // A build that has been installable for hours is not a fault and is not hurried:
+      // this app installs one only when somebody presses Restart now or quits it. But
+      // 0.8.207 sat staged for nearly 24 hours (2026-09-08 02:28 to 09-09 02:30) with
+      // nothing said about it anywhere, so the wait is at least written down once.
+      if (!stagedNagged && stagedTooLong(state.readyAt, Date.now())) {
+        stagedNagged = true
+        const hours = Math.round((Date.now() - (state.readyAt ?? 0)) / 3_600_000)
+        log('staged waiting', `v${state.version ?? ''} has been ready ${hours}h and is still not installed - it waits for Restart now or a quit, by design`)
+      }
+      await supersede()
+    }
     else await checkForUpdates()
   } finally {
-    if (auto) arm(pollDelay())
+    if (auto) arm(nextPollDelay())
   }
 }
 
@@ -1311,7 +1344,8 @@ async function supersede(): Promise<void> {
     const result = (await failFast(u.checkForUpdates(), CHECK_BUDGET_MS, 'the update probe')) as {
       updateInfo?: { version?: string }
     } | null
-    // It answered. Anything it said ends a run of timeouts.
+    // A feed answer clears both the fast-retry backoff and the timeout health run.
+    probeFails = 0
     probeRun = noteAnswer()
     const found = result?.updateInfo?.version
     if (!found || !newer(found, pending)) return
@@ -1339,7 +1373,11 @@ async function supersede(): Promise<void> {
         return
       }
     }
-    log('supersede failed', message)
+    probeFails += 1
+    log('supersede failed', `${message} (probe failure ${probeFails}, retrying in ${Math.round(nextPollDelay() / 1000)}s)`)
+    if (probeStalled(probeFails)) {
+      log('probe stalled', `${probeFails} update probes in a row have not answered - this machine is not reaching the feed`)
+    }
     // ...and if that was a timeout, whether it is the second one in a row. One is weather;
     // a run of them is a check loop that is not going to notice a release, and until now
     // that read in the log exactly like one bad minute repeated.

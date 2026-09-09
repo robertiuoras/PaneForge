@@ -15,21 +15,20 @@
 // word on screen is read by somebody who has never used git.
 
 /**
- * Is there a link here at all?
+ * A target the OS could never open, so it is never handed to the OS.
  *
- * `about:blank` is what a `window.open()` or a `target="_blank"` with nothing behind it
- * resolves to, and it reaches `setWindowOpenHandler` looking exactly like a link somebody
- * pressed. There is no page to open, so the OS refuses it and the app files a failure:
- * six `open url: a link in a pane: about:blank - Failed to open URL` lines between
- * 2026-09-05 01:56 and 2026-09-06 15:31, three of them inside eight seconds, none of them
- * anything a person could act on and none of them a fault worth a toast.
+ * `about:blank` reached `shell.openExternal` six times across 2026-09-05 and 09-06 (01:56,
+ * 07:08:15, 07:08:19, 07:08:22, 15:31) and failed every time, because no browser is
+ * registered for the `about:` scheme and there is nothing at the other end of it anyway. It
+ * comes from a page calling `window.open()` with no URL, or a `target="_blank"` anchor with
+ * an empty href - a real press, with no link behind it.
  *
- * So a blank target is nothing happening: no shell call, no log line, no words on screen.
- * Any real link - including one whose page happens to be about:something else - still goes.
+ * Nothing is on screen for these: the person did not ask for a page, so telling them their
+ * browser refused one is a lie about what happened.
  */
-export function openable(url: string): boolean {
-  const target = url.trim().toLowerCase().split(/[?#]/)[0]
-  return target !== '' && target !== 'about:blank' && target !== 'about:'
+export function nothingToOpen(url: string): boolean {
+  const u = url.trim().toLowerCase()
+  return u === '' || u === 'about:' || u === 'about:blank' || u.startsWith('about:blank?') || u.startsWith('about:blank#')
 }
 
 /** Longest URL worth putting in a toast. Past this the middle is dropped, not the end. */

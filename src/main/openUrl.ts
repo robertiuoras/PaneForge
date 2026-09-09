@@ -7,7 +7,7 @@
 
 import { clipboard, shell } from 'electron'
 import { logProblem } from './crash'
-import { linkFailedWords, openable, pathFailedWords } from '../shared/openUrl'
+import { linkFailedWords, nothingToOpen, pathFailedWords } from '../shared/openUrl'
 
 let notify: ((message: string) => void) | null = null
 
@@ -31,9 +31,14 @@ function say(message: string): void {
  * nothing this app can do about that, but it can make the link one paste away.
  */
 export function openLink(url: string, from: string): void {
-  // A press with no page behind it is not a failure to report - it is nothing to do. See
-  // `openable` for the six log lines this used to file about about:blank.
-  if (!openable(url)) return
+  // `about:blank` can only ever fail, and it did, six times over two days. It is still
+  // written down - the caller passing a blank target is the thing worth knowing - but it
+  // is not attempted, and nobody is told their browser would not open a page they never
+  // asked for.
+  if (nothingToOpen(url)) {
+    logProblem('open url', `${from}: ${url || '(empty)'} - nothing to open, not passed to the OS`)
+    return
+  }
   void shell.openExternal(url).catch((err: unknown) => {
     const why = err instanceof Error ? err.message : String(err)
     // The URL is the whole point of this line. Without it the four in the log are four
