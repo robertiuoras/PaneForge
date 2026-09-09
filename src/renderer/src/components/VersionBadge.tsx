@@ -7,6 +7,7 @@
 
 import { useEffect, useState } from 'react'
 import type { GameModeStatus, UpdateState } from '@shared/types'
+import { stalledHint } from '../../../shared/updateStale'
 
 const api = window.api
 
@@ -18,6 +19,10 @@ interface View {
 
 function view(s: UpdateState | null): View {
   if (!s) return { text: '', tone: '', title: '' }
+  // Said before the phase, and this is the point of it: `idle` and `up-to-date` are both
+  // drawn from the LAST answer the feed gave, so after a run of failed checks the badge
+  // said "up to date" about a question nobody had been able to ask for an hour.
+  if (s.stalled) return { text: 'cannot check', tone: 'warn', title: stalledHint() }
   switch (s.phase) {
     case 'checking':
       return { text: 'checking…', tone: '', title: 'Asking GitHub for the newest release' }

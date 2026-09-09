@@ -1347,6 +1347,8 @@ async function supersede(): Promise<void> {
     // A feed answer clears both the fast-retry backoff and the timeout health run.
     probeFails = 0
     probeRun = noteAnswer()
+    // ...and it takes the badge off 'cannot check': the feed answered.
+    if (state.stalled) set({ stalled: false })
     const found = result?.updateInfo?.version
     if (!found || !newer(found, pending)) return
     log('supersede', `${pending} -> ${found}`)
@@ -1377,6 +1379,7 @@ async function supersede(): Promise<void> {
     log('supersede failed', `${message} (probe failure ${probeFails}, retrying in ${Math.round(nextPollDelay() / 1000)}s)`)
     if (probeStalled(probeFails)) {
       log('probe stalled', `${probeFails} update probes in a row have not answered - this machine is not reaching the feed`)
+      set({ stalled: true })
     }
     // ...and if that was a timeout, whether it is the second one in a row. One is weather;
     // a run of them is a check loop that is not going to notice a release, and until now

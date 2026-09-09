@@ -76,3 +76,11 @@ export function stagedHours(readyAt: number, now: number): number {
 export function stagedWaitingWords(current: string, version: string, hours: number): string {
   return `PaneForge ${version} has been ready for ${hours} ${hours === 1 ? 'hour' : 'hours'} and you are still on ${current}. It installs when you choose Restart now, or the next time you quit PaneForge - never on its own while you are working.`
 }
+
+/**
+ * What the badge says when the check itself has stopped answering. The badge has room
+ * for two words, so the reason lives in the tooltip.
+ */
+export function stalledHint(): string {
+  return 'PaneForge cannot reach the place it gets its updates from, so it does not know whether a newer version exists. It is still trying.'
+}

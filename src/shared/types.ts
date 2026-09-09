@@ -1008,6 +1008,13 @@ export interface UpdateState {
    * that is the only moment this process can honestly measure from.
    */
   readyAt?: number
+  /**
+   * Several checks in a row have not answered, so nothing here knows whether a newer
+   * build exists. The badge reads this BEFORE the phase: `idle` and `none` are both
+   * drawn from the last answer the feed gave, so an hour of failed checks read as
+   * "up to date" - see `stalledHint` in shared/updateStale.ts.
+   */
+  stalled?: boolean
 }
 
 /**
