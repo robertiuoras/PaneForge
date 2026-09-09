@@ -16,8 +16,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { closeTestChrome } from './close-test-chrome.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-const chromePath = ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/Applications/Chromium.app/Contents/MacOS/Chromium'].find(existsSync)
-if (!chromePath || !existsSync('/usr/bin/openssl')) { console.log(`native browser auth: SKIPPED - ${!chromePath ? 'system Chrome' : 'openssl'} unavailable`); process.exit(0) }
+const chromePath = [join(process.env.PROGRAMFILES || 'C:/Program Files', 'Google/Chrome/Application/chrome.exe'), '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/Applications/Chromium.app/Contents/MacOS/Chromium'].find(existsSync)
+const opensslPath = ['/usr/bin/openssl', join(process.env.PROGRAMFILES || 'C:/Program Files', 'Git/usr/bin/openssl.exe')].find(existsSync)
+if (!chromePath || !opensslPath) { console.log(`native browser auth: SKIPPED - ${!chromePath ? 'system Chrome' : 'openssl'} unavailable`); process.exit(0) }
 
 let checks = 0, failures = 0
 const ok = (pass, name) => { checks++; console.log(`${pass ? 'ok  ' : 'FAIL'}  ${name}`); if (!pass) failures++ }
@@ -60,7 +61,7 @@ try {
   const state = await host.start(0, '127.0.0.1'); if (state.error || !host.server) throw Error('host fixture did not bind')
   const httpOrigin = `http://127.0.0.1:${host.server.address().port}`
   const tlsPort = await port()
-  const generated = spawnSync('/usr/bin/openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', key, '-out', cert, '-subj', '/CN=localhost', '-days', '1'], { stdio: 'ignore' })
+  const generated = spawnSync(opensslPath, ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', key, '-out', cert, '-subj', '/CN=localhost', '-days', '1'], { stdio: 'ignore', windowsHide: true })
   if (generated.status !== 0) { console.log('native browser auth: SKIPPED - openssl could not create a localhost fixture certificate'); process.exitCode = 0; throw Error('skip') }
   proxy = createHttpsServer({ key: await (await import('node:fs/promises')).readFile(key), cert: await (await import('node:fs/promises')).readFile(cert) }, (req, res) => {
     const upstream = httpRequest(httpOrigin + req.url, { method: req.method, headers: { ...req.headers, host: req.headers.host, 'x-forwarded-proto': 'https' } }, response => { res.writeHead(response.statusCode ?? 502, response.headers); response.pipe(res) })
@@ -68,7 +69,7 @@ try {
   })
   await new Promise((resolve, reject) => { proxy.once('error', reject); proxy.listen(tlsPort, '127.0.0.1', resolve) })
   const cdpPort = await port()
-  browser = spawn(chromePath, ['--headless=new', `--remote-debugging-port=${cdpPort}`, `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check', '--disable-extensions', '--ignore-certificate-errors', 'about:blank'], { stdio: 'ignore' })
+  browser = spawn(chromePath, ['--headless=new', `--remote-debugging-port=${cdpPort}`, `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check', '--disable-extensions', '--ignore-certificate-errors', 'about:blank'], { stdio: 'ignore', windowsHide: true })
   const version = await wait(async () => { try { return await (await fetch(`http://127.0.0.1:${cdpPort}/json/version`)).json() } catch { return null } }, 'Chrome CDP')
   ws = new WebSocket(version.webSocketDebuggerUrl); await new Promise((resolve, reject) => { ws.addEventListener('open', resolve, { once: true }); ws.addEventListener('error', reject, { once: true }) })
   const { send, events } = cdp(ws); const { targetId } = await send('Target.createTarget', { url: 'about:blank' }); const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true })

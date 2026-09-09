@@ -263,6 +263,7 @@ const TESTS = [
   ['phone', 'phone-test.mjs'],
   ['passkey', 'passkey-test.mjs'],
   ['nativehostauth', 'native-host-auth-test.mjs'],
+  ['nativeauthlimits', 'native-auth-limits-test.mjs'],
   ['nativetranscript', 'native-transcript-test.mjs'],
   ['panesize', 'pane-size-test.mjs'],
   ['borrowask', 'borrowask-test.mjs'],
