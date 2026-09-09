@@ -2774,7 +2774,15 @@ function ready(session, wanted) {
   return { ...marked, release: autoship('auto', session) }
 }
 
-function releaseClaim(session) {
+/**
+ * `gone` is the APP's word, never a chat's own hook: no running copy of PaneForge hosts the
+ * pane this chat was in, so a hold marked asleep has no pane left to wake it. Without it
+ * a sleeping hold is parked, not dropped (see below); with it the hold ends like any other
+ * chat's. Measured 2026-09-09: 26 of 41 holds on this machine were asleep and owned by
+ * chats no window had, immune to every sweep for ASLEEP_MAX_MS - the strip read
+ * `Other copies (21)` for three days over checkouts nobody was in.
+ */
+function releaseClaim(session, { gone = false } = {}) {
   const state = reap(read())
   // The chat is going. Whatever this device told the other one on its behalf stops being
   // true now rather than in PEER_STALE_MS - otherwise the desk that ends its day first
@@ -2791,8 +2799,9 @@ function releaseClaim(session) {
       // The chat's agent was stopped on purpose (sleep), not ended - the lane is still
       // its own and may hold half a feature. Park it exactly as the Stop hook would:
       // no markReady, no catchUp, nothing merged out from under a pane that is resting.
-      // It expires like any other stale hold once ASLEEP_MAX_MS passes (see `reap`).
-      if (c.asleep) {
+      // It expires like any other stale hold once ASLEEP_MAX_MS passes (see `reap`) - or
+      // now, when the app says the pane it was kept for is in no window (`gone`).
+      if (c.asleep && !gone) {
         c.parked = now()
         continue
       }
@@ -2891,6 +2900,36 @@ function beatRelease(session) {
   }
 }
 
+/**
+ * What in the main checkout stops a release from merging into it.
+ *
+ * A MODIFIED tracked file always does: the merge would land on top of somebody's edit.
+ * An UNTRACKED file does not - git merges around it - unless a ready lane brings a file
+ * of the same path, which is the one case git itself refuses ("would be overwritten").
+ *
+ * Every untracked file used to count. Measured 2026-09-09: assistant's main held two
+ * `.claude/agent-memory/...` notes an agent had left, clients' main a `clients/simon-hubspot/`
+ * folder, neither touched by any lane - and every finished lane in both repos sat unmerged
+ * behind `main checkout is dirty, commit first` for a day, while the strip drew both mains
+ * as dirty copies nobody could clear from a chat.
+ */
+function mainBlockers(state) {
+  const porcelain = git(MAIN, ...WORK_STATUS)
+  if (!porcelain) return ''
+  const lines = porcelain.split('\n').filter(Boolean)
+  const tracked = lines.filter((l) => !l.startsWith('??'))
+  if (tracked.length) return tracked.join('\n')
+  const untracked = new Set(lines.map((l) => l.slice(3).replace(/^"(.*)"$/, '$1')))
+  const blocked = []
+  for (const id of Object.keys(state.ready)) {
+    if (id === 'main') continue
+    const r = gitSafe(MAIN, 'diff', '--name-only', `${MB}...${laneBranch(id)}`)
+    if (!r.ok) continue
+    for (const f of r.out.split('\n')) if (f && untracked.has(f)) blocked.push(`?? ${f} (lane ${id} brings this file)`)
+  }
+  return blocked.join('\n')
+}
+
 function ship(kind, session) {
   if (!['auto', 'patch', 'minor', 'major'].includes(kind)) throw new Error(`unknown bump "${kind}"`)
   // `ship` is also reachable without going through autoship (`npm run ship`, `ship major`),
@@ -2918,7 +2957,7 @@ function ship(kind, session) {
   write(state)
 
   try {
-    const dirty = git(MAIN, ...WORK_STATUS)
+    const dirty = mainBlockers(state)
     if (dirty) throw new Error(`main checkout is dirty, commit first:\n${dirty}`)
 
     // A hand-cut release skips the SUITE, deliberately - it is Robert asking for a build
@@ -3986,7 +4025,9 @@ try {
       )
     }
   } else if (cmd === 'release') {
-    const r = releaseClaim(session)
+    // `--gone` is passed only by the app's reclaim sweep (src/main/laneBoard.ts), which has
+    // asked every running copy and found no pane hosting this chat.
+    const r = releaseClaim(session, { gone: argv.includes('--gone') })
     if (r.marked) console.log(`Lane ${r.marked.lane} had finished work - marked done on the way out.`)
     sayRelease(r.release)
   } else if (cmd === 'sleep') {
