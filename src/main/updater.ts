@@ -380,7 +380,16 @@ function noteReady(): void {
   const ignored = updateIgnored(superseded)
   state = { ...state, ignored }
   if (!ignored) return
-  log('stale', `${superseded} staged build(s) thrown away unused - restarting into v${state.version ?? ''} as soon as no pane is in use`)
+  // NOT "restarting as soon as no pane is in use", which is what this line used to say:
+  // nothing listens. The automatic restart was removed on 2026-09-04 and `npm run
+  // test:updatehold` refuses to let it back (see "Updates wait for the user to restart"
+  // in CLAUDE.md), so a staged build waits for Restart now or an ordinary quit however
+  // many newer builds replace it. A log line that promises a restart nobody will make is
+  // how 0.8.207 read as handled while it sat staged for 23 hours.
+  log(
+    'stale',
+    `${superseded} staged build(s) thrown away unused - v${state.version ?? ''} installs on the next quit or Restart now, nothing restarts by itself`
+  )
   try {
     ignoredListener?.()
   } catch {

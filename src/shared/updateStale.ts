@@ -36,32 +36,17 @@ export function updateIgnored(superseded: number): boolean {
   return superseded >= STALE_SUPERSEDES
 }
 
-/**
- * What the card says instead of the ordinary "it installs silently" line.
- *
- * Plain words: nobody reading this card knows what "superseded" or "staged" means, and
- * the only thing they need to know is that the app is about to restart on its own and
- * when. See "Every word on screen is read by somebody who has never used git".
- */
-export function ignoredHint(current: string): string {
-  return `You are still on ${current}, and newer builds keep being downloaded and thrown away unused. PaneForge will restart into this one by itself once no pane has been used for 10 minutes.`
-}
-
-// --- a build that has sat ready ---------------------------------------------------
+// --- and what does NOT happen when nobody presses it ------------------------------
 //
-// 2026-09-03, the PC: 0.8.196 was ready at 17:08 and the app went on running 0.8.177 -
-// nineteen releases behind the Mac it was linked to - until somebody pressed Restart over
-// ssh at 19:38. The first version of this rule only took a ready build on a window nobody
-// had focused for half an hour, to leave an attended desk alone. That distinction turned
-// out not to matter: `autoInstall` already refuses to touch a desk with a pane in use
-// (`deskBusy` in main/index.ts, unchanged) and the game hold on top of it, so a person at
-// the keyboard is protected either way. Robert, 2026-09-03: "if we release we should
-// probably auto update both pc and mac right?" - so the focus check was dropped and every
-// desk, attended or not, takes a build once it has sat ready this long.
-
-/**
- * How long a build stays ready before it is taken, on any desk. Releases here go out in
- * bursts (a fix follows its release by minutes); five minutes lets the fix supersede the
- * build rather than restarting into the one it fixes.
- */
-export const READY_HOLD_MS = 5 * 60_000
+// There is no automatic restart. A rule that took a build once it had sat ready five
+// minutes (READY_HOLD_MS) and a card that said "PaneForge will restart into this one by
+// itself" (ignoredHint) were both written on 2026-09-03 and both removed here on
+// 2026-09-09: neither was ever wired into `src/main`, and `npm run test:updatehold`
+// refuses to let one back in ("no timer, stale-build listener, or failed-install retry
+// can start an update"). Robert, 2026-09-04: no restart the user did not ask for.
+//
+// So the honest reading of the 2026-09-08 log is that the update path worked: 0.8.207 was
+// staged at 02:28:31, superseded by 0.8.208 at 01:43 the next morning, and installed at
+// the 02:30:34 launch - 23 hours, because a staged build installs on Restart now or an
+// ordinary quit and on nothing else. `updateIgnored()` still decides the FLAG, which is a
+// reading for the badge; it starts nothing.

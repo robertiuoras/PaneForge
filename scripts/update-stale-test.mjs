@@ -10,6 +10,7 @@
 //   node scripts/update-stale-test.mjs
 
 import { buildSync } from 'esbuild'
+import { readFileSync } from 'node:fs'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -25,7 +26,7 @@ buildSync({
   format: 'esm',
   platform: 'node'
 })
-const { STALE_SUPERSEDES, READY_HOLD_MS, ignoredHint, updateIgnored } =
+const { STALE_SUPERSEDES, updateIgnored } =
   await import(pathToFileURL(outfile).href)
 
 const fail = []
@@ -46,22 +47,24 @@ ok(STALE_SUPERSEDES === 2, 'the threshold is two, named rather than written into
 // this - which is why the rule may take a restart without asking again.
 ok(updateIgnored(0) === false, 'and an attempt puts it back to waiting')
 
-const hint = ignoredHint('0.8.185')
-ok(hint.includes('0.8.185'), 'the card names the version the user is stuck on')
-ok(hint.includes('restart into this one by itself'), 'and says the app will do it without being asked')
-ok(hint.includes('no pane has been used for 10 minutes'), 'and when: once nothing has been used for 10 minutes')
-// Every word on screen is read by somebody who has never used git.
-for (const word of ['superseded', 'staged', 'stale', 'feed', 'install attempt']) {
-  ok(!hint.toLowerCase().includes(word), `the card does not say "${word}"`)
-}
-
-// --- a build that has sat ready --------------------------------------------------
+// --- and nothing restarts by itself ------------------------------------------------
 //
-// The first version of this rule only fired on a window nobody had focused for half an
-// hour. That distinction was dropped 2026-09-03 (Robert: "if we release we should
-// probably auto update both pc and mac right?"): `autoInstall`'s own deskBusy hold
-// already protects a pane in use, so every desk takes a ready build the same way now.
-ok(READY_HOLD_MS === 5 * 60_000, 'a build is taken once it has sat ready five minutes')
+// The count is a reading, not a trigger. 0.8.207 sat staged from 2026-09-08T02:28 to the
+// 2026-09-09T02:30 launch - 23 hours across dozens of successful checks - and that is the
+// rule working: a staged build installs on Restart now or an ordinary quit and on nothing
+// else. `npm run test:updatehold` pins the same thing from the other side.
+const mainUpdater = readFileSync(new URL('../src/main/updater.ts', import.meta.url), 'utf8')
+const mainIndex = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+ok(!/READY_HOLD_MS/.test(mainUpdater + mainIndex), 'no ready-for-N-minutes rule takes a build on its own')
+ok(!/onUpdateIgnored\(/.test(mainIndex), 'and nothing in the app listens for the ignored flag to restart')
+ok(
+  !/restarting into v/.test(mainUpdater),
+  'the log does not promise a restart nobody will make - that is how 23 hours read as handled'
+)
+ok(
+  /installs on the next quit or Restart now/.test(mainUpdater),
+  'it says which build is waiting and what would install it'
+)
 
 // --- and the same rule, driven through the real updater ----------------------
 //
