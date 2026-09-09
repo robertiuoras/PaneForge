@@ -327,6 +327,7 @@ buildSync({
 const { PhoneServer } = await import(pathToFileURL(phoneBundle).href)
 
 let keys = []
+let browserDevices = []
 const invoked = []
 const sent = []
 const code = 'ABC234'
@@ -344,6 +345,7 @@ const server = new PhoneServer({
     return { ok: true }
   },
   send: (channel, args) => sent.push([channel, args]),
+  devices: () => browserDevices,
   keys: () => keys,
   saveKeys: (list) => (keys = list),
   typeGate: () => true
@@ -507,6 +509,17 @@ let enrolCredId
   ok(/stale challenge/.test(await replay.text()), 'and refused by name: a stale challenge')
 }
 
+// A paired cookie and a valid new authenticator cannot replace an existing trust root.
+{
+  const s = await (await get('/pf/key/state', { cookie: cookie(), ...TUNNEL })).json()
+  const body = { ...makeRegistration({ rpId:s.rpId, origin:s.origin, challenge:s.challenge,
+    credId:randomBytes(16), alg:ES256, keyPair:ecKeys, label:'cookie-only attempt' }), challenge:s.challenge }
+  const refused = await post('/pf/key/enrol', body, { cookie:cookie(), ...TUNNEL })
+  ok(refused.status === 400, 'a cookie alone cannot enroll an additional valid authenticator')
+  ok(/fresh existing assertion/.test(await refused.text()), 'additional enrollment requires an existing-key assertion')
+  ok(keys.length === 1, 'refused enrollment leaves the trusted key list unchanged')
+}
+
 // ---- unlock replay, the other half of "single use" ---------------------------------
 
 {
@@ -523,6 +536,28 @@ let enrolCredId
   const replay = await post('/pf/key/unlock', assertion, { cookie: cookie(), ...TUNNEL })
   ok(replay.status === 403, 'replaying the same unlock body a second time is refused', String(replay.status))
   ok(/stale challenge/.test(await replay.text()), 'and refused by name: a stale challenge')
+}
+
+// The fresh server marker alone is not client proof: a copied pf cookie must not
+// consume the legitimate browser's recent assertion to enroll an attacker's key.
+{
+  const browserToken = 'a'.repeat(64)
+  browserDevices = [{ id:'paired-proof-test', token:browserToken, ua:'fixture' }]
+  const pairedCookie = `pf=${browserToken}`
+  const s = await (await get('/pf/key/state', {cookie:pairedCookie,...TUNNEL})).json()
+  const asserted = await post('/pf/key/unlock', { ...makeAssertion({rpId:s.rpId,origin:s.origin,challenge:s.challenge,credId:enrolCredId,alg:ES256,keyPair:ecKeys,counter:4}),challenge:s.challenge }, {cookie:pairedCookie,...TUNNEL})
+  ok(asserted.status === 200, 'legitimate paired browser produces a fresh existing-key assertion')
+  const proof = (asserted.headers.get('set-cookie') ?? '').split(';')[0]
+  const registration = async () => {
+    const next = await (await get('/pf/key/state',{cookie:pairedCookie,...TUNNEL})).json()
+    return {...makeRegistration({rpId:next.rpId,origin:next.origin,challenge:next.challenge,credId:randomBytes(16),alg:ES256,keyPair:ecKeys,label:'additional key'}),challenge:next.challenge}
+  }
+  const attacker = await post('/pf/key/enrol', await registration(), {cookie:pairedCookie,...TUNNEL})
+  ok(attacker.status === 400 && keys.length === 1, 'copied pf without the returned pfu cannot consume a fresh marker to add a key')
+  const legitimate = await post('/pf/key/enrol', await registration(), {cookie:`${pairedCookie}; ${proof}`,...TUNNEL})
+  ok(legitimate.status === 200 && keys.length === 2, 'asserting client with its returned proof can enroll an additional key')
+  keys = keys.filter(k=>k.id === b64url(enrolCredId))
+  browserDevices = []
 }
 
 // ---- 12. the unlock cookie opens the gate, and forgetting the key closes it --------

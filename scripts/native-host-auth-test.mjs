@@ -1,5 +1,6 @@
 import { build } from 'esbuild'
 import { createHmac } from 'node:crypto'
+import { request as httpRequest } from 'node:http'
 import { Script } from 'node:vm'
 import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -84,12 +85,13 @@ try {
   const rotationCode = fullAuth.approve(rotation.request,fullAuth.csrfFor(rotation.request),'browser-1',['read']).code
   ok('active-device capacity still allows existing-device rotation', !!fullAuth.exchange(rotationCode,verifier,fullGrants[0].deviceId).accessToken && fullGrants.length===32)
   let httpGrants = [], httpReceipts = [], queued = 0, failReceiptSave = false
+  let devices = [{id:'browser-http',ua:'fixture',token:'a'.repeat(64)}]
   const server = new PhoneServer({
     staticDir: out, code: () => 'fixture-code', secret: () => 'fixture-secret',
     invoke: async () => { throw Error('general IPC must not be called') },
     send: () => { throw Error('general IPC must not be called') },
     channels: { invoke: [], send: [], on: [] },
-    devices: () => [{id:'browser-http',ua:'fixture',token:'a'.repeat(64)}],
+    devices: () => devices, saveDevices: rows => { devices = rows },
     nativeGrants: () => httpGrants, saveNativeGrants: rows => { httpGrants = rows },
     nativePromptReceipts: () => httpReceipts,
     saveNativePromptReceipts: rows => { if (failReceiptSave) throw Error('disk full'); httpReceipts = rows },
@@ -105,8 +107,23 @@ try {
       method, headers: {'x-forwarded-proto':'https','content-type':'application/json',...(token ? {authorization:`Bearer ${token}`} : {})},
       ...(body ? {body:JSON.stringify(body)} : {})
     })
+    const rawNative = (path, headers, body = '') => new Promise((resolve, reject) => {
+      const call = httpRequest(origin + '/pf/native/v1' + path, { method: 'POST', headers: {'x-forwarded-proto':'https', 'content-type':'application/json', ...headers} }, response => {
+        response.resume(); response.once('end', () => resolve(response.statusCode))
+      })
+      call.setTimeout(5_000, () => call.destroy(new Error('native response timed out')))
+      call.once('error', reject)
+      if (body) call.write(body)
+      call.end()
+    })
     ok('HTTP session endpoint denies unauthenticated read', (await request('/sessions')).status === 401)
     ok('HTTP control endpoint identifies an invalid bearer as unauthorized', (await request('/sessions/session-http/prompt','POST',{clientMessageId:'bad-auth-1',text:'Denied'},'invalid')).status === 401)
+    ok('HTTP native oversized Content-Length is rejected before authorization logic', await rawNative('/auth/start', {'content-length':'8193'}) === 413)
+    const chunked = await fetch(origin + '/pf/native/v1/auth/start', {
+      method:'POST', headers:{'x-forwarded-proto':'https','content-type':'application/json'},
+      body:new ReadableStream({start(controller) { controller.enqueue(new TextEncoder().encode('x'.repeat(8193))); controller.close() }}), duplex:'half'
+    })
+    ok('HTTP native chunked oversized body is rejected before authorization logic', chunked.status === 413)
     const startHttp = await (await request('/auth/start','POST',{codeChallenge:challenge,state:'h'.repeat(64),deviceId:'i'.repeat(64),deviceName:'Fixture'})).json()
     const requestId = new URL(startHttp.authorizationUrl).searchParams.get('request')
     const authorize = (cookie) => fetch(origin + '/pf/native/v1/auth/authorize?request=' + requestId, {
@@ -141,8 +158,31 @@ try {
     failReceiptSave = false
     const status = await (await request('/prompts/http-message-1','GET',undefined,bearer)).json()
     ok('HTTP delivery reconciliation returns the same receipt', status.clientMessageId === body.clientMessageId && status.state === 'queued')
+    const unicode = '界'.repeat(20_000)
+    ok('HTTP native prompt limit preserves 20,000 non-ASCII characters', (await request('/sessions/session-http/prompt','POST',{clientMessageId:'unicode-message-1',text:unicode},bearer)).status === 202)
+    ok('HTTP oversized native prompt produces one refusal without poisoning the server', await rawNative('/sessions/session-http/prompt', {authorization:'Bearer '+bearer,'content-length':String(128*1024+1)}) === 413 && (await request('/sessions')).status === 401)
     httpGrants = httpGrants.map(row=>({...row,unlockedUntil:Date.now()-1}))
     ok('HTTP valid but locked control grant returns 423', (await request('/sessions/session-http/prompt','POST',{clientMessageId:'locked-msg-1',text:'Locked'},bearer)).status === 423)
+    const approveBrowser = async () => {
+      const ask = await (await fetch(origin + '/pf/ask', {method:'POST',headers:{'user-agent':'same fixture UA'}})).json()
+      server.answerAsk(true)
+      const state = await fetch(origin + '/pf/ask?id=' + encodeURIComponent(ask.id), {headers:{'user-agent':'same fixture UA'}})
+      return (state.headers.get('set-cookie') ?? '').match(/pf=([a-f0-9]{64})/)?.[1]
+    }
+    const firstCookie = await approveBrowser(), secondCookie = await approveBrowser()
+    const approved = devices.filter(d => d.id !== 'browser-http')
+    ok('identical-UA approvals retain both browser identities', approved.length === 2 && firstCookie !== secondCookie)
+    const retainedStart = await (await request('/auth/start','POST',{codeChallenge:challenge,state:'p'.repeat(64),deviceId:'q'.repeat(64),deviceName:'Retained parent'})).json()
+    const retainedRequest = new URL(retainedStart.authorizationUrl).searchParams.get('request')
+    const retainedApproval = server.native.approve(retainedRequest, server.native.csrfFor(retainedRequest), approved[0].id, ['read'])
+    ok('retained parent browser can grant native approval', !!retainedApproval.code)
+    server.native.exchange(retainedApproval.code, verifier, 'q'.repeat(64))
+    const firstRequest = {headers:{cookie:'pf='+approved[0].token}}
+    const secondRequest = {headers:{cookie:'pf='+approved[1].token}}
+    const boundChallenge = server.issueChallenge(firstRequest)
+    ok('cross-browser passkey challenge completion is rejected', !server.takeChallenge(secondRequest, boundChallenge))
+    server.freshPasskeys.set(approved[0].id, Date.now())
+    ok('cookie-only second enrollment has no fresh assertion for its browser', !server.takeFreshPasskey(approved[1].id))
     server.nativeStarts = new Map(Array.from({length:1024},(_,i)=>[`ip-${i}`,{since:Date.now(),n:1}]))
     const startBody = {codeChallenge:challenge,state:'j'.repeat(64),deviceId:'l'.repeat(64),deviceName:'Fixture'}
     ok('HTTP authorization rate map refuses growth at capacity', (await request('/auth/start','POST',startBody)).status === 429 && server.nativeStarts.size === 1024)

@@ -63,6 +63,10 @@ const LOCK_MS = 60_000
 const KEEPALIVE_MS = 15_000
 /** `transcribe` posts a wav. Anything past this is refused rather than buffered. */
 const BODY_LIMIT = 24 * 1024 * 1024
+/** Native authorization and simple control requests never need a general upload buffer. */
+const NATIVE_JSON_LIMIT = 8 * 1024
+/** Prompts remain large enough for their documented 20,000-character limit. */
+const NATIVE_PROMPT_LIMIT = 128 * 1024
 /**
  * How long a request to be let in stands before it expires by itself.
  *
@@ -398,7 +402,7 @@ export class PhoneServer {
   private askTries = new Map<string, { n: number; since: number }>()
   private nextAsk = 1
   /** challenges handed out and not yet answered, with the moment they stop being valid */
-  private challenges = new Map<string, number>()
+  private challenges = new Map<string, { until: number; device: string }>()
   /** Native approval consumes a fresh WebAuthn assertion, never an old unlock cookie. */
   private freshPasskeys = new Map<string, number>()
   private nativeStarts = new Map<string, { since: number; n: number }>()
@@ -567,31 +571,17 @@ export class PhoneServer {
     ask.answered = ok ? 'yes' : 'no'
     if (ok) {
       const list = this.deps.devices?.() ?? []
-      // One row per device, not one per approval. The same phone asks again whenever its
-      // cookie is gone - a cleared browser, a private tab, and until the address was made
-      // stable, every single restart of the app - and appending each time is what turned
-      // this list into eight rows for three phones. Matched on the user-agent because it
-      // is the only thing about a browser that survives losing the cookie; an address is
-      // not (a phone changes network) and neither is anything the phone could be asked to
-      // remember, since the reason it is here is that it remembered nothing.
-      // A row written before this app knew to record a user-agent has nothing exact to
-      // match on, so it is collapsed on the two things it does carry - what kind of device
-      // it is and which side of the front door it came from. That is deliberately loose:
-      // it converges the pile of legacy duplicates as each phone next signs in, and the
-      // worst it can do is sign out an older phone of the same make, which asks again.
-      const same = (d: PhoneDevice): boolean =>
-        d.ua ? d.ua === ask.ua : d.kind === ask.kind && d.origin === ask.origin
+      // A lost cookie carries no stable proof that this is an existing device. Keep every
+      // prior approval instead of guessing from a user-agent and revoking somebody else.
       this.deps.saveDevices?.([
-        ...list.filter((d) => !same(d)),
+        ...list.filter((d) => d.id !== ask.id),
         {
           id: ask.id,
           kind: ask.kind,
           address: ask.address,
           origin: ask.origin,
-          // Kept from the row it replaces: "signed in since" is a fact about the device,
-          // and re-approving after a cleared cookie did not make it a new phone.
-          at: list.find(same)?.at ?? Date.now(),
-          seen: list.find(same)?.seen ?? 0,
+          at: list.find((d) => d.id === ask.id)?.at ?? Date.now(),
+          seen: list.find((d) => d.id === ask.id)?.seen ?? 0,
           ua: ask.ua,
           token: ask.token
         }
@@ -798,7 +788,7 @@ export class PhoneServer {
   private async nativeStart(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!isTls(req)) return this.plain(res, 400, 'https required')
     if (!this.nativeRate(req, this.nativeStarts, 10)) return this.plain(res, 429, 'try later')
-    const body = await this.readWire<Record<string, string>>(req, res)
+    const body = await this.readNativeWire<Record<string, string>>(req, res)
     if (!body) return
     try {
       const host = String(req.headers.host ?? '')
@@ -808,7 +798,7 @@ export class PhoneServer {
         codeChallenge: String(body.codeChallenge ?? ''), state: String(body.state ?? ''),
         deviceId: String(body.deviceId ?? ''), deviceName: String(body.deviceName ?? ''),
         grantId: body.grantId ? String(body.grantId) : undefined
-      })
+      }, addressOf(req))
       this.json(res, 200, { authorizationUrl: start.authorizationUrl.replace('https://localhost', `https://${host}`) })
     } catch { this.plain(res, 400, 'native authorization refused') }
   }
@@ -896,8 +886,8 @@ b.onclick=async()=>{
   private async nativeApprove(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const origin = String(req.headers.origin ?? '')
     const expected = `https://${String(req.headers.host ?? '')}`
-    if (!isTls(req) || origin !== expected || !this.authed(req) || !this.unlocked(req)) return this.plain(res, 403, 'fresh passkey required')
-    const body = await this.readWire<Record<string, string>>(req, res)
+    if (!isTls(req) || origin !== expected || !this.authed(req) || !this.hasPasskeyUnlock(req)) return this.plain(res, 403, 'fresh passkey required')
+    const body = await this.readNativeWire<Record<string, string>>(req, res)
     if (!body) return
     try {
       const browser = this.who(req)?.device ?? ''
@@ -910,7 +900,7 @@ b.onclick=async()=>{
   private async nativeToken(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!isTls(req)) return this.plain(res, 400, 'https required')
     if (!this.nativeRate(req, this.nativeTokens, 20)) return this.plain(res, 429, 'try later')
-    const body = await this.readWire<Record<string, string>>(req, res)
+    const body = await this.readNativeWire<Record<string, string>>(req, res)
     if (!body) return
     try { this.json(res, 200, this.native.exchange(String(body.code ?? ''), String(body.codeVerifier ?? ''), String(body.deviceId ?? ''))) }
     catch { this.plain(res, 400, 'native exchange refused') }
@@ -955,8 +945,9 @@ b.onclick=async()=>{
     const parts = path.split('/'); const id = decodeURIComponent(parts[5] ?? ''); const action = parts[6] ?? ''
     if (!(this.deps.sessions?.() ?? []).some((s) => s.id === id)) return this.plain(res, 404, 'not found')
     if (action === 'sleep' || action === 'keep-open') {
-      const body = await this.readWire<Record<string, unknown>>(req, res)
-      if (!body || typeof body[action === 'sleep' ? 'asleep' : 'keepOpen'] !== 'boolean') return this.plain(res, 400, 'invalid action')
+      const body = await this.readNativeWire<Record<string, unknown>>(req, res)
+      if (!body) return
+      if (typeof body[action === 'sleep' ? 'asleep' : 'keepOpen'] !== 'boolean') return this.plain(res, 400, 'invalid action')
       const value = Boolean(body[action === 'sleep' ? 'asleep' : 'keepOpen'])
       if (action === 'sleep') {
         const result = value ? this.deps.sleepSession?.(id) : this.deps.wakeSession?.(id)
@@ -965,9 +956,10 @@ b.onclick=async()=>{
       return this.deps.setKeepOpen?.(id, value) ? this.json(res, 200, {}) : this.plain(res, 409, 'session action refused')
     }
     if (action === 'prompt') {
-      const body = await this.readWire<Record<string,string>>(req,res)
-      const clientMessageId = String(body?.clientMessageId ?? ''); const text = String(body?.text ?? '')
-      if (!body || !/^[A-Za-z0-9_-]{8,128}$/.test(clientMessageId) || !text.trim() || text.length > 20_000) return this.plain(res,400,'invalid prompt')
+      const body = await this.readNativeWire<Record<string,string>>(req,res, NATIVE_PROMPT_LIMIT)
+      if (!body) return
+      const clientMessageId = String(body.clientMessageId ?? ''); const text = String(body.text ?? '')
+      if (!/^[A-Za-z0-9_-]{8,128}$/.test(clientMessageId) || !text.trim() || text.length > 20_000) return this.plain(res,400,'invalid prompt')
       try {
         const existing = this.native.prompt(grant, clientMessageId)
         const receipt = this.native.acceptPrompt(grant, clientMessageId, id, text)
@@ -1191,7 +1183,11 @@ b.onclick=async()=>{
 
   /** True when this request may reach a gated channel - including when nothing is gated. */
   private unlocked(req: IncomingMessage): boolean {
-    if (!this.armed(req)) return true
+    return !this.armed(req) || this.hasPasskeyUnlock(req)
+  }
+
+  /** Proof returned to the asserting client, even when the optional browser typing gate is off. */
+  private hasPasskeyUnlock(req: IncomingMessage): boolean {
     const cookie = /(?:^|;\s*)pfu=([^;]+)/.exec(req.headers.cookie ?? '')
     if (!cookie) return false
     return checkUnlock(this.gateSecret(), decodeURIComponent(cookie[1]), this.deps.keys?.() ?? [])
@@ -1208,18 +1204,20 @@ b.onclick=async()=>{
   }
 
   /** A challenge is good once, and only for the couple of minutes after it is handed out. */
-  private issueChallenge(): string {
+  private issueChallenge(req: IncomingMessage): string {
     const now = Date.now()
-    for (const [c, until] of this.challenges) if (until <= now) this.challenges.delete(c)
+    for (const [c, entry] of this.challenges) if (entry.until <= now) this.challenges.delete(c)
     const challenge = newChallenge()
-    this.challenges.set(challenge, now + CHALLENGE_MS)
+    const device = this.browserIdentity(req)
+    if (!device) throw new Error('browser identity required')
+    this.challenges.set(challenge, { until: now + CHALLENGE_MS, device })
     return challenge
   }
 
-  private takeChallenge(challenge: string): boolean {
-    const until = this.challenges.get(challenge)
+  private takeChallenge(req: IncomingMessage, challenge: string): boolean {
+    const entry = this.challenges.get(challenge)
     this.challenges.delete(challenge)
-    return !!until && until > Date.now()
+    return !!entry && entry.until > Date.now() && entry.device === this.browserIdentity(req)
   }
 
   /**
@@ -1240,7 +1238,7 @@ b.onclick=async()=>{
       // Only ids, never the keys themselves: this is what `allowCredentials` needs and
       // nothing on the phone has any use for a public key.
       ids: keys.map((k) => k.id),
-      challenge: this.issueChallenge()
+      challenge: this.issueChallenge(req)
     })
   }
 
@@ -1248,13 +1246,17 @@ b.onclick=async()=>{
     const body = await this.readWire<Record<string, string>>(req, res)
     if (!body) return
     try {
-      if (!this.takeChallenge(String(body.challenge ?? ''))) throw new Error('stale challenge')
+      if (!this.takeChallenge(req, String(body.challenge ?? ''))) throw new Error('stale challenge')
       const key = verifyRegistration(
         { clientDataJSON: body.clientDataJSON, attestationObject: body.attestationObject, label: body.label },
         this.expect(req, String(body.challenge))
       )
-      const keys = (this.deps.keys?.() ?? []).filter((k) => k.id !== key.id)
-      this.deps.saveKeys?.([...keys, key])
+      const keys = this.deps.keys?.() ?? []
+      const browser = this.who(req)?.device
+      // Once any key exists, a cookie alone cannot add another key. The assertion must
+      // have just succeeded for this same revocable browser identity.
+      if (keys.length && (!browser || !this.hasPasskeyUnlock(req) || !this.takeFreshPasskey(browser))) throw new Error('fresh existing assertion required')
+      this.deps.saveKeys?.([...keys.filter((k) => k.id !== key.id), key])
       // Enrolling IS a verified touch - the authenticator just checked the human - so the
       // window opens here rather than making them do it twice in a row.
       this.markFreshPasskey(req)
@@ -1268,7 +1270,7 @@ b.onclick=async()=>{
     const body = await this.readWire<Record<string, string>>(req, res)
     if (!body) return
     try {
-      if (!this.takeChallenge(String(body.challenge ?? ''))) throw new Error('stale challenge')
+      if (!this.takeChallenge(req, String(body.challenge ?? ''))) throw new Error('stale challenge')
       const keys = this.deps.keys?.() ?? []
       const moved = verifyAssertion(
         {
@@ -1291,6 +1293,14 @@ b.onclick=async()=>{
   private markFreshPasskey(req: IncomingMessage): void {
     const device = this.who(req)?.device
     if (device) this.freshPasskeys.set(device, Date.now())
+  }
+
+  /** A legacy pairing-code cookie is shared, so bind bootstrap challenges to its request context. */
+  private browserIdentity(req: IncomingMessage): string {
+    const who = this.who(req)
+    if (!who) return ''
+    if (who.device) return `device:${who.device}`
+    return `legacy:${createHash('sha256').update(`${addressOf(req)}\n${String(req.headers['user-agent'] ?? '')}`).digest('hex')}`
   }
 
   private takeFreshPasskey(device: string): boolean {
@@ -1354,6 +1364,18 @@ b.onclick=async()=>{
       const body = await readBody(req)
       return decodeWire(body || '{}') as T
     } catch (err) {
+      this.plain(res, 413, err instanceof Error ? err.message : 'bad body')
+      return null
+    }
+  }
+
+  private async readNativeWire<T>(req: IncomingMessage, res: ServerResponse, limit = NATIVE_JSON_LIMIT): Promise<T | null> {
+    try {
+      const body = await readBody(req, limit)
+      return decodeWire(body || '{}') as T
+    } catch (err) {
+      // A rejected upload may still have an unread body; never reuse its socket.
+      res.setHeader('connection', 'close')
       this.plain(res, 413, err instanceof Error ? err.message : 'bad body')
       return null
     }
@@ -1534,20 +1556,30 @@ function isLoopback(address: string): boolean {
 }
 
 
-async function readBody(req: IncomingMessage): Promise<string> {
+async function readBody(req: IncomingMessage, limit = BODY_LIMIT): Promise<string> {
   return await new Promise<string>((resolve, reject) => {
+    const contentLength = header(req, 'content-length')
+    if (contentLength && (!/^\d+$/.test(contentLength) || Number(contentLength) > limit)) {
+      req.resume()
+      reject(new Error('body too large'))
+      return
+    }
     let size = 0
+    let tooLarge = false
     const parts: Buffer[] = []
     req.on('data', (chunk: Buffer) => {
       size += chunk.length
-      if (size > BODY_LIMIT) {
-        reject(new Error('body too large'))
-        req.destroy()
+      if (size > limit) {
+        // Refuse immediately, then drain without retaining bytes. Waiting for the final
+        // chunk would let an oversized slow upload keep the response pending.
+        if (!tooLarge) reject(new Error('body too large'))
+        tooLarge = true
+        parts.length = 0
         return
       }
-      parts.push(chunk)
+      if (!tooLarge) parts.push(chunk)
     })
-    req.on('end', () => resolve(Buffer.concat(parts).toString('utf8')))
+    req.on('end', () => tooLarge ? reject(new Error('body too large')) : resolve(Buffer.concat(parts).toString('utf8')))
     req.on('error', reject)
   })
 }
