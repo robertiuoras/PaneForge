@@ -1455,6 +1455,32 @@ export interface RemoteWaiting {
  * each other over an encrypted socket, and both ends run the app. This one has a browser
  * at the far end, so the transport is HTTP and the secret is a cookie. See `main/phone.ts`.
  */
+export interface NativeGrant {
+  id: string
+  deviceId: string
+  deviceName: string
+  browserDevice: string
+  scopes: ('read' | 'control')[]
+  tokenHash: string
+  createdAt: number
+  expiresAt: number
+  unlockedUntil: number
+  codeVersion: string
+  seenAt?: number
+}
+
+/** A device-scoped native prompt acknowledgement. Text stays in the pane ledger, never config. */
+export interface NativePromptReceipt {
+  grantId: string
+  deviceId: string
+  clientMessageId: string
+  sessionId: string
+  textHash: string
+  acceptedAt: string
+  state: 'pending' | 'queued' | 'unknown'
+  updatedAt: string
+}
+
 export interface PhoneConfig {
   /** answer browsers. Off until switched on: anything that can type into a pane can run
    * commands on this machine. */
@@ -1504,6 +1530,10 @@ export interface PhoneConfig {
   typeGate?: boolean
   /** passkeys enrolled here, one per authenticator. Forgetting one revokes it immediately. */
   keys?: PhoneKey[]
+  /** Opaque native grants; raw bearers never persist. */
+  nativeGrants?: NativeGrant[]
+  /** Idempotency receipts for native prompt submissions; only a hash of text persists. */
+  nativePromptReceipts?: NativePromptReceipt[]
 }
 
 /**

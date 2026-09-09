@@ -50,7 +50,7 @@ import { START_COLS, START_ROWS } from '../shared/paneGrid'
 import { RESTORE_MARK_TEXT } from '../shared/replayWidth'
 import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, SUBMIT_GAP_MS, armDecision, clearChunks, hasFreshPaneHandoff, resumeOf, dropFor, dropWords, expiryDecision, queuedPromptDecision, quietEnoughToArm, standDownFor, type DropReason, type QueuedPromptVerdict } from '../shared/autoclear'
 import { acLog } from './autoclearLog'
-import { dropAllFor, noteAccepted, noteDropped, noteSubmitted, owedAfterRestore } from './queuedPrompts'
+import { dropAllFor, noteAccepted, noteNativeAccepted, noteDropped, noteSubmitted, owedAfterRestore } from './queuedPrompts'
 import type { QueueDrop } from '../shared/queuedPrompts'
 import { logReclaim } from './activationLog'
 import { ledgerSleep, ledgerWake } from './laneLedger'
@@ -1533,6 +1533,15 @@ export class SessionManager extends EventEmitter {
   sendPrompt(id: string, text: string): void {
     if (!this.sessions.has(id)) return
     this.queuePrompt(id, text)
+  }
+
+  /** A native receipt may say queued only after the real recovery ledger is saved. */
+  sendNativePrompt(id: string, text: string): boolean {
+    const live = this.sessions.get(id)
+    if (!live || live.meta.asleep || live.meta.status === 'exited' || !text) return false
+    const key = noteNativeAccepted(id, text, live.meta.cwd)
+    this.queuePrompt(id, text, 0, PROMPT_START_MS, undefined, PROMPT_WAIT_MAX_MS, 'turn', key)
+    return true
   }
 
   /**
