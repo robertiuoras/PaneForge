@@ -357,7 +357,7 @@ export interface PhoneDeps {
       blocks: Array<
         | { type: 'text'; text: string }
         | { type: 'code'; text: string; language?: string }
-        | { type: 'tool'; name: string; input: string; output: string; state: 'running' | 'complete' | 'error' }
+        | { type: 'tool'; name: string; input: string; output: string; state: 'requested' | 'running' | 'complete' | 'error'; callId?: string; phase?: 'call' | 'result' }
         | { type: 'notice'; text: string }
       >
       raw: string
