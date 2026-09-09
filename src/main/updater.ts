@@ -17,7 +17,7 @@ import {
 import { get } from 'node:https'
 import { join } from 'node:path'
 import { app, net } from 'electron'
-import { updateIgnored } from '../shared/updateStale'
+import { stagedTooLong, updateIgnored } from '../shared/updateStale'
 import { pickRelease } from '../shared/pickRelease'
 import { pickWinTag } from '../shared/winFeed'
 import type { UpdateState } from '../shared/types'
@@ -145,8 +145,16 @@ function set(patch: Partial<UpdateState>): void {
   // one nobody is going to press Restart for. Decided here rather than at each of the
   // three places that reach 'ready' (adopt at launch, mac stage, update-downloaded).
   if (state.phase !== before) {
-    if (state.phase === 'ready') noteReady()
-    else if (state.ignored) state = { ...state, ignored: false }
+    if (state.phase === 'ready') {
+      // The one moment this process can honestly measure the wait from. Read by the card
+      // and by the line below, both of which only describe it - nothing installs on it.
+      state = { ...state, readyAt: Date.now() }
+      stagedNagged = false
+      noteReady()
+    } else {
+      if (state.ignored) state = { ...state, ignored: false }
+      if (state.readyAt) state = { ...state, readyAt: undefined }
+    }
     phaseNet = budgetFor(state.phase) ? netWord() : ''
     armUnwedge()
   }
@@ -1205,6 +1213,9 @@ export function setAutoCheck(enabled: boolean): void {
  */
 let probeFails = 0
 
+/** The "it has been waiting this long" line is written once per staged build, not per poll. */
+let stagedNagged = false
+
 /** How long until the next poll, given how the last one went. Never slower than usual. */
 function nextPollDelay(): number {
   const usual = pollDelay()
@@ -1239,7 +1250,18 @@ export async function pollOnce(): Promise<void> {
     // newer release that went out in the meantime was only found AFTER restarting into
     // the stale one - one version per restart, which is what "I have to restart it
     // several times" was. Keep looking, and swap the pending build for a newer one.
-    if (state.phase === 'ready') await supersede()
+    if (state.phase === 'ready') {
+      // A build that has been installable for hours is not a fault and is not hurried:
+      // this app installs one only when somebody presses Restart now or quits it. But
+      // 0.8.207 sat staged for nearly 24 hours (2026-09-08 02:28 to 09-09 02:30) with
+      // nothing said about it anywhere, so the wait is at least written down once.
+      if (!stagedNagged && stagedTooLong(state.readyAt, Date.now())) {
+        stagedNagged = true
+        const hours = Math.round((Date.now() - (state.readyAt ?? 0)) / 3_600_000)
+        log('staged waiting', `v${state.version ?? ''} has been ready ${hours}h and is still not installed - it waits for Restart now or a quit, by design`)
+      }
+      await supersede()
+    }
     else await checkForUpdates()
   } finally {
     if (auto) arm(nextPollDelay())

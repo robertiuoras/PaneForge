@@ -1002,6 +1002,12 @@ export interface UpdateState {
    * See shared/updateStale.ts.
    */
   ignored?: boolean
+  /**
+   * When this build became installable, so the card and the log can say how long it has
+   * been waiting. Restamped by a relaunch that adopts an already-staged build, because
+   * that is the only moment this process can honestly measure from.
+   */
+  readyAt?: number
 }
 
 /**

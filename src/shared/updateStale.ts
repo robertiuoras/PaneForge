@@ -65,3 +65,39 @@ export function ignoredHint(current: string): string {
  * build rather than restarting into the one it fixes.
  */
 export const READY_HOLD_MS = 5 * 60_000
+
+// --- a build that has been ready for hours, with nobody told ------------------------
+//
+// 2026-09-09: 0.8.208 reached `state ready` at 01:43:58 and was still ready through the
+// restart log at 02:30:35 the next day; 0.8.207 before it sat staged from 02:28:31 on
+// 09-08 until the app was relaunched by hand nearly 24 hours later. Nothing was wrong -
+// this app installs a staged build only when somebody presses Restart now or quits it,
+// deliberately, so that no timer may ever tear down a working desk. But the waiting was
+// invisible: the card says the same sentence on hour one and on hour twenty-four, and the
+// log says nothing at all between the two.
+//
+// So the wait is made visible rather than shortened. Nothing here installs anything.
+
+/** How long a ready build waits before the app starts saying how long it has waited. */
+export const STAGED_NAG_MS = 6 * 60 * 60 * 1000
+
+/** Has this build been sitting installable long enough to be worth mentioning? */
+export function stagedTooLong(readyAt: number | undefined, now: number): boolean {
+  return !!readyAt && now - readyAt >= STAGED_NAG_MS
+}
+
+/** Whole hours, for a sentence. Never "0 hours": the caller only asks past the threshold. */
+export function stagedHours(readyAt: number, now: number): number {
+  return Math.max(1, Math.floor((now - readyAt) / 3_600_000))
+}
+
+/**
+ * What the card says once a build has been waiting.
+ *
+ * It says what the app is doing and what ends it, in the words of the buttons underneath
+ * it - a person who has never used git has no idea what "staged" means and no reason to
+ * learn. See "Every word on screen is read by somebody who has never used git".
+ */
+export function stagedWaitingWords(current: string, version: string, hours: number): string {
+  return `PaneForge ${version} has been ready for ${hours} ${hours === 1 ? 'hour' : 'hours'} and you are still on ${current}. It installs when you choose Restart now, or the next time you quit PaneForge - never on its own while you are working.`
+}

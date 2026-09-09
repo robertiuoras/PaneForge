@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import type { UpdateState } from '@shared/types'
+import { stagedHours, stagedTooLong, stagedWaitingWords } from '@shared/updateStale'
 import CardX from './CardX'
+import { useNow } from './Elapsed'
 
 const api = window.api
 
@@ -8,6 +10,12 @@ const api = window.api
  * The Claude-desktop shaped prompt: nothing at all until a new build is already
  * downloaded, then one card offering the restart. Dismissing hides it until the
  * next version, so a build every hour does not turn into a nag every hour.
+ *
+ * With one exception, added 2026-09-09: Later used to hide the card for the life of that
+ * version, so 0.8.207 sat installed-and-unmentioned from 02:28 on 09-08 until the app was
+ * relaunched by hand nearly a day later, on a screen that said nothing about it. Past
+ * `STAGED_NAG_MS` the card comes back once, saying how long it has been waiting - which is
+ * the whole change. Nothing installs itself: see "Updates wait for the user to restart".
  */
 export default function UpdateToast(): JSX.Element | null {
   const [state, setState] = useState<UpdateState | null>(null)
@@ -40,12 +48,17 @@ export default function UpdateToast(): JSX.Element | null {
     )
   }
 
+  // A minute is the finest reading this card has any use for - it counts in hours.
+  const now = useNow(60_000)
+  const waited = state?.phase === 'ready' && stagedTooLong(state.readyAt, now)
   const ready = state?.phase === 'ready'
   // On macOS the app cannot replace itself (unsigned build), so the card offers the
   // download page instead of a restart. Same prompt, honest button.
   const manual = state?.phase === 'available'
   if (!state || (!ready && !manual) || !state.version) return null
-  if (dismissed === state.version) return null
+  // A card that was put away comes back once the build has been waiting for hours: the
+  // person still chooses, they just get asked again after a day rather than never.
+  if (dismissed === state.version && !waited) return null
 
   return (
     <div className="update-toast">
@@ -53,9 +66,11 @@ export default function UpdateToast(): JSX.Element | null {
       <div className="ut-text">
         <strong>PaneForge {state.version} is {ready ? 'ready' : 'out'}</strong>
         <span className="hint">
-          {ready
-            ? `You are on ${state.current}. Choose Restart now when you are ready, or Later to install it the next time you quit.`
-            : `You are on ${state.current}. Download it and drag it over the old app.`}
+          {waited && state.readyAt
+            ? stagedWaitingWords(state.current, state.version, stagedHours(state.readyAt, now))
+            : ready
+              ? `You are on ${state.current}. Choose Restart now when you are ready, or Later to install it the next time you quit.`
+              : `You are on ${state.current}. Download it and drag it over the old app.`}
         </span>
       </div>
       <div className="ut-actions">
