@@ -377,7 +377,7 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
 // holding it up - and the control that the OTHER two rules did not quietly inherit any of
 // this is the last block.
 {
-  const budget = { ...ok, over: 3 }
+  const budget = { ...over, over: 3 }
   // Every fixture in this block is EXPENSIVE, because since 2026-08-23 the budget rung
   // only moves a pane that would give the machine something back. The gate itself is the
   // block below; here it is held constant so the ordering and the refusals are still the
@@ -391,7 +391,11 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
     autoHandoffPlan(three(), budget, peers, { ...DEFAULT_AUTO_HANDOFF, maxPerSweep: 1 }, {}, NOW).length,
     3
   )
-  eq('at the budget it moves nothing', autoHandoffPlan(three(), { ...ok, over: 0 }, peers, DEFAULT_AUTO_HANDOFF, {}, NOW).length, 0)
+  // Tested against budgetPlan itself: at over<=0 the level is not what decides this, the
+  // budget rung's own gate is. Through autoHandoffPlan a level past `ok` with `over: 0`
+  // would fall through to the pressure rung instead, which is a different assertion.
+  eq('at the budget it moves nothing', budgetPlan(three(), peers, DEFAULT_AUTO_HANDOFF, {}, NOW, 0).length, 0)
+  eq('at ok the budget moves nothing however far over', autoHandoffPlan(three(), { ...ok, over: 3 }, peers, DEFAULT_AUTO_HANDOFF, {}, NOW).length, 0)
 
   // On screen is the gate it drops, and the picks are ORDERED: the quiet off-screen pane
   // goes first, then the quiet visible one. A pane with a turn in flight is not picked at
@@ -413,7 +417,7 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
   // a statement about idleness, which is the whole difference from the two clocks.
   {
     const panes = [big({ id: 'fresh', lastKeyboard: NOW - 5_000 }), big({ id: 'me', focused: true })]
-    eq('a pane quiet for five seconds still counts', ids(autoHandoffPlan(panes, { ...ok, over: 1 }, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'fresh')
+    eq('a pane quiet for five seconds still counts', ids(autoHandoffPlan(panes, { ...over, over: 1 }, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'fresh')
   }
 
   // Everything that could lose work is still refused, one at a time.
@@ -427,26 +431,26 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
   ]
   for (const [label, extra] of refusals) {
     const panes = [big({ id: 'x', ...extra }), big({ id: 'keep' })]
-    eq(`the budget never moves ${label}`, ids(autoHandoffPlan(panes, { ...ok, over: 2 }, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'keep')
+    eq(`the budget never moves ${label}`, ids(autoHandoffPlan(panes, { ...over, over: 2 }, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'keep')
   }
 
   {
     const panes = [big({ id: 'x' }), big({ id: 'keep' })]
-    eq('a pane on cooldown after a failed move is left alone', ids(autoHandoffPlan(panes, { ...ok, over: 2 }, peers, DEFAULT_AUTO_HANDOFF, { x: NOW + MIN }, NOW)), 'keep')
+    eq('a pane on cooldown after a failed move is left alone', ids(autoHandoffPlan(panes, { ...over, over: 2 }, peers, DEFAULT_AUTO_HANDOFF, { x: NOW + MIN }, NOW)), 'keep')
   }
 
   {
     const panes = [big({ id: 'only' })]
-    eq('the window is never emptied, however far past the budget', autoHandoffPlan(panes, { ...ok, over: 5 }, peers, DEFAULT_AUTO_HANDOFF, {}, NOW).length, 0)
+    eq('the window is never emptied, however far past the budget', autoHandoffPlan(panes, { ...over, over: 5 }, peers, DEFAULT_AUTO_HANDOFF, {}, NOW).length, 0)
   }
 
   {
     // ...and it does not take a slot with it: the other pane still moves, and the window
     // is still not emptied.
     const panes = [big({ id: 'a', projectName: 'elsewhere' }), big({ id: 'keep' })]
-    eq('a project the peer does not have stays here', ids(autoHandoffPlan(panes, { ...ok, over: 2 }, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'keep')
+    eq('a project the peer does not have stays here', ids(autoHandoffPlan(panes, { ...over, over: 2 }, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'keep')
     const alone = [big({ id: 'a', projectName: 'elsewhere' })]
-    eq('and with nowhere for any of them, nothing moves', autoHandoffPlan(alone, { ...ok, over: 2 }, peers, DEFAULT_AUTO_HANDOFF, {}, NOW).length, 0)
+    eq('and with nowhere for any of them, nothing moves', autoHandoffPlan(alone, { ...over, over: 2 }, peers, DEFAULT_AUTO_HANDOFF, {}, NOW).length, 0)
   }
 
   eq('the budget respects the off switch like everything else', autoHandoffPlan(three(), budget, peers, { ...DEFAULT_AUTO_HANDOFF, enabled: false }, {}, NOW).length, 0)
@@ -469,12 +473,12 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
   // pass one pane back and forth for ever - so a pane never goes back where it came from.
   {
     const panes = [big({ id: 'came', arrivedFrom: 'pc' }), big({ id: 'me', focused: true })]
-    eq('a pane handed here is never handed straight back', autoHandoffPlan(panes, { ...ok, over: 1 }, peers, DEFAULT_AUTO_HANDOFF, {}, NOW).length, 0)
+    eq('a pane handed here is never handed straight back', autoHandoffPlan(panes, { ...over, over: 1 }, peers, DEFAULT_AUTO_HANDOFF, {}, NOW).length, 0)
 
     // ...and the control: it is refused because of WHERE it came from, not because it
     // arrived. A second machine that did not send it can still take it.
     const two = [...peers, { device: 'mini', deviceName: 'Mini', online: true, projects: [{ name: 'proj', path: '/mini/proj' }] }]
-    const plan = autoHandoffPlan(panes, { ...ok, over: 1 }, two, DEFAULT_AUTO_HANDOFF, {}, NOW)
+    const plan = autoHandoffPlan(panes, { ...over, over: 1 }, two, DEFAULT_AUTO_HANDOFF, {}, NOW)
     eq('but another machine may still take it', plan.map((p) => p.device).join(','), 'mini')
     eq('and hostFor is where that is decided', hostFor(peers, 'proj', 'pc'), null)
   }
@@ -493,7 +497,7 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
       big({ id: 'c', lastKeyboard: NOW - 50 * MIN }),
       big({ id: 'me', focused: true })
     ]
-    eq('panes no peer can host do not eat the moves', ids(autoHandoffPlan(panes, { ...ok, over: 3 }, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'a,b,c')
+    eq('panes no peer can host do not eat the moves', ids(autoHandoffPlan(panes, { ...over, over: 3 }, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'a,b,c')
     eq('...and the pressure sweep counts the same way', ids(autoHandoffPlan(panes, over, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'a,b')
   }
 
@@ -661,6 +665,29 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
     budgetPlan(held, macPeers, { ...free, budgetMinMb: 1 }, {}, NOW, 1).length === 1 &&
       idleOffloadPlan(held, macPeers, { ...free, offloadIdleMinutes: 1 }, {}, NOW).length === 1 &&
       autoHandoffPlan(held, over, macPeers, free, {}, NOW).length === 1)
+
+  // A lane copy of a kept project is still that project's work.
+  const pfCfg = { ...DEFAULT_AUTO_HANDOFF, keepHere: ['PaneForge'] }
+  check('a lane letter copy stays', staysHere(pfCfg, 'PaneForge-d'))
+  check('a legacy w-copy stays', staysHere(pfCfg, 'PaneForge-w2'))
+  check('...however cased', staysHere(pfCfg, 'paneforge-d'))
+  check('a name that only looks like a copy is a different project', !staysHere(pfCfg, 'PaneForged'))
+  check('a real suffix that is not a copy shape is a different project', !staysHere(pfCfg, 'PaneForge-api'))
+}
+
+{
+  // A pane picked as "this machine" in the New session dialog. See `Session.stayHere`.
+  const picked = pane({ id: 'picked', stayHere: true, memMb: 900 })
+  const free = pane({ id: 'free', memMb: 900 })
+
+  check('movable refuses it', !movable(picked))
+  check('...and picks the one without it', movable(free))
+  check('queueable refuses it', !queueable(picked))
+  check('...and picks the one without it', queueable(free))
+
+  const panes = [picked, free]
+  eq('the pressure sweep never moves it', ids(autoHandoffPlan(panes, over, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'free')
+  eq('the budget rung never moves it', ids(budgetPlan(panes, peers, { ...DEFAULT_AUTO_HANDOFF, budgetMinMb: 1 }, {}, NOW, 2)), 'free')
 }
 
 // Somebody arriving at a pane answers a CLOSE countdown and not a MOVE one. A click was

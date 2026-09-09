@@ -235,7 +235,10 @@ export default function NewSessionDialog({
         model: model || undefined,
         resume: resume && canResume,
         prompt: prompt.trim() || undefined,
-        where: touched && where !== 'auto' ? where : undefined
+        // A default of "this machine" (`defaultSessionWhere: 'local'`) is still a choice -
+        // `stayHere` must be set whether or not the person touched the picker this time,
+        // or a hand-picked pane only stayed put on the one launch that touched it.
+        where: where !== 'auto' ? where : undefined
       }
     })
   }

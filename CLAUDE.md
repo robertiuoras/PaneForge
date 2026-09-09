@@ -1118,6 +1118,8 @@ moves exactly that many.
 - Only rule allowed to move a pane ON SCREEN or MID-TURN. Busy pane picked LAST (`rank`); `queueable`
   wider than `movable`. Refused: focused pane, live question, mirror, one already moving, one on a
   failure cooldown, the last pane on the desk. Moved count = overshoot, not `maxPerSweep`.
+- A pane picked as `this machine` in the New session dialog carries `Session.stayHere`; every
+  automatic move refuses it, and `keepHere` matches a project's lane copies (`PaneForge-d`).
 - Lag read as well as memory, worse decides (`lagLevel`, `worstPressure`): 1 runnable thread/core =
   `warn`, 1.8 = `critical`, not CPU%. `os.loadavg()` 0 on Windows = "nobody measured".
 - 15s countdown always shown: `MoveSoon.tsx` (z-index 45, no animation), pane named.

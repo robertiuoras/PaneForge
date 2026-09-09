@@ -802,6 +802,8 @@ export class SessionManager extends EventEmitter {
       // must never send it straight back: two desks each keeping two agents would
       // otherwise pass one pane between them for ever, each one correct on its own.
       arrivedFrom: req.arrivedFrom,
+      // The person picked this machine by name, not by default - see `Session.stayHere`.
+      stayHere: req.where === 'local' ? true : undefined,
       lane: req.lane,
       laneNote: req.laneNote,
       cols: START_COLS,

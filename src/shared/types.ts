@@ -271,6 +271,17 @@ export interface Session {
    * `kept 55m` for this and explains the hold instead.
    */
   closeKept?: boolean
+  /**
+   * Set when the person chose "this machine" for this pane in the New session dialog
+   * (`StartSessionRequest.where === 'local'`).
+   *
+   * Every automatic move refuses it - `autoHandoffPlan`'s budget/pressure/idle rungs and
+   * `suggestMove` - the same as a project marked `keepHere`, but for one pane rather than a
+   * whole repo. A pressure move (reclaim closing or sleeping the pane) is still allowed:
+   * this is a statement about WHERE the work runs, not about whether the machine may give
+   * its memory back.
+   */
+  stayHere?: boolean
   autoAnswerN?: number
   /**
    * When this session will /clear ITSELF, epoch ms, and what it will ask the fresh one.

@@ -2578,6 +2578,8 @@ export default function App(): JSX.Element {
         busy: s.runSince !== undefined,
         // The device that handed it here, so the budget never hands it straight back.
         arrivedFrom: s.arrivedFrom,
+        // The person picked this machine for this pane. See `AutoPane.stayHere`.
+        stayHere: s.stayHere,
         // What the far end would resume. An agent pane without one never travels.
         resumeId: s.resumeId,
         projectName: projectNameOf(s.cwd),

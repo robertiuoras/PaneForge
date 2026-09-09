@@ -41,6 +41,7 @@
 // Pure. `npm run test:autohandoff`.
 
 import type { OffloadCandidate, Verdict } from './capacity'
+import { copySuffixOf } from './place'
 export { keepLocalOf } from './capacity'
 import type { FleetState } from './fleet'
 import { quietSince } from './reclaim'
@@ -319,6 +320,16 @@ export interface AutoPane {
    */
   machineBound?: string
   /**
+   * The person picked this machine by name for this pane (`Session.stayHere`).
+   *
+   * A refusal, same shape as `keepHere` but per-pane rather than per-project: a lane copy
+   * of a kept project and a hand-picked pane are the same statement at two different
+   * grains, so both are read before a move is offered, never after. A pressure move
+   * (reclaim closing or sleeping the pane) is unaffected - this refuses only automatic
+   * RELOCATION, not the machine giving its own memory back.
+   */
+  stayHere?: boolean
+  /**
    * Whether the far end could get this pane's CODE, or undefined for "nobody asked".
    *
    * A move only works because the repo travels: the sender commits what is dirty under an
@@ -364,7 +375,9 @@ export function travels(p: Pick<AutoPane, 'agent' | 'resumeId'>): boolean {
 }
 
 /** States a pane may be moved out of. Everything else is a turn in flight. */
-export function movable(p: Pick<AutoPane, 'state' | 'asking' | 'backJob' | 'machineBound' | 'shareable'>): boolean {
+export function movable(
+  p: Pick<AutoPane, 'state' | 'asking' | 'backJob' | 'machineBound' | 'shareable' | 'stayHere'>
+): boolean {
   if (p.asking) return false
   // Killing the pty takes the background work with it, and there is no turn boundary to
   // wait for. See `AutoPane.backJob`.
@@ -373,6 +386,8 @@ export function movable(p: Pick<AutoPane, 'state' | 'asking' | 'backJob' | 'mach
   if (p.machineBound) return false
   // ...and neither does the code. See `AutoPane.shareable`.
   if (p.shareable === false) return false
+  // The person chose this machine for this pane. See `AutoPane.stayHere`.
+  if (p.stayHere) return false
   // `exited` is left to reclaim: there is no agent to move, only a row to close.
   return p.state === 'ready' || p.state === 'needsYou'
 }
@@ -397,11 +412,14 @@ export function movable(p: Pick<AutoPane, 'state' | 'asking' | 'backJob' | 'mach
  * there with nobody asked), a pane that has exited (nothing to move), and one that has
  * not printed yet - `starting` has no transcript to resume from and no screen to carry.
  */
-export function queueable(p: Pick<AutoPane, 'state' | 'asking' | 'backJob' | 'machineBound' | 'shareable'>): boolean {
+export function queueable(
+  p: Pick<AutoPane, 'state' | 'asking' | 'backJob' | 'machineBound' | 'shareable' | 'stayHere'>
+): boolean {
   if (p.asking) return false
   if (p.backJob) return false
   if (p.machineBound) return false
   if (p.shareable === false) return false
+  if (p.stayHere) return false
   return p.state === 'ready' || p.state === 'needsYou'
 }
 
@@ -437,17 +455,19 @@ export function autoHandoffPlan(
   now = 0
 ): AutoHandoff[] {
   if (!cfg.enabled) return []
-  // The budget first, and it does not consult the level at all: `Verdict.over` is this
-  // desk's own statement about where agents run, and it is true at `ok`. When it is set,
-  // the reading that follows is about a machine that is ALREADY past what it agreed to
-  // hold, so waiting ten quiet minutes and skipping every pane on screen would be waiting
-  // for permission that has already been given.
+  // `Verdict.over` is a COUNT - `localPanes - keepLocal` - and a count is not a reason to
+  // move anybody: it can only decide WHICH panes go once the kernel has already said this
+  // machine is short. At `ok` the kernel is content, so the budget rung does not run at
+  // all, however far `over` reads - remote is for optimising resources DURING a session
+  // under measured pressure, never because a pane count crossed a number (Robert
+  // 2026-09-09, after this rung moved a pane he had explicitly opened here: "budget: 1
+  // pane(s) past 2").
+  if (v.level === 'ok') return []
   const over = Math.max(0, v.over ?? 0)
   if (over > 0) return budgetPlan(panes, peers, cfg, blocked, now, over)
-  // Otherwise the same trigger as every other rung: `ok` means the kernel is content, and
-  // moving somebody's pane to another machine while there is room here is not a tidy-up,
-  // it is the app deciding where they work.
-  if (v.level === 'ok') return []
+  // Otherwise the same trigger as every other rung: pressure is not `ok` (checked above),
+  // and moving somebody's pane to another machine while there is room here is not a
+  // tidy-up, it is the app deciding where they work.
   if (!(cfg.maxPerSweep > 0)) return []
   return pick(panes, peers, cfg, blocked, now, Math.max(0, cfg.minIdleMinutes), true)
 }
@@ -573,9 +593,19 @@ export function budgetPlan(
  * matches `PaneForge` is a refusal that silently stops refusing.
  */
 export function staysHere(cfg: Pick<AutoHandoffConfig, 'keepHere'>, projectName: string): boolean {
-  const want = (projectName ?? '').trim().toLowerCase()
-  if (!want) return false
-  return (cfg.keepHere ?? []).some((n) => n.trim().toLowerCase() === want)
+  const raw = (projectName ?? '').trim()
+  if (!raw) return false
+  const want = raw.toLowerCase()
+  // A lane copy of a kept project is still that project's work: `PaneForge-d` is
+  // `PaneForge`'s own second checkout, not a different repo somebody may hand off.
+  // `copySuffixOf` is the same test the sidebar's copy chip uses, so this and the card can
+  // never disagree about what counts as a copy - `PaneForged`/`PaneForge-api` are real
+  // project names and do not match.
+  const base = copySuffixOf(raw)?.toLowerCase()
+  return (cfg.keepHere ?? []).some((n) => {
+    const kept = n.trim().toLowerCase()
+    return kept === want || (!!base && kept === base)
+  })
 }
 
 /**
