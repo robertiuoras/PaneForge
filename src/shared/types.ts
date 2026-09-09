@@ -822,6 +822,8 @@ export interface LaneBoardEntry {
   chatAbout?: string
   /** a live chat holds it right now */
   held: boolean
+  /** A deliberately sleeping hold is preserved by SessionEnd and is not reclaimable. */
+  asleep?: number
   /**
    * Held by a chat that no running copy of the app is hosting and that has been silent
    * past the reclaim window - the next sweep gives it back. The strip draws no row for it

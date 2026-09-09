@@ -24,6 +24,8 @@ import { fileURLToPath } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const src = readFileSync(join(root, 'src/renderer/src/components/TerminalPane.tsx'), 'utf8')
+const promptEchoSource = readFileSync(join(root, 'src/shared/promptEcho.ts'), 'utf8')
+const { promptRow } = await import('data:text/javascript;base64,' + Buffer.from(transformSync(promptEchoSource, { loader: 'ts', format: 'esm' }).code).toString('base64'))
 let failed = 0
 const check = (ok, what, note = '') => {
   console.log(`${ok ? 'ok  ' : 'FAIL'}  ${what}${note ? ` - ${note}` : ''}`)
@@ -45,8 +47,8 @@ const executable = transformSync(actualSeed, { loader: 'ts', target: 'node20' })
 const entries = [{ key: 'one', at: 123, marker: { line: 1, dispose() {} } }]
 let serial = 0
 const terminal = { buffer: { active: { baseY: 0, cursorY: 5, getLine: () => ({ translateToString: () => '', getCell: () => ({getBgColor: () => 0}) }) } }, registerMarker: offset => ({ id: ++serial, line: 5 + offset, dispose() { this.disposed = true } }) }
-const runSeed = new Function('agent', 't', 'list', 'seedPrompts', 'echoKey', 'flatDraft', 'anchor', 'MARK_CAP', 'RAIL_LABEL_CHARS', 'publish', 'syncTotal', executable + ';return seedMarks')(
-  'claude', terminal, entries, () => [{ line: 1, text: 'one' }, { line: 3, text: 'two' }], x => x, x => x, () => {}, 80, 200, () => {}, () => {})
+const runSeed = new Function('agent', 't', 'list', 'promptRow', 'seedPrompts', 'echoKey', 'flatDraft', 'anchor', 'MARK_CAP', 'RAIL_LABEL_CHARS', 'publish', 'syncTotal', executable + ';return seedMarks')(
+  'claude', terminal, entries, promptRow, () => [{ line: 1, text: 'one' }, { line: 3, text: 'two' }], x => x, x => x, () => {}, 80, 200, () => {}, () => {})
 runSeed()
 check(entries.length === 2 && entries[1].key === 'two', 'a partial rail recovers its missing prompt tag')
 check(entries[0].at === 123, 'a surviving live tag preserves its original identity and time')

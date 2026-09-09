@@ -35,6 +35,7 @@ const TESTS = [
   ['copylogic', 'copy-logic-test.mjs'],
   ['changednothing', 'changed-nothing-test.mjs'],
   ['laneheartbeat', 'lane-heartbeat-test.mjs'],
+  ['lanereclaim', 'lane-reclaim-test.mjs'],
   ['shipimports', 'ship-imports-test.mjs'],
   ['guarddeckhold', 'guarddeck-hold-test.mjs'],
   ['power', 'power-test.mjs'],

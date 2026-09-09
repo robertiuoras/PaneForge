@@ -33,7 +33,7 @@ const install = new Function('api', 't', 'keepScrollback', 'withoutReplayQueries
   const noteSubmitted = (line) => submitted.push({text:line, row:t.buffer.active.baseY + t.buffer.active.cursorY});
   let sawOutput = false;
   let wipeSnap = null, wipeTimer;
-  const window = { clearTimeout }, publish = () => {}, setBlank = () => {}, pinned = { current: true }, seedMarks = () => {};
+  const window = { clearTimeout }, publish = () => {}, setBlank = () => {}, setScrolledUp = () => {}, pinned = { current: true }, scrollIntent = { current: 0 }, seedMarks = () => {};
   const keptRows = () => { throw new Error('read stale screen during snapshot'); };
   const screenNow = () => { throw new Error('armed stale wipe during snapshot'); };
   const armWipeCheck = () => {};
