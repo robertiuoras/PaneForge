@@ -45,6 +45,11 @@ scripts/lane.mjs status --repo <dir>` shows who holds what.
   in a second copy. A hold with no pane id - claimed by hand, or from outside the app - is
   left alone.
 - `npm run test:lanes`.
+- A CLOSED pane gives its lane back, asleep or not: `kill()` runs `lane.mjs closed --pane`
+  (`ledgerClosed`), which drops `asleep` and releases as the SessionEnd hook would. A
+  sleeping pane runs no hook when closed, so its hold sat for the 7-day `ASLEEP_MAX_MS`
+  (2026-09-07: four holds 17-23h dead, every lane busy). Not on quit - restore needs them.
+  `npm run test:laneclosed`.
 - Your first edit of a file another lane has already changed is told so, with that lane's
   line ranges (`guard` exits 0 with text). Same region: message that chat before editing.
   `npm run test:laneoverlap`.

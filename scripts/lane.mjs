@@ -2848,6 +2848,42 @@ function sleepLane(session, pane) {
 }
 
 /**
+ * The app, when a pane is CLOSED - by hand, by the idle clock, by the reclaim sweep - and
+ * so has no press left to wake it: every hold that pane has here goes through the ordinary
+ * release, asleep or not.
+ *
+ * `sleep` + the CLI's SessionEnd hook park a hold instead of freeing it, and every sweep
+ * then keeps it for ASLEEP_MAX_MS (seven days), which is right while the pane is on the
+ * desk. A pane closed while asleep has no agent, so no SessionEnd hook ever runs for it,
+ * and nothing cleared the mark: 2026-09-07, four holds (main 23h, a 23h, b 18h, c 17h)
+ * parked+asleep from panes long gone, every lane reading busy, `release --session`
+ * freeing nothing, and a chat hand-editing the ledger to get a checkout. Matched by PANE,
+ * because the pane id is what the app has at the moment it closes the card; a pane
+ * nobody holds is a no-op, never an error.
+ */
+function closePane(pane) {
+  if (!pane) throw new Error('closed needs --pane')
+  const state = reap(read())
+  const sessions = new Set()
+  for (const c of Object.values(state.lanes)) {
+    if (c.pane !== pane) continue
+    // The mark is what makes releaseClaim park instead of free. The pane is gone, so
+    // there is nobody to keep the lane for.
+    delete c.asleep
+    if (c.session) sessions.add(c.session)
+  }
+  write(state)
+  const freed = []
+  let marked = null
+  for (const session of sessions) {
+    const r = releaseClaim(session)
+    if (r.freed) freed.push(r.freed)
+    if (r.marked) marked = r.marked
+  }
+  return { freed, marked }
+}
+
+/**
  * The app, once a sleeping pane's agent is spawned again: clear the mark so the hold reads
  * exactly as an ordinary one again - `claim` (the CLI's own hook, next) then behaves as it
  * always has, because by the time it runs `asleep` is already gone.
@@ -3993,6 +4029,12 @@ try {
     console.log(JSON.stringify(sleepLane(session, arg('pane') ?? PANE)))
   } else if (cmd === 'wake') {
     console.log(JSON.stringify(wakeLane(session, arg('pane') ?? PANE)))
+  } else if (cmd === 'closed') {
+    // The app: this pane is gone. Not `release` - that is the CLI ending, which parks a
+    // sleeping hold; this is the card ending, after which nothing can wake it.
+    const r = closePane(arg('pane') ?? PANE)
+    if (r.marked) console.log(`Lane ${r.marked.lane} had finished work - marked done on the way out.`)
+    console.log(JSON.stringify({ freed: r.freed }))
   } else if (cmd === 'park') {
     // The Stop hook: this chat's turn ended. Holds on clean lanes are marked parked so a
     // chat that needs one takes it in minutes; the mark clears itself on the next claim.

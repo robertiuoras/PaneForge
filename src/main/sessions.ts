@@ -53,7 +53,7 @@ import { acLog } from './autoclearLog'
 import { dropAllFor, noteAccepted, noteNativeAccepted, noteDropped, noteSubmitted, owedAfterRestore } from './queuedPrompts'
 import type { QueueDrop } from '../shared/queuedPrompts'
 import { logReclaim } from './activationLog'
-import { ledgerSleep, ledgerWake } from './laneLedger'
+import { ledgerClosed, ledgerSleep, ledgerWake } from './laneLedger'
 import type { SleepReason } from '../shared/types'
 
 /**
@@ -2979,6 +2979,11 @@ export class SessionManager extends EventEmitter {
       /* already dead */
     }
     stopPipe(id)
+    // The card is gone, so its lane goes back - even a SLEEPING pane's, which the CLI's
+    // own SessionEnd hook parks rather than frees and which nothing else ever clears. Not
+    // on quit: those panes come back from desk.json at the next launch and must land in
+    // the checkout they left.
+    if (!this.down && s.meta.cwd) ledgerClosed(s.meta.cwd, id)
     recordEnd(id, resumeIdFor(id))
     // A prompt this pane was owed dies with it, and SAYS so: the card is gone, so nothing
     // will ever restore that id, and a row left behind would be a promise the app cannot

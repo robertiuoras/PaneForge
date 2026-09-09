@@ -8,6 +8,10 @@
 //                               the CLI's own SessionEnd hook parks it instead of releasing
 //                               it, and the idle sweep leaves it alone.
 //   ledgerWake(cwd, paneId)   - after the CLI is spawned again: the mark comes off.
+//   ledgerClosed(cwd, paneId) - the pane is gone (closed by hand, by the idle clock, by
+//                               reclaim): every hold it has is released, asleep or not - a
+//                               sleeping pane runs no SessionEnd hook when it is closed, so
+//                               without this its hold sat for the seven-day asleep limit.
 //   ledgerTakenFolders(paneId) - folders the ledger says ANOTHER chat holds right now,
 //                               handed to `laneFor` as extra taken folders on wake, so a
 //                               pane never wakes into a checkout somebody else took.
@@ -126,6 +130,15 @@ export function ledgerWake(cwd: string, paneId: string): void {
     if (main) run(main, ['wake', '--pane', paneId])
   } catch {
     /* best-effort: a wake that cannot reach the ledger still wakes the pane */
+  }
+}
+
+export function ledgerClosed(cwd: string, paneId: string): void {
+  try {
+    const main = mainCheckoutOf(cwd)
+    if (main) run(main, ['closed', '--pane', paneId])
+  } catch {
+    /* best-effort: a close that cannot reach the ledger still closes the pane */
   }
 }
 
