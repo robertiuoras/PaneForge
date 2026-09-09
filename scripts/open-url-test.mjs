@@ -33,7 +33,21 @@ buildSync({
   format: 'esm',
   platform: 'node'
 })
-const { linkFailedWords, pathFailedWords, shortUrl } = await import(pathToFileURL(wordsFile).href)
+const { linkFailedWords, nothingToOpen, pathFailedWords, shortUrl } = await import(
+  pathToFileURL(wordsFile).href
+)
+
+// --- the target that can only fail -------------------------------------------------
+//
+// 6x `a link in a pane: about:blank - Failed to open URL` on 2026-09-05 and 09-06. No
+// browser is registered for the `about:` scheme and there is no page at the other end of
+// it: this is a `window.open()` with no URL, or an empty `target="_blank"` href.
+ok(nothingToOpen('about:blank'), 'about:blank is nothing to open')
+ok(nothingToOpen('  ABOUT:BLANK '), '...whatever case or spacing it arrives in')
+ok(nothingToOpen('about:blank#x') && nothingToOpen('about:blank?a=1'), '...with a fragment or a query on it')
+ok(nothingToOpen(''), 'and an empty target is nothing to open either')
+ok(!nothingToOpen('https://example.com/x'), 'a real link is left alone')
+ok(!nothingToOpen('about:blankets.example.com'), '...and so is a link that merely starts like one')
 
 const url = 'https://github.com/robertiuoras/PaneForge/releases/tag/v0.8.188'
 const said = linkFailedWords(url)
@@ -64,14 +78,16 @@ writeFileSync(
   join(work, 'electron-stub.cjs'),
   `let extFail=null,pathAnswer=''
 const copied=[]
+const opened=[]
 module.exports={
   app:{getPath:()=>__dirname},
   clipboard:{writeText:(t)=>copied.push(t)},
   shell:{
-    openExternal:(u)=>extFail?Promise.reject(new Error(extFail)):Promise.resolve(),
+    openExternal:(u)=>{opened.push(u);return extFail?Promise.reject(new Error(extFail)):Promise.resolve()},
     openPath:()=>Promise.resolve(pathAnswer)
   },
   __copied:copied,
+  __opened:opened,
   __extFail:(m)=>{extFail=m},
   __pathAnswer:(m)=>{pathAnswer=m}
 }`
@@ -119,6 +135,16 @@ const URL='https://github.com/robertiuoras/PaneForge/releases/tag/v0.8.188'
   ok(el.__copied[0]===URL,'and the link is put on the clipboard, so there is something to do about it')
   ok(logged().includes(URL),'the log line carries the URL - four of these were undiagnosable without it')
   ok(logged().includes('a link in a pane'),'and which press it came from')
+
+  // about:blank never reaches the OS at all, and says nothing on screen: nobody asked
+  // for a page, so "your browser would not open it" would be a lie about what happened.
+  const before=el.__opened.length
+  m.openLink('about:blank','a link in a pane')
+  m.openLink('','a link in a pane')
+  await sleep(50)
+  ok(el.__opened.length===before,'about:blank and an empty target are never handed to the OS')
+  ok(told.length===1,'...and nobody is told their browser refused a page they never asked for')
+  ok(logged().includes('nothing to open'),'...but it is still written down, because the caller is the bug')
 
   // The silent half: openPath answers with a string, and '' is the success.
   el.__pathAnswer('')

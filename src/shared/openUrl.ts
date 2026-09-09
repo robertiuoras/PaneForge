@@ -14,6 +14,23 @@
 // The words live here, away from electron, so they can be held to the rule that every
 // word on screen is read by somebody who has never used git.
 
+/**
+ * A target the OS could never open, so it is never handed to the OS.
+ *
+ * `about:blank` reached `shell.openExternal` six times across 2026-09-05 and 09-06 (01:56,
+ * 07:08:15, 07:08:19, 07:08:22, 15:31) and failed every time, because no browser is
+ * registered for the `about:` scheme and there is nothing at the other end of it anyway. It
+ * comes from a page calling `window.open()` with no URL, or a `target="_blank"` anchor with
+ * an empty href - a real press, with no link behind it.
+ *
+ * Nothing is on screen for these: the person did not ask for a page, so telling them their
+ * browser refused one is a lie about what happened.
+ */
+export function nothingToOpen(url: string): boolean {
+  const u = url.trim().toLowerCase()
+  return u === '' || u === 'about:blank' || u.startsWith('about:blank?') || u.startsWith('about:blank#')
+}
+
 /** Longest URL worth putting in a toast. Past this the middle is dropped, not the end. */
 const MAX_SHOWN = 90
 
