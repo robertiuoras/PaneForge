@@ -357,7 +357,7 @@ export interface PhoneDeps {
       blocks: Array<
         | { type: 'text'; text: string }
         | { type: 'code'; text: string; language?: string }
-        | { type: 'tool'; name: string; input: string; output: string; state: 'running' | 'complete' | 'error' }
+        | { type: 'tool'; name: string; input: string; output: string; state: 'requested' | 'running' | 'complete' | 'error'; callId?: string; phase?: 'call' | 'result' }
         | { type: 'notice'; text: string }
       >
       raw: string
@@ -817,7 +817,9 @@ export class PhoneServer {
     if (!isTls(req)) return this.plain(res, 400, 'https required')
     const pending = this.native.pendingForBrowser(request)
     if (!pending) return this.plain(res, 410, 'authorization expired')
-    if (!this.authed(req)) return this.nativePairPage(res, request)
+    // Legacy code cookies have no revocable browser identity. Pair once before
+    // approving a native credential so it can be revoked with its parent browser.
+    if (!this.who(req)?.device) return this.nativePairPage(res, request)
     const csrf = this.native.csrfFor(request)
     if (!csrf) return this.plain(res, 410, 'authorization expired')
     // The page has no general renderer assets and starts a new required WebAuthn ceremony.
@@ -825,7 +827,57 @@ export class PhoneServer {
     const nonce = randomBytes(18).toString('base64')
     const esc = (v: string) => JSON.stringify(v).replace(/</g, '\\u003c')
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer', 'content-security-policy': `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'` })
-    res.end(`<!doctype html><meta name="referrer" content="no-referrer"><title>Approve PaneForge</title><meta name="viewport" content="width=device-width,initial-scale=1"><style nonce="${nonce}">body{font:17px system-ui;line-height:1.5;max-width:32rem;margin:3rem auto;padding:0 1.5rem;color:#152f32;background:#f5f8f6}button{min-height:48px;padding:12px 20px;font:inherit;border:0;border-radius:12px;color:white;background:#165c50}#status{overflow-wrap:anywhere}</style><p id="label"></p><button id="ok">Approve with passkey</button><p id="status"></p><script nonce="${nonce}">const request=${esc(request)},csrf=${esc(csrf)},name=${esc(pending.deviceName)};document.querySelector('#label').textContent='Approve '+name+' to read and control PaneForge?';const s=document.querySelector('#status');const b=document.querySelector('#ok');const u=s=>Uint8Array.from(atob(s.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0));const e=b=>btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');b.onclick=async()=>{try{b.disabled=true;s.textContent='Waiting for passkey…';let st=await (await fetch('/pf/key/state')).json();if(!st.ids.length)throw Error('enrol a passkey in PaneForge Settings first');let c=await navigator.credentials.get({publicKey:{challenge:u(st.challenge),rpId:st.rpId,allowCredentials:st.ids.map(id=>({type:'public-key',id:u(id)})),userVerification:'required',timeout:60000}});let a=c.response;let r=await fetch('/pf/key/unlock',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({challenge:st.challenge,id:c.id,clientDataJSON:e(a.clientDataJSON),authenticatorData:e(a.authenticatorData),signature:e(a.signature)})});if(!r.ok)throw Error('passkey refused');r=await fetch('/pf/native/v1/auth/approve',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({request,csrf})});let out=await r.json();if(!r.ok)throw Error('approval refused');location.replace('taskdriver://auth/paneforge?code='+encodeURIComponent(out.code)+'&state='+encodeURIComponent(out.state))}catch(x){s.textContent=x.message||'Approval failed';b.disabled=false}}</script>`)
+    res.end(String.raw`<!doctype html><html lang="en"><head>
+<meta name="referrer" content="no-referrer"><title>Approve PaneForge</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style nonce="${nonce}">body{font:17px system-ui;line-height:1.5;max-width:32rem;margin:3rem auto;padding:0 1.5rem;color:#152f32;background:#f5f8f6}button{min-height:48px;padding:12px 20px;font:inherit;border:0;border-radius:12px;color:white;background:#165c50}#status{overflow-wrap:anywhere}</style>
+</head><body><p id="label"></p><button id="ok" type="button">Approve with passkey</button><p id="status" role="status"></p>
+<script nonce="${nonce}">
+const request=${esc(request)},csrf=${esc(csrf)},name=${esc(pending.deviceName)};
+document.querySelector('#label').textContent='Approve '+name+' to read and control PaneForge?';
+const s=document.querySelector('#status'),b=document.querySelector('#ok');
+const u=s=>Uint8Array.from(atob(s.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0));
+const e=b=>btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+b.onclick=async()=>{
+  try{
+    b.disabled=true;s.textContent='Waiting for passkey…';
+    if(!window.PublicKeyCredential||!navigator.credentials)throw Error('This browser does not support passkeys.');
+    const stateResponse=await fetch('/pf/key/state');
+    if(!stateResponse.ok)throw Error('Browser pairing expired. Start this connection again.');
+    const st=await stateResponse.json();
+    let r;
+    if(!st.ids.length){
+      // This is already a desk-approved browser. Enrolment performs the same required
+      // user verification as an assertion and opens the server's fresh-touch window.
+      const userId=new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(st.rpId)));
+      const c=await navigator.credentials.create({publicKey:{
+        challenge:u(st.challenge),rp:{id:st.rpId,name:'PaneForge'},
+        user:{id:userId,name:'this desk',displayName:'this desk'},
+        pubKeyCredParams:[{type:'public-key',alg:-7},{type:'public-key',alg:-257}],
+        authenticatorSelection:{authenticatorAttachment:'platform',userVerification:'required',residentKey:'preferred'},
+        attestation:'none',timeout:60000
+      }});
+      if(!c)throw Error('Passkey creation was cancelled.');
+      const a=c.response;
+      r=await fetch('/pf/key/enrol',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({
+        challenge:st.challenge,clientDataJSON:e(a.clientDataJSON),attestationObject:e(a.attestationObject),label:name
+      })});
+    }else{
+      const c=await navigator.credentials.get({publicKey:{challenge:u(st.challenge),rpId:st.rpId,allowCredentials:st.ids.map(id=>({type:'public-key',id:u(id)})),userVerification:'required',timeout:60000}});
+      if(!c)throw Error('Passkey approval was cancelled.');
+      const a=c.response;
+      r=await fetch('/pf/key/unlock',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({
+        challenge:st.challenge,id:c.id,clientDataJSON:e(a.clientDataJSON),authenticatorData:e(a.authenticatorData),signature:e(a.signature)
+      })});
+    }
+    if(!r.ok)throw Error('Passkey refused. Please try again.');
+    r=await fetch('/pf/native/v1/auth/approve',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({request,csrf})});
+    if(!r.ok)throw Error('Approval refused. Start this connection again.');
+    const out=await r.json();
+    location.replace('taskdriver://auth/paneforge?code='+encodeURIComponent(out.code)+'&state='+encodeURIComponent(out.state));
+  }catch(x){s.textContent=x.message||'Approval failed';b.disabled=false}
+};
+</script></body></html>`)
   }
 
   /** First-time browser pairing retains only the opaque request id, then resumes locally. */
