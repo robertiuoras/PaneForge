@@ -27,6 +27,9 @@ const readings = [tok.text, ...(tok.alts ?? []).map((a) => a.text)]
 assert.equal(readings[0], '~/Work/Client Files/Jacob P/_deliverables/Jacob - phone', 'longest reading first')
 assert.ok(readings.includes('~/Work/Client Files/Jacob P/_deliverables/Jacob'), 'folder-with-space readings offered')
 
+const windowsDirectory = String.raw`C:\Users\Gamer\wrapped directory name`
+assert.equal(findPathTokens(windowsDirectory)[0]?.text, windowsDirectory, 'Windows rooted directories preserve spaces without a file extension')
+
 // Prose around an unrooted path still never becomes a candidate.
 const prose = findPathTokens('Wrote docs/proposals/thing.pdf and moved on').map((t) => t.text)
 assert.deepEqual(prose, ['docs/proposals/thing.pdf'])
