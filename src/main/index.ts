@@ -34,7 +34,7 @@ import { routePrompt } from '../shared/projectRoute'
 import { sendOrOpen } from '../shared/sendOrOpen'
 import { owedCount } from './queuedPrompts'
 import type { RouteResult } from '../shared/projectRoute'
-import { DEFAULT_PHONE_PORT, getConfig, projectsRoot, setConfig } from './config'
+import { DEFAULT_PHONE_PORT, getConfig, projectsRoot, setConfig, setConfigStrict } from './config'
 import { whatsNew } from './whatsNew'
 import { tour, tourCheck } from './tour'
 import { addSample, dropSample } from './tourSample'
@@ -117,7 +117,8 @@ import {
   resumeIdFor,
   resumableTranscript,
   transcriptPath,
-  codexTranscriptPath
+  codexTranscriptPath,
+  nativeTranscriptPage
 } from './transcripts'
 import { codexContextUsage, receivedContinuation } from './contextUsage'
 import { startContinuation } from './continuation'
@@ -731,7 +732,7 @@ const phone = new PhoneServer({
   devices: () => getConfig().phone?.devices ?? [],
   saveDevices: (list) => {
     const cfg = getConfig()
-    setConfig({ phone: { ...cfg.phone!, devices: list } })
+    setConfigStrict({ phone: { ...cfg.phone!, devices: list } })
   },
   canAsk: () => getConfig().phone?.ask !== false,
   // The passkey gate's two halves, stored the same way and for the same reason: an enrolled
@@ -740,9 +741,32 @@ const phone = new PhoneServer({
   keys: () => getConfig().phone?.keys ?? [],
   saveKeys: (list) => {
     const cfg = getConfig()
-    setConfig({ phone: { ...cfg.phone!, keys: list } })
+    setConfigStrict({ phone: { ...cfg.phone!, keys: list } })
   },
   typeGate: () => getConfig().phone?.typeGate !== false,
+  nativeGrants: () => getConfig().phone?.nativeGrants ?? [],
+  saveNativeGrants: (list) => {
+    const cfg = getConfig()
+    setConfigStrict({ phone: { ...cfg.phone!, nativeGrants: list } })
+  },
+  nativePromptReceipts: () => getConfig().phone?.nativePromptReceipts ?? [],
+  saveNativePromptReceipts: (list) => {
+    const cfg = getConfig()
+    setConfigStrict({ phone: { ...cfg.phone!, nativePromptReceipts: list } })
+  },
+  sessions: () => manager.list(),
+  sessionBuffer: (id) => manager.buffer(id),
+  semanticConversation: (id, agent, cursor) => nativeTranscriptPage(id, agent, cursor),
+  sleepSession: (id) => Boolean(manager.sleep(id, 'manual', { source: 'api' })),
+  setKeepOpen: (id, keepOpen) => {
+    const current = getConfig().pinnedPanes ?? []
+    const next = keepOpen ? [...new Set([...current, id])] : current.filter((pinned) => pinned !== id)
+    if (next.join(',') !== current.join(',')) setConfig({ pinnedPanes: next })
+    return true
+  },
+  isKeepOpen: (id) => (getConfig().pinnedPanes ?? []).includes(id),
+  wakeSession: (id) => manager.wake(id),
+  sendNativePrompt: (id, text) => manager.sendNativePrompt(id, text),
   onIdle: () => manager.returnSizes(),
   onChange: () => send('phone:changed', phoneState())
 })

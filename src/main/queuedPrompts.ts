@@ -5,7 +5,7 @@
 // this exists for was read back off `autoclear-app.log` and `history/<id>.log`, and the one
 // thing missing was any record that a prompt had been accepted at all.
 
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { app } from 'electron'
@@ -84,6 +84,19 @@ export function noteAccepted(id: string, text: string, cwd?: string): string {
   const row: QueuedPrompt = { id, key: newQueueKey(id, Date.now()), text, at: Date.now(), cwd }
   save(noteQueued(load(), row))
   qpLog(`${id} queued prompt accepted (${text.length} chars)`)
+  return row.key
+}
+
+/** Native acknowledgement promises a recoverable queue row before any PTY write. */
+export function noteNativeAccepted(id: string, text: string, cwd?: string): string {
+  const row: QueuedPrompt = { id, key: newQueueKey(id, Date.now()), text, at: Date.now(), cwd }
+  const next = noteQueued(load(), row)
+  const file = queuedPromptsPath()
+  mkdirSync(dirname(file), { recursive: true })
+  writeFileSync(file + '.tmp', JSON.stringify(next, null, 2), { mode: 0o600 })
+  renameSync(file + '.tmp', file)
+  store = next
+  qpLog(`${id} native prompt accepted (${text.length} chars)`)
   return row.key
 }
 
