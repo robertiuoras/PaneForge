@@ -260,6 +260,8 @@ const TESTS = [
   ['promote', 'promote-test.mjs'],
   ['phone', 'phone-test.mjs'],
   ['passkey', 'passkey-test.mjs'],
+  ['nativehostauth', 'native-host-auth-test.mjs'],
+  ['nativetranscript', 'native-transcript-test.mjs'],
   ['panesize', 'pane-size-test.mjs'],
   ['borrowask', 'borrowask-test.mjs'],
   ['linkstate', 'link-state-test.mjs'],
