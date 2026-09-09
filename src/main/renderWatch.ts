@@ -8,6 +8,7 @@ import { execFile } from 'node:child_process'
 import { app, type BrowserWindow } from 'electron'
 import { logProblem } from './crash'
 import {
+  MAX_SPINS,
   PROBE_EVERY_MS,
   WEDGE_WINDOW_MS,
   afterAct,
@@ -15,6 +16,7 @@ import {
   decide,
   fresh,
   noteWedge,
+  noteRecovered,
   type Watch
 } from '../shared/renderWatch'
 
@@ -92,14 +94,20 @@ export function watchRenderer(win: BrowserWindow, recreate: () => void): void {
   })
   wc.on('responsive', () => {
     if (!state.unresponsiveSince) return
-    logProblem(
-      'renderer',
-      `answering again after ${Date.now() - state.unresponsiveSince}ms (wedge ${state.wedges})`
-    )
+    const now = Date.now()
+    const forMs = now - state.unresponsiveSince
     // The wedge itself is NOT forgotten here. A renderer that heals itself and wedges
     // again is the leak this counts (2026-09-05, eight cycles, none of them acted on);
     // only a reload, or an hour of quiet, clears the count.
     state.unresponsiveSince = 0
+    // Counted, not just reported. See SPIN_MS in shared/renderWatch.ts for the two hours
+    // of this exact line that never added up to anything.
+    state = noteRecovered(state, forMs, now)
+    const tally = state.spins ? ` (spin ${state.spins} of ${MAX_SPINS})` : ''
+    logProblem('renderer', `answering again after ${forMs}ms${tally}`)
+    if (state.spins >= MAX_SPINS) {
+      logProblem('renderer', `${state.spins} spins on ${metricsFor(pidOf(win))} - reloading it rather than waiting for the next one`)
+    }
   })
   wc.on('render-process-gone', (_e, details) => {
     logProblem('renderer', `gone: reason=${details.reason} exitCode=${details.exitCode}`)
@@ -170,7 +178,9 @@ export function watchRenderer(win: BrowserWindow, recreate: () => void): void {
       ? 'process gone'
       : state.unresponsiveSince
         ? `unresponsive for ${now - state.unresponsiveSince}ms`
-        : `no answer to the liveness probe for ${now - state.probeSentAt}ms`
+        : state.probeSentAt
+          ? `no answer to the liveness probe for ${now - state.probeSentAt}ms`
+          : `${state.spins} spins it recovered from by itself in ${Math.round((now - state.firstSpinAt) / 1000)}s`
     const pid = pidOf(win)
     logProblem('renderer', `${act} (${why}) - ${metricsFor(pid)}`)
     logCpuTime(pid)

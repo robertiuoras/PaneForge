@@ -4884,3 +4884,28 @@ moving its CDP plumbing onto `ui-lab.mjs`, but the sweep actually running agains
 reliably-composited pixels for the first time rather than a `--minimized` capture whose
 reliability was already in question. Those failures belong to whoever owns `paletteFor` and
 the components in question, not to this workstream.
+
+## Updates wait for the user to restart
+
+Why a staged build can sit for a day, and why that is not the bug it looks like.
+
+2026-09-09 log review: `0.8.207 sat staged ~23h before install despite dozens of successful
+checks`. The evidence is exact - staged ready at 2026-09-08T02:28:31, superseded by 0.8.208
+at 01:43:37 the next morning, installed at the 02:30:34 launch - and the conclusion it
+invites (wire an auto-restart) is the one thing this app may not do.
+
+Only the explicit Restart now action or an ordinary user quit installs a staged build.
+`npm run test:updatehold` asserts it from the source side: no timer, no stale-build
+listener, no failed-install retry may start an update. Robert asked for that on 2026-09-04
+after a run of restarts nobody had asked for.
+
+Two pieces of the reversed rule were still on disk and wired to nothing:
+`READY_HOLD_MS` (take a build once it has sat ready five minutes) and `ignoredHint` (a card
+saying "PaneForge will restart into this one by itself once no pane has been used for 10
+minutes"). Both were deleted on 2026-09-09, and `npm run test:updatestale` now refuses a
+`READY_HOLD_MS` or an `onUpdateIgnored` consumer in `src/main`.
+
+What was a real defect is the log line beside them. `noteReady()` wrote `restarting into
+v0.8.207 as soon as no pane is in use` - a promise nothing keeps, which is exactly why a
+23-hour wait read as handled to whoever skimmed the log. It now says the build installs on
+the next quit or Restart now, and that nothing restarts by itself.

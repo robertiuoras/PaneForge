@@ -45,8 +45,9 @@ const { linkFailedWords, nothingToOpen, pathFailedWords, shortUrl } = await impo
 ok(nothingToOpen('about:blank'), 'about:blank is nothing to open')
 ok(nothingToOpen('  ABOUT:BLANK '), '...whatever case or spacing it arrives in')
 ok(nothingToOpen('about:blank#x') && nothingToOpen('about:blank?a=1'), '...with a fragment or a query on it')
+ok(nothingToOpen('about:'), '...and a bare about: target')
 ok(nothingToOpen(''), 'and an empty target is nothing to open either')
-ok(!nothingToOpen('https://example.com/x'), 'a real link is left alone')
+ok(!nothingToOpen('https://example.com/x') && !nothingToOpen('about:config') && !nothingToOpen('file:///Users/x/a.pdf') && !nothingToOpen('mailto:someone@example.com'), 'real links are left alone')
 ok(!nothingToOpen('about:blankets.example.com'), '...and so is a link that merely starts like one')
 
 const url = 'https://github.com/robertiuoras/PaneForge/releases/tag/v0.8.188'
@@ -153,7 +154,7 @@ const URL='https://github.com/robertiuoras/PaneForge/releases/tag/v0.8.188'
   ok(told.length===1,'a folder that opens says nothing')
   el.__pathAnswer('Failed to open path')
   m.openLocal('/Users/x/Projects','reveal')
-  await sleep(50)
+  await sleep(100)
   ok(told.length===2,'a folder that does not open is not silent any more')
   ok(logged().includes('/Users/x/Projects'),'and the log names the folder')
 

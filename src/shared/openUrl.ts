@@ -28,7 +28,7 @@
  */
 export function nothingToOpen(url: string): boolean {
   const u = url.trim().toLowerCase()
-  return u === '' || u === 'about:blank' || u.startsWith('about:blank?') || u.startsWith('about:blank#')
+  return u === '' || u === 'about:' || u === 'about:blank' || u.startsWith('about:blank?') || u.startsWith('about:blank#')
 }
 
 /** Longest URL worth putting in a toast. Past this the middle is dropped, not the end. */

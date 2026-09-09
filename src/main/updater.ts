@@ -16,8 +16,10 @@ import {
 } from 'node:fs'
 import { get } from 'node:https'
 import { join } from 'node:path'
-import { app, net } from 'electron'
+import { BrowserWindow, app, net } from 'electron'
 import { stagedTooLong, updateIgnored } from '../shared/updateStale'
+import { freshRun, noteAnswer, noteTimeout, probeStuck, stuckWords, type ProbeRun } from '../shared/updateProbe'
+import { applyAtLaunch } from '../shared/launchInstall'
 import { pickRelease } from '../shared/pickRelease'
 import { pickWinTag } from '../shared/winFeed'
 import type { UpdateState } from '../shared/types'
@@ -51,6 +53,8 @@ let auto = false
 let probing = false
 /** When that probe started, so one that never comes back cannot silence the badge for ever. */
 let probingAt = 0
+/** Probe timeouts in a row. See shared/updateProbe.ts for the 66 quiet minutes it is for. */
+let probeRun: ProbeRun = freshRun()
 
 /**
  * Is a probe genuinely in flight?
@@ -335,6 +339,8 @@ function writeHealth(h: Health): void {
 
 /** The feed answered. Whatever it said, the update path is reaching GitHub. */
 function noteGood(): void {
+  // The feed answered, so whatever the probe was struggling with is over.
+  probeRun = noteAnswer()
   const h = readHealth()
   // Once a minute at most: the poll is every 10 minutes but a burst of events is not.
   if (Date.now() - h.lastGood < 60_000) return
@@ -383,12 +389,56 @@ function noteReady(): void {
   const ignored = updateIgnored(superseded)
   state = { ...state, ignored }
   if (!ignored) return
-  log('stale', `${superseded} staged build(s) thrown away unused - restarting into v${state.version ?? ''} as soon as no pane is in use`)
+  // NOT "restarting as soon as no pane is in use", which is what this line used to say:
+  // nothing listens. The automatic restart was removed on 2026-09-04 and `npm run
+  // test:updatehold` refuses to let it back (see "Updates wait for the user to restart"
+  // in CLAUDE.md), so a staged build waits for Restart now or an ordinary quit however
+  // many newer builds replace it. A log line that promises a restart nobody will make is
+  // how 0.8.207 read as handled while it sat staged for 23 hours.
+  log(
+    'stale',
+    `${superseded} staged build(s) thrown away unused - v${state.version ?? ''} installs on the next quit or Restart now, nothing restarts by itself`
+  )
   try {
     ignoredListener?.()
   } catch {
     /* a listener must never cost the build that is ready */
   }
+}
+
+/**
+ * Move a staged bundle in now, while nothing is open, and come straight back.
+ *
+ * Returns true when this process is on its way out, so the caller stops setting up an
+ * updater for a version that is about to be replaced. Every refusal is a sentence in
+ * updater.log and leaves the app exactly as it was - the restart card still appears and
+ * the quit path still installs the build if the user closes the app instead.
+ */
+function installAtLaunch(version: string): boolean {
+  const verdict = applyAtLaunch({
+    staged: version,
+    newer: newer(version, app.getVersion()),
+    // A count that cannot be read is not a count of zero: the swap needs PROOF that
+    // nothing is drawn, and a test drive with no BrowserWindow must refuse, not throw.
+    windows: typeof BrowserWindow?.getAllWindows === 'function' ? BrowserWindow.getAllWindows().length : NaN,
+    tries: priorAttempt?.version === version ? priorAttempt.tries : 0,
+    canSwap: canSwap()
+  })
+  if (verdict !== 'go') {
+    log('launch install', `not applying the staged v${version}: ${verdict}`)
+    return false
+  }
+  // Counted BEFORE the swap, exactly as the Restart-now path does it: a swap that does not
+  // take leaves this same version staged, and the count is what stops the next launch
+  // trying it for ever.
+  recordInstallAttempt(version)
+  if (!swapAndRelaunch(true)) {
+    log('launch install', `the swap into v${version} could not be started - leaving it staged`)
+    return false
+  }
+  log('launch install', `applying the staged v${version} now, before anything is open`)
+  app.quit()
+  return true
 }
 
 /** At launch, say how long it has been since the feed last answered this machine. */
@@ -446,8 +496,12 @@ function recordInstallAttempt(version: string): void {
 }
 
 /** At launch, clear the diagnostic marker without retrying an install on the user's behalf. */
+/** The attempt marker this launch found, kept for the launch install below. */
+let priorAttempt: Attempt | null = null
+
 function checkLastAttempt(): void {
   const a = readAttempt()
+  priorAttempt = a
   if (!a) return
   try {
     unlinkSync(ATTEMPT())
@@ -1091,6 +1145,10 @@ export function initUpdater(onChange: Emit, enabled: boolean): void {
     if (process.platform === 'darwin') {
       const found = adoptStaged()
       if (found && newer(found, app.getVersion())) {
+        // ...and this is the moment to install it, not the moment to offer it again. See
+        // shared/launchInstall.ts for the day 0.8.207 was staged, ignored by the restart
+        // that could have applied it, and thrown away superseded 24 hours later.
+        if (installAtLaunch(found)) return
         set({
           phase: 'ready',
           version: found,
@@ -1204,19 +1262,13 @@ export function setAutoCheck(enabled: boolean): void {
   arm(8_000)
 }
 
-/**
- * Probes that failed in a row, and the backoff they buy.
- *
- * A failed probe used to re-arm at the ordinary cadence, so 66 minutes went by with no
- * answer from the feed over a network stall that cleared in seconds (2026-09-08, 10:17 to
- * 11:21). Cleared the moment the feed answers.
- */
+/** Probe failures re-arm sooner; probeRun separately records timeout health. */
 let probeFails = 0
 
 /** The "it has been waiting this long" line is written once per staged build, not per poll. */
 let stagedNagged = false
 
-/** How long until the next poll, given how the last one went. Never slower than usual. */
+/** A failed probe gets another chance sooner, without ever delaying the normal poll. */
 function nextPollDelay(): number {
   const usual = pollDelay()
   if (!probeFails) return usual
@@ -1292,8 +1344,9 @@ async function supersede(): Promise<void> {
     const result = (await failFast(u.checkForUpdates(), CHECK_BUDGET_MS, 'the update probe')) as {
       updateInfo?: { version?: string }
     } | null
-    // The feed answered. Whatever it said, the backoff has done its job.
+    // A feed answer clears both the fast-retry backoff and the timeout health run.
     probeFails = 0
+    probeRun = noteAnswer()
     const found = result?.updateInfo?.version
     if (!found || !newer(found, pending)) return
     log('supersede', `${pending} -> ${found}`)
@@ -1320,13 +1373,22 @@ async function supersede(): Promise<void> {
         return
       }
     }
-    // A probe that did not answer is retried sooner than the next full cycle - see
-    // `shared/updateRetry.ts` for the 66 minutes that bought this - and says so once when
-    // it stops being one bad request.
     probeFails += 1
     log('supersede failed', `${message} (probe failure ${probeFails}, retrying in ${Math.round(nextPollDelay() / 1000)}s)`)
     if (probeStalled(probeFails)) {
       log('probe stalled', `${probeFails} update probes in a row have not answered - this machine is not reaching the feed`)
+    }
+    // ...and if that was a timeout, whether it is the second one in a row. One is weather;
+    // a run of them is a check loop that is not going to notice a release, and until now
+    // that read in the log exactly like one bad minute repeated.
+    if (/did not answer within/.test(message)) {
+      const now = Date.now()
+      probeRun = noteTimeout(probeRun, now)
+      if (probeStuck(probeRun)) {
+        const words = stuckWords(probeRun, now)
+        log('probe STUCK', words)
+        noteWedge(words)
+      }
     }
   } finally {
     probing = false

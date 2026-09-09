@@ -58,6 +58,30 @@ export const STUCK_WEDGES = 2
  */
 export const WEDGE_WINDOW_MS = 60 * 60 * 1000
 
+/**
+ * A wedge that ends on its own, and the day counting them started mattering.
+ *
+ * 2026-09-05, this Mac: the same renderer (pid 5075) went unresponsive eight times between
+ * 01:03 and 03:11 and came back by itself every time - after 19s, then 30s, then 55s -
+ * while its working set climbed 205MB -> 286MB and its cumulative CPU went 1:32 -> 23:13.
+ * Not one of those eight was ever reloaded, because each episode ended a beat before the
+ * next tick asked, and `responsive` wiped the clock the reload was measured against. Three
+ * other renderers that day wedged HARD and were killed and reloaded inside 20s.
+ *
+ * So the reading a self-resolving spin leaves behind is kept. A renderer that keeps
+ * recovering is not a renderer that is well: it is one whose main thread is being blocked
+ * for tens of seconds at a time by something that is still there, and it gets the same
+ * treatment the hard wedges get rather than an unbounded loop.
+ */
+/** A recovery slower than this is a spin worth counting, not an ordinary busy moment. */
+export const SPIN_MS = 5_000
+
+/** How many self-resolving spins on one renderer before it is reloaded like a hard wedge. */
+export const MAX_SPINS = 3
+
+/** ...and how long that tally stands. Spins hours apart are not one fault. */
+export const SPIN_WINDOW_MS = 30 * 60_000
+
 export interface Watch {
   /** When Chromium last said the renderer stopped answering input. 0 = it is answering. */
   unresponsiveSince: number
@@ -71,6 +95,23 @@ export interface Watch {
   wedges: number
   /** When the most recent wedge started, so a stale count can be dropped. */
   lastWedgeAt: number
+  /** Spins this renderer has recovered from by itself inside `SPIN_WINDOW_MS`. */
+  spins: number
+  /** When the oldest spin in that tally happened. 0 = the tally is empty. */
+  firstSpinAt: number
+}
+
+/**
+ * Record a wedge the renderer came out of on its own. `forMs` is how long it was gone.
+ *
+ * A quick recovery is not a spin - a renderer is briefly unresponsive whenever it is doing
+ * real work - so anything under `SPIN_MS` leaves the tally alone. A spin outside the window
+ * starts the tally again rather than adding to a stale one.
+ */
+export function noteRecovered(w: Watch, forMs: number, now: number): Watch {
+  if (forMs < SPIN_MS) return w
+  const stale = !w.firstSpinAt || now - w.firstSpinAt > SPIN_WINDOW_MS
+  return stale ? { ...w, spins: 1, firstSpinAt: now } : { ...w, spins: w.spins + 1 }
 }
 
 export type Act = 'wait' | 'reload' | 'recreate' | 'give-up'
@@ -86,6 +127,10 @@ export function decide(w: Watch, now: number): Act {
   // A renderer wedging again after healing itself is not waited out: the grace period is
   // there to let a busy frame finish, and this one has already proved it does not.
   if (w.unresponsiveSince && w.wedges >= STUCK_WEDGES) return 'reload'
+  // A renderer that keeps wedging and un-wedging gets the same reload the hard wedges get.
+  // Asked BEFORE the two clocks below, because by construction neither of them is running:
+  // the spin has already ended, which is exactly how this one escaped for two hours.
+  if (w.spins >= MAX_SPINS) return 'reload'
   if (w.unresponsiveSince && now - w.unresponsiveSince >= GRACE_MS) return 'reload'
   if (w.probeSentAt && now - w.probeSentAt >= PROBE_DEAD_MS) return 'reload'
   return 'wait'
@@ -100,7 +145,9 @@ export function fresh(): Watch {
     reloads: 0,
     lastReloadAt: 0,
     wedges: 0,
-    lastWedgeAt: 0
+    lastWedgeAt: 0,
+    spins: 0,
+    firstSpinAt: 0
   }
 }
 
@@ -156,6 +203,10 @@ export function afterAct(w: Watch, now: number): Watch {
     reloads: w.reloads + 1,
     lastReloadAt: now,
     wedges: 0,
-    lastWedgeAt: 0
+    lastWedgeAt: 0,
+    // The tally is about THIS page. A reload replaces it, so the count starts again -
+    // otherwise the second reload would fire the instant the cooldown lifted.
+    spins: 0,
+    firstSpinAt: 0
   }
 }

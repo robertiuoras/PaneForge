@@ -1,4 +1,6 @@
 import { build } from 'esbuild'
+import { createHmac } from 'node:crypto'
+import { Script } from 'node:vm'
 import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -87,7 +89,7 @@ try {
     invoke: async () => { throw Error('general IPC must not be called') },
     send: () => { throw Error('general IPC must not be called') },
     channels: { invoke: [], send: [], on: [] },
-    devices: () => [{id:'browser-http',ua:'fixture'}],
+    devices: () => [{id:'browser-http',ua:'fixture',token:'a'.repeat(64)}],
     nativeGrants: () => httpGrants, saveNativeGrants: rows => { httpGrants = rows },
     nativePromptReceipts: () => httpReceipts,
     saveNativePromptReceipts: rows => { if (failReceiptSave) throw Error('disk full'); httpReceipts = rows },
@@ -107,6 +109,19 @@ try {
     ok('HTTP control endpoint identifies an invalid bearer as unauthorized', (await request('/sessions/session-http/prompt','POST',{clientMessageId:'bad-auth-1',text:'Denied'},'invalid')).status === 401)
     const startHttp = await (await request('/auth/start','POST',{codeChallenge:challenge,state:'h'.repeat(64),deviceId:'i'.repeat(64),deviceName:'Fixture'})).json()
     const requestId = new URL(startHttp.authorizationUrl).searchParams.get('request')
+    const authorize = (cookie) => fetch(origin + '/pf/native/v1/auth/authorize?request=' + requestId, {
+      headers: {'x-forwarded-proto':'https', ...(cookie ? {cookie:'pf='+cookie} : {})}
+    }).then(response => response.text())
+    const unpairedPage = await authorize()
+    const legacyCookie = createHmac('sha256','fixture-secret').update('fixture-code').digest('hex')
+    const legacyPage = await authorize(legacyCookie)
+    const pairedPage = await authorize('a'.repeat(64))
+    ok('HTTP legacy browser must obtain a revocable identity before native approval', legacyPage.includes('Requesting approval') && !legacyPage.includes('id="ok"'))
+    ok('HTTP paired browser receives first-passkey enrollment and assertion paths', pairedPage.includes('navigator.credentials.create') && pairedPage.includes('navigator.credentials.get'))
+    for (const [name, page] of [['unpaired',unpairedPage],['legacy',legacyPage],['paired',pairedPage]]) {
+      const script = /<script nonce="[^"]+">([\s\S]*?)<\/script>/.exec(page)?.[1]
+      ok('HTTP ' + name + ' browser page contains valid JavaScript', !!script && !throws(()=>new Script(script)))
+    }
     // Seed the already-tested approval ceremony; exercise actual HTTP token and control routes.
     const approvedHttp = server.native.approve(requestId,server.native.csrfFor(requestId),'browser-http',['read','control'])
     const tokenHttp = await (await request('/auth/token','POST',{code:approvedHttp.code,codeVerifier:verifier,deviceId:'i'.repeat(64)})).json()

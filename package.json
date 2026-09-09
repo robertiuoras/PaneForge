@@ -298,7 +298,9 @@
     "test:codexmodels": "node scripts/codex-models-test.mjs",
     "test:panefit": "node scripts/pane-fit-test.mjs",
     "test:railtrack": "node scripts/rail-track-test.mjs",
-    "test:issues": "node scripts/issues-dialog-test.mjs"
+    "test:issues": "node scripts/issues-dialog-test.mjs",
+    "test:updateprobe": "node scripts/update-probe-test.mjs",
+    "test:launchinstall": "node scripts/launch-install-test.mjs"
   },
   "dependencies": {
     "@lydell/node-pty": "1.2.0-beta.12",

@@ -19,7 +19,7 @@ const api = window.api
  */
 export default function UpdateToast(): JSX.Element | null {
   const [state, setState] = useState<UpdateState | null>(null)
-  const [dismissed, setDismissed] = useState<string>('')
+  const [dismissed, setDismissed] = useState<{ version: string; waited: boolean } | null>(null)
   // The click has to say something immediately. Main hides the window as its first act
   // now, but the frame between the click and that still belonged to a card that looked
   // like it had ignored the press, which is what "it lags and then closes" was.
@@ -58,11 +58,11 @@ export default function UpdateToast(): JSX.Element | null {
   if (!state || (!ready && !manual) || !state.version) return null
   // A card that was put away comes back once the build has been waiting for hours: the
   // person still chooses, they just get asked again after a day rather than never.
-  if (dismissed === state.version && !waited) return null
+  if (dismissed?.version === state.version && (!waited || dismissed.waited)) return null
 
   return (
     <div className="update-toast">
-      <CardX onDismiss={() => setDismissed(state.version as string)} />
+      <CardX onDismiss={() => setDismissed({ version: state.version as string, waited })} />
       <div className="ut-text">
         <strong>PaneForge {state.version} is {ready ? 'ready' : 'out'}</strong>
         <span className="hint">
@@ -77,7 +77,7 @@ export default function UpdateToast(): JSX.Element | null {
         <button
           className="ghost small"
           disabled={restarting}
-          onClick={() => setDismissed(state.version as string)}
+          onClick={() => setDismissed({ version: state.version as string, waited })}
         >
           Later
         </button>
