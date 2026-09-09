@@ -182,6 +182,7 @@ const TESTS = [
   // Four short child processes, ~3s: the incident it covers left this desk unable to
   // update for 28 hours while every surface read as healthy.
   ['blindlist', 'updater-blindlist-test.mjs'],
+  ['updateprobe', 'update-probe-test.mjs'],
   ['devicewatch', 'device-watch-test.mjs'],
   ['projects', 'projects-test.mjs'],
   ['cardfit', 'card-fit-test.mjs'],

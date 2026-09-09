@@ -18,6 +18,7 @@ import { get } from 'node:https'
 import { join } from 'node:path'
 import { app, net } from 'electron'
 import { updateIgnored } from '../shared/updateStale'
+import { freshRun, noteAnswer, noteTimeout, probeStuck, stuckWords, type ProbeRun } from '../shared/updateProbe'
 import { pickRelease } from '../shared/pickRelease'
 import { pickWinTag } from '../shared/winFeed'
 import type { UpdateState } from '../shared/types'
@@ -49,6 +50,8 @@ let auto = false
 let probing = false
 /** When that probe started, so one that never comes back cannot silence the badge for ever. */
 let probingAt = 0
+/** Probe timeouts in a row. See shared/updateProbe.ts for the 66 quiet minutes it is for. */
+let probeRun: ProbeRun = freshRun()
 
 /**
  * Is a probe genuinely in flight?
@@ -325,6 +328,8 @@ function writeHealth(h: Health): void {
 
 /** The feed answered. Whatever it said, the update path is reaching GitHub. */
 function noteGood(): void {
+  // The feed answered, so whatever the probe was struggling with is over.
+  probeRun = noteAnswer()
   const h = readHealth()
   // Once a minute at most: the poll is every 10 minutes but a burst of events is not.
   if (Date.now() - h.lastGood < 60_000) return
@@ -1252,6 +1257,8 @@ async function supersede(): Promise<void> {
     const result = (await failFast(u.checkForUpdates(), CHECK_BUDGET_MS, 'the update probe')) as {
       updateInfo?: { version?: string }
     } | null
+    // It answered. Anything it said ends a run of timeouts.
+    probeRun = noteAnswer()
     const found = result?.updateInfo?.version
     if (!found || !newer(found, pending)) return
     log('supersede', `${pending} -> ${found}`)
@@ -1279,6 +1286,18 @@ async function supersede(): Promise<void> {
       }
     }
     log('supersede failed', message)
+    // ...and if that was a timeout, whether it is the second one in a row. One is weather;
+    // a run of them is a check loop that is not going to notice a release, and until now
+    // that read in the log exactly like one bad minute repeated.
+    if (/did not answer within/.test(message)) {
+      const now = Date.now()
+      probeRun = noteTimeout(probeRun, now)
+      if (probeStuck(probeRun)) {
+        const words = stuckWords(probeRun, now)
+        log('probe STUCK', words)
+        noteWedge(words)
+      }
+    }
   } finally {
     probing = false
     u.autoDownload = restore
