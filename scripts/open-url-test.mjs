@@ -33,7 +33,19 @@ buildSync({
   format: 'esm',
   platform: 'node'
 })
-const { linkFailedWords, pathFailedWords, shortUrl } = await import(pathToFileURL(wordsFile).href)
+const { linkFailedWords, openable, pathFailedWords, shortUrl } = await import(pathToFileURL(wordsFile).href)
+
+// --- a press with no page behind it -------------------------------------------
+//
+// `window.open()` and a `target="_blank"` with nothing behind it both arrive at
+// setWindowOpenHandler as about:blank. Six of them were filed as failures between
+// 2026-09-05 01:56 and 2026-09-06 15:31, three inside eight seconds.
+for (const blank of ['about:blank', 'ABOUT:BLANK', '  about:blank  ', 'about:blank#x', 'about:blank?a=1', 'about:', '']) {
+  ok(!openable(blank), JSON.stringify(blank) + ' is nothing to open')
+}
+for (const real of ['https://example.com/', 'about:config', 'file:///Users/x/a.pdf', 'mailto:someone@example.com']) {
+  ok(openable(real), real + ' is a real link and still goes')
+}
 
 const url = 'https://github.com/robertiuoras/PaneForge/releases/tag/v0.8.188'
 const said = linkFailedWords(url)
@@ -111,7 +123,16 @@ const URL='https://github.com/robertiuoras/PaneForge/releases/tag/v0.8.188'
   await sleep(50)
   ok(told.length===0,'a link that opens says nothing')
 
+  // A blank target does not reach the shell at all, so a failing shell cannot make it
+  // speak: no toast, no clipboard, no log line.
   el.__extFail('Failed to open URL')
+  const beforeLog=logged().length
+  m.openLink('about:blank','a link in a pane')
+  await sleep(50)
+  ok(told.length===0,'about:blank tells nobody - there was never a page to open')
+  ok(el.__copied.length===0,'...and puts nothing on the clipboard')
+  ok(logged().length===beforeLog,'...and files no failure')
+
   m.openLink(URL,'a link in a pane')
   await sleep(50)
   ok(told.length===1,'a link that will not open reaches the screen')
