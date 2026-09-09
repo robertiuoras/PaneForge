@@ -11,6 +11,7 @@
  *   node scripts/pf-ctl.mjs list
  *   node scripts/pf-ctl.mjs open <cwd> [--title T] [--prompt P | --task BACKLOG_ID] [--model M] [--agent A]
  *                                       [--close-when-done] [--report-to <pane>]
+ *   pf-ctl close-when-done [<title-or-id>] [--report-to <pane>]
  *                                       [--resume <chat-id> | --continue] [--here | --on <device>]
  *   node scripts/pf-ctl.mjs open-many <plan.json>
  *   node scripts/pf-ctl.mjs devices
@@ -610,6 +611,18 @@ if (cmd === 'list') {
   const still = (await sessions()).some((x) => x.id === s.id)
   if (still) fail(1, `sessions:kill answered but ${s.id} is still listed`)
   console.log(`closed ${s.id} (${s.title})`)
+} else if (cmd === 'close-when-done') {
+  // `pf open --close-when-done` only covers a pane automation opened. This arms the same
+  // rule on a pane already on the desk - with no argument, the pane it is typed in, so a
+  // chat that has finished its own work can say so about itself.
+  const named = rest[0] && !rest[0].startsWith('--') ? rest[0] : undefined
+  const ref = named ?? process.env.PF_PANE
+  if (!ref) fail(1, 'close-when-done needs a pane: pf-ctl close-when-done [title-or-id]')
+  const s = resolve(await sessions(), ref)
+  if (!s) fail(1, `no pane named "${ref}"`)
+  const armed = await call('sessions:closeWhenDone', [s.id, flag(rest, '--report-to')])
+  if (!armed) fail(1, `the app would not arm ${s.id}`)
+  console.log(`${s.id} (${s.title}) will close itself once it is done`)
 } else if (cmd === 'rename') {
   // A pane wearing a name a person typed is never renamed by the app - that is the point
   // of `mayRename` - so a name typed WRONG (a client called `PiaTeam` when the roster says

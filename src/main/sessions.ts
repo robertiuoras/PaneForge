@@ -1963,6 +1963,29 @@ export class SessionManager extends EventEmitter {
     return true
   }
 
+  /**
+   * Arm "close yourself once you are done" on a pane that is ALREADY open.
+   *
+   * `pf open --close-when-done` is a flag on the OPEN, which only covers a pane some
+   * automation created. The other half, asked for 2026-09-09: a chat opened by hand that
+   * has finished its work and would otherwise sit on the desk until the idle clock takes
+   * it. Same reading, same refusals (`doneEnough`) - only the moment it is asked for is
+   * different, so nothing here decides when.
+   *
+   * `false` means no such pane, which is the caller's to report. A pane already armed
+   * answers `true`: asking twice is not an error.
+   */
+  armCloseWhenDone(id: string, reportTo?: string): boolean {
+    const live = this.sessions.get(id)
+    if (!live) return false
+    live.req.closeWhenDone = true
+    // Never itself: a pane cannot be told by the pane it just closed.
+    if (reportTo && reportTo !== id) live.req.reportTo = reportTo
+    const told = live.req.reportTo
+    console.info(`close-when-done: ${id} armed while open${told ? ` - will tell ${told}` : ''}`)
+    return true
+  }
+
   private sweepCloseWhenDone(live: Live, now: number, quiet: number): void {
     const { meta } = live
     if (!doneEnough({ ...meta, busyUntil: live.busyUntil }, quiet, now)) return
