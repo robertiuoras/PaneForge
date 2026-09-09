@@ -25,8 +25,17 @@ buildSync({
   format: 'esm',
   platform: 'node'
 })
-const { STALE_SUPERSEDES, READY_HOLD_MS, ignoredHint, updateIgnored } =
-  await import(pathToFileURL(outfile).href)
+const {
+  STALE_SUPERSEDES,
+  READY_HOLD_MS,
+  PROBE_RETRY_MS,
+  STALL_FAILS,
+  ignoredHint,
+  updateIgnored,
+  probeBackoffMs,
+  stalledHint,
+  updateStalled
+} = await import(pathToFileURL(outfile).href)
 
 const fail = []
 const ok = (c, n) => {
@@ -198,6 +207,25 @@ const health=()=>JSON.parse(fs.readFileSync(path.join(el.__dir,'update-health.js
 })()
 `
 )
+
+// --- a check that stopped answering ------------------------------------------
+//
+// 10:17:18 and 11:11:17 on 2026-09-08, both `the update probe did not answer within 120s`,
+// each followed by an ERR_TIMED_OUT and then a full ten-minute wait. Sixty-six minutes
+// with no successful check, and a badge that went on saying "up to date" throughout.
+const IDLE = 10 * 60_000
+ok(probeBackoffMs(0, IDLE) === IDLE, 'no failures: the ordinary poll, untouched')
+ok(probeBackoffMs(1, IDLE) === PROBE_RETRY_MS, `one failure looks again in ${PROBE_RETRY_MS / 1000}s, not ten minutes`)
+ok(probeBackoffMs(2, IDLE) === PROBE_RETRY_MS * 2, 'and backs off rather than asking at the same rate for ever')
+ok(probeBackoffMs(9, IDLE) === IDLE, 'capped at the ordinary poll - a machine offline all afternoon is not asked every 30s')
+ok(probeBackoffMs(3, 60_000) === 60_000, 'and it can only ever look SOONER: a chase stays a chase')
+ok(!updateStalled(STALL_FAILS - 1), 'one failed check is weather, not a fault')
+ok(updateStalled(STALL_FAILS), `${STALL_FAILS} in a row is worth saying out loud`)
+const stalledWords = stalledHint()
+for (const word of ['probe', 'feed', 'supersede', 'ERR_', 'HTTP']) {
+  ok(!stalledWords.includes(word), `the stalled words do not say "${word}" to somebody who has never coded`)
+}
+ok(/still trying/i.test(stalledWords), 'and they say it has not given up')
 
 try {
   const out = execFileSync(process.execPath, [join(work, 'drive.cjs')], { cwd: work, encoding: 'utf8' })

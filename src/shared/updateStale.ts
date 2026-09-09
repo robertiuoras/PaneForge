@@ -65,3 +65,52 @@ export function ignoredHint(current: string): string {
  * build rather than restarting into the one it fixes.
  */
 export const READY_HOLD_MS = 5 * 60_000
+
+// --- a check that stopped answering -----------------------------------------------
+//
+// 2026-09-09 log review, this Mac: `supersede failed the update probe did not answer
+// within 120s (online)` at 10:17:18, `net::ERR_TIMED_OUT` at 10:35:38, the same pair
+// again at 11:11:17 and 11:12:10, and no successful check until 11:21 - sixty-six minutes
+// in which the app had no idea whether a newer build existed. Each failure was reported
+// once and then waited out the full ten-minute poll, so a network stall that cleared in
+// thirty seconds still cost ten minutes, twice. And nothing anywhere said the update path
+// had stopped answering: every surface reads "up to date" when the last check failed.
+
+/** How soon to look again after the first failed check. Doubles per consecutive failure. */
+export const PROBE_RETRY_MS = 30_000
+
+/**
+ * Consecutive failures before the app stops calling it weather.
+ *
+ * Two, not one: one timed-out check is a laptop waking on a train, and reacting to that
+ * would put a warning on screen most mornings. Two in a row is the shape above.
+ */
+export const STALL_FAILS = 2
+
+/**
+ * How long until the next look, given how many checks in a row have failed.
+ *
+ * Backoff rather than a fixed short retry: a machine genuinely offline for an afternoon
+ * must not ask every thirty seconds for four hours. Capped at the ordinary poll, so this
+ * can only ever make the app look SOONER than it otherwise would - never later.
+ */
+export function probeBackoffMs(fails: number, idleMs: number): number {
+  if (fails <= 0) return idleMs
+  return Math.min(PROBE_RETRY_MS * 2 ** (fails - 1), idleMs)
+}
+
+/** Has the update path stopped answering? */
+export function updateStalled(fails: number): boolean {
+  return fails >= STALL_FAILS
+}
+
+/**
+ * What the person is told while it is stalled.
+ *
+ * Plain words: "probe", "feed" and "supersede" are this file's vocabulary and nobody
+ * else's. The only thing worth saying is that the app cannot currently tell whether it is
+ * up to date, and that it has not given up.
+ */
+export function stalledHint(): string {
+  return 'PaneForge cannot reach the place it gets its updates from, so it does not know whether a newer version exists. It is still trying.'
+}

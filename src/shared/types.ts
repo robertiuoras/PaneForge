@@ -1002,6 +1002,11 @@ export interface UpdateState {
    * See shared/updateStale.ts.
    */
   ignored?: boolean
+  /**
+   * Consecutive update checks have failed, so nothing on screen can honestly say whether
+   * this build is the newest one. See shared/updateStale.ts.
+   */
+  stalled?: boolean
 }
 
 /**

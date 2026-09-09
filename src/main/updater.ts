@@ -17,7 +17,7 @@ import {
 import { get } from 'node:https'
 import { join } from 'node:path'
 import { app, net } from 'electron'
-import { updateIgnored } from '../shared/updateStale'
+import { probeBackoffMs, stalledHint, updateIgnored, updateStalled } from '../shared/updateStale'
 import { pickRelease } from '../shared/pickRelease'
 import { pickWinTag } from '../shared/winFeed'
 import type { UpdateState } from '../shared/types'
@@ -324,8 +324,36 @@ function writeHealth(h: Health): void {
   }
 }
 
+/**
+ * Consecutive checks that never answered.
+ *
+ * In memory rather than in the health file on purpose: this decides how soon to look
+ * again, and a machine that has just started has no reason to back off because the one
+ * before it was on a bad train.
+ */
+let probeFails = 0
+
+/** A check failed. Look again sooner than the ordinary poll, and say so once it is a run. */
+function noteProbeFail(what: string): void {
+  probeFails += 1
+  const wait = probeBackoffMs(probeFails, IDLE_EVERY)
+  log('probe failed', `${what} - ${probeFails} in a row, looking again in ${Math.round(wait / 1000)}s`)
+  if (!updateStalled(probeFails) || state.stalled) return
+  log('stalled', `the update path has not answered ${probeFails} times running`)
+  set({ ...state, stalled: true, error: state.error ?? stalledHint() })
+}
+
+/** ...and the moment one answers, none of the above is true any more. */
+function noteProbeOk(): void {
+  if (!probeFails && !state.stalled) return
+  if (probeFails) log('probe ok', `the update path is answering again after ${probeFails} failed look(s)`)
+  probeFails = 0
+  if (state.stalled) set({ ...state, stalled: false, error: state.error === stalledHint() ? undefined : state.error })
+}
+
 /** The feed answered. Whatever it said, the update path is reaching GitHub. */
 function noteGood(): void {
+  noteProbeOk()
   const h = readHealth()
   // Once a minute at most: the poll is every 10 minutes but a burst of events is not.
   if (Date.now() - h.lastGood < 60_000) return
@@ -1031,7 +1059,9 @@ function chasing(): boolean {
 
 /** How long until the next look. Exported so `npm run test:updater` can assert it. */
 export function pollDelay(): number {
-  return chasing() ? CHASE_EVERY : IDLE_EVERY
+  // A run of failed checks looks again sooner, never later: `probeBackoffMs` is capped at
+  // the delay it was handed, so a chase stays a chase.
+  return probeBackoffMs(probeFails, chasing() ? CHASE_EVERY : IDLE_EVERY)
 }
 
 export function getUpdateState(): UpdateState {
@@ -1280,6 +1310,7 @@ async function supersede(): Promise<void> {
       }
     }
     log('supersede failed', message)
+    noteProbeFail(message)
   } finally {
     probing = false
     u.autoDownload = restore
@@ -1320,6 +1351,9 @@ export async function checkForUpdates(): Promise<UpdateState> {
       unwedge()
       return state
     }
+    // A check that ended in an error is a check that did not answer: same reading as a
+    // timed-out probe, same shorter look next time. See shared/updateStale.ts.
+    noteProbeFail(message)
     set({ phase: 'error', error: message })
   }
   return state
