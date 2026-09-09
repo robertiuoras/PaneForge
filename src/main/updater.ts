@@ -17,7 +17,14 @@ import {
 import { get } from 'node:https'
 import { join } from 'node:path'
 import { app, net } from 'electron'
-import { probeBackoffMs, stalledHint, updateIgnored, updateStalled } from '../shared/updateStale'
+import { logProblem } from './crash'
+import {
+  healthAlarm,
+  probeBackoffMs,
+  stalledHint,
+  updateIgnored,
+  updateStalled
+} from '../shared/updateStale'
 import { pickRelease } from '../shared/pickRelease'
 import { pickWinTag } from '../shared/winFeed'
 import type { UpdateState } from '../shared/types'
@@ -416,9 +423,17 @@ function logHealth(): void {
   if (!h.lastGood) return log('health', `no good update check on record yet (${h.wedges} wedge(s) recovered)`)
   const hours = Math.round((Date.now() - h.lastGood) / 3_600_000)
   const line = `last good update check ${hours}h ago, ${h.wedges} wedge(s) recovered${h.lastWedge ? `, last ${h.lastWedge}` : ''}`
-  // Three days without the feed answering is not a slow week - something is wrong that no
-  // single failure reported, and this is the line to search for when it is noticed later.
-  log(hours >= 72 ? 'health STALE' : 'health', line)
+  // Three days without the feed answering is not a slow week, and a hundred recovered
+  // wedges is not a long uptime - both are something wrong that no single failure
+  // reported, and this tag is what makes either searchable when it is noticed later.
+  const alarm = healthAlarm(hours, h.wedges)
+  log(alarm ? `health ${alarm}` : 'health', line)
+  // A count that has run away belongs in the file people actually open when something is
+  // wrong, not only in updater.log - see `WEDGE_ALARM`. Written at launch, so it is one
+  // line per run however long the machine has been up.
+  if (alarm.includes('WEDGED')) {
+    logProblem('update health', `the window has been recovered ${h.wedges} times on this machine - ${line}`)
+  }
 }
 
 // --- did the last install actually happen? ---------------------------------

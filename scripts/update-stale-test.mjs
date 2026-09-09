@@ -34,7 +34,10 @@ const {
   updateIgnored,
   probeBackoffMs,
   stalledHint,
-  updateStalled
+  updateStalled,
+  healthAlarm,
+  STALE_HOURS,
+  WEDGE_ALARM
 } = await import(pathToFileURL(outfile).href)
 
 const fail = []
@@ -226,6 +229,18 @@ for (const word of ['probe', 'feed', 'supersede', 'ERR_', 'HTTP']) {
   ok(!stalledWords.includes(word), `the stalled words do not say "${word}" to somebody who has never coded`)
 }
 ok(/still trying/i.test(stalledWords), 'and they say it has not given up')
+
+// --- 113 recovered wedges, tagged the same as a healthy machine ---------------
+//
+// `health last good update check 24h ago, 113 wedge(s) recovered` at launch on
+// 2026-09-09. Only the staleness had a word of its own, so the number that had run away
+// was the one thing in the line nothing was watching.
+ok(healthAlarm(1, 0) === '', 'a healthy machine says nothing')
+ok(healthAlarm(1, WEDGE_ALARM - 1) === '', 'and a handful of recovered wedges is a busy fortnight')
+ok(healthAlarm(1, WEDGE_ALARM) === 'WEDGED', `${WEDGE_ALARM} recovered wedges is a fault, not a tally`)
+ok(healthAlarm(1, 113) === 'WEDGED', 'and the reading that started this is caught')
+ok(healthAlarm(STALE_HOURS, 0) === 'STALE', 'a feed that has not answered in three days still says so on its own')
+ok(healthAlarm(STALE_HOURS, 113) === 'STALE WEDGED', 'and a machine with both says both')
 
 try {
   const out = execFileSync(process.execPath, [join(work, 'drive.cjs')], { cwd: work, encoding: 'utf8' })

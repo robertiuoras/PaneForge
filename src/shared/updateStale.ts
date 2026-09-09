@@ -114,3 +114,38 @@ export function updateStalled(fails: number): boolean {
 export function stalledHint(): string {
   return 'PaneForge cannot reach the place it gets its updates from, so it does not know whether a newer version exists. It is still trying.'
 }
+
+// --- the health line nobody was reading -------------------------------------------
+//
+// 2026-09-09, this Mac, at launch: `health last good update check 24h ago, 113 wedge(s)
+// recovered, last 2026-09-07T16:10:34`. One hundred and thirteen recovered wedges is not
+// noise a machine works through - it is a renderer that has been wedging for weeks - and
+// the line carrying it was tagged `health`, exactly like the ones saying everything is
+// fine. Only the 72-hour staleness had a word of its own, so the number that had run away
+// was the one thing in the line nothing was watching.
+
+/** Hours without the feed answering before the launch line says so in its tag. */
+export const STALE_HOURS = 72
+
+/**
+ * Recovered wedges before the count is a fault rather than a tally.
+ *
+ * A busy fortnight on a heavy desk is single figures. Twenty-five is a machine where the
+ * recovery path is load-bearing, which is a bug in whatever keeps needing it, not a
+ * healthy app that has been up a long time.
+ */
+export const WEDGE_ALARM = 25
+
+/**
+ * What to tag the launch health line with. '' when there is nothing to say.
+ *
+ * Both readings, because they are independent and a machine can have either: a laptop
+ * shut for a week is STALE with no wedges, and the desk above was WEDGED while its feed
+ * was answering fine.
+ */
+export function healthAlarm(hours: number, wedges: number): string {
+  const said: string[] = []
+  if (hours >= STALE_HOURS) said.push('STALE')
+  if (wedges >= WEDGE_ALARM) said.push('WEDGED')
+  return said.join(' ')
+}
