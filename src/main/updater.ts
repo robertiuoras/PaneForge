@@ -16,9 +16,10 @@ import {
 } from 'node:fs'
 import { get } from 'node:https'
 import { join } from 'node:path'
-import { app, net } from 'electron'
+import { BrowserWindow, app, net } from 'electron'
 import { updateIgnored } from '../shared/updateStale'
 import { freshRun, noteAnswer, noteTimeout, probeStuck, stuckWords, type ProbeRun } from '../shared/updateProbe'
+import { applyAtLaunch } from '../shared/launchInstall'
 import { pickRelease } from '../shared/pickRelease'
 import { pickWinTag } from '../shared/winFeed'
 import type { UpdateState } from '../shared/types'
@@ -386,6 +387,39 @@ function noteReady(): void {
   }
 }
 
+/**
+ * Move a staged bundle in now, while nothing is open, and come straight back.
+ *
+ * Returns true when this process is on its way out, so the caller stops setting up an
+ * updater for a version that is about to be replaced. Every refusal is a sentence in
+ * updater.log and leaves the app exactly as it was - the restart card still appears and
+ * the quit path still installs the build if the user closes the app instead.
+ */
+function installAtLaunch(version: string): boolean {
+  const verdict = applyAtLaunch({
+    staged: version,
+    newer: newer(version, app.getVersion()),
+    windows: BrowserWindow.getAllWindows().length,
+    tries: priorAttempt?.version === version ? priorAttempt.tries : 0,
+    canSwap: canSwap()
+  })
+  if (verdict !== 'go') {
+    log('launch install', `not applying the staged v${version}: ${verdict}`)
+    return false
+  }
+  // Counted BEFORE the swap, exactly as the Restart-now path does it: a swap that does not
+  // take leaves this same version staged, and the count is what stops the next launch
+  // trying it for ever.
+  recordInstallAttempt(version)
+  if (!swapAndRelaunch(true)) {
+    log('launch install', `the swap into v${version} could not be started - leaving it staged`)
+    return false
+  }
+  log('launch install', `applying the staged v${version} now, before anything is open`)
+  app.quit()
+  return true
+}
+
 /** At launch, say how long it has been since the feed last answered this machine. */
 function logHealth(): void {
   const h = readHealth()
@@ -441,8 +475,12 @@ function recordInstallAttempt(version: string): void {
 }
 
 /** At launch, clear the diagnostic marker without retrying an install on the user's behalf. */
+/** The attempt marker this launch found, kept for the launch install below. */
+let priorAttempt: Attempt | null = null
+
 function checkLastAttempt(): void {
   const a = readAttempt()
+  priorAttempt = a
   if (!a) return
   try {
     unlinkSync(ATTEMPT())
@@ -1086,6 +1124,10 @@ export function initUpdater(onChange: Emit, enabled: boolean): void {
     if (process.platform === 'darwin') {
       const found = adoptStaged()
       if (found && newer(found, app.getVersion())) {
+        // ...and this is the moment to install it, not the moment to offer it again. See
+        // shared/launchInstall.ts for the day 0.8.207 was staged, ignored by the restart
+        // that could have applied it, and thrown away superseded 24 hours later.
+        if (installAtLaunch(found)) return
         set({
           phase: 'ready',
           version: found,

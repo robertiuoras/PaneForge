@@ -183,6 +183,7 @@ const TESTS = [
   // update for 28 hours while every surface read as healthy.
   ['blindlist', 'updater-blindlist-test.mjs'],
   ['updateprobe', 'update-probe-test.mjs'],
+  ['launchinstall', 'launch-install-test.mjs'],
   ['devicewatch', 'device-watch-test.mjs'],
   ['projects', 'projects-test.mjs'],
   ['cardfit', 'card-fit-test.mjs'],
