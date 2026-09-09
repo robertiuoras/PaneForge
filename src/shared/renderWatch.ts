@@ -118,6 +118,33 @@ export function noteWedge(w: Watch, now: number): Watch {
   }
 }
 
+/**
+ * How many times a window the watchdog gave up on is REBUILT before it is left alone.
+ *
+ * Giving up used to be the end of it: `still wedged after 3 reload(s) - leaving it alone`
+ * (2026-09-05 00:48:17, pid 97494) is the last line about that window anywhere in the log.
+ * The watch was stopped with it, so nothing watched the app from then on, and the person in
+ * front of it was told nothing - a desk that had stopped answering, with no notice and no
+ * way back but killing PaneForge by hand.
+ *
+ * A rebuild is the recovery a DEAD renderer already gets: the window is destroyed and
+ * `createWindow` runs, panes coming back from desk.json and `--resume`. One is allowed,
+ * because a rebuild that wedges again is not a rescue, it is a loop.
+ */
+export const MAX_GIVE_UP_REBUILDS = 1
+
+/**
+ * What to do with a window the watchdog has run out of reloads for.
+ *
+ * `sinceLastMs` is how long ago the last give-up rebuild was, `Infinity` when there has not
+ * been one - an app left running for days earns its rebuild back, the same way the wedge
+ * count is forgotten after an hour of quiet.
+ */
+export function afterGiveUp(rebuilds: number, sinceLastMs: number): 'recreate' | 'leave' {
+  if (sinceLastMs > WEDGE_WINDOW_MS) return 'recreate'
+  return rebuilds < MAX_GIVE_UP_REBUILDS ? 'recreate' : 'leave'
+}
+
 export function afterAct(w: Watch, now: number): Watch {
   // The wedge count goes with it: the reload is the answer to those wedges, and the next
   // two are what say whether it worked.

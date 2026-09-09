@@ -18,7 +18,9 @@ const {
   decide,
   fresh,
   afterAct,
-  noteWedge
+  afterGiveUp,
+  noteWedge,
+  MAX_GIVE_UP_REBUILDS
 } = await import('../src/shared/renderWatch.ts')
 
 let failed = 0
@@ -111,6 +113,25 @@ ok(
   decide(w({ gone: true, reloads: MAX_RELOADS }), T) === 'give-up'
 )
 
+// --- and what happens to a window it has run out of reloads for -------------------------
+//
+// `still wedged after 3 reload(s) - leaving it alone` (2026-09-05 00:48:17, pid 97494) is
+// the LAST line about that window in the whole log: the watch stopped with it, nothing was
+// rebuilt, and nobody was told.
+ok(
+  'a window the watchdog has given up on is rebuilt, not abandoned',
+  afterGiveUp(0, Infinity) === 'recreate'
+)
+ok(
+  '...once - a rebuild that wedges again is a loop, not a rescue',
+  afterGiveUp(MAX_GIVE_UP_REBUILDS, 60_000) === 'leave',
+  `max ${MAX_GIVE_UP_REBUILDS}`
+)
+ok(
+  '...and an app left running for hours earns the rebuild back',
+  afterGiveUp(MAX_GIVE_UP_REBUILDS, WEDGE_WINDOW_MS + 1) === 'recreate'
+)
+
 // --- what an action leaves behind -------------------------------------------------------
 const after = afterAct(
   w({ unresponsiveSince: T - GRACE_MS, probeSentAt: T - PROBE_DEAD_MS, gone: true, wedges: 4, lastWedgeAt: T - 5 }),
@@ -138,6 +159,21 @@ ok(
 )
 ok('every action leaves a line in paneforge-errors.log', /logProblem\(/.test(main))
 ok('the wedge is counted where Chromium reports it', /noteWedge\(state, Date\.now\(\)\)/.test(main))
+const giveUp = main.slice(main.indexOf("act === 'give-up'"), main.indexOf("const why = state.gone"))
+ok(
+  'giving up rebuilds the window instead of leaving a dead desk behind',
+  giveUp !== '' && /afterGiveUp\(/.test(giveUp) && /return recreate\(\)/.test(giveUp)
+)
+ok(
+  '...and the line that leaves it alone says a rebuild was already tried',
+  /reload\(s\) and a rebuild - leaving it alone/.test(main)
+)
+// faultNotify only sends renderer lines that are an ACT, matched on their first word.
+const notify = readFileSync(new URL('../src/shared/faultNotify.ts', import.meta.url), 'utf8')
+ok(
+  'both give-up lines still reach the phone, since they start with "still wedged"',
+  /still wedged/.test(notify)
+)
 // The bug was that coming back looked like the end of the incident. It is not.
 const responsive = main.slice(main.indexOf("on('responsive'"), main.indexOf("on('render-process-gone'"))
 ok(
