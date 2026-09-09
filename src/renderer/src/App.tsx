@@ -4075,9 +4075,9 @@ export default function App(): JSX.Element {
    * own, read live: a live question, a run clock that is going, a move in flight, and any
    * state that is not one of the three the sweeps may reach.
    */
-  const stillCloseable = useCallback((id: string): boolean => {
+  const closeRefusal = useCallback((id: string): string | null => {
     const s = sessionsRef.current.find((x) => x.id === id)
-    if (!s) return false
+    if (!s) return 'it had already gone'
     // `s.ask` only, deliberately. A BELL is not a question: it is a noise the CLI made at
     // some point, it is never cleared by anything the app does, and `reclaimPaneOf` - the
     // reading the idle plan is built from - has never refused one. Two predicates for one
@@ -4085,18 +4085,46 @@ export default function App(): JSX.Element {
     // armed a belled pane every five seconds, the effect below dropped the card, and
     // nothing anywhere said so (measured 2026-09-07: s5-mtr24wj7 armed 76 times, never
     // closed). Same failure as the two readings of the close clock on 2026-09-01.
-    if (s.ask) return false
-    if (s.drafting) return false
-    if (s.runSince !== undefined) return false
-    if (s.handingOff) return false
+    if (s.ask) return 'it is waiting for an answer'
+    if (s.drafting) return 'something was typed into it'
+    if (s.runSince !== undefined) return 'it started working'
+    if (s.handingOff) return 'it is moving to another machine'
     const st = fleetState(s)
-    return st === 'ready' || st === 'exited' || st === 'needsYou'
+    if (st === 'ready' || st === 'exited' || st === 'needsYou') return null
+    // Plain words, because this reason is read on a row and in a log by somebody who has
+    // never seen `fleetState`: see "Every word on screen is read by somebody who has
+    // never used git".
+    return st === 'working'
+      ? 'it started working'
+      : st === 'starting'
+        ? 'it was still starting up'
+        : 'it was busy'
   }, [])
+
+  /** The same reading as a yes/no, for the places that only need one. */
+  const stillCloseable = useCallback((id: string): boolean => closeRefusal(id) === null, [closeRefusal])
 
   const doClose = useCallback(
     (ids: string[], mb: number) => {
       dropSoon(ids)
       const live = ids.filter((id) => stillCloseable(id))
+      // Every pane the countdown does NOT close leaves a line saying which one and why.
+      //
+      // Until this, both refusals below were a `console.info` into a DevTools window
+      // nobody has open, so an `armed` line with no `closed` line after it was the whole
+      // record - 2026-09-09, `acuity copy 2` (s30-mts8zg5d) armed at idleMin 60 and again
+      // at 142 with no matching close, and nothing anywhere said whether it had been
+      // spared, dropped or lost. Same failure as the countdown that was silently dropped
+      // on 2026-09-07, and the same fix.
+      for (const id of ids) {
+        if (live.includes(id)) continue
+        api.logReclaim({
+          event: 'close-skipped',
+          id,
+          name: paneWordRef.current(id),
+          why: closeRefusal(id) ?? 'it was no longer one this app may close'
+        })
+      }
       if (!live.length) {
         console.info(`reclaim: nothing left to close - ${ids.join(', ')} woke up during the countdown`)
         return
@@ -4115,7 +4143,7 @@ export default function App(): JSX.Element {
       }
       setActed({ what: 'closed', panes: live.map((id) => paneActedRef.current(id)), mb, at: Date.now() })
     },
-    [stillCloseable, dropSoon]
+    [stillCloseable, closeRefusal, dropSoon]
   )
 
   /**

@@ -971,12 +971,22 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
 // every drop must leave a line where a person reads one.
 {
   const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
-  const from = app.indexOf('const stillCloseable = useCallback')
+  const from = app.indexOf('const closeRefusal = useCallback')
   const to = app.indexOf('const doClose = useCallback')
-  check('stillCloseable is still where this test thinks it is', from > 0 && to > from)
+  check('the deadline re-check is still where this test thinks it is', from > 0 && to > from)
   const body = app.slice(from, to)
   check('the deadline re-check refuses nothing the plan does not - a bell is not a question', !/s\.bell/.test(body))
   check('...and a dropped countdown is written to reclaim.log, not only to DevTools', /event: 'spared'/.test(app))
+  // 2026-09-09: `acuity copy 2` armed at idleMin 60 and again at 142 with no `closed`
+  // line either time. A pane the countdown reaches and does not close must say which one
+  // and why, or an armed line with nothing after it is the whole record.
+  check('a pane the countdown spares says so on disk', /event: 'close-skipped'/.test(app))
+  check('...and names the reason rather than only the pane', /why: closeRefusal\(id\)/.test(app))
+  check(
+    'the reason is one reading, not a second predicate beside the first',
+    /const stillCloseable = useCallback\(\(id: string\): boolean => closeRefusal\(id\) === null/.test(app)
+  )
+  check('and it is said in plain words, not fleetState\'s', !/return st$/m.test(body))
 }
 
 console.log(`reclaim: ${checks} checks passed`)
