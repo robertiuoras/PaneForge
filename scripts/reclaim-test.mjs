@@ -75,6 +75,48 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
 }
 
 {
+  // Which pane the pressure sweep reaches for FIRST.
+  //
+  // 2026-09-09 01:23:29: `armed why=pressure id=s37-mtsmrjqj name=(3) Peer Receipt
+  // idleMin=686 hadAgent=true log=capacity: over`. Closing a pane whose agent has already
+  // exited returns a buffer; closing a live one takes the agent and its screen with it.
+  // The order was oldest-quiet-first alone, so which of the two got armed came down to
+  // which had been quiet longer - a live agent could be taken while a finished pane sat
+  // beside it.
+  const mixed = [
+    pane({ id: 'live', state: 'ready', lastKeyboard: NOW - 9 * HOUR }),
+    pane({ id: 'done', state: 'exited', lastKeyboard: NOW - 1 * HOUR })
+  ]
+  eq(
+    'a finished pane is taken before a live agent, however much longer the agent has been quiet',
+    ids(reclaimPlan(mixed, over, { ...DEFAULT_RECLAIM, maxPerSweep: 1 }, NOW)),
+    'done'
+  )
+  eq(
+    '...and the plan says which of the two it actually was',
+    reclaimPlan(mixed, over, { ...DEFAULT_RECLAIM, maxPerSweep: 1 }, NOW)[0].hadAgent,
+    false
+  )
+  // Not a ban: a desk of nothing but live agents still reclaims, or the rule would switch
+  // the feature off on exactly the machine that needs it.
+  const allLive = [
+    pane({ id: 'x', state: 'ready', lastKeyboard: NOW - 9 * HOUR }),
+    pane({ id: 'y', state: 'ready', lastKeyboard: NOW - 8 * HOUR }),
+    pane({ id: 'z', state: 'ready', lastKeyboard: NOW - 7 * HOUR })
+  ]
+  eq(
+    'with no finished pane on the desk, a live one is still taken - oldest quiet first',
+    ids(reclaimPlan(allLive, over, { ...DEFAULT_RECLAIM, maxPerSweep: 1 }, NOW)),
+    'x'
+  )
+  eq(
+    '...and is honest that an agent went with it',
+    reclaimPlan(allLive, over, { ...DEFAULT_RECLAIM, maxPerSweep: 1 }, NOW)[0].hadAgent,
+    true
+  )
+}
+
+{
   // The trigger is pressure, never a clock. This is the line between reclaiming and
   // tidying up after somebody who did not ask to be tidied up after.
   const old = [pane({ id: 'a', lastOutput: NOW - 40 * HOUR }), pane({ id: 'b' })]
