@@ -7,7 +7,15 @@
 import { execFile } from 'node:child_process'
 import { app, type BrowserWindow } from 'electron'
 import { logProblem } from './crash'
-import { PROBE_EVERY_MS, afterAct, decide, fresh, type Watch } from '../shared/renderWatch'
+import {
+  MAX_FLAPS,
+  PROBE_EVERY_MS,
+  afterAct,
+  decide,
+  fresh,
+  noteFlap,
+  type Watch
+} from '../shared/renderWatch'
 
 let timer: NodeJS.Timeout | null = null
 let state: Watch = fresh()
@@ -76,8 +84,20 @@ export function watchRenderer(win: BrowserWindow, recreate: () => void): void {
   })
   wc.on('responsive', () => {
     if (!state.unresponsiveSince) return
-    logProblem('renderer', `answering again after ${Date.now() - state.unresponsiveSince}ms`)
-    state.unresponsiveSince = 0
+    const now = Date.now()
+    const waited = now - state.unresponsiveSince
+    const before = state.flaps
+    // Counted BEFORE `unresponsiveSince` is cleared, because clearing it is exactly what
+    // used to make this cycle invisible to `decide` - see FLAP_WINDOW_MS.
+    state = { ...noteFlap(state, now), unresponsiveSince: 0 }
+    logProblem('renderer', `answering again after ${waited}ms (${state.flaps} of ${MAX_FLAPS} in this stretch)`)
+    if (state.flaps >= MAX_FLAPS && before < MAX_FLAPS) {
+      logProblem(
+        'renderer',
+        `wedged and recovered ${state.flaps} times in ${Math.round((now - state.flapSince) / 60_000)} min - ` +
+          `${metricsFor(pidOf(win))}; reloading rather than waiting for it again`
+      )
+    }
   })
   wc.on('render-process-gone', (_e, details) => {
     logProblem('renderer', `gone: reason=${details.reason} exitCode=${details.exitCode}`)

@@ -13,9 +13,12 @@ const {
   PROBE_DEAD_MS,
   RELOAD_COOLDOWN_MS,
   MAX_RELOADS,
+  MAX_FLAPS,
+  FLAP_WINDOW_MS,
   decide,
   fresh,
-  afterAct
+  afterAct,
+  noteFlap
 } = await import('../src/shared/renderWatch.ts')
 
 let failed = 0
@@ -111,6 +114,51 @@ ok(
   'activate treats a destroyed renderer as no window at all',
   activate !== '' && /if \(!alive\(\)\) return createWindow\(\)/.test(activate),
   JSON.stringify(activate.slice(0, 90))
+)
+
+// --- the renderer that always answers, eventually ------------------------------------
+//
+// pid 5075, 2026-09-09: six unresponsive/responsive cycles in two hours, none of them long
+// enough to reach GRACE_MS, memory and cpu time climbing throughout, and not one reload.
+// `responsive` clears `unresponsiveSince`, so every reading `decide` had was of a healthy
+// window. The cycles themselves are the reading.
+ok(
+  'one wedge that recovered is not a bug',
+  decide(w({ flaps: 1, flapSince: T - 60_000 }), T) === 'wait'
+)
+ok(
+  'two in half an hour is still a busy machine',
+  decide(w({ flaps: MAX_FLAPS - 1, flapSince: T - 60_000 }), T) === 'wait',
+  `max flaps ${MAX_FLAPS}`
+)
+ok(
+  'a renderer that keeps wedging and recovering is reloaded, not waited on again',
+  decide(w({ flaps: MAX_FLAPS, flapSince: T - 60_000 }), T) === 'reload'
+)
+ok(
+  '...but not while it is coming back from the reload that did it',
+  decide(w({ flaps: MAX_FLAPS, flapSince: T - 60_000, lastReloadAt: T - 1000 }), T) === 'wait'
+)
+ok(
+  'the count opens a window on the first cycle',
+  noteFlap(fresh(), T).flaps === 1 && noteFlap(fresh(), T).flapSince === T
+)
+ok(
+  'cycles close together accumulate',
+  noteFlap(noteFlap(fresh(), T), T + 60_000).flaps === 2
+)
+ok(
+  'a flap an hour apart is a new stretch, not an accumulating one',
+  noteFlap(noteFlap(fresh(), T), T + FLAP_WINDOW_MS + 1).flaps === 1,
+  `window ${FLAP_WINDOW_MS}ms`
+)
+ok(
+  'acting clears the flap count, so a fresh page blinking once does not reload it again',
+  afterAct(w({ flaps: MAX_FLAPS, flapSince: T - 60_000 }), T).flaps === 0
+)
+ok(
+  'the watch counts a recovery rather than only logging it',
+  /noteFlap\(state, now\)/.test(readFileSync(new URL('../src/main/renderWatch.ts', import.meta.url), 'utf8'))
 )
 
 console.log(failed ? `\n${failed} failed` : '\nrender watch: all good')

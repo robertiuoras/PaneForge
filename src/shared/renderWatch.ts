@@ -38,6 +38,31 @@ export const RELOAD_COOLDOWN_MS = 60_000
  */
 export const MAX_RELOADS = 3
 
+/**
+ * How long a stretch of wedge-and-recover cycles counts as ONE bad renderer.
+ *
+ * 2026-09-09 log review, this Mac: pid 5075 went unresponsive and came back six times
+ * between 01:03 and 03:11, the gaps growing 19s -> 55s, its working set climbing 205MB ->
+ * 286MB and its cumulative CPU time 1:32 -> 23:13. Not one of those cycles reached
+ * `GRACE_MS`, because `responsive` fires first and clears `unresponsiveSince` - so the
+ * watchdog wrote twelve log lines about a renderer it never once acted on, while three
+ * OTHER pids that missed a probe outright were reloaded within 20s of the first miss.
+ *
+ * A renderer that answers eventually is not healthy; it is a renderer with something
+ * spinning behind it that keeps finishing just in time. Counting the cycles is the only
+ * reading that tells it apart from a window that was briefly busy once.
+ */
+export const FLAP_WINDOW_MS = 30 * 60_000
+
+/**
+ * How many of those cycles inside the window before it is treated as a wedge.
+ *
+ * Three, not two: a machine under real load (a `npm test` fan-out, a video export) can
+ * make one window miss its input hang monitor twice in half an hour with nothing at all
+ * wrong with the page. Three inside thirty minutes is the shape above, and no other.
+ */
+export const MAX_FLAPS = 3
+
 export interface Watch {
   /** When Chromium last said the renderer stopped answering input. 0 = it is answering. */
   unresponsiveSince: number
@@ -47,6 +72,10 @@ export interface Watch {
   gone: boolean
   reloads: number
   lastReloadAt: number
+  /** Wedge-and-recover cycles inside the current window. See `FLAP_WINDOW_MS`. */
+  flaps: number
+  /** When the current flap window opened. 0 = there is none. */
+  flapSince: number
 }
 
 export type Act = 'wait' | 'reload' | 'recreate' | 'give-up'
@@ -59,6 +88,9 @@ export function decide(w: Watch, now: number): Act {
   if (w.gone) return spent ? 'give-up' : 'recreate'
   if (spent) return 'give-up'
   if (w.lastReloadAt && now - w.lastReloadAt < RELOAD_COOLDOWN_MS) return 'wait'
+  // Said AFTER the cooldown, because a reload leaves a renderer briefly unresponsive and
+  // that recovery must never be counted as the fault it was the cure for.
+  if (w.flaps >= MAX_FLAPS) return 'reload'
   if (w.unresponsiveSince && now - w.unresponsiveSince >= GRACE_MS) return 'reload'
   if (w.probeSentAt && now - w.probeSentAt >= PROBE_DEAD_MS) return 'reload'
   return 'wait'
@@ -66,9 +98,41 @@ export function decide(w: Watch, now: number): Act {
 
 /** A fresh watch, and what a reload leaves behind. */
 export function fresh(): Watch {
-  return { unresponsiveSince: 0, probeSentAt: 0, gone: false, reloads: 0, lastReloadAt: 0 }
+  return {
+    unresponsiveSince: 0,
+    probeSentAt: 0,
+    gone: false,
+    reloads: 0,
+    lastReloadAt: 0,
+    flaps: 0,
+    flapSince: 0
+  }
 }
 
 export function afterAct(w: Watch, now: number): Watch {
-  return { ...w, unresponsiveSince: 0, probeSentAt: 0, gone: false, reloads: w.reloads + 1, lastReloadAt: now }
+  // The flap count goes with the act: the window that was flapping has just been taken
+  // out from under the spin, so the next cycle is the first of a NEW stretch. Keeping the
+  // old count would reload again the moment the fresh page blinked once.
+  return {
+    ...w,
+    unresponsiveSince: 0,
+    probeSentAt: 0,
+    gone: false,
+    reloads: w.reloads + 1,
+    lastReloadAt: now,
+    flaps: 0,
+    flapSince: 0
+  }
+}
+
+/**
+ * A renderer that stopped answering has started answering again. Count it.
+ *
+ * The window is anchored on the FIRST cycle rather than the last, so a renderer that
+ * flaps once an hour for a day never accumulates - only a stretch of them close together
+ * reaches `MAX_FLAPS`.
+ */
+export function noteFlap(w: Watch, now: number): Watch {
+  if (!w.flapSince || now - w.flapSince > FLAP_WINDOW_MS) return { ...w, flaps: 1, flapSince: now }
+  return { ...w, flaps: w.flaps + 1 }
 }
