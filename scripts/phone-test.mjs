@@ -573,25 +573,28 @@ let cookie = ''
   const page = await fetch(at + '/', { headers: { cookie: mine } })
   ok((await page.text()).includes('THE-REAL-UI'), 'that cookie is the whole app')
 
-  // One row per DEVICE, not one per approval. The same phone asks again whenever its
-  // cookie is gone - a cleared browser, a private tab, and until the public address was
-  // made stable, every restart of the app - and appending each time is what turned this
-  // list into eight rows for three phones, at which point signing one out stopped meaning
-  // anything. Matched on the user-agent: it is the only thing about a browser that
-  // survives losing the cookie.
+  // One row per APPROVAL, not one per device. A phone that has lost its cookie carries
+  // no proof that it is the phone approved before: the only thing left to match it on is
+  // the user-agent, which anybody may set. Collapsing on that meant a fresh approval could
+  // silently revoke somebody else's token and wear their row while doing it - so a second
+  // approval now writes a second row, and both grants keep working until one is signed
+  // out. Legacy rows carrying no user-agent are still collapsed at startup (above).
   const wasAt = devices[0].at
   const req2 = await (await ask()).json()
   s2.answerAsk(true)
   const grant2 = (await fetch(`${at}/pf/ask?id=${encodeURIComponent(req2.id)}`)).headers.get(
     'set-cookie'
   )
-  ok(devices.length === 1, 'approving the same phone twice is still one row', String(devices.length))
-  ok(devices[0].at === wasAt, 'and "signed in since" is when it FIRST was, not just now')
+  ok(devices.length === 2, 'approving the same phone twice writes a second row', String(devices.length))
+  ok(devices[0].at === wasAt, 'and the row already there is left exactly as it was')
   const stale = await fetch(at + '/', { headers: { cookie: mine } })
-  ok(!(await stale.text()).includes('THE-REAL-UI'), 'the token it replaced stops working')
-  mine = (grant2 ?? '').split(';')[0]
   ok(
-    (await (await fetch(at + '/', { headers: { cookie: mine } })).text()).includes('THE-REAL-UI'),
+    (await stale.text()).includes('THE-REAL-UI'),
+    'the earlier grant still works - an approval never revokes one it cannot prove is the same phone'
+  )
+  const mine2 = (grant2 ?? '').split(';')[0]
+  ok(
+    (await (await fetch(at + '/', { headers: { cookie: mine2 } })).text()).includes('THE-REAL-UI'),
     'and the new one is the whole app'
   )
 
@@ -619,11 +622,18 @@ let cookie = ''
     await otherOwner.stop()
   }
 
-  // The half that has to be true for "Sign out" to mean anything.
+  // The half that has to be true for "Sign out" to mean anything. Each row is signed out
+  // on its own, and only the grant it minted stops working.
   s2.forgetDevice(devices[0].id)
-  ok(devices.length === 0, 'signing out forgets it')
+  ok(devices.length === 1, 'signing out forgets that row', String(devices.length))
   const after = await fetch(at + '/', { headers: { cookie: mine } })
   ok(!(await after.text()).includes('THE-REAL-UI'), 'and its cookie stops working at once')
+  ok(
+    (await (await fetch(at + '/', { headers: { cookie: mine2 } })).text()).includes('THE-REAL-UI'),
+    'while the other approval of the same phone is left alone'
+  )
+  s2.forgetDevice(devices[0].id)
+  ok(devices.length === 0, 'and signing the last one out empties the list', String(devices.length))
 
   // Refusals, and the ceiling on how many cards one address may raise.
   const again = await (await ask()).json()
