@@ -21,6 +21,7 @@ export type LaunchVerdict =
   | 'nothing is staged'
   | 'the staged build is not newer'
   | 'a window is already open'
+  | 'the window count could not be read'
   | 'it has already failed twice'
   | 'this copy cannot be replaced'
 
@@ -53,6 +54,8 @@ export function applyAtLaunch(s: LaunchState): LaunchVerdict {
   // be restoring or an agent may already be mid-turn, and the way out is the quit path
   // that has always handled it.
   if (s.windows > 0) return 'a window is already open'
+  // Only a MEASURED zero is proof: NaN (no BrowserWindow to ask) is not "nothing open".
+  if (s.windows !== 0) return 'the window count could not be read'
   if (s.tries >= MAX_TRIES) return 'it has already failed twice'
   if (!s.canSwap) return 'this copy cannot be replaced'
   return 'go'

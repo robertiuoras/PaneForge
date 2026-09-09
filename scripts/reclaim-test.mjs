@@ -1028,7 +1028,7 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   check('...and pressure closes it too', pressed.some((p) => p.id === 'agenty' && p.hadAgent === true))
   // The one place hadAgent decides anything: what closing it gives back.
   const src = readFileSync(join(root, 'src/shared/reclaim.ts'), 'utf8')
-  const reads = src.split('\n').filter((l) => /hadAgent/.test(l) && !/^\s*\*/.test(l))
+  const reads = src.split('\n').filter((l) => /hadAgent/.test(l) && !/^\s*(\*|\/\/)/.test(l))
   check(
     'nothing in the sweep refuses a pane for having an agent',
     reads.every((l) => /hadAgent: (boolean|p\.state !== 'exited')|hadAgent \? SESSION_MB : 0|hadAgent\?:/.test(l)),

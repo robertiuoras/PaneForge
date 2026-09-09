@@ -409,7 +409,9 @@ function installAtLaunch(version: string): boolean {
   const verdict = applyAtLaunch({
     staged: version,
     newer: newer(version, app.getVersion()),
-    windows: BrowserWindow.getAllWindows().length,
+    // A count that cannot be read is not a count of zero: the swap needs PROOF that
+    // nothing is drawn, and a test drive with no BrowserWindow must refuse, not throw.
+    windows: typeof BrowserWindow?.getAllWindows === 'function' ? BrowserWindow.getAllWindows().length : NaN,
     tries: priorAttempt?.version === version ? priorAttempt.tries : 0,
     canSwap: canSwap()
   })

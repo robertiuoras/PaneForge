@@ -44,6 +44,10 @@ ok(
   applyAtLaunch({ ...fresh, windows: 1 }) === 'a window is already open'
 )
 ok(
+  'a window count nobody could read is not a count of zero',
+  applyAtLaunch({ ...fresh, windows: NaN }) === 'the window count could not be read'
+)
+ok(
   'an install that has already failed twice is not tried a third time',
   applyAtLaunch({ ...fresh, tries: MAX_TRIES }) === 'it has already failed twice'
 )
