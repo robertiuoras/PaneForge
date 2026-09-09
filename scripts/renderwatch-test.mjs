@@ -13,9 +13,12 @@ const {
   PROBE_DEAD_MS,
   RELOAD_COOLDOWN_MS,
   MAX_RELOADS,
+  STUCK_WEDGES,
+  WEDGE_WINDOW_MS,
   decide,
   fresh,
-  afterAct
+  afterAct,
+  noteWedge
 } = await import('../src/shared/renderWatch.ts')
 
 let failed = 0
@@ -58,6 +61,35 @@ ok(
   decide(w({ gone: true, lastReloadAt: T - 1000 }), T) === 'recreate'
 )
 
+// --- the renderer that heals itself, and keeps doing it ---------------------------------
+//
+// 2026-09-05: eight `unresponsive` -> `answering again after 19-55s` cycles on one pid
+// between 01:03 and 03:11, cpu flat at 10.1-10.4%, working set 161MB -> 286MB. Every cycle
+// ended in a recovery, so every cycle read as fine, and it was never reloaded once.
+const first = noteWedge(fresh(), T)
+ok('the first wedge is counted', first.wedges === 1 && first.lastWedgeAt === T)
+ok(
+  '...and is still given its grace period, because one wedge is a busy frame',
+  decide({ ...first, unresponsiveSince: T }, T + (GRACE_MS - 1)) === 'wait'
+)
+const healed = { ...first, unresponsiveSince: 0 }
+const second = noteWedge(healed, T + 20 * 60_000)
+ok('a wedge after a recovery is the SECOND, not a new first', second.wedges === STUCK_WEDGES)
+ok(
+  'and it is reloaded on sight - waiting it out is what let this run for three hours',
+  decide(second, second.lastWedgeAt + 1) === 'reload'
+)
+ok(
+  '...still behind the cooldown, so a reload of its own is not read as the next wedge',
+  decide({ ...second, lastReloadAt: second.lastWedgeAt - 1000 }, second.lastWedgeAt + 1) === 'wait'
+)
+const stale = noteWedge({ ...healed, lastWedgeAt: T }, T + WEDGE_WINDOW_MS + 1)
+ok(
+  'a window that wedges once an hour is two incidents, not a leak',
+  stale.wedges === 1,
+  `window ${Math.round(WEDGE_WINDOW_MS / 60000)}min`
+)
+
 // --- the refusals ----------------------------------------------------------------------
 ok(
   'a window that has just been reloaded is unresponsive BY CONSTRUCTION and is left alone',
@@ -80,7 +112,11 @@ ok(
 )
 
 // --- what an action leaves behind -------------------------------------------------------
-const after = afterAct(w({ unresponsiveSince: T - GRACE_MS, probeSentAt: T - PROBE_DEAD_MS, gone: true }), T)
+const after = afterAct(
+  w({ unresponsiveSince: T - GRACE_MS, probeSentAt: T - PROBE_DEAD_MS, gone: true, wedges: 4, lastWedgeAt: T - 5 }),
+  T
+)
+ok('the reload is the answer to those wedges, so the count starts again', after.wedges === 0 && after.lastWedgeAt === 0)
 ok('acting clears every reading it acted on', after.unresponsiveSince === 0 && after.probeSentAt === 0 && !after.gone)
 ok('...and counts itself', after.reloads === 1 && after.lastReloadAt === T)
 ok('...so the very next tick waits instead of reloading again', decide(after, T + 1) === 'wait')
@@ -101,6 +137,14 @@ ok(
   /getOSProcessId\(\)/.test(main) && /cpu-time/.test(main)
 )
 ok('every action leaves a line in paneforge-errors.log', /logProblem\(/.test(main))
+ok('the wedge is counted where Chromium reports it', /noteWedge\(state, Date\.now\(\)\)/.test(main))
+// The bug was that coming back looked like the end of the incident. It is not.
+const responsive = main.slice(main.indexOf("on('responsive'"), main.indexOf("on('render-process-gone'"))
+ok(
+  'coming back does NOT forget the wedge - that reading is the leak',
+  responsive !== '' && !/wedges\s*[=:]\s*0/.test(responsive),
+  JSON.stringify(responsive.slice(0, 60))
+)
 
 const index = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
 ok('the window is actually watched', /watchRenderer\(win,/.test(index))

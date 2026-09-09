@@ -7,7 +7,7 @@
 import { execFile } from 'node:child_process'
 import { app, type BrowserWindow } from 'electron'
 import { logProblem } from './crash'
-import { PROBE_EVERY_MS, afterAct, decide, fresh, type Watch } from '../shared/renderWatch'
+import { PROBE_EVERY_MS, afterAct, decide, fresh, noteWedge, type Watch } from '../shared/renderWatch'
 
 let timer: NodeJS.Timeout | null = null
 let state: Watch = fresh()
@@ -69,14 +69,20 @@ export function watchRenderer(win: BrowserWindow, recreate: () => void): void {
 
   wc.on('unresponsive', () => {
     if (state.unresponsiveSince) return
-    state.unresponsiveSince = Date.now()
+    state = noteWedge(state, Date.now())
     const pid = pidOf(win)
-    logProblem('renderer', `unresponsive - ${metricsFor(pid)}`)
+    logProblem('renderer', `unresponsive (wedge ${state.wedges}) - ${metricsFor(pid)}`)
     logCpuTime(pid)
   })
   wc.on('responsive', () => {
     if (!state.unresponsiveSince) return
-    logProblem('renderer', `answering again after ${Date.now() - state.unresponsiveSince}ms`)
+    logProblem(
+      'renderer',
+      `answering again after ${Date.now() - state.unresponsiveSince}ms (wedge ${state.wedges})`
+    )
+    // The wedge itself is NOT forgotten here. A renderer that heals itself and wedges
+    // again is the leak this counts (2026-09-05, eight cycles, none of them acted on);
+    // only a reload, or an hour of quiet, clears the count.
     state.unresponsiveSince = 0
   })
   wc.on('render-process-gone', (_e, details) => {
