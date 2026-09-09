@@ -4075,9 +4075,9 @@ export default function App(): JSX.Element {
    * own, read live: a live question, a run clock that is going, a move in flight, and any
    * state that is not one of the three the sweeps may reach.
    */
-  const closeRefusal = useCallback((id: string): string | null => {
+  const stillCloseable = useCallback((id: string): boolean => {
     const s = sessionsRef.current.find((x) => x.id === id)
-    if (!s) return 'it had already gone'
+    if (!s) return false
     // `s.ask` only, deliberately. A BELL is not a question: it is a noise the CLI made at
     // some point, it is never cleared by anything the app does, and `reclaimPaneOf` - the
     // reading the idle plan is built from - has never refused one. Two predicates for one
@@ -4085,53 +4085,50 @@ export default function App(): JSX.Element {
     // armed a belled pane every five seconds, the effect below dropped the card, and
     // nothing anywhere said so (measured 2026-09-07: s5-mtr24wj7 armed 76 times, never
     // closed). Same failure as the two readings of the close clock on 2026-09-01.
-    if (s.ask) return 'it is waiting for an answer'
-    if (s.drafting) return 'something was typed into it'
-    if (s.runSince !== undefined) return 'it started working'
-    if (s.handingOff) return 'it is moving to another machine'
+    if (s.ask) return false
+    if (s.drafting) return false
+    if (s.runSince !== undefined) return false
+    if (s.handingOff) return false
     const st = fleetState(s)
-    if (st === 'ready' || st === 'exited' || st === 'needsYou') return null
-    // Plain words, because this reason is read on a row and in a log by somebody who has
-    // never seen `fleetState`: see "Every word on screen is read by somebody who has
-    // never used git".
-    return st === 'working'
-      ? 'it started working'
-      : st === 'starting'
-        ? 'it was still starting up'
-        : 'it was busy'
+    return st === 'ready' || st === 'exited' || st === 'needsYou'
   }, [])
 
-  /** The same reading as a yes/no, for the places that only need one. */
-  const stillCloseable = useCallback((id: string): boolean => closeRefusal(id) === null, [closeRefusal])
+  /**
+   * Say what happened to a pane a sweep armed and then did not close.
+   *
+   * Every `armed` line in `reclaim.log` used to be able to end in nothing. The sweep
+   * writes one per pane it picks, `closed` is written only when the pane actually goes,
+   * and the three ways a countdown ends without a close - the pane went back to work, it
+   * was spared while the rest of its plan went, somebody pressed Keep it open - each said
+   * so to `console.info`, which is a DevTools window nobody has open.
+   *
+   * On this Mac, 2026-09-09: `s30-mts8zg5d` was armed at 08:12:59 (idle 60 min) and again
+   * at 09:13:49 (idle 142 min) with no `closed` line either time, and `s27-mtsm7txrc` was
+   * armed twice before a third arm finally took it. Both panes carried `hadAgent: true`,
+   * which read like an unwritten rule about agent panes - and there is no such rule:
+   * `hadAgent` is a reading the sweep publishes (`p.state !== 'exited'`), used for the
+   * sentence and for the megabytes, and nothing in `shared/reclaim.ts` refuses a pane for
+   * carrying it. The panes stayed because they woke up, and nothing ever wrote that down.
+   */
+  const skipClose = useCallback((ids: string[], reason: string) => {
+    for (const id of ids) {
+      console.info(`reclaim: not closing ${id} - ${reason}`)
+      api.logReclaim({ event: 'skipped', id, name: paneWordRef.current(id), reason })
+    }
+  }, [])
 
   const doClose = useCallback(
     (ids: string[], mb: number) => {
       dropSoon(ids)
       const live = ids.filter((id) => stillCloseable(id))
-      // Every pane the countdown does NOT close leaves a line saying which one and why.
-      //
-      // Until this, both refusals below were a `console.info` into a DevTools window
-      // nobody has open, so an `armed` line with no `closed` line after it was the whole
-      // record - 2026-09-09, `acuity copy 2` (s30-mts8zg5d) armed at idleMin 60 and again
-      // at 142 with no matching close, and nothing anywhere said whether it had been
-      // spared, dropped or lost. Same failure as the countdown that was silently dropped
-      // on 2026-09-07, and the same fix.
-      for (const id of ids) {
-        if (live.includes(id)) continue
-        api.logReclaim({
-          event: 'close-skipped',
-          id,
-          name: paneWordRef.current(id),
-          why: closeRefusal(id) ?? 'it was no longer one this app may close'
-        })
-      }
       if (!live.length) {
-        console.info(`reclaim: nothing left to close - ${ids.join(', ')} woke up during the countdown`)
+        skipClose(ids, 'it went back to work during the countdown')
         return
       }
       if (live.length !== ids.length) {
-        console.info(
-          `reclaim: sparing ${ids.filter((id) => !live.includes(id)).join(', ')} - woke up during the countdown`
+        skipClose(
+          ids.filter((id) => !live.includes(id)),
+          'it went back to work during the countdown'
         )
         mb = Math.round((mb * live.length) / ids.length)
       }
@@ -4143,7 +4140,7 @@ export default function App(): JSX.Element {
       }
       setActed({ what: 'closed', panes: live.map((id) => paneActedRef.current(id)), mb, at: Date.now() })
     },
-    [stillCloseable, closeRefusal, dropSoon]
+    [stillCloseable, dropSoon, skipClose]
   )
 
   /**
@@ -4397,19 +4394,15 @@ export default function App(): JSX.Element {
     // countdown here would make the one pane worth moving the one that never moves.
     const woke = closeSoons.filter((s) => !s.move && !s.ids.every((id) => stillCloseable(id)))
     if (!woke.length) return
-    console.info('reclaim: countdown dropped - a pane it named went back to work')
-    // ...and on disk, next to the `armed` line that started it. A drop that only reaches
-    // DevTools is a countdown that vanishes for no readable reason, and a sweep that
-    // re-arms the same pane every five seconds looks exactly like one that works.
-    for (const s of woke) {
-      for (const id of s.ids) {
-        if (stillCloseable(id)) continue
-        api.logReclaim({ event: 'spared', id, name: paneWordRef.current(id), why: 'it went back to work' })
-      }
-    }
+    // Named, not counted: this is the line that answers "why was my pane armed twice and
+    // never closed" a week later. See `skipClose`.
+    skipClose(
+      woke.flatMap((s) => s.ids).filter((id) => !stillCloseable(id)),
+      'it went back to work while the countdown was running'
+    )
     const gone = new Set(woke.map((s) => soonKey(s)))
     setCloseSoons((list) => list.filter((s) => !gone.has(soonKey(s))))
-  }, [closeSoons, sessions, stillCloseable])
+  }, [closeSoons, sessions, stillCloseable, skipClose])
 
   /**
    * Put each local pane's closing deadline on the session, where the card reads it.
@@ -4536,6 +4529,8 @@ export default function App(): JSX.Element {
   )
 
   const keepOpen = useCallback((ids: string[]) => {
+    // The third way an `armed` line ends without a close, and the only one somebody chose.
+    skipClose(ids, 'you kept it open')
     const until = Date.now() + KEEP_MINUTES * 60_000
     for (const id of ids) keptUntil.current[id] = until
     // A move called off needs the handoff sweeps' OWN hold as well, or the next minute

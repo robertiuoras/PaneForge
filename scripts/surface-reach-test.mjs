@@ -36,6 +36,10 @@ const surfaceFile = path.join(root, 'src', 'shared', 'surface.ts')
  */
 const DESK_SIDE = {
   tellPane: 'pf tell <pane> "..." - how the far desk says "signed in" to the pane that asked',
+  // A pane says of ITSELF that it should go once it is done. The person who would press a
+  // button for this is the person who would simply close the pane; the caller that cannot
+  // is the agent inside it, at the end of its own work.
+  armCloseWhenDone: 'pf close-when-done [pane] - a chat arming its own pane from inside it',
   // Armed by the `autoclear` Stop hook through the phone server (`pane-clear.mjs`), never
   // from this window: the decision needs the transcript's token count and the handoff on
   // disk, neither of which the renderer has. Its CANCEL half is a real button on the card.

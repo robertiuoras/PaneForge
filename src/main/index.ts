@@ -1685,11 +1685,12 @@ async function startOrSend(
   const cfg = getConfig()
   const mode = preferRemoteOf(cfg.autoHandoff)
   // Set to keep everything here: no round trip over the link, no line in the log.
-  if (mode === 'never') return here()
+  if (mode === 'never' && !req.device) return here()
 
   const project = projectNameOf(req.cwd)
   let target: ReturnType<typeof projectOn> = null
   let peerPanes: number | undefined
+  let deviceOnline: boolean | undefined
   try {
     const peers = remote.state().peers.filter((p) => p.status === 'online')
     const candidates = await Promise.all(
@@ -1700,15 +1701,16 @@ async function startOrSend(
         projects: await remote.projectsOn(p.id).catch(() => [] as { name: string; path: string }[])
       }))
     )
-    // A NAMED device (`req.device`, contract stub - the "open on a device" workstream
-    // fills in the path lookup and the refusal when it is offline) beats the project match.
+    // A NAMED device beats the project match, and is answered rather than guessed at:
+    // `deviceOnline` says the link is up, `target` says that machine holds this project.
+    if (req.device) deviceOnline = candidates.some((c) => c.device === req.device || c.deviceName === req.device)
     target = req.device
       ? projectOn(
           candidates.filter((c) => c.device === req.device || c.deviceName === req.device),
           project
         )
       : projectOn(candidates, project)
-    peerPanes = peers.find((p) => p.id === target?.device)?.panes.length
+    peerPanes = peers.find((p) => p.id === (target?.device ?? req.device) || p.name === req.device)?.panes.length
   } catch {
     // A peer that cannot be asked is a peer that cannot be used. `placeNewPane` says so
     // in words below rather than this catch inventing a sentence.
@@ -1736,6 +1738,9 @@ async function startOrSend(
     devServer,
     peerAlive: !!target,
     peerBusyPanes: peerPanes,
+    device: req.device,
+    deviceOnline: req.device ? Boolean(deviceOnline) : undefined,
+    deviceHasProject: req.device ? !!target : undefined,
     // The same two readings the pressure card is built from, worse of the two. Not a pane
     // count: a desk with eight panes and memory to spare is a desk with room.
     pressure: worstPressure(lastPressure, lagLevel(loadPerCore())),
@@ -1749,12 +1754,16 @@ async function startOrSend(
       project,
       device: place.where === 'remote' ? target?.deviceName : undefined
     })
+  if (place.refused) {
+    note()
+    throw new Error(place.refused)
+  }
   if (place.where === 'local' || !target) {
     note()
     return here()
   }
   // The app's own decision is announced and can be stopped; the person's is carried out.
-  if (req.where !== 'remote' && !(await askOffload(project, target.deviceName, place.reason))) {
+  if (req.where !== 'remote' && !req.device && !(await askOffload(project, target.deviceName, place.reason))) {
     note('kept here - you pressed Keep')
     return here()
   }
@@ -1852,6 +1861,11 @@ ipcMain.handle('sessions:rename', (_e, id: string, title: string) =>
   remote.owns(id) ? remote.send(id, { t: 'rename', title }) : manager.rename(id, title)
 )
 ipcMain.handle('sessions:clientUndo', (_e, id: string) => manager.undoClientName(id))
+// A pane that has finished what it was opened for, said while it is open rather than
+// asked for at the open. The rule that decides WHEN is `shared/closeWhenDone.ts`.
+ipcMain.handle('sessions:closeWhenDone', (_e, id: string, reportTo?: string) =>
+  manager.armCloseWhenDone(id, reportTo)
+)
 // How hard a Codex pane thinks. Nothing is typed here: the choice is remembered and the
 // pane acts on it at its next turn boundary. See `shared/effort.ts`.
 ipcMain.handle('sessions:setEffort', (_e, id: string, choice: EffortChoice) =>

@@ -142,6 +142,7 @@ import type {
   SwarmRequest,
   TurnClock
 } from '../shared/types'
+import { SLOW_WAKE_MS, wokeSlowly } from '../shared/wakePlan'
 
 /** How long output must stay quiet before the pane's dot stops saying "working". */
 const IDLE_AFTER_MS = 4000
@@ -1962,6 +1963,29 @@ export class SessionManager extends EventEmitter {
     return true
   }
 
+  /**
+   * Arm "close yourself once you are done" on a pane that is ALREADY open.
+   *
+   * `pf open --close-when-done` is a flag on the OPEN, which only covers a pane some
+   * automation created. The other half, asked for 2026-09-09: a chat opened by hand that
+   * has finished its work and would otherwise sit on the desk until the idle clock takes
+   * it. Same reading, same refusals (`doneEnough`) - only the moment it is asked for is
+   * different, so nothing here decides when.
+   *
+   * `false` means no such pane, which is the caller's to report. A pane already armed
+   * answers `true`: asking twice is not an error.
+   */
+  armCloseWhenDone(id: string, reportTo?: string): boolean {
+    const live = this.sessions.get(id)
+    if (!live) return false
+    live.req.closeWhenDone = true
+    // Never itself: a pane cannot be told by the pane it just closed.
+    if (reportTo && reportTo !== id) live.req.reportTo = reportTo
+    const told = live.req.reportTo
+    console.info(`close-when-done: ${id} armed while open${told ? ` - will tell ${told}` : ''}`)
+    return true
+  }
+
   private sweepCloseWhenDone(live: Live, now: number, quiet: number): void {
     const { meta } = live
     if (!doneEnough({ ...meta, busyUntil: live.busyUntil }, quiet, now)) return
@@ -3130,13 +3154,28 @@ export class SessionManager extends EventEmitter {
       // one, because the interesting half is the GAP and a line written at the decision
       // cannot carry it. One line per wake, never per byte.
       if (firstByte && live.wokeAt) {
+        const woke = now - live.wokeAt
         logReclaim({
           at: now,
           action: 'wake-printed',
           pane: id,
-          ms: now - live.wokeAt,
+          ms: woke,
           folder: basename(meta.cwd)
         })
+        // ...and a slow one says so under its own name. Every reading used to be the same
+        // line, so 2302ms sat unremarked among readings of 10-150ms in the same file and
+        // the laggy-wake report had no evidence anybody could search for. See
+        // `SLOW_WAKE_MS`.
+        if (wokeSlowly(woke)) {
+          logReclaim({
+            at: now,
+            action: 'wake-slow',
+            pane: id,
+            ms: woke,
+            folder: basename(meta.cwd),
+            reason: `first byte took ${woke}ms, over the ${SLOW_WAKE_MS}ms a wake normally takes`
+          })
+        }
         live.wokeAt = 0
       }
       const wasIdle = meta.status !== 'working'

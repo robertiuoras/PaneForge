@@ -38,7 +38,9 @@ const dto = (page, id) => {
       assert.ok(['text', 'code', 'tool', 'notice'].includes(block.type))
       if (block.type === 'tool') {
         assert.equal(typeof block.name, 'string'); assert.equal(typeof block.input, 'string'); assert.equal(typeof block.output, 'string')
-        assert.ok(['running', 'complete', 'error'].includes(block.state))
+        assert.ok(['requested', 'running', 'complete', 'error'].includes(block.state))
+        assert.ok(block.callId === undefined || typeof block.callId === 'string')
+        assert.ok(block.phase === undefined || ['call', 'result'].includes(block.phase))
       } else assert.equal(typeof block.text, 'string')
     }
   }
@@ -50,8 +52,8 @@ try {
   const claudeId = 'claude-native'
   const claudeFile = join(claudeDir, `${claudeId}.jsonl`)
   const code = 'before\n```ts\n  const x = 1  \n```\nafter'
-  const tool = { type: 'tool_use', name: 'functions.exec_command', input: { cmd: 'pwd' } }
-  const result = { type: 'tool_result', content: 'ok\n', is_error: false }
+  const tool = { type: 'tool_use', id: 'call-claude', name: 'functions.exec_command', input: { cmd: 'pwd' } }
+  const result = { type: 'tool_result', tool_use_id: 'call-claude', content: 'ok\n', is_error: false }
   const claudeLines = [
     claudeRow('user', code),
     claudeRow('assistant', [{ type: 'text', text: 'working' }, tool]),
@@ -66,6 +68,10 @@ try {
   assert.equal(first.messages[0].blocks[1].text, '  const x = 1  \n', 'code whitespace is preserved')
   assert.equal(first.messages[1].blocks[1].type, 'tool', 'Claude tool use is exposed')
   assert.equal(first.messages[2].blocks[0].type, 'tool', 'Claude tool result is exposed')
+  assert.equal(first.messages[1].blocks[1].state, 'requested', 'a saved request does not claim a still-running process')
+  assert.equal(first.messages[1].blocks[1].phase, 'call'); assert.equal(first.messages[2].blocks[0].phase, 'result')
+  assert.equal(first.messages[1].blocks[1].callId, 'call-claude'); assert.equal(first.messages[2].blocks[0].callId, 'call-claude')
+  assert.equal(first.messages[2].id, String(Buffer.byteLength(claudeLines.slice(0, 2).join('\n') + '\n')), 'result keeps its exact byte identity')
   assert.equal(first.rawOutput, claudeLines.join('\n'), 'page raw output is exact records')
   forgetSession('claude-pane')
 
@@ -96,15 +102,22 @@ try {
   const codexRows = [
     line({ type: 'session_meta', payload: { id: codexId, session_id: codexId, cwd, timestamp: '2026-09-09T01:02:03.000Z' } }),
     line({ timestamp: '2026-09-09T01:02:04.000Z', type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: '```json\n{ "ok": true }\n```' }] } }),
-    line({ timestamp: '2026-09-09T01:02:05.000Z', type: 'response_item', payload: { type: 'custom_tool_call', name: 'exec', input: 'pwd', status: 'completed' } }),
-    line({ timestamp: '2026-09-09T01:02:06.000Z', type: 'response_item', payload: { type: 'custom_tool_call_output', output: [{ type: 'input_text', text: '/tmp' }] } })
+    line({ timestamp: '2026-09-09T01:02:05.000Z', type: 'response_item', payload: { type: 'custom_tool_call', call_id: 'call-codex', name: 'exec', input: 'pwd', status: 'completed' } }),
+    line({ timestamp: '2026-09-09T01:02:06.000Z', type: 'response_item', payload: { type: 'custom_tool_call_output', call_id: 'call-codex', output: [{ type: 'input_text', text: '/tmp' }] } }),
+    line({ type: 'response_item', payload: { type: 'function_call', call_id: 'call-function', name: 'run', arguments: '{"cmd":"false"}' } }),
+    line({ type: 'response_item', payload: { type: 'function_call_output', call_id: 'call-function', output: 'failed exactly\n', is_error: true } })
   ]
   writeFileSync(codexFile, codexRows.join('\n') + '\n')
   noteSession('codex-pane', cwd, 'codex', codexId)
   const codex = dto(nativeTranscriptPage('codex-pane', 'codex'), codexId)
-  assert.equal(codex.messages.length, 3, 'Codex message and tool records are semantic rows')
+  assert.equal(codex.messages.length, 5, 'Codex message and tool records are semantic rows')
   assert.equal(codex.messages[0].blocks[0].type, 'code', 'Codex fenced code is rendered as code')
   assert.equal(codex.messages[1].blocks[0].type, 'tool'); assert.equal(codex.messages[2].blocks[0].type, 'tool')
+  assert.equal(codex.messages[1].blocks[0].state, 'requested', 'completed call emission is not proof of completed execution')
+  assert.equal(codex.messages[1].blocks[0].callId, 'call-codex'); assert.equal(codex.messages[2].blocks[0].callId, 'call-codex')
+  assert.equal(codex.messages[3].blocks[0].phase, 'call'); assert.equal(codex.messages[4].blocks[0].phase, 'result')
+  assert.equal(codex.messages[4].blocks[0].state, 'error'); assert.equal(codex.messages[4].blocks[0].output, 'failed exactly\n')
+  assert.equal(codex.rawOutput, codexRows.slice(1).join('\n'), 'correlation metadata never changes raw JSONL')
   forgetSession('codex-pane')
 
   // A giant unbroken record must still return a smaller cursor, never the same one.

@@ -1023,7 +1023,7 @@ function plainText(content: unknown): string | undefined {
 export type NativeTranscriptBlock =
   | { type: 'text'; text: string }
   | { type: 'code'; text: string; language?: string }
-  | { type: 'tool'; name: string; input: string; output: string; state: 'running' | 'complete' | 'error' }
+  | { type: 'tool'; name: string; input: string; output: string; state: 'requested' | 'running' | 'complete' | 'error'; callId?: string; phase?: 'call' | 'result' }
   | { type: 'notice'; text: string }
 
 export interface NativeTranscriptMessage {
@@ -1133,11 +1133,11 @@ function nativeMessage(raw: string, agent: string, id: string): NativeTranscript
   if (item.type === 'function_call' || item.type === 'custom_tool_call') {
     const input = typeof item.arguments === 'string' ? item.arguments : typeof item.input === 'string' ? item.input : nativeUnknownText(item.input)
     return { id, role: 'assistant', provider: 'codex', at: nativeAt(row.timestamp), raw,
-      blocks: [{ type: 'tool', name: typeof item.name === 'string' ? item.name : 'Tool call', input, output: '', state: item.status === 'failed' ? 'error' : item.status === 'completed' ? 'complete' : 'running' }] }
+      blocks: [{ type: 'tool', name: typeof item.name === 'string' ? item.name : 'Tool call', input, output: '', state: item.status === 'failed' ? 'error' : 'requested', phase: 'call', ...(typeof item.call_id === 'string' ? { callId: item.call_id } : {}) }] }
   }
   if (item.type === 'function_call_output' || item.type === 'custom_tool_call_output') {
     return { id, role: 'assistant', provider: 'codex', at: nativeAt(row.timestamp), raw,
-      blocks: [{ type: 'tool', name: 'Tool result', input: '', output: nativeUnknownText(item.output), state: item.is_error || item.isError ? 'error' : 'complete' }] }
+      blocks: [{ type: 'tool', name: 'Tool result', input: '', output: nativeUnknownText(item.output), state: item.is_error || item.isError ? 'error' : 'complete', phase: 'result', ...(typeof item.call_id === 'string' ? { callId: item.call_id } : {}) }] }
   }
   return null
 }
@@ -1161,8 +1161,10 @@ function nativeBlocks(content: unknown): NativeTranscriptBlock[] {
     const block = part as Record<string, unknown>
     const type = block.type
     if ((type === 'text' || type === 'input_text' || type === 'output_text') && typeof block.text === 'string') out.push(...nativeTextBlocks(block.text))
-    else if (type === 'tool_use') out.push({ type: 'tool', name: typeof block.name === 'string' ? block.name : 'Tool call', input: nativeUnknownText(block.input), output: '', state: 'running' })
-    else if (type === 'tool_result') out.push({ type: 'tool', name: 'Tool result', input: '', output: nativeUnknownText(block.content), state: block.is_error === true ? 'error' : 'complete' })
+    // A saved call proves that it was requested, not that its process is still running.
+    // Preserve provider IDs so the reader can attach results across page boundaries.
+    else if (type === 'tool_use') out.push({ type: 'tool', name: typeof block.name === 'string' ? block.name : 'Tool call', input: nativeUnknownText(block.input), output: '', state: 'requested', phase: 'call', ...(typeof block.id === 'string' ? { callId: block.id } : {}) })
+    else if (type === 'tool_result') out.push({ type: 'tool', name: 'Tool result', input: '', output: nativeUnknownText(block.content), state: block.is_error === true ? 'error' : 'complete', phase: 'result', ...(typeof block.tool_use_id === 'string' ? { callId: block.tool_use_id } : {}) })
   }
   return out
 }

@@ -6,16 +6,17 @@
 
 import { execFile } from 'node:child_process'
 import { app, type BrowserWindow } from 'electron'
-import { noteActivity } from './activity'
 import { logProblem } from './crash'
-import { entry } from '../shared/activity'
 import {
-  MAX_FLAPS,
+  MAX_SPINS,
   PROBE_EVERY_MS,
+  WEDGE_WINDOW_MS,
   afterAct,
+  afterGiveUp,
   decide,
   fresh,
-  noteFlap,
+  noteWedge,
+  noteRecovered,
   type Watch
 } from '../shared/renderWatch'
 
@@ -23,6 +24,13 @@ let timer: NodeJS.Timeout | null = null
 let state: Watch = fresh()
 /** A `render-process-gone` this watch asked for, so it is answered with a reload. */
 let killing = false
+/**
+ * Give-up rebuilds, and when the last one was. Deliberately NOT reset by `watchRenderer`:
+ * the rebuilt window is the one that calls it, and a counter that window can clear is a
+ * rebuild loop.
+ */
+let giveUpRebuilds = 0
+let lastGiveUpAt = 0
 
 /** What the renderer's own OS process is costing, for the log line that names the spin. */
 function metricsFor(pid: number): string {
@@ -79,26 +87,26 @@ export function watchRenderer(win: BrowserWindow, recreate: () => void): void {
 
   wc.on('unresponsive', () => {
     if (state.unresponsiveSince) return
-    state.unresponsiveSince = Date.now()
+    state = noteWedge(state, Date.now())
     const pid = pidOf(win)
-    logProblem('renderer', `unresponsive - ${metricsFor(pid)}`)
+    logProblem('renderer', `unresponsive (wedge ${state.wedges}) - ${metricsFor(pid)}`)
     logCpuTime(pid)
   })
   wc.on('responsive', () => {
     if (!state.unresponsiveSince) return
     const now = Date.now()
-    const waited = now - state.unresponsiveSince
-    const before = state.flaps
-    // Counted BEFORE `unresponsiveSince` is cleared, because clearing it is exactly what
-    // used to make this cycle invisible to `decide` - see FLAP_WINDOW_MS.
-    state = { ...noteFlap(state, now), unresponsiveSince: 0 }
-    logProblem('renderer', `answering again after ${waited}ms (${state.flaps} of ${MAX_FLAPS} in this stretch)`)
-    if (state.flaps >= MAX_FLAPS && before < MAX_FLAPS) {
-      logProblem(
-        'renderer',
-        `wedged and recovered ${state.flaps} times in ${Math.round((now - state.flapSince) / 60_000)} min - ` +
-          `${metricsFor(pidOf(win))}; reloading rather than waiting for it again`
-      )
+    const forMs = now - state.unresponsiveSince
+    // The wedge itself is NOT forgotten here. A renderer that heals itself and wedges
+    // again is the leak this counts (2026-09-05, eight cycles, none of them acted on);
+    // only a reload, or an hour of quiet, clears the count.
+    state.unresponsiveSince = 0
+    // Counted, not just reported. See SPIN_MS in shared/renderWatch.ts for the two hours
+    // of this exact line that never added up to anything.
+    state = noteRecovered(state, forMs, now)
+    const tally = state.spins ? ` (spin ${state.spins} of ${MAX_SPINS})` : ''
+    logProblem('renderer', `answering again after ${forMs}ms${tally}`)
+    if (state.spins >= MAX_SPINS) {
+      logProblem('renderer', `${state.spins} spins on ${metricsFor(pidOf(win))} - reloading it rather than waiting for the next one`)
     }
   })
   wc.on('render-process-gone', (_e, details) => {
@@ -145,20 +153,24 @@ export function watchRenderer(win: BrowserWindow, recreate: () => void): void {
       return
     }
     if (act === 'give-up') {
+      // Abandoning the window used to be the whole of this branch, and it took the watch
+      // with it - no further line about that window, and nobody told (2026-09-05, pid
+      // 97494). A rebuild is the same recovery a dead renderer gets, and it is visible:
+      // the desk comes back instead of staying dead behind a window nobody can draw in.
+      const since = lastGiveUpAt ? now - lastGiveUpAt : Infinity
+      if (afterGiveUp(giveUpRebuilds, since) === 'recreate') {
+        giveUpRebuilds = since > WEDGE_WINDOW_MS ? 1 : giveUpRebuilds + 1
+        lastGiveUpAt = now
+        logProblem(
+          'renderer',
+          `still wedged after ${state.reloads} reload(s) - rebuilding the window (${metricsFor(pidOf(win))})`
+        )
+        stopRenderWatch()
+        return recreate()
+      }
       logProblem(
         'renderer',
-        `still wedged after ${state.reloads} attempt(s) including a rebuilt window - leaving it alone (${metricsFor(pidOf(win))})`
-      )
-      // Two things hear about it, because the one surface that cannot is the window.
-      // `faultNotify.ts` already sends `still wedged` to the phone (RENDERER_ACTS); this
-      // is the half that survives on the machine - `activity.json` is main's, so the row
-      // is still there to read after the quit-and-reopen this line is asking for.
-      noteActivity(
-        entry(
-          'wedged',
-          'the window',
-          'it stopped answering and reloading it did not help - quit PaneForge and open it again; your panes come back'
-        )
+        `still wedged after ${state.reloads} reload(s) and a rebuild - leaving it alone`
       )
       return stopRenderWatch()
     }
@@ -166,11 +178,13 @@ export function watchRenderer(win: BrowserWindow, recreate: () => void): void {
       ? 'process gone'
       : state.unresponsiveSince
         ? `unresponsive for ${now - state.unresponsiveSince}ms`
-        : `no answer to the liveness probe for ${now - state.probeSentAt}ms`
+        : state.probeSentAt
+          ? `no answer to the liveness probe for ${now - state.probeSentAt}ms`
+          : `${state.spins} spins it recovered from by itself in ${Math.round((now - state.firstSpinAt) / 1000)}s`
     const pid = pidOf(win)
     logProblem('renderer', `${act} (${why}) - ${metricsFor(pid)}`)
     logCpuTime(pid)
-    state = afterAct(state, now, act)
+    state = afterAct(state, now)
     if (act === 'recreate') {
       stopRenderWatch()
       return recreate()

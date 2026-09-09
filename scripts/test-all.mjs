@@ -66,6 +66,7 @@ const TESTS = [
   ['headerfit', 'header-fit-test.mjs'],
   ['promptseed', 'promptseed-test.mjs'],
   ['renderwatch', 'renderwatch-test.mjs'],
+  ['updateretry', 'update-retry-test.mjs'],
   ['mainwatch', 'main-watch-test.mjs'],
   ['logwrite', 'log-write-test.mjs'],
   ['sleepcause', 'sleep-cause-test.mjs'],
@@ -188,6 +189,8 @@ const TESTS = [
   // Four short child processes, ~3s: the incident it covers left this desk unable to
   // update for 28 hours while every surface read as healthy.
   ['blindlist', 'updater-blindlist-test.mjs'],
+  ['updateprobe', 'update-probe-test.mjs'],
+  ['launchinstall', 'launch-install-test.mjs'],
   ['devicewatch', 'device-watch-test.mjs'],
   ['projects', 'projects-test.mjs'],
   ['cardfit', 'card-fit-test.mjs'],
@@ -220,6 +223,7 @@ const TESTS = [
   // cross-device claim, and the git plumbing that carries it (2.4s, real repositories).
   ['lanepeers', 'lane-peers-test.mjs'],
   ['lanesleep', 'lane-sleep-test.mjs'],
+  ['laneuntracked', 'lane-untracked-test.mjs'],
   ['lanedevice', 'lane-device-test.mjs'],
   ['laneensure', 'lane-ensure-test.mjs'],
   // The lane a folder already IS, for a pane the app did not move itself - with the
@@ -261,6 +265,7 @@ const TESTS = [
   ['phone', 'phone-test.mjs'],
   ['passkey', 'passkey-test.mjs'],
   ['nativehostauth', 'native-host-auth-test.mjs'],
+  ['nativeauthlimits', 'native-auth-limits-test.mjs'],
   ['nativetranscript', 'native-transcript-test.mjs'],
   ['panesize', 'pane-size-test.mjs'],
   ['borrowask', 'borrowask-test.mjs'],

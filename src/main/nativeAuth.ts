@@ -41,6 +41,7 @@ interface Pending extends NativeStart {
   scopes?: NativeScope[]
   code?: string
   csrf?: string
+  source?: string
 }
 
 const PENDING_MS = 5 * 60_000
@@ -48,6 +49,7 @@ const GRANT_MS = 30 * 24 * 60 * 60_000
 const UNLOCK_MS = 15 * 60_000
 const MAX_PENDING = 32
 const MAX_GRANTS = 32
+const MAX_PROMPT_RECEIPTS = 5_000
 const b64 = (bytes: number): string => randomBytes(bytes).toString('base64url')
 const hash = (value: string): string => createHash('sha256').update(value).digest('hex')
 const challengeFor = (value: string): string => createHash('sha256').update(value).digest('base64url')
@@ -71,16 +73,20 @@ export class NativeAuth {
     private readonly browserExists: (device: string) => boolean
   ) {}
 
-  start(input: NativeStart): { request: string; authorizationUrl: string } {
+  start(input: NativeStart, source?: string): { request: string; authorizationUrl: string } {
     this.sweep()
     if (!/^[-_A-Za-z0-9]{43}$/.test(input.codeChallenge)) throw new Error('invalid PKCE challenge')
     if (!/^[-_A-Za-z0-9]{22,128}$/.test(input.state)) throw new Error('invalid state')
     if (!/^[-_A-Za-z0-9]{22,128}$/.test(input.deviceId)) throw new Error('invalid device id')
     if (!/^[A-Za-z0-9][A-Za-z0-9 .()_'/-]{0,79}$/.test(input.deviceName)) throw new Error('invalid device name')
     if (input.grantId && !/^[A-Za-z0-9_-]{22,128}$/.test(input.grantId)) throw new Error('invalid grant id')
+    for (const [id, pending] of this.pending) {
+      if (pending.deviceId === input.deviceId && !pending.code && pending.source === source) this.pending.delete(id)
+    }
+    if ([...this.pending.values()].some((p) => p.deviceId === input.deviceId || (source && p.source === source))) throw new Error('authorization already pending')
     if (this.pending.size >= MAX_PENDING) throw new Error('too many pending authorizations')
     const id = b64(24)
-    this.pending.set(id, { ...input, deviceName: input.deviceName.trim(), id, expiresAt: Date.now() + PENDING_MS, codeVersion: this.codeVersion() })
+    this.pending.set(id, { ...input, source, deviceName: input.deviceName.trim(), id, expiresAt: Date.now() + PENDING_MS, codeVersion: this.codeVersion() })
     return { request: id, authorizationUrl: `https://${this.hostName()}/pf/native/v1/auth/authorize?request=${encodeURIComponent(id)}` }
   }
 
@@ -164,6 +170,9 @@ export class NativeAuth {
       if (existing.deviceId !== grant.deviceId || existing.sessionId !== sessionId || existing.textHash !== textHash) throw new Error('prompt id conflict')
       return existing
     }
+    // Preserve every replay receipt. At capacity, reject new work before queueing;
+    // silently evicting old identities could submit an old retry twice.
+    if (this.receipts().length >= MAX_PROMPT_RECEIPTS) throw new Error('prompt receipt capacity reached')
     const now = new Date().toISOString()
     const receipt: NativePromptReceipt = { grantId: grant.id, deviceId: grant.deviceId, clientMessageId, sessionId, textHash, acceptedAt: now, state: 'pending', updatedAt: now }
     this.saveReceipts([...this.receipts(), receipt])

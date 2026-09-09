@@ -1003,8 +1003,16 @@ export interface UpdateState {
    */
   ignored?: boolean
   /**
-   * Consecutive update checks have failed, so nothing on screen can honestly say whether
-   * this build is the newest one. See shared/updateStale.ts.
+   * When this build became installable, so the card and the log can say how long it has
+   * been waiting. Restamped by a relaunch that adopts an already-staged build, because
+   * that is the only moment this process can honestly measure from.
+   */
+  readyAt?: number
+  /**
+   * Several checks in a row have not answered, so nothing here knows whether a newer
+   * build exists. The badge reads this BEFORE the phase: `idle` and `none` are both
+   * drawn from the last answer the feed gave, so an hour of failed checks read as
+   * "up to date" - see `stalledHint` in shared/updateStale.ts.
    */
   stalled?: boolean
 }
@@ -2161,6 +2169,11 @@ export interface Api {
   /** The list has been opened: everything in it stops counting as new. */
   markActivitySeen(): void
   killSession(id: string): Promise<void>
+  /**
+   * Tell a pane that is already open to close itself once it is done - the same rule
+   * `pf open --close-when-done` arms at the open, asked for later. `false` = no such pane.
+   */
+  armCloseWhenDone(id: string, reportTo?: string): Promise<boolean>
   /**
    * End this pane's agent and keep its card: the process and its whole tree go, the row
    * stays where it is wearing an `asleep` chip, and what is on screen is untouched.

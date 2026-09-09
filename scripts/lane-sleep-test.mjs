@@ -145,5 +145,33 @@ ok('the lane is still this pane\'s to keep working in', state().lanes[LANE]?.ses
 lane(repo, 'status', '--session', 'anyone')
 ok('an asleep hold seven days stale reaps like any other', state().lanes[LANE] === undefined, JSON.stringify(state().lanes))
 
+// -------------------------------------------------------------- the app's --gone ends it now
+
+// The pane that slept is in no running copy (closed, or a desk restarted without it), so
+// nothing will ever `wake` this hold. The app's reclaim sweep says so with `--gone`, and
+// release then ends the hold the way a chat's own SessionEnd would: clean committed work
+// is marked done, the lane is freed. 2026-09-09: 26 of 41 holds on the machine sat like
+// this, immune for seven days, drawn as `Other copies (21)`.
+const SESS2 = 'chat-slept-then-closed'
+const PANE2 = 'pane-slept-then-closed'
+lane(repo, 'claim', '--session', SESS2)
+const LANE2 = holderOf(SESS2)
+ok('a second claim landed', Boolean(LANE2), JSON.stringify(state().lanes))
+{
+  const s = state()
+  s.lanes[LANE2].pane = PANE2
+  write(s)
+}
+lane(repo, 'sleep', '--pane', PANE2)
+const laneFolder2 = LANE2 === 'main' ? repo : join(root, `demo-${LANE2}`)
+writeFileSync(join(laneFolder2, 'note2.txt'), 'finished feature\n')
+git(laneFolder2, 'add', '-A')
+git(laneFolder2, 'commit', '-qm', 'done')
+lane(repo, 'release', '--session', SESS2)
+ok('a plain release still parks an asleep hold', Boolean(state().lanes[LANE2]?.asleep), JSON.stringify(state().lanes))
+lane(repo, 'release', '--session', SESS2, '--gone')
+ok('release --gone ends an asleep hold', state().lanes[LANE2] === undefined, JSON.stringify(state().lanes))
+if (LANE2 !== 'main') ok('its committed clean work is marked done on the way out', Boolean(state().ready?.[LANE2]), JSON.stringify(state().ready))
+
 console.log(`\n${failed ? `${failed} FAILED` : 'all passed'}`)
 process.exit(failed ? 1 : 0)

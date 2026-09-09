@@ -241,6 +241,7 @@
     "test:headerfit": "node scripts/header-fit-test.mjs",
     "test:promptseed": "node scripts/promptseed-test.mjs",
     "test:trimloss": "node scripts/trim-loss-test.mjs",
+    "test:updateretry": "node scripts/update-retry-test.mjs",
     "test:renderwatch": "node scripts/renderwatch-test.mjs",
     "test:renderwatchlive": "node scripts/renderwatch-live.mjs",
     "test:capacity": "node scripts/capacity-test.mjs",
@@ -297,7 +298,9 @@
     "test:codexmodels": "node scripts/codex-models-test.mjs",
     "test:panefit": "node scripts/pane-fit-test.mjs",
     "test:railtrack": "node scripts/rail-track-test.mjs",
-    "test:issues": "node scripts/issues-dialog-test.mjs"
+    "test:issues": "node scripts/issues-dialog-test.mjs",
+    "test:updateprobe": "node scripts/update-probe-test.mjs",
+    "test:launchinstall": "node scripts/launch-install-test.mjs"
   },
   "dependencies": {
     "@lydell/node-pty": "1.2.0-beta.12",

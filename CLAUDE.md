@@ -188,6 +188,11 @@ Install once, update from app; hand-reinstall = defect.
   now action or a normal user quit installs the staged update. No timed restart, ignored
   version escalation, or failed-install retry may interrupt a running session. `npm run
   test:updatehold`.
+- SO A STAGED BUILD MAY SIT FOR DAYS, and that is the rule working: 0.8.207 was staged
+  2026-09-08T02:28 and only installed at the 2026-09-09T02:30 launch, superseded by 0.8.208
+  on the way. Dozens of successful checks in between are not a fault. Nothing in `src/main`
+  may consume `onUpdateIgnored` or `READY_HOLD_MS`; the log says which build waits and for
+  what, never that a restart is coming.
 - `phaseAt`/phase; `CHECK_BUDGET_MS` 2min, `DOWNLOAD_BUDGET_MS` 45min, `PROBE_BUDGET_MS` 5min,
   `POLL_WATCHDOG_MS` 6min. Quit gated `stagedInstallable()`, never `phase==='ready'`.
 - `update-health.json`: feed+wedges; 3d->`STALE`. `npm run test:updater`, `npm run test:wedge`.

@@ -15,23 +15,20 @@
 // word on screen is read by somebody who has never used git.
 
 /**
- * Is there a link here at all?
+ * A target the OS could never open, so it is never handed to the OS.
  *
- * 2026-09-09 log review, this Mac: five `open url: a link in a pane: about:blank - Failed
- * to open URL` lines across two days, three of them inside eight seconds. `about:blank` is
- * what `window.open()` resolves to when it is called with no URL - a page in a pane doing
- * `window.open()` to get a handle, or an anchor with an empty `href` and `target=_blank`.
- * It reaches `setWindowOpenHandler`, which hands every url straight to the OS, and the OS
- * has nothing to open it with. It cannot succeed and it names nothing, so the log line is
- * five occurrences of nothing - the same shape as the four this file was written for.
+ * `about:blank` reached `shell.openExternal` six times across 2026-09-05 and 09-06 (01:56,
+ * 07:08:15, 07:08:19, 07:08:22, 15:31) and failed every time, because no browser is
+ * registered for the `about:` scheme and there is nothing at the other end of it anyway. It
+ * comes from a page calling `window.open()` with no URL, or a `target="_blank"` anchor with
+ * an empty href - a real press, with no link behind it.
  *
- * `about:` and `javascript:` are here for the same reason and one more: handing either to
- * the OS opener is asking a browser to run something on a target the app never chose.
+ * Nothing is on screen for these: the person did not ask for a page, so telling them their
+ * browser refused one is a lie about what happened.
  */
-export function worthOpening(url: string): boolean {
-  const u = (url ?? '').trim()
-  if (!u) return false
-  return !/^(about:|javascript:|data:)/i.test(u)
+export function nothingToOpen(url: string): boolean {
+  const u = url.trim().toLowerCase()
+  return u === '' || u === 'about:' || u === 'about:blank' || u.startsWith('about:blank?') || u.startsWith('about:blank#')
 }
 
 /** Longest URL worth putting in a toast. Past this the middle is dropped, not the end. */

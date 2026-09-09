@@ -36,116 +36,51 @@ export function updateIgnored(superseded: number): boolean {
   return superseded >= STALE_SUPERSEDES
 }
 
-/**
- * What the card says instead of the ordinary "it installs silently" line.
- *
- * Plain words: nobody reading this card knows what "superseded" or "staged" means, and
- * the only thing they need to know is that the app is about to restart on its own and
- * when. See "Every word on screen is read by somebody who has never used git".
- */
-export function ignoredHint(current: string): string {
-  return `You are still on ${current}, and newer builds keep being downloaded and thrown away unused. PaneForge will restart into this one by itself once no pane has been used for 10 minutes.`
-}
-
-// --- a build that has sat ready ---------------------------------------------------
+// --- a build that has been ready for hours, with nobody told ------------------------
 //
-// 2026-09-03, the PC: 0.8.196 was ready at 17:08 and the app went on running 0.8.177 -
-// nineteen releases behind the Mac it was linked to - until somebody pressed Restart over
-// ssh at 19:38. The first version of this rule only took a ready build on a window nobody
-// had focused for half an hour, to leave an attended desk alone. That distinction turned
-// out not to matter: `autoInstall` already refuses to touch a desk with a pane in use
-// (`deskBusy` in main/index.ts, unchanged) and the game hold on top of it, so a person at
-// the keyboard is protected either way. Robert, 2026-09-03: "if we release we should
-// probably auto update both pc and mac right?" - so the focus check was dropped and every
-// desk, attended or not, takes a build once it has sat ready this long.
-
-/**
- * How long a build stays ready before it is taken, on any desk. Releases here go out in
- * bursts (a fix follows its release by minutes); five minutes lets the fix supersede the
- * build rather than restarting into the one it fixes.
- */
-export const READY_HOLD_MS = 5 * 60_000
-
-// --- a check that stopped answering -----------------------------------------------
+// There is no automatic restart. A previously proposed five-minute ready timer was
+// removed: a staged build installs only after Restart now, an ordinary quit, or the next
+// user-initiated launch when there are no windows to interrupt. `updateIgnored()` is a
+// badge reading; it starts nothing.
 //
-// 2026-09-09 log review, this Mac: `supersede failed the update probe did not answer
-// within 120s (online)` at 10:17:18, `net::ERR_TIMED_OUT` at 10:35:38, the same pair
-// again at 11:11:17 and 11:12:10, and no successful check until 11:21 - sixty-six minutes
-// in which the app had no idea whether a newer build existed. Each failure was reported
-// once and then waited out the full ten-minute poll, so a network stall that cleared in
-// thirty seconds still cost ten minutes, twice. And nothing anywhere said the update path
-// had stopped answering: every surface reads "up to date" when the last check failed.
+// 2026-09-09: 0.8.208 reached `state ready` at 01:43:58 and was still ready through the
+// restart log at 02:30:35 the next day; 0.8.207 before it sat staged from 02:28:31 on
+// 09-08 until the app was relaunched by hand nearly 24 hours later. Nothing was wrong -
+// this app installs a staged build only when somebody presses Restart now or quits it,
+// deliberately, so that no timer may ever tear down a working desk. But the waiting was
+// invisible: the card says the same sentence on hour one and on hour twenty-four, and the
+// log says nothing at all between the two.
+//
+// So the wait is made visible rather than shortened. Nothing here installs anything.
 
-/** How soon to look again after the first failed check. Doubles per consecutive failure. */
-export const PROBE_RETRY_MS = 30_000
+/** How long a ready build waits before the app starts saying how long it has waited. */
+export const STAGED_NAG_MS = 6 * 60 * 60 * 1000
 
-/**
- * Consecutive failures before the app stops calling it weather.
- *
- * Two, not one: one timed-out check is a laptop waking on a train, and reacting to that
- * would put a warning on screen most mornings. Two in a row is the shape above.
- */
-export const STALL_FAILS = 2
-
-/**
- * How long until the next look, given how many checks in a row have failed.
- *
- * Backoff rather than a fixed short retry: a machine genuinely offline for an afternoon
- * must not ask every thirty seconds for four hours. Capped at the ordinary poll, so this
- * can only ever make the app look SOONER than it otherwise would - never later.
- */
-export function probeBackoffMs(fails: number, idleMs: number): number {
-  if (fails <= 0) return idleMs
-  return Math.min(PROBE_RETRY_MS * 2 ** (fails - 1), idleMs)
+/** Has this build been sitting installable long enough to be worth mentioning? */
+export function stagedTooLong(readyAt: number | undefined, now: number): boolean {
+  return !!readyAt && now - readyAt >= STAGED_NAG_MS
 }
 
-/** Has the update path stopped answering? */
-export function updateStalled(fails: number): boolean {
-  return fails >= STALL_FAILS
+/** Whole hours, for a sentence. Never "0 hours": the caller only asks past the threshold. */
+export function stagedHours(readyAt: number, now: number): number {
+  return Math.max(1, Math.floor((now - readyAt) / 3_600_000))
 }
 
 /**
- * What the person is told while it is stalled.
+ * What the card says once a build has been waiting.
  *
- * Plain words: "probe", "feed" and "supersede" are this file's vocabulary and nobody
- * else's. The only thing worth saying is that the app cannot currently tell whether it is
- * up to date, and that it has not given up.
+ * It says what the app is doing and what ends it, in the words of the buttons underneath
+ * it - a person who has never used git has no idea what "staged" means and no reason to
+ * learn. See "Every word on screen is read by somebody who has never used git".
+ */
+export function stagedWaitingWords(current: string, version: string, hours: number): string {
+  return `PaneForge ${version} has been ready for ${hours} ${hours === 1 ? 'hour' : 'hours'} and you are still on ${current}. It installs when you choose Restart now, or the next time you quit PaneForge - never on its own while you are working.`
+}
+
+/**
+ * What the badge says when the check itself has stopped answering. The badge has room
+ * for two words, so the reason lives in the tooltip.
  */
 export function stalledHint(): string {
   return 'PaneForge cannot reach the place it gets its updates from, so it does not know whether a newer version exists. It is still trying.'
-}
-
-// --- the health line nobody was reading -------------------------------------------
-//
-// 2026-09-09, this Mac, at launch: `health last good update check 24h ago, 113 wedge(s)
-// recovered, last 2026-09-07T16:10:34`. One hundred and thirteen recovered wedges is not
-// noise a machine works through - it is a renderer that has been wedging for weeks - and
-// the line carrying it was tagged `health`, exactly like the ones saying everything is
-// fine. Only the 72-hour staleness had a word of its own, so the number that had run away
-// was the one thing in the line nothing was watching.
-
-/** Hours without the feed answering before the launch line says so in its tag. */
-export const STALE_HOURS = 72
-
-/**
- * Recovered wedges before the count is a fault rather than a tally.
- *
- * A busy fortnight on a heavy desk is single figures. Twenty-five is a machine where the
- * recovery path is load-bearing, which is a bug in whatever keeps needing it, not a
- * healthy app that has been up a long time.
- */
-export const WEDGE_ALARM = 25
-
-/**
- * What to tag the launch health line with. '' when there is nothing to say.
- *
- * Both readings, because they are independent and a machine can have either: a laptop
- * shut for a week is STALE with no wedges, and the desk above was WEDGED while its feed
- * was answering fine.
- */
-export function healthAlarm(hours: number, wedges: number): string {
-  const said: string[] = []
-  if (hours >= STALE_HOURS) said.push('STALE')
-  if (wedges >= WEDGE_ALARM) said.push('WEDGED')
-  return said.join(' ')
 }

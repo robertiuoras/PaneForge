@@ -516,9 +516,19 @@ export function reclaimPlan(
         CLOSEABLE.has(p.state)
     )
     .filter((p) => now - quietSince(p) >= minIdle)
-    // Oldest quiet first: of two finished panes, the one nobody has looked at since this
-    // morning is the safer one to close than the one that finished a minute ago.
-    .sort((a, b) => quietSince(a) - quietSince(b))
+    // A pane whose agent has already exited is the cheap one to take: closing it returns a
+    // buffer, where closing a live one takes an agent and its screen with it. So those go
+    // first, and a pane wearing `hadAgent=true` is what is left when the cheap ones did
+    // not cover it - not a coin flip between the two (2026-09-09 01:23:29, `(3) Peer
+    // Receipt` armed `why=pressure idleMin=686 hadAgent=true`).
+    //
+    // Within each group, oldest quiet first: of two finished panes, the one nobody has
+    // looked at since this morning is safer to close than the one that finished a minute
+    // ago.
+    .sort((a, b) => {
+      const cheap = Number(a.state !== 'exited') - Number(b.state !== 'exited')
+      return cheap !== 0 ? cheap : quietSince(a) - quietSince(b)
+    })
 
   // Never the last pane. An app that empties its own window under memory pressure has
   // not solved the problem, it has removed the reason the window is open.

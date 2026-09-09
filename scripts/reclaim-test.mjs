@@ -75,6 +75,48 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
 }
 
 {
+  // Which pane the pressure sweep reaches for FIRST.
+  //
+  // 2026-09-09 01:23:29: `armed why=pressure id=s37-mtsmrjqj name=(3) Peer Receipt
+  // idleMin=686 hadAgent=true log=capacity: over`. Closing a pane whose agent has already
+  // exited returns a buffer; closing a live one takes the agent and its screen with it.
+  // The order was oldest-quiet-first alone, so which of the two got armed came down to
+  // which had been quiet longer - a live agent could be taken while a finished pane sat
+  // beside it.
+  const mixed = [
+    pane({ id: 'live', state: 'ready', lastKeyboard: NOW - 9 * HOUR }),
+    pane({ id: 'done', state: 'exited', lastKeyboard: NOW - 1 * HOUR })
+  ]
+  eq(
+    'a finished pane is taken before a live agent, however much longer the agent has been quiet',
+    ids(reclaimPlan(mixed, over, { ...DEFAULT_RECLAIM, maxPerSweep: 1 }, NOW)),
+    'done'
+  )
+  eq(
+    '...and the plan says which of the two it actually was',
+    reclaimPlan(mixed, over, { ...DEFAULT_RECLAIM, maxPerSweep: 1 }, NOW)[0].hadAgent,
+    false
+  )
+  // Not a ban: a desk of nothing but live agents still reclaims, or the rule would switch
+  // the feature off on exactly the machine that needs it.
+  const allLive = [
+    pane({ id: 'x', state: 'ready', lastKeyboard: NOW - 9 * HOUR }),
+    pane({ id: 'y', state: 'ready', lastKeyboard: NOW - 8 * HOUR }),
+    pane({ id: 'z', state: 'ready', lastKeyboard: NOW - 7 * HOUR })
+  ]
+  eq(
+    'with no finished pane on the desk, a live one is still taken - oldest quiet first',
+    ids(reclaimPlan(allLive, over, { ...DEFAULT_RECLAIM, maxPerSweep: 1 }, NOW)),
+    'x'
+  )
+  eq(
+    '...and is honest that an agent went with it',
+    reclaimPlan(allLive, over, { ...DEFAULT_RECLAIM, maxPerSweep: 1 }, NOW)[0].hadAgent,
+    true
+  )
+}
+
+{
   // The trigger is pressure, never a clock. This is the line between reclaiming and
   // tidying up after somebody who did not ask to be tidied up after.
   const old = [pane({ id: 'a', lastOutput: NOW - 40 * HOUR }), pane({ id: 'b' })]
@@ -963,6 +1005,52 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   eq('...and the sweep picks it', ids(idleClosePlan([after, pad], CLOCKED3, NOW)), 'watched')
 }
 
+
+// --- an `armed` line that ends in nothing ---------------------------------------------
+//
+// reclaim.log, this Mac, 2026-09-09: `s30-mts8zg5d` armed at 08:12:59 (idle 60 min) and
+// again at 09:13:49 (idle 142 min) with no `closed` line either time; `s27-mtsm7txrc`
+// armed at 07:12:57 and 08:11:49 before a third arm at 08:13:00 finally took it. Both
+// carried `hadAgent: true`, which reads like a rule about agent panes.
+//
+// There is no such rule, and this is the half that proves it: `hadAgent` is a reading the
+// sweep PUBLISHES (`p.state !== 'exited'`), used for the sentence and the megabytes. A
+// pane with an agent in it is closed exactly like any other.
+{
+  const ONE_HOUR = { ...DEFAULT_RECLAIM, enabled: true, idleCloseMinutes: 60 }
+  const withAgent = pane({ id: 'agenty', state: 'ready', lastOutput: NOW - 5 * HOUR, lastFocus: NOW - 4 * HOUR })
+  // Paired, because the desk always keeps one pane back.
+  const pad = pane({ id: 'pad', lastKeyboard: NOW })
+  const plan = idleClosePlan([withAgent, pad], ONE_HOUR, NOW)
+  eq('a pane with an agent still in it is closed by the idle clock', ids(plan), 'agenty')
+  check('...and the plan says so out loud', plan[0].hadAgent === true, plan[0])
+  const pressed = reclaimPlan([withAgent, pad], { level: 'over', usedMb: 1, totalMb: 1 }, DEFAULT_RECLAIM, NOW)
+  check('...and pressure closes it too', pressed.some((p) => p.id === 'agenty' && p.hadAgent === true))
+  // The one place hadAgent decides anything: what closing it gives back.
+  const src = readFileSync(join(root, 'src/shared/reclaim.ts'), 'utf8')
+  const reads = src.split('\n').filter((l) => /hadAgent/.test(l) && !/^\s*(\*|\/\/)/.test(l))
+  check(
+    'nothing in the sweep refuses a pane for having an agent',
+    reads.every((l) => /hadAgent: (boolean|p\.state !== 'exited')|hadAgent \? SESSION_MB : 0|hadAgent\?:/.test(l)),
+    reads
+  )
+}
+
+// ...so the panes stayed because they WOKE UP, and nothing wrote that down. Every way a
+// countdown ends without a close now leaves a line beside the `armed` one.
+{
+  const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
+  check('a skipped close is logged like a closed one', /event: 'skipped'/.test(app))
+  check('...and carries the reason, not just the fact', /api\.logReclaim\(\{ event: 'skipped', id, name: [^,]+, reason \}\)/.test(app))
+  for (const [what, re] of [
+    ['the pane went back to work at the deadline', /skipClose\(ids, 'it went back to work during the countdown'\)/],
+    ['one pane of a plan was spared', /ids\.filter\(\(id\) => !live\.includes\(id\)\),\s*'it went back to work during the countdown'/],
+    ['the countdown was dropped mid-flight', /'it went back to work while the countdown was running'/],
+    ['somebody pressed Keep it open', /skipClose\(ids, 'you kept it open'\)/]
+  ]) {
+    check(`...for ${what}`, re.test(app))
+  }
+}
 // One clock, one predicate. `idleClosePlan` is built from `reclaimPaneOf` in App.tsx,
 // which has never refused a pane for a BELL; `stillCloseable` - the re-check at the
 // deadline - did. So the sweep armed a belled pane, the effect dropped the card, and the
@@ -971,22 +1059,12 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
 // every drop must leave a line where a person reads one.
 {
   const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
-  const from = app.indexOf('const closeRefusal = useCallback')
+  const from = app.indexOf('const stillCloseable = useCallback')
   const to = app.indexOf('const doClose = useCallback')
-  check('the deadline re-check is still where this test thinks it is', from > 0 && to > from)
+  check('stillCloseable is still where this test thinks it is', from > 0 && to > from)
   const body = app.slice(from, to)
   check('the deadline re-check refuses nothing the plan does not - a bell is not a question', !/s\.bell/.test(body))
-  check('...and a dropped countdown is written to reclaim.log, not only to DevTools', /event: 'spared'/.test(app))
-  // 2026-09-09: `acuity copy 2` armed at idleMin 60 and again at 142 with no `closed`
-  // line either time. A pane the countdown reaches and does not close must say which one
-  // and why, or an armed line with nothing after it is the whole record.
-  check('a pane the countdown spares says so on disk', /event: 'close-skipped'/.test(app))
-  check('...and names the reason rather than only the pane', /why: closeRefusal\(id\)/.test(app))
-  check(
-    'the reason is one reading, not a second predicate beside the first',
-    /const stillCloseable = useCallback\(\(id: string\): boolean => closeRefusal\(id\) === null/.test(app)
-  )
-  check('and it is said in plain words, not fleetState\'s', !/return st$/m.test(body))
+  check('...and a dropped countdown is written to reclaim.log, not only to DevTools', /event: 'skipped'/.test(app))
 }
 
 console.log(`reclaim: ${checks} checks passed`)

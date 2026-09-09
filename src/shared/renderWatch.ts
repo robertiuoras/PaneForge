@@ -39,29 +39,48 @@ export const RELOAD_COOLDOWN_MS = 60_000
 export const MAX_RELOADS = 3
 
 /**
- * How long a stretch of wedge-and-recover cycles counts as ONE bad renderer.
+ * How many self-healing wedges make a leak rather than a busy moment.
  *
- * 2026-09-09 log review, this Mac: pid 5075 went unresponsive and came back six times
- * between 01:03 and 03:11, the gaps growing 19s -> 55s, its working set climbing 205MB ->
- * 286MB and its cumulative CPU time 1:32 -> 23:13. Not one of those cycles reached
- * `GRACE_MS`, because `responsive` fires first and clears `unresponsiveSince` - so the
- * watchdog wrote twelve log lines about a renderer it never once acted on, while three
- * OTHER pids that missed a probe outright were reloaded within 20s of the first miss.
- *
- * A renderer that answers eventually is not healthy; it is a renderer with something
- * spinning behind it that keeps finishing just in time. Counting the cycles is the only
- * reading that tells it apart from a window that was briefly busy once.
+ * 2026-09-05: one renderer went unresponsive eight times between 01:03 and 03:11, each
+ * time answering again 19-55s later, with cpu pinned at 10.1-10.4% the whole while and
+ * its working set climbing 161MB -> 286MB. Every single cycle read as "it came back", so
+ * nothing was ever done about it. A renderer that recovers on its own once was busy; one
+ * that does it twice is a stuck event loop with a growing heap behind it, and waiting for
+ * the third is waiting for the machine.
  */
-export const FLAP_WINDOW_MS = 30 * 60_000
+export const STUCK_WEDGES = 2
 
 /**
- * How many of those cycles inside the window before it is treated as a wedge.
+ * Two wedges further apart than this are two incidents, not one leak.
  *
- * Three, not two: a machine under real load (a `npm test` fan-out, a video export) can
- * make one window miss its input hang monitor twice in half an hour with nothing at all
- * wrong with the page. Three inside thirty minutes is the shape above, and no other.
+ * The cadence that produced the rule was one wedge every ~27 minutes for three hours, so
+ * the window has to be wider than that or the count is reset before it can ever reach two.
  */
-export const MAX_FLAPS = 3
+export const WEDGE_WINDOW_MS = 60 * 60 * 1000
+
+/**
+ * A wedge that ends on its own, and the day counting them started mattering.
+ *
+ * 2026-09-05, this Mac: the same renderer (pid 5075) went unresponsive eight times between
+ * 01:03 and 03:11 and came back by itself every time - after 19s, then 30s, then 55s -
+ * while its working set climbed 205MB -> 286MB and its cumulative CPU went 1:32 -> 23:13.
+ * Not one of those eight was ever reloaded, because each episode ended a beat before the
+ * next tick asked, and `responsive` wiped the clock the reload was measured against. Three
+ * other renderers that day wedged HARD and were killed and reloaded inside 20s.
+ *
+ * So the reading a self-resolving spin leaves behind is kept. A renderer that keeps
+ * recovering is not a renderer that is well: it is one whose main thread is being blocked
+ * for tens of seconds at a time by something that is still there, and it gets the same
+ * treatment the hard wedges get rather than an unbounded loop.
+ */
+/** A recovery slower than this is a spin worth counting, not an ordinary busy moment. */
+export const SPIN_MS = 5_000
+
+/** How many self-resolving spins on one renderer before it is reloaded like a hard wedge. */
+export const MAX_SPINS = 3
+
+/** ...and how long that tally stands. Spins hours apart are not one fault. */
+export const SPIN_WINDOW_MS = 30 * 60_000
 
 export interface Watch {
   /** When Chromium last said the renderer stopped answering input. 0 = it is answering. */
@@ -72,31 +91,46 @@ export interface Watch {
   gone: boolean
   reloads: number
   lastReloadAt: number
-  /** The window itself has already been rebuilt once. There is nothing left to escalate to. */
-  recreated: boolean
-  /** Wedge-and-recover cycles inside the current window. See `FLAP_WINDOW_MS`. */
-  flaps: number
-  /** When the current flap window opened. 0 = there is none. */
-  flapSince: number
+  /** Wedges seen since the last reload, within `WEDGE_WINDOW_MS` of each other. */
+  wedges: number
+  /** When the most recent wedge started, so a stale count can be dropped. */
+  lastWedgeAt: number
+  /** Spins this renderer has recovered from by itself inside `SPIN_WINDOW_MS`. */
+  spins: number
+  /** When the oldest spin in that tally happened. 0 = the tally is empty. */
+  firstSpinAt: number
+}
+
+/**
+ * Record a wedge the renderer came out of on its own. `forMs` is how long it was gone.
+ *
+ * A quick recovery is not a spin - a renderer is briefly unresponsive whenever it is doing
+ * real work - so anything under `SPIN_MS` leaves the tally alone. A spin outside the window
+ * starts the tally again rather than adding to a stale one.
+ */
+export function noteRecovered(w: Watch, forMs: number, now: number): Watch {
+  if (forMs < SPIN_MS) return w
+  const stale = !w.firstSpinAt || now - w.firstSpinAt > SPIN_WINDOW_MS
+  return stale ? { ...w, spins: 1, firstSpinAt: now } : { ...w, spins: w.spins + 1 }
 }
 
 export type Act = 'wait' | 'reload' | 'recreate' | 'give-up'
 
 export function decide(w: Watch, now: number): Act {
   const spent = w.reloads >= MAX_RELOADS
-  // Reloads spent is not the end of what can be tried. A reload hands the same window a
-  // fresh page; rebuilding the window hands the app a fresh window, which is the recovery
-  // a person gets by quitting and reopening - and panes come back from desk.json and
-  // `--resume` either way. Only once THAT has been spent is there nothing left.
-  if (spent) return w.recreated ? 'give-up' : 'recreate'
   // A dead renderer is not a slow one: there is no page left to reload, so the window has
   // to be rebuilt. Said before the cooldown, because a process that is GONE is not going
   // to answer during it.
-  if (w.gone) return 'recreate'
+  if (w.gone) return spent ? 'give-up' : 'recreate'
+  if (spent) return 'give-up'
   if (w.lastReloadAt && now - w.lastReloadAt < RELOAD_COOLDOWN_MS) return 'wait'
-  // Said AFTER the cooldown, because a reload leaves a renderer briefly unresponsive and
-  // that recovery must never be counted as the fault it was the cure for.
-  if (w.flaps >= MAX_FLAPS) return 'reload'
+  // A renderer wedging again after healing itself is not waited out: the grace period is
+  // there to let a busy frame finish, and this one has already proved it does not.
+  if (w.unresponsiveSince && w.wedges >= STUCK_WEDGES) return 'reload'
+  // A renderer that keeps wedging and un-wedging gets the same reload the hard wedges get.
+  // Asked BEFORE the two clocks below, because by construction neither of them is running:
+  // the spin has already ended, which is exactly how this one escaped for two hours.
+  if (w.spins >= MAX_SPINS) return 'reload'
   if (w.unresponsiveSince && now - w.unresponsiveSince >= GRACE_MS) return 'reload'
   if (w.probeSentAt && now - w.probeSentAt >= PROBE_DEAD_MS) return 'reload'
   return 'wait'
@@ -110,16 +144,57 @@ export function fresh(): Watch {
     gone: false,
     reloads: 0,
     lastReloadAt: 0,
-    recreated: false,
-    flaps: 0,
-    flapSince: 0
+    wedges: 0,
+    lastWedgeAt: 0,
+    spins: 0,
+    firstSpinAt: 0
   }
 }
 
-export function afterAct(w: Watch, now: number, act?: Act): Watch {
-  // The flap count goes with the act: the window that was flapping has just been taken
-  // out from under the spin, so the next cycle is the first of a NEW stretch. Keeping the
-  // old count would reload again the moment the fresh page blinked once.
+/**
+ * Chromium said the renderer stopped answering. Counts it, and forgets a count that is
+ * older than one incident - so a window that wedges once a day is never reloaded for it.
+ */
+export function noteWedge(w: Watch, now: number): Watch {
+  const stale = w.lastWedgeAt !== 0 && now - w.lastWedgeAt > WEDGE_WINDOW_MS
+  return {
+    ...w,
+    unresponsiveSince: w.unresponsiveSince || now,
+    wedges: (stale ? 0 : w.wedges) + 1,
+    lastWedgeAt: now
+  }
+}
+
+/**
+ * How many times a window the watchdog gave up on is REBUILT before it is left alone.
+ *
+ * Giving up used to be the end of it: `still wedged after 3 reload(s) - leaving it alone`
+ * (2026-09-05 00:48:17, pid 97494) is the last line about that window anywhere in the log.
+ * The watch was stopped with it, so nothing watched the app from then on, and the person in
+ * front of it was told nothing - a desk that had stopped answering, with no notice and no
+ * way back but killing PaneForge by hand.
+ *
+ * A rebuild is the recovery a DEAD renderer already gets: the window is destroyed and
+ * `createWindow` runs, panes coming back from desk.json and `--resume`. One is allowed,
+ * because a rebuild that wedges again is not a rescue, it is a loop.
+ */
+export const MAX_GIVE_UP_REBUILDS = 1
+
+/**
+ * What to do with a window the watchdog has run out of reloads for.
+ *
+ * `sinceLastMs` is how long ago the last give-up rebuild was, `Infinity` when there has not
+ * been one - an app left running for days earns its rebuild back, the same way the wedge
+ * count is forgotten after an hour of quiet.
+ */
+export function afterGiveUp(rebuilds: number, sinceLastMs: number): 'recreate' | 'leave' {
+  if (sinceLastMs > WEDGE_WINDOW_MS) return 'recreate'
+  return rebuilds < MAX_GIVE_UP_REBUILDS ? 'recreate' : 'leave'
+}
+
+export function afterAct(w: Watch, now: number): Watch {
+  // The wedge count goes with it: the reload is the answer to those wedges, and the next
+  // two are what say whether it worked.
   return {
     ...w,
     unresponsiveSince: 0,
@@ -127,20 +202,11 @@ export function afterAct(w: Watch, now: number, act?: Act): Watch {
     gone: false,
     reloads: w.reloads + 1,
     lastReloadAt: now,
-    recreated: w.recreated || act === 'recreate',
-    flaps: 0,
-    flapSince: 0
+    wedges: 0,
+    lastWedgeAt: 0,
+    // The tally is about THIS page. A reload replaces it, so the count starts again -
+    // otherwise the second reload would fire the instant the cooldown lifted.
+    spins: 0,
+    firstSpinAt: 0
   }
-}
-
-/**
- * A renderer that stopped answering has started answering again. Count it.
- *
- * The window is anchored on the FIRST cycle rather than the last, so a renderer that
- * flaps once an hour for a day never accumulates - only a stretch of them close together
- * reaches `MAX_FLAPS`.
- */
-export function noteFlap(w: Watch, now: number): Watch {
-  if (!w.flapSince || now - w.flapSince > FLAP_WINDOW_MS) return { ...w, flaps: 1, flapSince: now }
-  return { ...w, flaps: w.flaps + 1 }
 }

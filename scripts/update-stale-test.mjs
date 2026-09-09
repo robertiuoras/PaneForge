@@ -10,6 +10,7 @@
 //   node scripts/update-stale-test.mjs
 
 import { buildSync } from 'esbuild'
+import { readFileSync } from 'node:fs'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -27,17 +28,11 @@ buildSync({
 })
 const {
   STALE_SUPERSEDES,
-  READY_HOLD_MS,
-  PROBE_RETRY_MS,
-  STALL_FAILS,
-  ignoredHint,
+  STAGED_NAG_MS,
   updateIgnored,
-  probeBackoffMs,
-  stalledHint,
-  updateStalled,
-  healthAlarm,
-  STALE_HOURS,
-  WEDGE_ALARM
+  stagedHours,
+  stagedTooLong,
+  stagedWaitingWords
 } = await import(pathToFileURL(outfile).href)
 
 const fail = []
@@ -58,22 +53,24 @@ ok(STALE_SUPERSEDES === 2, 'the threshold is two, named rather than written into
 // this - which is why the rule may take a restart without asking again.
 ok(updateIgnored(0) === false, 'and an attempt puts it back to waiting')
 
-const hint = ignoredHint('0.8.185')
-ok(hint.includes('0.8.185'), 'the card names the version the user is stuck on')
-ok(hint.includes('restart into this one by itself'), 'and says the app will do it without being asked')
-ok(hint.includes('no pane has been used for 10 minutes'), 'and when: once nothing has been used for 10 minutes')
-// Every word on screen is read by somebody who has never used git.
-for (const word of ['superseded', 'staged', 'stale', 'feed', 'install attempt']) {
-  ok(!hint.toLowerCase().includes(word), `the card does not say "${word}"`)
-}
-
-// --- a build that has sat ready --------------------------------------------------
+// --- and nothing restarts by itself ------------------------------------------------
 //
-// The first version of this rule only fired on a window nobody had focused for half an
-// hour. That distinction was dropped 2026-09-03 (Robert: "if we release we should
-// probably auto update both pc and mac right?"): `autoInstall`'s own deskBusy hold
-// already protects a pane in use, so every desk takes a ready build the same way now.
-ok(READY_HOLD_MS === 5 * 60_000, 'a build is taken once it has sat ready five minutes')
+// The count is a reading, not a trigger. 0.8.207 sat staged from 2026-09-08T02:28 to the
+// 2026-09-09T02:30 launch - 23 hours across dozens of successful checks - and that is the
+// rule working: a staged build installs on Restart now or an ordinary quit and on nothing
+// else. `npm run test:updatehold` pins the same thing from the other side.
+const mainUpdater = readFileSync(new URL('../src/main/updater.ts', import.meta.url), 'utf8')
+const mainIndex = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+ok(!/READY_HOLD_MS/.test(mainUpdater + mainIndex), 'no ready-for-N-minutes rule takes a build on its own')
+ok(!/onUpdateIgnored\(/.test(mainIndex), 'and nothing in the app listens for the ignored flag to restart')
+ok(
+  !/restarting into v/.test(mainUpdater),
+  'the log does not promise a restart nobody will make - that is how 23 hours read as handled'
+)
+ok(
+  /installs on the next quit or Restart now/.test(mainUpdater),
+  'it says which build is waiting and what would install it'
+)
 
 // --- and the same rule, driven through the real updater ----------------------
 //
@@ -211,37 +208,6 @@ const health=()=>JSON.parse(fs.readFileSync(path.join(el.__dir,'update-health.js
 `
 )
 
-// --- a check that stopped answering ------------------------------------------
-//
-// 10:17:18 and 11:11:17 on 2026-09-08, both `the update probe did not answer within 120s`,
-// each followed by an ERR_TIMED_OUT and then a full ten-minute wait. Sixty-six minutes
-// with no successful check, and a badge that went on saying "up to date" throughout.
-const IDLE = 10 * 60_000
-ok(probeBackoffMs(0, IDLE) === IDLE, 'no failures: the ordinary poll, untouched')
-ok(probeBackoffMs(1, IDLE) === PROBE_RETRY_MS, `one failure looks again in ${PROBE_RETRY_MS / 1000}s, not ten minutes`)
-ok(probeBackoffMs(2, IDLE) === PROBE_RETRY_MS * 2, 'and backs off rather than asking at the same rate for ever')
-ok(probeBackoffMs(9, IDLE) === IDLE, 'capped at the ordinary poll - a machine offline all afternoon is not asked every 30s')
-ok(probeBackoffMs(3, 60_000) === 60_000, 'and it can only ever look SOONER: a chase stays a chase')
-ok(!updateStalled(STALL_FAILS - 1), 'one failed check is weather, not a fault')
-ok(updateStalled(STALL_FAILS), `${STALL_FAILS} in a row is worth saying out loud`)
-const stalledWords = stalledHint()
-for (const word of ['probe', 'feed', 'supersede', 'ERR_', 'HTTP']) {
-  ok(!stalledWords.includes(word), `the stalled words do not say "${word}" to somebody who has never coded`)
-}
-ok(/still trying/i.test(stalledWords), 'and they say it has not given up')
-
-// --- 113 recovered wedges, tagged the same as a healthy machine ---------------
-//
-// `health last good update check 24h ago, 113 wedge(s) recovered` at launch on
-// 2026-09-09. Only the staleness had a word of its own, so the number that had run away
-// was the one thing in the line nothing was watching.
-ok(healthAlarm(1, 0) === '', 'a healthy machine says nothing')
-ok(healthAlarm(1, WEDGE_ALARM - 1) === '', 'and a handful of recovered wedges is a busy fortnight')
-ok(healthAlarm(1, WEDGE_ALARM) === 'WEDGED', `${WEDGE_ALARM} recovered wedges is a fault, not a tally`)
-ok(healthAlarm(1, 113) === 'WEDGED', 'and the reading that started this is caught')
-ok(healthAlarm(STALE_HOURS, 0) === 'STALE', 'a feed that has not answered in three days still says so on its own')
-ok(healthAlarm(STALE_HOURS, 113) === 'STALE WEDGED', 'and a machine with both says both')
-
 try {
   const out = execFileSync(process.execPath, [join(work, 'drive.cjs')], { cwd: work, encoding: 'utf8' })
   process.stdout.write(out)
@@ -249,6 +215,91 @@ try {
   process.stdout.write(String(e.stdout ?? ''))
   process.stderr.write(String(e.stderr ?? ''))
   fail.push('the wired rule')
+}
+
+// --- a build that has been ready for hours, with nobody told -------------------------
+//
+// 0.8.207 reached `state ready` at 2026-09-08T02:28:31 and the app was still running the
+// old build when it was relaunched by hand at 2026-09-09T02:30:34. Nothing installed it
+// because nothing may: this app takes a staged build on Restart now or on a quit, and no
+// timer is allowed to tear down a working desk. What was missing is that the screen said
+// the same sentence on hour one and on hour twenty-four, and Later had hidden it for good.
+{
+  const NOW = 1_800_000_000_000
+  const HOUR = 3_600_000
+  ok(!stagedTooLong(undefined, NOW), 'a build that never became ready has waited for nothing')
+  ok(!stagedTooLong(NOW - HOUR, NOW), 'an hour is an ordinary wait and is not mentioned')
+  ok(stagedTooLong(NOW - STAGED_NAG_MS, NOW), `past ${STAGED_NAG_MS / HOUR}h it is worth saying`)
+  ok(stagedTooLong(NOW - 24 * HOUR, NOW), 'and a full day certainly is')
+  ok(stagedHours(NOW - 24 * HOUR, NOW) === 24, 'the sentence counts whole hours')
+  ok(stagedHours(NOW - HOUR - 1000, NOW) === 1, '...and never says nought hours')
+
+  const words = stagedWaitingWords('0.8.206', '0.8.207', 24)
+  ok(words.includes('24 hours') && words.includes('0.8.207'), 'the card names the build and the wait')
+  ok(words.includes('Restart now'), '...and what ends the wait, in the words of the button underneath it')
+  ok(
+    !/staged|supersede|feed|installer/i.test(words),
+    'and says none of it to somebody who has never used git'
+  )
+  ok(
+    /never on its own while you are working/.test(words),
+    'it also says what the app will NOT do, because that is the promise being kept'
+  )
+}
+
+// Render the actual card with controlled hook state and clock, then invoke its buttons.
+// This catches a reminder whose Later button stops hiding it after the age threshold.
+{
+  const { build } = await import('esbuild')
+  const cardFile = join(OUT, 'update-toast-dismiss.mjs')
+  const fixture = { values: [], cursor: 0, now: 1_800_000_000_000, update: null }
+  globalThis.__updateToastFixture = fixture
+  const previousWindow = globalThis.window
+  globalThis.window = { api: {} }
+  try {
+    await build({
+      entryPoints: [join(ROOT, 'src/renderer/src/components/UpdateToast.tsx')],
+      outfile: cardFile, bundle: true, format: 'esm', platform: 'node', jsx: 'automatic',
+      alias: { '@shared': join(ROOT, 'src/shared') },
+      external: ['react/jsx-runtime'],
+      plugins: [{ name: 'card-fixture', setup(b) {
+        b.onResolve({ filter: /^react$/ }, () => ({ path: 'hooks', namespace: 'fixture' }))
+        b.onResolve({ filter: /^\.\/Elapsed$/ }, () => ({ path: 'clock', namespace: 'fixture' }))
+        b.onLoad({ filter: /.*/, namespace: 'fixture' }, ({ path }) => ({ contents: path === 'clock'
+          ? 'export const useNow = () => globalThis.__updateToastFixture.now'
+          : `export default {}; export const useEffect = () => {};
+             export function useState(initial) {
+               const f = globalThis.__updateToastFixture, i = f.cursor++;
+               if (!(i in f.values)) f.values[i] = initial;
+               return [i === 0 ? f.update : f.values[i], value => { f.values[i] = value }];
+             }`
+        }))
+      } }]
+    })
+    const { default: Card } = await import(pathToFileURL(cardFile).href)
+    const render = () => { fixture.cursor = 0; return Card() }
+    const later = card => card.props.children[2].props.children[0].props.onClick()
+    fixture.update = { phase: 'ready', current: '0.8.206', version: '0.8.207', readyAt: fixture.now }
+    let card = render()
+    ok(!!card, 'a newly ready build displays its card')
+    later(card)
+    ok(render() === null, 'Later hides the initial card')
+    fixture.now += STAGED_NAG_MS
+    card = render()
+    ok(!!card, 'the dismissed card returns when its wait reaches the reminder threshold')
+    later(card)
+    ok(render() === null, 'Later also hides the aged reminder')
+    fixture.now += STAGED_NAG_MS
+    ok(render() === null, 'a dismissed aged reminder stays hidden on later clock ticks')
+    fixture.update = { ...fixture.update, version: '0.8.208' }
+    card = render()
+    ok(!!card, 'a different build is still allowed to show its own reminder')
+    card.props.children[0].props.onDismiss()
+    ok(render() === null, 'the close button also dismisses an aged reminder')
+  } finally {
+    globalThis.window = previousWindow
+    delete globalThis.__updateToastFixture
+  }
 }
 
 console.log(fail.length ? `\n${fail.length} failed` : '\nall good')
