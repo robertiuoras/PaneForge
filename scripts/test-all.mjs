@@ -223,6 +223,7 @@ const TESTS = [
   // cross-device claim, and the git plumbing that carries it (2.4s, real repositories).
   ['lanepeers', 'lane-peers-test.mjs'],
   ['lanesleep', 'lane-sleep-test.mjs'],
+  ['laneuntracked', 'lane-untracked-test.mjs'],
   ['lanedevice', 'lane-device-test.mjs'],
   ['laneensure', 'lane-ensure-test.mjs'],
   // The lane a folder already IS, for a pane the app did not move itself - with the

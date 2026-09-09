@@ -623,9 +623,14 @@ export function goneLanes(board: LaneBoard | null, living: Set<string>, now = Da
     // no pane here by definition, so every test below would pass and this would run
     // `lane.mjs release` on a lane somebody is typing in at the other desk.
     .filter((l) => !l.peer)
-    // SessionEnd deliberately preserves a sleeping hold. Releasing it every minute
-    // cannot make progress and used to prevent every later lane from being visited.
-    .filter((l) => !l.asleep)
+    // A sleeping hold is NOT exempt. `asleep` keeps a lane for the pane that will wake it,
+    // and `living` is every running copy's answer to whether that pane exists: a chat no
+    // copy hosts has no pane, sleeping or otherwise. The sweep passes `--gone`, which is
+    // the one word that lets `release` end a sleeping hold instead of parking it - before
+    // that word existed this filter had to skip them, or the sweep ran a no-op release on
+    // the same hold every tick and starved every later lane. Measured 2026-09-09: 26 of
+    // 41 holds on this machine were asleep and owned by chats no window had, three days
+    // into a seven-day ASLEEP_MAX_MS, drawn as `Other copies (21)`.
     .filter((l) => l.held && l.session && !l.ownerPane && !living.has(l.session))
     .filter((l) => now - l.seen > GONE_MS)
     .map((l) => l.session as string)
@@ -856,7 +861,9 @@ export async function laneReclaim(panes: LanePane[]): Promise<void> {
       reclaiming = true
       await new Promise<void>((done) => execFile(
         process.execPath,
-        [next.engine, 'release', '--repo', next.repo, '--session', next.session],
+        // `--gone`: every running copy was asked and none hosts this chat's pane, so a hold
+        // it left asleep has nothing to wake it and is ended rather than parked.
+        [next.engine, 'release', '--repo', next.repo, '--session', next.session, '--gone'],
         {
           cwd: next.repo,
           windowsHide: true,
