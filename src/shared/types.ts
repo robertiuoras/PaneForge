@@ -2157,6 +2157,11 @@ export interface Api {
   markActivitySeen(): void
   killSession(id: string): Promise<void>
   /**
+   * Tell a pane that is already open to close itself once it is done - the same rule
+   * `pf open --close-when-done` arms at the open, asked for later. `false` = no such pane.
+   */
+  armCloseWhenDone(id: string, reportTo?: string): Promise<boolean>
+  /**
    * End this pane's agent and keep its card: the process and its whole tree go, the row
    * stays where it is wearing an `asleep` chip, and what is on screen is untouched.
    * See `shared/sleep.ts`.

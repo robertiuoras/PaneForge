@@ -80,5 +80,17 @@ const ctl = readFileSync(join(root, 'scripts/pf-ctl.mjs'), 'utf8')
 ok(/--close-when-done/.test(ctl), 'pf open takes the flag')
 ok(/process\.env\.PF_PANE/.test(ctl), '...and reports back to the pane that ran it, unasked')
 
+// ...and armed on a pane that is ALREADY open, which the flag cannot reach: a chat opened
+// by hand, finished, that would otherwise wait out the idle clock.
+ok(/armCloseWhenDone\(id: string, reportTo\?: string\): boolean/.test(sessions), 'a live pane can be armed')
+ok(/live\.req\.closeWhenDone = true/.test(sessions), '...by setting the very request the sweep reads, so no second rule decides when')
+ok(/reportTo !== id/.test(sessions), '...and a pane is never told about its own closing')
+const main = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
+ok(/ipcMain\.handle\('sessions:closeWhenDone'/.test(main), 'the channel is registered')
+const surface = readFileSync(join(root, 'src/shared/surface.ts'), 'utf8')
+ok(/'sessions:closeWhenDone'/.test(surface), "...on the one list both ends build from, or it would not compile")
+ok(/cmd === 'close-when-done'/.test(ctl), 'pf close-when-done arms it')
+ok(/close-when-done needs a pane/.test(ctl), '...and refuses by name when it cannot tell which pane')
+
 rmSync(work, { recursive: true, force: true })
 console.log(`close-done: ${checks} checks passed`)
