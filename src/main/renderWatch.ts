@@ -6,7 +6,9 @@
 
 import { execFile } from 'node:child_process'
 import { app, type BrowserWindow } from 'electron'
+import { noteActivity } from './activity'
 import { logProblem } from './crash'
+import { entry } from '../shared/activity'
 import {
   MAX_FLAPS,
   PROBE_EVERY_MS,
@@ -143,7 +145,21 @@ export function watchRenderer(win: BrowserWindow, recreate: () => void): void {
       return
     }
     if (act === 'give-up') {
-      logProblem('renderer', `still wedged after ${state.reloads} reload(s) - leaving it alone`)
+      logProblem(
+        'renderer',
+        `still wedged after ${state.reloads} attempt(s) including a rebuilt window - leaving it alone (${metricsFor(pidOf(win))})`
+      )
+      // Two things hear about it, because the one surface that cannot is the window.
+      // `faultNotify.ts` already sends `still wedged` to the phone (RENDERER_ACTS); this
+      // is the half that survives on the machine - `activity.json` is main's, so the row
+      // is still there to read after the quit-and-reopen this line is asking for.
+      noteActivity(
+        entry(
+          'wedged',
+          'the window',
+          'it stopped answering and reloading it did not help - quit PaneForge and open it again; your panes come back'
+        )
+      )
       return stopRenderWatch()
     }
     const why = state.gone
@@ -154,7 +170,7 @@ export function watchRenderer(win: BrowserWindow, recreate: () => void): void {
     const pid = pidOf(win)
     logProblem('renderer', `${act} (${why}) - ${metricsFor(pid)}`)
     logCpuTime(pid)
-    state = afterAct(state, now)
+    state = afterAct(state, now, act)
     if (act === 'recreate') {
       stopRenderWatch()
       return recreate()

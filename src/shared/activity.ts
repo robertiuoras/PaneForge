@@ -26,6 +26,11 @@ export type ActivityKind =
   | 'updated'
   | 'recovered'
   | 'stopped'
+  // The window stopped answering and nothing the app can do brought it back. The one
+  // entry here that names something still WRONG rather than something handled - it earns
+  // a row because the alternative is the state this was found in: a dead window, a log
+  // line nobody was reading, and no way to tell it from an app that was simply quiet.
+  | 'wedged'
   // Not something the app decided - a hook in the pane refused a command. It earns a row
   // by the same test as the rest: it happened without a person, it cost the pane real
   // time, and nowhere else on screen says it. See `shared/hookDeny.ts`.
@@ -61,6 +66,7 @@ export const KIND_WORDS: Record<ActivityKind, string> = {
   updated: 'Updated',
   recovered: 'Recovered',
   stopped: 'Stopped',
+  wedged: 'Stuck',
   refused: 'Refused'
 }
 

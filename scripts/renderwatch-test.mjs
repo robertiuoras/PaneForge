@@ -27,6 +27,8 @@ const ok = (what, cond, extra = '') => {
   console.log(`${cond ? 'ok   ' : 'FAIL '} ${what}${extra ? ` - ${extra}` : ''}`)
 }
 
+const SRC = readFileSync(new URL('../src/main/renderWatch.ts', import.meta.url), 'utf8')
+
 const T = 1_000_000_000
 const w = (over) => ({ ...fresh(), ...over })
 
@@ -72,14 +74,36 @@ ok(
   decide(w({ unresponsiveSince: T - GRACE_MS * 10, lastReloadAt: T - RELOAD_COOLDOWN_MS }), T) === 'reload'
 )
 ok(
-  'a window that keeps wedging is left as the app shipped, not reloaded for ever',
+  'reloads spent is not the end: the WINDOW is rebuilt before anything is given up on',
   decide(w({ unresponsiveSince: T - GRACE_MS * 10, reloads: MAX_RELOADS, lastReloadAt: T - RELOAD_COOLDOWN_MS }), T) ===
-    'give-up',
+    'recreate',
   `max ${MAX_RELOADS}`
 )
 ok(
+  '...and only once THAT has been spent is the window left as the app shipped',
+  decide(
+    w({
+      unresponsiveSince: T - GRACE_MS * 10,
+      reloads: MAX_RELOADS,
+      recreated: true,
+      lastReloadAt: T - RELOAD_COOLDOWN_MS
+    }),
+    T
+  ) === 'give-up'
+)
+ok(
+  'a rebuild is remembered, so it is not the answer twice',
+  afterAct(w({ reloads: MAX_RELOADS }), T, 'recreate').recreated === true
+)
+ok('a reload is not a rebuild', afterAct(fresh(), T, 'reload').recreated === false)
+ok(
+  'giving up says so where somebody will read it, not only in the log',
+  /noteActivity\(/.test(SRC) && /'wedged'/.test(SRC),
+  'an activity row on give-up'
+)
+ok(
   '...and a renderer that keeps DYING is given up on too, rather than rebuilt for ever',
-  decide(w({ gone: true, reloads: MAX_RELOADS }), T) === 'give-up'
+  decide(w({ gone: true, reloads: MAX_RELOADS, recreated: true }), T) === 'give-up'
 )
 
 // --- what an action leaves behind -------------------------------------------------------
@@ -158,7 +182,7 @@ ok(
 )
 ok(
   'the watch counts a recovery rather than only logging it',
-  /noteFlap\(state, now\)/.test(readFileSync(new URL('../src/main/renderWatch.ts', import.meta.url), 'utf8'))
+  /noteFlap\(state, now\)/.test(SRC)
 )
 
 console.log(failed ? `\n${failed} failed` : '\nrender watch: all good')

@@ -72,6 +72,8 @@ export interface Watch {
   gone: boolean
   reloads: number
   lastReloadAt: number
+  /** The window itself has already been rebuilt once. There is nothing left to escalate to. */
+  recreated: boolean
   /** Wedge-and-recover cycles inside the current window. See `FLAP_WINDOW_MS`. */
   flaps: number
   /** When the current flap window opened. 0 = there is none. */
@@ -82,11 +84,15 @@ export type Act = 'wait' | 'reload' | 'recreate' | 'give-up'
 
 export function decide(w: Watch, now: number): Act {
   const spent = w.reloads >= MAX_RELOADS
+  // Reloads spent is not the end of what can be tried. A reload hands the same window a
+  // fresh page; rebuilding the window hands the app a fresh window, which is the recovery
+  // a person gets by quitting and reopening - and panes come back from desk.json and
+  // `--resume` either way. Only once THAT has been spent is there nothing left.
+  if (spent) return w.recreated ? 'give-up' : 'recreate'
   // A dead renderer is not a slow one: there is no page left to reload, so the window has
   // to be rebuilt. Said before the cooldown, because a process that is GONE is not going
   // to answer during it.
-  if (w.gone) return spent ? 'give-up' : 'recreate'
-  if (spent) return 'give-up'
+  if (w.gone) return 'recreate'
   if (w.lastReloadAt && now - w.lastReloadAt < RELOAD_COOLDOWN_MS) return 'wait'
   // Said AFTER the cooldown, because a reload leaves a renderer briefly unresponsive and
   // that recovery must never be counted as the fault it was the cure for.
@@ -104,12 +110,13 @@ export function fresh(): Watch {
     gone: false,
     reloads: 0,
     lastReloadAt: 0,
+    recreated: false,
     flaps: 0,
     flapSince: 0
   }
 }
 
-export function afterAct(w: Watch, now: number): Watch {
+export function afterAct(w: Watch, now: number, act?: Act): Watch {
   // The flap count goes with the act: the window that was flapping has just been taken
   // out from under the spin, so the next cycle is the first of a NEW stretch. Keeping the
   // old count would reload again the moment the fresh page blinked once.
@@ -120,6 +127,7 @@ export function afterAct(w: Watch, now: number): Watch {
     gone: false,
     reloads: w.reloads + 1,
     lastReloadAt: now,
+    recreated: w.recreated || act === 'recreate',
     flaps: 0,
     flapSince: 0
   }
