@@ -106,3 +106,27 @@ export function roomFor(pressure: Pressure, freeMb: number): number {
   if (pressure !== 'normal') return 0
   return Math.max(0, Math.floor(freeMb / SESSION_MB))
 }
+
+// --- a pane that took seconds to say anything ---------------------------------------
+//
+// `wake-printed` measures the gap between deciding to wake a pane and its first byte, and
+// it was a measurement and nothing else: every reading, fast or slow, was one identical
+// line. On 2026-09-09 that log held 2302ms (`s8-mtrx1rww`, taskdriver.ai-g), 2098ms
+// (`s44-mttgbnco`, assistant-a) and 1581ms (`s43-mttg443k`, PaneForge-d) sitting among
+// readings of 10-150ms - ten to twenty times the rest of the same file - and nothing said
+// so. "Sleeping is fine, waking one is laggy" (Robert, 2026-09-05) is exactly this, and
+// the evidence for it was already on disk and unsearchable.
+
+/**
+ * The gap past which waking a pane stopped being instant.
+ *
+ * A second, because that is where a wake stops reading as the pane simply being there and
+ * starts reading as the app thinking about it. The ordinary reading on this machine is
+ * 10-150ms, so this is an order of magnitude clear of normal and cannot fire on weather.
+ */
+export const SLOW_WAKE_MS = 1000
+
+/** Did this wake take long enough to be worth a line of its own? */
+export function wokeSlowly(ms: number): boolean {
+  return ms >= SLOW_WAKE_MS
+}

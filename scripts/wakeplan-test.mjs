@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 /**
  * Which sleeping panes to wake, and which running ones to sleep, as the machine's own
  * pressure reading changes - shared/wakePlan.ts. Pure arithmetic, no Electron, no window.
@@ -21,7 +22,7 @@ buildSync({
   platform: 'node',
   outfile: file
 })
-const { wakePlan, pressureSleepPlan, roomFor } = await import(pathToFileURL(file).href)
+const { wakePlan, pressureSleepPlan, roomFor, SLOW_WAKE_MS, wokeSlowly } = await import(pathToFileURL(file).href)
 
 let n = 0
 function ok(label, cond) {
@@ -163,5 +164,24 @@ ok('no room under warn regardless of free memory', roomFor('warn', 10_000) === 0
 ok('no room under critical regardless of free memory', roomFor('critical', 10_000) === 0)
 ok('room is free memory over one session cost', roomFor('normal', 380) === 2)
 ok('room floors at zero', roomFor('normal', 0) === 0)
+
+// a wake nobody could search for -----------------------------------------
+//
+// `wake-printed` wrote the same line for every reading, so 2302ms (taskdriver.ai-g),
+// 2098ms (assistant-a) and 1581ms (PaneForge-d) sat unremarked on 2026-09-09 among
+// readings of 10-150ms in the same file. "Sleeping is fine, waking one is laggy" had its
+// evidence on disk already and no way to find it.
+ok('an ordinary wake is not worth a line of its own', !wokeSlowly(150))
+ok('...nor is one just under the threshold', !wokeSlowly(SLOW_WAKE_MS - 1))
+ok('a wake that took a second says so', wokeSlowly(SLOW_WAKE_MS))
+ok('and the readings that produced the rule all fire', wokeSlowly(1581) && wokeSlowly(2098) && wokeSlowly(2302))
+// An order of magnitude clear of the ordinary reading, so this cannot fire on weather.
+ok('the threshold is a second', SLOW_WAKE_MS === 1000)
+
+// worth nothing unwired: the pane that measures it has to write the second line.
+const sessionsSrc = readFileSync(new URL('../src/main/sessions.ts', import.meta.url), 'utf8')
+ok('the slow wake gets its own searchable action', /action: 'wake-slow'/.test(sessionsSrc))
+ok('...decided by the shared rule, not a number written twice', /wokeSlowly\(woke\)/.test(sessionsSrc))
+ok('...and the ordinary line still carries every reading', /action: 'wake-printed'/.test(sessionsSrc))
 
 console.log(`wakeplan: ${n} assertions passed`)
