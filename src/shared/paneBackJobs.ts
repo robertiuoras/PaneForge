@@ -186,16 +186,30 @@ const RUNTIMES = new Set(['node', 'bun', 'deno', 'python', 'python2', 'python3',
 export function workName(cmd: string): string {
   const first = commandName(cmd)
   if (!first || !RUNTIMES.has(first.toLowerCase())) return first
+  const runtime = first.toLowerCase()
   const rest = (cmd.match(/"[^"]*"|'[^']*'|\S+/g) ?? []).slice(1).map((w) => w.replace(/^["']|["']$/g, ''))
-  const arg = rest.find((w) => w && !w.startsWith('-'))
-  return arg ? programName(arg) : first
+  for (const arg of rest) {
+    // Inline source has no meaningful script name. These are the evaluator forms for the
+    // runtimes above, including the word subcommand Deno uses for the same operation.
+    const inline =
+      (['node', 'bun'].includes(runtime) && ['-e', '--eval', '-p', '--print'].includes(arg)) ||
+      (['python', 'python2', 'python3'].includes(runtime) && arg === '-c') ||
+      (['ruby', 'perl'].includes(runtime) && arg === '-e') ||
+      (runtime === 'php' && arg === '-r') ||
+      (runtime === 'deno' && arg === 'eval')
+    if (inline) return first
+    if (arg && !arg.startsWith('-')) return programName(arg)
+  }
+  return first
 }
 
 /**
  * The words a shell subtree should be printed as.
  *
- * The `-c` STRING first, because it is what somebody actually typed and the live leaf often
- * is not: `npm run dev` is three processes deep by the time it is serving and its leaf is
+ * A direct non-shell child first, because a long-lived shell keeps its original `-c` string
+ * after sequential commands have moved on. The `-c` STRING follows, because it is what
+ * somebody actually typed when no active child can answer. A nested shell remains its own
+ * boundary: `npm run dev` is three processes deep by the time it is serving and its leaf is
  * `node .../next dev`, which prints as `node` - a word that names nothing on a card.
  *
  * The FIRST segment that is not shell housekeeping, never the last. The measured prelude is
@@ -207,6 +221,18 @@ export function workName(cmd: string): string {
  * that prelude. Its own children are somebody else's reading.
  */
 export function jobLabel(rows: JobRow[], shell: JobRow): string {
+  // A shell retains its original `-c` string after sequential commands have moved on.
+  // Its direct non-shell children are the active command or pipeline. Do not traverse into
+  // a child shell: that remains its own command boundary and keeps the typed parent label.
+  let active: JobRow | null = null
+  for (const child of rows) {
+    if (child.ppid !== shell.pid || isCommandShell(child.cmd)) continue
+    const name = workName(child.cmd ?? '')
+    if (!name || SHELLS.has(name.toLowerCase())) continue
+    if (!active || (child.elapsed ?? 0) > (active.elapsed ?? 0)) active = child
+  }
+  if (active) return workName(active.cmd ?? '')
+
   const cmd = shell.cmd ?? ''
   const at = cmd.search(/(?:^|\s)(?:-c|\/c|\/k|-Command|-EncodedCommand)(?:\s|$)/i)
   if (at >= 0) {

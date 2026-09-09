@@ -17,6 +17,8 @@ assert.ok(keeperStart > 0 && keeperEnd > keeperStart)
 const factory = transformSync(source.slice(keeperStart, keeperEnd), {loader:'ts'}).code
 const keeperSource = readFileSync(new URL('../src/shared/keepScrollback.ts', import.meta.url), 'utf8')
 const { keepScrollback } = await import('data:text/javascript;base64,' + Buffer.from(transformSync(keeperSource, {loader:'ts',format:'esm'}).code).toString('base64'))
+const protocolSource = readFileSync(new URL('../src/shared/terminalProtocol.ts', import.meta.url), 'utf8')
+const { withoutReplayQueries } = await import('data:text/javascript;base64,' + Buffer.from(transformSync(protocolSource, {loader:'ts',format:'esm'}).code).toString('base64'))
 const t = new Terminal({ cols: 80, rows: 10, allowProposedApi: true })
 let reset, typed, resolveRead, reads = 0
 const api = {
@@ -25,13 +27,13 @@ const api = {
   getBuffer() { reads++; return new Promise(resolve => { resolveRead = resolve }) }
 }
 const pending = transformSync(source.slice(source.indexOf('    let pendingDataWrites = '), source.indexOf('    const offHandover = ', source.indexOf('    let pendingDataWrites = '))), {loader:'ts'}).code
-const install = new Function('api', 't', 'keepScrollback', `
+const install = new Function('api', 't', 'keepScrollback', 'withoutReplayQueries', `
   const sessionId = 'remote', list = [], dead = false;
   const submitted = [];
   const noteSubmitted = (line) => submitted.push({text:line, row:t.buffer.active.baseY + t.buffer.active.cursorY});
   let sawOutput = false;
   let wipeSnap = null, wipeTimer;
-  const window = { clearTimeout }, publish = () => {}, setBlank = () => {}, pinned = { current: true }, seedMarks = () => {};
+  const window = { clearTimeout }, publish = () => {}, setBlank = () => {}, setScrolledUp = () => {}, pinned = { current: true }, scrollIntent = { current: 0 }, seedMarks = () => {};
   const keptRows = () => { throw new Error('read stale screen during snapshot'); };
   const screenNow = () => { throw new Error('armed stale wipe during snapshot'); };
   const armWipeCheck = () => {};
@@ -40,7 +42,15 @@ const install = new Function('api', 't', 'keepScrollback', `
   ${callback}
   return { pinned, submitted };
 `)
-const { pinned, submitted } = install(api, t, keepScrollback)
+const { pinned, submitted } = install(api, t, keepScrollback, withoutReplayQueries)
+const replies = []
+t.onData(data => replies.push(data))
+// A live query already queued before a reset still receives its reply. Historical
+// queries in the replacement must not, even though all parsing happens asynchronously.
+t.write('\x1b[c')
+reset('remote', 'saved\x1b[c\x9b6n\x90$qm\x9c')
+await new Promise(resolve => t.write('', resolve))
+assert.deepEqual(replies, ['\x1b[?1;2c'])
 t.write('stale queued output\r\n')
 reset('remote', 'before\r\n')
 await new Promise(resolve => t.write('after\r\n', resolve))

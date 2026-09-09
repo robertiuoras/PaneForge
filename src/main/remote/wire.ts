@@ -59,6 +59,13 @@ export interface PeerIdentity {
   version: string
   /** Providers whose conversation imports preserve the source until resume is verified. */
   handoffResume?: string[]
+  /**
+   * Whether somebody is at that device's screen, as of the moment it said so.
+   *
+   * Absent means the build is older than this field, and an older build is not evidence
+   * that a desk is empty - `undefined` is drawn as "not known", never as "nobody".
+   */
+  person?: boolean
 }
 
 /** Anything either side may put on the wire. Shapes are checked where they land. */
@@ -533,6 +540,7 @@ function identityOf(m: Msg): PeerIdentity {
     name: String(m.name ?? 'Unknown device').slice(0, 40),
     platform: String(m.platform ?? ''),
     version: String(m.version ?? ''),
+    ...(typeof m.person === 'boolean' ? { person: m.person } : {}),
     ...(Array.isArray(m.handoffResume) ? { handoffResume: m.handoffResume.filter((p): p is string => p === 'claude' || p === 'codex') } : {})
   }
 }

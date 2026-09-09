@@ -148,6 +148,13 @@ export interface Session {
   title: string
   cwd: string
   agent: Agent
+  /**
+   * The conversation this pane can be resumed into, once known. Stamped by main when a
+   * turn ends (the transcript is flushed by then) and when a pane sleeps or wakes; absent
+   * until the CLI has written one. Read by the automatic move (`shared/autoHandoff.ts`
+   * `travels`): an agent pane with no id has nothing another machine could resume.
+   */
+  resumeId?: string
   /** model passed to the agent, empty/undefined = the CLI's own default */
   model?: string
   status: SessionStatus
@@ -520,7 +527,33 @@ export interface Session {
   asleepReason?: SleepReason
 }
 
-export type SleepReason = 'manual' | 'idle' | 'pressure' | 'queued'
+/**
+ * Why a pane is asleep.
+ *
+ * `restored` is the one nobody chose: the restore brought the card, its place and its
+ * old screen back and spawned nothing, so the pane has never had an agent in it this
+ * run. It reads as the plain `asleep 3m` chip like `manual` and `idle` do - the reader
+ * does not need the word - and `shared/reclaim.ts` is what it exists for.
+ */
+export type SleepReason =
+  | 'manual'
+  | 'idle'
+  | 'pressure'
+  | 'queued'
+  | 'restored'
+  | 'unknown'
+  | 'continuation'
+  | 'tour'
+  /** its conversation was handed to another machine and runs there now */
+  | 'handoff'
+
+/** Decision evidence, without terminal text, prompts or filesystem paths. */
+export interface SleepEvidence {
+  source: 'renderer-idle-sweep' | 'tour' | 'continuation' | 'renderer' | 'api' | 'internal' | 'handoff'
+  pressure?: 'ok' | 'tight' | 'over'
+  idleMs?: number
+  thresholdMs?: number
+}
 
 /**
  * A live tee of one pane's output. Rides on the session list rather than an event of
@@ -789,6 +822,8 @@ export interface LaneBoardEntry {
   chatAbout?: string
   /** a live chat holds it right now */
   held: boolean
+  /** A deliberately sleeping hold is preserved by SessionEnd and is not reclaimable. */
+  asleep?: number
   /**
    * Held by a chat that no running copy of the app is hosting and that has been silent
    * past the reclaim window - the next sweep gives it back. The strip draws no row for it
@@ -1328,6 +1363,13 @@ export interface RemotePeerState extends RemotePeer {
   since?: number
   /** it is announcing itself on this network right now */
   seen?: boolean
+  /**
+   * whether somebody is at that device's screen, while it is connected
+   *
+   * `undefined` is "nobody has said", which is what an older build over there leaves and
+   * what every disconnected row reads as. Only `true`/`false` are an answer.
+   */
+  person?: boolean
 }
 
 /** A PaneForge seen broadcasting on the LAN that this device has not paired with. */
@@ -1413,6 +1455,32 @@ export interface RemoteWaiting {
  * each other over an encrypted socket, and both ends run the app. This one has a browser
  * at the far end, so the transport is HTTP and the secret is a cookie. See `main/phone.ts`.
  */
+export interface NativeGrant {
+  id: string
+  deviceId: string
+  deviceName: string
+  browserDevice: string
+  scopes: ('read' | 'control')[]
+  tokenHash: string
+  createdAt: number
+  expiresAt: number
+  unlockedUntil: number
+  codeVersion: string
+  seenAt?: number
+}
+
+/** A device-scoped native prompt acknowledgement. Text stays in the pane ledger, never config. */
+export interface NativePromptReceipt {
+  grantId: string
+  deviceId: string
+  clientMessageId: string
+  sessionId: string
+  textHash: string
+  acceptedAt: string
+  state: 'pending' | 'queued' | 'unknown'
+  updatedAt: string
+}
+
 export interface PhoneConfig {
   /** answer browsers. Off until switched on: anything that can type into a pane can run
    * commands on this machine. */
@@ -1462,6 +1530,10 @@ export interface PhoneConfig {
   typeGate?: boolean
   /** passkeys enrolled here, one per authenticator. Forgetting one revokes it immediately. */
   keys?: PhoneKey[]
+  /** Opaque native grants; raw bearers never persist. */
+  nativeGrants?: NativeGrant[]
+  /** Idempotency receipts for native prompt submissions; only a hash of text persists. */
+  nativePromptReceipts?: NativePromptReceipt[]
 }
 
 /**
@@ -1702,7 +1774,9 @@ export interface Config {
   /** soft chime when a session finishes its turn or asks you something */
   soundOnIdle: boolean
   /**
-   * Send a pane's question to Telegram, so an answer is not waiting on somebody being at
+   * Send a pane's question - and an error that STOPPED it (`shared/paneError.ts`: a usage
+   * limit, a credit balance, an expired login, the ones nothing retries) - to Telegram, so
+   * neither is waiting on somebody being at
    * this desk. Off by construction on a machine with no bot credentials (`main/askNotify.ts`
    * reads `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` from the environment or from
    * `~/.claude/usage-notify.env`); this switch is for turning it off on a machine that has
@@ -1946,6 +2020,8 @@ export interface Config {
    */
   restoreSessions?: StartSessionRequest[]
   window: WindowBounds
+  /** Obsidian vault folder, opened by `vault:info`/`vault:graph`/`vault:open`. '' = unset. */
+  vaultPath: string
 }
 
 /** @see Config.restoreAfterRestart */
@@ -2085,7 +2161,7 @@ export interface Api {
    * stays where it is wearing an `asleep` chip, and what is on screen is untouched.
    * See `shared/sleep.ts`.
    */
-  sleepSession(id: string): Promise<Session | null>
+  sleepSession(id: string, reason?: SleepReason, evidence?: SleepEvidence): Promise<Session | null>
   /** Start a sleeping pane's agent again, back in the conversation it was in. */
   wakeSession(id: string): Promise<Session | null>
   /**
@@ -2232,6 +2308,13 @@ export interface Api {
   getConfig(): Promise<Config>
   setConfig(patch: Partial<Config>): Promise<Config>
   pickRoot(): Promise<string | null>
+  pickVault(): Promise<string | null>
+  /** The Obsidian vault for a folder (walks up for `.obsidian`), or null. */
+  vaultInfo(cwd: string): Promise<VaultInfo | null>
+  /** Notes and their [[wikilinks]] as a graph, read off disk. */
+  vaultGraph(vault: string): Promise<VaultGraph>
+  /** Open a note (or the vault) in the Obsidian app via `obsidian://`. */
+  vaultOpen(vault: string, note?: string): Promise<boolean>
   /** file dialog, then a copy into userData. `error` is a sentence to put on screen. */
   addSound(): Promise<{ ok: boolean; sound?: CustomSound; error?: string }>
   /** the bytes of an uploaded sound, for decodeAudioData. Null = gone or unreadable. */
@@ -2584,7 +2667,12 @@ export interface Api {
     ids?: string[],
     closeReceiverWhenDone?: boolean,
     /** false moves a pane mid-turn and loses the answer being written. Default true. */
-    waitForTurn?: boolean
+    waitForTurn?: boolean,
+    /**
+     * true INTERRUPTS a mid-turn pane (the CLI's own Escape) and moves it at once; the far
+     * end resumes the conversation and is asked to carry on. See `HandoffRequest.now`.
+     */
+    now?: boolean
   ): Promise<HandoffItem[]>
   /**
    * Bring a MIRRORED pane back to this device - the other direction of the same move.
@@ -2593,7 +2681,7 @@ export interface Api {
    * run its own handoff at us. Every refusal and the mid-turn queue are therefore the far
    * end's, and the report is the same `HandoffItem[]` a local hand-off gives.
    */
-  bringPaneHere(id: string): Promise<HandoffItem[]>
+  bringPaneHere(id: string, now?: boolean): Promise<HandoffItem[]>
   /** Panes waiting for their turn to end before they move - see shared/autoHandoff.ts. */
   handoffPending(): Promise<{ id: string; device: string; deviceName: string; since: number }[]>
   /** Stop waiting on one. The pane stays here, unmarked. */
@@ -2759,4 +2847,35 @@ export interface Api {
    * Shown as a line in the footer instead; the detail is in paneforge-errors.log.
    */
   onAppError(cb: (message: string) => void): () => void
+}
+
+/** An Obsidian vault found beside a project. `name` is the folder's own name. */
+export interface VaultInfo {
+  path: string
+  name: string
+  notes: number
+  /** Whether the Obsidian app is installed here (the `obsidian://` scheme has a handler). */
+  appInstalled: boolean
+  /**
+   * Set when `path` doesn't exist, isn't a directory, or holds no `.md` files - so an
+   * empty/broken vault reads as "here's why", never as a silent empty graph.
+   */
+  error?: string
+}
+export interface VaultNode {
+  id: string
+  title: string
+  /** Number of links in + out; the graph draws size off it. */
+  degree: number
+  folder: string
+}
+export interface VaultGraph {
+  nodes: VaultNode[]
+  /**
+   * [from id, to id] pairs. A link to a note that doesn't exist yet keeps its target id as
+   * an unresolved node (see `folder: ''`) rather than being dropped, so a link written
+   * before its note still draws.
+   */
+  links: [string, string][]
+  readAt: number
 }

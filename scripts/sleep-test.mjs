@@ -109,7 +109,11 @@ ok(/asleep\?: number/.test(reclaim), 'reclaim reads the sleeping flag')
 // after a restart closes like any other, or it sits on the desk for ever.
 const body = (name) => reclaim.slice(reclaim.indexOf(`function ${name}(`)).split('\n}')[0]
 ok(/!p\.asleep &&/.test(body('reclaimPlan')), 'the pressure sweep refuses a sleeping pane')
-ok(/!p\.asleep &&/.test(body('sleepable')), 'and so does the sleep clock')
+ok(/if \(p\.asleep\) return false/.test(body('sleepable')), 'and so does the sleep clock')
+// One per-pane control, not two (Robert 2026-09-08). `pinned` is "leave this pane alone":
+// off the sleep CLOCK as well as the close one, and handed back only under measured pressure.
+ok(/pressure !== 'ok'/.test(body('sleepable')), 'a kept pane sleeps only when the machine is short')
+ok(/return keepable\(p, personHere\)/.test(body('sleepable')), 'and keeps its pin against the clock')
 ok(!/!p\.asleep &&/.test(body('keepable')), 'but the idle close clock takes one')
 
 const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
@@ -143,7 +147,7 @@ ok(/noteSession\(id, fresh \? live\.meta\.cwd : resumeCwd, live\.meta\.agent/.te
 // Sleeping keeps its lane (lane-split 2026-09-04): the app marks the ledger asleep
 // before it kills the CLI, so the SessionEnd hook parks the hold instead of releasing it.
 
-ok(/sleep\(id: string, reason: SleepReason = 'manual'\)/.test(sessions), 'sleep takes a reason, default manual')
+ok(/sleep\(id: string, reason: SleepReason = 'unknown'/.test(sessions), 'an unlabelled caller is unknown, never a fictional manual click')
 ok(/ledgerSleep\(live\.meta\.cwd, id\)/.test(sessions), 'sleep marks the ledger before the CLI dies')
 ok(/ledgerWake\(live\.meta\.cwd, id\)/.test(sessions), 'wake clears the ledger mark once the CLI is running again')
 ok(/backJob: live\.meta\.backJob/.test(sessions), 'manual sleep keeps an agent background job alive')
@@ -164,11 +168,12 @@ const events = []
 let verified = false
 let kills = 0
 let ledgerChanges = 0
+const reclaimEvents = []
 const deps = {
-  canSleep, resumeIdFor: () => 'exact-conversation',
+  canSleep, sleepRefusal, resumeIdFor: () => 'exact-conversation',
   resumableTranscript: () => verified ? '/fixture/rollout.jsonl' : null,
   ledgerSleep: () => ledgerChanges++, killPaneStrays() {}, stopPipe() {},
-  recordEnd() {}, logReclaim() {}, basename: () => 'fixture', SLEEP_MARK: 'asleep'
+  recordEnd() {}, logReclaim: row => reclaimEvents.push(row), basename: () => 'fixture', SLEEP_MARK: 'asleep'
 }
 const method = transformSync(`class Fixture { ${sleepBody} }`, { loader: 'ts' }).code
 const Fixture = new Function(...Object.keys(deps), `${method}; return Fixture`)(...Object.values(deps))
@@ -215,7 +220,15 @@ for (const cols of [20, 80]) {
     `${cols}-column repaint restores the actual size`)
 }
 verified = true
-ok(manager.sleep('pane')?.asleep, 'later exact conversation proof still permits sleep')
+ok(manager.sleep('pane', 'pressure', { source: 'renderer-idle-sweep', pressure: 'over', idleMs: 31_000, thresholdMs: 30_000 })?.asleep, 'later exact conversation proof still permits sleep')
+const decision = reclaimEvents.find(row => row.action === 'sleep-request')
+is(decision.reason, 'pressure', 'request records the actual pressure reason')
+is(decision.source, 'renderer-idle-sweep', 'request identifies the automatic caller')
+is(decision.resumeId, 'exact-conversation', 'decision identifies the conversation it will stop')
+is(decision.processPid, 1, 'decision identifies the process it will stop')
+is(decision.thresholdMs, 30_000, 'decision explains the shortened pressure threshold')
+is(reclaimEvents.at(-1).action, 'sleep', 'successful sleep has a separate completion record')
+is(reclaimEvents.filter(row => row.refusal === 'conversation-unverified').length, 1, 'repeated missing-conversation refusals write one diagnostic')
 is(kills, 1, 'verified sleep ends the process once')
 live.meta.asleep = undefined
 live.meta.status = 'idle'

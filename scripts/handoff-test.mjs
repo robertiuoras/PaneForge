@@ -9,7 +9,7 @@
 
 import { buildSync } from 'esbuild'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -50,7 +50,7 @@ function bundle() {
       `export { RemoteHost } from ${p('src/main/remote/host.ts')}`,
       `export { RemoteClient } from ${p('src/main/remote/client.ts')}`,
       `export { newCode } from ${p('src/main/remote/wire.ts')}`,
-      `export { sendHandoff, receiveHandoff } from ${p('src/main/handoff.ts')}`,
+      `export { sendHandoff, receiveHandoff, writeConversation } from ${p('src/main/handoff.ts')}`,
       `export { handoffReceiverCanQuit, mapCwd, handoffReport, handoffConversationError } from ${p('src/shared/handoff.ts')}`
     ].join('\n'),
     'utf8'
@@ -96,7 +96,7 @@ function inertBackend() {
 }
 
 const mod = await import(pathToFileURL(bundle()).href)
-const { RemoteHost, RemoteClient, newCode, sendHandoff, receiveHandoff, mapCwd, handoffReceiverCanQuit, handoffReport, handoffConversationError } = mod
+const { RemoteHost, RemoteClient, newCode, sendHandoff, receiveHandoff, writeConversation, mapCwd, handoffReceiverCanQuit, handoffReport, handoffConversationError } = mod
 
 // ---------------------------------------------------------------- mapCwd
 console.log('mapCwd')
@@ -122,6 +122,35 @@ console.log('conversation transfer contract')
 ok('Claude needs both a resume flag and id', Boolean(handoffConversationError({ agent: 'claude', resumeId: 'c1' })))
 ok('Codex uses the same explicit resume contract', handoffConversationError({ agent: 'codex', resume: true, resumeId: 'c1' }, { name: 'c1.jsonl', size: 1 }, 1) === null)
 ok('a plain shell has explicit fresh-shell semantics', handoffConversationError({ agent: 'shell' }) === null)
+
+// A pane that came from here and is coming back. Its transcript is the SAME conversation
+// with more turns on the end, so the copy this disk still holds is a byte prefix of the
+// incoming one - the round trip Mac -> PC -> Mac, which refused and lost the far end's
+// turns until 2026-09-08.
+const convDir = join(out, 'writeconv')
+mkdirSync(convDir, { recursive: true })
+const older = Buffer.from('{"a":1}\n')
+const newer = Buffer.from('{"a":1}\n{"b":2}\n')
+const fresh = join(convDir, 'fresh.jsonl')
+ok('a conversation that is not here yet is written', writeConversation(fresh, newer) === null && readFileSync(fresh).equals(newer))
+ok('the same conversation twice is a no-op', writeConversation(fresh, newer) === null && readFileSync(fresh).equals(newer))
+const back = join(convDir, 'back.jsonl')
+writeFileSync(back, older)
+ok(
+  'the same conversation with more turns replaces the older copy',
+  writeConversation(back, newer) === null && readFileSync(back).equals(newer)
+)
+const other = join(convDir, 'other.jsonl')
+writeFileSync(other, Buffer.from('{"z":9}\n'))
+ok(
+  'a genuinely different conversation is still refused, bytes untouched',
+  typeof writeConversation(other, newer) === 'string' && readFileSync(other).toString() === '{"z":9}\n'
+)
+ok(
+  'a SHORTER incoming conversation is refused - it is not this one grown',
+  typeof writeConversation(back, older) === 'string' && readFileSync(back).equals(newer)
+)
+ok('no temp file is left behind', readdirSync(convDir).every((f) => !f.includes('.tmp')))
 
 // ---------------------------------------------------------------- the link
 const senderRoot = join(out, 'sender')
@@ -410,6 +439,47 @@ const shellHandoff = await receiveHandoff(
   null
 )
 ok('plain shell handoff explicitly starts a fresh shell', shellHandoff.ok && shellHandoff.session?.agent === 'shell')
+
+// ---------------------------------------------------------------- move it NOW
+// A mid-turn pane moved on purpose: the turn is stopped first (the CLI's own Escape, via
+// the interrupt dep), the ordinary handoff runs once the pane reads idle, and the far end
+// is asked to carry on. Robert, 2026-09-08: "i know that session 4 can be run on pc
+// probably its just ai domain name checking so i want to move it ... mid turn".
+console.log('move now')
+{
+  let busyNow = true
+  let interrupted = 0
+  const deliveriesBefore = received.length
+  const nowSender = {
+    ...sender,
+    list: () => [{ id: 's1', title: 'proj', cwd: repo, agent: 'claude', status: 'working', lastOutput: 0, createdAt: 0 }],
+    busy: () => busyNow,
+    queue: () => { throw new Error('a NOW move must never queue') },
+    interrupt: async () => { interrupted++; busyNow = false; return true },
+    selfDevice: () => 'mac',
+    deviceName: (d) => (d === 'mac' ? 'Laptop' : 'PC')
+  }
+  const moved = await sendHandoff(nowSender, 'pc', { ids: ['s1'], now: true })
+  ok('a busy pane moved with now is interrupted once, then moves', interrupted === 1 && moved[0]?.ok === true && !moved[0]?.pending, moved[0]?.error)
+  const payload = received.at(-1)
+  ok('the payload asks the far end to carry on, naming where it came from', received.length === deliveriesBefore + 1 && /carry on/i.test(payload?.continueWith ?? '') && /Laptop/.test(payload?.continueWith ?? ''), payload?.continueWith)
+  const far = started.at(-1)
+  ok('the far pane resumes the conversation AND is handed that prompt', far?.resume === true && far?.resumeId === 'conv123' && far?.prompt === payload?.continueWith, JSON.stringify({ resume: far?.resume, prompt: far?.prompt }))
+  ok('the report says the turn was interrupted and it was asked to carry on', (moved[0]?.notes ?? []).some((n) => /carry on/.test(n)), JSON.stringify(moved[0]?.notes))
+
+  // A turn that will not stop is a refusal by name, and nothing was delivered.
+  busyNow = true
+  const stuck = await sendHandoff({ ...nowSender, interrupt: async () => false }, 'pc', { ids: ['s1'], now: true })
+  ok('a turn that does not stop refuses by name, delivers nothing', stuck[0]?.ok === false && /did not stop within \d+s/.test(stuck[0]?.error ?? '') && received.length === deliveriesBefore + 1, stuck[0]?.error)
+  const cannot = await sendHandoff({ ...nowSender, interrupt: undefined }, 'pc', { ids: ['s1'], now: true })
+  ok('a build with no interrupt refuses rather than queueing or killing', cannot[0]?.ok === false && /cannot interrupt/.test(cannot[0]?.error ?? '') && received.length === deliveriesBefore + 1, cannot[0]?.error)
+
+  // An idle pane moved with now is simply moved: nothing to interrupt, no carry-on prompt.
+  busyNow = false
+  interrupted = 0
+  const idle = await sendHandoff(nowSender, 'pc', { ids: ['s1'], now: true })
+  ok('an idle pane moved with now is not interrupted and not asked to carry on', idle[0]?.ok === true && interrupted === 0 && received.at(-1)?.continueWith === undefined && started.at(-1)?.prompt === undefined, idle[0]?.error)
+}
 
 // ---------------------------------------------------------------- refusals
 console.log('refusals')

@@ -37,6 +37,7 @@
 
 import { SESSION_MB, type Verdict } from './capacity'
 import type { FleetState } from './fleet'
+import type { SleepReason } from './types'
 
 /**
  * States that may be closed to reclaim memory. Everything else is somebody's business.
@@ -137,7 +138,14 @@ export interface ReclaimConfig {
  * 2026-08-22: two panes handed off in the morning were still holding their CLIs at
  * teatime, which is the report this number answers.
  */
-export const IDLE_CLOSE_MINUTES = 5
+/*
+ * Ten, from 2026-09-08. Five was measured against what actually happened next: reclaim.log
+ * for 2026-09-07 has manual wakes at 11:55, 12:29 and 12:36, each minutes after the pane
+ * went quiet - a person who steps away for a coffee comes back to a closed pane and presses
+ * to bring it back. Ten still empties an unattended desk within the hour and stops taking
+ * the pane somebody is in the middle of using.
+ */
+export const IDLE_CLOSE_MINUTES = 10
 
 /**
  * How long a pane may sit unused before its agent is stopped and the CARD is kept.
@@ -327,6 +335,10 @@ export interface ReclaimPane {
    * who said "keep this one" did not mean "unless memory is tight" - the ladder still has
    * three rungs above closing, and the honest thing under real pressure is to move or to
    * say so rather than to overrule them.
+   *
+   * It is the app's ONE per-pane "leave this alone": no close, no move, and no sleep
+   * CLOCK either (`sleepable`). The single exception is sleeping under measured pressure,
+   * which gives the agent back and takes nothing else away.
    */
   pinned?: boolean
   /**
@@ -341,9 +353,17 @@ export interface ReclaimPane {
    * restart most panes come back asleep (`restoreAsleep`) - measured 2026-09-02: 5 of 7
    * panes on the desk asleep since a 04:37 restart, none ever closing. Robert: "sessions
    * aren't closing by themselves ... id rather them to close than sleep". A pane somebody
-   * KEPT (`pinned`) is the one that sleeps instead of closing.
+   * KEPT (`pinned`) is off both clocks and sleeps only under measured memory pressure -
+   * see `sleepable`.
    */
   asleep?: number
+  /**
+   * WHY it is asleep, which decides whether its screen is a turn anybody could have read.
+   *
+   * Only `restored` is read here, and only by `bornAsleep`. See it for the day every
+   * sleeping pane was treated as read.
+   */
+  asleepReason?: SleepReason
 }
 
 /**
@@ -391,6 +411,26 @@ export function quietSince(
  */
 export function unread(p: Pick<ReclaimPane, 'lastOutput' | 'lastFocus'>): boolean {
   return (p.lastOutput ?? 0) > (p.lastFocus ?? 0)
+}
+
+/**
+ * A pane the restore brought back with no agent in it - card, place and old screen, and
+ * nothing spawned (`req.asleep`, `sessions.ts`).
+ *
+ * It is the one sleeping pane whose `unread` reading is a LIE, and the only reason this
+ * function exists. It is born wearing `lastOutput: Date.now()` and no `lastFocus` at all,
+ * so bytes it printed BEFORE the restart - which somebody may well have read then - count
+ * as a turn nobody has seen, and count that way for ever.
+ *
+ * Every OTHER sleeping pane printed what is on its screen during this run, and whether
+ * anybody looked is exactly what `lastFocus` answers. `onTheClock` used to refuse the
+ * question for all of them (`!p.asleep`), which read a pane that finished a turn nobody
+ * saw and then fell asleep as read, and started the close clock on it. Robert, 2026-09-07:
+ * "when a session sleeping it thinks ive read its output ... make sure it doesnt start
+ * closing unless ive actually read its output".
+ */
+function bornAsleep(p: Pick<ReclaimPane, 'asleep' | 'asleepReason'>): boolean {
+  return p.asleep !== undefined && p.asleepReason === 'restored'
 }
 
 /**
@@ -619,7 +659,7 @@ export function idleSleepPlan(
   if (!minutes) return []
   const minIdle = pressureSleepMs(minutes, pressure)
   return panes
-    .filter((p) => sleepable(p, personHere))
+    .filter((p) => sleepable(p, personHere, pressure))
     .filter((p) => now - quietSince(p) >= minIdle)
     .sort((a, b) => quietSince(a) - quietSince(b))
     .map((p) => ({ id: p.id, idleMs: now - quietSince(p), hadAgent: p.state !== 'exited' }))
@@ -673,11 +713,12 @@ function onTheClock(p: ReclaimPane, personHere = true, now = 0, idleMs = 0): boo
     // the second desk this clock exists for: nothing there is ever read, so an unread
     // refusal would switch the feature off on the one machine that needs it - once a
     // pane has had a real chance to be seen.
-    // ...and never for a SLEEPING pane. Nothing has printed since it slept - what is on
-    // its screen was there when it was put to sleep - and a restored pane comes back
-    // asleep wearing a fresh `lastOutput` and no `lastFocus` at all, so `unread` would
-    // hold it on the desk for ever, exactly as the `asleep` refusal used to.
-    !(!p.asleep && unread(p) && (personHere || freshlyRestored)) && keepable(p, personHere)
+    // ...and never for a pane BORN asleep, whose screen is bytes from before the restart
+    // and whose `unread` reading is a lie about them. Every other sleeping pane is asked
+    // the question like any other pane: it printed what is on its screen during this run,
+    // and a turn nobody looked at is not taken off the desk for going quiet. See
+    // `bornAsleep`.
+    !(!bornAsleep(p) && unread(p) && (personHere || freshlyRestored)) && keepable(p, personHere)
   )
 }
 
@@ -693,23 +734,34 @@ function onTheClock(p: ReclaimPane, personHere = true, now = 0, idleMs = 0): boo
  * eligible panes, quiet 126s against a 60s clock, neither slept.
  */
 /**
- * The refusals the SLEEP clock keeps, which is `keepable` minus exactly one of them.
+ * The refusals the SLEEP clock keeps, which is `keepable` plus one of its own.
  *
- * `pinned` - "keep this one open" - is an instruction about the CARD. Somebody who said it
- * meant that the pane must still be there when they come back, and a slept pane is: its
- * card, its place, its screen and its conversation are all exactly where they were, and a
- * press wakes it in the same chat. What sleeping gives back is the agent, which is the
- * ~190 MB that made the pane worth a rule in the first place.
+ * `pinned` - "keep this pane open" - is the app's ONE per-pane "leave this alone", and it
+ * means the whole ladder: not closed, not moved, and not put to sleep by the clock. There
+ * is no second control for staying awake, and there is not going to be one (Robert,
+ * 2026-09-08: "allow option to select pane and not sleep ... i dont want 2 buttons for
+ * keep open and not sleep"). The card's own menu has said `no idle clock sleeps or closes
+ * it` since it was written; this is the code catching up with the words on screen.
  *
- * So a kept pane is exempt from closing and NOT from sleeping, which is what makes "keep
- * it open" cost nothing to say. Robert, 2026-08-31: "sessions even if kept open should
- * still sleep ... otherwise uses lots of resources". Every other refusal is shared
- * verbatim, `asleep` included - a sleeping pane is the outcome, not a candidate.
+ * It is refused by the CLOCK only. Under measured memory pressure a kept pane sleeps like
+ * any other, which is the older reading of the same instruction and still the right one:
+ * Robert, 2026-08-31, "sessions even if kept open should still sleep ... otherwise uses
+ * lots of resources". Sleeping takes nothing away - card, place, screen and conversation
+ * all stay, and a press brings the agent back in the same chat - so under real pressure
+ * it is the honest answer, while closing a kept pane never is (`keepable` still refuses
+ * that at every level).
+ *
+ * Every other refusal is shared verbatim, `asleep` included - a sleeping pane is the
+ * outcome, not a candidate.
  */
-function sleepable(p: ReclaimPane, personHere = true): boolean {
+function sleepable(p: ReclaimPane, personHere = true, pressure: SleepPressure = 'ok'): boolean {
   // A sleeping pane is the OUTCOME of this clock, never a candidate for it. `keepable`
   // no longer refuses one - the close clock takes it - so the refusal lives here.
-  return !p.asleep && keepable({ ...p, pinned: false }, personHere)
+  if (p.asleep) return false
+  // Held off the clock, handed back under pressure. `keepable` reads `pinned` itself, so
+  // the pressure case has to blank it to get the rest of the refusal set.
+  if (pressure !== 'ok') return keepable({ ...p, pinned: false }, personHere)
+  return keepable(p, personHere)
 }
 
 /**

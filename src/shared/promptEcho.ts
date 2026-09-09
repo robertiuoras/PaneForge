@@ -26,12 +26,15 @@
  *     may precede the marker: a framed line is refused.
  *
  * Codex's `›` uses the same blank-row/repaint checks as Claude below, plus its measured
- * background colour 235. It is only read for a Codex pane: an uncoloured chevron quoted
- * by a tool is not a prompt. The active composer carries the same colour and glyph, so
+ * background colour 235 or a bold chevron followed by regular prompt text. Current
+ * Codex uses default or RGB backgrounds. It is only read for a Codex pane: an ordinary
+ * chevron quoted by a tool is not a prompt. The active composer shares the styling, so
  * `seedMarks` marks its whole block active and this reader refuses it.
  *
  * `npm run test:promptecho`.
  */
+
+import type { IBufferLine } from '@xterm/xterm'
 
 /** Up to four leading spaces, the marker, a space, then something worth tagging. */
 const CLAUDE_ECHO = /^ {0,4}❯ {1,3}(\S.*)$/
@@ -70,8 +73,27 @@ export interface PromptEchoLine {
   wrapped?: boolean
   /** xterm's indexed background at the start of this row, when available. */
   background?: number
+  /** Codex's bold chevron followed by regular-weight prompt text. */
+  boldChevron?: boolean
   /** This row belongs to the live composer containing the cursor. */
   active?: boolean
+}
+
+/** The same paint evidence for seeding, re-anchoring and clicking a prompt tag. */
+export function promptRow(line: IBufferLine | undefined): PromptEchoLine {
+  const text = line?.translateToString(true) ?? ''
+  const prompt = /^ {0,4}› {1,3}(\S)/.exec(text)
+  const chevron = prompt ? text.indexOf('›') : -1
+  return {
+    text,
+    background: line?.getCell(0)?.getBgColor(),
+    boldChevron: chevron >= 0 && Boolean(line?.getCell(chevron)?.isBold()) &&
+      !line?.getCell(prompt![0].length - 1)?.isBold()
+  }
+}
+
+export function codexPromptPaint(row: PromptEchoLine): boolean {
+  return !row.active && (row.background === 235 || row.boldChevron === true)
 }
 
 /**
@@ -98,7 +120,7 @@ export function seedPrompts(
 ): SeededPrompt[] {
   // xterm represents a wrapped terminal line as several buffer rows. A prompt that spans
   // them is still one submitted ask, and the marker belongs on its first row.
-  const logical: Array<{ line: number; text: string; background?: number; active: boolean }> = []
+  const logical: Array<{ line: number; text: string; background?: number; boldChevron?: boolean; active: boolean }> = []
   for (let i = 0; i < lines.length; i++) {
     const row = lines[i]
     const text = typeof row === 'string' ? row : row.text
@@ -111,6 +133,7 @@ export function seedPrompts(
         line: i,
         text,
         background: typeof row === 'string' ? undefined : row.background,
+        boldChevron: typeof row === 'string' ? undefined : row.boldChevron,
         active: typeof row === 'string' ? false : Boolean(row.active)
       })
     }
@@ -119,7 +142,7 @@ export function seedPrompts(
   for (let i = 0; i < logical.length; i++) {
     const text = promptEcho(logical[i].text, agent)
     if (!text) continue
-    if (agent === 'codex' && (logical[i].background !== 235 || logical[i].active)) continue
+    if (agent === 'codex' && !codexPromptPaint(logical[i])) continue
     if (RULE.test(logical[i].text) || RULE.test(logical[i + 1]?.text ?? '')) continue
     if (i > 0 && logical[i - 1].text.trim() !== '') continue
     seen.set(text.replace(/\s+/g, ' ').toLowerCase(), { line: logical[i].line, text })

@@ -63,6 +63,12 @@ export default function NewSessionDialog({
   // Which machine. Offered only while a paired one is online; `auto` leaves it to the
   // app, which then says what it decided before doing it.
   const [where, setWhere] = useState<'auto' | 'local' | 'remote'>(defaultWhere)
+  // Whether the person picked a machine THIS time. Without it every start wrote its own
+  // destination back as the default, so one session started with nothing paired latched
+  // `local` for ever: 179 of 199 starts in offload.log were refused with "you chose this
+  // machine" by a choice nobody made. Untouched now means untouched - the app decides and
+  // says what it decided.
+  const [touched, setTouched] = useState(false)
   const [whereError, setWhereError] = useState('')
   const launching = useRef(false)
   // What the first message says it is about. `routed` is the project this dialog ticked
@@ -229,7 +235,7 @@ export default function NewSessionDialog({
         model: model || undefined,
         resume: resume && canResume,
         prompt: prompt.trim() || undefined,
-        where: peers.length === 0 ? 'local' : where === 'auto' ? undefined : where
+        where: touched && where !== 'auto' ? where : undefined
       }
     })
   }
@@ -241,7 +247,7 @@ export default function NewSessionDialog({
     setWhereError('')
     try {
       const destination = await onStart(reqs)
-      if (destination) await api.setConfig({ defaultSessionWhere: where === 'auto' ? 'auto' : destination })
+      if (touched && destination) await api.setConfig({ defaultSessionWhere: where === 'auto' ? 'auto' : destination })
     } catch {
       setWhereError('Could not start or save this session choice. Please try again.')
     } finally {
@@ -418,7 +424,10 @@ export default function NewSessionDialog({
                   type="button"
                   className={`chip pick${where === value || (peers.length === 0 && value === 'local') ? ' on' : ''}`}
                   aria-pressed={where === value || (peers.length === 0 && value === 'local')}
-                  onClick={() => setWhere(value)}
+                  onClick={() => {
+                    setWhere(value)
+                    setTouched(true)
+                  }}
                 >
                   {word}
                 </button>

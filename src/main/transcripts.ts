@@ -1019,6 +1019,167 @@ function plainText(content: unknown): string | undefined {
   return clean(text)
 }
 
+/** A bounded, exact-session transcript page for the native phone surface. */
+export type NativeTranscriptBlock =
+  | { type: 'text'; text: string }
+  | { type: 'code'; text: string; language?: string }
+  | { type: 'tool'; name: string; input: string; output: string; state: 'running' | 'complete' | 'error' }
+  | { type: 'notice'; text: string }
+
+export interface NativeTranscriptMessage {
+  id: string
+  role: 'user' | 'assistant' | 'system'
+  provider: 'claude' | 'codex' | 'terminal'
+  at: string | null
+  blocks: NativeTranscriptBlock[]
+  /** The exact JSONL record that produced this message, never a reconstructed object. */
+  raw: string
+}
+
+export interface NativeTranscriptPage {
+  messages: NativeTranscriptMessage[]
+  /** A byte offset before this page. Omitted only at the beginning of the transcript. */
+  nextCursor: string | null
+  /** Bounded exact JSONL records represented by this page, for the raw-output sheet. */
+  rawOutput: string
+}
+
+const NATIVE_TRANSCRIPT_BYTES = 256 * 1024
+const NATIVE_TRANSCRIPT_MESSAGES = 50
+
+/**
+ * Return the newest page first; each cursor is the exclusive end byte for an older page.
+ * That direction is what the mobile reader's "Load earlier" control consumes. We never
+ * read beyond one bounded window and always move its end backward, even if one malformed
+ * or unusually large record occupies the whole window.
+ */
+export function nativeTranscriptPage(paneId: string, agent: string, cursor?: string | null): NativeTranscriptPage | null {
+  if (agent !== 'claude' && agent !== 'codex') return null
+  const file = transcriptFor(paneId)
+  if (!file) return null
+  const end = cursor && /^\d+$/.test(cursor) ? Number(cursor) : undefined
+  if (end !== undefined && (!Number.isSafeInteger(end) || end < 0)) return null
+  let fd = -1
+  try {
+    const size = statSync(file).size
+    const pageEnd = end ?? size
+    if (pageEnd > size) return null
+    if (!pageEnd) return { messages: [], nextCursor: null, rawOutput: '' }
+    const readStart = Math.max(0, pageEnd - NATIVE_TRANSCRIPT_BYTES)
+    const bytes = Buffer.alloc(pageEnd - readStart)
+    fd = openSync(file, 'r')
+    const count = readSync(fd, bytes, 0, bytes.length, readStart)
+    // A nonzero window begins in a row. Skip that partial row rather than pretending it is
+    // JSON. If no newline fits, report honest bounded progress instead of returning the
+    // same cursor forever.
+    let start = 0
+    if (readStart > 0) {
+      const firstNewline = bytes.indexOf(0x0a)
+      if (firstNewline < 0) return nativeOversizedNotice(readStart, pageEnd)
+      start = firstNewline + 1
+    }
+    const rows: Array<{ start: number; message: NativeTranscriptMessage }> = []
+    while (start < count) {
+      const newline = bytes.indexOf(0x0a, start)
+      if (newline < 0) break // live writer has not completed this row yet
+      const raw = bytes.toString('utf8', start, newline)
+      const message = nativeMessage(raw, agent, String(readStart + start))
+      if (message) rows.push({ start: readStart + start, message })
+      start = newline + 1
+    }
+    const selected = rows.slice(-NATIVE_TRANSCRIPT_MESSAGES)
+    if (!selected.length) return { messages: [], nextCursor: readStart ? String(readStart) : null, rawOutput: '' }
+    const first = selected[0].start
+    return {
+      messages: selected.map((row) => row.message),
+      nextCursor: first > 0 ? String(first) : null,
+      rawOutput: selected.map((row) => row.message.raw).join('\n')
+    }
+  } catch {
+    return null
+  } finally {
+    if (fd >= 0) closeSync(fd)
+  }
+}
+
+function nativeOversizedNotice(readStart: number, pageEnd: number): NativeTranscriptPage {
+  return {
+    messages: [{
+      id: `notice-${readStart}-${pageEnd}`,
+      role: 'system', provider: 'terminal', at: null, raw: '',
+      blocks: [{ type: 'notice', text: 'One transcript record is larger than the bounded reader window. Load earlier messages to move past it; its raw record was not returned.' }]
+    }],
+    nextCursor: String(readStart),
+    rawOutput: ''
+  }
+}
+
+function nativeMessage(raw: string, agent: string, id: string): NativeTranscriptMessage | null {
+  let row: any
+  try { row = JSON.parse(raw) } catch { return null }
+  if (agent === 'claude') {
+    if ((row.type !== 'user' && row.type !== 'assistant') || row.isSidechain || !row.message) return null
+    const role = row.message.role
+    if (role !== 'user' && role !== 'assistant') return null
+    const blocks = nativeBlocks(row.message.content)
+    return blocks.length ? { id, role, provider: 'claude', at: nativeAt(row.timestamp), blocks, raw } : null
+  }
+  if (row.type !== 'response_item' || !row.payload) return null
+  const item = row.payload
+  if (item.type === 'message' && (item.role === 'user' || item.role === 'assistant')) {
+    const blocks = nativeBlocks(item.content)
+    return blocks.length ? { id, role: item.role, provider: 'codex', at: nativeAt(row.timestamp), blocks, raw } : null
+  }
+  if (item.type === 'function_call' || item.type === 'custom_tool_call') {
+    const input = typeof item.arguments === 'string' ? item.arguments : typeof item.input === 'string' ? item.input : nativeUnknownText(item.input)
+    return { id, role: 'assistant', provider: 'codex', at: nativeAt(row.timestamp), raw,
+      blocks: [{ type: 'tool', name: typeof item.name === 'string' ? item.name : 'Tool call', input, output: '', state: item.status === 'failed' ? 'error' : item.status === 'completed' ? 'complete' : 'running' }] }
+  }
+  if (item.type === 'function_call_output' || item.type === 'custom_tool_call_output') {
+    return { id, role: 'assistant', provider: 'codex', at: nativeAt(row.timestamp), raw,
+      blocks: [{ type: 'tool', name: 'Tool result', input: '', output: nativeUnknownText(item.output), state: item.is_error || item.isError ? 'error' : 'complete' }] }
+  }
+  return null
+}
+
+function nativeAt(value: unknown): string | null {
+  return typeof value === 'string' && Number.isFinite(Date.parse(value)) ? value : null
+}
+
+function nativeUnknownText(value: unknown): string {
+  if (typeof value === 'string') return value
+  try { return JSON.stringify(value) ?? '' } catch { return '' }
+}
+
+/** Maps provider blocks without hiding tool details or fenced code from the client. */
+function nativeBlocks(content: unknown): NativeTranscriptBlock[] {
+  if (typeof content === 'string') return nativeTextBlocks(content)
+  if (!Array.isArray(content)) return []
+  const out: NativeTranscriptBlock[] = []
+  for (const part of content) {
+    if (!part || typeof part !== 'object') continue
+    const block = part as Record<string, unknown>
+    const type = block.type
+    if ((type === 'text' || type === 'input_text' || type === 'output_text') && typeof block.text === 'string') out.push(...nativeTextBlocks(block.text))
+    else if (type === 'tool_use') out.push({ type: 'tool', name: typeof block.name === 'string' ? block.name : 'Tool call', input: nativeUnknownText(block.input), output: '', state: 'running' })
+    else if (type === 'tool_result') out.push({ type: 'tool', name: 'Tool result', input: '', output: nativeUnknownText(block.content), state: block.is_error === true ? 'error' : 'complete' })
+  }
+  return out
+}
+
+function nativeTextBlocks(text: string): NativeTranscriptBlock[] {
+  const out: NativeTranscriptBlock[] = []
+  const fence = /```([^\n`]*)\n([\s\S]*?)```/g
+  let at = 0
+  for (let hit = fence.exec(text); hit; hit = fence.exec(text)) {
+    if (hit.index > at) out.push({ type: 'text', text: text.slice(at, hit.index) })
+    out.push({ type: 'code', text: hit[2], ...(hit[1].trim() ? { language: hit[1].trim() } : {}) })
+    at = hit.index + hit[0].length
+  }
+  if (at < text.length || !out.length) out.push({ type: 'text', text: text.slice(at) })
+  return out.filter((block) => block.type === 'tool' || block.text.length > 0)
+}
+
 /**
  * Strip the wrappers a turn arrives in and decide whether anything is left. A pane whose
  * last user record was `/clear` should say nothing rather than say "/clear".

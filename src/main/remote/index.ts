@@ -73,12 +73,21 @@ export class Remote extends EventEmitter {
   private asking: (RemoteAsk & { answer(ok: boolean): void }) | null = null
   /** A request THIS device sent, while it waits to be approved over there. */
   private waiting: RemoteWaiting | null = null
+  /**
+   * Whether somebody is at THIS desk, as last measured by `shared/away.ts`.
+   *
+   * It rides the identity so a device knows the answer from the handshake on, and is
+   * re-stated by a `presence` frame every time it changes. Starts true: a desk nobody has
+   * measured yet is one somebody is presumed to be at, which is the same way an absent
+   * `person` is read everywhere else.
+   */
+  private person = true
 
   constructor(backend: HostBackend) {
     super()
     this.me = () => {
       const c = getConfig().remote
-      return { id: c.id, name: c.name, platform: process.platform, version: app.getVersion(), handoffResume: ['claude', 'codex'] }
+      return { id: c.id, name: c.name, platform: process.platform, version: app.getVersion(), handoffResume: ['claude', 'codex'], person: this.person }
     }
     this.host = new RemoteHost(backend, this.me, () => getConfig().remote.code)
     this.host.on('changed', () => this.changed())
@@ -205,7 +214,14 @@ export class Remote extends EventEmitter {
    * repaints. See `Borrow.person` in `shared/paneSize.ts`.
    */
   presenceChanged(person: boolean): void {
-    for (const c of this.clients.values()) c.restatePresence(person)
+    this.person = person
+    for (const c of this.clients.values()) {
+      c.restatePresence(person)
+      // ...and the desk itself, which is a row in their Devices list rather than a pane.
+      c.sendPresence(person)
+    }
+    this.host.tellPresence(person)
+    this.changed()
   }
 
   /** One screen here has stopped drawing a mirrored pane: give that one borrow back. */
@@ -284,12 +300,12 @@ export class Remote extends EventEmitter {
    * see `RemoteClient.takeBack` - so everything that decides whether a pane may move is
    * decided over there, where the pty is.
    */
-  bringHere(id: string): Promise<HandoffItem[]> {
+  bringHere(id: string, now = false): Promise<HandoffItem[]> {
     const cut = splitId(id)
     const client = cut && this.clients.get(cut.peer)
     if (!cut || !client) return Promise.reject(new Error('That pane is not on a paired device'))
     if (client.status !== 'online') return Promise.reject(new Error('That device is not connected'))
-    return client.takeBack(cut.local)
+    return client.takeBack(cut.local, now)
   }
 
   /** Keep a pick the link made on its own (a launch, a handoff) across restarts. */
@@ -372,6 +388,9 @@ export class Remote extends EventEmitter {
           status: client?.status ?? 'off',
           error: client?.error || undefined,
           version: client?.peerVersion || undefined,
+          // Whether somebody is at that desk. Only known while connected, and only from a
+          // build that says so - `undefined` means nobody has said, never "nobody there".
+          person: client?.status === 'online' ? client.peerPerson : undefined,
           // Everything `shared/fleet.ts` reads travels, so a pane on that machine can be
           // ranked and drawn here without being mirrored. This map used to keep six
           // fields, which was enough for the Devices pick list and left the sidebar with

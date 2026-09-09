@@ -1,3 +1,4 @@
+import { flushLogsOnExit } from './logWrite'
 import { execFile, spawn } from 'node:child_process'
 import { existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
@@ -33,13 +34,14 @@ import { routePrompt } from '../shared/projectRoute'
 import { sendOrOpen } from '../shared/sendOrOpen'
 import { owedCount } from './queuedPrompts'
 import type { RouteResult } from '../shared/projectRoute'
-import { DEFAULT_PHONE_PORT, getConfig, projectsRoot, setConfig } from './config'
+import { DEFAULT_PHONE_PORT, getConfig, projectsRoot, setConfig, setConfigStrict } from './config'
 import { whatsNew } from './whatsNew'
 import { tour, tourCheck } from './tour'
 import { addSample, dropSample } from './tourSample'
 import { addSound, pruneCustomSounds, removeSound, renameSound, soundData } from './sounds'
 import { writeAttachments, readAttachIns, withShots } from './attach'
 import { AskNotifier, askMessage, postAsk, telegramCreds } from './askNotify'
+import { errorMessage } from '../shared/paneError'
 import { askKeyOf } from '../shared/autoAnswer'
 import { ATTACH_MAX_BYTES, THUMB_KEEP, type AttachIn, type AttachResult } from '../shared/attach'
 import { CHOOSE_GAP_MS, keysForChoice, sameAsk, stampMatches } from '../shared/choices'
@@ -115,7 +117,8 @@ import {
   resumeIdFor,
   resumableTranscript,
   transcriptPath,
-  codexTranscriptPath
+  codexTranscriptPath,
+  nativeTranscriptPage
 } from './transcripts'
 import { codexContextUsage, receivedContinuation } from './contextUsage'
 import { startContinuation } from './continuation'
@@ -125,7 +128,7 @@ import { clearCommandFor, hasFreshPaneHandoff, readAsk as readAutoClearAsk, resu
 import { handoffFor, verifiedPaneHandoff } from './handoffSteps'
 import { briefForTask } from './backlogStore'
 import { startAutoClearWatch, stopAutoClearWatch } from './autoclearWatch'
-import { handoffReceiverCanQuit, type HandoffItem, type HandoffRequest } from '../shared/handoff'
+import { handoffReceiverCanQuit, INTERRUPT_WAIT_MS, type HandoffItem, type HandoffRequest } from '../shared/handoff'
 import { HandoffQueue } from './handoffQueue'
 import { devServersOf, listRunningDevs, localDevCommand, stopDevServer } from './devServers'
 import { keepDevServer, stopNow, watchDeadDevs } from './deadDev'
@@ -182,6 +185,7 @@ import * as history from './history'
 import { clashingRestores, takenFolders } from '../shared/laneTaken'
 import { copyNumber } from '../shared/place'
 import { readBoard, writeMemory, writeTasks } from './board'
+import { vaultGraph, vaultInfo, vaultOpen } from './vault'
 import * as voice from './voice'
 import { installCommand, uninstallCommand, updateCommand } from '../shared/agents'
 import { installLaneHooks } from './laneHooks'
@@ -412,7 +416,7 @@ function createWindow(): void {
   )
   if (snap) updateLog('window', `snapped ${snap.side} half of the external screen`)
   // A snapped window is a placed window, so it must not also open filling a display.
-  pseudoMax = cfg.window.maximized && mode !== 'normal' && !snap
+  pseudoMax = cfg.window.maximized && mode !== 'normal' && !snap && !headlessMode()
   const area = snap?.bounds ?? (pseudoMax ? workAreaFor(cfg) : null)
   // Asked BEFORE the window exists: `transparent` is a constructor option and cannot be
   // set afterwards, so a machine that cannot draw glass has to be known by now.
@@ -487,7 +491,7 @@ function createWindow(): void {
     })
   }
 
-  if (cfg.window.maximized && !pseudoMax && !snap) win.maximize()
+  if (cfg.window.maximized && !pseudoMax && !snap && !headlessMode()) win.maximize()
   // Clicking it is permission to behave like a normal maximized window.
   if (pseudoMax)
     win.once('focus', () => {
@@ -728,7 +732,7 @@ const phone = new PhoneServer({
   devices: () => getConfig().phone?.devices ?? [],
   saveDevices: (list) => {
     const cfg = getConfig()
-    setConfig({ phone: { ...cfg.phone!, devices: list } })
+    setConfigStrict({ phone: { ...cfg.phone!, devices: list } })
   },
   canAsk: () => getConfig().phone?.ask !== false,
   // The passkey gate's two halves, stored the same way and for the same reason: an enrolled
@@ -737,9 +741,32 @@ const phone = new PhoneServer({
   keys: () => getConfig().phone?.keys ?? [],
   saveKeys: (list) => {
     const cfg = getConfig()
-    setConfig({ phone: { ...cfg.phone!, keys: list } })
+    setConfigStrict({ phone: { ...cfg.phone!, keys: list } })
   },
   typeGate: () => getConfig().phone?.typeGate !== false,
+  nativeGrants: () => getConfig().phone?.nativeGrants ?? [],
+  saveNativeGrants: (list) => {
+    const cfg = getConfig()
+    setConfigStrict({ phone: { ...cfg.phone!, nativeGrants: list } })
+  },
+  nativePromptReceipts: () => getConfig().phone?.nativePromptReceipts ?? [],
+  saveNativePromptReceipts: (list) => {
+    const cfg = getConfig()
+    setConfigStrict({ phone: { ...cfg.phone!, nativePromptReceipts: list } })
+  },
+  sessions: () => manager.list(),
+  sessionBuffer: (id) => manager.buffer(id),
+  semanticConversation: (id, agent, cursor) => nativeTranscriptPage(id, agent, cursor),
+  sleepSession: (id) => Boolean(manager.sleep(id, 'manual', { source: 'api' })),
+  setKeepOpen: (id, keepOpen) => {
+    const current = getConfig().pinnedPanes ?? []
+    const next = keepOpen ? [...new Set([...current, id])] : current.filter((pinned) => pinned !== id)
+    if (next.join(',') !== current.join(',')) setConfig({ pinnedPanes: next })
+    return true
+  },
+  isKeepOpen: (id) => (getConfig().pinnedPanes ?? []).includes(id),
+  wakeSession: (id) => manager.wake(id),
+  sendNativePrompt: (id, text) => manager.sendNativePrompt(id, text),
   onIdle: () => manager.returnSizes(),
   onChange: () => send('phone:changed', phoneState())
 })
@@ -815,6 +842,8 @@ function rememberBounds(): void {
  * kind of interruption.
  */
 function focusWindow(asked = false): void {
+  // Offscreen copies stay offscreen even on Dock activation or a notification click.
+  if (headlessMode()) return
   if (!asked && isGameActive()) return
   if (!alive()) return createWindow()
   const w = win!
@@ -917,6 +946,39 @@ const askNotifier = new AskNotifier({
       if (!sent && telegramCreds()) console.log("telegram: could not post a pane question")
       return sent
     })
+})
+
+/**
+ * The same machinery for a pane that STOPPED rather than asked.
+ *
+ * A second `AskNotifier` rather than a second implementation: what it does - wait for the
+ * frames to stop, then send once, then hold the same message for five minutes - is exactly
+ * what an error needs, and for the same reason. A CLI paints its error line in pieces too,
+ * and a limit that has been hit is hit again on every retry the CLI makes by itself, which
+ * is a phone buzzing four times for one wall.
+ *
+ * Separate instance, not a shared one, so a pane that hits a limit AND then asks a question
+ * sends both: the keys are per pane, and one map would let the first swallow the second.
+ */
+const errorNotifier = new AskNotifier({
+  post: (text: string) =>
+    postAsk(text).then((sent) => {
+      if (!sent && telegramCreds()) console.log('telegram: could not post a pane error')
+      return sent
+    })
+})
+
+/**
+ * A pane whose run was ended by something nothing is going to retry.
+ *
+ * Only the message half, deliberately: the desk already has this on screen - the pane
+ * printed the error itself - and the failure this covers is nobody being at the desk. So
+ * there is no toast, no flash and no sound, and it is skipped for a mirror for the same
+ * reason a question is: that pane's own machine is raising it too.
+ */
+manager.on('paneError', (s: Session, line: string) => {
+  if (s.remote || !getConfig().telegramAsk) return
+  errorNotifier.schedule(s.id, () => ({ key: line, text: errorMessage(s.title, line, undefined) }))
 })
 
 /**
@@ -1094,7 +1156,7 @@ const remote = new Remote({
   // A device that mirrors one of our panes asking for it back. It is the ordinary
   // outward handoff, aimed at the device that asked - so a mid-turn pane is queued and
   // travels when its turn ends, exactly as it would had somebody pressed Hand off here.
-  handBack: (id, device) => runHandoff(device, { ids: [id], waitForTurn: true }),
+  handBack: (id, device, now) => runHandoff(device, { ids: [id], waitForTurn: now !== true, now: now === true }),
   projects: () => Promise.resolve(listProjects()),
   agents: () => Promise.resolve(listAgents()),
   jobs: () => ownJobs(),
@@ -1425,7 +1487,7 @@ ipcMain.handle('sessions:continueFresh', (_e, id: string) => {
   const source = manager.list().find((s) => s.id === id)
   if (!source || !['codex', 'claude'].includes(source.agent) || backJobOf(id)) return { ok: false, reason: 'No supported, safe source conversation.' }
   if (continuationOwnsSource(id)) return { ok: false, reason: 'This source already has a live continuation.' }
-  const result = startContinuation({ sleep: (key) => manager.sleep(key), wake: (key) => manager.wake(key), session: (key) => manager.list().find((s) => s.id === key), snapshot: () => manager.snapshot(), start: (req) => manager.start(req) }, id)
+  const result = startContinuation({ sleep: (key) => manager.sleep(key, 'continuation', { source: 'continuation' }), wake: (key) => manager.wake(key), session: (key) => manager.list().find((s) => s.id === key), snapshot: () => manager.snapshot(), start: (req) => manager.start(req) }, id)
   if (result.ok && result.id && result.digest) {
     continuationReceipts.set(result.id, { cwd: source.cwd, digest: result.digest, sourceId: id, deadline: Date.now() + 5 * 60_000 })
     return { ok: true, id: result.id, reason: 'Fresh pane opened; delivery is being checked. Your source is saved asleep.' }
@@ -1609,9 +1671,16 @@ async function startOrSend(
   // land in different lanes, and it is `laneFor` that decides which. A pane that goes to
   // the other machine claims nothing here - it takes no folder on this disk.
   const here = async (): Promise<Session> => {
+    // How long the press took to become a pane, in two halves. "Making a new session
+    // lags" (Robert, 2026-09-08) had no number anywhere: deciding the folder walks the
+    // lane ledger and the worktrees on disk, and on a machine short of memory those reads
+    // are the wait. One line per start, in the log that already answers where a pane went.
+    const began = Date.now()
     const lane = await laneFor(req, claimed)
-    claimed?.push(lane.cwd)
-    return manager.start(lane)
+    const decided = Date.now() - began
+    const session = await manager.start(lane)
+    logOffload({ event: 'started', id: session.id, cwd: lane.cwd, decidedMs: decided, openMs: Date.now() - began })
+    return session
   }
   const cfg = getConfig()
   const mode = preferRemoteOf(cfg.autoHandoff)
@@ -1754,11 +1823,17 @@ ipcMain.handle('sessions:restart', (_e, id: string) => {
   if (continuationOwnsSource(id)) return null
   return manager.restart(id)
 })
-ipcMain.handle('sessions:sleep', (_e, id: string) => {
+ipcMain.handle('sessions:sleep', (_e, id: string, reason?: import('../shared/types').SleepReason, evidence?: import('../shared/types').SleepEvidence) => {
   // A mirrored pane's pty is the other machine's, and sleeping it there is that desk's
   // decision to make - `canSleep` refuses a mirror at the renderer end too.
   if (remote.owns(id)) return null
-  return manager.sleep(id)
+  if (!_e?.processId) return manager.sleep(id, 'unknown', { source: 'api' })
+  if (evidence?.source === 'renderer-idle-sweep' &&
+      ['ok', 'tight', 'over'].includes(evidence.pressure ?? '')) {
+    return manager.sleep(id, evidence.pressure === 'ok' ? 'idle' : 'pressure', evidence)
+  }
+  if (reason === 'tour') return manager.sleep(id, 'tour', { source: 'tour' })
+  return manager.sleep(id, reason === 'manual' ? 'manual' : 'unknown', { source: 'renderer' })
 })
 ipcMain.handle('sessions:wake', async (_e, id: string) => {
   if (remote.owns(id)) return null
@@ -2163,6 +2238,15 @@ ipcMain.handle('config:pickRoot', async () => {
   const r = await dialog.showOpenDialog({
     title: 'Choose the folder that holds your projects',
     defaultPath: getConfig().root,
+    properties: ['openDirectory']
+  })
+  return r.canceled ? null : r.filePaths[0]
+})
+
+ipcMain.handle('config:pickVault', async () => {
+  const r = await dialog.showOpenDialog({
+    title: 'Choose your Obsidian vault folder',
+    defaultPath: getConfig().vaultPath || undefined,
     properties: ['openDirectory']
   })
   return r.canceled ? null : r.filePaths[0]
@@ -2699,6 +2783,41 @@ function paneBusy(s: Session): boolean {
 }
 
 /**
+ * Stop the turn a pane is on so it can be moved NOW (`HandoffRequest.now`).
+ *
+ * The CLI's own Escape - what a person presses to interrupt Claude Code or Codex - and
+ * nothing else: no signal, no kill. Both CLIs write the interrupted turn to their
+ * transcript on it, which is what the far end then resumes from. A pane holding a
+ * question gets the same key, which dismisses the question. Written as `app`, so the
+ * intervention count does not bill a person for it. Resolves once the pane reads idle
+ * again (`paneBusy` false, the same reading the queue waits on, minus `bell`, which is
+ * "finished and unread" and not a reason to wait), or false after `INTERRUPT_WAIT_MS`.
+ * A pane still starting is never sent a key - it is waited on.
+ */
+async function interruptTurn(id: string): Promise<boolean> {
+  const idle = (): boolean => {
+    const s = manager.list().find((x) => x.id === id)
+    return !s || (s.status !== 'working' && s.status !== 'starting' && s.stalledSince === undefined && !s.ask)
+  }
+  if (idle()) return true
+  const deadline = Date.now() + INTERRUPT_WAIT_MS
+  let sent = 0
+  while (Date.now() < deadline) {
+    const s = manager.list().find((x) => x.id === id)
+    if (!s) return false
+    // One Escape per 4s, at most three: Claude Code needs a second one when the first
+    // landed on a menu, and a fourth would only be typing into a composer.
+    if (s.status !== 'starting' && sent < 3 && Date.now() >= deadline - INTERRUPT_WAIT_MS + sent * 4000) {
+      manager.write(id, '\x1b', 'app')
+      sent++
+    }
+    await new Promise((r) => setTimeout(r, 250))
+    if (idle()) return true
+  }
+  return idle()
+}
+
+/**
  * Start a dev server a handoff brought over, in a pane of its own.
  *
  * The command is rebuilt HERE from this machine's package.json and lockfile - the payload
@@ -2731,6 +2850,9 @@ function runHandoff(device: string, request: HandoffRequest): Promise<HandoffIte
       list: () => manager.list(),
       snapshot: () => manager.snapshot(),
       kill: (id) => manager.kill(id),
+      sleep: (id) => {
+        manager.sleep(id, 'handoff', { source: 'handoff' })
+      },
       tailOf: (id, bytes) => history.tail(id, bytes),
       tailColsOf: (id) => history.colsOf(id),
       transcriptFileFor: (cwd, resumeId, agent) => agent === 'codex' ? codexTranscriptPath(cwd, resumeId) : transcriptPath(cwd, resumeId),
@@ -2740,6 +2862,7 @@ function runHandoff(device: string, request: HandoffRequest): Promise<HandoffIte
       selfDevice: () => getConfig().remote.id,
       busy: paneBusy,
       queue: (id, dev, closeAfter) => handoffQueue.add(id, dev, closeAfter),
+      interrupt: (id) => interruptTurn(id),
       stage: (id, stage) => manager.setHandoffStage(id, stage),
       log: logHandoff,
       devServersOf: (id, cwd) => {
@@ -2785,7 +2908,7 @@ const handoffQueue = new HandoffQueue({
 
 ipcMain.handle(
   'remote:handoff',
-  (_e, device: string, ids?: string[], closeReceiverWhenDone?: boolean, waitForTurn?: boolean) => {
+  (_e, device: string, ids?: string[], closeReceiverWhenDone?: boolean, waitForTurn?: boolean, now?: boolean) => {
     // A script that packs every argument into one array reaches here with `device` as
     // that array. `String()` turned it into "id,pane,false,true", which queued a pane for
     // a machine that does not exist and tried every other pane on the desk (ids undefined
@@ -2795,13 +2918,14 @@ ipcMain.handle(
     return runHandoff(device, {
       ids: Array.isArray(ids) && ids.length ? ids.map(String) : undefined,
       closeReceiverWhenDone: closeReceiverWhenDone === true,
-      waitForTurn: waitForTurn !== false
+      waitForTurn: waitForTurn !== false && now !== true,
+      now: now === true
     })
   }
 )
 // One press on a mirrored pane's own card. The answer is the far end's report, so a
 // refusal ("dirty checkout over there") arrives as a sentence naming the pane.
-ipcMain.handle('remote:bringHere', (_e, id: string) => remote.bringHere(String(id)))
+ipcMain.handle('remote:bringHere', (_e, id: string, now?: boolean) => remote.bringHere(String(id), now === true))
 ipcMain.handle('remote:handoffPending', () =>
   handoffQueue.pending().map((q) => ({ id: q.id, device: q.device, deviceName: remote.peerName(q.device), since: q.since }))
 )
@@ -3493,6 +3617,13 @@ onActivityChange((s) => send('activity:changed', s))
 // The refusal counter holds pane ids and nothing else; the words come from the list that
 // already knows what a pane is called.
 hookDenyNames((id) => manager.list().find((x) => x.id === id)?.title ?? 'a pane')
+// --- Obsidian vault ---------------------------------------------------------
+
+// `cwd` is unused for now: one vault per machine (`config.vaultPath`), not one per project.
+ipcMain.handle('vault:info', (_e, _cwd: string) => vaultInfo(getConfig().vaultPath))
+ipcMain.handle('vault:graph', (_e, vault: string) => vaultGraph(vault))
+ipcMain.handle('vault:open', (_e, vault: string, note?: string) => vaultOpen(vault, note))
+
 ipcMain.handle('history:list', () => history.list())
 ipcMain.handle('history:search', (_e, q: string) => history.search(q))
 ipcMain.handle('history:read', (_e, id: string) => history.read(id))
@@ -4191,7 +4322,10 @@ function installStagedMacUpdateOnQuit(): void {
   if (swapAndRelaunch(false)) updateLog('exit', 'installing the staged mac update on quit')
 }
 
+let hardExiting = false
 function hardExit(): void {
+  if (hardExiting) return
+  hardExiting = true
   // The quit line first, for the paths that reach here without `before-quit` ever
   // running; a no-op when it already did.
   logQuit()
@@ -4204,7 +4338,7 @@ function hardExit(): void {
   // The other thing shutdown()'s taskkill cannot reach: whatever the panes started that is
   // no longer linked to them. Detached, so it runs once we are not here to be its parent.
   sweepOwnStraysOnExit()
-  process.exit(0)
+  void flushLogsOnExit().finally(() => process.exit(0))
 }
 
 app.on('browser-window-focus', () => {
@@ -4259,7 +4393,8 @@ app.on('before-quit', (e) => {
   // A driven lane's agent is a detached process in its own group - nothing joins it to
   installStagedMacUpdateOnQuit()
 })
-app.on('will-quit', () => {
+app.on('will-quit', (e) => {
+  e.preventDefault()
   globalShortcut.unregisterAll()
   displayAwake.stop()
   // Dropping the pipe is enough - Discord clears the presence when the client goes.
@@ -4269,4 +4404,5 @@ app.on('will-quit', () => {
   stopAutoClearWatch()
   stopUsage()
   removeTestClipboard()
+  hardExit()
 })

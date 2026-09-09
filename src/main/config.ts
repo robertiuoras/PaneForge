@@ -287,7 +287,8 @@ function defaults(): Config {
       keys: []
     },
     theme: { ...DEFAULT_THEME },
-    window: { width: 1500, height: 940, maximized: false }
+    window: { width: 1500, height: 940, maximized: false },
+    vaultPath: ''
   }
 }
 
@@ -542,6 +543,23 @@ function dropSavedDiscordId(raw: Record<string, unknown>): void {
 }
 
 export function setConfig(patch: Partial<Config>): Config {
+  return writeConfig(patch, false)
+}
+
+/**
+ * Persist a security boundary before reporting it as changed.
+ *
+ * Most settings remain useful for the current session in a read-only profile, so the
+ * historical `setConfig` behaviour deliberately keeps their in-memory value.  Native
+ * grants are different: returning a bearer whose hash is not on disk would make a later
+ * restart silently forget a grant or a revocation.  Callers that mint/revoke authority
+ * therefore use this narrow fail-closed variant.
+ */
+export function setConfigStrict(patch: Partial<Config>): Config {
+  return writeConfig(patch, true)
+}
+
+function writeConfig(patch: Partial<Config>, strict: boolean): Config {
   const previous = getConfig()
   const next = { ...previous, ...patch }
   // The deprecated single field is kept in step with the record it became, so a build
@@ -559,7 +577,7 @@ export function setConfig(patch: Partial<Config>): Config {
   } catch (error) {
     // A keep-open checkmark promises protection after restart, so a failed disk write
     // must be reported rather than acknowledged as a saved preference.
-    if (patch.pinnedPanes !== undefined) {
+    if (strict || patch.pinnedPanes !== undefined) {
       cache = previous
       throw error
     }

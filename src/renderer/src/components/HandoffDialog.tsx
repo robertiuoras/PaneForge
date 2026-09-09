@@ -40,6 +40,11 @@ export interface HandoffTarget {
   starting?: boolean
   /** one of them is sitting on a question, which is the one state a move must not take */
   asking?: boolean
+  /**
+   * The other direction: this is a MIRRORED pane and the only place it can go is here.
+   * The machine list is replaced by this one, and the press asks the owner to send it.
+   */
+  back?: { deviceName: string }
 }
 
 interface Props {
@@ -90,15 +95,27 @@ export default function HandoffDialog({ target, peers, flash, onPair, onClose }:
   const unsupported = [...new Set(agents.filter((agent) => agent !== 'claude' && agent !== 'codex' && agent !== 'shell'))]
   const onlyUnsupported = agents.length > 0 && !hasConversation && !hasShell
 
-  async function go(): Promise<void> {
-    if (!chosen || busy || sending.current) return
+  // The pane is mid-turn or on a question, so the press has to say which of two things
+  // it does: wait for the turn (the queue) or stop the turn and go (`now`).
+  const held = Boolean(target.busy || target.asking || target.starting)
+  const back = target.back ?? null
+  const destination = back ? 'this machine' : chosen?.name ?? ''
+
+  /**
+   * `now` interrupts the turn first - the CLI's own Escape - and the far end is asked to
+   * carry on once it has resumed. Off, a busy pane is queued and moves when its turn ends.
+   */
+  async function go(now = false): Promise<void> {
+    if ((!chosen && !back) || busy || sending.current) return
     sending.current = true
     setBusy(true)
     try {
-      const items = await api.handoffToDevice(chosen.id, target.ids, true)
+      const items = back
+        ? await api.bringPaneHere(target.ids[0], now)
+        : await api.handoffToDevice(chosen!.id, target.ids, true, !now, now)
       // Every outcome gets a clause - moved, queued, and each failure by name. The words
       // are `handoffReport` in shared/handoff.ts, where the mixed case can be tested.
-      flash(handoffReport(items, chosen.name, target.ids.length === 1 ? target.title : undefined))
+      flash(handoffReport(items, destination, target.ids.length === 1 ? target.title : undefined))
       // Notes are the half that says what did NOT travel (no transcript, no repo, a dev
       // server that could not be named). They are worth one more line, never silence.
       const notes = items.flatMap((i) => i.notes ?? [])
@@ -115,7 +132,7 @@ export default function HandoffDialog({ target, peers, flash, onPair, onClose }:
     <div className="overlay" onMouseDown={onClose}>
       <div className="dialog handoff-dialog" onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-label="Hand off">
         <div className="dialog-head">
-          <strong>Hand off {target.title}</strong>
+          <strong>{back ? `Bring ${target.title} back` : `Where should ${target.title} run?`}</strong>
           <button className="x" onClick={onClose} aria-label="Close">
             ×
           </button>
@@ -134,8 +151,8 @@ export default function HandoffDialog({ target, peers, flash, onPair, onClose }:
         {target.asking ? (
           <p className="ho-note warn">
             This pane is sitting on a question it drew on screen, and a question lives on a
-            screen and in no transcript - so it cannot travel. Queue it here and it moves as
-            soon as you have answered; answer it first and it moves at once.
+            screen and in no transcript - so it cannot travel. <strong>Move now</strong> dismisses the
+            question (Escape) and moves it; <strong>after this turn</strong> waits for your answer.
           </p>
         ) : target.starting ? (
           <p className="ho-note">
@@ -144,18 +161,33 @@ export default function HandoffDialog({ target, peers, flash, onPair, onClose }:
           </p>
         ) : target.busy ? (
           <p className="ho-note">
-            This pane is mid-turn. Nothing is interrupted: {hasConversation ? 'its conversation copy opens after the turn ends while this original stays here.' : hasShell ? 'the shell handoff starts after the turn ends.' : 'any supported handoff starts after the turn ends.'}
+            This pane is mid-turn. <strong>Move now</strong> stops the turn (the same Escape you would press) and asks it to carry on over there. <strong>After this turn</strong> interrupts nothing: {hasConversation ? 'its conversation opens there once the turn ends.' : hasShell ? 'the shell moves once the turn ends.' : 'it moves once the turn ends.'}
           </p>
         ) : null}
 
         <div className="ho-list">
-          {online.length === 0 && (
+          {back && (
+            <div className="ho-dev picked" aria-pressed="true">
+              <span className="dev-glyph small online" aria-hidden="true">
+                <DeviceGlyph />
+              </span>
+              <span className="ho-dev-text">
+                <span className="ho-dev-name">This machine</span>
+                <span className="ho-dev-sub">
+                  <span className="dot online" />
+                  {`back from ${back.deviceName}`}
+                </span>
+              </span>
+              <span className="ho-tick" aria-hidden="true">✓</span>
+            </div>
+          )}
+          {!back && online.length === 0 && (
             <p className="dev-empty">
               No machine is online to take it. Open Devices on the other computer, press
               Copy invite, and paste it here.
             </p>
           )}
-          {online.map((p) => (
+          {!back && online.map((p) => (
             <button
               key={p.id}
               className={'ho-dev' + (pick === p.id ? ' picked' : '')}
@@ -179,7 +211,7 @@ export default function HandoffDialog({ target, peers, flash, onPair, onClose }:
               </span>
             </button>
           ))}
-          {offline.map((p) => (
+          {!back && offline.map((p) => (
             <div key={p.id} className="ho-dev off" title={p.error || 'Not connected'}>
               <span className="dev-glyph small off" aria-hidden="true">
                 <DeviceGlyph />
@@ -203,23 +235,45 @@ export default function HandoffDialog({ target, peers, flash, onPair, onClose }:
         </div>
 
         <div className="dialog-foot ho-foot">
-          <button className="ghost" onClick={onPair}>
-            Pair a device
-          </button>
+          {!back && (
+            <button className="ghost" onClick={onPair}>
+              Devices…
+            </button>
+          )}
           <span className="ho-spacer" />
           <button className="ghost" onClick={onClose}>
             Cancel
           </button>
-          <button className="primary" disabled={!chosen || busy || onlyUnsupported} onClick={() => void go()}>
+          {/* A held pane gets TWO presses, each saying what it does to the turn. The
+              queue is the gentle one and keeps the primary look; "now" is the one that
+              interrupts, so it is a plain button that names it. Robert, 2026-09-08:
+              "i want that mid turn ... and to pull it back mid turn if i want to". */}
+          {held && (
+            <button
+              className="ghost"
+              disabled={(!chosen && !back) || busy || onlyUnsupported}
+              title="Stops the turn with the CLI's own Escape, then moves it. The conversation resumes over there and is asked to carry on."
+              onClick={() => void go(true)}
+            >
+              {busy ? 'Moving…' : target.starting ? 'Move as soon as it is ready' : 'Move now'}
+            </button>
+          )}
+          <button className="primary" disabled={(!chosen && !back) || busy || onlyUnsupported} onClick={() => void go(false)}>
             {busy
-              ? 'Handing off…'
+              ? back ? 'Bringing it back…' : 'Handing off…'
               : onlyUnsupported
                 ? 'Selected agents cannot hand off'
-              : chosen
-                ? target.busy || target.asking
-                  ? `Queue for ${chosen.name}`
-                  : `Hand off to ${chosen.name}`
-                : 'Hand off'}
+                : held
+                  ? back
+                    ? 'Bring it back after this turn'
+                    : destination
+                      ? `Move to ${destination} after this turn`
+                      : 'Move after this turn'
+                  : back
+                    ? 'Bring it back'
+                    : chosen
+                      ? `Move to ${destination}`
+                      : 'Move'}
           </button>
         </div>
       </div>

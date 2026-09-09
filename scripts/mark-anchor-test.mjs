@@ -38,6 +38,15 @@ const require_ = createRequire(import.meta.url)
 const { anchorMark, echoKey, onEchoRow, findEcho, landingRow, rowShowsPrompt, LANDING_SCAN_ROWS } =
   require_(outfile)
 
+for (const background of [-1, 2630691]) {
+  const text = '› restore the actual conversation'
+  const key = echoKey(text.slice(2))
+  const rows = [{text: ''}, {text, background, boldChevron: true}, {text: 'reply'}, {text: 'stale marker'}]
+  assert.equal(onEchoRow(rows[1], key, 'codex'), true, 'actual Codex paint is recognised after a marker moves')
+  assert.equal(landingRow(i => rows[i], 3, key, 0, rows.length, 'codex'), 1, 'tag locates the actual default/RGB prompt')
+  assert.equal(onEchoRow({...rows[1],active: true}, key, 'codex'), false, 'an active draft stays excluded')
+}
+
 let checks = 0
 const check = (what, ok, detail) => {
   checks++

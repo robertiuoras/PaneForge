@@ -62,10 +62,11 @@ import {
 import { chipSpot, type ChipBox } from '../../../shared/copyChip'
 import { composerAt, frameAt, inputEnd, inputStart, leadingBlanks, promptTop } from '../../../shared/promptBox'
 import { findPathTokens } from '../../../shared/pathToken'
-import { completedSlash, seedPrompts } from '../../../shared/promptEcho'
+import { completedSlash, seedPrompts, promptRow } from '../../../shared/promptEcho'
 import { START_COLS, START_ROWS } from '../../../shared/paneGrid'
 import { fixSignature } from '../../../shared/fixSign'
 import { splitReplay } from '../../../shared/replayWidth'
+import { isTerminalReply, withoutReplayQueries } from '../../../shared/terminalProtocol'
 import { placeRail } from '../../../shared/rail'
 import type { RevealTarget } from '../../../shared/pathToken'
 import { cleanReply, draftBlock, previewOf } from '../../../shared/replyText'
@@ -234,6 +235,22 @@ function PaneBooting({ agent, over }: { agent?: string; over?: boolean }): React
       {now - since >= COUNT_AFTER_MS && <span className="pane-booting-secs">{secs}s</span>}
     </div>
   )
+}
+
+/**
+ * The line a SLEEPING pane wears, in the same place and the same shape as the booting one
+ * - so waking is one line replaced by another, in one spot, rather than a row of dashes
+ * scrolling the old screen and a second row of dashes scrolling it again.
+ *
+ * The terminal caption underneath it is now only `· asleep ·`: the sentence belongs here,
+ * where it is drawn in the app's own type at the app's own contrast, and where it goes
+ * away on the press instead of staying in the scrollback for ever.
+ *
+ * `pointer-events: none` on purpose: the press that wakes the pane is the press ON the
+ * pane (App.tsx), and a line that swallowed it would make the pane look dead.
+ */
+function PaneAsleep(): React.JSX.Element {
+  return <div className="pane-booting over pane-asleep">Asleep — press to start it again</div>
 }
 
 /**
@@ -1023,6 +1040,8 @@ function TerminalPane({
   // Whether this pane is following the tail. A ref because the resize and font-size effects
   // need it too, and it must survive without re-running the effect that owns the terminal.
   const pinned = useRef(true)
+  // A replay callback may not override a gesture made after the replay began.
+  const scrollIntent = useRef(0)
   // Only for the "back to newest" pill: the scroll position itself lives in xterm.
   const [scrolledUp, setScrolledUp] = useQuietState(false)
 
@@ -1838,8 +1857,7 @@ function TerminalPane({
       const line = b.getLine(i)
       if (!line) return undefined
       return {
-        text: line.translateToString(true),
-        background: line.getCell(0)?.getBgColor(),
+        ...promptRow(line),
         active: Boolean(composer && i >= composer.top && i <= composer.bottom)
       }
     }
@@ -1861,6 +1879,7 @@ function TerminalPane({
     // shown, and the press that says "take me to my prompt" is the one gesture where
     // landing somewhere else and saying nothing is the whole failure.
     if (land < b.viewportY || land >= b.viewportY + t.rows) t.scrollToLine(land)
+    scrollIntent.current++
     pinned.current = false
     setScrolledUp(true)
     setFlash(m.id)
@@ -2122,9 +2141,8 @@ function TerminalPane({
      * honest - the matcher can stay cheap and slightly greedy because being wrong is
      * invisible.
      *
-     * xterm only asks for links on the row the mouse is over, so this runs on hover and
-     * nowhere else. One consequence worth knowing: a path long enough to wrap is only
-     * matched on the row it starts on, because a provider is handed one row at a time.
+     * Codex wraps a long path with CRLF and indentation as well as xterm's soft wraps.
+     * Read the surrounding rows on hover and let the disk confirm the joined filename.
      */
     const KIND_TTL = 15_000
     const kinds = new Map<string, { at: number; target: RevealTarget | null }>()
@@ -2142,32 +2160,73 @@ function TerminalPane({
     t.registerLinkProvider({
       provideLinks(row, done) {
         const dir = cwdRef.current
-        const line = dir ? t.buffer.active.getLine(row - 1) : null
-        if (!line) return done(undefined)
-        const tokens = findPathTokens(line.translateToString(true))
-        if (!tokens.length) return done(undefined)
+        const buffer = t.buffer.active
+        if (!dir || !buffer.getLine(row - 1)) return done(undefined)
+        // Keep UTF-16 string offsets separate from terminal cells: an emoji before a
+        // path occupies two cells, while a combining character may occupy none.
+        const logicalLine = (at: number) => {
+          let first = at, last = at
+          const maxRows = Math.max(1, Math.ceil(4096 / t.cols))
+          while (first > 0 && at - first < maxRows && buffer.getLine(first)?.isWrapped) first--
+          while (last + 1 < buffer.length && last - first < maxRows && buffer.getLine(last + 1)?.isWrapped) last++
+          let text = ''
+          const cells: Array<{ x: number; endX: number; y: number }> = []
+          for (let y = first; y <= last; y++) {
+            const line = buffer.getLine(y)!
+            for (let x = 0; x < t.cols; x++) {
+              const cell = line.getCell(x)
+              if (!cell || cell.getWidth() === 0) continue
+              const chars = cell.getChars() || ' '
+              text += chars
+              for (let i = 0; i < chars.length; i++) cells.push({ x: x + 1, endX: x + cell.getWidth(), y: y + 1 })
+            }
+          }
+          return { text: text.trimEnd(), cells, first, last }
+        }
+        const line = logicalLine(row - 1)
+        const candidates = [{ ...line, joinedAt: -1 }]
+        // A hard-wrapped continuation is indented by Codex. Try both a word break and
+        // a split inside a filename; only an exact existing target may win this guess.
+        for (const [before, after] of [
+          line.first > 0 ? [logicalLine(line.first - 1), line] : [],
+          line.last + 1 < buffer.length ? [line, logicalLine(line.last + 1)] : []
+        ]) {
+          if (!before || !after) continue
+          const indent = after.text.length - after.text.trimStart().length
+          if (!indent) continue
+          for (const separator of ['', ' ']) candidates.push({
+            ...before,
+            text: before.text + separator + after.text.slice(indent),
+            cells: [...before.cells.slice(0, before.text.length), ...(separator ? [before.cells[before.text.length - 1]] : []), ...after.cells.slice(indent)],
+            joinedAt: before.text.length
+          })
+        }
         void Promise.all(
-          tokens.map(async (tok): Promise<ILink | null> => {
+          candidates.flatMap(candidate => findPathTokens(candidate.text).map(async (tok): Promise<ILink | null> => {
             // A filename with spaces in it has no shape prose does not also have, so the
             // token arrives as several readings of the same run, longest first, and the
             // DISK picks: the first one that is really there wins. `~/Work/Clients/Sonia/
             // Sonia 21st Birthday V9.mp4` used to link only as far as the folder, because
             // the matcher stopped at the first space and the folder happens to exist.
             for (const reading of [tok, ...(tok.alts ?? [])]) {
+              if (candidate.joinedAt >= 0 && (reading.start >= candidate.joinedAt || reading.end <= candidate.joinedAt || !/^(?:[\\/]|~[\\/]|\.{1,2}[\\/]|[A-Za-z]:[\\/])/.test(reading.text))) continue
+              const start = candidate.cells[reading.start]
+              const end = candidate.cells[reading.end - 1]
+              if (!start || !end || row < start.y || row > end.y) continue
               const target = await kindOf(dir, reading.text)
-              if (!target) continue
+              if (!target || (candidate.joinedAt >= 0 && target.ancestor)) continue
               return {
                 // xterm columns are 1-based and its end is inclusive.
                 range: {
-                  start: { x: reading.start + 1, y: row },
-                  end: { x: reading.end, y: row }
+                  start: { x: start.x, y: start.y },
+                  end: { x: end.endX, y: end.y }
                 },
                 text: reading.text,
                 activate: () => api.reveal(target.abs)
               }
             }
             return null
-          })
+          }))
         ).then((found) => {
           // Candidates starting at different words can cover the same cells - "Ignore
           // Sonia 21st Birthday final V9.mp4" offers a reading from every word in it, and
@@ -2178,14 +2237,15 @@ function TerminalPane({
             .filter((l): l is ILink => l !== null)
             .sort((a, b) => b.text.length - a.text.length)
           const taken: ILink[] = []
+          const cellIndex = (p: { x: number; y: number }): number => (p.y - 1) * t.cols + p.x
           for (const l of links) {
             const clash = taken.some(
-              (t) => l.range.start.x <= t.range.end.x && t.range.start.x <= l.range.end.x
+              (t) => cellIndex(l.range.start) <= cellIndex(t.range.end) && cellIndex(t.range.start) <= cellIndex(l.range.end)
             )
             if (!clash) taken.push(l)
           }
           done(taken.length ? taken : undefined)
-        })
+        }).catch(() => done(undefined))
       }
     })
 
@@ -2442,13 +2502,12 @@ function TerminalPane({
             { codexCols: t.cols, maxUp: t.rows, maxDown: t.rows }
           )
         : null
-      const rows: Array<{ text: string; wrapped: boolean; background?: number; active: boolean }> = []
+      const rows: Array<{ text: string; wrapped: boolean; background?: number; boldChevron?: boolean; active: boolean }> = []
       for (let i = 0; i < cursor; i++) {
         const line = b.getLine(i)
         rows.push({
-          text: line?.translateToString(true) ?? '',
+          ...promptRow(line),
           wrapped: Boolean(line?.isWrapped),
-          background: line?.getCell(0)?.getBgColor(),
           active: Boolean(composer && i >= composer.top && i <= composer.bottom)
         })
       }
@@ -2671,8 +2730,7 @@ function TerminalPane({
         const line = b.getLine(i)
         if (!line) return undefined
         return {
-          text: line.translateToString(true),
-          background: line.getCell(0)?.getBgColor(),
+          ...promptRow(line),
           active: Boolean(composer && i >= composer.top && i <= composer.bottom)
         }
       }
@@ -2722,7 +2780,17 @@ function TerminalPane({
       refreshSelChip()
     })
 
+    // onKey precedes onData synchronously. Modified F3 shares the cursor-report
+    // encoding, so a real key must win over protocol classification.
+    let keyboardData: string | null = null
+    t.onKey(({ key }) => { keyboardData = key })
     t.onData((d) => {
+      const fromKeyboard = keyboardData === d
+      keyboardData = null
+      if (!fromKeyboard && isTerminalReply(d)) {
+        if (!asleepRef.current) api.write(sessionId, d)
+        return
+      }
       // The curtain is up: the app is mid-handover and the resume prompt has not landed.
       // A keystroke here is the collision this whole thing exists to stop - it would be
       // typed into a session that is about to be handed a prompt, and it moves
@@ -2910,12 +2978,14 @@ function TerminalPane({
 
     // Typing invalidates a stale selection, so Ctrl+C goes back to interrupting.
     const onKeyClearsSelection = (e: KeyboardEvent): void => {
+      scrollIntent.current++
       if (e.ctrlKey || e.altKey || e.metaKey) return
       lastSelection.current = ''
       copied.current = ''
     }
     const onMouseDown = (e: MouseEvent): void => {
       if (e.button === 2) return
+      scrollIntent.current++
       lastSelection.current = ''
       copied.current = ''
     }
@@ -3345,6 +3415,7 @@ function TerminalPane({
     // Wheel up is the one gesture that means "stop following"; wheeling back down to the
     // last line resumes it. Nothing a write does can flip either way.
     const onWheel = (e: WheelEvent): void => {
+      scrollIntent.current++
       // vim, less and anything else on the alternate screen has no scrollback here, so the
       // wheel belongs to the app. Everywhere else this scrolls the terminal itself.
       //
@@ -3511,6 +3582,7 @@ function TerminalPane({
     })
 
     const replayBuffer = (b: string, settle: () => void): void => {
+      b = withoutReplayQueries(b)
       sawOutput = true
       // There is history on this pane, so it was drawn somewhere else first. See
       // `needRestoreFix`.
@@ -3519,7 +3591,7 @@ function TerminalPane({
       const done = (): void => {
         settle()
         // Land on the newest line, not wherever 20k replayed lines happen to leave the view.
-        t.scrollToBottom()
+        if (pinned.current) t.scrollToBottom()
         // Held until here rather than dropped before the write: a staged replay resizes
         // the terminal twice, and the dim "Starting…" line is what covers that.
         setBlank(false)
@@ -3803,7 +3875,12 @@ function TerminalPane({
       // the ordered write is complete. A new pane (and one already following output) has a
       // zero distance and keeps the normal live-output landing.
       const wasPinned = pinned.current
+      const intent = scrollIntent.current
       const tailGap = Math.max(0, t.buffer.active.baseY - t.buffer.active.viewportY)
+      // A deeper replay can add history or remove blank repaint rows. Distance from
+      // the tail then names different text. Prefer the reader's actual three rows.
+      const anchor = wasPinned ? [] : Array.from({ length: 3 }, (_, i) =>
+        t.buffer.active.getLine(t.buffer.active.viewportY + i)?.translateToString(true) ?? '')
       // Every tag was anchored into the buffer that reset just threw away, and the tail
       // about to arrive carries those same prompts for `seedMarks` to read back out.
       // Dropping them is also what LETS it run: it refuses on a rail that is not empty.
@@ -3821,7 +3898,7 @@ function TerminalPane({
       readingSnapshot = true
       let bytes: string
       try {
-        bytes = keep(snapshot)
+        bytes = keep(withoutReplayQueries(snapshot))
       } finally {
         readingSnapshot = false
       }
@@ -3829,8 +3906,27 @@ function TerminalPane({
       t.write('\x1bc' + bytes, () => {
         pendingDataWrites--
         if (dead) return
-        if (wasPinned) t.scrollToBottom()
-        else t.scrollToLine(Math.max(0, t.buffer.active.baseY - tailGap))
+        if (scrollIntent.current === intent) {
+          if (wasPinned) t.scrollToBottom()
+          else {
+            const b = t.buffer.active
+            const fallback = Math.max(0, b.baseY - tailGap)
+            let target = fallback
+            let nearest = Infinity
+            if (anchor.some(line => line.trim())) {
+              for (let row = 0; row <= b.baseY; row++) {
+                if (Math.abs(row - fallback) >= nearest) continue
+                if (anchor.every((line, i) => b.getLine(row + i)?.translateToString(true) === line)) {
+                  target = row
+                  nearest = Math.abs(row - fallback)
+                }
+              }
+            }
+            t.scrollToLine(target)
+          }
+          pinned.current = wasPinned
+          setScrolledUp(!wasPinned)
+        }
         seedMarks()
         drainTyped()
       })
@@ -3906,14 +4002,17 @@ function TerminalPane({
       const repairWhy = fixWhy.current
       noteFix('repair')
       try {
-        pinned.current = true
+        // Background repair must not overrule a reader who moved during replay.
+        // The explicit Fix button still requests a clean frame at the live end.
+        const follow = repairWhy === 'pressed' || pinned.current
+        pinned.current = follow
         reshape(t, f)
         // Worth doing on a mirror too: the redraw is asked of the far agent, and a
         // torn frame there is exactly what you cannot fix from the other machine.
         api.redraw(sessionId)
         t.refresh(0, t.rows - 1)
-        t.scrollToBottom()
-        setScrolledUp(false)
+        if (follow) t.scrollToBottom()
+        setScrolledUp(!follow)
         // A CLI redraw may dispose anchors on rows it clears. Once its repaint has settled,
         // recover missing replay tags from the bytes still in xterm; never add a
         // second tag beside live keystroke marks.
@@ -4772,7 +4871,10 @@ function TerminalPane({
           pane that would otherwise be an empty black box for the seconds the CLI spends
           starting up. It goes on the first byte, whether that byte is the agent's banner
           or a replayed transcript. */}
-      {(blank || booting) && !mirror && <PaneBooting agent={agent} over={!blank} />}
+      {(blank || booting) && !mirror && !asleep && <PaneBooting agent={agent} over={!blank} />}
+      {/* ...and the same line, in the same spot, while the agent is stopped. A mirror is
+          told nothing: the pane is asleep on the machine that owns it, not on this one. */}
+      {asleep && !mirror && <PaneAsleep />}
       {/* What was just attached, as a picture. Bottom-RIGHT: bottom-left is Codex's own
           `>` marker (the mic was moved off it for the same reason) and the header row is
           already the thing `headerFit` is fighting over. Goes on its own after
@@ -5001,6 +5103,7 @@ function TerminalPane({
           // also start a selection drag.
           onMouseDown={(e) => e.preventDefault()}
           onClick={() => {
+            scrollIntent.current++
             pinned.current = true
             term.current?.scrollToBottom()
             setScrolledUp(false)

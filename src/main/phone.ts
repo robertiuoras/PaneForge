@@ -29,7 +29,7 @@
  *   Uint8Array and plain JSON silently turns those into `{"0":12,...}`.
  */
 
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import {
   CHALLENGE_MS,
   UNLOCK_MS,
@@ -45,8 +45,9 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { networkInterfaces } from 'node:os'
 import { extname, join, normalize, sep } from 'node:path'
 import { markFor } from '../shared/deviceWatch'
+import { NativeAuth, type NativeGrant, type NativePromptReceipt } from './nativeAuth'
 import { deviceKind, hostOf, originOf } from '../shared/net'
-import type { PhoneAsk, PhoneDevice, PhonePeer, PhoneState } from '../shared/types'
+import type { PhoneAsk, PhoneDevice, PhonePeer, PhoneState, Session } from '../shared/types'
 import { decodeWire, encodeWire } from '../shared/wireJson'
 
 /**
@@ -102,7 +103,13 @@ const DESK_ONLY = new Set([
   'phone:typeGate',
   'phone:forgetKey',
   'phone:clearMark',
-  'sessions:closing'
+  'sessions:closing',
+  // A vault is opened from a folder dialog and the Obsidian app on THIS machine - a
+  // phone has neither.
+  'config:pickVault',
+  'vault:info',
+  'vault:graph',
+  'vault:open'
 ])
 
 /**
@@ -333,6 +340,36 @@ export interface PhoneDeps {
    * existing install gets until somebody turns it on.
    */
   typeGate?(): boolean
+  /** opaque native mobile grants, persisted as token hashes only */
+  nativeGrants?(): NativeGrant[]
+  saveNativeGrants?(list: NativeGrant[]): void
+  nativePromptReceipts?(): NativePromptReceipt[]
+  saveNativePromptReceipts?(list: NativePromptReceipt[]): void
+  sessions?(): Session[]
+  sessionBuffer?(id: string): string
+  /** Exact provider conversation, resolved from this pane's claimed transcript. */
+  semanticConversation?(id: string, agent: string, cursor?: string | null): {
+    messages: Array<{
+      id: string
+      role: 'user' | 'assistant' | 'system'
+      provider: 'claude' | 'codex' | 'terminal'
+      at: string | null
+      blocks: Array<
+        | { type: 'text'; text: string }
+        | { type: 'code'; text: string; language?: string }
+        | { type: 'tool'; name: string; input: string; output: string; state: 'running' | 'complete' | 'error' }
+        | { type: 'notice'; text: string }
+      >
+      raw: string
+    }>
+    nextCursor: string | null
+    rawOutput: string
+  } | null
+  sleepSession?(id: string): boolean
+  wakeSession?(id: string): unknown
+  setKeepOpen?(id: string, keepOpen: boolean): boolean
+  isKeepOpen?(id: string): boolean
+  sendNativePrompt?(id: string, text: string): boolean
   /** the last watching browser has gone: give back anything a phone was holding */
   onIdle?(): void
 }
@@ -362,12 +399,27 @@ export class PhoneServer {
   private nextAsk = 1
   /** challenges handed out and not yet answered, with the moment they stop being valid */
   private challenges = new Map<string, number>()
+  /** Native approval consumes a fresh WebAuthn assertion, never an old unlock cookie. */
+  private freshPasskeys = new Map<string, number>()
+  private nativeStarts = new Map<string, { since: number; n: number }>()
+  private nativeTokens = new Map<string, { since: number; n: number }>()
   private keepalive: NodeJS.Timeout | null = null
   private lastError = ''
   private listening = 0
   private nextPeer = 1
+  private native: NativeAuth
 
-  constructor(private deps: PhoneDeps) {}
+  constructor(private deps: PhoneDeps) {
+    this.native = new NativeAuth(
+      () => this.deps.nativeGrants?.() ?? [],
+      (list) => { if (!this.deps.saveNativeGrants) throw new Error('native grant storage unavailable'); this.deps.saveNativeGrants(list) },
+      () => createHash('sha256').update(this.deps.code()).digest('hex'),
+      () => 'localhost',
+      () => this.deps.nativePromptReceipts?.() ?? [],
+      (list) => { if (!this.deps.saveNativePromptReceipts) throw new Error('native receipt storage unavailable'); this.deps.saveNativePromptReceipts(list) },
+      (device) => (this.deps.devices?.() ?? []).some((row) => row.id === device)
+    )
+  }
 
   /**
    * Collapse a device list that was written before approvals were deduplicated.
@@ -588,6 +640,10 @@ export class PhoneServer {
   }
 
   forgetDevice(id: string): void {
+    if (id === '*') {
+      this.deps.saveNativeGrants?.([])
+    }
+    else this.native.revokeBrowser(id)
     const list = this.deps.devices?.() ?? []
     this.deps.saveDevices?.(id === '*' ? [] : list.filter((d) => d.id !== id))
     for (const c of [...this.clients]) {
@@ -707,6 +763,15 @@ export class PhoneServer {
     // available before authentication so a home-screen shortcut can retain its own
     // origin and standalone chrome, while every renderer asset remains behind auth.
     if (path === '/pf-entry.webmanifest') return this.entryManifest(res)
+    if (path === '/pf/native/v1/auth/start' && req.method === 'POST') return await this.nativeStart(req, res)
+    if (path === '/pf/native/v1/auth/token' && req.method === 'POST') return await this.nativeToken(req, res)
+    if (path === '/pf/native/v1/auth/revoke' && req.method === 'POST') return this.nativeRevoke(req, res)
+    if (path === '/pf/native/v1/sessions' && req.method === 'GET') return this.nativeSessions(req, res)
+    if (path.startsWith('/pf/native/v1/prompts/') && req.method === 'GET') return this.nativePromptStatus(req, res, path)
+    if (path.startsWith('/pf/native/v1/sessions/') && req.method === 'GET') return this.nativeConversation(req, res, path)
+    if (path.startsWith('/pf/native/v1/sessions/') && req.method === 'POST') return await this.nativeSessionAction(req, res, path)
+    if (path === '/pf/native/v1/auth/authorize') return this.nativeAuthorize(req, res, url.searchParams.get('request') ?? '')
+    if (path === '/pf/native/v1/auth/approve' && req.method === 'POST') return await this.nativeApprove(req, res)
     if (path === '/pf/pair' && req.method === 'POST') return await this.pair(req, res)
     // Both halves of being let in without a code, and both of them before the auth check:
     // a browser that has not been approved yet is exactly who is asking.
@@ -726,6 +791,177 @@ export class PhoneServer {
     if (path === '/pf/call' && req.method === 'POST') return await this.call(req, res)
     if (path === '/pf/send' && req.method === 'POST') return await this.fire(req, res)
     return this.static(path, res)
+  }
+
+  // ---- native system-browser pairing -----------------------------------------
+
+  private async nativeStart(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!isTls(req)) return this.plain(res, 400, 'https required')
+    if (!this.nativeRate(req, this.nativeStarts, 10)) return this.plain(res, 429, 'try later')
+    const body = await this.readWire<Record<string, string>>(req, res)
+    if (!body) return
+    try {
+      const host = String(req.headers.host ?? '')
+      // Native never selects a redirect. The app claims its registered taskdriver URI after
+      // the browser page has verified a fresh WebAuthn assertion.
+      const start = this.native.start({
+        codeChallenge: String(body.codeChallenge ?? ''), state: String(body.state ?? ''),
+        deviceId: String(body.deviceId ?? ''), deviceName: String(body.deviceName ?? ''),
+        grantId: body.grantId ? String(body.grantId) : undefined
+      })
+      this.json(res, 200, { authorizationUrl: start.authorizationUrl.replace('https://localhost', `https://${host}`) })
+    } catch { this.plain(res, 400, 'native authorization refused') }
+  }
+
+  private nativeAuthorize(req: IncomingMessage, res: ServerResponse, request: string): void {
+    if (!isTls(req)) return this.plain(res, 400, 'https required')
+    const pending = this.native.pendingForBrowser(request)
+    if (!pending) return this.plain(res, 410, 'authorization expired')
+    if (!this.authed(req)) return this.nativePairPage(res, request)
+    const csrf = this.native.csrfFor(request)
+    if (!csrf) return this.plain(res, 410, 'authorization expired')
+    // The page has no general renderer assets and starts a new required WebAuthn ceremony.
+    // The request id is unguessable and is consumed during the later token exchange.
+    const nonce = randomBytes(18).toString('base64')
+    const esc = (v: string) => JSON.stringify(v).replace(/</g, '\\u003c')
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer', 'content-security-policy': `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'` })
+    res.end(`<!doctype html><meta name="referrer" content="no-referrer"><title>Approve PaneForge</title><meta name="viewport" content="width=device-width,initial-scale=1"><style nonce="${nonce}">body{font:17px system-ui;line-height:1.5;max-width:32rem;margin:3rem auto;padding:0 1.5rem;color:#152f32;background:#f5f8f6}button{min-height:48px;padding:12px 20px;font:inherit;border:0;border-radius:12px;color:white;background:#165c50}#status{overflow-wrap:anywhere}</style><p id="label"></p><button id="ok">Approve with passkey</button><p id="status"></p><script nonce="${nonce}">const request=${esc(request)},csrf=${esc(csrf)},name=${esc(pending.deviceName)};document.querySelector('#label').textContent='Approve '+name+' to read and control PaneForge?';const s=document.querySelector('#status');const b=document.querySelector('#ok');const u=s=>Uint8Array.from(atob(s.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0));const e=b=>btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');b.onclick=async()=>{try{b.disabled=true;s.textContent='Waiting for passkey…';let st=await (await fetch('/pf/key/state')).json();if(!st.ids.length)throw Error('enrol a passkey in PaneForge Settings first');let c=await navigator.credentials.get({publicKey:{challenge:u(st.challenge),rpId:st.rpId,allowCredentials:st.ids.map(id=>({type:'public-key',id:u(id)})),userVerification:'required',timeout:60000}});let a=c.response;let r=await fetch('/pf/key/unlock',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({challenge:st.challenge,id:c.id,clientDataJSON:e(a.clientDataJSON),authenticatorData:e(a.authenticatorData),signature:e(a.signature)})});if(!r.ok)throw Error('passkey refused');r=await fetch('/pf/native/v1/auth/approve',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({request,csrf})});let out=await r.json();if(!r.ok)throw Error('approval refused');location.replace('taskdriver://auth/paneforge?code='+encodeURIComponent(out.code)+'&state='+encodeURIComponent(out.state))}catch(x){s.textContent=x.message||'Approval failed';b.disabled=false}}</script>`)
+  }
+
+  /** First-time browser pairing retains only the opaque request id, then resumes locally. */
+  private nativePairPage(res: ServerResponse, request: string): void {
+    const nonce = randomBytes(18).toString('base64')
+    const encoded = JSON.stringify(request).replace(/</g, '\\u003c')
+    res.writeHead(200, {
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': 'no-store',
+      'referrer-policy': 'no-referrer',
+      'content-security-policy': `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`
+    })
+    res.end(`<!doctype html><title>Pair browser</title><meta name="viewport" content="width=device-width,initial-scale=1"><style nonce="${nonce}">body{font:17px system-ui;line-height:1.5;max-width:32rem;margin:3rem auto;padding:0 1.5rem;color:#152f32;background:#f5f8f6}button{min-height:48px;padding:12px 20px;font:inherit;border:0;border-radius:12px;color:white;background:#165c50}#status{overflow-wrap:anywhere}</style><p>Ask the PaneForge desk to approve this browser, then this connection will continue.</p><p id="status">Requesting approval…</p><script nonce="${nonce}">const request=${encoded},s=document.querySelector('#status');(async()=>{try{let a=await fetch('/pf/ask',{method:'POST'});if(!a.ok)throw Error('Could not request pairing');let q=await a.json();s.textContent='Approve the matching code '+q.sas+' on PaneForge.';let poll=async()=>{let r=await fetch('/pf/ask?id='+encodeURIComponent(q.id));let x=await r.json();if(x.state==='yes')return location.replace('/pf/native/v1/auth/authorize?request='+encodeURIComponent(request));if(x.state==='waiting')return setTimeout(poll,1500);s.textContent='Pairing was not approved.'};poll()}catch(e){s.textContent=e.message||'Pairing failed.'}})()</script>`)
+  }
+
+  private async nativeApprove(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const origin = String(req.headers.origin ?? '')
+    const expected = `https://${String(req.headers.host ?? '')}`
+    if (!isTls(req) || origin !== expected || !this.authed(req) || !this.unlocked(req)) return this.plain(res, 403, 'fresh passkey required')
+    const body = await this.readWire<Record<string, string>>(req, res)
+    if (!body) return
+    try {
+      const browser = this.who(req)?.device ?? ''
+      // Empty identifies the legacy code cookie, which cannot be revoked per browser.
+      if (!browser || !this.takeFreshPasskey(browser)) throw new Error('fresh browser assertion required')
+      this.json(res, 200, this.native.approve(String(body.request ?? ''), String(body.csrf ?? ''), browser, ['read', 'control']))
+    } catch { this.plain(res, 400, 'native approval refused') }
+  }
+
+  private async nativeToken(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!isTls(req)) return this.plain(res, 400, 'https required')
+    if (!this.nativeRate(req, this.nativeTokens, 20)) return this.plain(res, 429, 'try later')
+    const body = await this.readWire<Record<string, string>>(req, res)
+    if (!body) return
+    try { this.json(res, 200, this.native.exchange(String(body.code ?? ''), String(body.codeVerifier ?? ''), String(body.deviceId ?? ''))) }
+    catch { this.plain(res, 400, 'native exchange refused') }
+  }
+
+  private nativeSessions(req: IncomingMessage, res: ServerResponse): void {
+    if (!isTls(req) || !this.native.bearer(this.nativeBearer(req), 'read')) return this.plain(res, 401, 'unauthorized')
+    const sessions = (this.deps.sessions?.() ?? []).filter((s) => s.status !== 'exited' || s.asleep).map((s) => ({ id: s.id, title: s.title, provider: s.agent === 'codex' ? 'codex' : s.agent === 'claude' ? 'claude' : 'terminal', state: s.asleep ? 'sleeping' : s.status === 'working' ? 'working' : s.ask ? 'needs-input' : 'idle', hostName: 'PaneForge', keepOpen: this.deps.isKeepOpen?.(s.id) ?? false, updatedAt: new Date(s.lastOutput || s.createdAt).toISOString() }))
+    this.json(res, 200, { sessions })
+  }
+
+  private nativeConversation(req: IncomingMessage, res: ServerResponse, path: string): void {
+    if (!isTls(req) || !this.native.bearer(this.nativeBearer(req), 'read')) return this.plain(res, 401, 'unauthorized')
+    const id = decodeURIComponent(path.split('/')[5] ?? '')
+    const session = (this.deps.sessions?.() ?? []).find((s) => s.id === id)
+    if (!session) return this.plain(res, 404, 'not found')
+    const cursor = new URL(req.url ?? '/', 'http://localhost').searchParams.get('cursor')
+    const semantic = this.deps.semanticConversation?.(id, session.agent, cursor)
+    if (semantic) {
+      return this.json(res, 200, {
+        sessionId: id,
+        messages: semantic.messages,
+        nextCursor: semantic.nextCursor,
+        transcriptAvailable: true,
+        rawOutput: semantic.rawOutput,
+        updatedAt: new Date(session.lastOutput || session.createdAt).toISOString()
+      })
+    }
+    const raw = this.deps.sessionBuffer?.(id) ?? ''
+    const start = cursor && /^\d+$/.test(cursor) ? Number(cursor) : Math.max(0, raw.length - 12_000)
+    if (!Number.isSafeInteger(start) || start < 0 || start > raw.length) return this.plain(res, 400, 'invalid cursor')
+    const end = Math.min(raw.length, start + 12_000)
+    // Terminal replay is a separate, explicitly non-semantic fallback while the provider
+    // has not yet created, or PaneForge cannot prove, this pane's transcript.
+    this.json(res, 200, { sessionId: id, messages: [], nextCursor: end < raw.length ? String(end) : null, transcriptAvailable: false, rawOutput: raw.slice(start, end), updatedAt: new Date(session.lastOutput || session.createdAt).toISOString() })
+  }
+
+  private async nativeSessionAction(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
+    const grant = isTls(req) ? this.native.bearer(this.nativeBearer(req), 'control') : null
+    if (!grant) return this.plain(res, 401, 'unauthorized')
+    if (grant.unlockedUntil <= Date.now()) return this.plain(res, 423, 'locked')
+    const parts = path.split('/'); const id = decodeURIComponent(parts[5] ?? ''); const action = parts[6] ?? ''
+    if (!(this.deps.sessions?.() ?? []).some((s) => s.id === id)) return this.plain(res, 404, 'not found')
+    if (action === 'sleep' || action === 'keep-open') {
+      const body = await this.readWire<Record<string, unknown>>(req, res)
+      if (!body || typeof body[action === 'sleep' ? 'asleep' : 'keepOpen'] !== 'boolean') return this.plain(res, 400, 'invalid action')
+      const value = Boolean(body[action === 'sleep' ? 'asleep' : 'keepOpen'])
+      if (action === 'sleep') {
+        const result = value ? this.deps.sleepSession?.(id) : this.deps.wakeSession?.(id)
+        return result === false || result === null ? this.plain(res, 409, 'session action refused') : this.json(res, 200, {})
+      }
+      return this.deps.setKeepOpen?.(id, value) ? this.json(res, 200, {}) : this.plain(res, 409, 'session action refused')
+    }
+    if (action === 'prompt') {
+      const body = await this.readWire<Record<string,string>>(req,res)
+      const clientMessageId = String(body?.clientMessageId ?? ''); const text = String(body?.text ?? '')
+      if (!body || !/^[A-Za-z0-9_-]{8,128}$/.test(clientMessageId) || !text.trim() || text.length > 20_000) return this.plain(res,400,'invalid prompt')
+      try {
+        const existing = this.native.prompt(grant, clientMessageId)
+        const receipt = this.native.acceptPrompt(grant, clientMessageId, id, text)
+        // A pre-existing pending receipt may be a crash between queueing and marking.
+        // It can be reported as unknown, but must never enqueue the text again.
+        if (existing) return this.json(res, 202, this.nativeReceipt(receipt))
+        // sendPrompt has accepted the text into PaneForge's durable queue. It does not
+        // imply the CLI submitted it, so a queued receipt makes no stronger claim.
+        if (!this.deps.sendNativePrompt?.(id, text)) return this.json(res, 202, this.nativeReceipt(this.native.markPrompt(grant, clientMessageId, 'unknown')))
+        return this.json(res, 202, this.nativeReceipt(this.native.markPrompt(grant, clientMessageId, 'queued')))
+      } catch { return this.plain(res, 409, 'prompt receipt refused') }
+    }
+    return this.plain(res, 404, 'not found')
+  }
+
+  private nativeRevoke(req: IncomingMessage, res: ServerResponse): void {
+    if (!isTls(req) || !this.native.revoke(this.nativeBearer(req))) return this.plain(res, 401, 'unauthorized')
+    this.json(res, 200, { ok: true })
+  }
+
+  private nativePromptStatus(req: IncomingMessage, res: ServerResponse, path: string): void {
+    const grant = isTls(req) ? this.native.bearer(this.nativeBearer(req), 'read') : null
+    const id = decodeURIComponent(path.split('/')[5] ?? '')
+    if (!grant || !/^[A-Za-z0-9_-]{8,128}$/.test(id)) return this.plain(res, 401, 'unauthorized')
+    const receipt = this.native.prompt(grant, id)
+    if (!receipt) return this.plain(res, 404, 'not found')
+    this.json(res, 200, this.nativeReceipt(receipt))
+  }
+
+  private nativeReceipt(receipt: NativePromptReceipt): Record<string, string> {
+    return { clientMessageId: receipt.clientMessageId, state: receipt.state === 'pending' ? 'unknown' : receipt.state, acceptedAt: receipt.acceptedAt }
+  }
+
+  private nativeRate(req: IncomingMessage, bucket: Map<string, { since: number; n: number }>, limit: number): boolean {
+    const key = addressOf(req); const now = Date.now()
+    for (const [address, entry] of bucket) if (now - entry.since >= 60_000) bucket.delete(address)
+    const old = bucket.get(key)
+    if (!old && bucket.size >= 1024) return false
+    const row = old ?? { since: now, n: 0 }
+    row.n += 1; bucket.set(key, row)
+    return row.n <= limit
+  }
+
+  private nativeBearer(req: IncomingMessage): string | undefined {
+    const value = String(req.headers.authorization ?? '')
+    return value.startsWith('Bearer ') ? value.slice(7) : undefined
   }
 
   private async pair(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -969,6 +1205,7 @@ export class PhoneServer {
       this.deps.saveKeys?.([...keys, key])
       // Enrolling IS a verified touch - the authenticator just checked the human - so the
       // window opens here rather than making them do it twice in a row.
+      this.markFreshPasskey(req)
       this.unlockRes(req, res, key.id)
     } catch (err) {
       this.plain(res, 400, err instanceof Error ? err.message : 'enrolment refused')
@@ -992,10 +1229,22 @@ export class PhoneServer {
         keys
       )
       this.deps.saveKeys?.(keys.map((k) => (k.id === moved.id ? moved : k)))
+      this.markFreshPasskey(req)
       this.unlockRes(req, res, moved.id)
     } catch (err) {
       this.plain(res, 403, err instanceof Error ? err.message : 'refused')
     }
+  }
+
+  private markFreshPasskey(req: IncomingMessage): void {
+    const device = this.who(req)?.device
+    if (device) this.freshPasskeys.set(device, Date.now())
+  }
+
+  private takeFreshPasskey(device: string): boolean {
+    const at = this.freshPasskeys.get(device)
+    this.freshPasskeys.delete(device)
+    return !!at && Date.now() - at <= 120_000
   }
 
   private expect(req: IncomingMessage, challenge: string): { challenge: string; rpId: string; origin: string } {
@@ -1179,7 +1428,10 @@ function cookieFor(req: IncomingMessage, token: string): string {
  */
 function isTls(req: IncomingMessage): boolean {
   const proto = header(req, 'x-forwarded-proto').split(',')[0].trim().toLowerCase()
-  return proto === 'https' || (req.socket as { encrypted?: boolean }).encrypted === true
+  if ((req.socket as { encrypted?: boolean }).encrypted === true) return true
+  // The listener is reachable on the LAN, so only our loopback TLS terminator may assert
+  // a forwarded protocol. A header from a direct caller never upgrades cleartext.
+  return isLoopback(normalise(req.socket.remoteAddress ?? '')) && proto === 'https'
 }
 
 /**

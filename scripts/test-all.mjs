@@ -21,7 +21,7 @@
 //   node scripts/test-all.mjs             every test below
 //   node scripts/test-all.mjs rail theme  only the ones whose name contains one of these
 
-import { execFileSync, spawn } from 'node:child_process'
+import { execFileSync, spawn, execSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { cpus, loadavg, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -35,9 +35,11 @@ const TESTS = [
   ['copylogic', 'copy-logic-test.mjs'],
   ['changednothing', 'changed-nothing-test.mjs'],
   ['laneheartbeat', 'lane-heartbeat-test.mjs'],
+  ['lanereclaim', 'lane-reclaim-test.mjs'],
   ['shipimports', 'ship-imports-test.mjs'],
   ['guarddeckhold', 'guarddeck-hold-test.mjs'],
   ['power', 'power-test.mjs'],
+  ['vault', 'vault-test.mjs'],
   ['killguard', 'kill-guard-test.mjs'],
   ['release', 'release-guard-test.mjs'],
   ['grid', 'grid-layout-test.mjs'],
@@ -59,12 +61,14 @@ const TESTS = [
   ['devkeep', 'devkeep-test.mjs'],
   ['devlayout', 'dev-layout-test.mjs'],
   ['remotereset', 'remote-reset-test.mjs'],
+  ['terminalprotocol', 'terminal-protocol-test.mjs'],
   ['exitclose', 'exitclose-test.mjs'],
   ['headerfit', 'header-fit-test.mjs'],
   ['promptseed', 'promptseed-test.mjs'],
   ['renderwatch', 'renderwatch-test.mjs'],
   ['mainwatch', 'main-watch-test.mjs'],
   ['logwrite', 'log-write-test.mjs'],
+  ['sleepcause', 'sleep-cause-test.mjs'],
   ['mainasyncio', 'main-async-io-test.mjs'],
   ['mainsyncio', 'main-sync-io-test.mjs'],
   ['elapsed', 'elapsed-test.mjs'],
@@ -85,6 +89,7 @@ const TESTS = [
   ['panemodel', 'panemodel-test.mjs'],
   ['effort', 'effort-test.mjs'],
   ['staleframe', 'stale-frame-test.mjs'],
+  ['wakescreen', 'wakescreen-test.mjs'],
   ['cloudwork', 'cloud-work-test.mjs'],
   ['fixsign', 'fix-sign-test.mjs'],
   ['settingsearch', 'settings-search-test.mjs'],
@@ -105,6 +110,7 @@ const TESTS = [
   ['updatecompletion', 'update-completion-test.mjs'],
   ['tokens', 'tokens-test.mjs'],
   ['recover', 'recover-test.mjs'],
+  ['paneerror', 'pane-error-test.mjs'],
   ['restoreturn', 'restore-turn-test.mjs'],
   ['restore', 'restore-context-test.mjs'],
   ['contextusage', 'context-usage-test.mjs'],
@@ -231,6 +237,9 @@ const TESTS = [
   ['slash', 'slash-test.mjs'],
   ['reveal', 'reveal-test.mjs'],
   ['pathlink', 'pathlink-test.mjs'],
+  ['terminalpathlink', 'terminal-path-link-test.mjs'],
+  ['restorereader', 'restore-reader-test.mjs'],
+  ['headlessfocus', 'headless-focus-test.mjs'],
   ['revealpane', 'reveal-pane-test.mjs'],
   ['gamemode', 'gamemode-test.mjs'],
   ['openurl', 'open-url-test.mjs'],
@@ -253,6 +262,8 @@ const TESTS = [
   ['promote', 'promote-test.mjs'],
   ['phone', 'phone-test.mjs'],
   ['passkey', 'passkey-test.mjs'],
+  ['nativehostauth', 'native-host-auth-test.mjs'],
+  ['nativetranscript', 'native-transcript-test.mjs'],
   ['panesize', 'pane-size-test.mjs'],
   ['borrowask', 'borrowask-test.mjs'],
   ['linkstate', 'link-state-test.mjs'],
@@ -368,7 +379,13 @@ const started = Date.now()
  * the 193 scripts changes.
  */
 const TMP_ROOT = mkdtempSync(join(tmpdir(), 'pf-test-run-'))
-const dropTmp = () => rmSync(TMP_ROOT, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+// A suite's headless Chrome outlives a killed run (ppid 1) and then blocks the real Chrome
+// from opening: macOS activates the running bundle instead of launching a window. Kill any
+// Chrome whose profile lives under this run's root before dropping the root.
+const dropTmp = () => {
+  try { execSync(`pkill -9 -f -- "--user-data-dir=${TMP_ROOT}"`, { stdio: 'ignore' }) } catch {}
+  rmSync(TMP_ROOT, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+}
 // `exit` alone leaks the root on every Ctrl-C, and this name is unique per run, so nothing
 // later reclaims it. A signal has to drop it itself, then die of that signal.
 process.on('exit', dropTmp)

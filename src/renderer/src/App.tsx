@@ -118,6 +118,7 @@ import {
   DEFAULT_RECLAIM,
   idleClosePlan,
   idleSleepPlan,
+  pressureSleepMs,
   type SleepPressure,
   sameDeadline,
   idleCloseAt,
@@ -176,6 +177,7 @@ import { TOUR_ASLEEP_MS, TOUR_SIDE_BACK_MS } from '../../shared/tour'
 function sayMs(ms: number): string {
   return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`
 }
+
 import Tips from './components/Tips'
 import { DEFAULT_TIPS } from '../../shared/tips'
 import { folderLabel } from '../../shared/revealPane'
@@ -328,7 +330,10 @@ function reclaimPaneOf(
     pinned,
     // A sleeping pane has already given its agent back and the card is the thing being
     // kept - closing it buys nothing and loses the pane. See `shared/sleep.ts`.
-    asleep: s.asleep
+    asleep: s.asleep,
+    // ...and WHY, which is what tells a pane that finished a turn nobody read from one the
+    // restore brought back wearing an old screen. See `bornAsleep` in shared/reclaim.ts.
+    asleepReason: s.asleepReason
   }
 }
 
@@ -2573,6 +2578,8 @@ export default function App(): JSX.Element {
         busy: s.runSince !== undefined,
         // The device that handed it here, so the budget never hands it straight back.
         arrivedFrom: s.arrivedFrom,
+        // What the far end would resume. An agent pane without one never travels.
+        resumeId: s.resumeId,
         projectName: projectNameOf(s.cwd),
         // What it is actually costing. `undefined` when the sampler has no answer - it
         // does not read the process table behind a hidden window - and `expensive` reads
@@ -2874,7 +2881,10 @@ export default function App(): JSX.Element {
         // HERE rather than on the other machine. See `pressureSleepMs`.
         pressure
       )
-      for (const p of plan) void api.sleepSession(p.id)
+      for (const p of plan) void api.sleepSession(p.id, pressure === 'ok' ? 'idle' : 'pressure', {
+        source: 'renderer-idle-sweep', pressure, idleMs: p.idleMs,
+        thresholdMs: pressureSleepMs(cfg.idleSleepMinutes ?? DEFAULT_RECLAIM.idleSleepMinutes!, pressure)
+      })
     }
     // A verdict turning tight is the moment to act, not up to a minute later.
     if (pressure !== 'ok') sweep()
@@ -3865,6 +3875,28 @@ export default function App(): JSX.Element {
    * below is its report rather than a guess made here. A pane mid-turn is QUEUED by the
    * far end and comes back when the turn ends; nothing is killed to make it travel.
    */
+  /**
+   * The mirror's side of the machine question. Idle: one press, it comes back. Mid-turn
+   * or on a question: the same box the outward move uses, in its "back" shape, so the
+   * press says whether the turn is stopped (`now`) or waited for.
+   */
+  const askBringBack = useCallback(
+    (s: Session) => {
+      const held = s.status === 'working' || s.status === 'starting' || Boolean(s.ask)
+      if (!held) return bringHere(s)
+      setHandoff({
+        ids: [s.id],
+        title: s.title,
+        busy: held,
+        starting: s.status === 'starting',
+        asking: Boolean(s.ask),
+        back: { deviceName: s.remote?.name ?? 'that machine' }
+      })
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  )
+
   const bringHere = useCallback(
     (s: Session) => {
       const where = s.remote?.name ?? 'that machine'
@@ -4046,7 +4078,14 @@ export default function App(): JSX.Element {
   const stillCloseable = useCallback((id: string): boolean => {
     const s = sessionsRef.current.find((x) => x.id === id)
     if (!s) return false
-    if (s.ask || s.bell) return false
+    // `s.ask` only, deliberately. A BELL is not a question: it is a noise the CLI made at
+    // some point, it is never cleared by anything the app does, and `reclaimPaneOf` - the
+    // reading the idle plan is built from - has never refused one. Two predicates for one
+    // clock is how eight panes logged `armed` and only two ever logged `closed`: the sweep
+    // armed a belled pane every five seconds, the effect below dropped the card, and
+    // nothing anywhere said so (measured 2026-09-07: s5-mtr24wj7 armed 76 times, never
+    // closed). Same failure as the two readings of the close clock on 2026-09-01.
+    if (s.ask) return false
     if (s.drafting) return false
     if (s.runSince !== undefined) return false
     if (s.handingOff) return false
@@ -4877,7 +4916,7 @@ export default function App(): JSX.Element {
                 className="keep-open-check"
                 type="checkbox"
                 aria-label={`Keep ${s.title} open`}
-                title={s.remote ? `Set keep-open on ${s.remote.name}, where this session runs` : 'Keep this session open until unchecked'}
+                title={s.remote ? `Set keep-open on ${s.remote.name}, where this session runs` : 'Keep this session open and its agent running until unchecked. Only a machine short of memory sleeps it.'}
                 disabled={savingPins || Boolean(s.remote)}
                 checked={!s.remote && Boolean(pinned[s.id])}
                 onChange={() => togglePin(s.id)}
@@ -4998,6 +5037,17 @@ export default function App(): JSX.Element {
                         row). One box wraps whole, keeps its chips together, and is the
                         only thing on the line that may be pushed to the right. */}
                     <span className="row-tags">
+                      {/* The dot gives the state its quickest possible scan, but it cannot
+                          be the only reading. Keep the word beside the actual timers so a
+                          green dot never has to be decoded from memory. A question already
+                          has its stronger, more specific "asks you" state below. */}
+                      {!s.ask && s.status !== 'exited' && (
+                        <span className={'chip card-status ' + s.status}>
+                          {s.status === 'idle'
+                            ? (s.engaged !== false ? 'waiting for you' : 'ready')
+                            : s.status === 'working' ? 'running' : s.status}
+                        </span>
+                      )}
                       {s.ask && (
                         <span
                           className="chip asks"
@@ -5125,7 +5175,7 @@ export default function App(): JSX.Element {
                       ) : s.runSince ? (
                         <span className="session-clock">turn <Elapsed since={s.runSince} title="This turn" /></span>
                       ) : s.lastRunMs !== undefined ? (
-                        <span className="elapsed done" title="Last turn">
+                        <span className="session-clock session-last" title="Last turn">
                           last {formatElapsed(s.lastRunMs)}
                         </span>
                       ) : null}
@@ -6040,24 +6090,23 @@ export default function App(): JSX.Element {
                     the row of six that all act on the pane in front of you. */}
                 {!s.remote && s.status !== 'exited' && (
                   <button
-                    className="ghost small desk-only pt-handoff"
+                    className="icon desk-only pt-handoff"
+                    aria-label="Where this agent runs"
                     title={
                       s.status === 'starting'
                         ? `Move ${s.lane ? `lane ${s.lane}` : s.title} to another machine. It is still starting here, so the move waits until it is ready.`
                         : s.status === 'working'
-                          ? `Move ${s.lane ? `lane ${s.lane}` : s.title} to another machine. It is mid-turn, so the move is queued until the turn ends - never killed.`
-                          : 'Where this agent runs: your paired machines, and what each of them is doing.'
+                          ? `Move ${s.lane ? `lane ${s.lane}` : s.title} to another machine now, or once this turn ends.`
+                          : `Move ${s.lane ? `lane ${s.lane}` : s.title} to another machine.`
                     }
                     onClick={(e) => {
                       e.stopPropagation()
-                      // Robert, 2026-08-28: "instead of handoff button in header it should
-                      // be remote, which if session is not started then normal remote, if
-                      // session mid turn then just asks like handoff". A pane between turns
-                      // has nothing to queue, so the question the button used to ask is one
-                      // nobody needed - it goes straight to Devices. Mid-turn is the one
-                      // case where the answer matters, and that keeps today's ask.
+                      // Always the machine question, never the Devices screen. It went to
+                      // Devices between turns from 2026-08-28, and that read as a button
+                      // that "only shows the remote popup, not actually moves it" (Robert,
+                      // 2026-09-08). The box lists the machines, moves on one press, and
+                      // has its own Devices… button for pairing.
                       const busy = s.status === 'working' || s.status === 'starting'
-                      if (!busy && !s.ask) return setDevices(true)
                       const ids = s.lane
                         ? sessions.filter((x) => !x.remote && x.lane === s.lane && x.cwd === s.cwd).map((x) => x.id)
                         : [s.id]
@@ -6070,7 +6119,11 @@ export default function App(): JSX.Element {
                       })
                     }}
                   >
-                    Remote
+                    {/* A glyph, not the word `Remote`: it sat in a bordered pill among
+                        eight flat 24px icons, which is what made the row look assembled
+                        from two different toolbars, and the word cost the width that
+                        dropped it first in a grid. The title still says it in full. */}
+                    ⇄
                   </button>
                 )}
                 {/* The same question from the other side of it. Drawn in the same slot as
@@ -6078,14 +6131,15 @@ export default function App(): JSX.Element {
                     and a mirrored pane had no answer to it at all until now. */}
                 {s.remote && s.status !== 'exited' && (
                   <button
-                    className="ghost small desk-only pt-handoff"
-                    title={`Bring ${s.title} back from ${s.remote.name}: its repo goes up as an auto-sync commit, the conversation and screen come over the link, and the pane reopens here. Mid-turn it comes back when the turn ends.`}
+                    className="icon desk-only pt-handoff"
+                    aria-label="Bring this pane back to this machine"
+                    title={`Bring ${s.title} back from ${s.remote.name}: its repo goes up as an auto-sync commit, the conversation and screen come over the link, and the pane reopens here. Mid-turn you choose: now, or once the turn ends.`}
                     onClick={(e) => {
                       e.stopPropagation()
-                      bringHere(s)
+                      askBringBack(s)
                     }}
                   >
-                    Bring here
+                    ⇤
                   </button>
                 )}
                 {/* One target instead of six. Everything below is still rendered on a
@@ -6538,7 +6592,7 @@ export default function App(): JSX.Element {
                       label: 'Bring it here',
                       hint: 'move it back from that machine',
                       icon: '⤵',
-                      run: () => bringHere(s)
+                      run: () => askBringBack(s)
                     }
                   ]
                 : []),
@@ -6702,7 +6756,7 @@ export default function App(): JSX.Element {
                 label: pinned[s.id] ? 'Let it close when idle' : 'Keep this pane open',
                 hint: pinned[s.id]
                   ? 'the idle clocks may sleep or close it again'
-                  : 'no idle clock sleeps or closes it'
+                  : 'no idle clock sleeps or closes it - only a machine short of memory does'
                 ,
                 run: () => togglePin(s.id)
               },
@@ -6724,6 +6778,23 @@ export default function App(): JSX.Element {
                   ]
                 : []),
               { key: 'rename', label: 'Rename…', hint: 'or double-click the card', run: () => setRenaming(s.id) },
+              {
+                key: 'notes',
+                label: 'Notes',
+                hint: 'open this project in Obsidian',
+                run: () => {
+                  void api.vaultInfo(s.cwd).then((info) => {
+                    if (!info || info.error) {
+                      setSettings(true)
+                      return
+                    }
+                    // No match is not a refusal: Obsidian's own "open" URI offers to create
+                    // the note when the file it names doesn't exist yet.
+                    const name = s.cwd.split(/[/\\]/).filter(Boolean).pop() ?? s.cwd
+                    void api.vaultOpen(info.path, name)
+                  })
+                }
+              },
               { key: 'info', label: 'Session info', hint: 'how long it has been open, what it costs', run: () => setInfo(s.id) },
               // How hard this Codex pane thinks. Codex is the only CLI that can be told
               // between turns, so the rows are only offered on one. The level rows come
@@ -6790,7 +6861,7 @@ export default function App(): JSX.Element {
                       key: 'bring',
                       label: 'Bring it here',
                       hint: `move it back from ${s.remote?.name ?? 'that machine'}`,
-                      run: () => bringHere(s)
+                      run: () => askBringBack(s)
                     }
                   ]
                 : []),
@@ -7043,7 +7114,7 @@ export default function App(): JSX.Element {
           setActiveId(pane.id)
           say('Putting this session to sleep\u2026')
           const t0 = Date.now()
-          await api.sleepSession(pane.id)
+          await api.sleepSession(pane.id, 'tour', { source: 'tour' })
           say(`Asleep in ${sayMs(Date.now() - t0)} - the card says asleep and the agent is gone.`)
           await new Promise((r) => setTimeout(r, TOUR_ASLEEP_MS))
           say('Waking it up again\u2026')

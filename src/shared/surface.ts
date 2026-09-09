@@ -86,6 +86,7 @@ export const SURFACE: Surface = {
   getConfig: ['invoke', 'config:get'],
   setConfig: ['invoke', 'config:set'],
   pickRoot: ['invoke', 'config:pickRoot'],
+  pickVault: ['invoke', 'config:pickVault'],
   addSound: ['invoke', 'sounds:add'],
   soundData: ['invoke', 'sounds:data'],
   removeSound: ['invoke', 'sounds:remove'],
@@ -111,6 +112,10 @@ export const SURFACE: Surface = {
   diffPatch: ['invoke', 'git:diffPatch'],
   laneBoard: ['invoke', 'lanes:board'],
   laneTimeline: ['invoke', 'lanes:timeline'],
+  /** Obsidian vault: where it is, its link graph, open a note in Obsidian. */
+  vaultInfo: ['invoke', 'vault:info'],
+  vaultGraph: ['invoke', 'vault:graph'],
+  vaultOpen: ['invoke', 'vault:open'],
   laneWork: ['invoke', 'lanes:work'],
   laneFolders: ['invoke', 'lanes:folders'],
   mergeLane: ['invoke', 'lanes:merge'],

@@ -64,7 +64,12 @@ const lane = (...args) => {
       out: execFileSync(process.execPath, [join(repo, 'scripts', 'lane.mjs'), ...args], {
         cwd: repo,
         encoding: 'utf8',
-        stdio: 'pipe'
+        stdio: 'pipe',
+        // The pane this test is RUN in is not the four chats it invents. One pane holds one
+        // lane, so a claim drops every other hold wearing the same `PF_PANE` - and with the
+        // real one inherited, all four reservations collapsed onto lane main and the pool
+        // could never fill. Every chat here is paneless, as a chat outside the app is.
+        env: { ...process.env, PF_PANE: '' }
       }).trim()
     }
   } catch (e) {

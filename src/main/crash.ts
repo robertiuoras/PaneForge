@@ -15,6 +15,7 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { app } from 'electron'
 import { appendLog } from './logWrite'
+import { diagnosticMeta } from './diagnosticMeta'
 
 /** paneforge-errors.log is rotated past this size. 20 MB is months of normal faults. */
 const LOG_MAX_BYTES = 20 * 1024 * 1024
@@ -39,13 +40,14 @@ function logPath(): string {
 function write(kind: string, err: unknown): void {
   const at = new Date().toISOString()
   const detail = err instanceof Error ? (err.stack || err.message) : String(err)
+  const context = ` [pf ${JSON.stringify(diagnosticMeta())}]`
   // The console line is what an agent running `npm run try` sees, so it is the same text.
-  console.error(`[${at}] ${kind}: ${detail}`)
+  console.error(`[${at}] ${kind}: ${detail}${context}`)
   try {
     const p = logPath()
     // 2026-09-04: this file had reached 7.8 GB - a renderer wedge logs a line every few
     // seconds and nothing ever trimmed it. Keep one previous generation and start over.
-    appendLog(p, `[${at}] ${kind}: ${detail}\n`, { rotateAt: LOG_MAX_BYTES })
+    appendLog(p, `[${at}] ${kind}: ${detail}${context}\n`, { rotateAt: LOG_MAX_BYTES })
   } catch {
     /* the console line above is the fallback */
   }

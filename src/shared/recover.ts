@@ -55,7 +55,7 @@ const ERROR_LINE = /API Error|Request failed|Stream (error|interrupted)/i
  * never in front of its own errors (`> `, `› `, `❯ `). An error line starts with the CLI's
  * own bullet, or with nothing.
  */
-const SOMEBODY_SAID = /^\s*[>❯›»$#%]\s/
+export const SOMEBODY_SAID = /^\s*[>❯›»$#%]\s/
 
 /**
  * Errors that carry the incomplete sentence and must still never be auto-continued.
@@ -68,9 +68,14 @@ const SOMEBODY_SAID = /^\s*[>❯›»$#%]\s/
  *
  * Checked against the error line only, never the answer above it - an agent that WROTE the
  * words "rate limit" in its reply has not hit one.
+ *
+ * Exported because it is also the definition of the OTHER half: a run stopped by one of
+ * these is the thing `shared/paneError.ts` sends to a phone, precisely because nothing
+ * here is going to retry it. Two lists would be two answers to "is this safe to continue",
+ * and the day they disagreed one pane would be both retried and reported.
  */
-const NEVER =
-  /rate.?limit|usage limit|quota|credit balance|insufficient|billing|overloaded|authenticat|unauthoris|unauthoriz|invalid[_ ]api|api[_ ]key|\b(401|403|429)\b/i
+export const STOPS =
+  /rate.?limit|usage limit|quota|credit balance|insufficient|billing|overloaded|authenticat|unauthoris|unauthoriz|invalid[_ ]api|api[_ ]key|not logged in|run \/login|\b(401|403|429)\b/i
 
 /** How much of the newest output is looked at. A screenful, not the scrollback. */
 export const TAIL_CHARS = 4000
@@ -138,7 +143,7 @@ export function truncatedLine(painted: string): string | null {
     // The same quote after it was submitted, echoed back with no box around it.
     if (SOMEBODY_SAID.test(row)) return null
     if (!ERROR_LINE.test(row)) continue
-    if (NEVER.test(row)) return null
+    if (STOPS.test(row)) return null
     return row.trim()
   }
   return null

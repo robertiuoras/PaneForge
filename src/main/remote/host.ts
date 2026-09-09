@@ -66,7 +66,8 @@ export interface HostBackend {
    *
    * Optional so a backend that cannot do it refuses in a sentence rather than throwing.
    */
-  handBack?(id: string, device: string): Promise<HandoffItem[]>
+  /** `now` interrupts a mid-turn pane and sends it at once - see `HandoffRequest.now`. */
+  handBack?(id: string, device: string, now?: boolean): Promise<HandoffItem[]>
   projects(): Promise<Project[]>
   agents(): Promise<AgentInfo[]>
   /**
@@ -185,6 +186,16 @@ export class RemoteHost extends EventEmitter {
 
   get listening(): boolean {
     return Boolean(this.server?.listening)
+  }
+
+  /**
+   * Tell every device connected to this one whether somebody is at this desk.
+   *
+   * A guest draws this machine on a row in its own Devices list, and nothing else would
+   * ever change that row: the identity is only exchanged at the handshake.
+   */
+  tellPresence(person: boolean): void {
+    for (const g of this.guests) g.conn.send({ t: 'presence', person })
   }
 
   list(): Guest[] {
@@ -404,6 +415,12 @@ export class RemoteHost extends EventEmitter {
           this.emit('changed')
           return
         }
+        case 'presence':
+          // The guest desk says whether anybody is in front of it. Kept on its identity so
+          // the guest list can say so; nothing here acts on it.
+          guest.conn.peer.person = typeof m.person === 'boolean' ? m.person : undefined
+          this.emit('changed')
+          return
         case 'detach':
           guest.attached.delete(id)
           // Whatever that guest borrowed goes back to this desk the moment it looks
@@ -520,7 +537,7 @@ export class RemoteHost extends EventEmitter {
             return
           }
           void this.backend
-            .handBack(id, device)
+            .handBack(id, device, m.now === true)
             .then((items) => conn.send({ t: 'takebackdone', rid, items }))
             .catch((err: Error) => conn.send({ t: 'failed', rid, error: err.message }))
           return

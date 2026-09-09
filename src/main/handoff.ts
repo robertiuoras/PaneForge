@@ -15,13 +15,15 @@
 
 import { execFile } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { existsSync, linkSync, mkdirSync, readFileSync, realpathSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, linkSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import {
   handoffConversationError,
   handoffAgentError,
   mapCwd,
+  continuePrompt,
+  INTERRUPT_WAIT_MS,
   type HandoffItem,
   type HandoffRequest,
   type HandoffPayload,
@@ -77,15 +79,38 @@ function importCodex(parsed: CodexImport, id: string, cwd: string): { file: Buff
   }
 }
 
-function writeConversation(path: string, file: Buffer): string | null {
-  if (existsSync(path)) {
-    try {
-      if (readFileSync(path).equals(file)) return null
-    } catch { /* refuse below */ }
-    return 'A different conversation file already exists here, so nothing was overwritten'
-  }
+export function writeConversation(path: string, file: Buffer): string | null {
   const directory = dirname(path)
   const temp = join(directory, `.${basename(path)}.${randomBytes(8).toString('hex')}.tmp`)
+  // A pane that has been here before left the SAME conversation, shorter: it went to the
+  // other machine, took more turns there, and has come home. Refusing that - which is what
+  // this did until 2026-09-08 - is why a pane moved Mac -> PC -> Mac arrived with its
+  // transcript missing and the log line "A different conversation file already exists
+  // here". A transcript only ever grows by appending, so the older copy is a byte PREFIX
+  // of the incoming one, and that is the whole test. Anything else is still refused.
+  if (existsSync(path)) {
+    let held: Buffer
+    try {
+      held = readFileSync(path)
+    } catch {
+      return 'A different conversation file already exists here, so nothing was overwritten'
+    }
+    if (held.equals(file)) return null
+    if (!(held.length < file.length && file.subarray(0, held.length).equals(held))) {
+      return 'A different conversation file already exists here, so nothing was overwritten'
+    }
+    try {
+      writeFileSync(temp, file, { flag: 'wx' })
+      // Rename, not link: the older copy is still there and this is the one case where
+      // replacing it is the point. Still atomic, so a reader never sees half a file.
+      renameSync(temp, path)
+      return null
+    } catch {
+      return 'Conversation transcript could not be stored safely'
+    } finally {
+      try { unlinkSync(temp) } catch { /* already published or absent */ }
+    }
+  }
   try {
     mkdirSync(directory, { recursive: true })
     writeFileSync(temp, file, { flag: 'wx' })
@@ -202,6 +227,15 @@ export interface SendDeps {
   /** the same specs a desk restore uses - resumeId and scrollbackId included */
   snapshot(): StartSessionRequest[]
   kill(id: string): void
+  /**
+   * Stop the agent in this pane and keep everything else - card, screen, conversation -
+   * so a press wakes it here in the same conversation. What an AGENT handoff does to its
+   * source once the far end is running: the pane is not killed (the remote resume is
+   * started, not confirmed, and the conversation must stay reachable from this desk),
+   * but a CLI left running here gives nothing back, and giving memory back is the only
+   * reason an automatic move exists. Absent means the source is left running.
+   */
+  sleep?(id: string): void
   /** the pane's screen, from its history file - raw bytes, ANSI intact */
   tailOf(id: string, bytes: number): string
   /**
@@ -228,6 +262,12 @@ export interface SendDeps {
   busy?(s: Session): boolean
   /** Take this pane, to be moved to `device` once it goes quiet. */
   queue?(id: string, device: string, closeReceiverWhenDone: boolean): void
+  /**
+   * Stop the turn this pane is on and wait for its composer to come back - the CLI's own
+   * Escape, then `busy` polled up to `INTERRUPT_WAIT_MS`. Resolves true once the pane
+   * reads idle, false when it never did. Absent means `now` cannot be honoured.
+   */
+  interrupt?(id: string): Promise<boolean>
   /** The dev servers this pane has running, as script names its repo really has. */
   devServersOf?(id: string, cwd: string): Promise<{ servers: DevServer[]; notes: string[] }>
 }
@@ -262,9 +302,28 @@ export async function sendHandoff(deps: SendDeps, device: string, request: Hando
       out.push({ id: pane.id, title: pane.title, ok: false, error, notes: [] })
       continue
     }
+    // Mid-turn and asked for NOW: the turn is stopped first, so the transcript the far end
+    // resumes from holds the interrupted turn rather than half of a flushed one, and the
+    // far end is asked to carry on. A turn that will not stop is a refusal, not a kill.
+    let continueWith: string | undefined
+    if (request.now === true && deps.busy?.(pane)) {
+      if (!deps.interrupt) {
+        out.push({ id: pane.id, title: pane.title, ok: false, error: 'This build cannot interrupt a turn to move it - hand it off after the turn instead', notes: [] })
+        continue
+      }
+      deps.log?.(`${pane.id} -> ${deps.deviceName(device)}: interrupting the turn to move it now`)
+      const stopped = await deps.interrupt(pane.id)
+      if (!stopped) {
+        const error = `${pane.title} did not stop within ${Math.round(INTERRUPT_WAIT_MS / 1000)}s, so it stayed here - hand it off after the turn instead`
+        deps.log?.(`${pane.id} -> ${deps.deviceName(device)}: refused - ${error}`)
+        out.push({ id: pane.id, title: pane.title, ok: false, error, notes: [] })
+        continue
+      }
+      continueWith = continuePrompt(deps.selfDevice ? deps.deviceName(deps.selfDevice()) : 'the other machine')
+    }
     // Mid-turn: queued, never killed. `waitForTurn` defaults on - the caller has to say
     // out loud that an unfinished answer is expendable.
-    if (request.waitForTurn !== false && deps.busy?.(pane) && deps.queue) {
+    if (request.now !== true && request.waitForTurn !== false && deps.busy?.(pane) && deps.queue) {
       deps.queue(pane.id, device, closeAfter)
       out.push({
         id: pane.id,
@@ -277,7 +336,7 @@ export async function sendHandoff(deps: SendDeps, device: string, request: Hando
       continue
     }
     try {
-      out.push(await sendOne(deps, device, pane, closeAfter))
+      out.push(await sendOne(deps, device, pane, closeAfter, continueWith))
     } catch (err) {
       out.push({ id: pane.id, title: pane.title, ok: false, error: (err as Error).message, notes: [] })
     }
@@ -285,7 +344,7 @@ export async function sendHandoff(deps: SendDeps, device: string, request: Hando
   return out
 }
 
-async function sendOne(deps: SendDeps, device: string, pane: Session, closeReceiverWhenDone: boolean): Promise<HandoffItem> {
+async function sendOne(deps: SendDeps, device: string, pane: Session, closeReceiverWhenDone: boolean, continueWith?: string): Promise<HandoffItem> {
   const spec = deps.snapshot().find((r) => r.scrollbackId === pane.id)
   if (!spec) return { id: pane.id, title: pane.title, ok: false, error: 'Pane has already closed', notes: [] }
   const notes: string[] = []
@@ -366,6 +425,8 @@ async function sendOne(deps: SendDeps, device: string, pane: Session, closeRecei
   }
   if (handoffSpec.agent !== 'shell') payload.sourceRetained = true
   if (transcript) payload.transcript = transcript
+  // Only a conversation can carry on; a shell that was interrupted simply starts fresh.
+  if (continueWith && transcript) payload.continueWith = continueWith
 
   deps.stage?.(pane.id, `sending to ${where}`)
   const t1 = Date.now()
@@ -378,8 +439,15 @@ async function sendOne(deps: SendDeps, device: string, pane: Session, closeRecei
     return { id: pane.id, title: pane.title, ok: false, error: result.error || 'Refused over there', notes }
   }
   if (handoffSpec.agent !== 'shell') {
-    const kept = 'Remote conversation opened, but this original pane stays open because PaneForge cannot yet confirm the remote agent accepted the resume.'
-    deps.log?.(`${pane.id} -> ${where}: remote process started after ${Date.now() - t1} ms; original kept - resume acceptance is not confirmed`)
+    // The conversation now runs over there. This pane is not killed - the remote resume
+    // is started, not confirmed - but its agent is stopped, so the ~190 MB+ it held comes
+    // back; the card, screen and conversation stay, and a press wakes it here.
+    const slept = !!deps.sleep
+    deps.sleep?.(pane.id)
+    const kept = slept
+      ? `Remote conversation opened on ${where}. This original pane stays open but asleep - its agent was stopped here to give the memory back, and a press wakes it in the same conversation.`
+      : 'Remote conversation opened, but this original pane stays open because PaneForge cannot yet confirm the remote agent accepted the resume.'
+    deps.log?.(`${pane.id} -> ${where}: remote process started after ${Date.now() - t1} ms; original ${slept ? 'put to sleep' : 'kept running'} - resume acceptance is not confirmed`)
     return { id: pane.id, title: pane.title, ok: true, sourceKept: true, notes: [...notes, ...result.notes, kept] }
   }
   deps.log?.(`${pane.id} -> ${where}: running there after ${Date.now() - t1} ms (${Date.now() - t0} ms in all)`)
@@ -544,6 +612,13 @@ export async function receiveHandoff(
     if (conflict) return { ok: false, error: conflict, notes }
     req.resume = true
     req.resumeId = spec.resumeId
+    // The sender cut a turn short to move this: ask the resumed conversation to carry on.
+    // Through the same `queuePrompt` a `pf open --prompt` uses, so it waits for an idle
+    // composer and is confirmed by a turn. Only ever on a conversation that resumed.
+    if (typeof payload.continueWith === 'string' && payload.continueWith.trim()) {
+      req.prompt = payload.continueWith.trim().slice(0, 400)
+      notes.push('Its turn was interrupted to move it, so it has been asked to carry on')
+    }
   } else if (spec.resumeId) {
     notes.push('Conversation did not travel - the agent starts fresh in the right folder')
   }

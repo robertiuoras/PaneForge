@@ -17,7 +17,8 @@ curl -fsSL https://raw.githubusercontent.com/robertiuoras/PaneForge/master/scrip
 The build is not code signed (a certificate is a few hundred dollars a year), which is
 the only reason either OS complains. Updates after the first install are automatic.
 
-The `*-{{VERSION}}-*` files are the same builds with the version in the name, and
-`latest.yml` / `latest-mac.yml` are the feed the app's own updater reads.
+Everything else under Assets is machinery, not a download: the same two builds with the
+version in the name, and the `latest*.yml` feeds the app's own updater reads. GitHub
+decides what that list shows; the three files above are the whole of it for a person.
 
 {{CHANGES}}

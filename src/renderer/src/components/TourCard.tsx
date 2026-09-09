@@ -26,7 +26,7 @@ import { useEffect, useState } from 'react'
 import type { TourCheck, TourProgress, TourState, TourStep, TourSurface } from '../../../shared/tour'
 import type { SoundConfig } from '../../../shared/sounds'
 import { checkWords, checkedAll, checkedWords, currentStep, demoFor, doingWords, done, dwellFor, howToCheck, next, nextUnchecked, previous, stepKey, waitsForYou } from '../../../shared/tour'
-import { lookVerdict, spotFits, type LookVerdict } from '../../../shared/lookCheck'
+import { lookVerdict, MIN_SPOT, spotFits, type LookVerdict } from '../../../shared/lookCheck'
 import { previewSound } from '../useChime'
 import CardX from './CardX'
 
@@ -108,9 +108,19 @@ const SURFACE_SEL: Record<string, string | null> = {
   none: null
 }
 
-/** A ring around the control a step is about. Re-measured on a slow tick because the
- * surface it points at is opened by state the card cannot see settle; nothing animates. */
-function TourSpot({ selector }: { selector: string }): JSX.Element | null {
+/**
+ * A ring around the control a step is about, with the rest of the window dimmed behind it.
+ *
+ * Two things it will not do, both measured in the live tour on 2026-09-08. It will not
+ * ring something that is not on screen - `.pane-title` matches every pane on the desk,
+ * hidden ones included. And when nothing matches it does not simply draw nothing: it
+ * TELLS the card, because a step that has no ring and a step whose ring found nothing
+ * looked exactly the same (two of six steps drew no ring and said not a word).
+ *
+ * Re-measured on a slow tick because the surface it points at is opened by state the card
+ * cannot see settle; nothing animates.
+ */
+function TourSpot({ selector, onDrew }: { selector: string; onDrew: (drew: boolean) => void }): JSX.Element | null {
   const [box, setBox] = useState<DOMRect | null>(null)
   useEffect(() => {
     // A NEW RECT EVERY TICK IS A RE-RENDER EVERY TICK. `getBoundingClientRect` hands back a
@@ -120,9 +130,22 @@ function TourSpot({ selector }: { selector: string }): JSX.Element | null {
     // as well"). The reading is compared by VALUE, and only a control that actually moved
     // costs a render.
     const read = (): void => {
-      const el = document.querySelector(selector)
-      const r = el ? el.getBoundingClientRect() : null
+      const win = { width: window.innerWidth, height: window.innerHeight }
+      // The first match that is really ON SCREEN, not simply the first in the document.
+      // `.pane-title` matches every pane on the desk including the ones scrolled or
+      // hidden behind others, so a step ringed a control nobody could see and the card
+      // said nothing about it.
+      let best: DOMRect | null = null
+      for (const el of document.querySelectorAll(selector)) {
+        const r = el.getBoundingClientRect()
+        if (r.width < MIN_SPOT || r.height < MIN_SPOT) continue
+        if (r.bottom <= 0 || r.top >= win.height || r.right <= 0 || r.left >= win.width) continue
+        if (!spotFits(r, win)) continue
+        best = r
+        break
+      }
       setBox((was) => {
+        const r = best
         if (!r || !was) return r === was ? was : r
         const same = was.left === r.left && was.top === r.top && was.width === r.width && was.height === r.height
         return same ? was : r
@@ -136,8 +159,10 @@ function TourSpot({ selector }: { selector: string }): JSX.Element | null {
       window.removeEventListener('resize', read)
     }
   }, [selector])
-  // A ring that covers the window is not a ring - see `spotFits`.
-  if (!box || !spotFits(box, { width: window.innerWidth, height: window.innerHeight })) return null
+  useEffect(() => {
+    onDrew(!!box)
+  }, [box, onDrew])
+  if (!box) return null
   const pad = 6
   return (
     <div
@@ -181,6 +206,8 @@ export default function TourCard({ onOpen, onFinish, sounds, paneAlive, onSleepW
   // WHAT THE TOUR IS DOING, as it does it. One line per action, oldest first, cleared on
   // every step: Robert 2026-09-04 - "realtime show doing... opening... typing... and it
   // shows me realtime so i can see all those things".
+  // Whether this step's ring found anything. `null` is "not measured yet".
+  const [ringed, setRinged] = useState<boolean | null>(null)
   const [acts, setActs] = useState<string[]>([])
   const say = (line: string): void => setActs((a) => (a[a.length - 1] === line ? a : [...a, line]))
 
@@ -576,6 +603,13 @@ export default function TourCard({ onOpen, onFinish, sounds, paneAlive, onSleepW
             measurements to the person it is measuring for (Robert 2026-09-04: "dont need
             looked at it..."), so it is silent, and the guard still fires when the ring
             lands on nothing. */}
+        {/* A ring that found nothing used to be indistinguishable from a step that never
+            had one: no box, no word, nothing to tell the two apart. */}
+        {step.spot && ringed === false && (
+          <div className="tour-nospot" data-testid="tour-nospot">
+            Nothing to point at on this one - look at the whole screen it named.
+          </div>
+        )}
         {look && !look.ok && (
           <div className="tour-look bad" data-testid="tour-look">
             <span className="tour-check-mark">✗</span>
@@ -645,7 +679,11 @@ export default function TourCard({ onOpen, onFinish, sounds, paneAlive, onSleepW
           </button>
         </div>
       </div>
-      {step.spot && <TourSpot selector={step.spot} />}
+      {/* Keyed on the STEP, so a new step measures again from nothing rather than
+          inheriting the last step's answer when the two share a selector. */}
+      {step.spot && (
+        <TourSpot key={`${state.index}:${step.spot}`} selector={step.spot} onDrew={(d) => setRinged(d)} />
+      )}
     </>
   )
 }

@@ -84,6 +84,15 @@ export class RemoteClient extends EventEmitter {
   /** the version that device's handshake reported, cleared on disconnect */
   peerVersion = ''
 
+  /**
+   * Whether somebody is at that device's screen, as it last said.
+   *
+   * First heard in the handshake, then re-stated by a `presence` frame whenever it
+   * changes over there. `undefined` while disconnected, and for a build too old to send
+   * it - a row can then say nothing rather than inventing an empty desk.
+   */
+  peerPerson: boolean | undefined = undefined
+
   /** Every pane that device has, whether or not this one is mirroring it. */
   private available: Session[] = []
   /** The panes this device chose to mirror, by their id ON that device. */
@@ -254,6 +263,17 @@ export class RemoteClient extends EventEmitter {
   }
 
   /**
+   * Tell that device whether somebody is at THIS desk.
+   *
+   * Separate from `restatePresence`, which re-states borrows and so says nothing at all
+   * while no pane is being mirrored. This one is about the desk itself, and the far end
+   * draws it on our row in its Devices list.
+   */
+  sendPresence(person: boolean): void {
+    this.conn?.send({ t: 'presence', person })
+  }
+
+  /**
    * One screen here has let go of a pane we are still watching.
    *
    * Detaching returns every borrow this connection holds, which is right when the pane
@@ -374,8 +394,10 @@ export class RemoteClient extends EventEmitter {
    * timeout rather than a refusal - which is why the sentence the caller shows says the
    * machine did not answer rather than that it said no.
    */
-  takeBack(localId: string): Promise<HandoffItem[]> {
-    return this.ask<HandoffItem[]>({ t: 'takeback', id: localId }, HANDOFF_ASK_MS)
+  takeBack(localId: string, now = false): Promise<HandoffItem[]> {
+    // `now` is dropped on the floor by a host older than it, which then queues the pane
+    // as before - the report says so, and nothing is killed either way.
+    return this.ask<HandoffItem[]>(now ? { t: 'takeback', id: localId, now: true } : { t: 'takeback', id: localId }, HANDOFF_ASK_MS)
   }
 
   handoff(payload: HandoffPayload, file: Buffer | null): Promise<HandoffResult> {
@@ -457,6 +479,7 @@ export class RemoteClient extends EventEmitter {
     // The id in the config was a guess until now (typed in, or read off a broadcast);
     // the handshake is the first time the device has actually said who it is.
     this.peerVersion = conn.peer.version || ''
+    this.peerPerson = conn.peer.person
     if (conn.peer.id && conn.peer.id !== this.peer.id) this.emit('identified', conn.peer)
     conn.on('msg', (m: Msg) => this.receive(m))
     conn.on('gone', (why: string) => {
@@ -523,6 +546,12 @@ export class RemoteClient extends EventEmitter {
         this.emit('reset', joinId(this.peer.id, id))
         return
       }
+      case 'presence':
+        // Somebody arrived at that desk, or left it. `status` is what the manager turns
+        // into a redraw of the Devices list.
+        this.peerPerson = typeof m.person === 'boolean' ? m.person : undefined
+        this.emit('status')
+        return
       case 'attention':
         this.emit('attention', this.tag(m.session as Session))
         return
@@ -620,6 +649,7 @@ export class RemoteClient extends EventEmitter {
     this.socket = null
     this.since = 0
     this.peerVersion = ''
+    this.peerPerson = undefined
     this.available = []
     // `watching` deliberately survives: it is what this device chose to mirror, and a
     // reconnect should bring those panes back rather than make the choice again.

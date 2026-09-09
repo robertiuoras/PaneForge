@@ -52,6 +52,7 @@ import AgentLogo from './AgentLogo'
 import AppearanceTab from './AppearanceTab'
 import SoundsTab from './SoundsTab'
 import InstallConsole from './InstallConsole'
+import VaultDialog from './VaultDialog'
 import { BLURBS } from '@shared/blurbs'
 import Select from './Select'
 import { Segmented, Switch } from './Controls'
@@ -196,6 +197,12 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
   const pickRoot = async (): Promise<void> => {
     const dir = await api.pickRoot()
     if (dir) onChange({ root: dir })
+  }
+
+  const [showVault, setShowVault] = useState(false)
+  const pickVault = async (): Promise<void> => {
+    const dir = await api.pickVault()
+    if (dir) onChange({ vaultPath: dir })
   }
 
   const onInstalled = useCallback(
@@ -363,6 +370,28 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
               </div>
 
               <div className="setting">
+                <label>Obsidian vault</label>
+                <div className="setting-row">
+                  <input
+                    className="search"
+                    readOnly
+                    value={config.vaultPath}
+                    placeholder="No vault set"
+                  />
+                  <button className="ghost" onClick={pickVault}>
+                    Browse
+                  </button>
+                  {config.vaultPath && (
+                    <button className="ghost" onClick={() => setShowVault(true)}>
+                      Open graph
+                    </button>
+                  )}
+                </div>
+                <div className="hint">The vault's notes and [[links]], as a graph you can click into.</div>
+              </div>
+              {showVault && <VaultDialog onClose={() => setShowVault(false)} />}
+
+              <div className="setting">
                 <label>Default agent</label>
                 <Select
                   value={config.defaultAgent}
@@ -438,8 +467,8 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                 <Switch
                   checked={config.telegramAsk}
                   onChange={(v) => onChange({ telegramAsk: v })}
-                  label="Send a pane's question to Telegram"
-                  hint="A question stops the run until somebody presses a row, and the pane looks finished while it waits - so this one alert leaves the machine. Needs TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in the environment or in ~/.claude/usage-notify.env; without them nothing is sent. Message only: answering is still a press here or on the phone."
+                  label="Send a pane's question, or an error that stopped it, to Telegram"
+                  hint="Both stop the run and leave the pane looking finished: a question waits for somebody to press a row, and an error like a usage limit or an expired login is not retried by anything. Needs TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in the environment or in ~/.claude/usage-notify.env; without them nothing is sent. Message only: answering is still a press here or on the phone."
                 />
                 <Switch
                   checked={config.bellAlert}

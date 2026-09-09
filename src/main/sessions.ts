@@ -42,7 +42,7 @@ import type { ClientNamed } from '../shared/types'
  */
 export const NOTHING_OPEN = 'the handoff lists nothing still open'
 import { jobFromTable, paneJob, programName, SHELLS } from '../shared/paneJob'
-import { canSleep } from '../shared/sleep'
+import { canSleep, sleepRefusal } from '../shared/sleep'
 import { doneEnough } from '../shared/closeWhenDone'
 import { folderName, laneOfCheckout, projectOf } from '../shared/place'
 import { dropStale, lentGrid, watchedBorrow, type Borrow } from '../shared/paneSize'
@@ -50,7 +50,7 @@ import { START_COLS, START_ROWS } from '../shared/paneGrid'
 import { RESTORE_MARK_TEXT } from '../shared/replayWidth'
 import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, SUBMIT_GAP_MS, armDecision, clearChunks, hasFreshPaneHandoff, resumeOf, dropFor, dropWords, expiryDecision, queuedPromptDecision, quietEnoughToArm, standDownFor, type DropReason, type QueuedPromptVerdict } from '../shared/autoclear'
 import { acLog } from './autoclearLog'
-import { dropAllFor, noteAccepted, noteDropped, noteSubmitted, owedAfterRestore } from './queuedPrompts'
+import { dropAllFor, noteAccepted, noteNativeAccepted, noteDropped, noteSubmitted, owedAfterRestore } from './queuedPrompts'
 import type { QueueDrop } from '../shared/queuedPrompts'
 import { logReclaim } from './activationLog'
 import { ledgerSleep, ledgerWake } from './laneLedger'
@@ -129,6 +129,8 @@ import { askSignature, CHOOSE_GAP_MS, keysForChoice, readAsk, sameAsk , stampMat
 import { stripAnsi as strip } from '../shared/ansi'
 import { silenceMs, stalledNow } from '../shared/alerts'
 import { DEFAULT_RECOVER, recover, TAIL_CHARS } from '../shared/recover'
+import { stoppedLine } from '../shared/paneError'
+import { wakeBytes } from '../shared/wakeScreen'
 import { getConfig } from './config'
 import { spawnQuiet } from './spawnQuiet'
 import type {
@@ -276,8 +278,7 @@ const RESTORE_MARK = `\x1b[0m\r\n\x1b[2m${RESTORE_MARK_TEXT}\x1b[0m\r\n`
  * `RESTORE_MARK`: dim, one line, attributes reset first because the pane is cut mid-frame.
  * Nothing else marks the seam - the screen above it is genuinely the screen it had.
  */
-const SLEEP_MARK = '\x1b[0m\r\n\x1b[2m--- asleep: the agent has been stopped, press to wake it ---\x1b[0m\r\n'
-const WAKE_MARK = '\x1b[0m\r\n\x1b[2m--- awake ---\x1b[0m\r\n'
+const SLEEP_MARK = '\x1b[0m\r\n\x1b[2m\u00b7 asleep \u00b7\x1b[0m\r\n'
 
 /**
  * What a restored pane replays, or '' when there is nothing honest to put back.
@@ -814,6 +815,12 @@ export class SessionManager extends EventEmitter {
     if (born) {
       meta.status = 'exited'
       meta.asleep = Date.now()
+      // Which sleep this is, and not decoration: a pane born asleep is the ONE sleeping
+      // pane whose "nobody has read this" reading is a lie, because `lastOutput` above is
+      // stamped now while its screen is bytes from before the restart. `shared/reclaim.ts`
+      // reads this to tell it apart from a pane that printed a turn and then fell asleep
+      // with nobody having looked at it.
+      meta.asleepReason = 'restored'
     }
     const live: Live = {
       meta,
@@ -1181,21 +1188,39 @@ export class SessionManager extends EventEmitter {
    * `status` goes to `exited` alongside `asleep` on purpose: every guard in this app that
    * asks whether a pane has a live process already reads that word.
    */
-  sleep(id: string, reason: SleepReason = 'manual'): Session | null {
+  sleep(id: string, reason: SleepReason = 'unknown', evidence?: import('../shared/types').SleepEvidence): Session | null {
+    if (!['manual', 'idle', 'pressure', 'queued', 'unknown', 'continuation', 'tour'].includes(reason)) reason = 'unknown'
     const live = this.sessions.get(id)
-    if (!live) return null
-    if (
-      !canSleep({
-        status: live.meta.status,
-        asleep: live.meta.asleep,
-        busy: Boolean(live.meta.runSince) || live.busyUntil > Date.now(),
-        asking: Boolean(live.meta.ask),
-        drafting: Boolean(live.meta.drafting),
-        job: live.meta.job,
-        backJob: live.meta.backJob
-      })
-    )
+    if (!live) {
+      logReclaim({ action: 'sleep-refused', pane: id, reason, refusal: 'pane-missing' })
       return null
+    }
+    const reading = {
+      status: live.meta.status,
+      asleep: live.meta.asleep,
+      busy: Boolean(live.meta.runSince) || live.busyUntil > Date.now(),
+      asking: Boolean(live.meta.ask),
+      drafting: Boolean(live.meta.drafting),
+      job: live.meta.job,
+      backJob: live.meta.backJob
+    }
+    // These are measured before killing the process. Explicit fields keep caller-supplied
+    // data out of the log: never spread an IPC payload which could contain prompt text.
+    const decision = {
+      reason,
+      source: ['renderer-idle-sweep', 'tour', 'continuation', 'renderer', 'api', 'internal'].includes(evidence?.source ?? '') ? evidence!.source : 'internal',
+      pressure: ['ok', 'tight', 'over'].includes(evidence?.pressure ?? '') ? evidence!.pressure : undefined,
+      idleMs: Number.isFinite(evidence?.idleMs) ? evidence!.idleMs : undefined,
+      thresholdMs: Number.isFinite(evidence?.thresholdMs) ? evidence!.thresholdMs : undefined,
+      status: live.meta.status, processPid: live.proc?.pid, agent: live.meta.agent,
+      busy: reading.busy, asking: reading.asking, drafting: reading.drafting,
+      job: Boolean(reading.job), backJob: Boolean(reading.backJob),
+      lastKeyboard: live.meta.lastKeyboard, lastOutput: live.meta.lastOutput
+    }
+    if (!canSleep(reading)) {
+      logReclaim({ action: 'sleep-refused', pane: id, ...decision, refusal: sleepRefusal({ ...reading, job: reading.job ? 'a job' : undefined, backJob: reading.backJob ? 'a job' : undefined }) })
+      return null
+    }
     // An unnamed provider resume selects some other conversation. Do this before the
     // ledger or process tree changes: a pane without an exact answered conversation
     // remains running until its own conversation can be identified. Shell panes have no
@@ -1206,6 +1231,7 @@ export class SessionManager extends EventEmitter {
     if (live.meta.agent !== 'shell' && !resumable) {
       if (live.sleepRefusalShown) return null
       live.sleepRefusalShown = true
+      logReclaim({ action: 'sleep-refused', pane: id, ...decision, resumeId, refusal: 'conversation-unverified' })
       const note = '\x1b[33mSleep refused: this conversation could not be verified, so this pane remains running.\x1b[0m\r\n'
       this.emit('data', id, note)
       live.buffer.push(note)
@@ -1219,6 +1245,7 @@ export class SessionManager extends EventEmitter {
       return null
     }
     live.sleepRefusalShown = false
+    logReclaim({ action: 'sleep-request', pane: id, ...decision, resumeId })
     // Before the CLI dies, so the SessionEnd hook it fires on the way out reads the lane
     // ledger already marked - the whole point being that it PARKS this hold instead of
     // releasing it (see scripts/lane.mjs `releaseClaim`). Never blocks: worst case the
@@ -1241,6 +1268,7 @@ export class SessionManager extends EventEmitter {
     // reason - waking would otherwise re-run the work the pane was opened to do - except
     // `queued`: a pane put to sleep before it ever ran is woken to do exactly that.
     live.req = { ...live.req, resume: true, resumeId, prompt: reason === 'queued' ? live.req.prompt : undefined }
+    live.meta.resumeId = resumeId
     this.endRun(live)
     live.jobName = null
     live.meta.job = undefined
@@ -1254,7 +1282,7 @@ export class SessionManager extends EventEmitter {
     this.emit('data', id, SLEEP_MARK)
     live.buffer.push(SLEEP_MARK)
     this.emitSessions()
-    logReclaim({ at: Date.now(), action: 'sleep', pane: id, reason, folder: basename(live.meta.cwd) })
+    logReclaim({ at: Date.now(), action: 'sleep', pane: id, ...decision, resumeId, folder: basename(live.meta.cwd) })
     return live.meta
   }
 
@@ -1296,7 +1324,10 @@ export class SessionManager extends EventEmitter {
 
   wake(id: string): Session | null {
     const live = this.sessions.get(id)
-    if (!live || !live.meta.asleep) return null
+    if (!live || !live.meta.asleep) {
+      logReclaim({ action: 'wake-refused', pane: id, refusal: live ? 'not-asleep' : 'pane-missing' })
+      return null
+    }
     const reason = live.meta.asleepReason
     // Restore can deliberately leave an unavailable saved conversation asleep. Never
     // turn that placeholder into an unnamed provider resume or a fresh replacement.
@@ -1312,6 +1343,7 @@ export class SessionManager extends EventEmitter {
     // still worth keeping, so it wakes FRESH in its folder and says so once. Nothing is
     // adopted from a sibling: the resume is dropped, not widened to `--continue`.
     const fresh = live.meta.agent !== 'shell' && !resumable
+    logReclaim({ action: 'wake-request', pane: id, previousSleepReason: reason, resumeId, resumable, fresh, agent: live.meta.agent })
     if (fresh) {
       const note = '\x1b[33mThe saved conversation could not be resumed, so this pane starts a new one in the same folder. Its old screen stays above.\x1b[0m\r\n'
       this.emit('data', id, note)
@@ -1319,10 +1351,16 @@ export class SessionManager extends EventEmitter {
       live.req = { ...live.req, resume: false, resumeId: undefined, resumeCwd: undefined }
     }
     noteSession(id, fresh ? live.meta.cwd : resumeCwd, live.meta.agent, live.req.resume ? live.req.resumeId : undefined)
+    live.meta.resumeId = live.req.resume ? live.req.resumeId : undefined
     // Cleared before anything else reads the request: it is what made this pane arrive
     // asleep, and a later restart of a pane somebody has woken must not send it back.
     live.req = { ...live.req, asleep: undefined }
-    live.proc = this.spawn(live.req, live.meta.agent, live.cols, live.rows, live.meta.id)
+    try {
+      live.proc = this.spawn(live.req, live.meta.agent, live.cols, live.rows, live.meta.id)
+    } catch (error) {
+      logReclaim({ action: 'wake-failed', pane: id, resumeId, fresh, failure: 'spawn-failed' })
+      throw error
+    }
     live.runner = specFor(live.meta.agent).bin
     live.meta.asleep = undefined
     live.meta.asleepReason = undefined
@@ -1330,7 +1368,7 @@ export class SessionManager extends EventEmitter {
     // conversation state it needs - so the ledger reads asleep for the whole gap between
     // "the app decided to wake this pane" and "the CLI is actually running again".
     ledgerWake(live.meta.cwd, id)
-    logReclaim({ at: Date.now(), action: 'wake', pane: id, reason: reason ?? 'manual', folder: basename(live.meta.cwd) })
+    logReclaim({ at: Date.now(), action: 'wake', pane: id, previousSleepReason: reason ?? 'unknown', resumeId: live.req.resumeId, fresh, processPid: live.proc?.pid, agent: live.meta.agent, folder: basename(live.meta.cwd) })
     // Stamped for the `wake-printed` line further down, which is where the seconds are.
     live.wokeAt = Date.now()
     live.meta.status = 'starting'
@@ -1349,8 +1387,12 @@ export class SessionManager extends EventEmitter {
     live.meta.lastOutput = Date.now()
     live.meta.lastKeyboard = Date.now()
     live.repaintUntil = 0
-    this.emit('data', id, WAKE_MARK)
-    live.buffer.push(WAKE_MARK)
+    // Not a caption: the pane says "Starting <agent>..." over the terminal already
+    // (`PaneBooting`), and what the CLI needs here is rows nobody has painted on. See
+    // shared/wakeScreen.ts - this scrolls, it never erases.
+    const clean = wakeBytes(live.rows)
+    this.emit('data', id, clean)
+    live.buffer.push(clean)
     this.attach(live)
     recordStart(live.meta)
     this.emitSessions()
@@ -1491,6 +1533,15 @@ export class SessionManager extends EventEmitter {
   sendPrompt(id: string, text: string): void {
     if (!this.sessions.has(id)) return
     this.queuePrompt(id, text)
+  }
+
+  /** A native receipt may say queued only after the real recovery ledger is saved. */
+  sendNativePrompt(id: string, text: string): boolean {
+    const live = this.sessions.get(id)
+    if (!live || live.meta.asleep || live.meta.status === 'exited' || !text) return false
+    const key = noteNativeAccepted(id, text, live.meta.cwd)
+    this.queuePrompt(id, text, 0, PROMPT_START_MS, undefined, PROMPT_WAIT_MAX_MS, 'turn', key)
+    return true
   }
 
   /**
@@ -1867,6 +1918,10 @@ export class SessionManager extends EventEmitter {
       if (live.workTurn?.startedAt === endedThis) live.workAfter = shot
     })
     live.meta.runSince = undefined
+    // The turn is over, so the CLI has flushed it: this is when the conversation id
+    // becomes something another machine could resume (`Session.resumeId`, read by the
+    // automatic move). A Map lookup for Claude; Codex checks its claimed rollout file.
+    live.meta.resumeId = resumeIdFor(live.meta.id)
     live.runEndedAt = Date.now()
     // The turn is over, however it ended: a pane cannot still be "stuck mid-turn"
     // while the chime is announcing that its turn finished.
@@ -2889,6 +2944,8 @@ export class SessionManager extends EventEmitter {
   kill(id: string): void {
     const s = this.sessions.get(id)
     if (!s) return
+    logReclaim({ action: 'close-request', pane: id, processPid: s.proc?.pid,
+      status: s.meta.status, asleep: Boolean(s.meta.asleep), quitting: this.down })
     // Before the pty dies, while its pid still names a group and a tree. What the pane
     // started detached is not reachable from either, which is what strays.ts is for.
     if (s.proc) killPaneStrays(id, s.proc.pid)
@@ -2934,6 +2991,11 @@ export class SessionManager extends EventEmitter {
     this.down = true
     const live = [...this.sessions.values()]
     const ids = [...this.sessions.keys()]
+    for (const s of live) {
+      logReclaim({ action: 'shutdown-request', pane: s.meta.id, processPid: s.proc?.pid,
+        agent: s.meta.agent, folder: basename(s.meta.cwd), status: s.meta.status,
+        asleep: Boolean(s.meta.asleep), quitting: true })
+    }
     this.sessions.clear()
     // Before the early return: a pane that was teed and then closed by hand is gone
     // from the map, but its stream is only closed here if anything went wrong above.
@@ -3028,6 +3090,9 @@ export class SessionManager extends EventEmitter {
     const proc = live.proc
     // A pane with no process: `wake()` calls this again once there is one.
     if (!proc) return
+    const processIdentity = { pane: id, processPid: proc.pid, agent: meta.agent,
+      resumeId: live.req.resumeId, folder: basename(meta.cwd) }
+    logReclaim({ action: 'process-start', ...processIdentity })
 
     proc.onData((data) => {
       // A late event from the previous process of a restarted session would append
@@ -3100,6 +3165,9 @@ export class SessionManager extends EventEmitter {
     })
 
     proc.onExit(({ exitCode }) => {
+      logReclaim({ action: 'process-exit', ...processIdentity, exitCode,
+        superseded: live.proc !== proc, asleep: Boolean(meta.asleep),
+        sleepReason: meta.asleepReason, quitting: this.down, currentStatus: meta.status })
       if (live.proc !== proc) return
       meta.status = 'exited'
       // A pane put to sleep killed this process itself and has already said everything
@@ -3445,15 +3513,20 @@ export class SessionManager extends EventEmitter {
    */
   private sweepRecover(live: Live): void {
     const cfg = getConfig().recover ?? DEFAULT_RECOVER
-    if (!cfg.enabled) return
     const text = strip(live.buffer.read())
     if (text.length < live.recoverSeen) live.recoverSeen = 0
     if (text.length <= live.recoverSeen) return
-    const fresh = text.slice(live.recoverSeen)
-    const found = recover(
-      { painted: fresh.slice(-TAIL_CHARS), busy: false, tries: live.recoverTries },
-      cfg
-    )
+    const painted = text.slice(live.recoverSeen).slice(-TAIL_CHARS)
+    // A run STOPPED by something nothing here retries - a usage limit, a credit balance,
+    // an auth failure. Read before the continue decision and NOT behind `cfg.enabled`:
+    // they are different features and share only this cursor. Turning the automatic
+    // continue off must not also silence the pane that has given up, which is the one a
+    // person misses (`shared/paneError.ts`).
+    const stopped = stoppedLine(painted)
+    if (stopped) this.emit('paneError', live.meta, stopped)
+    const found = cfg.enabled
+      ? recover({ painted, busy: false, tries: live.recoverTries }, cfg)
+      : null
     // Everything from here has been read, whichever way it went: a turn that ended whole
     // gives the budget back, so a pane that drops once an hour never runs out of tries.
     live.recoverSeen = text.length

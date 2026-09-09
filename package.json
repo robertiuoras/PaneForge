@@ -1,6 +1,6 @@
 {
   "name": "claude-orchestrator",
-  "version": "0.8.206",
+  "version": "0.8.208",
   "private": true,
   "description": "PaneForge",
   "author": "Robert",
@@ -33,6 +33,7 @@
     "test:handoffstatthrottle": "node scripts/handoff-stat-throttle-test.mjs",
     "test:panemodel": "node scripts/panemodel-test.mjs",
     "test:staleframe": "node scripts/stale-frame-test.mjs",
+    "test:wakescreen": "node scripts/wakescreen-test.mjs",
     "test:cloudwork": "node scripts/cloud-work-test.mjs",
     "test:changednothing": "node scripts/changed-nothing-test.mjs",
     "test:copymode": "node scripts/copymode-test.mjs",
@@ -125,6 +126,7 @@
     "test:settingsearch": "node scripts/settings-search-test.mjs",
     "test:asknotify": "node scripts/ask-notify-test.mjs",
     "test:recover": "node scripts/recover-test.mjs",
+    "test:paneerror": "node scripts/pane-error-test.mjs",
     "test:sleep": "node scripts/sleep-test.mjs",
     "test:reclaim": "node scripts/reclaim-test.mjs",
     "test:activity": "node scripts/activity-test.mjs",
