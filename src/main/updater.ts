@@ -34,6 +34,7 @@ import {
 } from './macUpdate'
 import { appendLog } from './logWrite'
 import { diagnosticMeta } from './diagnosticMeta'
+import { probeRetryMs, probeStalled } from '../shared/updateRetry'
 
 type Emit = (s: UpdateState) => void
 
@@ -1195,6 +1196,22 @@ export function setAutoCheck(enabled: boolean): void {
   arm(8_000)
 }
 
+/**
+ * Probes that failed in a row, and the backoff they buy.
+ *
+ * A failed probe used to re-arm at the ordinary cadence, so 66 minutes went by with no
+ * answer from the feed over a network stall that cleared in seconds (2026-09-08, 10:17 to
+ * 11:21). Cleared the moment the feed answers.
+ */
+let probeFails = 0
+
+/** How long until the next poll, given how the last one went. Never slower than usual. */
+function nextPollDelay(): number {
+  const usual = pollDelay()
+  if (!probeFails) return usual
+  return Math.min(probeRetryMs(probeFails), usual)
+}
+
 /** One self-rescheduling timer, so the gap can change with what is going on. */
 function arm(ms: number): void {
   if (timer) clearTimeout(timer)
@@ -1225,7 +1242,7 @@ export async function pollOnce(): Promise<void> {
     if (state.phase === 'ready') await supersede()
     else await checkForUpdates()
   } finally {
-    if (auto) arm(pollDelay())
+    if (auto) arm(nextPollDelay())
   }
 }
 
@@ -1253,6 +1270,8 @@ async function supersede(): Promise<void> {
     const result = (await failFast(u.checkForUpdates(), CHECK_BUDGET_MS, 'the update probe')) as {
       updateInfo?: { version?: string }
     } | null
+    // The feed answered. Whatever it said, the backoff has done its job.
+    probeFails = 0
     const found = result?.updateInfo?.version
     if (!found || !newer(found, pending)) return
     log('supersede', `${pending} -> ${found}`)
@@ -1279,7 +1298,14 @@ async function supersede(): Promise<void> {
         return
       }
     }
-    log('supersede failed', message)
+    // A probe that did not answer is retried sooner than the next full cycle - see
+    // `shared/updateRetry.ts` for the 66 minutes that bought this - and says so once when
+    // it stops being one bad request.
+    probeFails += 1
+    log('supersede failed', `${message} (probe failure ${probeFails}, retrying in ${Math.round(nextPollDelay() / 1000)}s)`)
+    if (probeStalled(probeFails)) {
+      log('probe stalled', `${probeFails} update probes in a row have not answered - this machine is not reaching the feed`)
+    }
   } finally {
     probing = false
     u.autoDownload = restore

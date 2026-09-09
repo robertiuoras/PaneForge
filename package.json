@@ -241,6 +241,7 @@
     "test:headerfit": "node scripts/header-fit-test.mjs",
     "test:promptseed": "node scripts/promptseed-test.mjs",
     "test:trimloss": "node scripts/trim-loss-test.mjs",
+    "test:updateretry": "node scripts/update-retry-test.mjs",
     "test:renderwatch": "node scripts/renderwatch-test.mjs",
     "test:renderwatchlive": "node scripts/renderwatch-live.mjs",
     "test:capacity": "node scripts/capacity-test.mjs",
