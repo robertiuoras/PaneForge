@@ -6,7 +6,7 @@ const text = readFileSync(new URL('../src/main/config.ts', import.meta.url), 'ut
 const start = text.indexOf('export function setConfig(')
 const end = text.indexOf('\n/** Validated projects root:', start)
 assert.ok(start >= 0 && end > start)
-const code = transformSync(text.slice(start, end).replace('export function', 'function'), {loader:'ts'}).code
+const code = transformSync(text.slice(start, end).replace(/^export function/gm, 'function'), {loader:'ts'}).code
 const previous = {pinnedPanes:['existing'],providerKeys:{}}
 let fail = true, saved
 const env = {cache:previous,getConfig:()=>env.cache, file:()=>'/fixture/config.json',dirname:()=>'/fixture',mkdirSync:()=>{},writeFileSync:(_path,body)=>{if(fail)throw Error('disk full');saved=JSON.parse(body)},renameSync:()=>{},applyLaunchAtLogin:()=>{}}
