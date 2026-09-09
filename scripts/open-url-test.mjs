@@ -9,7 +9,7 @@
 
 import { buildSync } from 'esbuild'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -33,7 +33,27 @@ buildSync({
   format: 'esm',
   platform: 'node'
 })
-const { linkFailedWords, pathFailedWords, shortUrl } = await import(pathToFileURL(wordsFile).href)
+const { linkFailedWords, pathFailedWords, shortUrl, worthOpening } = await import(
+  pathToFileURL(wordsFile).href
+)
+
+// --- a target that was never a link ------------------------------------------
+//
+// Five `a link in a pane: about:blank - Failed to open URL` lines across 2026-09-05 and
+// 09-06, three of them inside eight seconds. `window.open()` with no argument resolves to
+// about:blank, it reaches setWindowOpenHandler like any other url, and the OS has nothing
+// to open it with - so the failure was guaranteed and the log line named nothing.
+ok(!worthOpening('about:blank'), 'about:blank is not a link anybody pressed')
+ok(!worthOpening(''), 'and neither is an empty href')
+ok(!worthOpening('   '), 'nor whitespace')
+ok(!worthOpening('javascript:void(0)'), 'and a javascript: target is never handed to the OS')
+ok(worthOpening('https://example.com'), 'an ordinary link still opens')
+ok(worthOpening('mailto:someone@example.com'), 'and so does a scheme the OS does claim')
+const mainSrc = readFileSync(join(ROOT, 'src/main/openUrl.ts'), 'utf8')
+ok(
+  mainSrc.indexOf('worthOpening(url)') < mainSrc.indexOf('shell.openExternal'),
+  'and the check happens BEFORE the OS opener, not after it fails'
+)
 
 const url = 'https://github.com/robertiuoras/PaneForge/releases/tag/v0.8.188'
 const said = linkFailedWords(url)

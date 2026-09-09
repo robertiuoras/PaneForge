@@ -7,7 +7,7 @@
 
 import { clipboard, shell } from 'electron'
 import { logProblem } from './crash'
-import { linkFailedWords, pathFailedWords } from '../shared/openUrl'
+import { linkFailedWords, pathFailedWords, worthOpening } from '../shared/openUrl'
 
 let notify: ((message: string) => void) | null = null
 
@@ -31,6 +31,15 @@ function say(message: string): void {
  * nothing this app can do about that, but it can make the link one paste away.
  */
 export function openLink(url: string, from: string): void {
+  // Nothing to open, and nothing to tell anybody: `about:blank` is a page in a pane
+  // calling `window.open()` with no argument, not a link somebody pressed. Logged once
+  // with its target so the next one is diagnosable, and never handed to the OS - see
+  // `worthOpening` in shared/openUrl.ts. No toast: there is no failure to report to
+  // somebody who did not press anything.
+  if (!worthOpening(url)) {
+    logProblem('open url skipped', `${from}: ${url || '(empty)'} - nothing an OS opener can take`)
+    return
+  }
   void shell.openExternal(url).catch((err: unknown) => {
     const why = err instanceof Error ? err.message : String(err)
     // The URL is the whole point of this line. Without it the four in the log are four
