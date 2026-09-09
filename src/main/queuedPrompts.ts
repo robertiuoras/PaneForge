@@ -93,6 +93,9 @@ export function noteNativeAccepted(id: string, text: string, cwd?: string): stri
   const next = noteQueued(load(), row)
   const file = queuedPromptsPath()
   mkdirSync(dirname(file), { recursive: true })
+  // sync-on-purpose: the row is the receipt for a prompt the native host has already been
+  // told is accepted, and the PTY write follows on this same turn - there is no later turn
+  // for an asynchronous write to land in before the thing it recovers has happened.
   writeFileSync(file + '.tmp', JSON.stringify(next, null, 2), { mode: 0o600 })
   renameSync(file + '.tmp', file)
   store = next

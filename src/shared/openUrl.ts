@@ -14,6 +14,24 @@
 // The words live here, away from electron, so they can be held to the rule that every
 // word on screen is read by somebody who has never used git.
 
+/**
+ * Is there a link here at all?
+ *
+ * `about:blank` is what a `window.open()` or a `target="_blank"` with nothing behind it
+ * resolves to, and it reaches `setWindowOpenHandler` looking exactly like a link somebody
+ * pressed. There is no page to open, so the OS refuses it and the app files a failure:
+ * six `open url: a link in a pane: about:blank - Failed to open URL` lines between
+ * 2026-09-05 01:56 and 2026-09-06 15:31, three of them inside eight seconds, none of them
+ * anything a person could act on and none of them a fault worth a toast.
+ *
+ * So a blank target is nothing happening: no shell call, no log line, no words on screen.
+ * Any real link - including one whose page happens to be about:something else - still goes.
+ */
+export function openable(url: string): boolean {
+  const target = url.trim().toLowerCase().split(/[?#]/)[0]
+  return target !== '' && target !== 'about:blank' && target !== 'about:'
+}
+
 /** Longest URL worth putting in a toast. Past this the middle is dropped, not the end. */
 const MAX_SHOWN = 90
 

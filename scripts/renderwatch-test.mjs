@@ -13,9 +13,13 @@ const {
   PROBE_DEAD_MS,
   RELOAD_COOLDOWN_MS,
   MAX_RELOADS,
+  MAX_SPINS,
+  SPIN_MS,
+  SPIN_WINDOW_MS,
   decide,
   fresh,
-  afterAct
+  afterAct,
+  noteRecovered
 } = await import('../src/shared/renderWatch.ts')
 
 let failed = 0
@@ -101,6 +105,63 @@ ok(
   /getOSProcessId\(\)/.test(main) && /cpu-time/.test(main)
 )
 ok('every action leaves a line in paneforge-errors.log', /logProblem\(/.test(main))
+
+// --- the renderer that kept wedging and kept coming back ------------------------------
+//
+// pid 5075, this Mac, 2026-09-05: eight `unresponsive` -> `answering again after Nms`
+// cycles between 01:03 and 03:11, recoveries growing 19s -> 55s, working set 205MB ->
+// 286MB, cumulative CPU 1:32 -> 23:13. Never reloaded once, while three renderers that
+// wedged HARD the same night were killed and reloaded inside 20 seconds. Every episode
+// ended a beat before the next 5s tick asked, and `responsive` wiped the only clock
+// `decide` was measuring.
+{
+  let s = fresh()
+  ok('a fresh watch has no spins against it', s.spins === 0 && s.firstSpinAt === 0)
+  // A renderer is briefly unresponsive whenever it does real work. That is not a spin.
+  s = noteRecovered(s, SPIN_MS - 1, T)
+  ok('a quick recovery is not counted at all', s.spins === 0, `under ${SPIN_MS}ms`)
+  ok('...and nothing is done about it', decide(s, T) === 'wait')
+
+  s = noteRecovered(fresh(), 20_000, T)
+  ok('a 20s freeze it came out of by itself IS counted', s.spins === 1)
+  ok('one spin is still left alone', decide(s, T) === 'wait')
+  s = noteRecovered(s, 30_000, T + 60_000)
+  ok('two spins are still left alone', s.spins === 2 && decide(s, T + 60_000) === 'wait')
+  s = noteRecovered(s, 55_000, T + 120_000)
+  ok(
+    `${MAX_SPINS} spins inside the window is a wedge, and gets the reload the hard ones get`,
+    s.spins === MAX_SPINS && decide(s, T + 120_000) === 'reload'
+  )
+
+  // ...and the reload is the answer, so the tally starts again. Without this the second
+  // reload would fire the instant the cooldown lifted, which is the loop this replaces.
+  const after = afterAct(s, T + 120_000)
+  ok('the reload clears the tally', after.spins === 0 && after.firstSpinAt === 0)
+  ok('...and the cooldown still holds it off', decide(after, T + 121_000) === 'wait')
+
+  // Spins hours apart are two ordinary bad moments, not one sick renderer.
+  let slow = noteRecovered(fresh(), 20_000, T)
+  slow = noteRecovered(slow, 20_000, T + SPIN_WINDOW_MS + 1)
+  ok('a spin outside the window starts the tally again', slow.spins === 1, `window ${SPIN_WINDOW_MS}ms`)
+  ok('...so an occasional slow moment never reloads anybody', decide(slow, T + SPIN_WINDOW_MS + 1) === 'wait')
+
+  // The refusals above it all still win: a spent watch is left alone, and a dead process
+  // is rebuilt rather than reloaded.
+  ok(
+    'a watch that has spent its reloads gives up rather than acting on spins',
+    decide({ ...s, reloads: MAX_RELOADS }, T + 120_000) === 'give-up'
+  )
+  ok(
+    'a gone renderer is still rebuilt, spins or not',
+    decide({ ...s, gone: true }, T + 120_000) === 'recreate'
+  )
+}
+
+const main2 = readFileSync(new URL('../src/main/renderWatch.ts', import.meta.url), 'utf8')
+ok(
+  "the 'responsive' handler is what counts a spin - nothing else sees one end",
+  /noteRecovered\(state, forMs, now\)/.test(main2)
+)
 
 const index = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
 ok('the window is actually watched', /watchRenderer\(win,/.test(index))
