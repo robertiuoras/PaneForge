@@ -10,8 +10,16 @@ import { delimiter, isAbsolute, join } from 'node:path'
  * profile. Keep the standard user-level CLI folders in PATH so an already-installed
  * agent does not look missing merely because PaneForge was not started from Terminal.
  */
+/** The PATH this last built, keyed by the PATH it was built FROM. */
+let hydrated: { from: string; to: string } | null = null
+
 export function hydrateUserPath(): string {
   const current = process.env.PATH ?? ''
+  // Called once per `which`, and it reads nvm's version folder every time. The answer is a
+  // pure function of the PATH it starts from, so the second call with the same input is the
+  // first call's answer.
+  if (hydrated && hydrated.from === current) return hydrated.to
+  const startedFrom = current
   // Narrow test escape hatch: production PaneForge never sets this, but it lets the
   // installer prerequisite test model a machine that genuinely has no Node anywhere.
   if (process.env.PANEFORGE_NO_USER_PATHS === '1') return current
@@ -68,11 +76,47 @@ export function hydrateUserPath(): string {
 
   const next = parts.join(delimiter)
   process.env.PATH = next
+  hydrated = { from: startedFrom, to: next }
   return next
+}
+
+/**
+ * What `which` already answered, and when.
+ *
+ * Every pane spawn asked this from scratch, and the answer costs a stat for every PATH
+ * entry times every extension until it hits: on this Mac, with nvm's per-version bin
+ * folders in PATH, resolving one CLI is dozens of stats, and a pane resolves more than one
+ * before it prints a byte. Nothing on PATH changes between two panes opened a second apart.
+ *
+ * Kept short and re-checked: an entry is only believed while the file it names is still
+ * there (one stat, not the walk), and it expires anyway so a CLI installed while PaneForge
+ * is open is found within the minute rather than after a restart.
+ */
+const answers = new Map<string, { path: string; at: number }>()
+const WHICH_TTL_MS = 60_000
+
+/** Test seam and a way out: `which.forget()` after anything that changes PATH. */
+export function forgetWhich(): void {
+  answers.clear()
+  hydrated = null
 }
 
 export function which(cmd: string): string {
   if (isAbsolute(cmd) && existsSync(cmd)) return cmd
+
+  const key = `${process.platform}\u0000${cmd}`
+  const had = answers.get(key)
+  if (had && Date.now() - had.at < WHICH_TTL_MS) {
+    // A miss is cached too - a machine without `grok` should not re-walk PATH for it on
+    // every spawn - and a miss has no file to re-check.
+    if (had.path === cmd) return cmd
+    try {
+      if (existsSync(had.path)) return had.path
+    } catch {
+      /* fall through and resolve again */
+    }
+    answers.delete(key)
+  }
 
   const exts =
     process.platform === 'win32'
@@ -89,12 +133,16 @@ export function which(cmd: string): string {
     for (const ext of order) {
       const candidate = join(dir, cmd + ext)
       try {
-        if (existsSync(candidate) && statSync(candidate).isFile()) return candidate
+        if (existsSync(candidate) && statSync(candidate).isFile()) {
+          answers.set(key, { path: candidate, at: Date.now() })
+          return candidate
+        }
       } catch {
         /* unreadable PATH entry */
       }
     }
   }
   // Let the caller fail with node-pty's own error rather than inventing one.
+  answers.set(key, { path: cmd, at: Date.now() })
   return cmd
 }

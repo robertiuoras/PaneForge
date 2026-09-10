@@ -105,6 +105,7 @@ import {
 } from '../../shared/capacity'
 import {
   CLOSE_COUNTDOWN_MS,
+  MIN_COUNTDOWN_MS,
   countdownEnd,
   DEFAULT_MASCOT,
   KEEP_MINUTES,
@@ -608,6 +609,15 @@ const deskRenders = { n: 0, ms: 0 }
 const GRID_RANK: Record<FleetState, number> = {
   needsYou: 0, stalled: 1, working: 1, starting: 1, ready: 2, exited: 3
 }
+
+/**
+ * How long a countdown has to survive before it is worth a sound.
+ *
+ * Long enough for the "it went back to work" check to have dropped a card that was armed
+ * over a pane that is not really idle, short enough that the alert still arrives while
+ * fifteen seconds are on the clock.
+ */
+const SOON_SOUND_DELAY_MS = 700
 
 export default function App(): JSX.Element {
   // How many times the WHOLE window has re-rendered, for probes. The sidebar, every card
@@ -2395,6 +2405,15 @@ export default function App(): JSX.Element {
    */
   const armCloseRef = useRef<(plan: Reclaim[], why: 'idle' | 'pressure', log: string) => void>(() => {})
   /**
+   * The same, one rung down: a pane about to be put to SLEEP counts down first.
+   *
+   * Until 2026-09-10 this rung acted in silence - the CLI was stopped with nothing on
+   * screen saying so, and the only sign was the card's clock changing to `asleep 3m`.
+   * Robert: "fix silently goes to sleep sessions it should have a countdown so i know its
+   * sleeping otherwise i lose track of where its going".
+   */
+  const armSleepRef = useRef<(plan: Reclaim[], pressure: SleepPressure) => void>(() => {})
+  /**
    * The same, for the rung above closing: moving a pane to another machine.
    *
    * Both handoff sweeps used to move panes into a `console.info`, so a pane could leave
@@ -2917,19 +2936,21 @@ export default function App(): JSX.Element {
         // ...and whether `focused` means anything: on a desk nobody has touched the app
         // focused that pane by itself. See `keepable` in shared/reclaim.ts.
         personRef.current,
-        // Short of memory, a finished pane is paused within a minute instead of five - the
-        // cheapest rung there is, and the one that makes room for the next pane to start
-        // HERE rather than on the other machine. See `pressureSleepMs`.
-        pressure
+        // Short of memory, a finished pane is paused within a minute instead of thirty -
+        // the cheapest rung there is, and the one that makes room for the next pane to
+        // start HERE rather than on the other machine. See `pressureSleepMs`.
+        pressure,
+        // Picked a countdown EARLY rather than a countdown late, exactly as the close
+        // sweep does: the card is the last seconds of the pane's own clock.
+        CLOSE_COUNTDOWN_MS
       )
-      for (const p of plan) void api.sleepSession(p.id, pressure === 'ok' ? 'idle' : 'pressure', {
-        source: 'renderer-idle-sweep', pressure, idleMs: p.idleMs,
-        thresholdMs: pressureSleepMs(cfg.idleSleepMinutes ?? DEFAULT_RECLAIM.idleSleepMinutes!, pressure)
-      })
+      // ...out loud, and not yet: the same card the close rung puts up, saying what is
+      // about to happen and holding a button that stops it.
+      if (plan.length) armSleepRef.current(plan, pressure)
     }
     // A verdict turning tight is the moment to act, not up to a minute later.
     if (pressure !== 'ok') sweep()
-    const timer = window.setInterval(sweep, pressure === 'ok' ? 60_000 : 15_000)
+    const timer = window.setInterval(sweep, pressure === 'ok' ? 5_000 : 5_000)
     return () => window.clearInterval(timer)
   }, [config?.reclaim, pressure])
 
@@ -4274,6 +4295,40 @@ export default function App(): JSX.Element {
     ])
   }
 
+  armSleepRef.current = (plan, pressure) => {
+    const now = Date.now()
+    const armed = new Set(closeSoonsRef.current.flatMap((c) => c.ids))
+    const keep = plan.filter((p) => (keptUntil.current[p.id] ?? 0) <= now && !armed.has(p.id))
+    if (!keep.length) return
+    const why: 'idle' | 'pressure' = pressure === 'ok' ? 'idle' : 'pressure'
+    for (const p of keep) {
+      api.logReclaim({
+        event: 'armed',
+        why,
+        id: p.id,
+        name: paneWordRef.current(p.id),
+        idleMin: Math.round(p.idleMs / 60000),
+        hadAgent: p.hadAgent,
+        seconds: Math.round(CLOSE_COUNTDOWN_MS / 1000)
+      })
+    }
+    // One card per pane: a sleep is a decision about one pane, and two of them are two
+    // sentences with two buttons - the same rule the close cards follow.
+    setCloseSoons((list) => [
+      ...list,
+      ...keep.map((p) => ({
+        key: `sleep:${p.id}`,
+        ids: [p.id],
+        names: [paneWordRef.current(p.id)],
+        // The pane's OWN deadline, never now-plus-fifteen: the pane was picked up to a
+        // lead early, so the card ends where the clock ends and the number only goes down.
+        deadline: Math.max(now + MIN_COUNTDOWN_MS, p.dueAt ?? now + CLOSE_COUNTDOWN_MS),
+        why,
+        sleep: true as const
+      }))
+    ])
+  }
+
   armCloseRef.current = (plan, why, log) => {
     const now = Date.now()
     const armed = new Set(closeSoonsRef.current.flatMap((c) => c.ids))
@@ -4338,14 +4393,29 @@ export default function App(): JSX.Element {
   useEffect(() => {
     if (!anySoon) return
     if (!soundOn.current) return
-    // `playAction`, never `playEvent`: the pane a sweep picks is usually the one that just
-    // finished, so the `done` chime lands a moment before this and the 900ms guard ate it.
-    playAction('move', soundSet.current)
+    // ...and only for a card that is STILL THERE a beat later. A sweep arms every five
+    // seconds and the card is dropped again the moment the pane reads as back at work
+    // (`stillCloseable`), so an arm that never became a visible countdown was a bowl with
+    // nothing on screen to explain it - one pane on this machine armed 76 times and closed
+    // never (2026-09-07). Robert, 2026-09-10: "random noises in paneforge". The sound
+    // announces a decision a person can act on, so it waits until there is one to look at.
+    //
+    // A SLEEP countdown is silent on purpose: sleeping takes nothing away - the card, the
+    // screen and the conversation all stay - so it is worth drawing and not worth a noise.
+    const t = window.setTimeout(() => {
+      if (!soundOn.current) return
+      if (!closeSoonsRef.current.some((c) => !c.sleep)) return
+      // `playAction`, never `playEvent`: the pane a sweep picks is usually the one that
+      // just finished, so the `done` chime lands a moment before this and the 900ms guard
+      // ate it.
+      playAction('move', soundSet.current)
+    }, SOON_SOUND_DELAY_MS)
+    return () => window.clearTimeout(t)
   }, [anySoon])
   // The ticks belong to the SOONEST deadline: the last ten seconds of the stack, once,
-  // whichever card they are counting.
+  // whichever card they are counting - and never a sleep's, which is silent.
   useEffect(() => {
-    if (!closeSoon) return
+    if (!closeSoon || closeSoon.sleep) return
     if (!soundOn.current) return
     const ticks: number[] = []
     // Ten, not five. The countdown is fifteen seconds and five put the first sound two
@@ -4412,13 +4482,26 @@ export default function App(): JSX.Element {
           else dropSoon(soon.ids)
           return
         }
+        if (soon.sleep) {
+          dropSoon(soon.ids)
+          for (const id of soon.ids) {
+            if (!stillCloseable(id)) {
+              skipClose([id], 'it went back to work during the countdown')
+              continue
+            }
+            void api.sleepSession(id, soon.why === 'idle' ? 'idle' : 'pressure', {
+              source: 'renderer-idle-sweep'
+            })
+          }
+          return
+        }
         const mb = pendingMb.current[key] ?? 0
         delete pendingMb.current[key]
         doClose(soon.ids, mb)
       }, Math.max(0, soon.deadline - Date.now()))
     })
     return () => timers.forEach((t) => window.clearTimeout(t))
-  }, [closeSoons, doClose, doMove, dropSoon])
+  }, [closeSoons, doClose, doMove, dropSoon, skipClose, stillCloseable])
 
   /**
    * A pane that wakes up mid-countdown takes the countdown down with it.
@@ -4617,6 +4700,14 @@ export default function App(): JSX.Element {
   )
   const moveSoonNow = useCallback(
     (ids: string[]) => {
+      // `Sleep now` is the wait spent early, nothing else - the pane keeps its card, its
+      // screen and its conversation either way.
+      const asleep = closeSoonsRef.current.find((c) => c.sleep && c.ids.some((id) => ids.includes(id)))
+      if (asleep) {
+        setCloseSoons((list) => list.filter((c) => c !== asleep))
+        for (const id of asleep.ids) void api.sleepSession(id, 'manual', { source: 'renderer' })
+        return
+      }
       const soon = queueSoonsRef.current.find((c) => c.ids.some((id) => ids.includes(id)))
       if (soon && soon.move) {
         setQueueSoons((list) => list.filter((c) => c !== soon))

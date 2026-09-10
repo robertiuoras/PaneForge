@@ -144,6 +144,15 @@ export interface CloseSoon {
    * a console nobody has open, so a pane left this desk with nothing on screen saying so.
    */
   move?: { device: string; deviceName: string }
+  /**
+   * Set when the countdown is a SLEEP - the pane's agent stops, everything else stays.
+   *
+   * The rung below closing had no card at all: a pane's CLI was stopped with nothing on
+   * screen saying so, and the only sign was the clock on the card changing to `asleep 3m`.
+   * Robert, 2026-09-10: "fix silently goes to sleep sessions it should have a countdown so
+   * i know its sleeping otherwise i lose track of where its going".
+   */
+  sleep?: true
 }
 
 export interface MascotProps {

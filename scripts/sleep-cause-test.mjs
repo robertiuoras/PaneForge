@@ -28,6 +28,22 @@ for (const pressure of ['ok', 'tight', 'over']) {
     pressureSleepMs: (minutes, p) => (p === 'over' ? .5 : p === 'tight' ? 1 : minutes) * 60_000,
     DEFAULT_RECLAIM: { idleSleepMinutes: 30 },
     idleSleepPlan: () => [{ id: 'pane', idleMs: 1_800_123 }],
+    CLOSE_COUNTDOWN_MS: 15_000,
+    // From 2026-09-10 the sweep does not sleep anything: it arms a countdown card, and the
+    // card is what sleeps when nobody stops it (Robert: "it should have a countdown so i
+    // know its sleeping"). The decision the card carries is still the sweep's, so this
+    // stands in for the card and then makes the call the card's own branch makes.
+    armSleepRef: {
+      current: (plan, p) => {
+        for (const item of plan)
+          void deps.api.sleepSession(item.id, p === 'ok' ? 'idle' : 'pressure', {
+            source: 'renderer-idle-sweep',
+            pressure: p,
+            idleMs: item.idleMs,
+            thresholdMs: deps.pressureSleepMs(deps.cfg.idleSleepMinutes, p)
+          })
+      }
+    },
     api: { sleepSession: (...args) => handler({ processId: 123 }, ...args), logReclaim() {} }
   }
   new Function(...Object.keys(deps), `${sweepCode}; sweep()`)(...Object.values(deps))
@@ -39,6 +55,14 @@ for (const pressure of ['ok', 'tight', 'over']) {
   assert.equal(evidence.idleMs, 1_800_123)
   assert.equal(evidence.thresholdMs, pressure === 'over' ? 30_000 : pressure === 'tight' ? 60_000 : 1_800_000)
 }
+// ...and the card's own branch really is the one that calls it, with that reason. The stub
+// above proves the decision survives the IPC; this proves the app has the caller.
+assert.match(
+  app,
+  /if \(soon\.sleep\) \{[\s\S]{0,600}api\.sleepSession\(id, soon\.why === 'idle' \? 'idle' : 'pressure', \{\s*source: 'renderer-idle-sweep'/,
+  'the sleep countdown is what calls sleepSession, with the measured reason'
+)
+assert.match(app, /armSleepRef\.current\(plan, pressure\)/, 'the sweep arms the countdown')
 console.log('sleep-cause: renderer and IPC preserve idle/pressure decisions')
 
 handler({ processId: 0 }, 'api-pane')

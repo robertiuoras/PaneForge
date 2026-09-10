@@ -166,7 +166,16 @@ export const IDLE_CLOSE_MINUTES = 10
  * nothing. Robert, 2026-08-31: "we need timer as well 5 mins to sleep otherwise uses lots
  * of resources".
  */
-export const IDLE_SLEEP_MINUTES = 5
+/*
+ * Thirty from 2026-09-10, back up from five. Robert, that morning: "make it sleep after a
+ * long time only under high load on memory/cpu that it can sleep quicker which helps us".
+ * Five minutes was set when a sleep looked free; measured since, it is not - a pane slept
+ * and woken three times in six minutes on 2026-09-10 spawned a fresh ~550 MB CLI each
+ * time, so the churn cost more than the sleep freed. The shortening under a MEASURED
+ * memory verdict below is untouched: that is the case where the pane's 190 MB is what the
+ * machine is actually short of.
+ */
+export const IDLE_SLEEP_MINUTES = 30
 /**
  * The idle wait a finished pane gets while the machine is MEASURED short of memory (the
  * capacity verdict's own level, 'tight' or 'over' - never a pane count, never a clock).
@@ -694,7 +703,14 @@ export function idleSleepPlan(
   cfg: ReclaimConfig = DEFAULT_RECLAIM,
   now = 0,
   personHere = true,
-  pressure: SleepPressure = 'ok'
+  pressure: SleepPressure = 'ok',
+  /**
+   * How far AHEAD of the deadline a pane may be picked, ms - the same lead
+   * `idleClosePlan` takes, and for the same reason: the countdown IS the last seconds of
+   * the pane's own clock, so the number on the card only ever goes down. Zero keeps the
+   * old behaviour, which is to name panes that are already past it.
+   */
+  lead = 0
 ): Reclaim[] {
   if (!cfg.enabled) return []
   const minutes = Math.max(0, cfg.idleSleepMinutes ?? IDLE_SLEEP_MINUTES)
@@ -707,9 +723,16 @@ export function idleSleepPlan(
     p.wokeAt !== undefined && now - p.wokeAt < WAKE_GRACE_MS ? plainMinIdle : shortenedMinIdle
   return panes
     .filter((p) => sleepable(p, personHere, pressure))
-    .filter((p) => now - quietSince(p) >= minIdleFor(p))
+    .filter((p) => now + lead - quietSince(p) >= minIdleFor(p))
     .sort((a, b) => quietSince(a) - quietSince(b))
-    .map((p) => ({ id: p.id, idleMs: now - quietSince(p), hadAgent: p.state !== 'exited' }))
+    .map((p) => ({
+      id: p.id,
+      // Never the lead: this is how long the pane has REALLY been quiet, and it is what
+      // the log line is read back for.
+      idleMs: Math.max(0, now - quietSince(p)),
+      hadAgent: p.state !== 'exited',
+      dueAt: quietSince(p) + minIdleFor(p)
+    }))
 }
 
 /** MB the plan is expected to return, for the line that says whether it was worth doing. */

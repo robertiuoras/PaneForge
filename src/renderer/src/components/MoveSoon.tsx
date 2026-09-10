@@ -89,6 +89,7 @@ const TICK_SKEW_MS = 12
  */
 export function moveSoonWords(soon: CloseSoon): string {
   const who = soon.names.length === 1 ? soon.names[0] : `${soon.names.length} panes`
+  if (soon.sleep) return `Putting ${who} to sleep`
   return soon.move ? `Moving ${who} to ${soon.move.deviceName}` : `Closing ${who}`
 }
 
@@ -128,17 +129,19 @@ export default function MoveSoon({ soons, onKeep, onNow }: MoveSoonProps): React
           </div>
           <div className="move-soon-why">
             {soon.why === 'idle'
-              ? 'It has been quiet a long time.'
+              ? soon.sleep
+                ? 'It has been quiet a long time. Everything on it is kept - a press wakes it.'
+                : 'It has been quiet a long time.'
               : soon.why === 'turn'
                 ? 'Its turn just ended.'
                 : 'This machine is running out of memory.'}
           </div>
           <div className="move-soon-acts">
             <button type="button" onClick={() => onKeep(soon.ids)}>
-              {soon.move ? 'Keep it here' : 'Keep it open'}
+              {soon.sleep ? 'Keep it awake' : soon.move ? 'Keep it here' : 'Keep it open'}
             </button>
             <button type="button" className="ghost" onClick={() => onNow(soon.ids)}>
-              {soon.move ? 'Move now' : 'Close now'}
+              {soon.sleep ? 'Sleep now' : soon.move ? 'Move now' : 'Close now'}
             </button>
           </div>
         </div>

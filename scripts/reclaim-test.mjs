@@ -844,11 +844,22 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
 {
   const SLEEPY = { ...DEFAULT_RECLAIM, idleSleepMinutes: 30 }
   eq('on by default', DEFAULT_RECLAIM.idleSleepMinutes, IDLE_SLEEP_MINUTES)
-  // Five, the same as the close clock. Sleeping gives back the ~190 MB and keeps the card,
-  // its place, its screen and its conversation, so the half hour it used to wait was
-  // buying nothing at a real cost - Robert, 2026-08-31: "we need timer as well 5 mins to
-  // sleep otherwise uses lots of resources".
-  eq('...at five minutes', IDLE_SLEEP_MINUTES, 5)
+  // Thirty from 2026-09-10, back up from five: a sleep is NOT free after all - a pane
+  // slept and woken three times in six minutes spawned a fresh ~550 MB CLI each time, so
+  // the churn cost more than the sleep freed. Robert that morning: "make it sleep after a
+  // long time only under high load on memory/cpu that it can sleep quicker which helps
+  // us". The shortening under a measured memory verdict is unchanged and pinned below.
+  eq('...after a long time', IDLE_SLEEP_MINUTES, 30)
+  // ...and the lead, which is what makes the countdown card the last seconds of the pane's
+  // own clock rather than fifteen seconds bolted on after it.
+  {
+    const LEAD = 15_000
+    const nearly = pane({ id: 'nearly', lastKeyboard: NOW - (30 * 60_000 - 5_000) })
+    eq('a pane five seconds off its clock is not named without a lead', idleSleepPlan([nearly], SLEEPY, NOW).length, 0)
+    const early = idleSleepPlan([nearly], SLEEPY, NOW, true, 'ok', LEAD)
+    eq('...and IS named with one', ids(early), 'nearly')
+    eq('and the card ends where the clock ends', early[0].dueAt, nearly.lastKeyboard + 30 * 60_000)
+  }
   // A config written by an older build has no such field at all, and that must read as the
   // default rather than as "never" (undefined) or "immediately" (0).
   const older = { ...DEFAULT_RECLAIM }
@@ -951,7 +962,13 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
 {
   const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
   check('the desk runs the sleep sweep', /idleSleepPlan\(/.test(app), '')
-  check('...and it sleeps each pane with the measured pressure reason', /for \(const p of plan\) void api\.sleepSession\(p\.id, pressure === 'ok' \? 'idle' : 'pressure'/.test(app), '')
+  // ...and it ARMS a card rather than acting: from 2026-09-10 a sleep counts down on
+  // screen first, because a pane whose CLI stopped with nothing said about it is a pane
+  // Robert loses track of ("fix silently goes to sleep sessions it should have a
+  // countdown so i know its sleeping otherwise i lose track of where its going").
+  check('...and it arms a countdown rather than sleeping on the spot', /armSleepRef\.current\(plan, pressure\)/.test(app), '')
+  check('...and the countdown is what sleeps, with the measured reason', /soon\.sleep[\s\S]{0,400}sleepSession\(id, soon\.why === 'idle' \? 'idle' : 'pressure'/.test(app), '')
+  check('...and the card says it is a sleep', /sleep: true as const/.test(app), '')
   check(
     'and "Sleep this pane" is gone from the card menu - the clock does it',
     !/key: 'sleep'/.test(app),
