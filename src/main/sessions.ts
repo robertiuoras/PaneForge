@@ -114,7 +114,7 @@ import {
 } from '../shared/slashTurn'
 import { feedDraft, newDraft, type DraftState } from '../shared/draft'
 import { OutBuffer } from './outBuffer'
-import { allAgents, buildArgs, hasAgent, modelValue, resolveEnv } from '../shared/agents'
+import { allAgents, buildArgs, colourEnv, hasAgent, modelValue, resolveEnv } from '../shared/agents'
 import { homedir } from 'node:os'
 import { allowsCwd, scrubForeignKeys } from '../shared/paneTrust'
 import { anchoredStart, readsBusy, composerHeld, type BusyReason } from '../shared/busy'
@@ -4177,18 +4177,10 @@ function agentEnv(): Record<string, string> {
     if (k.startsWith('CODEX_SANDBOX')) continue
     // Electron injects its own runtime hints that confuse Node-based CLIs.
     if (k === 'ELECTRON_RUN_AS_NODE' || k.startsWith('ELECTRON_')) continue
-    // Colour is not the app's to give away. Claude Code sets NO_COLOR=1 on every shell
-    // it runs, so whenever this app was started FROM an agent's Bash tool it inherited
-    // that flag and handed it to every pane it opened afterwards - the CLI inside then
-    // drew its whole interface in one plain white, for the life of the app.
-    if (k === 'NO_COLOR' || k === 'NODE_DISABLE_COLORS') continue
-    if (k === 'FORCE_COLOR' && (v === '0' || v === 'false')) continue
     env[k] = v
   }
-  env.TERM = 'xterm-256color'
-  // xterm.js renders 24-bit colour; say so, or a CLI that probes for it falls back to 16.
-  env.COLORTERM = 'truecolor'
-  return env
+  // Colour is not the app's to give away, and it also sets TERM: see colourEnv.
+  return colourEnv(env)
 }
 
 function basename(p: string): string {

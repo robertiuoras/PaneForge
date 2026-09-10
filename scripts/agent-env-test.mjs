@@ -44,7 +44,8 @@ const {
   keyProviderFor,
   keyVar,
   needsOpenRouterKey,
-  resolveEnv
+  resolveEnv,
+  colourEnv
 } = createRequire(import.meta.url)(out)
 
 let checks = 0
@@ -285,5 +286,21 @@ ok(
     'gemini-3.1-pro',
   'a runner with no catalogue still prints what was typed'
 )
+
+// ------------------------------------------------------- colour reaches the pane
+//
+// 2026-09-10: both CLIs drew their whole interface in one plain white for a morning.
+// The app had been started from an agent shell, Claude Code exports NO_COLOR=1 into
+// every shell it runs, and each pane inherited it - so the flag has to die on the way
+// in, whatever the app itself was launched with.
+
+const painted = colourEnv({ NO_COLOR: '1', FORCE_COLOR: '0', NODE_DISABLE_COLORS: '1', PATH: '/bin' })
+ok(!('NO_COLOR' in painted), 'a pane never inherits NO_COLOR')
+ok(!('NODE_DISABLE_COLORS' in painted), 'a pane never inherits NODE_DISABLE_COLORS')
+ok(!('FORCE_COLOR' in painted), 'FORCE_COLOR=0 is dropped rather than passed on')
+is(painted.COLORTERM, 'truecolor', 'the pane is told the terminal renders 24-bit colour')
+is(painted.TERM, 'xterm-256color', 'TERM is the app to set')
+is(painted.PATH, '/bin', 'everything else is passed through untouched')
+is(colourEnv({ FORCE_COLOR: '1' }).FORCE_COLOR, '1', 'a deliberate FORCE_COLOR survives')
 
 console.log(`agent env: ${checks} checks OK`)

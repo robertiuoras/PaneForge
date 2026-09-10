@@ -939,6 +939,28 @@ const KEY_BY_PLACEHOLDER = new Map(KEY_PROVIDERS.map((p) => [p.placeholder, p.id
  * provider this build has never heard of, and handing a CLI the literal `${FOO_KEY}`
  * is the exact failure above with nobody to blame it on.
  */
+/**
+ * The colour half of a pane's environment.
+ *
+ * Claude Code exports `NO_COLOR=1` into every shell its Bash tool runs, and the Codex
+ * binary reads that variable too. An app started from one of those shells therefore hands
+ * a colourless environment to every pane it opens afterwards, and the agent CLI inside
+ * draws its whole interface in one plain white for the life of the app. xterm.js renders
+ * 24-bit colour, so say so rather than leaving a CLI to probe for it and settle for 16.
+ */
+export function colourEnv(env: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(env)) {
+    if (k === 'NO_COLOR' || k === 'NODE_DISABLE_COLORS') continue
+    // A deliberate FORCE_COLOR stays; only the switched-off form is dropped.
+    if (k === 'FORCE_COLOR' && (v === '0' || v === 'false')) continue
+    out[k] = v
+  }
+  out.TERM = 'xterm-256color'
+  out.COLORTERM = 'truecolor'
+  return out
+}
+
 export function resolveEnv(spec: AgentSpec, keys: AgentKeys = {}): Record<string, string> {
   const out: Record<string, string> = {}
   for (const [k, v] of Object.entries(spec.env ?? {})) {
