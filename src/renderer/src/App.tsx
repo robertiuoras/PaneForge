@@ -337,7 +337,10 @@ function reclaimPaneOf(
     asleep: s.asleep,
     // ...and WHY, which is what tells a pane that finished a turn nobody read from one the
     // restore brought back wearing an old screen. See `bornAsleep` in shared/reclaim.ts.
-    asleepReason: s.asleepReason
+    asleepReason: s.asleepReason,
+    // Held against WAKE_GRACE_MS so the shortened pressure clock does not put a pane back
+    // to sleep seconds after a person woke it. See `Session.wokeAt`.
+    wokeAt: s.wokeAt
   }
 }
 

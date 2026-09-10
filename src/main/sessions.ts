@@ -1385,6 +1385,10 @@ export class SessionManager extends EventEmitter {
     logReclaim({ at: Date.now(), action: 'wake', pane: id, previousSleepReason: reason ?? 'unknown', resumeId: live.req.resumeId, fresh, processPid: live.proc?.pid, agent: live.meta.agent, folder: basename(live.meta.cwd) })
     // Stamped for the `wake-printed` line further down, which is where the seconds are.
     live.wokeAt = Date.now()
+    // Stamped on the broadcast Session too, kept (never zeroed on first byte like
+    // `live.wokeAt` above) so the pressure sweep can hold this pane's sleep clock for
+    // WAKE_GRACE_MS after a person woke it - see `Session.wokeAt`.
+    live.meta.wokeAt = live.wokeAt
     live.meta.status = 'starting'
     live.meta.printed = undefined
     live.meta.exitCode = undefined

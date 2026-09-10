@@ -3182,6 +3182,16 @@ built, not from `lastPressure`, which on a cold launch may not have sampled. The
 update restart, `restoreAfterRestart: 'always'`) are deliberately untouched.
 `npm run test:capacity`, red-proofed against the warn branch.
 
+- **A wake a person just did must not be undone by the pressure sweep it fed.** Measured
+  2026-09-10 in `reclaim.log`, pane `s23-mtv51lxz`: sleep 06:21:27, wake 06:23:40, sleep
+  06:24:57, wake 06:25:26 - three cycles in six minutes, and each wake costs a fresh
+  ~550 MB CLI (`spawn` + `--resume`), more than the prior sleep freed, so the churn made
+  the pressure worse, not better. `ReclaimPane.wokeAt` / `Session.wokeAt` carries the
+  epoch of the last person-initiated wake (`sessions.ts` `wake()`); `idleSleepPlan` in
+  `shared/reclaim.ts` holds such a pane to the UNSHORTENED idle-sleep clock for
+  `WAKE_GRACE_MS` (5 min) even under measured pressure - the ordinary 30-minute clock
+  is unaffected since 5 < 30 already. `npm run test:reclaim`.
+
 ## Never close the app you are running inside (full rules, moved out of CLAUDE.md 2026-08-31)
 
 The installed `PaneForge` is the live app; killing it ends this session mid-turn. To see a

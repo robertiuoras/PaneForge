@@ -383,7 +383,20 @@ export interface ReclaimPane {
    * sleeping pane was treated as read.
    */
   asleepReason?: SleepReason
+  /**
+   * Epoch ms this pane was last WOKEN by a person. Undefined = never woken.
+   *
+   * Read only by `idleSleepPlan`, and only against `WAKE_GRACE_MS`: a pane a person just
+   * clicked awake should not be handed straight back to the shortened PRESSURE clock, or
+   * the wake itself (a fresh ~550 MB CLI) makes the pressure it was supposed to relieve
+   * worse. It does not touch the ordinary idle clock - 5 minutes is well under the usual
+   * 30, so ignoring it there changes nothing.
+   */
+  wokeAt?: number
 }
+
+/** How long a wake holds a pane off the SHORTENED pressure sleep clock, ms. See `ReclaimPane.wokeAt`. */
+export const WAKE_GRACE_MS = 5 * 60_000
 
 /**
  * When this pane last did anything at all - the latest of a keystroke, a printed byte, the
@@ -686,10 +699,15 @@ export function idleSleepPlan(
   if (!cfg.enabled) return []
   const minutes = Math.max(0, cfg.idleSleepMinutes ?? IDLE_SLEEP_MINUTES)
   if (!minutes) return []
-  const minIdle = pressureSleepMs(minutes, pressure)
+  const shortenedMinIdle = pressureSleepMs(minutes, pressure)
+  const plainMinIdle = minutes * 60_000
+  // A pane woken by a person within WAKE_GRACE_MS keeps the UNSHORTENED clock, even under
+  // pressure - see `ReclaimPane.wokeAt`. The ordinary clock (5 min < 30 min) is unaffected.
+  const minIdleFor = (p: ReclaimPane): number =>
+    p.wokeAt !== undefined && now - p.wokeAt < WAKE_GRACE_MS ? plainMinIdle : shortenedMinIdle
   return panes
     .filter((p) => sleepable(p, personHere, pressure))
-    .filter((p) => now - quietSince(p) >= minIdle)
+    .filter((p) => now - quietSince(p) >= minIdleFor(p))
     .sort((a, b) => quietSince(a) - quietSince(b))
     .map((p) => ({ id: p.id, idleMs: now - quietSince(p), hadAgent: p.state !== 'exited' }))
 }

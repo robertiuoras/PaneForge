@@ -290,6 +290,26 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
     eq('memory tight shortens it to a minute', sleepPressureOf('tight', 'memory'), 'tight')
     eq('memory over shortens it to half a minute', sleepPressureOf('over', 'memory'), 'over')
     eq('no verdict at all is the ordinary clock', sleepPressureOf(undefined, undefined), 'ok')
+    // 2026-09-10: three sleep/wake cycles in six minutes - the wake cost more memory
+    // than the sleep it undid freed. A pane a person just woke keeps the ORDINARY
+    // clock for WAKE_GRACE_MS, even under pressure; the normal 30-minute clock is
+    // unaffected because 5 < 30 already.
+    eq(
+      'woken a minute ago under pressure: the shortened clock does not apply',
+      idleSleepPlan([pane({ id: 'q', lastKeyboard: NOW - 40_000, wokeAt: NOW - 60_000 })], cfg, NOW, true, 'over')
+        .length,
+      0
+    )
+    eq(
+      'the same pane woken six minutes ago (past WAKE_GRACE_MS) is slept',
+      ids(idleSleepPlan([pane({ id: 'q', lastKeyboard: NOW - 40_000, wokeAt: NOW - 6 * 60_000 })], cfg, NOW, true, 'over')),
+      'q'
+    )
+    eq(
+      'a pane never woken behaves as before',
+      ids(idleSleepPlan([pane({ id: 'q', lastKeyboard: NOW - 40_000 })], cfg, NOW, true, 'over')),
+      'q'
+    )
     // ONE per-pane control. "Keep this pane open" is the app's only "leave this alone",
     // and it now means the sleep clock too - the card's menu has said `no idle clock
     // sleeps or closes it` all along (Robert 2026-09-08: "i dont want 2 buttons for keep

@@ -1112,6 +1112,9 @@ is the CLI inside (~190 MB each, vs 16-17 MB Codex). `npm run test:reclaim`.
   same metadata. Shutdown gives async diagnostics up to 250 ms to finish, so a stalled disk or
   forced kill can still lose terminal records. `node scripts/sleep-cause-live.mjs` verifies a
   real automatic sweep, wake and normal quit in an isolated shell-only Electron profile.
+- A pane a PERSON just woke keeps the unshortened clock for `WAKE_GRACE_MS` (5 min,
+  `ReclaimPane.wokeAt`): one pane slept and woke 3x in 6 min on 2026-09-10, each wake a
+  fresh ~550 MB CLI, so the churn cost more than the sleep freed. `npm run test:reclaim`.
 - Only a MEMORY verdict shortens the sleep clock (`sleepPressureOf`): lag alone left every
   finished pane sleeping at 30s and waking at 7-9s (2026-09-10, load 2.9/core, 34% free).
 - `reclaim.idleCloseMinutes` 0 by default, switch sets 5 min.

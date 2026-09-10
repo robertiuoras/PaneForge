@@ -537,6 +537,16 @@ export interface Session {
    * `pressure` and `queued` are woken again by the app on its own (`shared/wakePlan.ts`).
    */
   asleepReason?: SleepReason
+  /**
+   * Epoch ms of the last time a PERSON woke this pane from sleep. Undefined = never woken.
+   *
+   * Feeds `WAKE_GRACE_MS` in shared/reclaim.ts: a pane a person just woke should not be
+   * put back to sleep by the shortened PRESSURE clock within a few minutes, or a machine
+   * under memory pressure churns wake/sleep forever while making pressure worse, not
+   * better - each wake costs more memory than the sleep it undoes freed. The ordinary
+   * 30-minute idle-sleep clock is unaffected.
+   */
+  wokeAt?: number
 }
 
 /**
