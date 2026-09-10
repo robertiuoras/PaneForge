@@ -270,4 +270,17 @@ is(
   'and no literal `kept open` is left behind to go stale beside it'
 )
 
+// A pane restored ASLEEP claims its conversation on arrival. `snapshot()` asks
+// `resumeIdFor` on every desk write, and that reads the claim `noteSession` makes - so a
+// restore branch that returned before making it wrote `resumeId: null` for every sleeping
+// pane, and the next restart woke each one fresh (2026-09-10, pizza-ovens-r-us and
+// simon-hubspot, transcripts on disk throughout).
+{
+  const startAt = sessions.indexOf('    if (born) {')
+  const born = sessions.slice(startAt, sessions.indexOf('    this.attach(live)', startAt))
+  assert.match(born, /noteSession\(id, req\.resumeCwd \?\? req\.cwd, agent, req\.resume \? req\.resumeId : undefined\)/, 'a pane restored asleep claims its saved conversation before it returns')
+  assert.ok(born.indexOf('noteSession(') < born.indexOf('return meta'), 'and the claim is made before the early return, not after it')
+  checks += 2
+}
+
 console.log(`sleep: ${checks} checks passed`)

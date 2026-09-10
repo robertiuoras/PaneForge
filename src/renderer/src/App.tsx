@@ -4573,8 +4573,16 @@ export default function App(): JSX.Element {
     // A move called off needs the handoff sweeps' OWN hold as well, or the next minute
     // tick arms the identical countdown again - which is the shape that gets a feature
     // switched off. The sweep lock goes back with it.
+    // ...and ONCE is the offer. A move somebody turned down is not asked about again
+    // for the life of this window: the person has said where that pane works, and the
+    // Handoff button is theirs whenever they change their mind (Robert 2026-09-10: "only
+    // offer it once for the move over if i cancel it then i can just move it myself at a
+    // later time"). The ten-minute hold above is for the CLOSE clock only.
     if (closeSoonsRef.current.some((c) => c.move && c.ids.some((id) => ids.includes(id)))) {
-      for (const id of ids) handoffBlocked.current[id] = until
+      for (const id of ids) {
+        handoffBlocked.current[id] = Number.POSITIVE_INFINITY
+        api.logReclaim({ event: 'move-declined', id, name: paneWordRef.current(id), reason: 'you kept it here - it will not be offered a move again' })
+      }
       handoffSweeping.current = false
     }
     // Only the card that named these panes. Answering one of two cards leaves the other
@@ -4626,7 +4634,7 @@ export default function App(): JSX.Element {
    * broadcast. `publishClosingRef` because `focusLeftAt` is a ref and nothing else would
    * notice that it moved.
    */
-  const touchPane = useCallback((id: string) => {
+  const touchPane = useCallback((id: string, wake = true) => {
     focusLeftAt.current[id] = Date.now()
     // Arriving at a SLEEPING pane is the press that wakes it. The chip has always been
     // the way back, but a sleeping pane is a pane somebody kept for easy access - and
@@ -4638,8 +4646,13 @@ export default function App(): JSX.Element {
     // row and the pane itself, never by a sweep. A mirror is refused because its pty is
     // on the other machine (`shared/sleep.ts`), and waking is idempotent in main, so a
     // second press while the CLI boots costs nothing.
+    //
+    // Not from a RIGHT-click: the press before a context menu is a person reaching for
+    // the row's actions - Move, Close, Rename - and a sleeping pane that spawned its CLI
+    // on that press was woken by somebody who wanted to move it (Robert 2026-09-10: "if i
+    // right click a pane and its sleep ... allow me to just right click not wake it up").
     const asleepPane = sessionsRef.current.find((x) => x.id === id)
-    if (asleepPane?.asleep && !asleepPane.remote) void api.wakeSession(id)
+    if (wake && asleepPane?.asleep && !asleepPane.remote) void api.wakeSession(id)
     // ...and a person arriving at a pane a countdown NAMED is the answer that countdown
     // was asking for. Nothing dropped it: the sweeps' own "went back to work" effect keys
     // on `stillCloseable`, which a click does not change - so clicking the pane restarted
@@ -4916,7 +4929,7 @@ export default function App(): JSX.Element {
               }
               onPointerDown={(e) => {
                 const pick = (): void => {
-                  touchPane(s.id)
+                  touchPane(s.id, e.button !== 2)
                   setActiveId(s.id)
                   handheld.showPane()
                 }
@@ -5840,8 +5853,8 @@ export default function App(): JSX.Element {
                   : null)
               } as React.CSSProperties
             }
-            onMouseDown={() => {
-              touchPane(s.id)
+            onMouseDown={(e) => {
+              touchPane(s.id, e.button !== 2)
               setActiveId(s.id)
             }}
           >

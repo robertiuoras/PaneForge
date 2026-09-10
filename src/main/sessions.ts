@@ -883,6 +883,15 @@ export class SessionManager extends EventEmitter {
       // all three the moment somebody presses the chip. The gist is still read, because
       // the card has to be able to say what this pane was doing before it is woken.
       meta.gist = gistFor(id)
+      // ...and the conversation it is asleep IN is claimed now, not at the wake. Every
+      // desk write asks `resumeIdFor`, which reads the claim this call makes; a pane that
+      // returned here without it wrote `resumeId: null` to desk.json on the next save, and
+      // the restart after that one found nothing to verify and woke it FRESH - the Codex
+      // pane in pizza-ovens-r-us and the Claude pane in simon-hubspot both had their
+      // transcripts on disk the whole time (2026-09-10, "The saved conversation could not
+      // be resumed" on a pane that had only ever slept). One restart with the pane asleep
+      // was enough to lose it for good.
+      noteSession(id, req.resumeCwd ?? req.cwd, agent, req.resume ? req.resumeId : undefined)
       this.emitSessions()
       return meta
     }

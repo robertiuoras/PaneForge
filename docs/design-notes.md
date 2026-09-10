@@ -4909,3 +4909,36 @@ What was a real defect is the log line beside them. `noteReady()` wrote `restart
 v0.8.207 as soon as no pane is in use` - a promise nothing keeps, which is exactly why a
 23-hour wait read as handled to whoever skimmed the log. It now says the build installs on
 the next quit or Restart now, and that nothing restarts by itself.
+
+
+## A reopened pane comes back with what was on its screen — the sleeping pane that lost its conversation (2026-09-10)
+
+`start()` has an early return for a pane restored asleep: nothing to attach, nothing to type
+at. `noteSession`, the call that claims the conversation the pane is in, sat after that
+return - so a sleeping pane had no claim, `resumeIdFor` answered nothing, and the next
+desk write (every `snapshot()` asks it) saved `resumeId: null`. The restart after that one
+read the null, could verify nothing, and woke the pane FRESH with "The saved conversation
+could not be resumed". The Codex pane in pizza-ovens-r-us and the Claude pane in
+simon-hubspot both had their transcripts on disk the whole time; desk.prev.json already
+carried the null before the restart that showed the message. One restart with the pane
+asleep was enough, and a second confirmed it. The claim is now made inside the asleep
+branch, before the return. `sleep-test.mjs` pins the order.
+
+## ...and before it closes one, it tries to move it — offered once (2026-09-10)
+
+Two automatic moves armed on 2026-09-10 (04:17Z, 04:24Z) and were dismissed within 2-4s;
+`Keep it here` held the pane for `KEEP_MINUTES` and then the next sweep could ask again.
+Robert: "only offer it once for the move over if i cancel it then i can just move it
+myself at a later time." Declining now writes `handoffBlocked` at Infinity for that pane
+and a `move-declined` row on the bell. The close clock keeps its ten-minute hold; the two
+are different questions. Nothing is offered while the machine reads `ok`, and a pane
+mid-turn is never picked - so a desk of five working panes at `warn` shows no countdown
+until one of them goes quiet, which is the rule working.
+
+## A card answers a right-click, and can say what it is — a right-click is not a wake (2026-09-10)
+
+The sidebar row wakes a sleeping pane on pointerdown (2026-08-29, "click it, then find
+the small chip" was two presses). A right-click fires pointerdown first, so reaching for
+Move or Close on a sleeping row spawned its CLI on the way to the menu. Robert: "allow me
+to just right click not wake it up and move it". `touchPane(id, wake)` now takes whether
+this press may wake, and both the row and the pane pass `e.button !== 2`.

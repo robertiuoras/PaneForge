@@ -597,6 +597,9 @@ accent, rail follows to that tab. A switch stays in the group that explains it.
 Not `PaneMenu.tsx`, the phone's bottom sheet with 52px rows.
 
 `SessionInfo.tsx` is "see info" the card lacks room for. `Open for` counts from `createdAt`
+
+A right-click never wakes a sleeping pane: the sidebar row and the pane itself pass
+`e.button !== 2` to `touchPane`, whose wake sits behind that flag. `npm run test:autohandoff`.
 through `useNow`; header clock stays the TURN. Rest is a reading already held; opens poll
 nothing.
 
@@ -818,6 +821,11 @@ Scrollback is renderer memory; `test:restore` hands the agent `--resume` (conver
   hidden pane FLAGGED not repaired. `test:restorefix`.
 - Prompt tags: rail is KEYSTROKES so replay registers none; `seedMarks` scans for `❯ <text>` echo once
   while rail empty; keeps ONE tag per prompt. `test:promptecho`.
+
+- A pane restored ASLEEP claims its conversation in `start()` BEFORE the early return
+  (`noteSession`): every desk write asks `resumeIdFor`, which reads that claim, so a
+  restart with the pane still asleep wrote `resumeId: null` and the next one woke it fresh
+  (2026-09-10, transcripts on disk throughout). `npm run test:sleep`.
 
 `/clear` no longer takes the previous turn. `npm run test:scrollclear`.
 
@@ -1130,6 +1138,9 @@ moves exactly that many.
 - Lag read as well as memory, worse decides (`lagLevel`, `worstPressure`): 1 runnable thread/core =
   `warn`, 1.8 = `critical`, not CPU%. `os.loadavg()` 0 on Windows = "nobody measured".
 - 15s countdown always shown: `MoveSoon.tsx` (z-index 45, no animation), pane named.
+- `Keep it here` on an APP-decided move is offered ONCE: `handoffBlocked` at Infinity for
+  the window's life, `move-declined` on the bell; the ten-minute hold is the close
+  clock's. The Handoff button is the way to move it later.
 - Checked before picking: `AutoPane.machineBound` (`shared/paneBound.ts`), keyed on automation flags
   (`--remote-debugging-port`/`-pipe`, `--headless`) plus a non-MCP driver binary. `AutoPane.shareable` —
   git repo under projects root with origin remote (`main/handoff.ts`, cached 5 min); `false` refuses,

@@ -702,4 +702,26 @@ assert.equal(
 )
 checks += 3
 
+// The renderer's own answer to "Keep it here" on an APP-decided move. The pane is held
+// off every later handoff plan for the life of the window (`handoffBlocked` at
+// Infinity), not for the ten-minute hold the close clock gets - the person has said
+// where that pane works, and the Handoff button is theirs when they change their mind
+// (Robert 2026-09-10: "only offer it once ... if i cancel it then i can just move it
+// myself"). And a RIGHT-click is not the press that wakes a sleeping pane: the row and
+// the pane both pass `e.button !== 2` to `touchPane`, whose wake is behind that flag.
+{
+  const { readFileSync } = await import('node:fs')
+  const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
+  const keep = app.slice(app.indexOf('const keepOpen = useCallback'), app.indexOf('const moveSoonKeep = useCallback'))
+  assert.match(keep, /handoffBlocked\.current\[id\] = Number\.POSITIVE_INFINITY/, 'declining an automatic move holds the pane off every later plan for good')
+  assert.match(keep, /event: 'move-declined'/, 'and says so on the bell')
+  assert.doesNotMatch(keep, /handoffBlocked\.current\[id\] = until/, 'the ten-minute hold is the close clock\'s, not the move\'s')
+  const touchAt = app.indexOf('const touchPane = useCallback')
+  const touch = app.slice(touchAt, app.indexOf('\n  }, [', touchAt))
+  assert.match(touch, /\(id: string, wake = true\)/, 'touchPane takes whether this press may wake')
+  assert.match(touch, /if \(wake && asleepPane\?\.asleep/, 'the wake is behind that flag')
+  assert.equal((app.match(/touchPane\(s\.id, e\.button !== 2\)/g) ?? []).length, 2, 'the sidebar row and the pane itself both refuse to wake on a right-click')
+  checks += 6
+}
+
 console.log(`autohandoff: ${checks} checks passed`)
