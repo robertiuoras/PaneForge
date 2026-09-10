@@ -137,7 +137,7 @@ export default function MoveSoon({ soons, onKeep, onNow }: MoveSoonProps): React
                 : 'This machine is running out of memory.'}
           </div>
           <div className="move-soon-acts">
-            <button type="button" onClick={() => onKeep(soon.ids)}>
+            <button type="button" className="primary" onClick={() => onKeep(soon.ids)}>
               {soon.sleep ? 'Keep it awake' : soon.move ? 'Keep it here' : 'Keep it open'}
             </button>
             <button type="button" className="ghost" onClick={() => onNow(soon.ids)}>

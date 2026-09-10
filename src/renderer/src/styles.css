@@ -3164,7 +3164,20 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
 /* Tabular, or the sentence re-flows every second as the digit narrows. */
 .move-soon-count { font-variant-numeric: tabular-nums; color: var(--accent); }
 .move-soon-why { color: var(--muted); font-size: 12px; }
-.move-soon-acts { display: flex; justify-content: flex-end; gap: 6px; }
+/* Two answers to one question, so two equal halves rather than a right-aligned pair.
+   The Keep button carried NO class at all: `button, input { font: inherit }` was the only
+   rule that reached it, so beside a styled `.ghost` it drew as the browser's own grey
+   native button (Robert 2026-09-10: "some weird button on the left side on the card").
+   It is `.primary` now - it is the safe answer and the one the card is really offering.
+   Both are held to ONE height here for the reason `.dialog.confirm .dialog-row` already
+   records: `.ghost` and `.primary` carry different padding (7px vs 9px), so an untouched
+   pair is 34.8px and 38.8px and each sticks 2px out of the other. `justify-content` is
+   set because both base classes are `display: flex` with a `gap` meant for an icon. */
+.move-soon-acts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.move-soon-acts > button {
+  min-height: 32px; padding: 6px 10px; font-size: 12px;
+  justify-content: center; white-space: nowrap;
+}
 
 /* The dev-copy tour, same card shape and corner as `.move-soon` - it is the same kind
    of thing, a card the app put up on its own that walks alongside the work rather than

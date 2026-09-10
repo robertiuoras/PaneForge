@@ -856,25 +856,9 @@ export default function App(): JSX.Element {
    * flight is past the queue and cannot be called back.
    */
   const stopMove = (s: { id: string; title: string }): void => {
-    // ...and it HOLDS the pane, which taking it off the queue does not.
-    //
-    // `cancelHandoff` empties the queue entry and nothing else, so the sweep that put it
-    // there was free to pick the same pane on its very next pass - the budget rung runs on
-    // every session change and the idle one every minute. Reported 2026-08-23: "i press
-    // keep it here but it still comes up again later to move it not even a minute later".
-    // The mascot's own "Keep it here" always did this (`keepOpen`); the chip, the card menu
-    // and the phone's sheet reached the cancel without it, which made the visible control
-    // the one that did not work.
-    keepHere([s.id])
-    void api
-      .cancelHandoff(s.id)
-      .then((stopped) =>
-        flash(
-          stopped
-            ? `${s.title} stays here for ${KEEP_MINUTES} minutes`
-            : `${s.title} is already moving - too late to stop it`
-        )
-      )
+    void stopQueuedMove([s.id]).then(([stopped]) =>
+      flash(stopped ? `${s.title} stays here` : `${s.title} is already moving - too late to stop it`)
+    )
   }
   /** the pane whose output is being read as text (and therefore selected with a finger) */
   const [textPane, setTextPane] = useState<string | null>(null)
@@ -4628,6 +4612,50 @@ export default function App(): JSX.Element {
   }, [])
 
   /**
+   * Call a QUEUED move off - the one path behind the card's Keep, the chip, the card menu
+   * and the phone's sheet.
+   *
+   * Three things have to happen together and only one of them used to:
+   *
+   * 1. `cancelHandoff` empties the queue entry. On its own that is all it does, so the
+   *    sweep that put the pane there was free to pick it again on its very next pass -
+   *    the budget rung runs on every session change and the idle one every minute
+   *    (Robert 2026-08-23: "i press keep it here but it still comes up again later to
+   *    move it not even a minute later").
+   * 2. The sweeps' own hold, and an APP-decided move is offered ONCE (Robert 2026-09-10:
+   *    "only offer it once for the move over if i cancel it then i can just move it
+   *    myself at a later time"). `handoffBlocked` is read by the PLANS only, so a person
+   *    pressing Handoff themselves is never refused by it.
+   * 3. A row on the bell. 2026-09-10: pane s11 was armed at 10:37:55, queued at 10:38:10
+   *    and taken off the queue at 10:38:21, and the only trace of any of it was one line
+   *    in handoff.log.
+   *
+   * The answer is per id and load-bearing: a move already in flight is past the queue and
+   * cannot be called back, so the caller may not report it as stopped.
+   */
+  const stopQueuedMove = useCallback(
+    async (ids: string[]): Promise<boolean[]> => {
+      keepHere(ids)
+      handoffSweeping.current = false
+      const out: boolean[] = []
+      for (const id of ids) {
+        const stopped = await api.cancelHandoff(id)
+        out.push(stopped)
+        if (!stopped) continue
+        handoffBlocked.current[id] = Number.POSITIVE_INFINITY
+        api.logReclaim({
+          event: 'move-declined',
+          id,
+          name: paneWordRef.current(id),
+          reason: 'you kept it here - it will not be offered a move again'
+        })
+      }
+      return out
+    },
+    [keepHere]
+  )
+
+  /**
    * "Do it now" on one card - the countdown that NAMED these panes, never the stack.
    *
    * It used to read `closeSoon?.move`, which was the only countdown there could be; with
@@ -4691,26 +4719,12 @@ export default function App(): JSX.Element {
       const soon = queueSoonsRef.current.find((c) => c.ids.some((id) => ids.includes(id)))
       if (soon) {
         setQueueSoons((list) => list.filter((c) => c !== soon))
-        for (const id of soon.ids) {
-          void api.cancelHandoff(id)
-          // Taking it off the queue empties one map entry and holds nothing, so the sweep
-          // that armed this move was free to arm it again on its next pass - the same
-          // "i press keep it here but it still comes up again later" `stopMove` was given
-          // `keepHere` for. An APP-decided move is offered ONCE, so the block is for the
-          // life of the window and the bell gets its row; the Handoff button is still
-          // there when the person changes their mind. 2026-09-10: pane s11 was armed at
-          // 10:37:55, queued at 10:38:10 and taken off the queue at 10:38:21 with nothing
-          // written anywhere a person could read.
-          handoffBlocked.current[id] = Number.POSITIVE_INFINITY
-          api.logReclaim({ event: 'move-declined', id, name: paneWordRef.current(id), reason: 'you kept it here - it will not be offered a move again' })
-        }
-        handoffSweeping.current = false
-        keepHere(soon.ids)
+        void stopQueuedMove(soon.ids)
         return
       }
       keepOpen(ids)
     },
-    [keepOpen, keepHere]
+    [keepOpen, stopQueuedMove]
   )
   const moveSoonNow = useCallback(
     (ids: string[]) => {
