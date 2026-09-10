@@ -63,8 +63,18 @@ export class FrameStream {
 export interface PresenceCounts {
   /** panes whose turn is running right now */
   running: number
-  /** panes on the desk that have not exited */
+  /** panes on the desk, INCLUDING the ones asleep - a slept pane is still a pane */
   total: number
+  /**
+   * Panes whose agent has been stopped but whose card, screen and conversation are still
+   * on the desk.
+   *
+   * They read as `exited` and used to be dropped outright, so the desk's own number went
+   * DOWN every time the idle clock slept something and the profile said five sessions
+   * where there were eight. Robert, 2026-09-10: "can u also count sleeping sessions in
+   * paneforge as well for our discord rich presence".
+   */
+  asleep: number
   /** project folder names of the running panes, deduped, in pane order */
   names: string[]
   /** epoch ms of the oldest running turn's start, if any turn is running */
@@ -111,13 +121,15 @@ export function countPresence(sessions: PresenceSession[], appStart: number): Pr
   const seen = new Set<string>()
   const live: PresenceSession[] = []
   for (const s of sessions) {
-    if (s.status === 'exited') continue
     if (s.id) {
       if (seen.has(s.id)) continue
       seen.add(s.id)
     }
     live.push(s)
   }
+  // `exited` is a pane whose agent is stopped and whose card is still here - what the idle
+  // clock does. It is not a pane that has gone: a closed pane is not in this list at all.
+  const asleep = live.filter((s) => s.status === 'exited').length
   const running = live.filter((s) => s.status === 'working')
   const names: string[] = []
   for (const s of running) {
@@ -128,6 +140,7 @@ export function countPresence(sessions: PresenceSession[], appStart: number): Pr
   return {
     running: running.length,
     total: live.length,
+    asleep,
     names,
     oldestRunSince: since.length ? Math.min(...since) : undefined,
     appStart
@@ -272,6 +285,7 @@ export const DISCORD_TOKENS: ReadonlyArray<readonly [string, string]> = [
   ['{running}', 'panes with a turn running right now'],
   ['{total}', 'panes on the desk'],
   ['{idle}', 'panes not running anything'],
+  ['{asleep}', 'panes asleep - stopped to save memory, one press wakes them'],
   ['{sessions}', '"session" or "sessions", matching the total'],
   ['{projects}', 'the project folders being worked in'],
   ['{project}', 'the first of those folders']
@@ -283,6 +297,7 @@ function fill(tpl: string, c: PresenceCounts, names: string[], dropped: number):
     .replace(/\{running\}/g, String(c.running))
     .replace(/\{total\}/g, String(c.total))
     .replace(/\{idle\}/g, String(Math.max(0, c.total - c.running)))
+    .replace(/\{asleep\}/g, String(c.asleep))
     .replace(/\{sessions\}/g, c.total === 1 ? 'session' : 'sessions')
     .replace(/\{projects\}/g, projects)
     .replace(/\{project\}/g, names[0] ?? '')

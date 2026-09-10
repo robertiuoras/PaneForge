@@ -1697,9 +1697,10 @@ const SAMPLE_BUSY: PresenceCounts = {
   total: 5,
   names: ['PaneForge', 'Toolstash', 'Manic-s-Auction-House'],
   oldestRunSince: 0,
+  asleep: 1,
   appStart: 0
 }
-const SAMPLE_IDLE: PresenceCounts = { running: 0, total: 5, names: [], appStart: 0 }
+const SAMPLE_IDLE: PresenceCounts = { running: 0, total: 5, names: [], asleep: 2, appStart: 0 }
 
 /**
  * The activity as Discord will draw it - the application's real name on top, then

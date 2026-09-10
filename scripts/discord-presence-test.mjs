@@ -445,7 +445,13 @@ const counts = (running, total, names = ['PaneForge']) => ({
     { status: 'exited', cwd: '/Users/robertiuoras/Projects/betting' }
   ]
   const c = countPresence(desk, 999)
-  check('counts: mirrored panes are on the desk too', c.total === 8, `total ${c.total}`)
+  // Nine, not eight, from 2026-09-10: the `exited` pane at the end is one the idle clock
+  // SLEPT, and a slept pane is still a pane - its card, screen and conversation are all
+  // still on the desk and one press wakes it. Dropping it made the desk's own number go
+  // down every time the sleep clock fired. Robert: "can u also count sleeping sessions in
+  // paneforge as well for our discord rich prescene".
+  check('counts: mirrored panes are on the desk too', c.total === 9, `total ${c.total}`)
+  check('counts: ...and a sleeping pane is counted, not dropped', c.asleep === 1, `asleep ${c.asleep}`)
   check('counts: every running turn counts, whichever machine runs it', c.running === 5, `running ${c.running}`)
   check(
     'counts: a mirrored pane\'s Windows cwd becomes a folder name, not a path',
