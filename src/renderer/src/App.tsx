@@ -4691,12 +4691,26 @@ export default function App(): JSX.Element {
       const soon = queueSoonsRef.current.find((c) => c.ids.some((id) => ids.includes(id)))
       if (soon) {
         setQueueSoons((list) => list.filter((c) => c !== soon))
-        for (const id of soon.ids) void api.cancelHandoff(id)
+        for (const id of soon.ids) {
+          void api.cancelHandoff(id)
+          // Taking it off the queue empties one map entry and holds nothing, so the sweep
+          // that armed this move was free to arm it again on its next pass - the same
+          // "i press keep it here but it still comes up again later" `stopMove` was given
+          // `keepHere` for. An APP-decided move is offered ONCE, so the block is for the
+          // life of the window and the bell gets its row; the Handoff button is still
+          // there when the person changes their mind. 2026-09-10: pane s11 was armed at
+          // 10:37:55, queued at 10:38:10 and taken off the queue at 10:38:21 with nothing
+          // written anywhere a person could read.
+          handoffBlocked.current[id] = Number.POSITIVE_INFINITY
+          api.logReclaim({ event: 'move-declined', id, name: paneWordRef.current(id), reason: 'you kept it here - it will not be offered a move again' })
+        }
+        handoffSweeping.current = false
+        keepHere(soon.ids)
         return
       }
       keepOpen(ids)
     },
-    [keepOpen]
+    [keepOpen, keepHere]
   )
   const moveSoonNow = useCallback(
     (ids: string[]) => {
