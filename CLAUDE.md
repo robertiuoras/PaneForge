@@ -35,6 +35,8 @@ Hook assigns each session a lane — `main` (master) or worktree `PaneForge-a`/`
 scripts/lane.mjs status --repo <dir>` shows who holds what.
 
 - Visiting chat gets a letter lane, never `main`, unless it has uncommitted work.
+- A hand-typed `/clear` gives the lane back only when the pane is QUIET: mid-turn it stays
+  (`laneWentQuiet`), because `moveTo` restarts the CLI and drops the turn and its prompt.
 - One engine: `lane.mjs --repo <dir>`. `.lanes.json`: `{ "lanes": false, "branch": "main",
   "release": "merge", "pool": ["main","a"] }`.
 - No-remote repos, `claude-memory`: no lanes. Never leave one conflicted.
@@ -537,7 +539,9 @@ test:desk`.
 - Listing (fields on `remote:changed`) vs mirroring (byte stream + xterm buffer); `openListed`
   turns one into the other.
 - Order in a group is sidebar's own numbering. A listed row has no pane NUMBER; a real row's
-  number comes off the full ordered list.
+  number comes off the full ordered list. EVERY pane wears it, past 9 as a plain label
+  (`.num.far`); the grid shows only as many tiles as read at 440x240 (`gridRoom`/`gridPick`,
+  needs-you first, asleep last, active always) and says how many stayed in the list.
 - Mirrored pane never listed twice; device off/connecting/error lists nothing. Badge counts both
   machines.
 - `Running` = `runSince` (submit keystroke, busy footer, shell command), ended by `endRun`, or a
@@ -1099,6 +1103,8 @@ is the CLI inside (~190 MB each, vs 16-17 MB Codex). `npm run test:reclaim`.
   same metadata. Shutdown gives async diagnostics up to 250 ms to finish, so a stalled disk or
   forced kill can still lose terminal records. `node scripts/sleep-cause-live.mjs` verifies a
   real automatic sweep, wake and normal quit in an isolated shell-only Electron profile.
+- Only a MEMORY verdict shortens the sleep clock (`sleepPressureOf`): lag alone left every
+  finished pane sleeping at 30s and waking at 7-9s (2026-09-10, load 2.9/core, 34% free).
 - `reclaim.idleCloseMinutes` 0 by default, switch sets 5 min.
 
 Restore: `restorePlan` starts all at normal, two at warn, one at critical, never zero while a pane is
