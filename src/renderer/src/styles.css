@@ -1080,6 +1080,8 @@ button.chip.closing:hover { filter: brightness(1.3); }
    right edge, a green smear beside the digit instead of a lit key. Measured over CDP:
    wrap.width 22, num.width 16. Anything that must line up with the pill has to hang off
    the wrapper only while the two boxes are the same box. */
+/* A number past 9 is a label, not a key: same pill, no key sheen, two digits fit. */
+.num.far { min-width: 22px; letter-spacing: -0.02em; opacity: 0.8; }
 .num-wrap { position: relative; display: inline-flex; flex: none; margin-right: 6px; }
 /* The halo is LIGHT, not a second pill.
 
