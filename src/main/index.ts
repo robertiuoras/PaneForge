@@ -2074,6 +2074,16 @@ async function laneWentQuiet(id: string): Promise<void> {
   await new Promise((r) => setTimeout(r, 2000))
   const s = manager.list().find((x) => x.id === id)
   if (!s || s.status === 'exited' || !s.lane || s.cwd !== before.cwd) return
+  // A pane MID-TURN is never moved: `moveTo` restarts the CLI, and a restart drops the
+  // conversation it was running plus any prompt queued for it. 2026-09-10 00:54Z: a
+  // hand-typed `/clear` landed while the autoclear's resume turn was running in lane-b;
+  // the pane was moved home two seconds later, the turn killed (exit 129), and the
+  // resume prompt was left unsent in a composer wearing the old lane's header. The
+  // lane is given back next time the pane clears while quiet.
+  if (s.runSince || s.status === 'working') {
+    send('lane:moved', id, `Cleared mid-turn - this pane stays in its copy until the turn ends`)
+    return
+  }
   const home = await returnToBase(
     s.cwd,
     busyDirs().filter((d) => d !== s.cwd)
