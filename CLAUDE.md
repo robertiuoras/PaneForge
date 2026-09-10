@@ -37,6 +37,7 @@ scripts/lane.mjs status --repo <dir>` shows who holds what.
 - Visiting chat gets a letter lane, never `main`, unless it has uncommitted work.
 - A hand-typed `/clear` gives the lane back only when the pane is QUIET: mid-turn it stays
   (`laneWentQuiet`), because `moveTo` restarts the CLI and drops the turn and its prompt.
+  The decision is `shared/laneReturn.ts` `mayReturnLane`; `npm run test:lanereturn`.
 - One engine: `lane.mjs --repo <dir>`. `.lanes.json`: `{ "lanes": false, "branch": "main",
   "release": "merge", "pool": ["main","a"] }`.
 - No-remote repos, `claude-memory`: no lanes. Never leave one conflicted.
