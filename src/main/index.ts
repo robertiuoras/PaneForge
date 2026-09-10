@@ -2313,7 +2313,7 @@ ipcMain.on('shell:reveal', (_e, path: string) => {
  * what a loose text matcher hands it.
  */
 ipcMain.handle('shell:pathKind', (_e, cwd: string, token: string) =>
-  resolveRevealTarget(cwd ?? '', token ?? '')
+  resolveRevealTarget(cwd ?? '', token ?? '', projectsRoot())
 )
 
 /**

@@ -49,4 +49,35 @@ const whole = resolveRevealTarget(root, `${front} clips full frame comparison.mp
 assert.equal(whole?.kind, 'file', 'the whole path is the file')
 assert.equal(resolveRevealTarget(root, `${root}/nowhere/at all.ts`), null, 'nothing below root exists: no link')
 assert.equal(resolveRevealTarget(root, `${root}/nowhere/planned.ts`), null, 'a spaceless missing path is not a link')
-console.log('pathlink: 9 ok')
+// A repo-relative path from a chat sitting in ANOTHER checkout still links (2026-09-10).
+const projects = join(root, 'Projects')
+const memory = join(projects, 'memory-a')
+const stale = join(projects, 'memory-b')
+const pane = join(projects, 'clients')
+for (const dir of [memory, stale, pane]) mkdirSync(join(dir, 'shared'), { recursive: true })
+writeFileSync(join(stale, 'shared', 'proof.png'), '')
+writeFileSync(join(memory, 'shared', 'proof.png'), '')
+// memory-a is written second, so it is the newer copy and the one the sentence means.
+const away = resolveRevealTarget(pane, 'shared/proof.png', projects)
+assert.equal(resolve(away?.abs ?? ''), resolve(join(memory, 'shared', 'proof.png')), 'the newest copy is the link')
+assert.equal(away?.kind, 'file')
+assert.equal(resolveRevealTarget(pane, 'shared/proof.png'), null, 'no projects folder handed in: no sweep')
+
+// A bare filename is not swept for - too many checkouts hold one.
+writeFileSync(join(memory, 'notes.md'), '')
+assert.equal(resolveRevealTarget(pane, 'notes.md', projects), null, 'a bare filename is never swept for')
+// ...and a `..` is never given to the sweep, which would let it climb out of every root
+// it is tried against. Read from the pane itself it is an ordinary path and still links.
+assert.ok(resolveRevealTarget(pane, '../memory-a/shared/proof.png', projects), 'a real ../ path from the pane still links')
+assert.equal(resolveRevealTarget(pane, '../gone/shared/proof.png', projects), null, 'a ../ path is not swept for')
+
+// A path relative to the pane's own CHECKOUT wins over every other folder, even a newer one.
+mkdirSync(join(pane, '.git'), { recursive: true })
+mkdirSync(join(pane, 'shared'), { recursive: true })
+writeFileSync(join(pane, 'shared', 'proof.png'), '')
+const deep = join(pane, 'src', 'x')
+mkdirSync(deep, { recursive: true })
+const own = resolveRevealTarget(deep, 'shared/proof.png', projects)
+assert.equal(resolve(own?.abs ?? ''), resolve(join(pane, 'shared', 'proof.png')), "the pane's own repo wins")
+
+console.log('pathlink: 15 ok')
