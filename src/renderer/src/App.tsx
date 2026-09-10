@@ -212,6 +212,7 @@ import {
   trackPx,
   usable,
   gridRoom,
+  gridCols,
   gridPick,
   type LayoutKind
 } from './gridLayout'
@@ -2967,8 +2968,8 @@ export default function App(): JSX.Element {
     ? (config?.gridLayout as LayoutKind)
     : 'tiled'
   const plan = useMemo(
-    () => planGrid(layout, tiled ? gridChoice.shown.length : 1),
-    [layout, tiled, gridChoice.shown.length]
+    () => planGrid(layout, tiled ? gridChoice.shown.length : 1, gridCols(box.w, box.gap)),
+    [layout, tiled, gridChoice.shown.length, box.w, box.gap]
   )
   const cols = plan.cols
   const rows = plan.rows
@@ -4994,7 +4995,11 @@ export default function App(): JSX.Element {
                     {/* The switch key, and the fastest place to read the pane's state:
                         lit green while its agent is running, amber when a turn finished
                         while you were looking somewhere else. */}
-                    {paneNumber <= 9 && (
+                    {/* Every pane wears its number - the tenth pane onward used to wear
+                        none, so a desk of fourteen read as numbered 1-9 and then nothing
+                        (Robert 2026-09-10: "we lost numbering on sessions"). Only 1-9
+                        are Ctrl keys; past that the number is a plain label. */}
+                    {paneNumber > 0 && (
                       /* The wrapper exists only to carry the breathing halo. The key
                          itself is `overflow: hidden` so its sheen stays inside the
                          pill, and that clips a pseudo-element halo too - so the halo
@@ -5005,9 +5010,11 @@ export default function App(): JSX.Element {
                       <span className="num-wrap">
                         <span
                           className={
-                            'num' + (s.status === 'working' ? ' live' : s.attention ? ' attn' : '')
+                            'num' +
+                            (s.status === 'working' ? ' live' : s.attention ? ' attn' : '') +
+                            (paneNumber > 9 ? ' far' : '')
                           }
-                          title={keyLabel(`Ctrl ${paneNumber}`)}
+                          title={paneNumber <= 9 ? keyLabel(`Ctrl ${paneNumber}`) : `Pane ${paneNumber}`}
                         >
                           {paneNumber}
                         </span>

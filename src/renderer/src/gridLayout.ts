@@ -112,13 +112,15 @@ export interface GridPlan {
  * One pane is one pane in every layout - a "big left" of one is a full window, not a
  * half-empty grid - so `n === 1` short-circuits before any of the shapes are considered.
  */
-export function planGrid(kind: LayoutKind, n: number): GridPlan {
+export function planGrid(kind: LayoutKind, n: number, maxCols = Infinity): GridPlan {
   const cells: Cell[] = []
   if (n <= 0) return { cols: 1, rows: 1, cells }
 
   if (kind === 'tiled' || n === 1) {
-    // Near-square, the rule the grid has used since it was a .bat file.
-    const cols = Math.max(1, Math.ceil(Math.sqrt(n)))
+    // Near-square, the rule the grid has used since it was a .bat file - but never more
+    // columns than the box holds readable tiles across (`gridCols`): four panes in a
+    // 618px box are one column of four, not a 2x2 of 300px tiles.
+    const cols = Math.max(1, Math.min(Math.ceil(Math.sqrt(n)), maxCols))
     const rows = Math.max(1, Math.ceil(n / cols))
     for (let i = 0; i < n; i++)
       cells.push({ col: (i % cols) + 1, row: Math.floor(i / cols) + 1, colSpan: 1, rowSpan: 1 })
@@ -248,12 +250,17 @@ export const template = (f: Fractions): string => f.map((x) => `${x}fr`).join(' 
 export const MIN_PANE_W = 440
 export const MIN_PANE_H = 240
 
+/** How many readable tiles fit across a box `w` wide. Never 0; an unmeasured box is unbounded. */
+export function gridCols(w: number, gap: number): number {
+  if (!(w > 0)) return Infinity
+  return Math.max(1, Math.floor((w + gap) / (MIN_PANE_W + gap)))
+}
+
 /** How many readable tiles fit in a box of `w` x `h` with `gap` between them. Never 0. */
 export function gridRoom(w: number, h: number, gap: number): number {
   if (!(w > 0) || !(h > 0)) return Infinity
-  const cols = Math.max(1, Math.floor((w + gap) / (MIN_PANE_W + gap)))
   const rows = Math.max(1, Math.floor((h + gap) / (MIN_PANE_H + gap)))
-  return cols * rows
+  return gridCols(w, gap) * rows
 }
 
 /**

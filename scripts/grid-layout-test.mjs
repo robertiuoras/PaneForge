@@ -31,6 +31,7 @@ const mod = join(dir, 'gridLayout.mjs')
 writeFileSync(mod, js, 'utf8')
 const {
   gridRoom,
+  gridCols,
   gridPick,
   drag,
   dividerPx,
@@ -232,6 +233,9 @@ ok('a 1400x500 box holds six', gridRoom(1400, 500, 6) === 6)
 ok('a 1280x800 window less the sidebar holds four, not fourteen', gridRoom(998, 788, 6) === 6 || gridRoom(998, 788, 6) === 4)
 ok('a box too small for one still holds one', gridRoom(300, 200, 6) === 1)
 ok('an unmeasured box caps nothing', gridRoom(0, 0, 6) === Infinity)
+ok('a 618px box is one column across', gridCols(618, 6) === 1)
+ok('and four tiles in it stack, never a 2x2 of 300px', planGrid('tiled', 4, gridCols(618, 6)).cols === 1 && planGrid('tiled', 4, 1).rows === 4)
+ok('with no column cap the old near-square rule holds', planGrid('tiled', 4).cols === 2)
 const ranked = [
   { id: 'a', rank: 3 }, { id: 'b', rank: 0 }, { id: 'c', rank: 2 }, { id: 'd', rank: 1 }, { id: 'e', rank: 3 }
 ]
