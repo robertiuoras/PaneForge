@@ -25,6 +25,7 @@ import { DataPump } from './dataPump'
 import { DiscordPresence } from './discordPresence'
 import { countPresence, type PresenceCounts } from '../shared/discordRpc'
 import { quitWhere } from '../shared/quitWords'
+import { mayReturnLane } from '../shared/laneReturn'
 import { revealTarget, within } from '../shared/reveal'
 import { revealTargetFor } from '../shared/revealPane'
 import { clientForText, rosterRoot } from './clients'
@@ -2073,17 +2074,15 @@ async function laneWentQuiet(id: string): Promise<void> {
   // after whatever that pane was doing has settled.
   await new Promise((r) => setTimeout(r, 2000))
   const s = manager.list().find((x) => x.id === id)
-  if (!s || s.status === 'exited' || !s.lane || s.cwd !== before.cwd) return
-  // A pane MID-TURN is never moved: `moveTo` restarts the CLI, and a restart drops the
-  // conversation it was running plus any prompt queued for it. 2026-09-10 00:54Z: a
-  // hand-typed `/clear` landed while the autoclear's resume turn was running in lane-b;
-  // the pane was moved home two seconds later, the turn killed (exit 129), and the
-  // resume prompt was left unsent in a composer wearing the old lane's header. The
-  // lane is given back next time the pane clears while quiet.
-  if (s.runSince || s.status === 'working') {
-    send('lane:moved', id, `Cleared mid-turn - this pane stays in its copy until the turn ends`)
+  // Whether the copy may go back at all - including the mid-turn refusal, which is the
+  // one that matters: `moveTo` restarts the CLI, and a restart drops the turn plus any
+  // prompt queued behind it. `shared/laneReturn.ts`, `npm run test:lanereturn`.
+  const verdict = mayReturnLane(before, s)
+  if (!verdict.move) {
+    if (verdict.why === 'mid-turn') send('lane:moved', id, verdict.say)
     return
   }
+  if (!s) return
   const home = await returnToBase(
     s.cwd,
     busyDirs().filter((d) => d !== s.cwd)

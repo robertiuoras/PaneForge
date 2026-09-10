@@ -229,6 +229,9 @@ const TESTS = [
   // The lane a folder already IS, for a pane the app did not move itself - with the
   // standalone `service-a` repo as the control a name-only guess gets wrong.
   ['lanedetect', 'lane-detect-test.mjs'],
+  // Whether a chat that cleared itself may hand its copy back - the mid-turn refusal that
+  // keeps a move from restarting the CLI under a running turn.
+  ['lanereturn', 'lane-return-test.mjs'],
   // Which screen the two copies of the app may take a half of, and the four desks where
   // nothing may move at all.
   ['desksnap', 'desk-snap-test.mjs'],
