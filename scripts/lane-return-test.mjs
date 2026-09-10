@@ -10,7 +10,7 @@
 import { readFileSync, writeFileSync, rmSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
@@ -27,7 +27,8 @@ rmSync(dir, { recursive: true, force: true })
 mkdirSync(dir, { recursive: true })
 const mod = join(dir, 'laneReturn.mjs')
 writeFileSync(mod, js, 'utf8')
-const { mayReturnLane, MID_TURN_WORDS } = await import(mod)
+// A bare Windows path (`C:\\...`) is not a legal ESM specifier - it must be a file:// URL.
+const { mayReturnLane, MID_TURN_WORDS } = await import(pathToFileURL(mod).href)
 
 let checks = 0
 const fails = []

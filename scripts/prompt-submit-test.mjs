@@ -327,6 +327,17 @@ manager.kill(cmd.id)
 // holding `/model opus`, and Claude Code read the pair as one slash command:
 // `Model 'opus\n\nContinue the handoff...' not found`. The clear happened, the handover did
 // not. So the proof is the command's ANSWER, not the silence around it.
+// Answers the moment the return this queuePrompt sends was written, so a case can be
+// judged against the confirm window rather than against a wall-clock sleep.
+async function sentReturnAt(proc, waitMs = 3000) {
+  const until = Date.now() + waitMs
+  while (Date.now() < until) {
+    if (proc.writes.some((w) => w === '\r')) return Date.now()
+    await sleep(10)
+  }
+  return Date.now()
+}
+
 const eaten = manager.start({ cwd: root, agent: 'shell' })
 const eatenProc = manager.sessions.get(eaten.id).proc
 let eatenDone = 0
@@ -335,8 +346,20 @@ await sleep(120)
 eatenProc.say(COMPOSER)
 // The return goes in and the pane stays exactly as it was - quiet at its composer, with
 // nothing printed. The old code settled on that silence within one poll (40ms here).
-await sleep(400)
-ok(eatenDone === 0, 'a command that printed nothing has not landed', String(eatenDone))
+// Timed off the RETURN, never off a fixed sleep: the give-up settle lands
+// PROMPT_CONFIRM_MS x PROMPT_ENTER_TRIES after it, and on a loaded Windows box a
+// 400ms sleep overshot far enough to reach that give-up and read it as a landing
+// (2026-09-10, test:pc). Three polls is still long past the single poll the old bug
+// settled in, and the elapsed guard makes a slow machine FAIL rather than pass.
+const eatenReturnAt = await sentReturnAt(eatenProc)
+await sleep(Number(process.env.PF_PROMPT_POLL_MS) * 3)
+const sinceReturn = Date.now() - eatenReturnAt
+const confirmBudget = Number(process.env.PF_PROMPT_CONFIRM_MS) * Number(process.env.PF_PROMPT_ENTER_TRIES)
+ok(
+  eatenDone === 0 && sinceReturn < confirmBudget,
+  'a command that printed nothing has not landed',
+  `settles=${eatenDone}, ${sinceReturn}ms after the return, budget ${confirmBudget}ms`
+)
 ok(
   eatenProc.writes.some((w) => w === '\r'),
   'and the return really was sent, so the silence is the pane\'s answer and not a missing keystroke',
