@@ -636,7 +636,11 @@ export function suggestMove(
 ): AutoHandoff | null {
   if (!cfg.enabled) return null
   const eligible = panes
-    .filter((p) => travels(p) && !p.focused && !p.remote && !p.handingOff && queueable(p))
+    // A SUGGESTION is a card with `Keep it here` on it, not a move, so the pane pin
+    // (`stayHere`) is not a refusal here: picking "This device" says where a pane OPENS,
+    // never that a lagging desk may not ask about it later (Robert, 2026-09-10). Only
+    // the automatic rungs honour the pin.
+    .filter((p) => travels(p) && !p.focused && !p.remote && !p.handingOff && queueable({ ...p, stayHere: false }))
     .filter((p) => !staysHere(cfg, p.projectName))
     .filter((p) => !((blocked[p.id] ?? 0) > now))
     .sort(

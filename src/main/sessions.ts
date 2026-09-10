@@ -803,7 +803,9 @@ export class SessionManager extends EventEmitter {
       // otherwise pass one pane between them for ever, each one correct on its own.
       arrivedFrom: req.arrivedFrom,
       // The person picked this machine by name, not by default - see `Session.stayHere`.
-      stayHere: req.where === 'local' ? true : undefined,
+      // `req.where` alone is placement and may be the saved default; only the dialog knows
+      // whether the picker was touched.
+      stayHere: req.stayHere ? true : undefined,
       lane: req.lane,
       laneNote: req.laneNote,
       cols: START_COLS,

@@ -273,11 +273,12 @@ export interface Session {
   closeKept?: boolean
   /**
    * Set when the person chose "this machine" for this pane in the New session dialog
-   * (`StartSessionRequest.where === 'local'`).
+   * (`StartSessionRequest.stayHere` - the picker was touched; a saved default is not a pin).
    *
-   * Every automatic move refuses it - `autoHandoffPlan`'s budget/pressure/idle rungs and
-   * `suggestMove` - the same as a project marked `keepHere`, but for one pane rather than a
-   * whole repo. A pressure move (reclaim closing or sleeping the pane) is still allowed:
+   * Every AUTOMATIC move refuses it - `autoHandoffPlan`'s budget/pressure/idle rungs - the
+   * same as a project marked `keepHere`, but for one pane rather than a whole repo.
+   * `suggestMove` does not: a suggestion is a card the person can decline, and picking a
+   * device says where the pane opens, not that a lagging desk may never ask. A pressure move (reclaim closing or sleeping the pane) is still allowed:
    * this is a statement about WHERE the work runs, not about whether the machine may give
    * its memory back.
    */
@@ -613,6 +614,14 @@ export interface StartSessionRequest {
    * online to pick. Absent = let `shared/offloadFirst.ts` decide.
    */
   where?: 'local' | 'remote'
+  /**
+   * The person PRESSED "This device" in the New session dialog this time. Only that pins
+   * the pane (`Session.stayHere`); a `where` that came from the saved default is placement,
+   * not a pin. 2026-09-10: every pane since 2026-09-03 carried the pin off a default nobody
+   * touched, so under a 5.5 GB compressor the pressure card had nothing it was allowed to
+   * suggest moving.
+   */
+  stayHere?: boolean
   /**
    * A NAMED paired device to start on (its id or its name as shown in Devices). Beats
    * `where`; a device that is not online refuses the pane by name, never falls back.

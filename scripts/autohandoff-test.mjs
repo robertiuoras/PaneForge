@@ -688,6 +688,11 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
   const panes = [picked, free]
   eq('the pressure sweep never moves it', ids(autoHandoffPlan(panes, over, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'free')
   eq('the budget rung never moves it', ids(budgetPlan(panes, peers, { ...DEFAULT_AUTO_HANDOFF, budgetMinMb: 1 }, {}, NOW, 2)), 'free')
+  // ...but the pressure card may still SUGGEST it: the pin says where a pane opens, not
+  // that a lagging desk may never ask (Robert, 2026-09-10). Dearest first, so the 900 MB
+  // picked pane is offered ahead of a cheaper unpinned one.
+  const cheap = pane({ id: 'cheap', memMb: 300 })
+  eq('the suggestion card still offers a picked pane', suggestMove([picked, cheap], peers, DEFAULT_AUTO_HANDOFF, {}, NOW)?.id, 'picked')
 }
 
 // Somebody arriving at a pane answers a CLOSE countdown and not a MOVE one. A click was

@@ -235,10 +235,11 @@ export default function NewSessionDialog({
         model: model || undefined,
         resume: resume && canResume,
         prompt: prompt.trim() || undefined,
-        // A default of "this machine" (`defaultSessionWhere: 'local'`) is still a choice -
-        // `stayHere` must be set whether or not the person touched the picker this time,
-        // or a hand-picked pane only stayed put on the one launch that touched it.
-        where: where !== 'auto' ? where : undefined
+        // The saved default decides WHERE it opens; only a picker pressed THIS time pins the
+        // pane there (`stayHere`). A default is not a pin: with `defaultSessionWhere: 'local'`
+        // every pane carried the pin and the pressure card could suggest moving nothing.
+        where: where !== 'auto' ? where : undefined,
+        stayHere: touched && where === 'local' ? true : undefined
       }
     })
   }
