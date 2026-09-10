@@ -144,7 +144,7 @@ import {
   type AutoHandoff,
   type AutoPane
 } from '../../shared/autoHandoff'
-import { fleetState } from '../../shared/fleet'
+import { fleetState, type FleetState } from '../../shared/fleet'
 import { keptWords } from '../../shared/sleep'
 import { asleepChip } from '../../shared/sleepWords'
 import type { SleepReason } from '../../shared/types'
@@ -211,6 +211,8 @@ import {
   template,
   trackPx,
   usable,
+  gridRoom,
+  gridPick,
   type LayoutKind
 } from './gridLayout'
 
@@ -594,6 +596,14 @@ function AutoTick({ at, tick }: { at: number; tick: () => void }): null {
 /** Whole-window render counter, exposed for probes. See the component body. */
 const deskRenders = { n: 0, ms: 0 }
 ;(window as unknown as { __pfDeskRenders?: { n: number; ms: number } }).__pfDeskRenders = deskRenders
+
+/**
+ * Who gets a tile when the grid is full: a pane waiting on a person, then one printing,
+ * then a quiet one, and a sleeping one last - its screen is not moving. See `gridPick`.
+ */
+const GRID_RANK: Record<FleetState, number> = {
+  needsYou: 0, stalled: 1, working: 1, starting: 1, ready: 2, exited: 3
+}
 
 export default function App(): JSX.Element {
   // How many times the WHOLE window has re-rendered, for probes. The sidebar, every card
@@ -2193,16 +2203,39 @@ export default function App(): JSX.Element {
   // positioned over the whole area - so it needs no layout of its own.
   const tiled = grid && !zoom
 
+  // The grid's own content box, measured below once it exists. Declared here because
+  // which panes the grid SHOWS depends on it, and that is read before the grid draws.
+  const [box, setBox] = useState({ w: 0, h: 0, gap: 9, padX: 0, padY: 0 })
+  /**
+   * Which panes get a tile. Past the number of readable tiles the box holds, the panes
+   * that need a person come first and sleeping ones last; the rest stay in the list on
+   * the left and come into the grid when pressed. See `gridPick`.
+   */
+  const gridChoice = useMemo(
+    () =>
+      tiled
+        ? gridPick(
+            sessions.map((s) => ({ id: s.id, rank: GRID_RANK[fleetState(s)] })),
+            gridRoom(box.w, box.h, box.gap),
+            activeId ?? undefined
+          )
+        : { shown: [], hidden: 0 },
+    [tiled, sessions, box.w, box.h, box.gap, activeId]
+  )
+  const cellAt = useMemo(
+    () => new Map(gridChoice.shown.map((id, i) => [id, i])),
+    [gridChoice]
+  )
   const visibleIds = useMemo(
     () =>
       new Set(
         zoom
           ? [zoom]
-          : grid
-            ? sessions.map((s) => s.id)
+          : tiled
+            ? gridChoice.shown
             : sessions.filter((s) => s.id === activeId).map((s) => s.id)
       ),
-    [grid, zoom, sessions, activeId]
+    [tiled, zoom, sessions, activeId, gridChoice]
   )
 
   /**
@@ -2934,8 +2967,8 @@ export default function App(): JSX.Element {
     ? (config?.gridLayout as LayoutKind)
     : 'tiled'
   const plan = useMemo(
-    () => planGrid(layout, tiled ? sessions.length : 1),
-    [layout, tiled, sessions.length]
+    () => planGrid(layout, tiled ? gridChoice.shown.length : 1),
+    [layout, tiled, gridChoice.shown.length]
   )
   const cols = plan.cols
   const rows = plan.rows
@@ -3620,7 +3653,6 @@ export default function App(): JSX.Element {
   // Needed because a divider drag is in pixels and the sizes it edits are fractions.
   // The tracks live inside the padding, so this is the content box and where it starts -
   // clientWidth would be 18px too wide and put every divider half a pane out of place.
-  const [box, setBox] = useState({ w: 0, h: 0, gap: 9, padX: 0, padY: 0 })
   useEffect(() => {
     const el = panesRef.current
     if (!el || !tiled) return
@@ -5764,7 +5796,12 @@ export default function App(): JSX.Element {
               title="Drag to resize these rows. Double-click to put them back."
             />
           ))}
-        {sessions.map((s, i) => (
+        {tiled && gridChoice.hidden > 0 && (
+          <div className="grid-more" title="The grid keeps every pane big enough to read. Press a session in the list to bring it here.">
+            {gridChoice.hidden} more {gridChoice.hidden === 1 ? 'session is' : 'sessions are'} in the list on the left
+          </div>
+        )}
+        {sessions.map((s) => (
           // Every pane stays mounted so its scrollback survives tab switches;
           // unmounting the xterm instance would blank the session.
           <div
@@ -5788,10 +5825,10 @@ export default function App(): JSX.Element {
             style={
               {
                 '--agent': agents.find((a) => a.id === s.agent)?.color ?? '#8b8b99',
-                ...(tiled && plan.cells[i]
+                ...(tiled && plan.cells[cellAt.get(s.id) ?? -1]
                   ? {
-                      gridColumn: `${plan.cells[i].col} / span ${plan.cells[i].colSpan}`,
-                      gridRow: `${plan.cells[i].row} / span ${plan.cells[i].rowSpan}`
+                      gridColumn: `${plan.cells[cellAt.get(s.id)!].col} / span ${plan.cells[cellAt.get(s.id)!].colSpan}`,
+                      gridRow: `${plan.cells[cellAt.get(s.id)!].row} / span ${plan.cells[cellAt.get(s.id)!].rowSpan}`
                     }
                   : null)
               } as React.CSSProperties

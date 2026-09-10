@@ -235,3 +235,46 @@ export function drag(f: Fractions, total: number, gap: number, i: number, deltaP
 
 /** CSS for one axis. */
 export const template = (f: Fractions): string => f.map((x) => `${x}fr`).join(' ')
+
+// -------------------------------------------------- how many panes a grid can show
+
+/**
+ * The smallest tile a terminal is still readable in. 440px is 60 columns at the 7px a
+ * 12px monospace glyph takes, plus the pane's own chrome; 240px is a header, ten rows
+ * and the CLI's composer. Below either the pane draws a torn CLI that nobody can read
+ * or act on, which is what fourteen panes in a 4x4 grid on a 1280px window was
+ * (Robert 2026-09-10: "if i open it now its super small since so many sessions").
+ */
+export const MIN_PANE_W = 440
+export const MIN_PANE_H = 240
+
+/** How many readable tiles fit in a box of `w` x `h` with `gap` between them. Never 0. */
+export function gridRoom(w: number, h: number, gap: number): number {
+  if (!(w > 0) || !(h > 0)) return Infinity
+  const cols = Math.max(1, Math.floor((w + gap) / (MIN_PANE_W + gap)))
+  const rows = Math.max(1, Math.floor((h + gap) / (MIN_PANE_H + gap)))
+  return cols * rows
+}
+
+/**
+ * Which panes the grid shows when there are more than fit: the ones that need a
+ * person first, then the ones printing, then the quiet ones, and a pane whose agent is
+ * asleep last - its screen is not moving, so hiding it loses nothing. Order inside a
+ * rank is the desk's own, so a pane does not jump cells because another finished. The
+ * active pane is always shown. The rest stay in the list on the left, where a press on
+ * one makes it active and so brings it into the grid.
+ */
+export type GridPane = { id: string; rank: number }
+export interface GridChoice {
+  shown: string[]
+  hidden: number
+}
+export function gridPick(panes: GridPane[], max: number, activeId: string | undefined): GridChoice {
+  if (panes.length <= max) return { shown: panes.map((p) => p.id), hidden: 0 }
+  const kept = panes
+    .map((p, i) => ({ ...p, i, rank: p.id === activeId ? -1 : p.rank }))
+    .sort((a, b) => a.rank - b.rank || a.i - b.i)
+    .slice(0, Math.max(1, max))
+    .sort((a, b) => a.i - b.i)
+  return { shown: kept.map((p) => p.id), hidden: panes.length - kept.length }
+}

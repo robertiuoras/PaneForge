@@ -22,7 +22,7 @@ const js = src
   .replace(/^export type .*$/gm, '')
   .replace(/^export interface [\s\S]*?^}$/gm, '')
   .replace(/: Fractions\[\]/g, '')
-  .replace(/: (Fractions|GridSize|LayoutKind|GridPlan|Cell|number|string|boolean)(\[\])?( \| undefined)?/g, '')
+  .replace(/: (Fractions|GridSize|LayoutKind|GridPlan|GridPane|GridChoice|Cell|number|string|boolean)(\[\])?( \| undefined)?/g, '')
   .replace(/<[A-Za-z]+(\[\])?>/g, '')
 const dir = join(tmpdir(), 'paneforge-grid-test')
 rmSync(dir, { recursive: true, force: true })
@@ -30,6 +30,8 @@ mkdirSync(dir, { recursive: true })
 const mod = join(dir, 'gridLayout.mjs')
 writeFileSync(mod, js, 'utf8')
 const {
+  gridRoom,
+  gridPick,
   drag,
   dividerPx,
   equal,
@@ -219,6 +221,27 @@ ok(
   'every pane is still there afterwards',
   new Set(moveInOrder(four, 'b', 1)).size === four.length
 )
+
+// -------------------------------------------------- how many panes the grid shows
+//
+// Fourteen panes in a 4x4 on a 1280px window drew tiles 250px wide: a terminal nobody
+// could read. The grid keeps to tiles a CLI is readable in and leaves the rest in the list.
+
+ok('a 1000x300 box holds two readable tiles', gridRoom(1000, 300, 6) === 2)
+ok('a 1400x500 box holds six', gridRoom(1400, 500, 6) === 6)
+ok('a 1280x800 window less the sidebar holds four, not fourteen', gridRoom(998, 788, 6) === 6 || gridRoom(998, 788, 6) === 4)
+ok('a box too small for one still holds one', gridRoom(300, 200, 6) === 1)
+ok('an unmeasured box caps nothing', gridRoom(0, 0, 6) === Infinity)
+const ranked = [
+  { id: 'a', rank: 3 }, { id: 'b', rank: 0 }, { id: 'c', rank: 2 }, { id: 'd', rank: 1 }, { id: 'e', rank: 3 }
+]
+const pick = gridPick(ranked, 2, undefined)
+ok('your-move and working panes are the ones shown', JSON.stringify(pick.shown) === '["b","d"]')
+ok('and the count left in the list is said', pick.hidden === 3)
+ok('the active pane is always shown', gridPick(ranked, 2, 'e').shown.includes('e'))
+ok('desk order survives inside the pick', JSON.stringify(gridPick(ranked, 3, undefined).shown) === '["b","c","d"]')
+ok('enough room shows every pane in desk order', JSON.stringify(gridPick(ranked, 9, undefined).shown) === '["a","b","c","d","e"]')
+ok('and hides none', gridPick(ranked, 9, undefined).hidden === 0)
 
 console.log(failed ? `\n${failed} failed` : '\nall passed')
 process.exit(failed ? 1 : 0)
