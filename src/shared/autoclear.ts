@@ -352,7 +352,7 @@ export const DEFAULT_AUTOCLEAR: AutoClearConfig = {
  * the toast at 0:00 ('stale' - meta left behind by an arm this timer no longer owns)
  * cleans the meta up instead of leaving the card on screen forever.
  */
-export type ExpiryVerdict = 'fire' | 'wait' | 'vanished' | 'foreign' | 'stale' | DropReason
+export type ExpiryVerdict = 'fire' | 'wait' | 'settling' | 'vanished' | 'foreign' | 'stale' | DropReason
 
 /**
  * How long a countdown held off by an unsent draft waits before asking again.
@@ -372,6 +372,23 @@ export function expiryDecision(p: {
   now: number
   /** `dropFor` over the pane's state right now, null when it is clean. */
   drop: DropReason | null
+  /**
+   * How long ago this pane last PRINTED, when the caller can say.
+   *
+   * `drop` reads `runSince`, and `runSince` is dropped the moment the busy footer stops
+   * saying the agent is working - which under load is not the same thing as the turn being
+   * over. A Stop hook that BLOCKS (this file's own, ideas-gate, verify-gate) makes the CLI
+   * write a second reply into the same pane, and on 2026-09-10 the machine was slow enough
+   * that the footer between the two went stale: `dropFor` read a clean pane, the countdown
+   * fired, and `/clear` plus the resume prompt landed in Claude Code's mid-turn queue
+   * ("Press up to edit queued messages" on Robert's screen, ~/.claude/autoclear.log
+   * 07:03:44). The clear then ran at the turn boundary and took the queued prompt with it.
+   *
+   * So the fire path takes the same reading the ARM path already takes (`ARM_QUIET_MS`):
+   * a pane that printed a moment ago is not finished, whatever the footer says. It is not
+   * a stand-down - the card and its button stay, and the timer asks again.
+   */
+  quietMs?: number
 }): ExpiryVerdict {
   if (!p.exists) return 'vanished'
   if (p.metaAt !== p.armedAt) {
@@ -384,6 +401,10 @@ export function expiryDecision(p: {
   // the one that waits. It is not a stand-down: the countdown, and the button that stops
   // it, stay exactly where they are and the timer asks again in `DRAFT_RETRY_MS`.
   if (p.drop === 'drafting') return 'wait'
+  // Still printing: not finished, whatever `runSince` says. Checked BEFORE the other drops
+  // only in the sense that a clean-looking pane can still be busy; a real drop below still
+  // wins for a pane that is plainly working.
+  if (!p.drop && typeof p.quietMs === 'number' && !quietEnoughToArm(p.quietMs)) return 'settling'
   // 'working' does NOT type. Claude Code queues pty input arriving mid-turn, and this
   // sequence is THREE chunks: `/clear`, the resume prompt, the submit CR. All three land
   // in that queue, the `/clear` runs first at the turn boundary, and a clear throws the

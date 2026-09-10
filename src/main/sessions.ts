@@ -2734,7 +2734,8 @@ export class SessionManager extends EventEmitter {
         metaAt: live?.meta.autoClearAt,
         armedAt,
         now: Date.now(),
-        drop: live ? dropFor({ ...live.meta, typed: live.typed }) : 'gone'
+        drop: live ? dropFor({ ...live.meta, typed: live.typed }) : 'gone',
+        quietMs: live ? Date.now() - live.meta.lastOutput : undefined
       })
       acLog(
         `${id} expiry: ${verdict} (armed ${armedAt}, meta ${live?.meta.autoClearAt ?? 'none'})`
@@ -2747,6 +2748,19 @@ export class SessionManager extends EventEmitter {
         const next = Date.now() + DRAFT_RETRY_MS
         live!.meta.autoClearAt = next
         acLog(`${id} waiting: ${dropWords('drafting')} - asking again at ${new Date(next).toISOString()}`)
+        this.emitSessions()
+        const again = setTimeout(() => fire(next), DRAFT_RETRY_MS)
+        again.unref?.()
+        this.autoClearTimers.set(id, again)
+        return
+      }
+      // Printing again under a countdown that `runSince` did not catch - the second reply a
+      // blocking Stop hook causes, or any turn on a machine slow enough for the busy footer
+      // to go stale. Held off exactly like a draft: the card stays, only the moment moves.
+      if (verdict === 'settling') {
+        const next = Date.now() + DRAFT_RETRY_MS
+        live!.meta.autoClearAt = next
+        acLog(`${id} waiting: the pane printed ${Date.now() - live!.meta.lastOutput}ms ago and may not be finished - asking again at ${new Date(next).toISOString()}`)
         this.emitSessions()
         const again = setTimeout(() => fire(next), DRAFT_RETRY_MS)
         again.unref?.()
@@ -2807,6 +2821,16 @@ export class SessionManager extends EventEmitter {
         // before writing: a person may submit, open a question, or recall a history line
         // in this window. The clear is not complete until its command reaches the pty.
         const late = dropFor({ ...current.meta, typed: current.typed })
+        const lateQuiet = Date.now() - current.meta.lastOutput
+        if (!late && !quietEnoughToArm(lateQuiet)) {
+          const next = Date.now() + DRAFT_RETRY_MS
+          current.meta.autoClearAt = next
+          const again = setTimeout(() => fire(next), DRAFT_RETRY_MS)
+          again.unref?.()
+          this.autoClearTimers.set(id, again)
+          this.emitSessions()
+          return acLog(`${id} clear waiting: the pane printed ${lateQuiet}ms ago and may not be finished`)
+        }
         if (late === 'drafting') {
           const next = Date.now() + DRAFT_RETRY_MS
           current.meta.autoClearAt = next
