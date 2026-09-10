@@ -30,7 +30,7 @@ buildSync({
   platform: 'node',
   outfile
 })
-const { reclaimPlan, idleClosePlan, idleSleepPlan, idleCloseAt, sameDeadline, unread, readStamp, reclaimedMb, pressureSleepMs, DEFAULT_RECLAIM, IDLE_CLOSE_MINUTES, IDLE_SLEEP_MINUTES } = createRequire(import.meta.url)(outfile)
+const { reclaimPlan, idleClosePlan, idleSleepPlan, idleCloseAt, sameDeadline, unread, readStamp, reclaimedMb, pressureSleepMs, sleepPressureOf, DEFAULT_RECLAIM, IDLE_CLOSE_MINUTES, IDLE_SLEEP_MINUTES } = createRequire(import.meta.url)(outfile)
 
 let checks = 0
 function check(what, ok, detail) {
@@ -283,6 +283,13 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
     eq('a pane holding a question is never paused', idleSleepPlan([pane({ id: 'a', asking: true, lastKeyboard: NOW - HOUR })], cfg, NOW, true, 'over').length, 0)
     eq('sleep switched off stays off under pressure', idleSleepPlan(quiet2m(), { ...cfg, idleSleepMinutes: 0 }, NOW, true, 'over').length, 0)
     eq('a setting shorter than the pressure wait wins', pressureSleepMs(0.25, 'tight'), 15_000)
+    // 2026-09-10: load 2.9/core with 34% memory free slept every finished pane at 30s and
+    // woke each at 7-9s. Lag is not a shortage a sleep can fix.
+    eq('a lag verdict does not shorten the clock', sleepPressureOf('over', 'lag'), 'ok')
+    eq('nor does a pane-budget one', sleepPressureOf('tight', 'budget'), 'ok')
+    eq('memory tight shortens it to a minute', sleepPressureOf('tight', 'memory'), 'tight')
+    eq('memory over shortens it to half a minute', sleepPressureOf('over', 'memory'), 'over')
+    eq('no verdict at all is the ordinary clock', sleepPressureOf(undefined, undefined), 'ok')
     // ONE per-pane control. "Keep this pane open" is the app's only "leave this alone",
     // and it now means the sleep clock too - the card's menu has said `no idle clock
     // sleeps or closes it` all along (Robert 2026-09-08: "i dont want 2 buttons for keep

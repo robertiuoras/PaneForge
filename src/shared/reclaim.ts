@@ -199,6 +199,25 @@ export function pressureSleepMs(minutes: number, pressure: SleepPressure): numbe
   return m * 60_000
 }
 
+/**
+ * Which capacity verdicts may shorten the sleep clock at all.
+ *
+ * Sleeping a pane gives back its ~190 MB, and nothing else: the CLI it kills was idle,
+ * costing 1-2% of a core. So a verdict whose reason is LAG - the desk at load 2.9 per
+ * core with 34% of memory free, 2026-09-10 - must not put finished panes to sleep after
+ * 30s, because the sleep frees nothing the machine is short of, and every wake under
+ * that load spawned the CLI again at 7-9s to first byte (reclaim.log `wake-slow`); one
+ * pane went round sleep/wake five times in 25 minutes. Lag alone leaves the idle clock
+ * where the setting put it. `budget` is a count past `keepLocal`, not a shortage.
+ */
+export function sleepPressureOf(
+  level: 'ok' | 'tight' | 'over' | undefined,
+  why: 'ok' | 'memory' | 'lag' | 'budget' | undefined
+): SleepPressure {
+  if (why !== 'memory') return 'ok'
+  return level === 'over' ? 'over' : level === 'tight' ? 'tight' : 'ok'
+}
+
 export const DEFAULT_RECLAIM: ReclaimConfig = {
   enabled: true,
   minIdleMinutes: 15,

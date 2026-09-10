@@ -119,6 +119,7 @@ import {
   idleClosePlan,
   idleSleepPlan,
   pressureSleepMs,
+  sleepPressureOf,
   type SleepPressure,
   sameDeadline,
   idleCloseAt,
@@ -2854,8 +2855,9 @@ export default function App(): JSX.Element {
    * different questions at different lengths and one loop doing both would have to agree
    * with `idleCloseAt` about a deadline this rung does not publish.
    */
-  const pressure: SleepPressure =
-    capacity?.level === 'over' ? 'over' : capacity?.level === 'tight' ? 'tight' : 'ok'
+  // Only a MEMORY verdict shortens the clock: sleeping frees memory, not a core, and a
+  // wake under lag is the slow, load-adding thing. See `sleepPressureOf`.
+  const pressure: SleepPressure = sleepPressureOf(capacity?.level, capacity?.why)
   useEffect(() => {
     const cfg = config?.reclaim ?? DEFAULT_RECLAIM
     if (!cfg.enabled) return
