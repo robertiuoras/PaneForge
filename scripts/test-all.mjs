@@ -217,6 +217,7 @@ const TESTS = [
   ['mirrorfit', 'mirrorfit-test.mjs'],
   ['wirebatch', 'wire-batch-test.mjs'],
   ['handoff', 'handoff-test.mjs'],
+  ['handoffrepo', 'handoff-repo-test.mjs'],
   ['resumecheck', 'resumecheck-test.mjs'],
   ['route', 'project-route-test.mjs'],
   ['laneargs', 'lane-args-test.mjs'],
