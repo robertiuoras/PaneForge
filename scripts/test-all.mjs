@@ -118,6 +118,7 @@ const TESTS = [
   ['verifiedhandoff', 'verified-handoff-test.mjs'],
   ['continuation', 'continuation-test.mjs'],
   ['claim', 'transcript-claim-test.mjs'],
+  ['clearclaim', 'transcript-clear-test.mjs'],
   ['quitwords', 'quit-words-test.mjs'],
   ['reclaim', 'reclaim-test.mjs'],
   ['activity', 'activity-test.mjs'],

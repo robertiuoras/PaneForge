@@ -339,7 +339,13 @@ const interactives = new Set<string>()
  */
 export function heldElsewhere(file: string, cwd: string): boolean {
   const said = wroteIn(file)
-  if (!said || !cwd || said === cwd) return false
+  // Not `===`. Claude Code writes the folder the way the OS spells it (`C:\Users\...`)
+  // and this app holds a pane's cwd with forward slashes (`C:/Users/...`), so on Windows
+  // a pane's own conversation failed the same-folder exemption and was refused as a
+  // sibling lane's - the one thing this check exists to catch. Measured 2026-09-11: the
+  // assistant pane on the PC could not claim the chat its own `/clear` had just created,
+  // so it had no resume id to hand off or to reopen with.
+  if (!said || !cwd || sameCwd(said, cwd)) return false
   // Narrow on purpose: the refusal is for a SIBLING sharing this history folder, which
   // is the whole failure. A transcript stating a path this machine files somewhere else
   // is a pane handed here from another device - the receiver writes that file into its
@@ -400,6 +406,20 @@ function opening(file: string): Opening {
       settled = true
       break
     }
+    // The command's own records come BEFORE the hook attachment that reports it, so they
+    // are the opening and not the conversation. `/clear` and `/compact` also state in
+    // plain words what the file is, which is the same answer the marker gives.
+    //
+    // Measured 2026-09-11 on a real cleared transcript: the caveat record is line 3 and
+    // `SessionStart:clear` is line 6, so the scan below stopped three lines short and
+    // every `/clear` on this desk read as `unknown`. A settled pane may only follow a
+    // conversation that says `clear`, so those panes stopped following their own.
+    if (/<command-name>\/(clear|compact)\b/.test(line)) {
+      said = 'clear'
+      settled = true
+      break
+    }
+    if (line.includes('<local-command-caveat>') || line.includes('<command-name>')) continue
     // Past the opening records, everything is the conversation's own text - and a chat
     // that PRINTS a hook name (this file's tests do, and so does any chat about lanes)
     // must not read as one. Attachments are hook output, so they are still opening.
