@@ -55,6 +55,7 @@ import type { QueueDrop } from '../shared/queuedPrompts'
 import { logReclaim } from './activationLog'
 import { ledgerSleep, ledgerWake } from './laneLedger'
 import type { SleepReason } from '../shared/types'
+import { SLEEP_REASONS, SLEEP_SOURCES } from '../shared/types'
 
 /**
  * One request to clear a pane: what the Stop hook asks for, and what the watcher asks for.
@@ -1205,8 +1206,12 @@ export class SessionManager extends EventEmitter {
    * `status` goes to `exited` alongside `asleep` on purpose: every guard in this app that
    * asks whether a pane has a live process already reads that word.
    */
-  sleep(id: string, reason: SleepReason = 'unknown', evidence?: import('../shared/types').SleepEvidence): Session | null {
-    if (!['manual', 'idle', 'pressure', 'queued', 'unknown', 'continuation', 'tour'].includes(reason)) reason = 'unknown'
+  sleep(id: string, reason: SleepReason, evidence?: import('../shared/types').SleepEvidence): Session | null {
+    // No default. Every call site names why it is taking the pane, because the log is the
+    // only place that question is ever answered again, and a default is a call site that
+    // never had to think. The list is the shared one: a hand-written copy here is what
+    // rewrote `handoff` and `restored` to `unknown`.
+    if (!(SLEEP_REASONS as readonly string[]).includes(reason)) reason = 'unknown'
     const live = this.sessions.get(id)
     if (!live) {
       logReclaim({ action: 'sleep-refused', pane: id, reason, refusal: 'pane-missing' })
@@ -1225,14 +1230,19 @@ export class SessionManager extends EventEmitter {
     // data out of the log: never spread an IPC payload which could contain prompt text.
     const decision = {
       reason,
-      source: ['renderer-idle-sweep', 'tour', 'continuation', 'renderer', 'api', 'internal'].includes(evidence?.source ?? '') ? evidence!.source : 'internal',
+      source: (SLEEP_SOURCES as readonly string[]).includes(evidence?.source ?? '') ? evidence!.source : 'internal',
       pressure: ['ok', 'tight', 'over'].includes(evidence?.pressure ?? '') ? evidence!.pressure : undefined,
       idleMs: Number.isFinite(evidence?.idleMs) ? evidence!.idleMs : undefined,
       thresholdMs: Number.isFinite(evidence?.thresholdMs) ? evidence!.thresholdMs : undefined,
       status: live.meta.status, processPid: live.proc?.pid, agent: live.meta.agent,
       busy: reading.busy, asking: reading.asking, drafting: reading.drafting,
       job: Boolean(reading.job), backJob: Boolean(reading.backJob),
-      lastKeyboard: live.meta.lastKeyboard, lastOutput: live.meta.lastOutput
+      lastKeyboard: live.meta.lastKeyboard, lastOutput: live.meta.lastOutput,
+      // The two numbers "was it still running" is actually asked in. `lastOutput` alone
+      // is an epoch nobody subtracts by hand at 3am, and reading it wrong is how a sleep
+      // 8 minutes after the pane last printed got argued about as if it were mid-turn.
+      outputAgoMs: live.meta.lastOutput ? Date.now() - live.meta.lastOutput : undefined,
+      keyboardAgoMs: live.meta.lastKeyboard ? Date.now() - live.meta.lastKeyboard : undefined
     }
     if (!canSleep(reading)) {
       logReclaim({ action: 'sleep-refused', pane: id, ...decision, refusal: sleepRefusal({ ...reading, job: reading.job ? 'a job' : undefined, backJob: reading.backJob ? 'a job' : undefined }) })

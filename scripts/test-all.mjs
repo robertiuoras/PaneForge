@@ -121,6 +121,7 @@ const TESTS = [
   ['clearclaim', 'transcript-clear-test.mjs'],
   ['quitwords', 'quit-words-test.mjs'],
   ['reclaim', 'reclaim-test.mjs'],
+  ['sleepreason', 'sleep-reason-test.mjs'],
   ['activity', 'activity-test.mjs'],
   ['lanetimeline', 'lane-timeline-test.mjs'],
   ['askstamp', 'ask-stamp-test.mjs'],

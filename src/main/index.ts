@@ -1848,7 +1848,17 @@ ipcMain.handle('sessions:sleep', (_e, id: string, reason?: import('../shared/typ
     return manager.sleep(id, evidence.pressure === 'ok' ? 'idle' : 'pressure', evidence)
   }
   if (reason === 'tour') return manager.sleep(id, 'tour', { source: 'tour' })
-  return manager.sleep(id, reason === 'manual' ? 'manual' : 'unknown', { source: 'renderer' })
+  // A reason the renderer OWNS is recorded as sent. This line used to rewrite everything
+  // that was not exactly 'manual' to 'unknown', so an automatic idle or pressure sleep and
+  // a menu click left the same log row - which is why 2026-09-11's three sleeps at
+  // 13:10:47Z could not be told apart. The window still may not claim main's own words:
+  // 'continuation', 'handoff' and 'restored' describe something only main can have done,
+  // and a renderer saying one is not evidence of it (sleep-cause-test.mjs pins that).
+  const windowOwns = ['manual', 'idle', 'pressure', 'queued']
+  if (reason && windowOwns.includes(reason)) {
+    return manager.sleep(id, reason, { source: 'renderer' })
+  }
+  return manager.sleep(id, 'unknown', { source: 'renderer' })
 })
 ipcMain.handle('sessions:wake', async (_e, id: string) => {
   if (remote.owns(id)) return null
@@ -3533,6 +3543,18 @@ function doInstall(): void {
   // makes a set of panes impossible to be rid of by restarting. `update` is the one
   // reason that reopens without asking; every other restart asks.
   saveDeskOnExit(getConfig().restoreAfterUpdate ? manager.snapshot() : [], 'update')
+  // What the restart is about to interrupt, named before it is gone. An update takes the
+  // whole desk in one call, and afterwards there is no way to ask which panes were
+  // mid-answer: `restoreAsleep` brings most of them back asleep, and a turn that was cut
+  // in half looks exactly like one that finished. 2026-09-11: 17 panes went down at
+  // 13:13:28Z for v0.8.213 and the only record of what was lost was the person noticing.
+  const midTurn = manager.list().filter((s) => s.status === 'working' || s.status === 'starting')
+  updateLog(
+    'install',
+    `taking the desk: ${manager.list().length} pane(s), ${midTurn.length} mid-turn${
+      midTurn.length ? ' - ' + midTurn.map((s) => s.id).join(', ') : ''
+    }`
+  )
   // Flushes transcripts, ends their metadata in one pass and hard-kills every agent
   // tree in a single taskkill instead of one blocking ConPTY teardown per pane.
   manager.shutdown()

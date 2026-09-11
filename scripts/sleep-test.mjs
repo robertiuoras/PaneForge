@@ -147,7 +147,8 @@ ok(/noteSession\(id, fresh \? live\.meta\.cwd : resumeCwd, live\.meta\.agent/.te
 // Sleeping keeps its lane (lane-split 2026-09-04): the app marks the ledger asleep
 // before it kills the CLI, so the SessionEnd hook parks the hold instead of releasing it.
 
-ok(/sleep\(id: string, reason: SleepReason = 'unknown'/.test(sessions), 'an unlabelled caller is unknown, never a fictional manual click')
+ok(/sleep\(id: string, reason: SleepReason,/.test(sessions), 'sleep() has no default reason - every caller names why it took the pane')
+ok(!/reason === 'manual' \? 'manual' : 'unknown'/.test(sessions), 'nothing dresses an unlabelled caller up as a click')
 ok(/ledgerSleep\(live\.meta\.cwd, id\)/.test(sessions), 'sleep marks the ledger before the CLI dies')
 ok(/ledgerWake\(live\.meta\.cwd, id\)/.test(sessions), 'wake clears the ledger mark once the CLI is running again')
 ok(/backJob: live\.meta\.backJob/.test(sessions), 'manual sleep keeps an agent background job alive')
@@ -164,6 +165,16 @@ ok(sleepBody.indexOf("live.meta.agent !== 'shell' && !resumable") < sleepBody.in
 
 // Exercise the real manager method across repeated idle sweeps. A failed identity
 // check must keep the process alive without filling its terminal with warnings.
+/** The reason and source lists sleep() checks against, read off shared/types.ts. */
+function listsFromTypes() {
+  const types = readFileSync(join(root, 'src/shared/types.ts'), 'utf8')
+  const pick = (name) => [
+    ...(types.match(new RegExp(`export const ${name} = \\[([\\s\\S]*?)\\] as const`))?.[1] ?? '')
+      .matchAll(/'([a-z-]+)'/g)
+  ].map((m) => m[1])
+  return { SLEEP_REASONS: pick('SLEEP_REASONS'), SLEEP_SOURCES: pick('SLEEP_SOURCES') }
+}
+
 const events = []
 let verified = false
 let kills = 0
@@ -173,7 +184,11 @@ const deps = {
   canSleep, sleepRefusal, resumeIdFor: () => 'exact-conversation',
   resumableTranscript: () => verified ? '/fixture/rollout.jsonl' : null,
   ledgerSleep: () => ledgerChanges++, killPaneStrays() {}, stopPipe() {},
-  recordEnd() {}, logReclaim: row => reclaimEvents.push(row), basename: () => 'fixture', SLEEP_MARK: 'asleep'
+  recordEnd() {}, logReclaim: row => reclaimEvents.push(row), basename: () => 'fixture', SLEEP_MARK: 'asleep',
+  // sleep() reads the one shared list of reasons rather than a hand-written copy (the two
+  // copies that existed disagreed, and rewrote 'handoff' and 'restored' to 'unknown').
+  // The fixture runs the method body outside its module, so it has to supply them.
+  ...listsFromTypes()
 }
 const method = transformSync(`class Fixture { ${sleepBody} }`, { loader: 'ts' }).code
 const Fixture = new Function(...Object.keys(deps), `${method}; return Fixture`)(...Object.values(deps))

@@ -131,6 +131,7 @@
     "test:paneerror": "node scripts/pane-error-test.mjs",
     "test:sleep": "node scripts/sleep-test.mjs",
     "test:reclaim": "node scripts/reclaim-test.mjs",
+    "test:sleepreason": "node scripts/sleep-reason-test.mjs",
     "test:activity": "node scripts/activity-test.mjs",
     "test:lanetimeline": "node scripts/lane-timeline-test.mjs",
     "test:askstamp": "node scripts/ask-stamp-test.mjs",

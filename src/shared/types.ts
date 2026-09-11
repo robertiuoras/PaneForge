@@ -566,21 +566,44 @@ export interface Session {
  * run. It reads as the plain `asleep 3m` chip like `manual` and `idle` do - the reader
  * does not need the word - and `shared/reclaim.ts` is what it exists for.
  */
-export type SleepReason =
-  | 'manual'
-  | 'idle'
-  | 'pressure'
-  | 'queued'
-  | 'restored'
-  | 'unknown'
-  | 'continuation'
-  | 'tour'
+export const SLEEP_REASONS = [
+  'manual',
+  'idle',
+  'pressure',
+  'queued',
+  'restored',
+  'unknown',
+  'continuation',
+  'tour',
   /** its conversation was handed to another machine and runs there now */
-  | 'handoff'
+  'handoff'
+] as const
+/**
+ * ONE list, because there were two and they disagreed.
+ *
+ * `sessions.ts` and the `sessions:sleep` handler each carried their own hand-written
+ * copy of the valid reasons, and anything off the copy was rewritten to `unknown`.
+ * Neither copy listed `restored` or `handoff`, and the handler additionally rewrote
+ * every reason that was not `manual`. So on 2026-09-11 three panes slept at 13:10:47Z
+ * wearing `reason:"unknown" source:"renderer"`, and nothing in the log could tell an
+ * automatic sleep from a hand on the keyboard - which is the whole of "something slept my
+ * session while it was still running" being unanswerable. A reason is checked against THIS
+ * list, in both places, so a new one added here works everywhere.
+ */
+export type SleepReason = (typeof SLEEP_REASONS)[number]
 
 /** Decision evidence, without terminal text, prompts or filesystem paths. */
+export const SLEEP_SOURCES = [
+  'renderer-idle-sweep',
+  'tour',
+  'continuation',
+  'renderer',
+  'api',
+  'internal',
+  'handoff'
+] as const
 export interface SleepEvidence {
-  source: 'renderer-idle-sweep' | 'tour' | 'continuation' | 'renderer' | 'api' | 'internal' | 'handoff'
+  source: (typeof SLEEP_SOURCES)[number]
   pressure?: 'ok' | 'tight' | 'over'
   idleMs?: number
   thresholdMs?: number
