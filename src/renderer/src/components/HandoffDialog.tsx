@@ -138,6 +138,13 @@ export default function HandoffDialog({ target, peers, flash, onPair, onClose }:
           </button>
         </div>
 
+        {/* Everything between the head and the buttons scrolls as ONE body. It used to
+            be four siblings of the dialog with the machine list capped at 46vh and the
+            dialog itself scrolling too: two nested scrollers, so on a short window the
+            box scrolled its own head off the top AND the list clipped a machine row in
+            half against the button row (2026-09-11). One scroller, head and answers
+            pinned, so however many machines are paired the last one can be reached. */}
+        <div className="ho-body">
         <p className="ho-lead">
           A running process cannot travel. {hasConversation ? 'Claude and Codex open their saved conversation on the other machine. The original stays here so you can check the resumed conversation before closing it. Both computers need a PaneForge version that supports this transfer.' : hasShell ? 'A shell starts fresh in the transferred folder on the other machine, then closes here after it starts.' : 'Supported conversations can open on the other machine while the originals stay here.'} Uncommitted code is pushed as an <code> auto-sync</code> commit, and the screen and eligible dev-server names travel over the link.
         </p>
@@ -232,6 +239,7 @@ export default function HandoffDialog({ target, peers, flash, onPair, onClose }:
               </button>
             </div>
           ))}
+        </div>
         </div>
 
         <div className="dialog-foot ho-foot">

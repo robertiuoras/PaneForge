@@ -65,28 +65,70 @@ const offline = (name, why) => `
     <button class="ghost small">Connect</button>
   </div>`
 
-const NOTE = `<p class="ho-note">This pane is mid-turn. Nothing is interrupted: it is queued and moves the moment the turn ends, with the answer intact.</p>`
+// The real mid-turn note, which is what the dialog shows with a `busy` pane: three lines
+// of it, above the list, and it is half the reason the box ran out of room.
+const NOTE = `<p class="ho-note">This pane is mid-turn. <strong>Move now</strong> stops the turn (the same Escape you would press) and asks it to carry on over there. <strong>After this turn</strong> interrupts nothing: its conversation opens there once the turn ends.</p>`
 
-function page({ note, devices, title }) {
+// A held pane draws FOUR answers, and the primary carries the machine's own name.
+const HELD_FOOT = `
+      <button class="ghost">Devices…</button>
+      <span class="ho-spacer"></span>
+      <button class="ghost">Cancel</button>
+      <button class="ghost">Move now</button>
+      <button class="primary">Move to DESKTOP-CMSUCM1 after this turn</button>`
+
+const PLAIN_FOOT = `
+      <button class="ghost">Devices…</button>
+      <span class="ho-spacer"></span>
+      <button class="ghost">Cancel</button>
+      <button class="primary">Move to DESKTOP-CMSUCM1</button>`
+
+function page({ note, devices, title, held }) {
   return `<!doctype html><meta charset="utf-8"><style>
   html,body{margin:0;background:#111;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:13px}
   ${css}
   </style>
   <div class="overlay"><div class="dialog handoff-dialog">
     <div class="dialog-head"><strong>Hand off ${title}</strong><button class="x">×</button></div>
+    <div class="ho-body">
     <p class="ho-lead">The work moves to another machine and keeps going there. The pty cannot travel, so everything that outlives it does: uncommitted code is pushed as an <code>auto-sync</code> commit, the conversation and the screen go over the link, and any dev server this pane had running is started again over there. The pane closes here and comes straight back as a mirror, so you keep watching it.</p>
     ${note ? NOTE : ''}
     <div class="ho-list">${devices}</div>
-    <div class="dialog-foot ho-foot">
-      <button class="ghost">Pair a device</button>
-      <span class="ho-spacer"></span>
-      <button class="ghost">Cancel</button>
-      <button class="primary">Queue for DESKTOP-CMSUCM1</button>
+    </div>
+    <div class="dialog-foot ho-foot">${held ? HELD_FOOT : PLAIN_FOOT}
     </div>
   </div></div>`
 }
 
 const CASES = [
+  {
+    // The shape Robert photographed on 2026-09-11: one machine, mid-turn, four answers,
+    // in a window short enough that the old box scrolled its own head away and cut the
+    // machine row in half against the buttons.
+    name: 'mid-turn, one machine, short window',
+    sizes: [[980, 560], [980, 460], [820, 520]],
+    held: true,
+    html: page({
+      title: 'PaneForge',
+      note: true,
+      held: true,
+      devices: dev('DESKTOP-CMSUCM1', '100.78.1.77', 0, true)
+    })
+  },
+  {
+    // The future Robert asked about: more machines than the window can show.
+    name: 'mid-turn, eight machines, short window',
+    sizes: [[980, 560], [980, 460]],
+    held: true,
+    html: page({
+      title: 'PaneForge',
+      note: true,
+      held: true,
+      devices: Array.from({ length: 8 }, (_, i) =>
+        dev(`DESKTOP-NUMBER-${i + 1}`, `100.78.1.${i + 10}`, i, i === 0)
+      ).join('')
+    })
+  },
   {
     name: 'one machine, idle pane',
     sizes: [[900, 700]],
@@ -240,6 +282,9 @@ try {
         const primary = document.querySelector('.ho-foot .primary')
         const cancel = [...document.querySelectorAll('.ho-foot .ghost')].pop()
         const list = document.querySelector('.ho-list')
+        const body = document.querySelector('.ho-body')
+        const head = document.querySelector('.dialog-head')
+        const rows = [...document.querySelectorAll('.ho-dev')]
         // The TEXT's own width, measured with a Range, not scrollWidth: these spans are
         // flex children that stretch to the row, so scrollWidth answers about the box and
         // reports every name as 1-2px over. A Range says how wide the glyphs really are,
@@ -256,22 +301,63 @@ try {
           // margin-left:auto on the primary beat the row's own justification.
           gap: box(primary).left - box(cancel).right,
           listScrolls: list.scrollHeight > list.clientHeight + 1,
+          bodyScrolls: body.scrollHeight > body.clientHeight + 1,
+          head: box(head),
+          body: box(body),
+          // The dialog SHELL must not scroll: if it does, its own head and its buttons
+          // ride away with the text - which is exactly what was photographed.
+          shellScrolls: dlg.scrollHeight > dlg.clientHeight + 1,
+          // A machine row is either wholly inside the scrolling body or wholly out of it.
+          // A row sliced by the body's own edge is the clipped row this file now refuses.
+          sliced: rows
+            .map((el) => box(el))
+            .filter((r) => r.top < box(body).bottom - 1 && r.bottom > box(body).bottom + 1).length,
+          rowsHidden: rows.filter((el) => { const r = box(el); return r.top >= box(body).bottom - 1 }).length,
+          rowH: rows.length ? box(rows[0]).h : 0,
           h: innerHeight, w: innerWidth
         }
       })()`)
 
       const at = `${c.name} @ ${width}x${height}`
       ok(m.dlg.bottom <= m.h + 1, `${at}: the box fits the window`, `bottom ${m.dlg.bottom.toFixed(0)} of ${m.h}`)
+      ok(m.dlg.top >= -1, `${at}: the box starts on screen`, `top ${m.dlg.top.toFixed(0)}`)
+      ok(!m.shellScrolls, `${at}: the box itself does not scroll`, 'head and answers stay put')
+      ok(m.head.top >= m.dlg.top - 1, `${at}: the title is on screen`)
+      // A row straddling the edge of a SCROLLING body is the ordinary "more below" cue.
+      // A row cut in half by a body that does not scroll is the photographed defect:
+      // there is no way to see the rest of it.
+      ok(
+        m.sliced === 0 || m.bodyScrolls,
+        `${at}: no machine row is cut off with no way to reach it`,
+        `${m.sliced} sliced, ${m.bodyScrolls ? 'scrolls' : 'DOES NOT SCROLL'}`
+      )
+      ok(
+        !m.rowsHidden || m.bodyScrolls,
+        `${at}: every machine can be reached`,
+        `${m.rowsHidden} below the fold, ${m.bodyScrolls ? 'scrolls' : 'DOES NOT SCROLL'}`
+      )
+      ok(m.foot.bottom <= m.h + 1, `${at}: the answers are on screen`, `bottom ${m.foot.bottom.toFixed(0)} of ${m.h}`)
       ok(m.primaryHit, `${at}: the hand-off button can be pressed`, `${m.primary.w.toFixed(0)}x${m.primary.h.toFixed(0)}`)
       ok(m.cancelHit, `${at}: Cancel can be pressed`)
       ok(m.primary.h >= 28, `${at}: the answers are big enough to hit`, `${m.primary.h.toFixed(1)}px tall`)
-      ok(m.gap >= 0 && m.gap <= 24, `${at}: the two answers sit together`, `${m.gap.toFixed(1)}px apart`)
+      // On a wrapped row the primary drops to its own line, so `gap` is the horizontal
+      // distance to a button ABOVE it and means nothing; the same-line case still holds.
+      const sameLine = Math.abs(m.primary.top - m.cancel.top) < 2
+      if (sameLine)
+        ok(m.gap >= 0 && m.gap <= 24, `${at}: the two answers sit together`, `${m.gap.toFixed(1)}px apart`)
+      // Every button on a line is the same height: "Move now" broke across two lines in a
+      // button half the height of the one beside it at 480px.
+      ok(
+        !sameLine || Math.abs(m.primary.h - m.cancel.h) < 1,
+        `${at}: the answers are the same height`,
+        `${m.primary.h.toFixed(0)} vs ${m.cancel.h.toFixed(0)}`
+      )
       // The failure this file exists for: a device NAME is what you are choosing between,
       // so it is the one string that may never be the thing that gets cut.
       for (const n of m.names)
         ok(n.want <= n.w + 1, `${at}: "${n.text}" is whole`, `${n.want.toFixed(1)}px of text in ${n.w.toFixed(1)}px`)
       console.log(
-        `      dialog ${m.dlg.h.toFixed(0)}px, list ${m.list.h.toFixed(0)}px${m.listScrolls ? ' (scrolls)' : ''}, foot at ${m.foot.top.toFixed(0)}`
+        `      dialog ${m.dlg.h.toFixed(0)}px, body ${m.body.h.toFixed(0)}px${m.bodyScrolls ? ' (scrolls)' : ''}, list ${m.list.h.toFixed(0)}px, foot at ${m.foot.top.toFixed(0)}`
       )
     }
   }

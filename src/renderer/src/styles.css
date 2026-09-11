@@ -2438,6 +2438,7 @@ body.sizing * { user-select: none !important; }
 .dialog > .keys,
 .dialog > .hist-list,
 .dialog > .dev-cols,
+.dialog > .ho-body,
 .dialog > .transcript {
   flex: 1 1 auto; min-height: 0; overflow-y: auto; padding-bottom: 8px;
 }
@@ -2455,6 +2456,7 @@ body.sizing * { user-select: none !important; }
 .dialog:has(> .diff-body),
 .dialog:has(> .vault-body),
 .dialog:has(> .dev-cols),
+.dialog:has(> .ho-body),
 .dialog:has(> .transcript) { overflow: hidden; }
 /* In the fallback case above the button row would scroll away with everything else;
    pinning it to the bottom of the scroll area keeps the actions on screen. The
@@ -4081,7 +4083,14 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
 
 /* ------------------------------------------------------------------------ hand off
    One question - which machine - so the box holds a picker and nothing else. */
-.dialog.handoff-dialog { width: 480px; }
+.dialog.handoff-dialog { width: 520px; }
+/* The ONE child that scrolls, so the head and the answers are always on screen no
+   matter how many machines are paired. Registered with the shells below too, which is
+   what stops the dialog scrolling as well and taking its own head with it. */
+.ho-body {
+  display: flex; flex-direction: column; gap: 12px;
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+}
 .ho-lead { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .ho-lead code { font-size: 11px; }
 .ho-note {
@@ -4091,7 +4100,9 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
   font-size: 12px; line-height: 1.45;
 }
 .ho-note.warn { color: var(--warn); }
-.ho-list { display: flex; flex-direction: column; gap: 4px; max-height: 46vh; overflow-y: auto; }
+/* No cap and no scroller of its own: `.ho-body` above is the one that scrolls. A second
+   one here is what cut a machine row in half above the buttons. */
+.ho-list { display: flex; flex-direction: column; gap: 4px; }
 .ho-dev {
   display: flex; align-items: center; gap: 10px;
   width: 100%; padding: 8px 10px;
@@ -4116,9 +4127,17 @@ button.git-badge.pressable.dirty:hover { color: var(--warn); }
 /* A row, against `.dialog > .dialog-foot`'s column. `.ho-spacer` does the separating
    rather than `margin-left: auto` on the primary: a margin there silently beats a
    parent's justification and is what left a 99px hole between two answers once. */
+/* Four answers can be on this row at once - Devices…, Cancel, Move now and a primary
+   whose label carries the machine's own name - so it WRAPS rather than squeezing them:
+   at 480px "Move now" was broken across two lines inside a button half the height of
+   the one beside it. Wrapping puts the long primary on its own line instead, and
+   `stretch` keeps every button on a line the same height. */
 .dialog > .ho-foot, .dialog > .si-foot {
-  flex-direction: row; align-items: center; gap: 8px;
+  flex-direction: row; align-items: stretch; gap: 8px;
+  flex-wrap: wrap; justify-content: flex-end;
 }
+.dialog > .ho-foot > .ghost { white-space: nowrap; }
+.dialog > .ho-foot > .primary { text-align: center; }
 .ho-spacer, .si-spacer { flex: 1 1 auto; }
 
 /* --------------------------------------------------------------------- session info */
