@@ -125,6 +125,7 @@ import { codexContextUsage, receivedContinuation } from './contextUsage'
 import { startContinuation } from './continuation'
 import { handoffCandidates } from '../shared/handoffSteps'
 import { receiveHandoff, sendHandoff, shareable } from './handoff'
+import { RESUME_CONFIRM_MS } from '../shared/resumeCheck'
 import { clearCommandFor, hasFreshPaneHandoff, readAsk as readAutoClearAsk, resumeBrief } from '../shared/autoclear'
 import { handoffFor, verifiedPaneHandoff } from './handoffSteps'
 import { briefForTask } from './backlogStore'
@@ -1143,7 +1144,10 @@ const remote = new Remote({
         historyDir: () => join(app.getPath('userData'), 'history'),
         noteTailCols: (id, cols) => history.noteCols(id, cols),
         claudeProjectDir: projectDir,
-        startDev: (dir, script) => startDevServer(dir, script)
+        startDev: (dir, script) => startDevServer(dir, script),
+        resumed: (id) => manager.confirmResume(id, RESUME_CONFIRM_MS),
+        kill: (id) => manager.kill(id),
+        log: logHandoff
       },
       payload,
       file
@@ -2876,6 +2880,7 @@ function runHandoff(device: string, request: HandoffRequest): Promise<HandoffIte
       sleep: (id) => {
         manager.sleep(id, 'handoff', { source: 'handoff' })
       },
+      moved: (id, device) => manager.setMovedTo(id, device),
       tailOf: (id, bytes) => history.tail(id, bytes),
       tailColsOf: (id) => history.colsOf(id),
       transcriptFileFor: (cwd, resumeId, agent) => agent === 'codex' ? codexTranscriptPath(cwd, resumeId) : transcriptPath(cwd, resumeId),

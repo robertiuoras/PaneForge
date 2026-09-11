@@ -275,6 +275,8 @@ export interface AutoPane {
    * to be genuinely out of memory for its half of the loop, and the move fixes that.
    */
   arrivedFrom?: string
+  /** its conversation already runs on this device - see `Session.movedTo`; never sent again */
+  movedTo?: string
   /** what this pane's folder is called as a project - the only portable name for it */
   projectName: string
   /**
@@ -368,7 +370,10 @@ export interface AutoHandoff {
  * offload.log and handoff.log while the machine sat at memory pressure 2 with 10 GB in
  * one pane (2026-09-08: "this should never happen as we have remote pc available").
  */
-export function travels(p: Pick<AutoPane, 'agent' | 'resumeId'>): boolean {
+export function travels(p: Pick<AutoPane, 'agent' | 'resumeId' | 'movedTo'>): boolean {
+  // Already running over there. Sending it again is refused on arrival every time, and was
+  // - see `Session.movedTo`.
+  if (p.movedTo) return false
   if (p.agent === 'shell') return true
   if (p.agent === 'claude' || p.agent === 'codex') return !!p.resumeId
   return false
@@ -538,6 +543,18 @@ function thresholdOf(value: unknown, fallback: number): number {
   return fallback
 }
 
+/**
+ * How long a pane must have been left alone before the budget rung may take it.
+ *
+ * The budget rung deliberately drops `minIdleMinutes` - it runs on a machine under measured
+ * pressure, and ten minutes is too long to wait for memory. It may not drop the idea
+ * entirely: on 2026-09-11 a pane a person had just pressed awake (bytes printed 24 s
+ * earlier) was armed for the PC, refused over there, and armed again on the next sweep.
+ * A pane somebody touched in the last two minutes is that person's attention, whatever
+ * it costs, and can be taken next sweep if they have left it.
+ */
+export const BUDGET_QUIET_MS = 2 * 60_000
+
 export function budgetPlan(
   panes: AutoPane[],
   peers: OffloadCandidate[],
@@ -553,6 +570,7 @@ export function budgetPlan(
     // dearest pane on the desk is exactly the one this list exists to hold back.
     .filter((p) => !staysHere(cfg, p.projectName))
     .filter((p) => !((blocked[p.id] ?? 0) > now))
+    .filter((p) => now - quietSince(p) >= BUDGET_QUIET_MS)
     // The cost gate. A desk five panes over its budget with nothing expensive on it moves
     // NOTHING and stays over - which is the honest answer, because there is nothing here
     // to give back. See `AutoHandoffConfig.budgetMinMb`.

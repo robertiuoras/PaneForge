@@ -236,6 +236,11 @@ export interface SendDeps {
    * reason an automatic move exists. Absent means the source is left running.
    */
   sleep?(id: string): void
+  /**
+   * Stamp `Session.movedTo` on a pane whose conversation was opened over there without the
+   * resume being confirmed - the one outcome that leaves two panes wearing one conversation.
+   */
+  moved?(id: string, device: string): void
   /** the pane's screen, from its history file - raw bytes, ANSI intact */
   tailOf(id: string, bytes: number): string
   /**
@@ -349,6 +354,15 @@ async function sendOne(deps: SendDeps, device: string, pane: Session, closeRecei
   if (!spec) return { id: pane.id, title: pane.title, ok: false, error: 'Pane has already closed', notes: [] }
   const notes: string[] = []
   const where = deps.deviceName(device)
+  // Its conversation is already running on another machine from an earlier move whose
+  // resume was never confirmed. The far end refuses it on arrival ("A different
+  // conversation file already exists"), and did, every sweep - see `Session.movedTo`.
+  if (pane.movedTo) {
+    const there = deps.deviceName(pane.movedTo)
+    const error = `Its conversation is already running on ${there} - press this pane to carry on here instead, or close it`
+    deps.log?.(`${pane.id} -> ${where}: refused before repo push - ${error}`)
+    return { id: pane.id, title: pane.title, ok: false, error, notes }
+  }
   const t0 = Date.now()
 
   // This comes before git add/commit/push. A handoff that cannot carry the
@@ -438,20 +452,25 @@ async function sendOne(deps: SendDeps, device: string, pane: Session, closeRecei
     deps.log?.(`${pane.id} -> ${where}: refused over there after ${Date.now() - t1} ms - ${result.error || 'no reason given'}`)
     return { id: pane.id, title: pane.title, ok: false, error: result.error || 'Refused over there', notes }
   }
-  if (handoffSpec.agent !== 'shell') {
-    // The conversation now runs over there. This pane is not killed - the remote resume
-    // is started, not confirmed - but its agent is stopped, so the ~190 MB+ it held comes
-    // back; the card, screen and conversation stay, and a press wakes it here.
+  if (handoffSpec.agent !== 'shell' && result.resumed !== true) {
+    // The conversation was started over there but the receiver could not PROVE it came up
+    // (an older build, or a machine slower than `RESUME_CONFIRM_MS`). This pane is not
+    // killed - its agent is stopped, so the ~190 MB+ it held comes back; the card, screen
+    // and conversation stay, and a press wakes it here. It is stamped as moved so no rung
+    // sends it again.
     const slept = !!deps.sleep
     deps.sleep?.(pane.id)
+    deps.moved?.(pane.id, device)
     const kept = slept
       ? `Remote conversation opened on ${where}. This original pane stays open but asleep - its agent was stopped here to give the memory back, and a press wakes it in the same conversation.`
       : 'Remote conversation opened, but this original pane stays open because PaneForge cannot yet confirm the remote agent accepted the resume.'
     deps.log?.(`${pane.id} -> ${where}: remote process started after ${Date.now() - t1} ms; original ${slept ? 'put to sleep' : 'kept running'} - resume acceptance is not confirmed`)
     return { id: pane.id, title: pane.title, ok: true, sourceKept: true, notes: [...notes, ...result.notes, kept] }
   }
-  deps.log?.(`${pane.id} -> ${where}: running there after ${Date.now() - t1} ms (${Date.now() - t0} ms in all)`)
-  // The far end's pane is running; this one is now a second window onto old state.
+  deps.log?.(`${pane.id} -> ${where}: running there after ${Date.now() - t1} ms (${Date.now() - t0} ms in all)${result.resumed ? ' - resume confirmed' : ''}`)
+  // The far end's pane is running - for an agent, PROVEN running at an idle composer - so
+  // this one is now a second window onto old state. Closed, not slept: an asleep copy of a
+  // conversation that lives elsewhere is the duplicate row this used to leave behind.
   deps.kill(pane.id)
   return { id: pane.id, title: pane.title, ok: true, notes: [...notes, ...result.notes] }
 }
@@ -525,6 +544,16 @@ export interface ReceiveDeps {
   root(): string
   /** the same lane split a local launch goes through, deciding the final cwd */
   place(req: StartSessionRequest): Promise<StartSessionRequest>
+  /**
+   * Watch the started pane until `shared/resumeCheck.ts` can say whether the conversation
+   * came up: `ok` at an idle composer, `failed` when the process quit or printed a failed
+   * resume, `unknown` past `RESUME_CONFIRM_MS`. Absent = `unknown`, the old behaviour.
+   */
+  resumed?(id: string): Promise<'ok' | 'failed' | 'unknown'>
+  /** close a started pane whose resume failed - nothing is running in it worth keeping */
+  kill?(id: string): void
+  /** one line per stage with its ms, into handoff.log - the numbers a slow move is judged by */
+  log?(line: string): void
   start(req: StartSessionRequest): Session | Promise<Session>
   /** where this machine keeps pane history logs */
   historyDir(): string
@@ -578,9 +607,12 @@ export async function receiveHandoff(
   if (!mapped) {
     return { ok: false, error: `No matching folder here for ${spec.cwd}`, notes }
   }
+  const from = payload.senderDevice ? `<- ${payload.senderDevice}` : '<-'
+  const t0 = Date.now()
   if (payload.repo) {
     const err = await ensureRepo(payload.repo, payload.senderRoot, deps.root())
     if (err) return { ok: false, error: err, notes }
+    deps.log?.(`${from}: repo ready in ${Date.now() - t0} ms (${spec.title})`)
   }
   if (!existsSync(mapped)) {
     if (payload.repo) return { ok: false, error: `Pulled the repo but ${mapped} does not exist in it`, notes }
@@ -634,7 +666,25 @@ export async function receiveHandoff(
     req.scrollbackId = sid
   }
 
+  const t1 = Date.now()
   const session = await deps.start(req)
+  deps.log?.(`${from}: pane started in ${Date.now() - t1} ms (${session.id})`)
+
+  // The proof the sender waits on. Only a conversation that RESUMED can be confirmed;
+  // a fresh start in the right folder is already what the notes say it is.
+  let resumed: boolean | undefined
+  if (req.resume && req.resumeId && deps.resumed) {
+    const t2 = Date.now()
+    const verdict = await deps.resumed(session.id)
+    deps.log?.(`${from}: resume ${verdict} after ${Date.now() - t2} ms (${session.id})`)
+    if (verdict === 'failed') {
+      // Nothing worth keeping is running here: the CLI quit, or printed that it found no
+      // such conversation. Close it and refuse, so the sender keeps its own pane awake.
+      deps.kill?.(session.id)
+      return { ok: false, error: 'The conversation did not resume over there, so the original stays here', notes }
+    }
+    resumed = verdict === 'ok'
+  }
 
   // After the agent's pane, and only after: a dev server is what the pane was working ON,
   // and a failure to start one may not cost the handoff the pane it just completed.
@@ -650,7 +700,8 @@ export async function receiveHandoff(
       notes.push(`Could not restart ${d.script}: ${(err as Error).message}`)
     }
   }
-  return { ok: true, session, notes }
+  deps.log?.(`${from}: handed over in ${Date.now() - t0} ms`)
+  return resumed === undefined ? { ok: true, session, notes } : { ok: true, session, notes, resumed }
 }
 
 /**

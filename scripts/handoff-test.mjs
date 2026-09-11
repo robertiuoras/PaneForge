@@ -250,6 +250,57 @@ ok('the successful agent transfer records that its source stayed open', items[0]
 ok('the successful copy says why the original remains', /original pane stays open/.test(items[0]?.notes.join(' ') ?? ''))
 ok('a focused handoff leaves every other pane here', !killed.includes('s2'))
 
+// ---------------------------------------------------------------- the resume is proven, or it is not
+// The receiver watches the started pane (`shared/resumeCheck.ts`) and answers `resumed`.
+// Proven: the sender CLOSES its copy, the way a shell pane's already is - no second row
+// wearing the same conversation. Failed: refused, the receiver's dead pane closed, the
+// sender's pane kept awake. Unknown (an older receiver, a slow machine): the old
+// sleep-and-keep, now stamped `movedTo` so nothing sends it again.
+{
+  // The checks further down read what the FIRST transfer recorded; these extra transfers
+  // must not be counted against them.
+  const savedCols = notedCols.splice(0)
+  const savedStarted = started.splice(0)
+  const receiverKilled = []
+  const moved = []
+  const sender2 = { ...sender, moved: (id, device) => moved.push([id, device]) }
+  receiver.resumed = async () => 'ok'
+  const before = received.length
+  const proven = await sendHandoff(sender2, 'pc', { ids: ['s1'] })
+  ok('a confirmed resume moves the pane', proven[0]?.ok === true, proven[0]?.error)
+  ok('a confirmed resume closes the original here - it is running over there', killed.includes('s1'))
+  ok('a confirmed resume does not report the source as kept', proven[0]?.sourceKept !== true)
+  ok('a confirmed resume says nothing about an original staying open', !/original pane stays open/.test(proven[0]?.notes.join(' ') ?? ''))
+  ok('a confirmed resume is not stamped as moved-without-proof', moved.length === 0)
+  ok('the confirmation reached the sender in the result', received.length === before + 1)
+
+  receiver.resumed = async () => 'failed'
+  receiver.kill = (id) => receiverKilled.push(id)
+  killed.length = 0
+  const failed = await sendHandoff(sender2, 'pc', { ids: ['s1'] })
+  ok('a failed resume is refused', failed[0]?.ok === false)
+  ok('a failed resume says the conversation did not resume', /did not resume/.test(failed[0]?.error ?? ''), failed[0]?.error)
+  ok('a failed resume closes the dead pane over there', receiverKilled.length === 1)
+  ok('a failed resume keeps the original here, awake', killed.length === 0 && moved.length === 0)
+
+  receiver.resumed = async () => 'unknown'
+  const unknown = await sendHandoff(sender2, 'pc', { ids: ['s1'] })
+  ok('an unconfirmed resume still opens over there', unknown[0]?.ok === true, unknown[0]?.error)
+  ok('an unconfirmed resume keeps the original here', killed.length === 0 && unknown[0]?.sourceKept === true)
+  ok('an unconfirmed resume stamps the original as moved to that device', moved.length === 1 && moved[0][0] === 's1' && moved[0][1] === 'pc')
+  delete receiver.resumed
+  delete receiver.kill
+
+  // ...and a pane already stamped is never sent again: the far end would refuse it.
+  const stamped = { ...sender2, list: () => sender.list().map((s) => (s.id === 's1' ? { ...s, movedTo: 'pc' } : s)) }
+  const sent = received.length
+  const again = await sendHandoff(stamped, 'pc', { ids: ['s1'] })
+  ok('a conversation already running over there is refused before anything is sent', again[0]?.ok === false && received.length === sent)
+  ok('...and the refusal names where it runs and what to do', /already running on PC/.test(again[0]?.error ?? ''), again[0]?.error)
+  notedCols.splice(0, notedCols.length, ...savedCols)
+  started.splice(0, started.length, ...savedStarted)
+}
+
 const clone = join(receiverRoot, 'proj')
 ok('the repo was cloned under the receiving root', existsSync(join(clone, '.git')))
 // Line endings are the checkout's business, not the handoff's: git on Windows writes

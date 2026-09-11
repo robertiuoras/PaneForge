@@ -45,7 +45,9 @@ const {
   staysHere,
   suggestMove,
   budgetPlan,
-  endsOnArrival
+  endsOnArrival,
+  travels,
+  BUDGET_QUIET_MS
 } = createRequire(import.meta.url)(outfile)
 
 let checks = 0
@@ -413,11 +415,14 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
     eq('quiet and off-screen first, then on-screen, and never the one mid-turn', ids(autoHandoffPlan(panes, budget, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'quiet,seen')
   }
 
-  // ...and a pane that has only just been typed into is still eligible. The budget is not
-  // a statement about idleness, which is the whole difference from the two clocks.
+  // ...and a pane that has only just been typed into is somebody's attention: the budget
+  // drops the ten-minute idle wait, not the idea of one (`BUDGET_QUIET_MS`). Until
+  // 2026-09-11 five seconds counted, and a pane pressed awake 24 s earlier was sent.
   {
     const panes = [big({ id: 'fresh', lastKeyboard: NOW - 5_000 }), big({ id: 'me', focused: true })]
-    eq('a pane quiet for five seconds still counts', ids(autoHandoffPlan(panes, { ...over, over: 1 }, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'fresh')
+    eq('a pane typed into five seconds ago is left this sweep', ids(autoHandoffPlan(panes, { ...over, over: 1 }, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), '')
+    const later = [big({ id: 'fresh', lastKeyboard: NOW - 3 * MIN }), big({ id: 'me', focused: true })]
+    eq('...and counts three minutes later, well short of the idle clock', ids(autoHandoffPlan(later, { ...over, over: 1 }, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'fresh')
   }
 
   // Everything that could lose work is still refused, one at a time.
@@ -727,6 +732,31 @@ checks += 3
   assert.match(touch, /if \(wake && asleepPane\?\.asleep/, 'the wake is behind that flag')
   assert.equal((app.match(/touchPane\(s\.id, e\.button !== 2\)/g) ?? []).length, 2, 'the sidebar row and the pane itself both refuse to wake on a right-click')
   checks += 6
+}
+
+{
+  // A conversation already running on the other machine is never sent again. 2026-09-11:
+  // an unconfirmed move left the original asleep here, a press woke it, and the budget
+  // rung armed it again 24 s later - refused over there ("A different conversation file
+  // already exists") on every sweep after. `Session.movedTo` is the refusal.
+  const stamped = pane({ id: 'candidate', agent: 'claude', resumeId: 'conv-1', memMb: 300, movedTo: 'pc' })
+  const other = pane({ id: 'keep', agent: 'claude', resumeId: 'conv-2', memMb: 300 })
+  eq('a conversation already running elsewhere does not travel', travels(stamped), false)
+  eq('...and the budget rung skips it for the next pane', ids(budgetPlan([stamped, other], peers, { ...DEFAULT_AUTO_HANDOFF, budgetMinMb: 1 }, {}, NOW, 1)), 'keep')
+  eq('...and the pressure rung skips it', ids(autoHandoffPlan([stamped, other], over, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'keep')
+
+  // A pane somebody just touched is that person's attention: the budget rung drops the
+  // ten-minute idle wait, not the idea of one. Bytes printed 24 s ago (a wake) or a key
+  // pressed 30 s ago hold it for this sweep; two minutes of quiet let it go.
+  const woken = pane({ id: 'candidate', agent: 'claude', resumeId: 'conv-1', memMb: 300, lastOutput: NOW - 24_000 })
+  const typed = pane({ id: 'candidate', agent: 'claude', resumeId: 'conv-1', memMb: 300, lastKeyboard: NOW - 30_000 })
+  const left = pane({ id: 'candidate', agent: 'claude', resumeId: 'conv-1', memMb: 300, lastOutput: NOW - BUDGET_QUIET_MS })
+  eq('the budget rung leaves a pane that printed 24 s ago', ids(budgetPlan([woken, other], peers, { ...DEFAULT_AUTO_HANDOFF, budgetMinMb: 1 }, {}, NOW, 2)), 'keep')
+  eq('the budget rung leaves a pane typed into 30 s ago', ids(budgetPlan([typed, other], peers, { ...DEFAULT_AUTO_HANDOFF, budgetMinMb: 1 }, {}, NOW, 2)), 'keep')
+  // A third pane that stays, or 'never the last pane' would cap the move at one.
+  const me = pane({ id: 'me', agent: 'claude', resumeId: 'conv-3', memMb: 300, focused: true })
+  eq('...and takes it once it has been quiet for BUDGET_QUIET_MS', budgetPlan([left, other, me], peers, { ...DEFAULT_AUTO_HANDOFF, budgetMinMb: 1 }, {}, NOW, 2).map((p) => p.id).sort().join(','), 'candidate,keep')
+  eq('the hold is two minutes, not the ten-minute idle wait', BUDGET_QUIET_MS, 2 * MIN)
 }
 
 console.log(`autohandoff: ${checks} checks passed`)

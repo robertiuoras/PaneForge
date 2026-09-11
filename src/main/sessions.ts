@@ -118,6 +118,7 @@ import { allAgents, buildArgs, colourEnv, hasAgent, modelValue, resolveEnv } fro
 import { homedir } from 'node:os'
 import { allowsCwd, scrubForeignKeys } from '../shared/paneTrust'
 import { anchoredStart, readsBusy, composerHeld, type BusyReason } from '../shared/busy'
+import { resumeVerdict, RESUME_POLL_MS } from '../shared/resumeCheck'
 import { exitPlan, exitWords } from '../shared/exitClose'
 import { readsCloudWork, cloudHeld } from '../shared/cloudWork'
 import { outputIsWork } from '../shared/fleet'
@@ -2974,6 +2975,52 @@ export class SessionManager extends EventEmitter {
       this.emitSessions()
     }, 6000)
     t.unref?.()
+  }
+
+  /**
+   * Its conversation is now running on `device` and this copy stays, asleep - see
+   * `Session.movedTo`. Cleared by nothing but closing the pane: a wake forks the
+   * conversation rather than un-moving it.
+   */
+  setMovedTo(id: string, device: string): void {
+    const s = this.sessions.get(id)
+    if (!s || s.meta.movedTo === device) return
+    s.meta.movedTo = device
+    this.emit('changed', s.meta)
+  }
+
+  /**
+   * Did the conversation a handoff started here actually come up? Polls
+   * `shared/resumeCheck.ts` against the pane's own process and newest screen until it
+   * says `ok` or `failed`, or `budgetMs` runs out (`unknown`). The busy read is of the
+   * LAST THING PAINTED, for the reason written on `queuePrompt`.
+   */
+  async confirmResume(id: string, budgetMs: number): Promise<'ok' | 'failed' | 'unknown'> {
+    const deadline = Date.now() + budgetMs
+    let seen = 0
+    let painted = ''
+    while (Date.now() < deadline) {
+      const live = this.sessions.get(id)
+      if (!live) return 'failed'
+      const text = strip(live.buffer.read())
+      if (text.length < seen) seen = 0
+      if (text.length > seen) {
+        painted = text.slice(seen).slice(-PROMPT_TAIL_CHARS)
+        seen = text.length
+      }
+      const verdict = resumeVerdict(
+        {
+          alive: live.proc !== null && live.meta.status !== 'exited',
+          printed: live.meta.printed !== undefined,
+          quietMs: Date.now() - (live.meta.lastOutput ?? 0),
+          painted
+        },
+        PROMPT_QUIET_MS
+      )
+      if (verdict !== 'pending') return verdict
+      await new Promise((r) => setTimeout(r, RESUME_POLL_MS))
+    }
+    return 'unknown'
   }
 
   setHandingOff(id: string, on: boolean, queuedAt?: number | null): void {

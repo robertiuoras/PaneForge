@@ -217,6 +217,7 @@ const TESTS = [
   ['mirrorfit', 'mirrorfit-test.mjs'],
   ['wirebatch', 'wire-batch-test.mjs'],
   ['handoff', 'handoff-test.mjs'],
+  ['resumecheck', 'resumecheck-test.mjs'],
   ['route', 'project-route-test.mjs'],
   ['laneargs', 'lane-args-test.mjs'],
   // Cheap, and the pair covers the two halves that fail differently: the arithmetic of a

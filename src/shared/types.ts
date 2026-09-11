@@ -424,6 +424,15 @@ export interface Session {
    */
   arrivedFrom?: string
   /**
+   * The device this pane's CONVERSATION was opened on by a handoff whose resume was never
+   * confirmed - the original kept here asleep, the copy running over there. Set by
+   * `main/handoff.ts` on that one outcome, and read as a refusal by every rung that moves
+   * a pane (`travels`) and by the send itself: a conversation already running elsewhere is
+   * never sent again, because the far end will refuse it ("A different conversation file
+   * already exists") on every sweep for ever. See `shared/resumeCheck.ts`.
+   */
+  movedTo?: string
+  /**
    * This pane's agent runs on another machine and is mirrored here. The id is
    * namespaced with the device, so nothing else in the app has to care: keystrokes,
    * resizes and closes are routed back over the link by the main process.

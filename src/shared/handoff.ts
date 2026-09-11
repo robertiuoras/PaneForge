@@ -134,6 +134,13 @@ export interface HandoffResult {
   ok: boolean
   error?: string
   session?: Session
+  /**
+   * The receiver watched the started pane come up at an idle composer with its process
+   * still alive - `shared/resumeCheck.ts` said `ok` - so the conversation is proven to be
+   * running there and the sender may close its own copy. Absent from an older receiver,
+   * and false when the wait ran out: both keep the sender's pane, asleep.
+   */
+  resumed?: boolean
   /** things that carried only partly - said, never silently dropped */
   notes: string[]
 }

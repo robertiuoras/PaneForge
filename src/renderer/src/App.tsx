@@ -2628,6 +2628,7 @@ export default function App(): JSX.Element {
         busy: s.runSince !== undefined,
         // The device that handed it here, so the budget never hands it straight back.
         arrivedFrom: s.arrivedFrom,
+        movedTo: s.movedTo,
         // The person picked this machine for this pane. See `AutoPane.stayHere`.
         stayHere: s.stayHere,
         // What the far end would resume. An agent pane without one never travels.
@@ -4247,6 +4248,10 @@ export default function App(): JSX.Element {
             error: error instanceof Error ? error.message : String(error)
           }])
           const item = items[0]
+          // Opened over there without the resume being proven: the copy here stays, asleep,
+          // and is never armed again - the far end refuses a second send of a conversation
+          // it already holds. `Session.movedTo` carries the same refusal into main.
+          if (item?.ok && 'sourceKept' in item && item.sourceKept === true) handoffBlocked.current[move.id] = Number.POSITIVE_INFINITY
           if (item?.ok || item?.pending) {
             setActed({
               what: 'moved',
