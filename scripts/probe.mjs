@@ -1,6 +1,6 @@
 // Ask the running test copy a question about itself, and print the answer as JSON.
 //
-//   npm run try -- --keep --minimized --remote-debugging-port=9333
+//   npm run try -- --keep --minimized --remote-debugging-port=9444
 //   node scripts/probe.mjs "document.querySelectorAll('.mark').length"
 //   node scripts/probe.mjs --height 560 "getComputedStyle(document.querySelector('.dialog')).maxHeight"
 //   node scripts/probe.mjs --file checks/dialogs.js
@@ -29,7 +29,7 @@ function flag(name, fallback) {
   if (i < 0) return fallback
   return args.splice(i, 2)[1]
 }
-const port = flag('--port', process.env.PF_PORT ?? '9333')
+const port = flag('--port', process.env.PF_PORT ?? '9444')
 const height = Number(flag('--height', 0))
 const width = Number(flag('--width', 0))
 // A phone is not only a narrow window: half of what this app does differently on one is

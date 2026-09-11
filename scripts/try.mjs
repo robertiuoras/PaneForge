@@ -79,9 +79,45 @@ const passThrough = args.filter(
     !a.startsWith('--profile=')
 )
 // A headless copy is only reachable over CDP, so it needs a port even when nobody typed one -
-// PF_PORT (the same variable a lane's own launch already uses) or 9333, Chrome's usual one.
-if (headless && !passThrough.some((a) => a.startsWith('--remote-debugging-port=')))
-  passThrough.push(`--remote-debugging-port=${process.env.PF_PORT ?? '9333'}`)
+// PF_PORT (the same variable a lane's own launch already uses) or the first free one from
+// 9444. NEVER 9333: that is the Chrome Automation browser's port on this machine, and a
+// dev copy told to use it could not bind, so every probe at 127.0.0.1:9333 talked to that
+// Chrome instead - and each relaunch reset its window (2026-09-11, a peer session watching
+// `lsof -iTCP:9333` saw the Electron appear every couple of minutes). A port somebody
+// typed that another process already holds is refused, not silently shared.
+const typedPort = passThrough.find((a) => a.startsWith('--remote-debugging-port='))?.split('=')[1]
+const wantPort = typedPort ?? process.env.PF_PORT
+if (headless || wantPort) {
+  const port = await freePort(wantPort)
+  if (typeof port === 'string') {
+    console.error(port)
+    process.exit(2)
+  }
+  if (!typedPort) passThrough.push(`--remote-debugging-port=${port}`)
+}
+
+/**
+ * The port the copy will listen on, or the sentence saying why it cannot. A port nobody
+ * chose walks up from 9444 until one binds; a port somebody chose must bind as it is.
+ */
+async function freePort(want) {
+  const { createServer } = await import('node:net')
+  const canBind = (p) =>
+    new Promise((resolve) => {
+      const s = createServer()
+      s.once('error', () => resolve(false))
+      s.listen(p, '127.0.0.1', () => s.close(() => resolve(true)))
+    })
+  if (want !== undefined) {
+    const p = Number(want)
+    if (!Number.isInteger(p) || p <= 0) return `--remote-debugging-port must be a port number, got ${JSON.stringify(want)}`
+    if (p === 9333) return 'port 9333 is the Chrome Automation browser on this machine - pick another (PF_PORT=9444 is the default)'
+    if (!(await canBind(p))) return `port ${p} is already held by another process - a headless copy cannot share it (try PF_PORT=${p + 1})`
+    return p
+  }
+  for (let p = 9444; p < 9544; p++) if (await canBind(p)) return p
+  return 'no free port between 9444 and 9543 for the headless copy'
+}
 
 // A UI copy test must never replace the user's real clipboard, including non-text
 // formats. Make one owner-only fixture and hand it only to this detached test copy.

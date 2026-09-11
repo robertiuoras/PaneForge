@@ -30,7 +30,7 @@ const rootUrl = pathToFileURL(root).href.replace(/\/?$/, '/').toLowerCase()
 // Runs `npm run try` for this checkout and waits until its CDP port answers. Returns the
 // child so the caller can `close()` it; `--close` (test-app.mjs) also reaches it by
 // checkout, so a caller that forgets to close still gets swept by the next `npm run try`.
-export function launch({ headless = true, port = process.env.PF_PORT ?? '9333', keep } = {}) {
+export function launch({ headless = true, port = process.env.PF_PORT ?? '9444', keep } = {}) {
   const args = [
     headless ? '--headless' : '--show',
     `--remote-debugging-port=${port}`,
@@ -53,7 +53,7 @@ export function closeLaunched() {
 // Finds the debuggable page on this checkout's launch, waiting for it to appear. Never
 // the `shelf` page, and never another checkout's copy sharing the port by accident - the
 // renderer's own URL says which build loaded, so a mismatch is refused with the fix.
-export async function page(port = process.env.PF_PORT ?? '9333') {
+export async function page(port = process.env.PF_PORT ?? '9444') {
   let found
   for (let i = 0; i < 20; i++) {
     const list = await fetch(`http://127.0.0.1:${port}/json/list`)
@@ -173,7 +173,7 @@ export class Link {
   }
 }
 
-export async function connect(port = process.env.PF_PORT ?? '9333') {
+export async function connect(port = process.env.PF_PORT ?? '9444') {
   const p = await page(port)
   const ws = new WebSocket(p.webSocketDebuggerUrl)
   await new Promise((r) => ws.addEventListener('open', r, { once: true }))
@@ -257,7 +257,7 @@ async function main() {
     const i = rest.indexOf(`--${name}`)
     return i === -1 ? fallback : rest[i + 1]
   }
-  const port = arg('port', process.env.PF_PORT ?? '9333')
+  const port = arg('port', process.env.PF_PORT ?? '9444')
 
   if (cmd === 'shot') {
     const link = await connect(port)
@@ -300,7 +300,7 @@ async function main() {
     return
   }
 
-  console.log('usage: node scripts/ui-lab.mjs <shot|eval|panes> [--port 9333] ...')
+  console.log('usage: node scripts/ui-lab.mjs <shot|eval|panes> [--port 9444] ...')
   process.exit(1)
 }
 

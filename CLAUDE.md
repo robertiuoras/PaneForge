@@ -70,7 +70,7 @@ local scratch, cannot collide; trunk can, and a release can cut twice.
 
 `.lanes.json` says `"release": "merge"`: merges into master, pushes; no version cut, no publish.
 End of work: build, prove in a second copy (`npm run try -- --keep
---remote-debugging-port=9333`, then `npm run probe`), report numbers, stop. `npm run
+--remote-debugging-port=9444`, then `npm run probe`), report numbers, stop. `npm run
 typecheck`/`npm test` gate a commit.
 
 ```
@@ -1228,14 +1228,15 @@ suite (`view-test`, `contrast-test`, `ask-render-test`, `ask-click-test`, `rende
 
 ```
 npm run build                                             # skip w/ --keep or you measure the last build
-npm run try -- --headless --remote-debugging-port=9333
+npm run try -- --headless --remote-debugging-port=9444   # never 9333: that is the Chrome Automation browser
 node scripts/ui-lab.mjs eval "(() => { const r=document.querySelector('.dialog').getBoundingClientRect(); return { fits: r.bottom <= innerHeight } })()"
 node scripts/ui-lab.mjs shot --out /tmp/x.png --selector .dialog --width 1280 --height 560
 npm run try -- --close
 ```
 
-Same answer before/after = nothing rebuilt. Port per checkout: second lane uses `PF_PORT=9334` +
-launch flag. `ui-lab.mjs`'s `shot --width/--height` drives Chromium's device metrics override
+Same answer before/after = nothing rebuilt. Port per checkout: second lane uses `PF_PORT=9445` +
+launch flag; a headless copy with no port takes the first free one from 9444, and 9333
+(the Chrome Automation browser) is refused. `ui-lab.mjs`'s `shot --width/--height` drives Chromium's device metrics override
 (same as `--minimized`'s old `probe.mjs --height/--width`), restores after. `eval` runs with
 `awaitPromise`: an async arrow clicking a dialog then measuring works as one argument.
 `window.__pf[sessionId]` gives a pane's live `term`/`fit`. `npm run test:uilab` proves the
