@@ -2656,7 +2656,13 @@ export default function App(): JSX.Element {
         machineBound: usageRef.current?.panes[s.id]?.bound,
         // Whether the code could get there. `undefined` until the first answer for that
         // folder lands, and undefined does not refuse - see `AutoPane.shareable`.
-        shareable: shareableRef.current[s.cwd]
+        shareable: shareableRef.current[s.cwd],
+        // What the pane was asked to do - History's own `gist` (`shared/gist.ts`), pushed
+        // onto the live session already (`Session.gist`, read by `mascot.ts` the same
+        // way). Checked against `pinnedByPrompt` before any automatic move. See
+        // `AutoPane.ask`.
+        ask: s.gist,
+        cwd: s.cwd
       })),
     []
   )

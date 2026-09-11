@@ -185,8 +185,18 @@ const LOCAL_SERVER =
   /\b(?:localhost|127\.0\.0\.1|0\.0\.0\.0|dev[- ]server|npm run (?:dev|start|serve)|(?:on |at )?port \d{2,5}|:\d{4,5}\b)/i
 /** This screen: a browser or a picture of something drawn on it. */
 const LOCAL_SCREEN = /\b(?:screenshot|screen ?shot|browser|chrome|safari|cdp|devtools|on (?:the )?screen)\b/i
-/** The person naming this machine. */
-const LOCAL_WORD = /\b(?:on (?:my|this) (?:mac|macbook|machine|laptop|computer)|locally|local(?:ly)? only|here)\b/i
+/**
+ * The person naming this machine, or a piece of Mac housekeeping that only exists on it.
+ *
+ * Widened 2026-09-11: pane s33-mtwdutha ("close onedrive remove from mac not needed clean
+ * up") was moved to the Windows PC by `budgetPlan`, where OneDrive-on-the-Mac cannot be
+ * touched, because the old list only caught "on my/this mac" - not "remove FROM mac", not
+ * a bare app-settings word. The housekeeping words are named ones, not app names in
+ * general: Finder, the Dock, the menu bar, launchd/launchctl, login items, System
+ * Settings, Homebrew, Keychain - all things that exist on THIS machine and nowhere else.
+ */
+const LOCAL_WORD =
+  /\b(?:(?:on|off|from) (?:my |this |the )?(?:mac|macbook|machine|laptop|computer)|my mac'?s|locally|local(?:ly)? only|here|uninstall|launchd|launchctl|login items?|system settings|finder|the dock|menu bar|homebrew|brew|keychain)\b/i
 
 /**
  * Why this brief is about things the other machine does not have, or undefined.

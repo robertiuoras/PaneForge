@@ -1144,6 +1144,8 @@ moves exactly that many.
 - `Keep it here` on an APP-decided move is offered ONCE: `handoffBlocked` at Infinity for
   the window's life, `move-declined` on the bell; the ten-minute hold is the close
   clock's. The Handoff button is the way to move it later.
+- The pane's own ASK is read too (`AutoPane.ask` through `offloadFirst.ts`'s `pinnedByPrompt`):
+  a pane told to do something that only exists here never moves, however quiet or costly.
 - Checked before picking: `AutoPane.machineBound` (`shared/paneBound.ts`), keyed on automation flags
   (`--remote-debugging-port`/`-pipe`, `--headless`) plus a non-MCP driver binary. `AutoPane.shareable` —
   git repo under projects root with origin remote (`main/handoff.ts`, cached 5 min); `false` refuses,
