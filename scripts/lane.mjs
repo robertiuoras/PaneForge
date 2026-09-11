@@ -615,6 +615,40 @@ function pushRefs(specs) {
 }
 
 /**
+ * Take down the remote copy of any lane branch the trunk on origin already contains.
+ *
+ * Nothing here ever pushes a lane branch on purpose: autosync does, because a lane
+ * worktree's current branch IS `lane-<id>` and autosync commits and pushes whatever the
+ * current branch is. That backup is wanted while the lane is being worked. What was
+ * missing is the other end - once the lane's commits are in the trunk the remote name is
+ * pure noise, and seven of them had piled up in `clients` by 2026-09-11, every one of
+ * them 0 commits ahead of main, making GitHub's branch list read as unmerged work.
+ *
+ * Deleting is safe only against the trunk AS ORIGIN HAS IT, and only for a tip this
+ * device can actually resolve: a branch another machine pushed and we have never fetched
+ * fails `merge-base` and is left alone rather than guessed at.
+ */
+function pruneRemoteLanes() {
+  if (!hasOrigin()) return []
+  const listed = gitSafe(MAIN, 'ls-remote', '--heads', 'origin', 'refs/heads/lane-*', 'refs/heads/pf/w*')
+  if (!listed.ok) return []
+  const trunk = gitSafe(MAIN, 'rev-parse', `refs/remotes/origin/${MB}`)
+  if (!trunk.ok || !/^[0-9a-f]{40}$/.test(trunk.out.trim())) return []
+  const merged = []
+  for (const line of listed.out.split('\n')) {
+    const [sha, ref] = line.trim().split(/\s+/)
+    if (!/^[0-9a-f]{40}$/.test(sha ?? '') || !ref?.startsWith('refs/heads/')) continue
+    if (!gitSafe(MAIN, 'merge-base', '--is-ancestor', sha, trunk.out.trim()).ok) continue
+    merged.push(ref)
+  }
+  if (!merged.length) return []
+  // One round trip for all of them, and a failure is silent: a remote that refused the
+  // delete is a tidier that did not run, never a release that did not happen.
+  if (!pushRefs(merged.map((ref) => `:${ref}`))) return []
+  return merged.map((ref) => ref.slice('refs/heads/'.length))
+}
+
+/**
  * Say that this device holds `slot`, and take our own older names for it down.
  *
  * Create-then-delete rather than force-update, because the time is in the name: an update
@@ -3096,7 +3130,12 @@ function ship(kind, session) {
       fresh.lastShip = { version, at: now(), lanes: shippedLanes }
       write(fresh)
 
-      return { shipped: true, version, merged, rebased, conflicts, blocked, skipped, unproved, built }
+      // The trunk is on origin by now, so every lane name up there that it contains is
+      // finished. Swept here rather than reported by `doctor`, which is where the pile
+      // used to be noticed, by hand, long after it stopped meaning anything.
+      const prunedRemotes = pruneRemoteLanes()
+
+      return { shipped: true, version, merged, rebased, conflicts, blocked, skipped, unproved, built, prunedRemotes }
     }
 
     // A repository that does not cut versions is finished at the merge. It still gets the
