@@ -45,7 +45,7 @@ import { copySuffixOf } from './place'
 export { keepLocalOf } from './capacity'
 import type { FleetState } from './fleet'
 import { quietSince } from './reclaim'
-import type { PreferRemote } from './offloadFirst'
+import { pinnedByPrompt, type PreferRemote } from './offloadFirst'
 
 export interface AutoHandoffConfig {
   /** Move finished panes to a paired device when this machine runs out of memory. */
@@ -346,6 +346,17 @@ export interface AutoPane {
    * there would switch the whole ladder off for a fact nobody was testing.
    */
   shareable?: boolean
+  /**
+   * What the pane was asked to do, when known - History's own `gist` (`shared/gist.ts`),
+   * the free-by-construction first line kept from the keystrokes actually typed at the
+   * agent. Checked against `pinnedByPrompt` before any automatic move: pane s33-mtwdutha
+   * was asked to "remove onedrive from mac" and was handed to the Windows PC anyway on
+   * 2026-09-11, because every rung here only ever asked what was DRIVING the screen
+   * (`machineBound`), never what the pane was TOLD to do.
+   */
+  ask?: string
+  /** the pane's own folder, so `pinnedByPrompt` can tell a path inside the project apart */
+  cwd?: string
 }
 
 export interface AutoHandoff {
@@ -381,7 +392,10 @@ export function travels(p: Pick<AutoPane, 'agent' | 'resumeId' | 'movedTo'>): bo
 
 /** States a pane may be moved out of. Everything else is a turn in flight. */
 export function movable(
-  p: Pick<AutoPane, 'state' | 'asking' | 'backJob' | 'machineBound' | 'shareable' | 'stayHere'>
+  p: Pick<
+    AutoPane,
+    'state' | 'asking' | 'backJob' | 'machineBound' | 'shareable' | 'stayHere' | 'ask' | 'cwd'
+  >
 ): boolean {
   if (p.asking) return false
   // Killing the pty takes the background work with it, and there is no turn boundary to
@@ -393,6 +407,9 @@ export function movable(
   if (p.shareable === false) return false
   // The person chose this machine for this pane. See `AutoPane.stayHere`.
   if (p.stayHere) return false
+  // The pane was ASKED to do something that only exists here - "remove onedrive from
+  // mac" moved to the Windows PC anyway on 2026-09-11 (s33-mtwdutha). See `AutoPane.ask`.
+  if (pinnedByPrompt(p.ask, p.cwd)) return false
   // `exited` is left to reclaim: there is no agent to move, only a row to close.
   return p.state === 'ready' || p.state === 'needsYou'
 }
@@ -418,13 +435,19 @@ export function movable(
  * not printed yet - `starting` has no transcript to resume from and no screen to carry.
  */
 export function queueable(
-  p: Pick<AutoPane, 'state' | 'asking' | 'backJob' | 'machineBound' | 'shareable' | 'stayHere'>
+  p: Pick<
+    AutoPane,
+    'state' | 'asking' | 'backJob' | 'machineBound' | 'shareable' | 'stayHere' | 'ask' | 'cwd'
+  >
 ): boolean {
   if (p.asking) return false
   if (p.backJob) return false
   if (p.machineBound) return false
   if (p.shareable === false) return false
   if (p.stayHere) return false
+  // Same refusal as `movable`, same incident (s33-mtwdutha, 2026-09-11): the queue would
+  // otherwise carry a Mac-only ask across the moment the turn ends.
+  if (pinnedByPrompt(p.ask, p.cwd)) return false
   return p.state === 'ready' || p.state === 'needsYou'
 }
 

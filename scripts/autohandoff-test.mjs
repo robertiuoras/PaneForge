@@ -681,6 +681,25 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
 }
 
 {
+  // s33-mtwdutha, 2026-09-11: a pane asked "close onedrive remove from mac not needed
+  // clean up" was handed to the Windows PC by budgetPlan, where OneDrive-on-the-Mac
+  // cannot be touched - no automatic rung read what the pane was ASKED to do, only what
+  // was driving the screen. See `AutoPane.ask`.
+  const macAsk = 'close onedrive remove from mac not needed clean up'
+  const pinned = pane({ id: 'pinned', ask: macAsk, memMb: 900 })
+  const ordinary = pane({ id: 'ordinary', ask: 'tidy the README', memMb: 900 })
+
+  check('movable refuses a pane asked to do something on this machine', !movable(pinned))
+  check('...and picks the one without it', movable(ordinary))
+  check('queueable refuses it too', !queueable(pinned))
+  check('...and picks the one without it', queueable(ordinary))
+
+  const askPanes = [pinned, ordinary]
+  eq('the pressure sweep never moves it', ids(autoHandoffPlan(askPanes, over, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'ordinary')
+  eq('the budget rung leaves the mac-bound ask out', ids(budgetPlan(askPanes, peers, { ...DEFAULT_AUTO_HANDOFF, budgetMinMb: 1 }, {}, NOW, 2)), 'ordinary')
+}
+
+{
   // A pane picked as "this machine" in the New session dialog. See `Session.stayHere`.
   const picked = pane({ id: 'picked', stayHere: true, memMb: 900 })
   const free = pane({ id: 'free', memMb: 900 })
