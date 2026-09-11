@@ -35,6 +35,7 @@ export function TextSheet({
   sessionId,
   title,
   cols,
+  text: given,
   onClose,
   onToast
 }: {
@@ -42,14 +43,24 @@ export function TextSheet({
   title: string
   /** the pty's width, so the replay is re-drawn at the width it was written for */
   cols: number
+  /**
+   * Text already in hand - one reply, cleaned - instead of the pane's transcript. The
+   * transcript is what a phone with no selection needs; a reply is what a person on the
+   * desk wants to READ without the hook rows and tool lines the CLI printed round it.
+   */
+  text?: string
   onClose(): void
   onToast?(message: string): void
 }): JSX.Element {
-  const [text, setText] = useState<string | null>(null)
+  const [text, setText] = useState<string | null>(given ?? null)
   const [error, setError] = useState('')
   const body = useRef<HTMLPreElement>(null)
 
   useEffect(() => {
+    if (given !== undefined) {
+      setText(given)
+      return
+    }
     let dead = false
     void (async () => {
       try {
@@ -65,13 +76,14 @@ export function TextSheet({
     return () => {
       dead = true
     }
-  }, [sessionId, cols])
+  }, [sessionId, cols, given])
 
   // Open at the newest line: this is a transcript, and the thing you came to read is what
-  // the agent said last.
+  // the agent said last. A single reply opens at its top - that is where reading starts.
   useEffect(() => {
+    if (given !== undefined) return
     if (text !== null && body.current) body.current.scrollTop = body.current.scrollHeight
-  }, [text])
+  }, [text, given])
 
   useEffect(() => {
     const key = (e: KeyboardEvent): void => {
@@ -109,8 +121,9 @@ export function TextSheet({
           {error ? `Could not read this pane: ${error}` : (text ?? 'Reading the transcript…')}
         </pre>
         <div className="text-sheet-foot">
-          Press and hold to select. Everything this pane printed, as far back as its
-          transcript goes.
+          {given !== undefined
+            ? 'The last thing the agent said, without the tool lines and hook messages around it.'
+            : 'Press and hold to select. Everything this pane printed, as far back as its transcript goes.'}
         </div>
       </div>
     </div>

@@ -82,6 +82,7 @@ import TerminalPane, {
   paneCopyMenu,
   paneCopyMode,
   paneCopyReply,
+  setReadSheetOpener,
   paneDraft,
   paneFind,
   paneFocus,
@@ -871,6 +872,11 @@ export default function App(): JSX.Element {
   }
   /** the pane whose output is being read as text (and therefore selected with a finger) */
   const [textPane, setTextPane] = useState<string | null>(null)
+  /** One reply as readable text, from a pane's copy menu `Read` row. */
+  const [readSheet, setReadSheet] = useState<{ id: string; text: string } | null>(null)
+  useEffect(() => {
+    setReadSheetOpener((id, text) => setReadSheet({ id, text }))
+  }, [])
   /**
    * On a phone (or any window under 720px) the list and the panes take turns rather than
    * sharing the width - see handheld.ts. Nothing else in here has to know: the classes go
@@ -6753,6 +6759,20 @@ export default function App(): JSX.Element {
             cols={s.cols || 80}
             onToast={flash}
             onClose={() => setTextPane(null)}
+          />
+        )
+      })()}
+      {(() => {
+        const s = readSheet ? sessions.find((x) => x.id === readSheet.id) : null
+        if (!s || !readSheet) return null
+        return (
+          <TextSheet
+            sessionId={s.id}
+            title={`${s.title} - last reply`}
+            cols={s.cols || 80}
+            text={readSheet.text}
+            onToast={flash}
+            onClose={() => setReadSheet(null)}
           />
         )
       })()}
