@@ -488,7 +488,7 @@ console.log(`cursor click: ${checks} checks passed`)
   const begin = source.indexOf('const moveAlongLine =')
   const end = source.indexOf('const forceSelectable =', begin)
   const code = transformSync(source.slice(begin, end), { loader: 'ts' }).code
-  function fixture(selection = '', ask = false) {
+  function fixture(selection = '', ask = false, picker = false) {
     const rows = [{ start: 2, end: 49, full: true }, { start: 2, end: 20, full: false }]
     const b = { type: 'normal', baseY: 0, viewportY: 0, cursorX: 20, cursorY: 1 }
     const writes = [], timers = []
@@ -504,7 +504,10 @@ console.log(`cursor click: ${checks} checks passed`)
       stopForAgent() {}, sendKeys: k => { revision.current++; writes.push(k) },
       rowText: r => texts[r], keyRevision: revision, typedAt: typed,
       dead: false, asleepRef: asleep, lastSelection: cached, copied: { current: selection },
-      setTimeout: f => timers.push(f), sameLine: () => false }
+      setTimeout: f => timers.push(f), sameLine: () => false,
+      // The pane keeps its own last-decision reading, and refuses while Codex is paging
+      // its completion list - both live outside the slice, so the fixture supplies them.
+      clickNote: () => {}, sessionId: 'fixture', pickerBelow: () => picker }
     const handler = new Function(...Object.keys(deps), code + ';return {callback:moveAlongLine,die(){dead=true}}')(...Object.values(deps))
     handler.callback({ clientX: 4, clientY: 0, preventDefault() {} })
     return { b, writes, timers, revision, typed, texts, asking, cached, asleep, die: handler.die, selection: () => selection }
@@ -519,5 +522,10 @@ console.log(`cursor click: ${checks} checks passed`)
   f.b.cursorX = 4
   assert.equal(f.writes.length, 1, 'the original batch reaches the target without a second jump')
   assert.equal(fixture('', true).writes.length, 0, 'a chooser still refuses cursor movement')
-  console.log('renderer click placement: selection, delayed remote echo and chooser refusal passed')
+  // Codex pages its own completion list with the left and right arrows, so while that list
+  // is up a click may send none: measured live 2026-09-11, fifteen of them left the caret
+  // at column 19 and steered the file picker instead.
+  assert.equal(fixture('', false, true).writes.length, 0, 'Codex paging its completion list refuses cursor movement')
+  assert.equal(fixture('', false, false).writes.length, 1, 'and an ordinary Codex draft still places the cursor')
+  console.log('renderer click placement: selection, delayed remote echo, chooser and picker refusals passed')
 }

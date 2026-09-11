@@ -140,21 +140,38 @@ export function inputStart(text: string): number {
     // The FIRST marker followed by a space, not the last: the prompt always precedes what
     // was typed, so a `$` inside the text cannot win - and under-selecting is the one
     // failure that would leave characters behind.
-    for (let i = 0; i + 1 < cap; i++) {
+    //
+    // The scan runs to the end of the ROW, not to `cap`, and the blank after the marker is
+    // walked past even when `cap` stops at the marker itself. An EMPTY composer is exactly
+    // that row - the marker and the single blank the CLI draws beside it, nothing else - so
+    // `inputEnd` trims the blank away, `cap` lands on 1, and the old bound (`i + 1 < cap`)
+    // could never look at the pair. `inputStart` answered 0, `composerAt` reads a 0 as "no
+    // marker, so this is not a composer", and a pane with an empty prompt box had no input
+    // at all: no select-all, no delete, and a click inside it decided nothing.
+    for (let i = 0; i + 1 < text.length; i++) {
       if (MARKERS.includes(text[i]) && BLANKS.includes(text[i + 1])) {
         let j = i + 1
-        while (j < cap && BLANKS.includes(text[j])) j++
+        const stop = Math.max(cap, i + 2)
+        while (j < stop && BLANKS.includes(text[j])) j++
         return j
       }
     }
     return 0
   }
+  // The same empty-box reading inside a frame: an empty row pulls `cap` back to the
+  // frame's own column, so the marker is looked for a little past it - but only the
+  // marker. A row that carries none answers exactly what it always did.
+  const look = Math.max(cap, frame + 3)
   let i = frame + 1
-  while (i < cap && BLANKS.includes(text[i])) i++
-  if (i < cap && MARKERS.includes(text[i])) {
+  while (i < look && BLANKS.includes(text[i])) i++
+  if (i < look && MARKERS.includes(text[i])) {
+    const after = Math.max(cap, i + 2)
     i++
-    while (i < cap && BLANKS.includes(text[i])) i++
+    while (i < after && BLANKS.includes(text[i])) i++
+    return i
   }
+  i = frame + 1
+  while (i < cap && BLANKS.includes(text[i])) i++
   return i
 }
 
@@ -181,6 +198,15 @@ export function inputEnd(text: string): number {
     end--
     while (end > 0 && BLANKS.includes(text[end - 1])) end--
   }
+  // A row that holds nothing but the prompt is an EMPTY input, and its start and its end
+  // are the same column - one past the blank the marker is drawn with. Without this the
+  // two readings cross on an empty box (`inputStart` 4, `inputEnd` 3), and a caller that
+  // trusts the pair measures a negative length.
+  //
+  // `end < text.length` is load-bearing: `'x'.includes('')` is TRUE, so a row whose last
+  // written character is a marker with NOTHING after it would otherwise be pushed one
+  // column past the row itself.
+  if (end > 0 && end < text.length && MARKERS.includes(text[end - 1]) && BLANKS.includes(text[end])) end++
   const frame = frameAt(text)
   return frame < 0 ? end : Math.max(end, frame + 1)
 }
@@ -301,4 +327,28 @@ function trimmed(text: string): string {
 /** A drawn rule, long enough that a line of prose cannot be mistaken for one. */
 function isRule(s: string): boolean {
   return s.length >= 8 && TOP_RULE.test(s)
+}
+
+/**
+ * Codex's completion list, drawn UNDER the draft while an `@` path or a `/` command is
+ * half typed - and the reason a click there does nothing.
+ *
+ * Measured live (Codex 0.153.4, 77 columns, `tell me about @sr` in the composer): the
+ * list is rows of matches and a footer reading `enter insert - esc close - left/right
+ * [All Results]`. Those two arrow glyphs are the whole finding: while the list is up,
+ * Codex reads LEFT and RIGHT itself, to page the results. So the arrows a click turns
+ * into never reach the text - the caret sat at column 19 through fifteen of them - and
+ * they are not harmless either, since each one steers somebody's file picker.
+ *
+ * Claude Code's own list is deliberately NOT matched: measured the same way, it takes
+ * up and down only and a click inside the draft still lands. So this asks for the
+ * footer Codex prints, not for "a list is on screen".
+ */
+export function pickerBelow(read: (row: number) => string, bottom: number, maxDown = 12): boolean {
+  for (let r = bottom + 1; r <= bottom + maxDown; r++) {
+    const s = read(r)
+    if (!s) continue
+    if (/(^|\s)esc\s+(close|cancel)(\s|$)/.test(s) && /[\u2190\u2192]/.test(s)) return true
+  }
+  return false
 }

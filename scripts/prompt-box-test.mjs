@@ -22,6 +22,7 @@ rmSync(work, { recursive: true, force: true })
 mkdirSync(work, { recursive: true })
 
 const outfile = join(work, 'box.bundle.cjs')
+const moveFile = join(work, 'move.bundle.cjs')
 buildSync({
   absWorkingDir: root,
   entryPoints: ['src/shared/promptBox.ts'],
@@ -30,7 +31,16 @@ buildSync({
   platform: 'node',
   outfile
 })
-const { boxedRow, composerAt, frameAt, sameBox, inputStart, inputEnd, leadingBlanks, promptTop } = createRequire(import.meta.url)(outfile)
+buildSync({
+  absWorkingDir: root,
+  entryPoints: ['src/shared/cursorMove.ts'],
+  bundle: true,
+  format: 'cjs',
+  platform: 'node',
+  outfile: moveFile
+})
+const { keysToPoint } = createRequire(import.meta.url)(moveFile)
+const { boxedRow, composerAt, frameAt, sameBox, inputStart, inputEnd, leadingBlanks, pickerBelow, promptTop } = createRequire(import.meta.url)(outfile)
 
 let checks = 0
 const check = (what, ok, detail) => {
@@ -238,5 +248,83 @@ for (const row of [CC_FIRST, CC_SECOND, ZSH, BASH, '│ >                  │']
     eq('a long visible Codex draft starts at its first row', span?.top, 1);
     eq('a long visible Codex draft includes its final row', span?.bottom, 30);
   }
+}
+// Captured live 2026-09-11 off this checkout, Claude Code 2.1.268 and Codex 0.153.4 in a
+// headless dev copy at 77 columns - the frames a person sees when they click around a
+// half-typed prompt. `scripts/ui-lab.mjs` drove the clicks that read the cursor back.
+{
+  const NB = ' '
+  const RULE = '─'.repeat(77)
+
+  // An EMPTY Claude Code composer: the marker, the blank drawn beside it, nothing else.
+  // `inputEnd` trims that blank away, so the marker scan used to stop before it could
+  // see the pair and `inputStart` answered 0 - which `composerAt` reads as "no marker,
+  // so no composer". A pane with an empty prompt box had no input at all.
+  eq('an empty Claude composer row still starts its text past the marker', inputStart('❯' + NB), 2)
+  eq('and with a plain space beside the marker too', inputStart('❯ '), 2)
+  eq('and its start and its end are the same column', inputEnd('❯' + NB), 2)
+  const empty = ['', '', RULE, '❯' + NB, RULE, '  bypass permissions on']
+  const emptyBox = composerAt((r) => empty[r] ?? '', 3)
+  check('an empty Claude composer is found', !!emptyBox)
+  eq('and it is the one row between the rules', emptyBox?.top, 3)
+  eq('and it ends there too', emptyBox?.bottom, 3)
+  eq('an empty framed box reads the same way', inputStart('│ ❯      │'), 4)
+  eq('a framed row with no marker is unchanged', inputStart('│        │'), 1)
+  // `'x'.includes('')` is true, so a marker at the very end of a row must not push the
+  // end past the row itself.
+  eq('a row ending on a marker with nothing after it stays inside the row', inputEnd('cost 50%'), 8)
+
+  const claude = [RULE,
+    '❯' + NB + 'hello world this is a test of clicking around the prompt box with enough',
+    '  text to wrap onto a second row nicely',
+    RULE]
+  const cl = composerAt((r) => claude[r] ?? '', 2)
+  eq('a typed Claude draft starts on its marker row', cl?.top, 1)
+  eq('and ends on its last written row', cl?.bottom, 2)
+  eq('the text starts past the marker', inputStart(claude[1]), 2)
+  eq('a continuation row is indented by two', leadingBlanks(claude[2]), 2)
+
+  const codex = ['• You have 1 usage limit reset available.', ' ', ' ',
+    '› hello world this is a test of clicking around the prompt box with enough',
+    '  text to wrap onto a second row nicely', ' ',
+    '  weekly 0% left · 0 in · 0 out · Context 100% left · gpt-6-astra high']
+  const cx = composerAt((r) => codex[r] ?? '', 4, { codexCols: 77 })
+  eq('a typed Codex draft starts on its own marker row', cx?.top, 3)
+  eq('and ends above the blank before the status row', cx?.bottom, 4)
+  eq('a Codex placeholder row still starts its text past the marker', inputStart('› Ask Codex to do anything'), 2)
+
+  // Codex's completion list, the one state where a click must send nothing.
+  const picking = [...codex.slice(0, 5), ' ',
+    '> lanes.md                  docs/rework/',
+    '  idle-cost.md              docs/rework/',
+    ' ',
+    '  enter insert · esc close · ←/→… [All Results]   Filesystem Only']
+  const pick = (r) => picking[r] ?? ''
+  check('Codex paging its own completion list is seen below the draft', pickerBelow(pick, 4))
+  check('and an ordinary draft has no list below it', !pickerBelow((r) => codex[r] ?? '', 4))
+  check('a list without those arrow glyphs is not it', !pickerBelow((r) => (r === 6 ? '  esc close' : ''), 4))
+}
+
+// The keys a click becomes, over the rows those same live frames drew.
+{
+  const ESC = String.fromCharCode(27)
+  const rows = [
+    { start: 2, end: 73, full: false },
+    { start: 2, end: 40, full: false }
+  ]
+  const left = (n) => (ESC + '[D').repeat(n)
+  const right = (n) => (ESC + '[C').repeat(n)
+  eq('clicking back along the first row is that many lefts',
+    keysToPoint(rows, { row: 0, col: 40 }, { row: 0, col: 10 }), left(30))
+  eq('clicking the second row from the first crosses the wrap for one character',
+    keysToPoint(rows, { row: 0, col: 10 }, { row: 1, col: 5 }), right((73 - 10) + 1 + (5 - 2)))
+  eq('and back up again is the same count the other way',
+    keysToPoint(rows, { row: 1, col: 5 }, { row: 0, col: 10 }), left((73 - 10) + 1 + (5 - 2)))
+  eq('a click on the cell the cursor is already on sends nothing',
+    keysToPoint(rows, { row: 1, col: 12 }, { row: 1, col: 12 }), '')
+  eq('a click past the end of a row is the end of that row',
+    keysToPoint(rows, { row: 1, col: 10 }, { row: 1, col: 70 }), right(30))
+  eq('an empty composer has nowhere to click to',
+    keysToPoint([{ start: 2, end: 2, full: false }], { row: 0, col: 2 }, { row: 0, col: 6 }), '')
 }
 console.log(`prompt box: ${checks} checks passed`)

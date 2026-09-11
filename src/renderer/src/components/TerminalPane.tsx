@@ -60,7 +60,7 @@ import {
   type MarkerHost
 } from '../../../shared/markAnchor'
 import { chipSpot, type ChipBox } from '../../../shared/copyChip'
-import { composerAt, frameAt, inputEnd, inputStart, leadingBlanks, promptTop } from '../../../shared/promptBox'
+import { composerAt, frameAt, inputEnd, inputStart, leadingBlanks, pickerBelow, promptTop } from '../../../shared/promptBox'
 import { findPathTokens } from '../../../shared/pathToken'
 import { completedSlash, seedPrompts, promptRow } from '../../../shared/promptEcho'
 import { START_COLS, START_ROWS } from '../../../shared/paneGrid'
@@ -3343,19 +3343,39 @@ function TerminalPane({
     selectInputRef.current = selectInput
     deleteSelectionRef.current = deleteSelection
 
+    /**
+     * What the last click in this pane decided, and why.
+     *
+     * A click that does nothing looks the same from the outside whichever of the eight
+     * refusals stopped it, and every one of them is a plain `return`. Diagnosing "I click
+     * in the prompt box and the cursor does not move" meant guessing between them - so the
+     * pane keeps the answer: `window.__pfClick[<session id>]`. One object per pane,
+     * overwritten by the next click, nothing drawn from it.
+     */
+    const clickNote = (why: string, extra: Record<string, unknown> = {}): void => {
+      const w = window as unknown as { __pfClick?: Record<string, unknown> }
+      if (!w.__pfClick) w.__pfClick = {}
+      w.__pfClick[sessionId] = { at: Date.now(), why, ...extra }
+    }
+
     const moveAlongLine = (e: MouseEvent): void => {
       const from = downAt
       downAt = null
-      if (!clickCursorRef.current || !from) return
+      if (!clickCursorRef.current || !from) {
+        clickNote(clickCursorRef.current ? 'not-a-plain-click' : 'setting-off')
+        return
+      }
       // An arrow is a menu step while a chooser is up - see `askRef`. Proven by
       // `test:askclick`, whose red case types six right arrows into a live question.
-      if (askRef.current) return
-      if (Math.abs(e.clientX - from.x) > 3 || Math.abs(e.clientY - from.y) > 3) return
-      if (t.buffer.active.type === 'alternate') return
+      if (askRef.current) return clickNote('question-on-screen')
+      if (Math.abs(e.clientX - from.x) > 3 || Math.abs(e.clientY - from.y) > 3) {
+        return clickNote('pointer-travelled')
+      }
+      if (t.buffer.active.type === 'alternate') return clickNote('alternate-screen')
       const screen = el.querySelector('.xterm-screen') as HTMLElement | null
-      if (!screen) return
+      if (!screen) return clickNote('no-screen')
       const r = screen.getBoundingClientRect()
-      if (!r.width || !r.height) return
+      if (!r.width || !r.height) return clickNote('screen-has-no-size')
       const at = cellAt(e.clientX, e.clientY, r, t.cols, t.rows)
       const b = t.buffer.active
       const cursorRow = b.baseY + b.cursorY
@@ -3371,6 +3391,11 @@ function TerminalPane({
         const bottom = spanBottom(span)
         const held = (r: number): boolean => r >= span.top && r <= bottom
         if (held(cursorRow) && held(clickRow)) {
+          // While Codex's completion list is up it reads the arrows itself, so the keys
+          // a click becomes never reach the text and do page the list instead.
+          if (agent === 'codex' && pickerBelow(rowText, bottom)) {
+            return clickNote('codex-picker-open', { cursorRow, clickRow, col: at.col })
+          }
           // A stationary click in the editor replaces a selection. A drag or a
           // click in transcript text still keeps its highlight for copying.
           t.clearSelection()
@@ -3384,7 +3409,7 @@ function TerminalPane({
             // navigation to one screen; unverified inputs keep the lower limit.
             agent === 'codex' ? Math.min(t.cols * t.rows, 10_000) : undefined
           )
-          if (!keys) return
+          if (!keys) return clickNote('composer-no-move', { cursorRow, clickRow, col: at.col })
           e.preventDefault()
           stopForAgent(e)
           // A remote echo can show an intermediate caret while these arrows are
@@ -3392,11 +3417,13 @@ function TerminalPane({
           // it overshoots once the original batch finishes. Wrapped separators
           // remain ambiguous until the CLI exposes its logical input position.
           sendKeys(keys)
+          clickNote('composer', { keys: keys.length, cursorRow, clickRow, col: at.col })
           return
         }
-      }
-      if (t.getSelection()) return
-      if (!sameLine(cursorRow, clickRow)) return
+        clickNote('outside-the-composer', { top: span.top, bottom, cursorRow, clickRow })
+      } else clickNote('no-composer-found', { cursorRow, clickRow })
+      if (t.getSelection()) return clickNote('selection-held', { cursorRow, clickRow })
+      if (!sameLine(cursorRow, clickRow)) return clickNote('other-line', { cursorRow, clickRow })
       // Past the end of what is written is the end of what is written. Without this, a
       // click in the empty half of the row sends a burst of rights that the editor eats one
       // by one for nothing - and on a CLI that reads an arrow as a menu step, does worse.
@@ -3407,10 +3434,11 @@ function TerminalPane({
         rows: clickRow - cursorRow,
         cols: t.cols
       })
-      if (!keys) return
+      if (!keys) return clickNote('line-no-move', { cursorRow, clickRow, col: at.col })
       e.preventDefault()
       stopForAgent(e)
       sendKeys(keys)
+      clickNote('line', { keys: keys.length, cursorRow, clickRow, col: at.col })
     }
 
     const forceSelectable = (e: MouseEvent): void => {
