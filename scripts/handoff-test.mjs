@@ -491,6 +491,80 @@ const shellHandoff = await receiveHandoff(
 )
 ok('plain shell handoff explicitly starts a fresh shell', shellHandoff.ok && shellHandoff.session?.agent === 'shell')
 
+// ------------------------------------------------ a conversation that comes back home
+// Sending a conversation away does not always close the original: when the far end cannot
+// PROVE the resume, `sendOne` sleeps it and stamps `movedTo` instead. So the machine that
+// sent it keeps a sleeping pane wearing that conversation - and pulling the conversation
+// back used to draw a SECOND row beside it. Robert, 2026-09-11: "i pull session back i
+// want it to delete the one on the pc right not to leave both open", with two `assistant`
+// rows on one desk (13:14:50 sent and slept, 13:26:07 came back as a new pane).
+console.log('coming back to the desk it left')
+{
+  const homeDir = join(receiverRoot, 'home-again')
+  mkdirSync(homeDir, { recursive: true })
+  const body = Buffer.from(transcriptBytes)
+  const payload = () => ({
+    spec: { cwd: homeDir, agent: 'claude', resume: true, resumeId: 'came-back' },
+    senderRoot: receiverRoot,
+    senderDevice: 'pc',
+    sourceRetained: true,
+    transcript: { name: 'came-back.jsonl', size: body.length }
+  })
+  // What this desk still holds: the pane it slept when it sent the conversation away, a
+  // pane sleeping on a DIFFERENT conversation, and a live pane on the same one.
+  const desk = [
+    { id: 'slept', title: 'assistant', cwd: homeDir, agent: 'claude', status: 'exited', lastOutput: 0, createdAt: 0, resumeId: 'came-back', movedTo: 'pc' },
+    { id: 'other', title: 'other', cwd: homeDir, agent: 'claude', status: 'exited', lastOutput: 0, createdAt: 0, resumeId: 'something-else', movedTo: 'pc' },
+    { id: 'live', title: 'live', cwd: homeDir, agent: 'claude', status: 'working', lastOutput: 0, createdAt: 0, resumeId: 'came-back' }
+  ]
+
+  const killed = []
+  const home = {
+    ...receiver,
+    place: async (req) => ({ ...req }),
+    list: () => desk,
+    kill: (id) => killed.push(id),
+    resumed: async () => 'ok'
+  }
+  const back = await receiveHandoff(home, payload(), body)
+  ok('a conversation coming home starts here', back.ok === true, back.error)
+  ok(
+    'the sleeping copy this machine kept is closed, and nothing else is',
+    killed.length === 1 && killed[0] === 'slept',
+    JSON.stringify(killed)
+  )
+  ok(
+    'the report says the kept copy was closed',
+    (back.notes ?? []).some((n) => /closed/i.test(n)),
+    JSON.stringify(back.notes)
+  )
+
+  // The control, and the one that matters: an UNPROVEN resume must leave the sleeping
+  // original alone. It is then the only reachable copy of the conversation, and closing
+  // it would trade a duplicate row for a lost chat.
+  const unsureKilled = []
+  const unsure = {
+    ...receiver,
+    place: async (req) => ({ ...req }),
+    list: () => desk,
+    kill: (id) => unsureKilled.push(id),
+    resumed: async () => 'unknown'
+  }
+  const quiet = await receiveHandoff(unsure, payload(), Buffer.from(transcriptBytes))
+  ok('an unproven resume closes nothing on this desk', quiet.ok === true && unsureKilled.length === 0, JSON.stringify(unsureKilled))
+
+  // ...and a receiver that cannot read the desk at all behaves as it always did.
+  const blindKilled = []
+  const blind = {
+    ...receiver,
+    place: async (req) => ({ ...req }),
+    kill: (id) => blindKilled.push(id),
+    resumed: async () => 'ok'
+  }
+  const old = await receiveHandoff(blind, payload(), Buffer.from(transcriptBytes))
+  ok('a receiver with no reading of the desk still completes the handoff', old.ok === true && blindKilled.length === 0, old.error)
+}
+
 // ---------------------------------------------------------------- move it NOW
 // A mid-turn pane moved on purpose: the turn is stopped first (the CLI's own Escape, via
 // the interrupt dep), the ordinary handoff runs once the pane reads idle, and the far end

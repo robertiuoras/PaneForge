@@ -552,6 +552,17 @@ export interface ReceiveDeps {
   resumed?(id: string): Promise<'ok' | 'failed' | 'unknown'>
   /** close a started pane whose resume failed - nothing is running in it worth keeping */
   kill?(id: string): void
+  /**
+   * Every pane on this desk. Read for ONE thing: a conversation arriving here regularly
+   * finds its own older self already on this desk. When this machine sent it away,
+   * `sendOne` could not always be shown the resume (an older build over there, or a
+   * machine slower than `RESUME_CONFIRM_MS`), so it slept the original and stamped
+   * `movedTo` rather than closing it. Bringing the conversation back then drew a SECOND
+   * row wearing it - "i pull session back ... not to leave both open", Robert 2026-09-11,
+   * two rows for one `assistant` conversation, one asleep and one just started. Absent
+   * means nothing is swept and the old behaviour stands.
+   */
+  list?(): Session[]
   /** one line per stage with its ms, into handoff.log - the numbers a slow move is judged by */
   log?(line: string): void
   start(req: StartSessionRequest): Session | Promise<Session>
@@ -684,6 +695,36 @@ export async function receiveHandoff(
       return { ok: false, error: 'The conversation did not resume over there, so the original stays here', notes }
     }
     resumed = verdict === 'ok'
+  }
+
+  // The conversation is now PROVEN running here, so any other pane on this desk still
+  // wearing it is a second row onto state that has moved on. That is the copy this
+  // machine kept when it sent the conversation away: `sendOne` sleeps the original and
+  // stamps `movedTo` whenever the far end cannot prove the resume, and bringing it back
+  // is exactly the case where it comes home to find itself.
+  //
+  // AFTER the proof and never before. An unproven or failed resume leaves that original
+  // as the only reachable copy of the conversation, and closing it on the way in would
+  // trade a duplicate row for a lost chat.
+  if (resumed && spec.resumeId) {
+    let closed = 0
+    for (const other of deps.list?.() ?? []) {
+      if (other.id === session.id) continue
+      if (other.resumeId !== spec.resumeId) continue
+      // A pane that was sent away (`movedTo`), or one sleeping on the same conversation -
+      // a sleeping pane carries `status: 'exited'`. A pane still RUNNING this same
+      // conversation is somebody's live window and is never taken.
+      if (!other.movedTo && other.status !== 'exited') continue
+      deps.kill?.(other.id)
+      deps.log?.(`${from}: closed ${other.id} - the same conversation came back to this desk`)
+      closed++
+    }
+    if (closed > 0)
+      notes.push(
+        closed === 1
+          ? 'The copy this machine kept when the conversation left has been closed'
+          : `${closed} older copies of this conversation on this machine have been closed`
+      )
   }
 
   // After the agent's pane, and only after: a dev server is what the pane was working ON,

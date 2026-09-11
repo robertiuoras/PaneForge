@@ -1147,6 +1147,7 @@ const remote = new Remote({
         startDev: (dir, script) => startDevServer(dir, script),
         resumed: (id) => manager.confirmResume(id, RESUME_CONFIRM_MS),
         kill: (id) => manager.kill(id),
+        list: () => manager.list(),
         log: logHandoff
       },
       payload,
