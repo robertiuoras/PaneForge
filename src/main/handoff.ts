@@ -708,8 +708,16 @@ export async function receiveHandoff(
  * Make this machine's checkout hold the pushed branch, touching nothing that
  * is not already on the remote. Returns an error string, or '' when the repo
  * is in place.
+ *
+ * "The remote" here means the commit, not the branch ref: a lane branch can be
+ * deleted out from under a handoff already in flight (2026-09-11, the assistant
+ * repo's `lane-a` was deleted by the trunk-contains rule, 26d8dc33, between the
+ * sender's push and the Mac's fetch). `repo.sha` is still reachable on origin
+ * through the trunk in that case, and GitHub serves any reachable full sha even
+ * with the branch gone - so a branch fetch/clone that fails falls back to
+ * fetching/cloning the sha and rebuilding the local branch on top of it.
  */
-async function ensureRepo(repo: HandoffRepo, senderRoot: string, root: string): Promise<string> {
+export async function ensureRepo(repo: HandoffRepo, senderRoot: string, root: string): Promise<string> {
   const target = mapCwd(slash(senderRoot).replace(/\/+$/, '') + (repo.dirRel ? '/' + repo.dirRel : ''), senderRoot, root)
   if (!target) return 'Could not place the repo under the projects root here'
   if (!existsSync(target)) {
@@ -718,6 +726,15 @@ async function ensureRepo(repo: HandoffRepo, senderRoot: string, root: string): 
       await git(dirname(target), ['clone', '--branch', repo.branch, repo.url, target], 300_000)
       return ''
     } catch (err) {
+      if (repo.sha) {
+        try {
+          await git(dirname(target), ['clone', repo.url, target], 300_000)
+          await git(target, ['checkout', '-b', repo.branch, repo.sha])
+          return ''
+        } catch (shaErr) {
+          return `Clone failed: ${repo.branch} is gone from origin (${(err as Error).message}) and ${repo.sha.slice(0, 8)} could not be checked out either: ${(shaErr as Error).message}`
+        }
+      }
       return `Clone failed: ${(err as Error).message}`
     }
   }
@@ -737,7 +754,18 @@ async function ensureRepo(repo: HandoffRepo, senderRoot: string, root: string): 
       ])
       if (head === repo.sha && branch === repo.branch) return ''
     }
-    await git(target, ['fetch', 'origin', repo.branch], 120_000)
+    let ref = `origin/${repo.branch}`
+    try {
+      await git(target, ['fetch', 'origin', repo.branch], 120_000)
+    } catch (fetchErr) {
+      if (!repo.sha) return `Could not update ${target}: ${(fetchErr as Error).message}`
+      try {
+        await git(target, ['fetch', 'origin', repo.sha], 120_000)
+        ref = repo.sha
+      } catch (shaErr) {
+        return `Could not update ${target}: ${repo.branch} is gone from origin (${(fetchErr as Error).message}) and ${repo.sha.slice(0, 8)} could not be fetched either: ${(shaErr as Error).message}`
+      }
+    }
     let has = true
     try {
       await git(target, ['rev-parse', '--verify', repo.branch])
@@ -745,15 +773,15 @@ async function ensureRepo(repo: HandoffRepo, senderRoot: string, root: string): 
       has = false
     }
     if (!has) {
-      await git(target, ['checkout', '-b', repo.branch, `origin/${repo.branch}`])
+      await git(target, ['checkout', '-b', repo.branch, ref])
       return ''
     }
-    const ahead = await git(target, ['rev-list', '--count', `origin/${repo.branch}..${repo.branch}`])
+    const ahead = await git(target, ['rev-list', '--count', `${ref}..${repo.branch}`])
     if (ahead !== '0') {
       return `${target} has ${ahead} unpushed commit(s) on ${repo.branch} here - not touching it`
     }
     await git(target, ['checkout', repo.branch])
-    await git(target, ['merge', '--ff-only', `origin/${repo.branch}`])
+    await git(target, ['merge', '--ff-only', ref])
     return ''
   } catch (err) {
     return `Could not update ${target}: ${(err as Error).message}`

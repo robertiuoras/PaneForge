@@ -107,6 +107,7 @@
     "test:remoteversion": "node scripts/remote-version-test.mjs",
     "test:deadlink": "node scripts/deadlink-test.mjs",
     "test:handoff": "node scripts/handoff-test.mjs && node scripts/handoff-notify-test.mjs",
+    "test:handoffrepo": "node scripts/handoff-repo-test.mjs",
     "test:handoffnotify": "node scripts/handoff-notify-test.mjs",
     "test:conflict": "node scripts/conflict-test.mjs",
     "test:rename": "node scripts/rename-repo-test.mjs",
