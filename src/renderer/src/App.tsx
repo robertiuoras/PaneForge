@@ -366,11 +366,18 @@ function reclaimPaneOf(
 function CloseClock({
   at,
   onKeep,
-  kept
+  kept,
+  sleep
 }: {
   at: number
   onKeep?: () => void
   kept?: boolean
+  /**
+   * The armed countdown is a SLEEP, not a close. Same chip, different word: the card
+   * beside it said `Putting ... to sleep` while this read `closes 0:09` (2026-09-11), two
+   * readings of one decision that disagreed on what the decision was.
+   */
+  sleep?: boolean
 }): React.JSX.Element | null {
   const now = useNow()
   const left = Math.max(0, Math.ceil((at - now) / 1000))
@@ -390,15 +397,17 @@ function CloseClock({
   // worth drawing - it is when the hold runs out - but not under that sentence.
   const why = kept
     ? `Kept open. Nothing will close this pane for ${words}, however quiet it goes; after that the idle clock has it again.${onKeep ? ' Press to start the hour again.' : ''}`
-    : onKeep
-      ? `This pane has been quiet, so it is being closed to give its memory back in ${words}. Nothing is lost - the conversation and what was on the screen both come back from History. Press to keep it open for an hour.`
-      : `The machine it runs on will close it in ${words} for being idle. Its desk decides that, not this one.`
+    : sleep
+      ? `This pane has been quiet, so it is going to sleep in ${words}. Its card, its screen and its conversation all stay - a press wakes it. Press to keep it awake for an hour.`
+      : onKeep
+        ? `This pane has been quiet, so it is being closed to give its memory back in ${words}. Nothing is lost - the conversation and what was on the screen both come back from History. Press to keep it open for an hour.`
+        : `The machine it runs on will close it in ${words} for being idle. Its desk decides that, not this one.`
   // The last minute is RED, on the same argument the card's own glow is: this is the app
   // about to do something to somebody's pane, and the moment it stops being a clock and
   // starts being an alert is the moment it is nearly out of time.
   // Never the red last-minute alert for a hold: nothing is about to happen to that pane.
   const cls = 'chip closing' + (!kept && left <= 60 ? ' soon' : '') + (kept ? ' kept' : '')
-  const word = kept ? 'kept' : 'closes'
+  const word = kept ? 'kept' : sleep ? 'sleeps' : 'closes'
   if (!onKeep) return <span className={cls} title={why}>{`${word} ${words}`}</span>
   return (
     <button
@@ -4087,6 +4096,11 @@ export default function App(): JSX.Element {
     },
     [closeSoons]
   )
+  /** Whether the countdown naming this pane is a SLEEP - the chip's word depends on it. */
+  const alarmSleeps = useCallback(
+    (id: string): boolean => closeSoons.some((s) => s.sleep && s.ids.includes(id)),
+    [closeSoons]
+  )
   const alarmIds = useMemo(
     () =>
       new Set([
@@ -4095,6 +4109,17 @@ export default function App(): JSX.Element {
       ]),
     [closeSoons, sessions]
   )
+  /**
+   * Panes main REFUSED to sleep, and until when the sleep clock leaves them alone.
+   *
+   * `sleepSession` answers `null` for a refusal, and until 2026-09-11 nobody read the
+   * answer: the pane stayed idle, the next sweep armed the same ten-second card, and the
+   * desk showed `Putting (10) ... to sleep in 9s` every fifteen seconds for as long as
+   * the window lived - eight `armed` lines in 2.5 minutes for one pane, no `sleep`, no
+   * `skipped`, no `sleep-refused`. Its own hold rather than `keptUntil`, because a sleep
+   * main will not do is not a reason to take the pane off the CLOSE clock too.
+   */
+  const sleepHeld = useRef<Record<string, number>>({})
   /** What the pending close is expected to give back, for the sentence afterwards. */
   // Keyed by the countdown it belongs to: two armed closes are two different numbers.
   const pendingMb = useRef<Record<string, number>>({})
@@ -4282,10 +4307,20 @@ export default function App(): JSX.Element {
   armSleepRef.current = (plan, pressure) => {
     const now = Date.now()
     const armed = new Set(closeSoonsRef.current.flatMap((c) => c.ids))
-    const keep = plan.filter((p) => (keptUntil.current[p.id] ?? 0) <= now && !armed.has(p.id))
+    const keep = plan.filter(
+      (p) =>
+        (keptUntil.current[p.id] ?? 0) <= now &&
+        (sleepHeld.current[p.id] ?? 0) <= now &&
+        !armed.has(p.id)
+    )
     if (!keep.length) return
     const why: 'idle' | 'pressure' = pressure === 'ok' ? 'idle' : 'pressure'
+    // The pane's OWN deadline, never now-plus-fifteen: the pane was picked up to a lead
+    // early, so the card ends where the clock ends and the number only goes down.
+    const deadlineOf = (p: Reclaim): number =>
+      Math.max(now + MIN_COUNTDOWN_MS, p.dueAt ?? now + CLOSE_COUNTDOWN_MS)
     for (const p of keep) {
+      const deadline = deadlineOf(p)
       api.logReclaim({
         event: 'armed',
         why,
@@ -4293,7 +4328,8 @@ export default function App(): JSX.Element {
         name: paneWordRef.current(p.id),
         idleMin: Math.round(p.idleMs / 60000),
         hadAgent: p.hadAgent,
-        seconds: Math.round(CLOSE_COUNTDOWN_MS / 1000)
+        // What the card really counts - it said 15 while the card counted 10.
+        seconds: Math.round((deadline - now) / 1000)
       })
     }
     // One card per pane: a sleep is a decision about one pane, and two of them are two
@@ -4304,11 +4340,15 @@ export default function App(): JSX.Element {
         key: `sleep:${p.id}`,
         ids: [p.id],
         names: [paneWordRef.current(p.id)],
-        // The pane's OWN deadline, never now-plus-fifteen: the pane was picked up to a
-        // lead early, so the card ends where the clock ends and the number only goes down.
-        deadline: Math.max(now + MIN_COUNTDOWN_MS, p.dueAt ?? now + CLOSE_COUNTDOWN_MS),
+        deadline: deadlineOf(p),
         why,
-        sleep: true as const
+        sleep: true as const,
+        // Carried to the deadline, so main files the sleep under the reading that made
+        // it: without these it read `reason: unknown, source: renderer`, the same line a
+        // hand-pressed menu row writes.
+        pressure,
+        idleMs: p.idleMs,
+        thresholdMs: p.dueAt === undefined ? undefined : p.dueAt - (now - p.idleMs)
       }))
     ])
   }
@@ -4454,11 +4494,22 @@ export default function App(): JSX.Element {
   }, [clearSoonAt])
 
   // One timer per card, so a second decision is not waiting on the first one's clock.
+  //
+  // The actions are read through a ref and the effect keys on the LIST alone. It used to
+  // list every callback as a dependency, so any render that rebuilt one of them cleared
+  // every pending timer and set it again with what was left - and a desk of streaming
+  // panes renders often enough that a timer with nothing left can be cleared before the
+  // event loop reaches it: a card sitting at `0s`, nothing happening, and nothing in
+  // reclaim.log saying why. What the deadline does is written down (`due`) before it does
+  // it, so the next "reached the timer and nothing happened" is answerable from the file.
+  const soonActRef = useRef({ doClose, doMove, dropSoon, skipClose, stillCloseable })
+  soonActRef.current = { doClose, doMove, dropSoon, skipClose, stillCloseable }
   useEffect(() => {
     if (!closeSoons.length) return
     const timers = closeSoons.map((soon) => {
       const key = soonKey(soon)
       return window.setTimeout(() => {
+        const { doClose, doMove, dropSoon, skipClose, stillCloseable } = soonActRef.current
         if (soon.move) {
           const held = moveSoonRef.current[key]
           delete moveSoonRef.current[key]
@@ -4473,9 +4524,26 @@ export default function App(): JSX.Element {
               skipClose([id], 'it went back to work during the countdown')
               continue
             }
-            void api.sleepSession(id, soon.why === 'idle' ? 'idle' : 'pressure', {
-              source: 'renderer-idle-sweep'
-            })
+            api.logReclaim({ event: 'due', id, name: paneWordRef.current(id), what: 'sleep' })
+            void (async () => {
+              let slept: unknown = null
+              try {
+                slept = await api.sleepSession(id, soon.why === 'idle' ? 'idle' : 'pressure', {
+                  source: 'renderer-idle-sweep',
+                  pressure: soon.pressure ?? 'ok',
+                  idleMs: soon.idleMs,
+                  thresholdMs: soon.thresholdMs
+                })
+              } catch {
+                slept = null
+              }
+              if (slept) return
+              // Main said no (its own line says why). Not asked again for a while: the
+              // pane is still idle, so the next sweep would arm the same card and the
+              // desk would count to zero every fifteen seconds for as long as it stays.
+              sleepHeld.current[id] = Date.now() + KEEP_MINUTES * 60_000
+              skipClose([id], 'the app refused to sleep it - see the sleep-refused line above')
+            })()
           }
           return
         }
@@ -4485,7 +4553,7 @@ export default function App(): JSX.Element {
       }, Math.max(0, soon.deadline - Date.now()))
     })
     return () => timers.forEach((t) => window.clearTimeout(t))
-  }, [closeSoons, doClose, doMove, dropSoon, skipClose, stillCloseable])
+  }, [closeSoons])
 
   /**
    * A pane that wakes up mid-countdown takes the countdown down with it.
@@ -4791,7 +4859,9 @@ export default function App(): JSX.Element {
     // still on screen.
     const soon = closeSoonsRef.current.find((c) => c.ids.includes(id))
     if (soon && endsOnArrival(soon)) {
-      console.info(`reclaim: countdown dropped - somebody came to ${id}`)
+      // In the file, like every other way a countdown ends: this was the one drop that
+      // only went to a console nobody has open.
+      skipClose(soon.ids, 'somebody came to it')
       setCloseSoons((list) => list.filter((c) => soonKey(c) !== soonKey(soon)))
     }
     publishClosingRef.current()
@@ -5275,6 +5345,8 @@ export default function App(): JSX.Element {
                           // A countdown card naming this pane is a live plan to close it,
                           // whatever hold the publish had on it a moment ago.
                           kept={alarmAt(s.id) === undefined && s.closeKept}
+                          // ...or to SLEEP it, and the chip says which.
+                          sleep={alarmSleeps(s.id)}
                           onKeep={() => keepOpen([s.id])}
                         />
                       ) : pinned[s.id] ? (

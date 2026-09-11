@@ -283,4 +283,35 @@ is(
   checks += 2
 }
 
+// The countdown in front of a sleep said the wrong thing, and then did nothing.
+//
+// 2026-09-11, pane s17: the card read `Putting ... to sleep` while the chip on the same
+// row read `closes 0:09` - `CloseClock` only knew one word. And the deadline sent
+// `{ source: 'renderer-idle-sweep' }` with no `pressure`, so main filed every sweep sleep
+// as reason `unknown` from `renderer`; when main REFUSED, the renderer heard nothing,
+// logged nothing, and re-armed the same 10s countdown every 15s for ever (eight `armed`
+// lines in 2.5 minutes, no `sleep`, no `skipped`, no `sleep-refused`).
+{
+  const chip = app.slice(app.indexOf('function CloseClock('), app.indexOf('const api = window.api'))
+  assert.match(chip, /sleep \? 'sleeps' : 'closes'/, 'the chip has a word for a sleep countdown')
+  assert.match(chip, /going to sleep/, '...and its hover says what a sleep keeps')
+  const row = app.slice(app.indexOf('{alarmAt(s.id) ?? s.closingAt ? ('), app.indexOf('onKeep={() => keepOpen([s.id])}'))
+  assert.match(row, /sleep=\{alarmSleeps\(s\.id\)\}/, 'the row tells the chip whether the armed countdown is a sleep')
+  const at = app.indexOf('if (soon.sleep) {', app.indexOf('// One timer per card'))
+  const deadline = app.slice(at, app.indexOf('const mb = pendingMb.current[key] ?? 0', at))
+  assert.match(deadline, /source: 'renderer-idle-sweep',\s*pressure: soon\.pressure/, 'the deadline hands main the pressure it was armed under')
+  assert.match(deadline, /idleMs: soon\.idleMs/, '...and how long the pane had been quiet')
+  assert.match(deadline, /skipClose\(\[id\], 'the app refused to sleep it/, 'a refusal is written down where the arm was')
+  assert.match(deadline, /sleepHeld\.current\[id\] = /, '...and holds the pane off the sleep clock instead of re-arming it every sweep')
+  const arm = app.slice(app.indexOf('armSleepRef.current = (plan, pressure) => {'), app.indexOf('armCloseRef.current = (plan, why, log) => {'))
+  assert.match(arm, /sleepHeld\.current\[p\.id\]/, 'the sleep arm reads that hold')
+  assert.match(arm, /seconds: Math\.round\(\(deadline - now\) \/ 1000\)/, 'the armed line says how long the card really counts')
+  assert.doesNotMatch(app, /console\.info\(`reclaim: countdown dropped - somebody came to \$\{id\}`\)/, 'a countdown dropped by a press is not a console line')
+  assert.match(app, /skipClose\(soon\.ids, 'somebody came to it'\)/, '...it is a skipped line in reclaim.log like every other end')
+  const refuse = sessions.indexOf("refusal: 'conversation-unverified'")
+  const once = sessions.indexOf('if (live.sleepRefusalShown) return null')
+  assert.ok(refuse > 0 && once > refuse, 'main writes the unverified refusal down every time, and only the on-screen note is once')
+  checks += 12
+}
+
 console.log(`sleep: ${checks} checks passed`)

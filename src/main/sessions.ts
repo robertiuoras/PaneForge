@@ -376,6 +376,8 @@ interface Live {
   meta: Session
   /** A refused idle sweep may retry, but must not keep printing into the terminal. */
   sleepRefusalShown?: boolean
+  /** When the unverified-conversation refusal was last written to reclaim.log. */
+  sleepRefusalLoggedAt?: number
   /**
    * Null while the pane is ASLEEP - a card with no process behind it. That is a real
    * state a pane can be BORN in (a restore, see `shared/restoreTurn.ts`), not only one it
@@ -1243,9 +1245,18 @@ export class SessionManager extends EventEmitter {
     const resumeCwd = live.req.resumeCwd ?? live.meta.cwd
     const resumable = Boolean(resumeId && resumableTranscript(resumeCwd, resumeId, live.meta.agent))
     if (live.meta.agent !== 'shell' && !resumable) {
+      // In the file again every few minutes - only the line on the pane is once. A
+      // refusal logged once and then silent left "armed, armed, armed" with nothing
+      // beside it to say the sweep was being told no; fifty asks in a burst still write
+      // one line. The five minutes is inline because `sleep-test.mjs` evals this method
+      // on its own, without the module's constants.
+      const at = Date.now()
+      if (!live.sleepRefusalShown || at - (live.sleepRefusalLoggedAt ?? 0) >= 5 * 60_000) {
+        live.sleepRefusalLoggedAt = at
+        logReclaim({ action: 'sleep-refused', pane: id, ...decision, resumeId, refusal: 'conversation-unverified', shown: live.sleepRefusalShown === true })
+      }
       if (live.sleepRefusalShown) return null
       live.sleepRefusalShown = true
-      logReclaim({ action: 'sleep-refused', pane: id, ...decision, resumeId, refusal: 'conversation-unverified' })
       const note = '\x1b[33mSleep refused: this conversation could not be verified, so this pane remains running.\x1b[0m\r\n'
       this.emit('data', id, note)
       live.buffer.push(note)

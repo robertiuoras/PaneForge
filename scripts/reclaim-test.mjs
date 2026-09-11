@@ -967,7 +967,7 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   // Robert loses track of ("fix silently goes to sleep sessions it should have a
   // countdown so i know its sleeping otherwise i lose track of where its going").
   check('...and it arms a countdown rather than sleeping on the spot', /armSleepRef\.current\(plan, pressure\)/.test(app), '')
-  check('...and the countdown is what sleeps, with the measured reason', /soon\.sleep[\s\S]{0,400}sleepSession\(id, soon\.why === 'idle' \? 'idle' : 'pressure'/.test(app), '')
+  check('...and the countdown is what sleeps, with the measured reason', /soon\.sleep[\s\S]{0,900}sleepSession\(id, soon\.why === 'idle' \? 'idle' : 'pressure'/.test(app), '')
   check('...and the card says it is a sleep', /sleep: true as const/.test(app), '')
   check(
     'and "Sleep this pane" is gone from the card menu - the clock does it',

@@ -153,6 +153,13 @@ export interface CloseSoon {
    * i know its sleeping otherwise i lose track of where its going".
    */
   sleep?: true
+  /**
+   * The reading a SLEEP was armed under, carried to the deadline so main files the sleep
+   * as `idle`/`pressure` from the sweep and not as `unknown` from a hand.
+   */
+  pressure?: 'ok' | 'tight' | 'over'
+  idleMs?: number
+  thresholdMs?: number
 }
 
 export interface MascotProps {
