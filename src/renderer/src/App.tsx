@@ -5407,13 +5407,17 @@ export default function App(): JSX.Element {
                           <button
                             type="button"
                             className="chip handoff-queued"
-                            title={s.agent !== 'shell' ? 'Opens a conversation copy on the paired device after this turn. The original stays here. Press to cancel.' : 'Waiting for this turn to end before handoff. Press to keep it here.'}
+                            title={s.agent !== 'shell' ? 'Opens a copy on the paired device after this turn. Press to cancel.' : 'Waiting for this turn to end. Press to keep it here.'}
                             onClick={(e) => {
                               e.stopPropagation()
                               stopMove(s)
                             }}
                           >
-                            {s.agent !== 'shell' ? 'copy opens when done' : 'moves when done'} <Elapsed className="handoff-elapsed" since={s.handoffQueuedAt} title="Queued for handoff" />
+                            {s.agent !== 'shell' ? (
+                              <>copy opens when done <Elapsed className="handoff-elapsed" since={s.handoffQueuedAt} title="Queued for handoff" /></>
+                            ) : (
+                              <>moves when done <Elapsed className="handoff-elapsed" since={s.handoffQueuedAt} title="Queued for handoff" /></>
+                            )}
                           </button>
                         ) : (
                           // Which half is running and for how long: a move is a repo push
