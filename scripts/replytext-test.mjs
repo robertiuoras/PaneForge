@@ -67,6 +67,18 @@ ok('an unrecognised row is kept rather than guessed at', tailOut.includes('[CAVE
 eq('nothing but the answer and the status line is left', tailOut.split('\n').length, 2)
 
 // ---------------------------------------------------------------------------
+// A Stop hook that blocked, between the two halves of one answer. The CLI prints the
+// gate's whole instruction to the model; none of it is the reply.
+const hooks = fixture('reply-claude-hooks.txt')
+const hooksOut = cleanReply(hooks)
+ok('the first half survives', hooksOut.includes('Say the word on the 152'))
+ok('the second half survives', hooksOut.includes('Archiving the 152 notes is destructive'))
+ok('the hook summary row is gone', !hooksOut.includes('Ran 3 stop hooks'))
+ok('the hook error rows are gone', !hooksOut.includes('Stop hook error') && !hooksOut.includes('STANDING RULE'))
+ok('the instruction body is gone', !hooksOut.includes('BUILD the thing you just dangled'))
+eq('two halves, one blank between paragraphs', hooksOut.split('\n').filter((l) => l.trim()).length, 7)
+
+// ---------------------------------------------------------------------------
 // A whole answer, with the agent's own tool markers in it.
 const body = fixture('reply-claude-body.txt')
 const bodyOut = cleanReply(body)

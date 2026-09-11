@@ -66,6 +66,18 @@ const FOOTER_MAX = SPINNER_MAX
 /** The markers in front of an agent's own tool calls and their output. */
 const MARKER = /^(\s*)[⏺⎿]\s?/
 
+/**
+ * The CLI's own report of a Stop hook run: `⏺ Ran 3 stop hooks (ctrl+o to expand)`, then
+ * the `⎿  Stop hook error: …` rows carrying the gate's whole instruction to the model.
+ * That text was written FOR the agent, and it is the part of a turn a person reading the
+ * answer has to scroll past (2026-09-11: a fifteen-row standing rule between the two halves
+ * of one reply). The block runs from this row to the next `⏺` the agent prints, so
+ * everything up to that marker is the CLI's, not the answer's.
+ */
+const HOOK_RUN = /^\s*⏺?\s*Ran \d+ [\w:-]+ hooks?\b/
+/** The row the agent's next sentence starts on: its own marker at the left edge. */
+const AGENT_ROW = /^\s*⏺/
+
 /** A run of this many blank rows or more is a repaint artefact, not a paragraph break. */
 const BLANK_RUN = 3
 
@@ -89,8 +101,17 @@ function drop(row: string): boolean {
  */
 export function cleanReply(rows: string[]): string {
   const kept: string[] = []
+  let inHook = false
   for (const raw of rows) {
     const row = raw.replace(/\s+$/, '')
+    if (HOOK_RUN.test(row)) {
+      inHook = true
+      continue
+    }
+    if (inHook) {
+      if (!AGENT_ROW.test(row)) continue
+      inHook = false
+    }
     if (drop(row)) continue
     kept.push(row.replace(MARKER, '$1'))
   }

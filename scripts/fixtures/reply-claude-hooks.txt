@@ -1,0 +1,22 @@
+⏺ Data is correct. Not 100% clean, two things are still visibly wrong in his
+  portal.
+
+  Everything else, including the 82 notes that were missing this morning, is in
+  and read back from HubSpot. Say the word on the 152 and it is one command.
+
+⏺ Ran 3 stop hooks (ctrl+o to expand)
+  ⎿  Stop hook error: STANDING RULE (ideas-gate): this reply ends by
+  offering work instead of doing it — detected: "say the word".
+  Robert has said repeatedly that a good, low-risk, reversible,
+  verifiable improvement gets built in the SAME turn, never queued
+  behind his approval.
+  Do one of these now, then stop:
+  1. BUILD the thing you just dangled, verify it (typecheck/build or a
+  real run), and report it under Changes, marked "(unasked)" if it was
+  outside the ask.
+  Do not answer this by re-explaining the idea or by asking again.
+
+⏺ Archiving the 152 notes is destructive on a client's live portal, one of your
+  reserved forks, so it stays untouched.
+
+  Answer to the question: the data is correct and complete.

@@ -468,6 +468,16 @@ export const paneCopyMenu = new Map<string, (mark?: number) => CopyChoice[]>()
 export const paneCopyReply = new Map<string, () => void>()
 
 /**
+ * How a pane puts one reply in front of the person as readable text. App owns the sheet;
+ * a pane hands it the cleaned reply from its copy menu's `Read` row. Set once by App on
+ * mount, the same way the maps above are filled by each pane.
+ */
+export let openReadSheet: (sessionId: string, text: string) => void = () => {}
+export function setReadSheetOpener(fn: (sessionId: string, text: string) => void): void {
+  openReadSheet = fn
+}
+
+/**
  * The live terminals, for scripts/probe.mjs to ask questions of.
  *
  * Every scroll bug this app has had lives in the gap between what the buffer thinks
@@ -1933,13 +1943,21 @@ function TerminalPane({
       ? draftBlock(rowsOf(lineOf(turn) + 1, next ? lineOf(next) - 1 : end))
       : ''
     add('draft', 'The drafted message', 'Drafted message', draft)
+    // Reading comes before copying: the reply on screen has the CLI's hook messages and
+    // tool rows between its paragraphs, and this row is the same text with them gone.
+    const read = (key: string, label: string): void => {
+      if (!reply.trim()) return
+      out.push({ key, label, preview: previewOf(reply), run: () => openReadSheet(sessionId, reply) })
+    }
     if (one) {
+      read('read', 'Read its reply')
       add('prompt', 'Copy this prompt', 'Prompt', prompt)
       add('reply', 'Copy its reply', 'Reply', reply)
       add('both', 'Copy both', 'Prompt and reply', both)
       if (turn) out.push({ key: 'go', label: 'Go to it', preview: '', run: () => jumpTo(turn) })
       return out
     }
+    read('read', 'Read the last reply')
     add('reply', 'Last reply', 'Reply', reply)
     add('prompt', 'Last prompt', 'Prompt', prompt)
     add('both', 'Last prompt + reply', 'Prompt and reply', both)
