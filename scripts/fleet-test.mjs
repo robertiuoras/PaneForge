@@ -9,7 +9,7 @@
 
 import { buildSync } from 'esbuild'
 import { strict as assert } from 'node:assert'
-import { mkdirSync, rmSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -351,5 +351,40 @@ is(
   true,
   "the CLI's own busy footer is work, even for a turn this app never saw typed"
 )
+
+// ---------------------------------------------------------------------------
+// A pane says Running only from a frame its OWN process wrote
+//
+// `busyUntil` is what `outputIsWork` above reads, and it is armed from the pane's screen
+// (`checkBusy`), not from the process. A pane restored MID-TURN comes back wearing the
+// previous run's screen - running footer and all - so the read is true, the deadline is
+// renewed every sweep, and the only downgrade out of `working` (`!busyOnScreen`) can
+// never fire. Measured on Robert's desk 2026-09-12: pane `s7-mtwz8ufj`
+// (`Simon - HubSpot database load`) printed `working` from `pf list` with no matching pid
+// in `ps` and no row at all in that app run's `reclaim.log`.
+{
+  const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
+  assert.match(
+    sessions,
+    /const busyHere = busy && s\.meta\.printed !== undefined/,
+    'the busy deadline is armed only from a frame this process has printed into'
+  )
+  assert.match(
+    sessions,
+    /s\.busyUntil = busyHere \? now \+ 180_000 : 0/,
+    '...and that is the reading the deadline itself is taken from'
+  )
+  assert.doesNotMatch(
+    sessions,
+    /s\.busyUntil = busy \?/,
+    'no ungated arming is left beside it'
+  )
+  assert.match(
+    sessions,
+    /if \(busyHere\) \{\s+const wasRunning = Boolean\(s\.meta\.runSince\)/,
+    'the run clock the footer starts is gated on the same reading'
+  )
+  checks += 4
+}
 
 console.log(`\n${checks} checks - all good`)

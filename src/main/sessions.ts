@@ -2567,11 +2567,23 @@ export class SessionManager extends EventEmitter {
     // the pane means the pane is gone, not that the turn is still going. The old ten
     // minute deadline was longer than the heartbeat by so much that a pane torn down
     // mid-turn left its session frozen as "working" for the rest of the ten minutes.
-    s.busyUntil = busy ? now + 180_000 : 0
+    //
+    // ...and only from a frame THIS process wrote. A pane restored mid-turn comes back
+    // wearing the PREVIOUS run's screen, running footer and all. `checkBusy` reads that
+    // footer, re-arms this deadline every sweep, and the one downgrade out of `working`
+    // (the `!busyOnScreen` branch in the idle sweep) can then never fire - so the pane
+    // says Running for the life of the desk with no process of its own anywhere.
+    // Measured 2026-09-12: pane `s7-mtwz8ufj` (`Simon - HubSpot database load`) printed
+    // `working` from `pf list` with no matching pid in `ps` and not one row in that app
+    // run's `reclaim.log`. `meta.printed` is the only reading that tells replayed bytes
+    // from this process's own - it is undefined until the first byte and cleared by both
+    // a restart and a wake, and only main can take it.
+    const busyHere = busy && s.meta.printed !== undefined
+    s.busyUntil = busyHere ? now + 180_000 : 0
     // The footer is the honest turn boundary, so it drives the run clock too: it
     // starts a turn the app never saw typed (a queued prompt, /clear, a resumed
     // session) and ends one the instant the agent stops saying it is running.
-    if (busy) {
+    if (busyHere) {
       const wasRunning = Boolean(s.meta.runSince)
       const moved = this.beginRun(s, clock)
       // Inside a slash command's window the footer confirming "busy" is the /clear
