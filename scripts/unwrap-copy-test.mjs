@@ -126,8 +126,6 @@ assert.equal(
   ['Property Investors Alliance', 'piateam.com.au'].join('\n')
 )
 
-console.log('unwrap copy: 16 assertions passed')
-
 // A URL the terminal broke across two rows must come back as one link, with no space at the
 // break. A space there is invisible in the paste and produces a link that 404s.
 const link = [
@@ -147,3 +145,35 @@ assert.ok(
 // is short of the wrap column, so the two rows stay apart.
 const afterLink = ['See https://example.com/x', 'and then the next thing happens here.'].join('\n')
 assert.ok(!unwrapForClipboard(afterLink).includes('/xand'), 'a short line must not glue')
+
+// ...and the same wrap with ONE LONGER LINE ANYWHERE ELSE in the copy. This is the `%20`
+// Robert reported on 2026-09-12: the ruler used to be the widest row in the whole
+// selection, so a neighbouring sentence lifted it above the wrap column, the URL row read
+// as "not full", and the break fell through to the prose join - which puts a space in the
+// middle of the address, and `%20` in whatever opens it.
+const withNeighbour = [
+  'A much longer neighbouring line of prose that runs well past the wrap column here ok',
+  'Open https://app.taskdriver.ai/connect/report-email/Wi2CoTjd0nr8Ns5qx',
+  'iLcQsjPBkazp5HgoERhr6uzAlU and sign in there to approve the drafts today',
+].join('\n')
+const joinedNeighbour = unwrapForClipboard(withNeighbour)
+assert.ok(
+  joinedNeighbour.includes(
+    'https://app.taskdriver.ai/connect/report-email/Wi2CoTjd0nr8Ns5qxiLcQsjPBkazp5HgoERhr6uzAlU',
+  ),
+  'a wrapped URL rejoins whatever else is in the selection',
+)
+assert.ok(!joinedNeighbour.includes('Ns5qx iLcQsj'), 'and no space lands at the break')
+
+// A row ending in a URL that is joined by the PROSE rule closes with nothing too - a space
+// is never right there, whatever decided the two rows belong together.
+const proseJoin = [
+  'The dashboard everybody uses now lives at https://app.taskdriver.ai/connect/report',
+  'email/Wi2CoTjd0nr8Ns5qxiLcQsjPBkazp5HgoERhr6uzAlU which is where the drafts wait',
+].join('\n')
+assert.ok(
+  unwrapForClipboard(proseJoin).includes('/connect/reportemail/Wi2CoTjd0nr8Ns5qx'),
+  'a prose join over a URL tail uses no space either',
+)
+
+console.log('unwrap copy: 20 assertions passed')

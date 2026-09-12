@@ -56,8 +56,10 @@ const BLOCK_END = /\|\s*$/;
 
 // A URL the terminal broke across two rows. Rejoining those rows with a space, the way
 // prose is rejoined, produces a link that LOOKS right and is not - the space lands inside
-// the token and whatever reads it gets a truncated address. So a break inside a URL is
-// closed with nothing at all.
+// the token and whatever reads it gets a truncated address, and pasted anywhere that
+// encodes it the space comes back as `%20` (Robert, 2026-09-12: a copied link arriving as
+// `.../report-email/Wi2CoTjd0nr8Ns5qxiLcQsjPBkazp5HgoER hr6uzAlU`). So a break inside a
+// URL is closed with nothing at all.
 const URL_TAIL = /(?:^|\s)(?:https?:\/\/|www\.)[^\s]*$/;
 
 function isFull(line: string, width: number): boolean {
@@ -173,17 +175,20 @@ export function unwrapForClipboard(text: string): string {
       ((width !== undefined && wrapped.get(from[from.length - 1]) !== undefined && isFull(prev, width)) ||
         sentenceContinues(prev, line));
     // A wrapped URL joins with no space, and joins even when the paragraph does not read as
-    // prose: the break has to land exactly at the wrap column (`isFull`) and the next row has
-    // to start hard against the left edge, which is what a wrap looks like and what a line
-    // somebody typed after a link does not.
-    const urlWrap =
-      openable &&
-      URL_TAIL.test(prev) &&
-      /^[^\s]/.test(line) &&
-      fullWidth >= MIN_WIDTH &&
-      isFull(prev, fullWidth);
+    // prose: the next row has to start hard against the left edge, which is what a wrap
+    // looks like and what a line somebody typed after a link does not.
+    //
+    // The width test is on the ROW THAT ENDS IN THE URL, not on the widest row in the
+    // selection. `isFull(prev, fullWidth)` was the bug behind the `%20`: one longer line
+    // anywhere in the copy - a neighbouring sentence, a heading - lifted the ruler above
+    // the wrap column, the URL row read as "not full", and the break fell through to the
+    // prose join, which puts a SPACE in the middle of the address. A row 40 characters
+    // long ending mid-URL was wrapped by the terminal; nothing else writes one.
+    const urlWrap = openable && URL_TAIL.test(prev) && /^[^\s]/.test(line) && prev.length >= MIN_WIDTH;
     if (urlWrap) out[out.length - 1] = `${prev}${line}`;
-    else if (joinable) out[out.length - 1] = `${prev} ${line.trim()}`;
+    // ...and belt and braces: any other join of a row that ends inside a URL closes with
+    // nothing too. A space here is never right, whatever decided to join the rows.
+    else if (joinable) out[out.length - 1] = URL_TAIL.test(prev) ? `${prev}${line.trim()}` : `${prev} ${line.trim()}`;
     else {
       out.push(line);
       from.push(i);
