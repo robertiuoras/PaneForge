@@ -54,6 +54,12 @@ const CODEY = /[{}=`]|\(\)/;
 // swallow whatever follows it.
 const BLOCK_END = /\|\s*$/;
 
+// A URL the terminal broke across two rows. Rejoining those rows with a space, the way
+// prose is rejoined, produces a link that LOOKS right and is not - the space lands inside
+// the token and whatever reads it gets a truncated address. So a break inside a URL is
+// closed with nothing at all.
+const URL_TAIL = /(?:^|\s)(?:https?:\/\/|www\.)[^\s]*$/;
+
 function isFull(line: string, width: number): boolean {
   return line.length >= width - SLACK;
 }
@@ -147,6 +153,10 @@ export function unwrapForClipboard(text: string): string {
     for (const i of para) wrapped.set(i, width);
   }
 
+  // The widest row in the whole selection - the ruler for "this row ran out of room", used
+  // where a URL sits in a paragraph the prose test rejected and so has no width of its own.
+  const fullWidth = Math.max(...lines.map((l) => l.length));
+
   const out: string[] = [];
   const from: number[] = [];
   lines.forEach((line, i) => {
@@ -162,7 +172,18 @@ export function unwrapForClipboard(text: string): string {
       openable &&
       ((width !== undefined && wrapped.get(from[from.length - 1]) !== undefined && isFull(prev, width)) ||
         sentenceContinues(prev, line));
-    if (joinable) out[out.length - 1] = `${prev} ${line.trim()}`;
+    // A wrapped URL joins with no space, and joins even when the paragraph does not read as
+    // prose: the break has to land exactly at the wrap column (`isFull`) and the next row has
+    // to start hard against the left edge, which is what a wrap looks like and what a line
+    // somebody typed after a link does not.
+    const urlWrap =
+      openable &&
+      URL_TAIL.test(prev) &&
+      /^[^\s]/.test(line) &&
+      fullWidth >= MIN_WIDTH &&
+      isFull(prev, fullWidth);
+    if (urlWrap) out[out.length - 1] = `${prev}${line}`;
+    else if (joinable) out[out.length - 1] = `${prev} ${line.trim()}`;
     else {
       out.push(line);
       from.push(i);

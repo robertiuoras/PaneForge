@@ -127,3 +127,23 @@ assert.equal(
 )
 
 console.log('unwrap copy: 16 assertions passed')
+
+// A URL the terminal broke across two rows must come back as one link, with no space at the
+// break. A space there is invisible in the paste and produces a link that 404s.
+const link = [
+  'Send her this link and she connects her own Gmail:',
+  'https://app.taskdriver.ai/connect/report-email/Wi2CoTjd0nr8Ns5qxiLcQsjPBkazp5Hgo',
+  'ERhr6uzAlU',
+  'It expires in seven days.',
+].join('\n')
+assert.ok(
+  unwrapForClipboard(link).includes(
+    'https://app.taskdriver.ai/connect/report-email/Wi2CoTjd0nr8Ns5qxiLcQsjPBkazp5HgoERhr6uzAlU',
+  ),
+  'a wrapped URL must rejoin without a space',
+)
+
+// A line that merely ENDS with a link, followed by a new sentence, is not a wrap: the break
+// is short of the wrap column, so the two rows stay apart.
+const afterLink = ['See https://example.com/x', 'and then the next thing happens here.'].join('\n')
+assert.ok(!unwrapForClipboard(afterLink).includes('/xand'), 'a short line must not glue')
