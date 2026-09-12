@@ -357,6 +357,26 @@ export interface AutoPane {
   ask?: string
   /** the pane's own folder, so `pinnedByPrompt` can tell a path inside the project apart */
   cwd?: string
+  /**
+   * The SLEEP rung is about to take this pane (`idleSleepPlan`, read `SLEEPS_SOON_LEAD_MS`
+   * ahead of its deadline).
+   *
+   * A refusal, and the one that decides between two rungs rather than inside one. Robert,
+   * 2026-09-12: "session has ended but why is it getting urged to move to remote pc?
+   * shouldnt it just sleep that would save resources and keep it on mac". The budget rung
+   * armed a move on a pane quiet for THREE minutes (`move-armed`, `budget: 10 pane(s) past
+   * 2`, s24-mtxt2bc4) while that pane's own sleep clock was running underneath it. Sleeping
+   * gives back the same ~190 MB CLI, syncs no repo, kills no pty, and leaves the pane on
+   * this desk where he can press it awake - so when both rungs want the same pane, the
+   * cheaper one wins.
+   *
+   * It says SOON, never "sleepable". The sleep clock only shortens under a MEMORY verdict
+   * (`sleepPressureOf`); under a lag verdict it stays at the setting's thirty minutes, and
+   * an unconditional refusal would leave a costly pane sitting here for another twenty-odd
+   * minutes with neither rung acting on it. Computed by the caller from the same plan the
+   * sleep sweep runs, so the two readings cannot disagree.
+   */
+  sleepsSoon?: boolean
 }
 
 export interface AutoHandoff {
@@ -578,6 +598,17 @@ function thresholdOf(value: unknown, fallback: number): number {
  */
 export const BUDGET_QUIET_MS = 2 * 60_000
 
+/**
+ * How far ahead of the sleep rung's own deadline a pane counts as `sleepsSoon`.
+ *
+ * The move sweep runs once a minute, so a pane refused now is looked at again in sixty
+ * seconds; two minutes is that window with the move's own fifteen-second countdown and a
+ * sweep's worth of slack on top. Shorter and a pane forty seconds from sleeping is armed
+ * for the PC and gone before its own clock matures; much longer and a pane the sleep rung
+ * will not reach for half an hour is held back from a rung that would act now.
+ */
+export const SLEEPS_SOON_LEAD_MS = 2 * 60_000
+
 export function budgetPlan(
   panes: AutoPane[],
   peers: OffloadCandidate[],
@@ -594,6 +625,9 @@ export function budgetPlan(
     .filter((p) => !staysHere(cfg, p.projectName))
     .filter((p) => !((blocked[p.id] ?? 0) > now))
     .filter((p) => now - quietSince(p) >= BUDGET_QUIET_MS)
+    // The sleep rung is about to take it, and sleeping is the cheaper way to give the same
+    // memory back. See `AutoPane.sleepsSoon`.
+    .filter((p) => !p.sleepsSoon)
     // The cost gate. A desk five panes over its budget with nothing expensive on it moves
     // NOTHING and stays over - which is the honest answer, because there is nothing here
     // to give back. See `AutoHandoffConfig.budgetMinMb`.
@@ -751,6 +785,8 @@ function pick(
     .filter((p) => !staysHere(cfg, p.projectName))
     .filter((p) => !(screen && p.visible))
     .filter((p) => now - quietSince(p) >= minIdle)
+    // ...and the same refusal here, so the two rungs can never both arm on one pane.
+    .filter((p) => !p.sleepsSoon)
     .filter((p) => !((blocked[p.id] ?? 0) > now))
     .sort((a, b) => quietSince(a) - quietSince(b))
 

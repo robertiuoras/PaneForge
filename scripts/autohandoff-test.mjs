@@ -47,7 +47,8 @@ const {
   budgetPlan,
   endsOnArrival,
   travels,
-  BUDGET_QUIET_MS
+  BUDGET_QUIET_MS,
+  SLEEPS_SOON_LEAD_MS
 } = createRequire(import.meta.url)(outfile)
 
 let checks = 0
@@ -776,6 +777,39 @@ checks += 3
   const me = pane({ id: 'me', agent: 'claude', resumeId: 'conv-3', memMb: 300, focused: true })
   eq('...and takes it once it has been quiet for BUDGET_QUIET_MS', budgetPlan([left, other, me], peers, { ...DEFAULT_AUTO_HANDOFF, budgetMinMb: 1 }, {}, NOW, 2).map((p) => p.id).sort().join(','), 'candidate,keep')
   eq('the hold is two minutes, not the ten-minute idle wait', BUDGET_QUIET_MS, 2 * MIN)
+}
+
+{
+  // A pane the SLEEP rung is about to take is not moved to the other machine. Robert,
+  // 2026-09-12: "session has ended but why is it getting urged to move to remote pc?
+  // shouldnt it just sleep that would save resources and keep it on mac". Sleeping frees
+  // the same ~190 MB CLI, syncs no repo and leaves the pane here, so when both rungs want
+  // the same pane the cheaper one wins. `AutoPane.sleepsSoon`.
+  const sleepy = pane({ id: 'candidate', agent: 'claude', resumeId: 'conv-1', memMb: 300, sleepsSoon: true })
+  const other = pane({ id: 'keep', agent: 'claude', resumeId: 'conv-2', memMb: 300 })
+  const spare = pane({ id: 'me', agent: 'claude', resumeId: 'conv-3', memMb: 300, focused: true })
+  eq('the budget rung leaves a pane the sleep rung is about to take', ids(budgetPlan([sleepy, other, spare], peers, { ...DEFAULT_AUTO_HANDOFF, budgetMinMb: 1 }, {}, NOW, 2)), 'keep')
+  eq('CONTROL: the same pane without that reading is moved', ids(budgetPlan([pane({ ...sleepy, sleepsSoon: false }), other, spare], peers, { ...DEFAULT_AUTO_HANDOFF, budgetMinMb: 1 }, {}, NOW, 2).sort((a, b) => a.id.localeCompare(b.id))), 'candidate,keep')
+  // ...and the pressure rung, which is the one `autoHandoffPlan` runs when the desk is
+  // short but not past its budget, refuses it too - so no rung can race the sleep clock.
+  eq('the pressure rung leaves it as well', ids(autoHandoffPlan([sleepy, other], over, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'keep')
+  eq('the idle clock leaves it as well', ids(idleOffloadPlan([sleepy, other], peers, { ...DEFAULT_AUTO_HANDOFF, offloadIdleMinutes: 1 }, {}, NOW)), 'keep')
+  // The lead is the move sweep's own window, not a guess: refuse too early and a costly
+  // pane the sleep rung will not reach for half an hour is held back from a rung that
+  // would act now (under a LAG verdict the sleep clock is not shortened at all).
+  eq('the lead covers one move sweep', SLEEPS_SOON_LEAD_MS, 2 * MIN)
+
+  // The reading itself is computed from the sleep rung's OWN plan, so the two cannot
+  // disagree about a pane.
+  const { readFileSync } = await import('node:fs')
+  const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
+  const at = app.indexOf('const handoffPanes = useCallback')
+  const built = app.slice(at, app.indexOf('handoffPanesRef.current = handoffPanes', at))
+  assert.match(built, /idleSleepPlan\(/, 'handoffPanes reads the sleep rung\'s own plan')
+  assert.match(built, /SLEEPS_SOON_LEAD_MS/, '...at the move sweep\'s lead')
+  assert.match(built, /sleepsSoon: sleepingSoon\.has\(s\.id\)/, '...and puts it on every pane')
+  assert.match(built, /sleepPressureRef\.current/, '...under the same pressure reading the sleep sweep uses')
+  checks += 4
 }
 
 console.log(`autohandoff: ${checks} checks passed`)

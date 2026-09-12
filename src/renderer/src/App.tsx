@@ -135,6 +135,7 @@ import {
 import { deskNow } from '../../shared/away'
 import {
   autoHandoffPlan,
+  SLEEPS_SOON_LEAD_MS,
   idleOffloadPlan,
   offloadMinutes,
   movable as handoffMovable,
@@ -682,6 +683,10 @@ export default function App(): JSX.Element {
   // offer a pane the current settings refuse.
   const configRef = useRef<Config | null>(null)
   configRef.current = config
+  // The sleep rung's pressure reading, so the MOVE sweep can ask the same question the
+  // sleep sweep is about to answer. Written below where `pressure` is computed; a ref
+  // rather than a dependency because `handoffPanes` is deliberately built from refs.
+  const sleepPressureRef = useRef<SleepPressure>('ok')
   const [activeId, setActiveId] = useState<string | null>(null)
   /**
    * When the keyboard last LEFT each pane, which is when its idle clock may start.
@@ -2627,9 +2632,30 @@ export default function App(): JSX.Element {
   // Read from the pressure card's async suggestion, which is created in an effect that ran
   // long before this callback existed on that render.
   const handoffPanesRef = useRef<() => AutoPane[]>(() => [])
-  const handoffPanes = useCallback(
-    (): AutoPane[] =>
-      sessionsRef.current.map((s) => ({
+  const handoffPanes = useCallback((): AutoPane[] => {
+    // Which panes the SLEEP rung is about to take, read from the same plan its own sweep
+    // runs - one predicate, so the two rungs cannot disagree about a pane. See
+    // `AutoPane.sleepsSoon`.
+    const cfg = configRef.current?.reclaim ?? DEFAULT_RECLAIM
+    const sleepingSoon = new Set(
+      idleSleepPlan(
+        sessionsRef.current.map((s) =>
+          reclaimPaneOf(
+            s,
+            activeRef.current,
+            focusLeftAt.current[s.id],
+            pinnedRef.current[s.id],
+            usageRef.current?.panes[s.id]?.jobs?.[0]?.label
+          )
+        ),
+        cfg,
+        deskNow(Date.now(), awayRef.current),
+        personRef.current,
+        sleepPressureRef.current,
+        SLEEPS_SOON_LEAD_MS
+      ).map((p) => p.id)
+    )
+    return sessionsRef.current.map((s) => ({
         id: s.id,
         agent: s.agent,
         state: fleetState(s),
@@ -2677,10 +2703,11 @@ export default function App(): JSX.Element {
         // way). Checked against `pinnedByPrompt` before any automatic move. See
         // `AutoPane.ask`.
         ask: s.gist,
-        cwd: s.cwd
-      })),
-    []
-  )
+        cwd: s.cwd,
+        // The sleep rung has this one. See `AutoPane.sleepsSoon`.
+        sleepsSoon: sleepingSoon.has(s.id)
+      }))
+  }, [])
   handoffPanesRef.current = handoffPanes
 
   /**
@@ -2759,6 +2786,9 @@ export default function App(): JSX.Element {
     const worthAsking = panes.some((p) => {
       if (p.focused || p.remote || p.handingOff) return false
       if ((handoffBlocked.current[p.id] ?? 0) > now) return false
+      // Both rungs below refuse it, so asking the peers about it is a round trip over the
+      // link for an empty plan. See `AutoPane.sleepsSoon`.
+      if (p.sleepsSoon) return false
       if (over) return handoffQueueable(p)
       return (
         !p.visible &&
@@ -2935,6 +2965,7 @@ export default function App(): JSX.Element {
   // Only a MEMORY verdict shortens the clock: sleeping frees memory, not a core, and a
   // wake under lag is the slow, load-adding thing. See `sleepPressureOf`.
   const pressure: SleepPressure = sleepPressureOf(capacity?.level, capacity?.why)
+  sleepPressureRef.current = pressure
   useEffect(() => {
     const cfg = config?.reclaim ?? DEFAULT_RECLAIM
     if (!cfg.enabled) return

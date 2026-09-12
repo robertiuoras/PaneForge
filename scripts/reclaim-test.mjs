@@ -1113,4 +1113,46 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   check('...and a dropped countdown is written to reclaim.log, not only to DevTools', /event: 'skipped'/.test(app))
 }
 
+{
+  // The two rungs cannot both arm on one pane. `idleSleepPlan` read SLEEPS_SOON_LEAD_MS
+  // ahead is what `AutoPane.sleepsSoon` is, and `budgetPlan` refuses every pane wearing
+  // it - so the case Robert reported on 2026-09-12 (a pane quiet for three minutes armed
+  // for the PC with its own thirty-minute sleep clock running underneath) is decided one
+  // way whichever sweep fires first.
+  const handoffOut = join(work, 'autohandoff.bundle.cjs')
+  buildSync({ absWorkingDir: root, entryPoints: ['src/shared/autoHandoff.ts'], bundle: true, format: 'cjs', platform: 'node', outfile: handoffOut })
+  const { budgetPlan, DEFAULT_AUTO_HANDOFF, SLEEPS_SOON_LEAD_MS } = createRequire(import.meta.url)(handoffOut)
+  const cfg = { ...DEFAULT_RECLAIM, idleSleepMinutes: 30 }
+  const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name: 'proj', path: '/pc/proj' }] }]
+  const autoPane = (id, quietMs, extra = {}) => ({
+    id,
+    agent: 'claude',
+    resumeId: `conv-${id}`,
+    state: 'ready',
+    lastKeyboard: NOW - quietMs,
+    focused: false,
+    visible: false,
+    remote: false,
+    handingOff: false,
+    asking: false,
+    projectName: 'proj',
+    memMb: 300,
+    ...extra
+  })
+  const soon = (quietMs) =>
+    idleSleepPlan([pane({ id: 'q', lastKeyboard: NOW - quietMs })], cfg, NOW, true, 'ok', SLEEPS_SOON_LEAD_MS).length > 0
+
+  // 29 minutes quiet: the sleep rung has it within the move sweep's own window.
+  eq('a pane a minute from sleeping reads as sleepsSoon', soon(29 * 60_000), true)
+  const held = [autoPane('q', 29 * 60_000, { sleepsSoon: soon(29 * 60_000) }), autoPane('keep', 29 * 60_000), autoPane('me', 0, { focused: true })]
+  eq('...and the budget rung takes the other pane instead', budgetPlan(held, peers, { ...DEFAULT_AUTO_HANDOFF, budgetMinMb: 1 }, {}, NOW, 2).map((p) => p.id).join(','), 'keep')
+
+  // Three minutes quiet under a verdict that does NOT shorten the sleep clock: the sleep
+  // rung will not reach this pane for another twenty-seven minutes, so refusing the move
+  // would leave a costly pane here with nothing acting on it. It moves.
+  eq('a pane 27 minutes from sleeping does not', soon(3 * 60_000), false)
+  const free = [autoPane('q', 3 * 60_000, { sleepsSoon: soon(3 * 60_000) }), autoPane('keep', 29 * 60_000, { sleepsSoon: true }), autoPane('me', 0, { focused: true })]
+  eq('...and the budget rung moves it', budgetPlan(free, peers, { ...DEFAULT_AUTO_HANDOFF, budgetMinMb: 1 }, {}, NOW, 2).map((p) => p.id).join(','), 'q')
+}
+
 console.log(`reclaim: ${checks} checks passed`)
