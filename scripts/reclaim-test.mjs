@@ -969,11 +969,13 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   check('...and it arms a countdown rather than sleeping on the spot', /armSleepRef\.current\(plan, pressure\)/.test(app), '')
   check('...and the countdown is what sleeps, with the measured reason', /soon\.sleep[\s\S]{0,900}sleepSession\(id, soon\.why === 'idle' \? 'idle' : 'pressure'/.test(app), '')
   check('...and the card says it is a sleep', /sleep: true as const/.test(app), '')
-  check(
-    'and "Sleep this pane" is gone from the card menu - the clock does it',
-    !/key: 'sleep'/.test(app),
-    ''
-  )
+  // ...and the card menu offers the press as well. Taken off 2026-08-28 ("that should be
+  // automatically assigned to unused tabs") and asked for again 2026-09-12 ("need option
+  // for us to manually sleep a session maybe in the right click menu"): the clock is
+  // still how it usually happens, and this is the hand for a pane you are done with now.
+  check("and \"Sleep this pane\" is on the card menu", /key: 'sleep'/.test(app), '')
+  check('...gated by the same refusals the clock uses', /canSleep\(sleepReading\)/.test(app), '')
+  check('...and a refusal is said on screen, not only logged', /onSleepRefused\(/.test(app), '')
 }
 
 // A slept pane still has a SHAPE, and the pane it wakes into must be that shape.

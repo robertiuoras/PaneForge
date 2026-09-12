@@ -147,7 +147,7 @@ import {
   type AutoPane
 } from '../../shared/autoHandoff'
 import { fleetState, type FleetState } from '../../shared/fleet'
-import { keptWords } from '../../shared/sleep'
+import { canSleep, keptWords, sleepRefusal } from '../../shared/sleep'
 import { asleepChip } from '../../shared/sleepWords'
 import type { SleepReason } from '../../shared/types'
 import { idleQuitVerdict } from '../../shared/idlequit'
@@ -995,6 +995,12 @@ export default function App(): JSX.Element {
    * Ctrl+3 reaches. A ref because the sweeps that use it run from timers holding no
    * render's closure, and a stale name here would point at the wrong card.
    */
+  /**
+   * `flash` is declared further down the component than the effects that need it, so the
+   * ref is the way one of them reaches it. Written on every render, read only in a
+   * callback, so there is never a stale one.
+   */
+  const flashRef = useRef<(msg: string) => void>(() => {})
   const paneWordRef = useRef((id: string) => {
     const i = sessionsRef.current.findIndex((x) => x.id === id)
     if (i < 0) return 'a pane'
@@ -1416,10 +1422,18 @@ export default function App(): JSX.Element {
     // A pane naming itself for the client (or the subject) it is working on. No sound and
     // no glow: nothing was asked of anybody, and the card says so for three seconds.
     const offNamed = api.onClientNamed((e) => setClientNamed(e))
+    // A sleep somebody pressed for and did not get. Silent until 2026-09-12: the card
+    // took itself off screen, `sleepSession` answered `null`, and the reason was in a log
+    // file - so the button read as broken (Robert: "i press sleep now and it doesn't
+    // sleep"). The name is the pane's own word, so two cards cannot be confused.
+    const offSleepNo = api.onSleepRefused((e) => {
+      flashRef.current(`${paneWordRef.current(e.id)} did not sleep. ${e.why}`)
+    })
     return () => {
       offStalled()
       offAsk()
       offBell()
+      offSleepNo()
       offNamed()
     }
   }, [])
@@ -1622,6 +1636,7 @@ export default function App(): JSX.Element {
     setNote(msg)
     window.setTimeout(() => setNote(null), 4000)
   }, [])
+  flashRef.current = flash
 
   // A main-process error used to be a modal box that took the keyboard off whatever you
   // were typing. It says so in the corner now; the stack is in paneforge-errors.log.
@@ -7033,6 +7048,18 @@ export default function App(): JSX.Element {
         const paneNumber = sessions.indexOf(s) + 1
         const shut = (): void => setCardMenu(null)
         const local = !s.remote
+        // What `shared/sleep.ts` needs to answer "may this one sleep", off the card's own
+        // fields. `remote` is the mirror reading: that pty belongs to the other desk.
+        const sleepReading = {
+          status: s.status,
+          asleep: s.asleep,
+          mirror: !!s.remote,
+          busy: !!s.runSince,
+          asking: !!s.ask,
+          drafting: !!s.drafting,
+          job: s.job,
+          backJob: s.backJob
+        }
         return (
           <SessionMenu
             title={s.title}
@@ -7050,6 +7077,47 @@ export default function App(): JSX.Element {
                 ,
                 run: () => togglePin(s.id)
               },
+              // Sleeping by hand, back on the menu.
+              //
+              // This row was here, taken off 2026-08-28 ("we don't need the right click
+              // then sleep this pane, that should be automatically assigned to unused
+              // tabs") and asked for again 2026-09-12 ("need option for us to manually
+              // sleep a session maybe in the right click menu"). The automatic clock is
+              // still the usual way it happens; this is the press for a pane you are done
+              // with NOW rather than in thirty minutes.
+              //
+              // The refusals are `shared/sleep.ts`'s own, so the row says why instead of
+              // disappearing: a disabled row with the reason under it is the difference
+              // between "this app cannot do that" and "not while it is mid-turn". Main
+              // takes the same reading again over its own live pane, so this one only has
+              // to be good enough to explain itself.
+              ...(local && !s.asleep
+                ? [
+                    {
+                      key: 'sleep',
+                      label: 'Sleep this pane',
+                      disabled: !canSleep(sleepReading),
+                      hint:
+                        sleepRefusal(sleepReading) ||
+                        'stop its agent, keep the card, screen and conversation',
+                      run: () => {
+                        void (async () => {
+                          let slept: unknown = null
+                          try {
+                            slept = await api.sleepSession(s.id, 'manual', { source: 'menu' })
+                          } catch {
+                            slept = null
+                          }
+                          // Main answers `null` for a refusal it took on its own reading -
+                          // an unverified conversation is the one this row cannot see. Its
+                          // own `sleep-refused` line says which; this one says the press
+                          // landed and nothing happened, so the log reads as one story.
+                          if (!slept) skipClose([s.id], 'the app refused to sleep it by hand - see the sleep-refused line above')
+                        })()
+                      }
+                    }
+                  ]
+                : []),
               // Waking is a press and sleeping is not: the idle clock puts an unused pane
               // to sleep by itself (`idleSleepPlan`), so the row that did it by hand is
               // gone - Robert, 2026-08-28: "we don't need the right click then sleep this

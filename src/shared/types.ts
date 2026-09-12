@@ -600,7 +600,11 @@ export const SLEEP_SOURCES = [
   'renderer',
   'api',
   'internal',
-  'handoff'
+  'handoff',
+  // A hand on the card's right-click menu. Told apart from 'renderer' on purpose: that one
+  // is any other press the window makes, and "did a person sleep this" is the question the
+  // reason list exists to answer.
+  'menu'
 ] as const
 export interface SleepEvidence {
   source: (typeof SLEEP_SOURCES)[number]
@@ -2209,6 +2213,8 @@ export interface Api {
   undoClientName(id: string): Promise<void>
   /** A pane has just been named for a client. Carries what it was called before. */
   onClientNamed(fn: (e: ClientNamed) => void): () => void
+  /** A sleep somebody asked for that main would not do, and the sentence saying why. */
+  onSleepRefused(fn: (e: { id: string; why: string }) => void): () => void
   onActivity(fn: (feed: ActivityFeed) => void): () => void
   /**
    * The sidebar's order after a card was dragged, newest-first-to-last as displayed.

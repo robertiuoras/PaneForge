@@ -236,6 +236,7 @@ export const SURFACE: Surface = {
   onBell: ['on', 'sessions:bell'],
   onAsk: ['on', 'sessions:ask'],
   onClientNamed: ['on', 'sessions:clientNamed'],
+  onSleepRefused: ['on', 'sessions:sleepRefused'],
   onActivity: ['on', 'activity:changed'],
   onLaneTimeline: ['on', 'lanes:timeline-changed'],
   paneBell: ['send', 'sessions:bell'],

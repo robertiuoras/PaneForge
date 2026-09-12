@@ -930,6 +930,9 @@ manager.on('ask', (s: Session) => raiseAsk(s))
 // A pane naming itself is a thing the app decided, so it is reported and never asked -
 // the card in the corner carries the undo. Renderer only: nothing about it is worth a
 // phone notification.
+manager.on('sleepRefused', (id: string, why: string) => {
+  send('sessions:sleepRefused', { id, why })
+})
 manager.on('clientNamed', (e: ClientNamed) => {
   send('sessions:clientNamed', e)
   // The card that says this is gone in three seconds; the list is where it can still be

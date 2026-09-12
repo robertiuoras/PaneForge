@@ -1245,7 +1245,13 @@ export class SessionManager extends EventEmitter {
       keyboardAgoMs: live.meta.lastKeyboard ? Date.now() - live.meta.lastKeyboard : undefined
     }
     if (!canSleep(reading)) {
-      logReclaim({ action: 'sleep-refused', pane: id, ...decision, refusal: sleepRefusal({ ...reading, job: reading.job ? 'a job' : undefined, backJob: reading.backJob ? 'a job' : undefined }) })
+      const why = sleepRefusal({ ...reading, job: reading.job ? 'a job' : undefined, backJob: reading.backJob ? 'a job' : undefined })
+      logReclaim({ action: 'sleep-refused', pane: id, ...decision, refusal: why })
+      // Said out loud when a PERSON asked. Robert, 2026-09-12: "i press sleep now and it
+      // doesn't sleep" - the press was answered `null`, the card took itself off screen,
+      // and every word about why went to a log file. A refusal of a press is a sentence
+      // on screen or it is a broken button.
+      this.emit('sleepRefused', id, why)
       return null
     }
     // An unnamed provider resume selects some other conversation. Do this before the
@@ -1266,6 +1272,12 @@ export class SessionManager extends EventEmitter {
         live.sleepRefusalLoggedAt = at
         logReclaim({ action: 'sleep-refused', pane: id, ...decision, resumeId, refusal: 'conversation-unverified', shown: live.sleepRefusalShown === true })
       }
+      // The same sentence the terminal gets, on the card that was pressed. The second
+      // press goes through - that is what `sleepRefusalShown` is for - so the sentence
+      // has to SAY so, or the button reads as dead.
+      this.emit('sleepRefused', id, live.sleepRefusalShown
+        ? 'This conversation still could not be verified.'
+        : 'This conversation could not be verified, so the pane is still running. Press Sleep again to sleep it anyway.')
       if (live.sleepRefusalShown) return null
       live.sleepRefusalShown = true
       const note = '\x1b[33mSleep refused: this conversation could not be verified, so this pane remains running.\x1b[0m\r\n'
