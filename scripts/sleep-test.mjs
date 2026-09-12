@@ -14,7 +14,7 @@
 
 import { buildSync, transformSync } from 'esbuild'
 import { strict as assert } from 'node:assert'
-import { mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -176,12 +176,13 @@ function listsFromTypes() {
 }
 
 const events = []
+let resumeIdNow = 'exact-conversation'
 let verified = false
 let kills = 0
 let ledgerChanges = 0
 const reclaimEvents = []
 const deps = {
-  canSleep, sleepRefusal, resumeIdFor: () => 'exact-conversation',
+  canSleep, sleepRefusal, resumeIdFor: () => resumeIdNow,
   resumableTranscript: () => verified ? '/fixture/rollout.jsonl' : null,
   ledgerSleep: () => ledgerChanges++, killPaneStrays() {}, stopPipe() {},
   recordEnd() {}, logReclaim: row => reclaimEvents.push(row), basename: () => 'fixture', SLEEP_MARK: 'asleep',
@@ -266,6 +267,20 @@ changeConversation(true, live, 'pane', () => {})
 manager.sleep('pane')
 is(events.filter(([kind, , text]) => kind === 'data' && text?.includes('Sleep refused')).length, 5, 'an unrelated command does not reset suppression')
 
+// The latch is per conversation. A Codex pane is often refused while its rollout has not
+// been discovered yet (`resumeIdFor` answering nothing), and the discovery can succeed
+// minutes later - a latch held on the PANE meant it was refused in silence from then on,
+// whatever the reading underneath it became (2026-09-12, pane `s2-mtwz8uej`).
+resumeIdNow = undefined
+manager.sleep('pane')
+is(events.filter(([kind, , text]) => kind === 'data' && text?.includes('Sleep refused')).length, 6, 'losing the conversation entirely is a new refusal, said out loud')
+manager.sleep('pane')
+is(events.filter(([kind, , text]) => kind === 'data' && text?.includes('Sleep refused')).length, 6, '...and is then suppressed like any other')
+resumeIdNow = 'a-conversation-that-was-finally-found'
+manager.sleep('pane')
+is(events.filter(([kind, , text]) => kind === 'data' && text?.includes('Sleep refused')).length, 7, 'a conversation discovered after the refusal is owed the sentence again')
+resumeIdNow = 'exact-conversation'
+
 // ---------------------------------------------------------------------------
 // The pin, on a card that is already saying something
 
@@ -327,6 +342,65 @@ is(
   const once = sessions.indexOf('if (live.sleepRefusalShown) return null')
   assert.ok(refuse > 0 && once > refuse, 'main writes the unverified refusal down every time, and only the on-screen note is once')
   checks += 12
+}
+
+// ---------------------------------------------------------------------------
+// A Codex pane with a real rollout on disk is sleepable
+//
+// This is the bug Robert reported on 2026-09-12: session 1, a codex pane, refused
+// `conversation-unverified` on every press of `Sleep now` and on every idle sweep. The
+// refusal in sleep() is correct - a conversation that cannot be resumed must not be
+// ended. What was wrong is upstream: a codex pane's rollout was only ever matched when
+// the rollout was CREATED after the pane started, so a pane restored onto an older
+// conversation could never be identified, and `resumeIdFor` answered nothing for ever.
+{
+  const bundle = join(work, 'transcripts.bundle.cjs')
+  buildSync({
+    absWorkingDir: root,
+    entryPoints: ['src/main/transcripts.ts'],
+    bundle: true,
+    format: 'cjs',
+    platform: 'node',
+    external: ['electron'],
+    outfile: bundle
+  })
+  const home = join(work, 'codex-home')
+  process.env.CODEX_HOME = home
+  mkdirSync(join(home, 'sessions', '2026', '09', '12'), { recursive: true })
+  const cwd = join(work, 'a-project')
+  mkdirSync(cwd, { recursive: true })
+
+  const { noteSession, noteSubmittedPrompt, resumeIdFor, resumableTranscript } = require(bundle)
+  const id = '4f2a9c11-7b0e-4d33-9a55-2c9f6b1d8e40'
+  const line = 'fix the sleep refusal on this codex pane'
+  const rollout = join(home, 'sessions', '2026', '09', '12', `rollout-${id}.jsonl`)
+
+  noteSession('codex-pane', cwd, 'codex')
+  noteSubmittedPrompt('codex-pane', line)
+  is(resumeIdFor('codex-pane'), undefined, 'a codex pane with no rollout on disk names no conversation')
+
+  // Written AFTER the pane started, but stamped two hours earlier - exactly the shape of
+  // a conversation the pane was resumed into, and the one the old time gate refused.
+  const born = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
+  writeFileSync(rollout, [
+    JSON.stringify({ type: 'session_meta', payload: { id, cwd, timestamp: born } }),
+    JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: line }] } }),
+    JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'on it' }] } }),
+    ''
+  ].join('\n'))
+
+  is(resumeIdFor('codex-pane'), id, 'a rollout the pane can prove it typed into is its conversation, whenever it was created')
+  ok(resumableTranscript(cwd, id, 'codex') === rollout, '...and that conversation is resumable, so the pane may sleep')
+
+  // The proof is the typed line, never the folder alone: a rollout in the same folder
+  // this pane never said anything into belongs to somebody else.
+  noteSession('other-pane', cwd, 'codex')
+  is(resumeIdFor('other-pane'), undefined, 'a pane that has proved nothing still claims no conversation')
+
+  const source = readFileSync(join(root, 'src/main/transcripts.ts'), 'utf8')
+  const discovery = source.slice(source.indexOf('const matches = codexRollouts('), source.indexOf('if (matches.length !== 1) return null'))
+  ok(!/row\.at >= s\.at - START_SLACK_MS/.test(discovery), 'and no birth-time gate is put back on top of that proof')
+  delete process.env.CODEX_HOME
 }
 
 console.log(`sleep: ${checks} checks passed`)

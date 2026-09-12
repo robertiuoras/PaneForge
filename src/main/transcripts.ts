@@ -507,7 +507,15 @@ export function transcriptFor(id: string): string | null {
     const matches = codexRollouts(s.at - START_SLACK_MS)
       .map(codexMeta)
       .filter((row): row is CodexMeta => Boolean(row))
-      .filter((row) => sameCwd(row.cwd, s.cwd) && row.at >= s.at - START_SLACK_MS && !taken.has(row.file) && codexSaidByPane(row.file, uniqueLines))
+      // The line proof IS the identity, so the rollout's own birth time is not a gate on
+      // top of it. It used to be, and that made a pane whose rollout predates its current
+      // start - one the app restored, or one resumed into an older conversation -
+      // permanently unidentifiable: `resumeIdFor` answered nothing, so every sleep of it
+      // was refused `conversation-unverified` for the life of the app (2026-09-12, pane
+      // `s2-mtwz8uej`). What still bounds the search is `codexRollouts`, which only offers
+      // files WRITTEN since this pane started - a rollout this pane is typing into has
+      // just been appended to, whenever it was created.
+      .filter((row) => sameCwd(row.cwd, s.cwd) && !taken.has(row.file) && codexSaidByPane(row.file, uniqueLines))
     // Cwd and time identify a candidate only while they identify exactly one. Two panes
     // launched together in one folder must remain unresumable rather than swap chats.
     if (matches.length !== 1) return null

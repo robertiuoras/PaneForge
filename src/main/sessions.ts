@@ -380,6 +380,8 @@ interface Live {
   sleepRefusalShown?: boolean
   /** When the unverified-conversation refusal was last written to reclaim.log. */
   sleepRefusalLoggedAt?: number
+  /** Which conversation that refusal was about, so a new one is said out loud again. */
+  sleepRefusalId?: string
   /**
    * Null while the pane is ASLEEP - a card with no process behind it. That is a real
    * state a pane can be BORN in (a restore, see `shared/restoreTurn.ts`), not only one it
@@ -1267,6 +1269,17 @@ export class SessionManager extends EventEmitter {
       // beside it to say the sweep was being told no; fifty asks in a burst still write
       // one line. The five minutes is inline because `sleep-test.mjs` evals this method
       // on its own, without the module's constants.
+      // The latch belongs to a CONVERSATION, not to the pane. A Codex pane's rollout is
+      // often only discovered minutes after it starts, so its answer here goes from
+      // nothing at all to an exact id - and a latch held on the pane meant that pane was
+      // refused in silence for the life of the app however the reading changed under it
+      // (2026-09-12, pane `s2-mtwz8uej`). A different answer is a different conversation,
+      // so the sentence is owed again.
+      if (live.sleepRefusalId !== resumeId) {
+        live.sleepRefusalShown = false
+        live.sleepRefusalLoggedAt = undefined
+      }
+      live.sleepRefusalId = resumeId
       const at = Date.now()
       if (!live.sleepRefusalShown || at - (live.sleepRefusalLoggedAt ?? 0) >= 5 * 60_000) {
         live.sleepRefusalLoggedAt = at

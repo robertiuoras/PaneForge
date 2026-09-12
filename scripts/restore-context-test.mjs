@@ -384,7 +384,23 @@ try {
   T.noteSession('pane-codex-old', oldCwd, 'codex')
   T.noteSubmittedPrompt('pane-codex-old', 'old Codex prompt')
   rollout('old', oldId, oldCwd, new Date(Date.now() - 10 * 60_000).toISOString(), 'old Codex prompt')
-  assert.equal(T.resumeIdFor('pane-codex-old'), undefined, 'a Codex rollout older than the pane is refused')
+  // A rollout BORN before the pane, still being written into, is the ordinary shape of a
+  // resumed conversation - and the only way an older file can hold a line this pane typed
+  // since it started. Refusing it on its birth time alone left every such pane unable to
+  // name its conversation at all, so `resumeIdFor` answered nothing and every sleep of it
+  // was refused `conversation-unverified` for the life of the app (2026-09-12, pane
+  // `s2-mtwz8uej`, a Codex pane Robert could not put to sleep by hand or by sweep).
+  assert.equal(T.resumeIdFor('pane-codex-old'), oldId, 'an older Codex rollout this pane proved it typed into is still its conversation')
+  // What does the bounding instead is the file being WRITTEN since the pane started. One
+  // nobody has touched since cannot be the conversation a live pane is talking into.
+  const dormantId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+  const dormantCwd = mkdtempSync(join(tmpdir(), 'pf-codex-dormant-'))
+  T.noteSession('pane-codex-dormant', dormantCwd, 'codex')
+  T.noteSubmittedPrompt('pane-codex-dormant', 'dormant Codex prompt')
+  rollout('dormant', dormantId, dormantCwd, undefined, 'dormant Codex prompt')
+  const dormantAt = new Date(Date.now() - 60 * 60_000)
+  utimesSync(join(codexDir, 'dormant.jsonl'), dormantAt, dormantAt)
+  assert.equal(T.resumeIdFor('pane-codex-dormant'), undefined, 'a rollout untouched since the pane started is nobody here')
   T.noteSession('pane-codex-named', cwd, 'codex', codexId)
   assert.equal(T.resumeIdFor('pane-codex-named'), codexId, 'a named Codex resume is accepted only when metadata matches cwd and id')
   const rehomeCwd = mkdtempSync(join(tmpdir(), 'pf-codex-rehome-'))
@@ -397,7 +413,7 @@ try {
   assert.equal(T.resumable(cwd, noReplyId, 'codex'), false, 'Codex metadata without an assistant reply is not restorable')
   T.noteSession('pane-codex-wrong-cwd', otherCwd, 'codex', codexId)
   assert.equal(T.resumeIdFor('pane-codex-wrong-cwd'), undefined, 'a named Codex id from another cwd is refused')
-  for (const id of ['pane3', 'pane-codex-two', 'pane-codex-first-query-first', 'pane-codex-first-query-second', 'pane-codex-ambiguous-one', 'pane-codex-ambiguous-two', 'pane-codex-shared-one-first', 'pane-codex-shared-one-second', 'pane-codex-unique-one', 'pane-codex-unique-two', 'pane-codex-old', 'pane-codex-named', 'pane-codex-rehomed', 'pane-codex-wrong-cwd']) T.forgetSession(id)
+  for (const id of ['pane3', 'pane-codex-two', 'pane-codex-first-query-first', 'pane-codex-first-query-second', 'pane-codex-ambiguous-one', 'pane-codex-ambiguous-two', 'pane-codex-shared-one-first', 'pane-codex-shared-one-second', 'pane-codex-unique-one', 'pane-codex-unique-two', 'pane-codex-old', 'pane-codex-dormant', 'pane-codex-named', 'pane-codex-rehomed', 'pane-codex-wrong-cwd']) T.forgetSession(id)
   rmSync(codexHome, { recursive: true, force: true })
   rmSync(firstQueryCwd, { recursive: true, force: true })
   rmSync(sharedOneCwd, { recursive: true, force: true })
