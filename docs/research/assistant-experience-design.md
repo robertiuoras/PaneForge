@@ -8,6 +8,20 @@ This is a proposed interaction specification accompanying [the research and arch
 
 The delivery order is Mac first, Windows follows. The primary end-to-end journey starts with an accepted client job or email brief, researches the existing client context, requests missing login/access, executes authorised deliverables, and produces a private completion document with screenshot evidence. Use included agent subscriptions first and show paid voice/API usage separately.
 
+## Confirmed simplification and reliability requirements
+
+Robert's priority is scaling Taskdriver.ai as an agency toward $10k+ per month. PaneForge should increase client delivery capacity and reduce supervision. Brezo and broader startup exploration are deferred.
+
+Use Live on demand to describe an outcome, steer a task, ask about selected work or discuss a review decision. End the conversation while authorised work continues. The assistant should not require a voice connection to remain useful.
+
+Simplify the visible interface rather than assuming every capability can disappear. Keep Copy output, Open folder and clearly scoped clear/new-conversation actions in a compact contextual menu or command palette. These local actions should execute directly without an LLM round trip. Clearing the visible terminal, starting a fresh conversation and deleting history are different operations and must not share an ambiguous command. Preserve drafts and session history unless their removal is explicitly requested. Keep Stop task, voice-off state, approvals and review access readily visible. Typed input and direct controls must work when voice is unavailable or its budget is exhausted.
+
+Voice requests and direct controls should reach the same underlying operations and authority checks. Avoid duplicate implementations. Hide advanced terminal machinery behind Workbench; do not remove backend functionality needed to execute, inspect or recover work merely because the assistant can invoke it.
+
+Rendering correctness is a prerequisite, not an automatic-repair feature to showcase. Diagnose and eliminate the actual cause of torn frames or incorrect history before migrating it. A periodic repaint, simulated resize or replay loop does not count as the root-cause fix. Ordinary resize, pane switching, background/foreground transitions and session restoration must remain correct without invoking repair. The latest reported occurrence has not been reproduced or diagnosed in this planning work.
+
+Acceptance requires a reproducible failing case, an explanation of the faulty state/size/order transition, and regression evidence after fixing it. Exercise rapid and repeated resizing, narrow/wide layouts, Unicode/wrapped lines, long history, multiple panes and sleep/wake. Verify frame correctness and preservation of draft, scroll position, session identity and history. Recovery telemetry must distinguish a clean run from a defect hidden by automatic repair. A bounded fallback may handle exceptional GPU/context loss, but it cannot substitute for correctness during normal operations. Do not claim that a change of shell guarantees this result.
+
 ## Navigation and layout
 
 Use two primary views, **Assistant** and **Workbench**, sharing the same tasks. Assistant is the conversational and outcome view; Workbench exposes terminals, files, diffs, lanes, and detailed execution. Voice is an optional input method in either view, not a third task universe.

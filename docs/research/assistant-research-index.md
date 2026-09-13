@@ -46,3 +46,5 @@ No application code, dependencies, credentials, OS settings, agent schedules or 
 
 - [Three visual directions and animated study](../design/paneforge-directions/README.md)
 - [Voice economics and commercial hypotheses](voice-economics-and-opportunities.md)
+
+- [Brezo startup ideas, deferred](../ideas/brezo/README.md): separate from the active Taskdriver agency priority.
