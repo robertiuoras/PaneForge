@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Layout B · Top mode control</title>
+<link rel="stylesheet" href="shared.css">
+<style>.app{--nav-w:216px}.topbar .seg{margin:0 auto}</style>
+</head>
+<body data-layout="b">
+<div class="app">
+  <header class="topbar">
+    <button class="btn quiet menu-toggle" data-action="open-nav" aria-label="Open projects and chats">☰</button>
+    <div class="brand"><img src="../paneforge-directions/assets/brands/paneforge.svg" alt="PaneForge logo">PaneForge</div>
+    <nav class="seg" role="tablist" aria-label="Views">
+      <button role="tab" data-action="mode:chat" aria-selected="true">Chat</button>
+      <button role="tab" data-action="mode:work" aria-selected="false">Work <span class="dot" style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--attention);vertical-align:2px;margin-left:4px" aria-label="one decision waiting"></span></button>
+      <button role="tab" data-action="mode:code" aria-selected="false">Code</button>
+    </nav>
+    <div style="position:relative;display:flex;align-items:center;gap:10px">
+      <input data-role="search" class="btn" style="width:200px" type="search" placeholder="Find a saved chat  /" aria-label="Find a saved chat">
+      <div class="search-results agent-menu" hidden style="right:auto;left:0;top:100%"></div>
+      <button class="pill agent" data-action="agent-menu" aria-haspopup="menu" aria-expanded="false"><img data-bind="agent-img" alt=""> <span data-bind="agent-name">Codex</span> ▾</button>
+      <div class="agent-menu" role="menu" hidden style="right:0;top:100%"></div>
+      <span class="pill" aria-label="Private workspace, signed in as Robert">Private · R</span>
+    </div>
+  </header>
+
+  <nav class="sidebar" aria-label="Projects and saved chats">
+    <small style="margin-top:4px">Projects</small>
+    <button class="nav-btn" data-action="project:Harbour Studio">Harbour Studio</button>
+    <button class="nav-btn" data-action="project:Taskdriver">Taskdriver</button>
+    <button class="nav-btn" data-action="project:PaneForge">PaneForge</button>
+    <button class="nav-btn" data-action="new-project">+ New project <span class="k">⌘N</span></button>
+    <small>Saved chats</small>
+    <button class="nav-btn" data-action="thread:launch">The launch plan</button>
+    <button class="nav-btn" data-action="thread:review">Weekly business review</button>
+    <button class="nav-btn" data-action="thread:projectview">Improve the project view</button>
+    <div class="providers"><span>Sessions</span><img src="../paneforge-directions/assets/brands/codex.svg" alt="Codex"><img src="../paneforge-directions/assets/brands/claude.svg" alt="Claude"><img src="../paneforge-directions/assets/brands/antigravity.png" alt="Antigravity"></div>
+  </nav>
+
+  <main class="main">
+    <div class="canvas" data-inject></div>
+  </main>
+
+  <footer class="guide" aria-live="polite"><span class="say"></span><span class="steps"></span><span class="stats"></span></footer>
+</div>
+<div class="toast" role="status"></div>
+<script src="shared.js"></script>
+</body>
+</html>

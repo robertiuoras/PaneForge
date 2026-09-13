@@ -1,0 +1,35 @@
+{
+  "brief": "/Users/robertiuoras/Projects/PaneForge-b/docs/research/workflow-foundations/product-session.md",
+  "startHereRead": true,
+  "status": "delivered",
+  "acknowledgedAt": "2026-09-13T00:00:00Z",
+  "cwd": "/Users/robertiuoras/Projects/PaneForge-c",
+  "lane": "c",
+  "branch": "lane-c",
+  "pane": "s34-mtzkrul5",
+  "provider": "claude",
+  "model": "claude-fable-5-1",
+  "nativeConversationId": "45557665-6712-4221-b905-f230b38b72b7",
+  "goalRegistration": "saved goal brief only - no native /goal support in this session",
+  "deliverables": {
+    "plan": "docs/research/successor-product-plan.md",
+    "prototypes": "docs/design/successor-layouts/",
+    "receipt": "docs/research/workflow-foundations/product-session-receipt.json"
+  },
+  "scope": "planning and local prototypes only; no migration, release, external messages, paid API, recurring jobs, new workers",
+  "note": "Brief files live in PaneForge-b (sibling lane); this session reads them read-only and writes only in PaneForge-c.",
+  "unresolvedDecisions": [
+    "Layout A/B/C after the user evaluation in successor-product-plan.md section 7; hypothesis B plus C search/list",
+    "First real task fixture for stage 1 (proposed: one enquiry to proposal)",
+    "Hard voice/API budget before the voice pilot",
+    "Teammates grouped by project or by identity roster",
+    "When to spend the Tauri spike, given stage-0 baseline numbers may remove the reason"
+  ],
+  "deliveredAt": "2026-09-13T09:20:00Z",
+  "evidence": "docs/design/successor-layouts/validation.json (headless Chrome Automation run, all three layouts pass; click 11/11/9 actions, 0 wrong turns; keyboard 20 actions each)",
+  "notDone": [
+    "No user evaluation run yet (needs people)",
+    "No whole-process baseline measured under a controlled pane workload (stage 0)",
+    "Nothing implemented in the app"
+  ]
+}
