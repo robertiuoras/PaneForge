@@ -1,0 +1,15 @@
+{
+  "ok": true,
+  "checks": [
+    "108 simulated agents",
+    "status counts",
+    "folder filtering",
+    "pagination",
+    "selected conversation",
+    "empty search",
+    "390px viewport",
+    "four SVG identity cards",
+    "no page errors"
+  ],
+  "runtimeAgentsStarted": 0
+}

@@ -1,0 +1,551 @@
+[
+  {
+    "repo": "langchain-ai/langgraph",
+    "name": "LangGraph",
+    "category": "orchestration",
+    "summary": "Stateful graph runtime for long-running agent workflows.",
+    "useful_for": "checkpointed task lifecycle experiments",
+    "limitation": "Python framework; evaluate persistence and provider adapters locally.",
+    "fit": "shortlist",
+    "evidence": "source-inspected",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/langchain-ai/langgraph",
+      "https://docs.langchain.com/oss/python/langgraph/"
+    ],
+    "code_pointers": [
+      "libs/checkpoint-conformance/langgraph/checkpoint/conformance/"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "microsoft/autogen",
+    "name": "AutoGen",
+    "category": "orchestration",
+    "summary": "Microsoft agent framework for multi-agent applications.",
+    "useful_for": "conversation and handoff patterns",
+    "limitation": "Repository API reports CC-BY-4.0; licence/reuse scope needs legal confirmation.",
+    "fit": "consider",
+    "evidence": "documentation",
+    "license": "CC-BY-4.0",
+    "source_urls": [
+      "https://github.com/microsoft/autogen",
+      "https://microsoft.github.io/autogen/"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "crewAIInc/crewAI",
+    "name": "CrewAI",
+    "category": "orchestration",
+    "summary": "Role-oriented agent workflow framework.",
+    "useful_for": "bounded delegation ideas",
+    "limitation": "Role-play abstraction is not a reason to adopt a permanent agent fleet.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/crewAIInc/crewAI"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "openai/openai-agents-python",
+    "name": "OpenAI Agents SDK",
+    "category": "orchestration",
+    "summary": "Lightweight SDK for agent workflows, handoffs and tracing.",
+    "useful_for": "provider-native workflow comparison",
+    "limitation": "Python/API surface does not prove subscription CLI feature parity.",
+    "fit": "consider",
+    "evidence": "documentation",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/openai/openai-agents-python",
+      "https://openai.github.io/openai-agents-python/"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "huggingface/smolagents",
+    "name": "smolagents",
+    "category": "orchestration",
+    "summary": "Small agent library centred on code actions.",
+    "useful_for": "minimal-tool-agent reference",
+    "limitation": "Do not execute generated code without PaneForge policy gates.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/huggingface/smolagents",
+      "https://huggingface.co/docs/smolagents"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "agno-agi/agno",
+    "name": "Agno",
+    "category": "orchestration",
+    "summary": "Agent platform framework.",
+    "useful_for": "agent platform comparison",
+    "limitation": "Broad platform surface exceeds first prototype needs.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/agno-agi/agno",
+      "https://docs.agno.com"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "pydantic/pydantic-ai",
+    "name": "Pydantic AI",
+    "category": "orchestration",
+    "summary": "Typed Python AI agents and model interfaces.",
+    "useful_for": "schema validation patterns",
+    "limitation": "Typed output validates shape, not truth or authority.",
+    "fit": "consider",
+    "evidence": "documentation",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/pydantic/pydantic-ai"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "microsoft/semantic-kernel",
+    "name": "Semantic Kernel",
+    "category": "orchestration",
+    "summary": "Microsoft SDK for integrating LLM functions into apps.",
+    "useful_for": ".NET/Python plugin comparison",
+    "limitation": "Plugin systems require independent policy enforcement.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/microsoft/semantic-kernel"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "camel-ai/camel",
+    "name": "CAMEL",
+    "category": "orchestration",
+    "summary": "Multi-agent research framework.",
+    "useful_for": "research comparison only",
+    "limitation": "Research scaling claims need task-specific reproduction.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/camel-ai/camel"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "FoundationAgents/MetaGPT",
+    "name": "MetaGPT",
+    "category": "orchestration",
+    "summary": "Multi-agent software-company simulation framework.",
+    "useful_for": "software workflow pattern reference",
+    "limitation": "Former geekan path redirects here; catalogued once only.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/FoundationAgents/MetaGPT"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "langchain-ai/langchain",
+    "name": "LangChain",
+    "category": "orchestration",
+    "summary": "General LLM application and integration framework.",
+    "useful_for": "integration pattern reference",
+    "limitation": "Large abstraction surface; do not add it without a measured integration need.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/langchain-ai/langchain"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "run-llama/llama_index",
+    "name": "LlamaIndex",
+    "category": "memory-retrieval",
+    "summary": "Document ingestion and retrieval framework.",
+    "useful_for": "RAG comparison",
+    "limitation": "Use structured/full-text retrieval before introducing an index.",
+    "fit": "consider",
+    "evidence": "documentation",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/run-llama/llama_index"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "deepset-ai/haystack",
+    "name": "Haystack",
+    "category": "memory-retrieval",
+    "summary": "Modular retrieval and agent pipeline framework.",
+    "useful_for": "explicit retrieval pipeline reference",
+    "limitation": "Needs corpus-specific leakage and citation evaluation.",
+    "fit": "consider",
+    "evidence": "documentation",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/deepset-ai/haystack"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "microsoft/agent-framework",
+    "name": "Microsoft Agent Framework",
+    "category": "orchestration",
+    "summary": "Python and .NET framework for agent workflows.",
+    "useful_for": "cross-language comparison",
+    "limitation": "New framework requires qualification before reliance.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/microsoft/agent-framework"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "bytedance/deer-flow",
+    "name": "DeerFlow",
+    "category": "orchestration",
+    "summary": "Long-horizon agent harness with tools, memories and subagents.",
+    "useful_for": "harness failure-case reference",
+    "limitation": "Do not infer robust autonomy from its stated scope.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/bytedance/deer-flow"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "OpenBMB/ChatDev",
+    "name": "ChatDev",
+    "category": "orchestration",
+    "summary": "LLM multi-agent collaboration project for software tasks.",
+    "useful_for": "role simulation research",
+    "limitation": "Not evidence that simulated roles improve delivery.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/OpenBMB/ChatDev"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "OpenBMB/AgentVerse",
+    "name": "AgentVerse",
+    "category": "orchestration",
+    "summary": "Multi-agent task-solving and simulation framework.",
+    "useful_for": "historical framework reference",
+    "limitation": "Last push in 2024; maintenance risk.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/OpenBMB/AgentVerse"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "langchain-ai/open_deep_research",
+    "name": "Open Deep Research",
+    "category": "orchestration",
+    "summary": "Open research-agent implementation.",
+    "useful_for": "research workflow fixtures",
+    "limitation": "Do not expose web results as trusted instructions.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/langchain-ai/open_deep_research"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "mem0ai/mem0",
+    "name": "Mem0",
+    "category": "memory",
+    "summary": "Persistent memory infrastructure for agents.",
+    "useful_for": "memory API comparison",
+    "limitation": "Memory extraction can create stale or false facts.",
+    "fit": "consider",
+    "evidence": "documentation",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/mem0ai/mem0"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "letta-ai/letta",
+    "name": "Letta",
+    "category": "memory",
+    "summary": "Stateful-agent platform focused on advanced memory.",
+    "useful_for": "memory lifecycle comparison",
+    "limitation": "Keep authority ledger outside model-managed memory.",
+    "fit": "consider",
+    "evidence": "documentation",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/letta-ai/letta",
+      "https://docs.letta.com/"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "getzep/graphiti",
+    "name": "Graphiti",
+    "category": "memory",
+    "summary": "Real-time knowledge-graph memory framework.",
+    "useful_for": "time-aware provenance research",
+    "limitation": "Graph construction adds complexity before proven retrieval benefit.",
+    "fit": "consider",
+    "evidence": "source-inspected",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/getzep/graphiti",
+      "https://help.getzep.com/graphiti"
+    ],
+    "code_pointers": [
+      "graphiti_core/driver/driver.py",
+      "graphiti_core/cross_encoder/client.py"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "topoteretes/cognee",
+    "name": "Cognee",
+    "category": "memory",
+    "summary": "Self-hostable memory platform with knowledge graph.",
+    "useful_for": "local graph-memory comparison",
+    "limitation": "Do not adopt graph store without measured lookup failures.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/topoteretes/cognee"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "MemTensor/MemOS",
+    "name": "MemOS",
+    "category": "memory",
+    "summary": "Memory system claiming hybrid retrieval and skill reuse.",
+    "useful_for": "claim/evaluation comparison",
+    "limitation": "Repository token-savings claim is not PaneForge evidence.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/MemTensor/MemOS"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "memodb-io/Acontext",
+    "name": "Acontext",
+    "category": "memory",
+    "summary": "Agent skills represented as a memory layer.",
+    "useful_for": "skill-memory comparison",
+    "limitation": "Skills need versioning and policy regardless of storage.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/memodb-io/Acontext"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "supermemoryai/supermemory",
+    "name": "Supermemory",
+    "category": "memory",
+    "summary": "Local-capable memory and context engine.",
+    "useful_for": "local context-engine comparison",
+    "limitation": "Confirm tenant isolation and retention before use.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/supermemoryai/supermemory"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "qdrant/qdrant",
+    "name": "Qdrant",
+    "category": "vector-store",
+    "summary": "Vector search database.",
+    "useful_for": "optional hybrid retrieval backend",
+    "limitation": "Vectors require metadata filters and deletion testing.",
+    "fit": "consider",
+    "evidence": "documentation",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/qdrant/qdrant",
+      "https://qdrant.tech"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "chroma-core/chroma",
+    "name": "Chroma",
+    "category": "vector-store",
+    "summary": "Search infrastructure for AI applications.",
+    "useful_for": "retrieval backend comparison",
+    "limitation": "Not a source of truth for authority or evidence.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/chroma-core/chroma"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "pgvector/pgvector",
+    "name": "pgvector",
+    "category": "vector-store",
+    "summary": "Vector similarity extension for Postgres.",
+    "useful_for": "evaluate alongside existing relational state",
+    "limitation": "GitHub API returns NOASSERTION; inspect licence before copying/distribution.",
+    "fit": "consider",
+    "evidence": "documentation",
+    "license": "NOASSERTION",
+    "source_urls": [
+      "https://github.com/pgvector/pgvector"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "temporalio/temporal",
+    "name": "Temporal",
+    "category": "durable-workflow",
+    "summary": "Durable workflow service for retries and recovery.",
+    "useful_for": "task lifecycle and effect reconciliation patterns",
+    "limitation": "Heavy service; first prove a smaller transactional task store insufficient.",
+    "fit": "consider",
+    "evidence": "source-inspected",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/temporalio/temporal",
+      "https://docs.temporal.io"
+    ],
+    "code_pointers": [
+      "service/history/",
+      ".github/workflows/features-integration.yml"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "PrefectHQ/prefect",
+    "name": "Prefect",
+    "category": "scheduler",
+    "summary": "Python workflow orchestration framework.",
+    "useful_for": "scheduled workflow comparison",
+    "limitation": "Data-pipeline emphasis differs from desktop task ownership.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/PrefectHQ/prefect"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "ray-project/ray",
+    "name": "Ray",
+    "category": "scaling",
+    "summary": "Distributed compute runtime and AI libraries.",
+    "useful_for": "future distributed compute research",
+    "limitation": "100+ workers need cluster operations and do not improve coordination automatically.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/ray-project/ray",
+      "https://ray.io"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "langfuse/langfuse",
+    "name": "Langfuse",
+    "category": "observability-eval",
+    "summary": "LLM tracing, evaluation and observability platform.",
+    "useful_for": "run/evidence visibility patterns",
+    "limitation": "GitHub API returns NOASSERTION; licence gate required.",
+    "fit": "consider",
+    "evidence": "documentation",
+    "license": "NOASSERTION",
+    "source_urls": [
+      "https://github.com/langfuse/langfuse",
+      "https://langfuse.com"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "Arize-ai/phoenix",
+    "name": "Phoenix",
+    "category": "observability-eval",
+    "summary": "AI observability and evaluation toolkit.",
+    "useful_for": "eval/trace comparison",
+    "limitation": "GitHub API returns NOASSERTION; licence gate required.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "NOASSERTION",
+    "source_urls": [
+      "https://github.com/Arize-ai/phoenix"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "promptfoo/promptfoo",
+    "name": "promptfoo",
+    "category": "evaluation",
+    "summary": "Prompt, agent and RAG test framework with CI support.",
+    "useful_for": "regression and adversarial fixture patterns",
+    "limitation": "Its security features are not authorisation to scan third parties.",
+    "fit": "shortlist",
+    "evidence": "documentation",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/promptfoo/promptfoo",
+      "https://promptfoo.dev"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "SWE-bench/SWE-bench",
+    "name": "SWE-bench",
+    "category": "evaluation",
+    "summary": "Benchmark for resolving real GitHub issues.",
+    "useful_for": "coding evaluation fixture reference",
+    "limitation": "Benchmark performance does not establish desktop-agent reliability.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/SWE-bench/SWE-bench",
+      "https://www.swebench.com"
+    ],
+    "checked_at": "2026-09-13"
+  }
+]

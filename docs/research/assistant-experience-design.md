@@ -10,7 +10,7 @@ The delivery order is Mac first, Windows follows. The primary end-to-end journey
 
 ## Confirmed simplification and reliability requirements
 
-Robert's priority is scaling Taskdriver.ai as an agency toward $10k+ per month. PaneForge should increase client delivery capacity and reduce supervision. Brezo and broader startup exploration are deferred.
+Robert's priority is scaling Taskdriver.ai as an agency toward $10k+ per month. PaneForge should increase client delivery capacity and reduce supervision. Brezo and broader startup exploration are deferred. Keep the harness private for Robert's projects and agency work; sharing internals or publishing a product is not part of the current plan. Public-product research is retained only for a possible later decision.
 
 Use Live on demand to describe an outcome, steer a task, ask about selected work or discuss a review decision. End the conversation while authorised work continues. The assistant should not require a voice connection to remain useful.
 
@@ -21,6 +21,16 @@ Voice requests and direct controls should reach the same underlying operations a
 Rendering correctness is a prerequisite, not an automatic-repair feature to showcase. Diagnose and eliminate the actual cause of torn frames or incorrect history before migrating it. A periodic repaint, simulated resize or replay loop does not count as the root-cause fix. Ordinary resize, pane switching, background/foreground transitions and session restoration must remain correct without invoking repair. The latest reported occurrence has not been reproduced or diagnosed in this planning work.
 
 Acceptance requires a reproducible failing case, an explanation of the faulty state/size/order transition, and regression evidence after fixing it. Exercise rapid and repeated resizing, narrow/wide layouts, Unicode/wrapped lines, long history, multiple panes and sleep/wake. Verify frame correctness and preservation of draft, scroll position, session identity and history. Recovery telemetry must distinguish a clean run from a defect hidden by automatic repair. A bounded fallback may handle exceptional GPU/context loss, but it cannot substitute for correctness during normal operations. Do not claim that a change of shell guarantees this result.
+
+## Workspace and scale direction
+
+Robert prefers a more futuristic, modern workspace organised as workspaces → projects/folders → saved chats and agents, with persistent shared project context. The newer [Orbital workspace prototype](../design/paneforge-directions/workspace.html) explores this direction; earlier calm concepts remain comparison options, not an approved final design.
+
+The long-term execution target is 100+ agents concurrently. Distinguish total saved/managed agents, queued jobs, actively executing agents, blocked agents and completed work in both UI and telemetry. The prototype's 108 records are simulated UI fixtures, not execution or load-test evidence. Its 12 running / 84 queued / 6 needs-input / 6 completed split is illustrative, not a chosen capacity limit.
+
+A scale experiment must separately test UI responsiveness with hundreds of saved sessions and real executor throughput at staged concurrency. Establish provider subscription limits, host memory/CPU, external-service limits, cancellation, task dependencies, per-client isolation and spend constraints. Remote hosts may increase compute capacity but do not increase provider entitlements automatically. Do not run every saved terminal renderer or hydrate every full transcript in the overview. Project/folder filters, search, compact status rows and details on selection should preserve access without displaying 100 active terminal panes.
+
+Do not begin a 100-agent run or provision compute from this design requirement. Keep the harness private and optimise useful completed work, not agent count alone.
 
 ## Navigation and layout
 

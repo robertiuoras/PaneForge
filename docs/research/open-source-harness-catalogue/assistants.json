@@ -1,0 +1,664 @@
+[
+  {
+    "repo": "All-Hands-AI/OpenHands",
+    "name": "OpenHands",
+    "category": "coding agent platform",
+    "summary": "Agent server, workspaces, conversations, events and browser/code execution.",
+    "useful_for": "Durable project run lifecycle and event-oriented UI.",
+    "limitation": "Large full-stack control plane; do not import wholesale.",
+    "fit": "shortlist",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/All-Hands-AI/OpenHands",
+      "https://github.com/All-Hands-AI/OpenHands/blob/main/README.md",
+      "https://github.com/All-Hands-AI/OpenHands/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-13T03:54:59Z",
+    "demo_url": "https://openhands.dev"
+  },
+  {
+    "repo": "openai/codex",
+    "name": "Codex CLI",
+    "category": "coding agent",
+    "summary": "Open-source terminal coding agent with local workspace and tool execution.",
+    "useful_for": "Terminal UX, approvals and coding-agent interaction patterns.",
+    "limitation": "Provider-specific product and terminal-centric surface.",
+    "fit": "shortlist",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/openai/codex",
+      "https://github.com/openai/codex/blob/main/README.md",
+      "https://github.com/openai/codex/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-13T06:53:33Z"
+  },
+  {
+    "repo": "anthropics/claude-code",
+    "name": "Claude Code",
+    "category": "coding agent",
+    "summary": "Anthropic CLI repository and documentation for agentic coding.",
+    "useful_for": "Reference UX for task planning, skills and terminal workflows.",
+    "limitation": "Repository has no observed OSS license; do not copy source.",
+    "fit": "reference",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "source-available/no repository license observed",
+    "source_urls": [
+      "https://github.com/anthropics/claude-code",
+      "https://github.com/anthropics/claude-code/blob/main/README.md"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-13T03:16:44Z",
+    "demo_url": "https://code.claude.com/docs/en/overview"
+  },
+  {
+    "repo": "anomalyco/opencode",
+    "name": "OpenCode",
+    "category": "coding agent",
+    "summary": "Open-source terminal and desktop coding agent.",
+    "useful_for": "Lean local coding-agent UX and provider routing ideas.",
+    "limitation": "Coding focus, not a device assistant.",
+    "fit": "shortlist",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/anomalyco/opencode",
+      "https://github.com/anomalyco/opencode/blob/dev/README.md",
+      "https://github.com/anomalyco/opencode/blob/dev/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-13T05:46:37Z",
+    "demo_url": "https://opencode.ai"
+  },
+  {
+    "repo": "cline/cline",
+    "name": "Cline",
+    "category": "IDE coding agent",
+    "summary": "VS Code extension that plans and executes coding tasks with tools.",
+    "useful_for": "Permission prompts, checkpoints and IDE agent interaction.",
+    "limitation": "Tied to extension-host constraints.",
+    "fit": "consider",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/cline/cline",
+      "https://github.com/cline/cline/blob/main/README.md",
+      "https://github.com/cline/cline/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-12T22:59:21Z",
+    "demo_url": "https://cline.bot"
+  },
+  {
+    "repo": "RooCodeInc/Roo-Code",
+    "name": "Roo Code",
+    "category": "IDE coding agent",
+    "summary": "Multi-mode VS Code coding agent extension.",
+    "useful_for": "Modes, task delegation and human-visible plan patterns.",
+    "limitation": "IDE plugin architecture is not a desktop harness.",
+    "fit": "consider",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/RooCodeInc/Roo-Code",
+      "https://github.com/RooCodeInc/Roo-Code/blob/main/README.md",
+      "https://github.com/RooCodeInc/Roo-Code/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-05-15T18:08:47Z",
+    "demo_url": "https://roocode.com"
+  },
+  {
+    "repo": "Aider-AI/aider",
+    "name": "Aider",
+    "category": "terminal coding assistant",
+    "summary": "Terminal pair-programming agent with git-aware edits.",
+    "useful_for": "Git-aware editing and concise terminal interaction.",
+    "limitation": "No desktop/voice orchestration.",
+    "fit": "consider",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/Aider-AI/aider",
+      "https://github.com/Aider-AI/aider/blob/main/README.md",
+      "https://github.com/Aider-AI/aider/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-05-22T14:02:20Z",
+    "demo_url": "https://aider.chat/"
+  },
+  {
+    "repo": "continuedev/continue",
+    "name": "Continue",
+    "category": "IDE/CLI coding assistant",
+    "summary": "Open-source coding assistant spanning IDE and CLI integrations.",
+    "useful_for": "Model/provider configuration and developer workflow UX.",
+    "limitation": "Primarily coding assistance.",
+    "fit": "consider",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/continuedev/continue",
+      "https://github.com/continuedev/continue/blob/main/README.md",
+      "https://github.com/continuedev/continue/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-13T07:28:23Z",
+    "demo_url": "https://continue.dev"
+  },
+  {
+    "repo": "plandex-ai/plandex",
+    "name": "Plandex",
+    "category": "terminal coding agent",
+    "summary": "Terminal coding agent designed for larger tasks and planning.",
+    "useful_for": "Long-task planning and context management references.",
+    "limitation": "Repository activity is older than the main shortlists.",
+    "fit": "consider",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/plandex-ai/plandex",
+      "https://github.com/plandex-ai/plandex/blob/main/README.md",
+      "https://github.com/plandex-ai/plandex/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2025-10-03T21:49:58Z",
+    "demo_url": "https://plandex.ai"
+  },
+  {
+    "repo": "aaif-goose/goose",
+    "name": "Goose",
+    "category": "agent runtime",
+    "summary": "Local Rust agent with CLI, desktop application, extensions and MCP support.",
+    "useful_for": "Permission store, session management and MCP/ACP boundaries.",
+    "limitation": "It is a complete agent host; reuse patterns, not its control plane.",
+    "fit": "shortlist",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/aaif-goose/goose",
+      "https://github.com/aaif-goose/goose/blob/main/README.md",
+      "https://github.com/aaif-goose/goose/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-11T21:32:04Z",
+    "demo_url": "https://goose-docs.ai/"
+  },
+  {
+    "repo": "BloopAI/vibe-kanban",
+    "name": "Vibe Kanban",
+    "category": "coding-agent orchestrator",
+    "summary": "Kanban interface for running coding agents such as Codex and Claude Code.",
+    "useful_for": "Project queue, task status and concurrent-agent workspace UX.",
+    "limitation": "Depends on external coding agents; not a device driver.",
+    "fit": "shortlist",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/BloopAI/vibe-kanban",
+      "https://github.com/BloopAI/vibe-kanban/blob/main/README.md",
+      "https://github.com/BloopAI/vibe-kanban/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-12T06:20:43Z",
+    "demo_url": "https://www.vibekanban.com/"
+  },
+  {
+    "repo": "openinterpreter/openinterpreter",
+    "name": "Open Interpreter",
+    "category": "local computer agent",
+    "summary": "Local agent that runs code and uses a computer through a workstation-oriented product.",
+    "useful_for": "Local-first computer-agent product boundaries.",
+    "limitation": "Current README positions it around coding/open models; verify platform drivers before adoption.",
+    "fit": "consider",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/openinterpreter/openinterpreter",
+      "https://github.com/openinterpreter/openinterpreter/blob/main/README.md",
+      "https://github.com/openinterpreter/openinterpreter/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-09T04:59:04Z",
+    "demo_url": "http://openinterpreter.com/"
+  },
+  {
+    "repo": "browser-use/browser-use",
+    "name": "Browser Use",
+    "category": "browser-use library",
+    "summary": "Python library for browser automation agents.",
+    "useful_for": "Browser execution substrate and browser-focused evaluation.",
+    "limitation": "Browser only, not native desktop control.",
+    "fit": "shortlist",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/browser-use/browser-use",
+      "https://github.com/browser-use/browser-use/blob/main/README.md",
+      "https://github.com/browser-use/browser-use/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-12T07:39:39Z",
+    "demo_url": "https://browser-use.com"
+  },
+  {
+    "repo": "browserbase/stagehand",
+    "name": "Stagehand",
+    "category": "browser automation SDK",
+    "summary": "Browser automation SDK combining Playwright-style control with AI actions.",
+    "useful_for": "Typed browser automation and deterministic fallbacks.",
+    "limitation": "Browser only; hosted Browserbase features may be separate.",
+    "fit": "shortlist",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/browserbase/stagehand",
+      "https://github.com/browserbase/stagehand/blob/main/README.md",
+      "https://github.com/browserbase/stagehand/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-11T22:12:52Z",
+    "demo_url": "https://stagehand.dev"
+  },
+  {
+    "repo": "simular-ai/Agent-S",
+    "name": "Agent S",
+    "category": "desktop computer-use research",
+    "summary": "Agent framework for operating desktop environments.",
+    "useful_for": "Planner-grounder split and desktop-agent evaluation design.",
+    "limitation": "Research architecture needs product hardening and OS-driver verification.",
+    "fit": "shortlist",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/simular-ai/Agent-S",
+      "https://github.com/simular-ai/Agent-S/blob/main/README.md",
+      "https://github.com/simular-ai/Agent-S/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-05T22:02:40Z",
+    "demo_url": "https://www.simular.ai"
+  },
+  {
+    "repo": "bytedance/UI-TARS-desktop",
+    "name": "UI-TARS Desktop",
+    "category": "desktop computer-use app",
+    "summary": "Desktop agent application based on UI-TARS models.",
+    "useful_for": "Computer-use UX and action trace references.",
+    "limitation": "Electron application, so not a shell replacement; model/runtime dependencies.",
+    "fit": "reference",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/bytedance/UI-TARS-desktop",
+      "https://github.com/bytedance/UI-TARS-desktop/blob/main/README.md",
+      "https://github.com/bytedance/UI-TARS-desktop/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-11T03:56:20Z",
+    "demo_url": "https://agent-tars.com"
+  },
+  {
+    "repo": "microsoft/UFO",
+    "name": "UFO",
+    "category": "Windows OS agent",
+    "summary": "Windows UI automation agent using UIA and multi-agent orchestration.",
+    "useful_for": "Windows automation adapters and DAG/resource management concepts.",
+    "limitation": "Windows-specific research code.",
+    "fit": "shortlist",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/microsoft/UFO",
+      "https://github.com/microsoft/UFO/blob/main/README.md",
+      "https://github.com/microsoft/UFO/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-11T11:27:38Z",
+    "demo_url": "https://microsoft.github.io/UFO/"
+  },
+  {
+    "repo": "OS-Copilot/OS-Copilot",
+    "name": "OS-Copilot",
+    "category": "OS assistant research",
+    "summary": "Conversational embodied OS agent for daily task automation.",
+    "useful_for": "Task decomposition and OS-assistant research patterns.",
+    "limitation": "Research project with uncertain maintenance and production safety.",
+    "fit": "reference",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/OS-Copilot/OS-Copilot",
+      "https://github.com/OS-Copilot/OS-Copilot/blob/main/README.md",
+      "https://github.com/OS-Copilot/OS-Copilot/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2024-09-09T02:11:13Z"
+  },
+  {
+    "repo": "TheAgentCompany/TheAgentCompany",
+    "name": "The Agent Company",
+    "category": "agent benchmark",
+    "summary": "Simulated software-company benchmark for long-horizon agents.",
+    "useful_for": "Evaluation tasks for project-level autonomy.",
+    "limitation": "Benchmark, not an end-user agent runtime.",
+    "fit": "consider",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/TheAgentCompany/TheAgentCompany",
+      "https://github.com/TheAgentCompany/TheAgentCompany/blob/main/README.md",
+      "https://github.com/TheAgentCompany/TheAgentCompany/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2025-11-17T20:31:16Z",
+    "demo_url": "https://the-agent-company.com"
+  },
+  {
+    "repo": "Skyvern-AI/skyvern",
+    "name": "Skyvern",
+    "category": "browser workflow agent",
+    "summary": "Browser workflow automation with visual reasoning.",
+    "useful_for": "Structured browser workflow reliability and verification.",
+    "limitation": "AGPL obligations; browser scope only.",
+    "fit": "consider",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "AGPL-3.0",
+    "source_urls": [
+      "https://github.com/Skyvern-AI/skyvern",
+      "https://github.com/Skyvern-AI/skyvern/blob/main/README.md",
+      "https://github.com/Skyvern-AI/skyvern/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-13T00:52:00Z",
+    "demo_url": "https://www.skyvern.com"
+  },
+  {
+    "repo": "OpenAdaptAI/OpenAdapt",
+    "name": "OpenAdapt",
+    "category": "GUI task compiler",
+    "summary": "Compiles demonstrated GUI tasks into programs with independent verification.",
+    "useful_for": "Demonstration-to-automation and verification-first patterns.",
+    "limitation": "A task compiler, not conversational device control.",
+    "fit": "consider",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/OpenAdaptAI/OpenAdapt",
+      "https://github.com/OpenAdaptAI/OpenAdapt/blob/main/README.md",
+      "https://github.com/OpenAdaptAI/OpenAdapt/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-12T07:44:17Z",
+    "demo_url": "https://openadapt.ai"
+  },
+  {
+    "repo": "lavague-ai/LaVague",
+    "name": "LaVague",
+    "category": "browser automation agent",
+    "summary": "Open-source browser automation agents.",
+    "useful_for": "Web-agent workflows and evaluation ideas.",
+    "limitation": "Last observed push is older; browser only.",
+    "fit": "reference",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/lavague-ai/LaVague",
+      "https://github.com/lavague-ai/LaVague/blob/main/README.md",
+      "https://github.com/lavague-ai/LaVague/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2025-01-21T13:41:48Z",
+    "demo_url": "https://docs.lavague.ai/en/latest/"
+  },
+  {
+    "repo": "e2b-dev/desktop",
+    "name": "E2B Desktop",
+    "category": "desktop VM environment",
+    "summary": "Desktop environment project for sandboxed agent computer use.",
+    "useful_for": "Disposable VM isolation for risky computer-use evaluation.",
+    "limitation": "Infrastructure layer, not a local assistant UI.",
+    "fit": "shortlist",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/e2b-dev/desktop",
+      "https://github.com/e2b-dev/desktop/blob/main/README.md",
+      "https://github.com/e2b-dev/desktop/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-11T09:45:09Z",
+    "demo_url": "https://e2b.dev/?utm_source=github&utm_medium=referral&utm_campaign=repo_website&utm_content=desktop"
+  },
+  {
+    "repo": "assafelovic/gpt-researcher",
+    "name": "GPT Researcher",
+    "category": "research agent",
+    "summary": "Autonomous research-agent project.",
+    "useful_for": "Research task decomposition and source collection UX.",
+    "limitation": "Narrow domain and external-model dependence.",
+    "fit": "consider",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/assafelovic/gpt-researcher",
+      "https://github.com/assafelovic/gpt-researcher/blob/main/README.md",
+      "https://github.com/assafelovic/gpt-researcher/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-08-27T19:34:56Z",
+    "demo_url": "https://gptr.dev"
+  },
+  {
+    "repo": "khoj-ai/khoj",
+    "name": "Khoj",
+    "category": "personal knowledge assistant",
+    "summary": "Self-hosted assistant for personal knowledge and search.",
+    "useful_for": "Private retrieval, user data boundaries and personal assistant UX.",
+    "limitation": "AGPL obligations and not a computer driver.",
+    "fit": "consider",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "AGPL-3.0",
+    "source_urls": [
+      "https://github.com/khoj-ai/khoj",
+      "https://github.com/khoj-ai/khoj/blob/master/README.md",
+      "https://github.com/khoj-ai/khoj/blob/master/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-08-02T01:55:40Z",
+    "demo_url": "https://khoj.dev"
+  },
+  {
+    "repo": "leon-ai/leon",
+    "name": "Leon",
+    "category": "personal voice assistant",
+    "summary": "Open-source personal assistant with skills and voice-oriented intent handling.",
+    "useful_for": "Intent/skill discovery and personal-assistant interaction.",
+    "limitation": "Classic skill architecture; weaker modern agent execution evidence.",
+    "fit": "reference",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/leon-ai/leon",
+      "https://github.com/leon-ai/leon/blob/develop/README.md",
+      "https://github.com/leon-ai/leon/blob/develop/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-12T16:44:16Z",
+    "demo_url": "https://getleon.ai"
+  },
+  {
+    "repo": "OpenVoiceOS/ovos-core",
+    "name": "OpenVoiceOS Core",
+    "category": "voice assistant platform",
+    "summary": "FOSS voice-assistant core with message-bus and skill architecture.",
+    "useful_for": "Voice lifecycle, skill bus and offline-friendly assistant concepts.",
+    "limitation": "Voice platform, not a coding/computer-use orchestrator.",
+    "fit": "consider",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/OpenVoiceOS/ovos-core",
+      "https://github.com/OpenVoiceOS/ovos-core/blob/dev/README.md",
+      "https://github.com/OpenVoiceOS/ovos-core/blob/dev/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-13T07:48:25Z",
+    "demo_url": "https://openvoiceos.github.io/ovos-core/"
+  },
+  {
+    "repo": "moeru-ai/airi",
+    "name": "AIRI",
+    "category": "voice character assistant",
+    "summary": "Open-source multimodal AI companion with web, desktop and mobile surfaces.",
+    "useful_for": "Voice-input lifecycle, interruption handling and polished assistant presence.",
+    "limitation": "Companion product; avoid inheriting its Electron/character app control plane.",
+    "fit": "shortlist",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/moeru-ai/airi",
+      "https://github.com/moeru-ai/airi/blob/main/README.md",
+      "https://github.com/moeru-ai/airi/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-13T08:20:53Z",
+    "demo_url": "https://airi.moeru.ai/docs/"
+  },
+  {
+    "repo": "lobehub/lobehub",
+    "name": "LobeHub",
+    "category": "assistant workspace",
+    "summary": "Multi-provider LLM workspace and assistant interface.",
+    "useful_for": "Chat workspace, providers and tool integration UX.",
+    "limitation": "Community license has use restrictions; source-available reference.",
+    "fit": "reference",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "LobeHub Community License (source-available)",
+    "source_urls": [
+      "https://github.com/lobehub/lobehub",
+      "https://github.com/lobehub/lobehub/blob/canary/README.md",
+      "https://github.com/lobehub/lobehub/blob/canary/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-13T08:09:02Z",
+    "demo_url": "https://lobehub.com"
+  },
+  {
+    "repo": "Mintplex-Labs/anything-llm",
+    "name": "AnythingLLM",
+    "category": "local agent workspace",
+    "summary": "Local-first LLM workspace with documents, agents and multiple providers.",
+    "useful_for": "Local data/workspace UX and self-hosted packaging.",
+    "limitation": "Broad application rather than focused device orchestration.",
+    "fit": "consider",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/Mintplex-Labs/anything-llm",
+      "https://github.com/Mintplex-Labs/anything-llm/blob/master/README.md",
+      "https://github.com/Mintplex-Labs/anything-llm/blob/master/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-11T01:01:33Z",
+    "demo_url": "https://anythingllm.com"
+  },
+  {
+    "repo": "open-webui/open-webui",
+    "name": "Open WebUI",
+    "category": "self-hosted AI UI",
+    "summary": "Self-hosted web UI for LLMs, knowledge and tools.",
+    "useful_for": "Provider-agnostic chat, user isolation and tool UX.",
+    "limitation": "Custom Open WebUI license; review terms before reuse.",
+    "fit": "reference",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "Open WebUI License (source-available)",
+    "source_urls": [
+      "https://github.com/open-webui/open-webui",
+      "https://github.com/open-webui/open-webui/blob/main/README.md",
+      "https://github.com/open-webui/open-webui/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-13T00:23:51Z",
+    "demo_url": "https://openwebui.com"
+  },
+  {
+    "repo": "danny-avila/LibreChat",
+    "name": "LibreChat",
+    "category": "self-hosted AI chat UI",
+    "summary": "Multi-provider chat application with agents and plugins.",
+    "useful_for": "Provider switching and chat product UX.",
+    "limitation": "Chat app scope, not desktop-control substrate.",
+    "fit": "consider",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/danny-avila/LibreChat",
+      "https://github.com/danny-avila/LibreChat/blob/main/README.md",
+      "https://github.com/danny-avila/LibreChat/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-13T08:24:20Z",
+    "demo_url": "https://librechat.ai/"
+  },
+  {
+    "repo": "langgenius/dify",
+    "name": "Dify",
+    "category": "agent workflow platform",
+    "summary": "Visual platform for LLM applications, workflows and agents.",
+    "useful_for": "Workflow UI, observability and provider integration references.",
+    "limitation": "Modified Apache license restricts some multi-tenant use; source-available reference.",
+    "fit": "reference",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "Dify Open Source License (modified Apache 2.0)",
+    "source_urls": [
+      "https://github.com/langgenius/dify",
+      "https://github.com/langgenius/dify/blob/main/README.md",
+      "https://github.com/langgenius/dify/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-12T23:51:51Z",
+    "demo_url": "https://dify.ai"
+  },
+  {
+    "repo": "FlowiseAI/Flowise",
+    "name": "Flowise",
+    "category": "visual agent workflow platform",
+    "summary": "Visual builder for LLM workflows and agents.",
+    "useful_for": "Workflow authoring and trace visualization ideas.",
+    "limitation": "Split licensing: enterprise files commercial; inspect individual files before reuse.",
+    "fit": "reference",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "Apache-2.0 outside named commercial areas",
+    "source_urls": [
+      "https://github.com/FlowiseAI/Flowise",
+      "https://github.com/FlowiseAI/Flowise/blob/main/README.md",
+      "https://github.com/FlowiseAI/Flowise/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-08-13T12:38:19Z",
+    "demo_url": "https://flowiseai.com"
+  },
+  {
+    "repo": "n8n-io/n8n",
+    "name": "n8n",
+    "category": "workflow automation platform",
+    "summary": "Source-available workflow automation system with integrations.",
+    "useful_for": "Automation recipes, credentials boundaries and run history UX.",
+    "limitation": "Sustainable Use License and enterprise exclusions; reference only.",
+    "fit": "reference",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "Sustainable Use License / enterprise exclusions (source-available)",
+    "source_urls": [
+      "https://github.com/n8n-io/n8n",
+      "https://github.com/n8n-io/n8n/blob/master/README.md",
+      "https://github.com/n8n-io/n8n/blob/master/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-13T08:18:56Z",
+    "demo_url": "https://n8n.io"
+  }
+]

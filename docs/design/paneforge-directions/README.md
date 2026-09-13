@@ -40,3 +40,15 @@ Do not rewrite the full backend into Rust before the prototype proves a reason. 
 `build.py` generates the composition and local interactive gallery. The existing pinned HyperFrames 0.7.99 CLI renders it; GSAP 3.14.2 is vendored with its embedded licence header. Run from this directory: `hyperframes check --snapshots --json`, then `hyperframes render --fps 30 --quality standard --workers 1 --output paneforge-directions.mp4` using the pinned package binary.
 
 Validation receipt is [verification.json](verification.json). Visuals and final MP4 require human visual inspection in addition to automated checks. Gallery controls are prototype playback controls; the depicted app buttons are not connected to services.
+
+## Optional identity study
+
+[Names and vector logo concepts](branding/index.html): PaneForge, Fold, Relay and Aven. These are creative sketches, not cleared trademarks or available domains. No rename or installed-icon change is selected. Private use for Robert's projects takes priority; a public identity can be revisited later.
+
+## Updated workspace direction
+
+[Orbital: futuristic workspaces, folders and saved agents](workspace.html) is the newer direction requested by Robert. It includes 108 simulated records, working project/status/search filters, pagination and a selected conversation inspector. No live agents or voice connections are created. The target of 100+ concurrently executing agents still requires staged runtime, provider and resource qualification.
+
+## Personal studio revision
+
+Open `studio.html` for the latest Chat, Work and Code direction, following feedback about artificial counters, colour and orchestration jargon. Astra is a reversible personal-name placeholder. `studio-chat.png`, `studio-work.png` and `studio-code.png` are verified headless previews. Navigation, project switching, clear-view behaviour, mobile width and catalogue integration passed in `studio-verification.json`. All content is simulated; no execution, voice or actual renderer fix is connected. The earlier MP4 illustrates the earlier three directions, not this revision.

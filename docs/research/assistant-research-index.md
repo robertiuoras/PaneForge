@@ -22,7 +22,7 @@ Research baseline checked 13 September 2026. This pack plans the successor; it d
 5. Demonstrate one complete private workflow: accepted brief/context → authorised work → Chrome login handoff when needed → verified private proof pack.
 6. Add the efficient development loop: deterministic UI fixtures, scoped state/interaction checks, targeted image review and protected CI gates.
 7. Prove the Taskdriver phone journey, including stale/double approvals, offline hosts and real executor acknowledgements.
-8. Run a personal pilot before a public local-app beta. Hosted compute and a plugin marketplace remain later choices.
+8. Run and improve the harness privately for Robert's own projects and Taskdriver delivery. Public distribution is deferred without a target date; reconsider only if Robert chooses and demand warrants it. Hosted compute and a plugin marketplace remain deferred.
 
 The sequence is a proposed set of experiments, not authority to install frameworks, call paid APIs, change permissions or release an app. Each experiment needs its named preconditions, fixtures, budgets and pass criteria recorded before execution.
 
@@ -48,3 +48,10 @@ No application code, dependencies, credentials, OS settings, agent schedules or 
 - [Voice economics and commercial hypotheses](voice-economics-and-opportunities.md)
 
 - [Brezo startup ideas, deferred](../ideas/brezo/README.md): separate from the active Taskdriver agency priority.
+
+## September 13 research and studio revision
+
+- [Taskdriver and PaneForge product boundary](taskdriver-paneforge-product-boundary.md): one business record, personal assistant and dedicated Chat / Work / Code views.
+- [100-project research library](open-source-harness-catalogue/index.html): searchable catalogue, source and licence evidence, demo links and source/test dossiers.
+- [Feature value decisions](open-source-harness-catalogue/feature-value-matrix.md): measured evidence versus inference, with build/test/defer/cut criteria.
+- [Revised studio prototype](../design/paneforge-directions/studio.html): restrained palette and Astra placeholder; simulated interactions only.
