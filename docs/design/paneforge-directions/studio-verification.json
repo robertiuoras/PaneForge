@@ -1,0 +1,15 @@
+{
+  "ok": true,
+  "checks": [
+    "Chat Work Code navigation",
+    "project context switch",
+    "clear preserves history label",
+    "390px layouts",
+    "100 catalogue cards",
+    "recommendation filter",
+    "empty search",
+    "local navigation targets",
+    "no page errors"
+  ],
+  "connectedAgents": 0
+}

@@ -1,0 +1,1721 @@
+[
+  {
+    "repo": "All-Hands-AI/OpenHands",
+    "name": "OpenHands",
+    "category": "coding agent platform",
+    "summary": "Agent server, workspaces, conversations, events and browser/code execution.",
+    "useful_for": "Durable project run lifecycle and event-oriented UI.",
+    "limitation": "Large full-stack control plane; do not import wholesale.",
+    "fit": "shortlist",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/All-Hands-AI/OpenHands",
+      "https://github.com/All-Hands-AI/OpenHands/blob/main/README.md",
+      "https://github.com/All-Hands-AI/OpenHands/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-13T03:54:59Z",
+    "demo_url": "https://openhands.dev"
+  },
+  {
+    "repo": "openai/codex",
+    "name": "Codex CLI",
+    "category": "coding agent",
+    "summary": "Open-source terminal coding agent with local workspace and tool execution.",
+    "useful_for": "Terminal UX, approvals and coding-agent interaction patterns.",
+    "limitation": "Provider-specific product and terminal-centric surface.",
+    "fit": "shortlist",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/openai/codex",
+      "https://github.com/openai/codex/blob/main/README.md",
+      "https://github.com/openai/codex/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-13T06:53:33Z"
+  },
+  {
+    "repo": "anthropics/claude-code",
+    "name": "Claude Code",
+    "category": "coding agent",
+    "summary": "Anthropic CLI repository and documentation for agentic coding.",
+    "useful_for": "Reference UX for task planning, skills and terminal workflows.",
+    "limitation": "Repository has no observed OSS license; do not copy source.",
+    "fit": "reference",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "source-available/no repository license observed",
+    "source_urls": [
+      "https://github.com/anthropics/claude-code",
+      "https://github.com/anthropics/claude-code/blob/main/README.md"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-13T03:16:44Z",
+    "demo_url": "https://code.claude.com/docs/en/overview"
+  },
+  {
+    "repo": "anomalyco/opencode",
+    "name": "OpenCode",
+    "category": "coding agent",
+    "summary": "Open-source terminal and desktop coding agent.",
+    "useful_for": "Lean local coding-agent UX and provider routing ideas.",
+    "limitation": "Coding focus, not a device assistant.",
+    "fit": "shortlist",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/anomalyco/opencode",
+      "https://github.com/anomalyco/opencode/blob/dev/README.md",
+      "https://github.com/anomalyco/opencode/blob/dev/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-13T05:46:37Z",
+    "demo_url": "https://opencode.ai"
+  },
+  {
+    "repo": "cline/cline",
+    "name": "Cline",
+    "category": "IDE coding agent",
+    "summary": "VS Code extension that plans and executes coding tasks with tools.",
+    "useful_for": "Permission prompts, checkpoints and IDE agent interaction.",
+    "limitation": "Tied to extension-host constraints.",
+    "fit": "consider",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/cline/cline",
+      "https://github.com/cline/cline/blob/main/README.md",
+      "https://github.com/cline/cline/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-12T22:59:21Z",
+    "demo_url": "https://cline.bot"
+  },
+  {
+    "repo": "RooCodeInc/Roo-Code",
+    "name": "Roo Code",
+    "category": "IDE coding agent",
+    "summary": "Multi-mode VS Code coding agent extension.",
+    "useful_for": "Modes, task delegation and human-visible plan patterns.",
+    "limitation": "IDE plugin architecture is not a desktop harness.",
+    "fit": "consider",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/RooCodeInc/Roo-Code",
+      "https://github.com/RooCodeInc/Roo-Code/blob/main/README.md",
+      "https://github.com/RooCodeInc/Roo-Code/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-05-15T18:08:47Z",
+    "demo_url": "https://roocode.com"
+  },
+  {
+    "repo": "Aider-AI/aider",
+    "name": "Aider",
+    "category": "terminal coding assistant",
+    "summary": "Terminal pair-programming agent with git-aware edits.",
+    "useful_for": "Git-aware editing and concise terminal interaction.",
+    "limitation": "No desktop/voice orchestration.",
+    "fit": "consider",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/Aider-AI/aider",
+      "https://github.com/Aider-AI/aider/blob/main/README.md",
+      "https://github.com/Aider-AI/aider/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-05-22T14:02:20Z",
+    "demo_url": "https://aider.chat/"
+  },
+  {
+    "repo": "continuedev/continue",
+    "name": "Continue",
+    "category": "IDE/CLI coding assistant",
+    "summary": "Open-source coding assistant spanning IDE and CLI integrations.",
+    "useful_for": "Model/provider configuration and developer workflow UX.",
+    "limitation": "Primarily coding assistance.",
+    "fit": "consider",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/continuedev/continue",
+      "https://github.com/continuedev/continue/blob/main/README.md",
+      "https://github.com/continuedev/continue/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-13T07:28:23Z",
+    "demo_url": "https://continue.dev"
+  },
+  {
+    "repo": "plandex-ai/plandex",
+    "name": "Plandex",
+    "category": "terminal coding agent",
+    "summary": "Terminal coding agent designed for larger tasks and planning.",
+    "useful_for": "Long-task planning and context management references.",
+    "limitation": "Repository activity is older than the main shortlists.",
+    "fit": "consider",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/plandex-ai/plandex",
+      "https://github.com/plandex-ai/plandex/blob/main/README.md",
+      "https://github.com/plandex-ai/plandex/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2025-10-03T21:49:58Z",
+    "demo_url": "https://plandex.ai"
+  },
+  {
+    "repo": "aaif-goose/goose",
+    "name": "Goose",
+    "category": "agent runtime",
+    "summary": "Local Rust agent with CLI, desktop application, extensions and MCP support.",
+    "useful_for": "Permission store, session management and MCP/ACP boundaries.",
+    "limitation": "It is a complete agent host; reuse patterns, not its control plane.",
+    "fit": "shortlist",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/aaif-goose/goose",
+      "https://github.com/aaif-goose/goose/blob/main/README.md",
+      "https://github.com/aaif-goose/goose/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-11T21:32:04Z",
+    "demo_url": "https://goose-docs.ai/"
+  },
+  {
+    "repo": "BloopAI/vibe-kanban",
+    "name": "Vibe Kanban",
+    "category": "coding-agent orchestrator",
+    "summary": "Kanban interface for running coding agents such as Codex and Claude Code.",
+    "useful_for": "Project queue, task status and concurrent-agent workspace UX.",
+    "limitation": "Depends on external coding agents; not a device driver.",
+    "fit": "shortlist",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/BloopAI/vibe-kanban",
+      "https://github.com/BloopAI/vibe-kanban/blob/main/README.md",
+      "https://github.com/BloopAI/vibe-kanban/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-12T06:20:43Z",
+    "demo_url": "https://www.vibekanban.com/"
+  },
+  {
+    "repo": "openinterpreter/openinterpreter",
+    "name": "Open Interpreter",
+    "category": "local computer agent",
+    "summary": "Local agent that runs code and uses a computer through a workstation-oriented product.",
+    "useful_for": "Local-first computer-agent product boundaries.",
+    "limitation": "Current README positions it around coding/open models; verify platform drivers before adoption.",
+    "fit": "consider",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/openinterpreter/openinterpreter",
+      "https://github.com/openinterpreter/openinterpreter/blob/main/README.md",
+      "https://github.com/openinterpreter/openinterpreter/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-09T04:59:04Z",
+    "demo_url": "http://openinterpreter.com/"
+  },
+  {
+    "repo": "browser-use/browser-use",
+    "name": "Browser Use",
+    "category": "browser-use library",
+    "summary": "Python library for browser automation agents.",
+    "useful_for": "Browser execution substrate and browser-focused evaluation.",
+    "limitation": "Browser only, not native desktop control.",
+    "fit": "shortlist",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/browser-use/browser-use",
+      "https://github.com/browser-use/browser-use/blob/main/README.md",
+      "https://github.com/browser-use/browser-use/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-12T07:39:39Z",
+    "demo_url": "https://browser-use.com"
+  },
+  {
+    "repo": "browserbase/stagehand",
+    "name": "Stagehand",
+    "category": "browser automation SDK",
+    "summary": "Browser automation SDK combining Playwright-style control with AI actions.",
+    "useful_for": "Typed browser automation and deterministic fallbacks.",
+    "limitation": "Browser only; hosted Browserbase features may be separate.",
+    "fit": "shortlist",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/browserbase/stagehand",
+      "https://github.com/browserbase/stagehand/blob/main/README.md",
+      "https://github.com/browserbase/stagehand/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-11T22:12:52Z",
+    "demo_url": "https://stagehand.dev"
+  },
+  {
+    "repo": "simular-ai/Agent-S",
+    "name": "Agent S",
+    "category": "desktop computer-use research",
+    "summary": "Agent framework for operating desktop environments.",
+    "useful_for": "Planner-grounder split and desktop-agent evaluation design.",
+    "limitation": "Research architecture needs product hardening and OS-driver verification.",
+    "fit": "shortlist",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/simular-ai/Agent-S",
+      "https://github.com/simular-ai/Agent-S/blob/main/README.md",
+      "https://github.com/simular-ai/Agent-S/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-05T22:02:40Z",
+    "demo_url": "https://www.simular.ai"
+  },
+  {
+    "repo": "bytedance/UI-TARS-desktop",
+    "name": "UI-TARS Desktop",
+    "category": "desktop computer-use app",
+    "summary": "Desktop agent application based on UI-TARS models.",
+    "useful_for": "Computer-use UX and action trace references.",
+    "limitation": "Electron application, so not a shell replacement; model/runtime dependencies.",
+    "fit": "reference",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/bytedance/UI-TARS-desktop",
+      "https://github.com/bytedance/UI-TARS-desktop/blob/main/README.md",
+      "https://github.com/bytedance/UI-TARS-desktop/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-11T03:56:20Z",
+    "demo_url": "https://agent-tars.com"
+  },
+  {
+    "repo": "microsoft/UFO",
+    "name": "UFO",
+    "category": "Windows OS agent",
+    "summary": "Windows UI automation agent using UIA and multi-agent orchestration.",
+    "useful_for": "Windows automation adapters and DAG/resource management concepts.",
+    "limitation": "Windows-specific research code.",
+    "fit": "shortlist",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/microsoft/UFO",
+      "https://github.com/microsoft/UFO/blob/main/README.md",
+      "https://github.com/microsoft/UFO/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-11T11:27:38Z",
+    "demo_url": "https://microsoft.github.io/UFO/"
+  },
+  {
+    "repo": "OS-Copilot/OS-Copilot",
+    "name": "OS-Copilot",
+    "category": "OS assistant research",
+    "summary": "Conversational embodied OS agent for daily task automation.",
+    "useful_for": "Task decomposition and OS-assistant research patterns.",
+    "limitation": "Research project with uncertain maintenance and production safety.",
+    "fit": "reference",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/OS-Copilot/OS-Copilot",
+      "https://github.com/OS-Copilot/OS-Copilot/blob/main/README.md",
+      "https://github.com/OS-Copilot/OS-Copilot/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2024-09-09T02:11:13Z"
+  },
+  {
+    "repo": "TheAgentCompany/TheAgentCompany",
+    "name": "The Agent Company",
+    "category": "agent benchmark",
+    "summary": "Simulated software-company benchmark for long-horizon agents.",
+    "useful_for": "Evaluation tasks for project-level autonomy.",
+    "limitation": "Benchmark, not an end-user agent runtime.",
+    "fit": "consider",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/TheAgentCompany/TheAgentCompany",
+      "https://github.com/TheAgentCompany/TheAgentCompany/blob/main/README.md",
+      "https://github.com/TheAgentCompany/TheAgentCompany/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2025-11-17T20:31:16Z",
+    "demo_url": "https://the-agent-company.com"
+  },
+  {
+    "repo": "Skyvern-AI/skyvern",
+    "name": "Skyvern",
+    "category": "browser workflow agent",
+    "summary": "Browser workflow automation with visual reasoning.",
+    "useful_for": "Structured browser workflow reliability and verification.",
+    "limitation": "AGPL obligations; browser scope only.",
+    "fit": "consider",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "AGPL-3.0",
+    "source_urls": [
+      "https://github.com/Skyvern-AI/skyvern",
+      "https://github.com/Skyvern-AI/skyvern/blob/main/README.md",
+      "https://github.com/Skyvern-AI/skyvern/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-13T00:52:00Z",
+    "demo_url": "https://www.skyvern.com"
+  },
+  {
+    "repo": "OpenAdaptAI/OpenAdapt",
+    "name": "OpenAdapt",
+    "category": "GUI task compiler",
+    "summary": "Compiles demonstrated GUI tasks into programs with independent verification.",
+    "useful_for": "Demonstration-to-automation and verification-first patterns.",
+    "limitation": "A task compiler, not conversational device control.",
+    "fit": "consider",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/OpenAdaptAI/OpenAdapt",
+      "https://github.com/OpenAdaptAI/OpenAdapt/blob/main/README.md",
+      "https://github.com/OpenAdaptAI/OpenAdapt/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-12T07:44:17Z",
+    "demo_url": "https://openadapt.ai"
+  },
+  {
+    "repo": "lavague-ai/LaVague",
+    "name": "LaVague",
+    "category": "browser automation agent",
+    "summary": "Open-source browser automation agents.",
+    "useful_for": "Web-agent workflows and evaluation ideas.",
+    "limitation": "Last observed push is older; browser only.",
+    "fit": "reference",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/lavague-ai/LaVague",
+      "https://github.com/lavague-ai/LaVague/blob/main/README.md",
+      "https://github.com/lavague-ai/LaVague/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2025-01-21T13:41:48Z",
+    "demo_url": "https://docs.lavague.ai/en/latest/"
+  },
+  {
+    "repo": "e2b-dev/desktop",
+    "name": "E2B Desktop",
+    "category": "desktop VM environment",
+    "summary": "Desktop environment project for sandboxed agent computer use.",
+    "useful_for": "Disposable VM isolation for risky computer-use evaluation.",
+    "limitation": "Infrastructure layer, not a local assistant UI.",
+    "fit": "shortlist",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/e2b-dev/desktop",
+      "https://github.com/e2b-dev/desktop/blob/main/README.md",
+      "https://github.com/e2b-dev/desktop/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-11T09:45:09Z",
+    "demo_url": "https://e2b.dev/?utm_source=github&utm_medium=referral&utm_campaign=repo_website&utm_content=desktop"
+  },
+  {
+    "repo": "assafelovic/gpt-researcher",
+    "name": "GPT Researcher",
+    "category": "research agent",
+    "summary": "Autonomous research-agent project.",
+    "useful_for": "Research task decomposition and source collection UX.",
+    "limitation": "Narrow domain and external-model dependence.",
+    "fit": "consider",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/assafelovic/gpt-researcher",
+      "https://github.com/assafelovic/gpt-researcher/blob/main/README.md",
+      "https://github.com/assafelovic/gpt-researcher/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-08-27T19:34:56Z",
+    "demo_url": "https://gptr.dev"
+  },
+  {
+    "repo": "khoj-ai/khoj",
+    "name": "Khoj",
+    "category": "personal knowledge assistant",
+    "summary": "Self-hosted assistant for personal knowledge and search.",
+    "useful_for": "Private retrieval, user data boundaries and personal assistant UX.",
+    "limitation": "AGPL obligations and not a computer driver.",
+    "fit": "consider",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "AGPL-3.0",
+    "source_urls": [
+      "https://github.com/khoj-ai/khoj",
+      "https://github.com/khoj-ai/khoj/blob/master/README.md",
+      "https://github.com/khoj-ai/khoj/blob/master/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-08-02T01:55:40Z",
+    "demo_url": "https://khoj.dev"
+  },
+  {
+    "repo": "leon-ai/leon",
+    "name": "Leon",
+    "category": "personal voice assistant",
+    "summary": "Open-source personal assistant with skills and voice-oriented intent handling.",
+    "useful_for": "Intent/skill discovery and personal-assistant interaction.",
+    "limitation": "Classic skill architecture; weaker modern agent execution evidence.",
+    "fit": "reference",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/leon-ai/leon",
+      "https://github.com/leon-ai/leon/blob/develop/README.md",
+      "https://github.com/leon-ai/leon/blob/develop/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-12T16:44:16Z",
+    "demo_url": "https://getleon.ai"
+  },
+  {
+    "repo": "OpenVoiceOS/ovos-core",
+    "name": "OpenVoiceOS Core",
+    "category": "voice assistant platform",
+    "summary": "FOSS voice-assistant core with message-bus and skill architecture.",
+    "useful_for": "Voice lifecycle, skill bus and offline-friendly assistant concepts.",
+    "limitation": "Voice platform, not a coding/computer-use orchestrator.",
+    "fit": "consider",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/OpenVoiceOS/ovos-core",
+      "https://github.com/OpenVoiceOS/ovos-core/blob/dev/README.md",
+      "https://github.com/OpenVoiceOS/ovos-core/blob/dev/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-13T07:48:25Z",
+    "demo_url": "https://openvoiceos.github.io/ovos-core/"
+  },
+  {
+    "repo": "moeru-ai/airi",
+    "name": "AIRI",
+    "category": "voice character assistant",
+    "summary": "Open-source multimodal AI companion with web, desktop and mobile surfaces.",
+    "useful_for": "Voice-input lifecycle, interruption handling and polished assistant presence.",
+    "limitation": "Companion product; avoid inheriting its Electron/character app control plane.",
+    "fit": "shortlist",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/moeru-ai/airi",
+      "https://github.com/moeru-ai/airi/blob/main/README.md",
+      "https://github.com/moeru-ai/airi/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-13T08:20:53Z",
+    "demo_url": "https://airi.moeru.ai/docs/"
+  },
+  {
+    "repo": "lobehub/lobehub",
+    "name": "LobeHub",
+    "category": "assistant workspace",
+    "summary": "Multi-provider LLM workspace and assistant interface.",
+    "useful_for": "Chat workspace, providers and tool integration UX.",
+    "limitation": "Community license has use restrictions; source-available reference.",
+    "fit": "reference",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "LobeHub Community License (source-available)",
+    "source_urls": [
+      "https://github.com/lobehub/lobehub",
+      "https://github.com/lobehub/lobehub/blob/canary/README.md",
+      "https://github.com/lobehub/lobehub/blob/canary/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-13T08:09:02Z",
+    "demo_url": "https://lobehub.com"
+  },
+  {
+    "repo": "Mintplex-Labs/anything-llm",
+    "name": "AnythingLLM",
+    "category": "local agent workspace",
+    "summary": "Local-first LLM workspace with documents, agents and multiple providers.",
+    "useful_for": "Local data/workspace UX and self-hosted packaging.",
+    "limitation": "Broad application rather than focused device orchestration.",
+    "fit": "consider",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/Mintplex-Labs/anything-llm",
+      "https://github.com/Mintplex-Labs/anything-llm/blob/master/README.md",
+      "https://github.com/Mintplex-Labs/anything-llm/blob/master/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-11T01:01:33Z",
+    "demo_url": "https://anythingllm.com"
+  },
+  {
+    "repo": "open-webui/open-webui",
+    "name": "Open WebUI",
+    "category": "self-hosted AI UI",
+    "summary": "Self-hosted web UI for LLMs, knowledge and tools.",
+    "useful_for": "Provider-agnostic chat, user isolation and tool UX.",
+    "limitation": "Custom Open WebUI license; review terms before reuse.",
+    "fit": "reference",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "Open WebUI License (source-available)",
+    "source_urls": [
+      "https://github.com/open-webui/open-webui",
+      "https://github.com/open-webui/open-webui/blob/main/README.md",
+      "https://github.com/open-webui/open-webui/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-13T00:23:51Z",
+    "demo_url": "https://openwebui.com"
+  },
+  {
+    "repo": "danny-avila/LibreChat",
+    "name": "LibreChat",
+    "category": "self-hosted AI chat UI",
+    "summary": "Multi-provider chat application with agents and plugins.",
+    "useful_for": "Provider switching and chat product UX.",
+    "limitation": "Chat app scope, not desktop-control substrate.",
+    "fit": "consider",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/danny-avila/LibreChat",
+      "https://github.com/danny-avila/LibreChat/blob/main/README.md",
+      "https://github.com/danny-avila/LibreChat/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-13T08:24:20Z",
+    "demo_url": "https://librechat.ai/"
+  },
+  {
+    "repo": "langgenius/dify",
+    "name": "Dify",
+    "category": "agent workflow platform",
+    "summary": "Visual platform for LLM applications, workflows and agents.",
+    "useful_for": "Workflow UI, observability and provider integration references.",
+    "limitation": "Modified Apache license restricts some multi-tenant use; source-available reference.",
+    "fit": "reference",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "Dify Open Source License (modified Apache 2.0)",
+    "source_urls": [
+      "https://github.com/langgenius/dify",
+      "https://github.com/langgenius/dify/blob/main/README.md",
+      "https://github.com/langgenius/dify/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-12T23:51:51Z",
+    "demo_url": "https://dify.ai"
+  },
+  {
+    "repo": "FlowiseAI/Flowise",
+    "name": "Flowise",
+    "category": "visual agent workflow platform",
+    "summary": "Visual builder for LLM workflows and agents.",
+    "useful_for": "Workflow authoring and trace visualization ideas.",
+    "limitation": "Split licensing: enterprise files commercial; inspect individual files before reuse.",
+    "fit": "reference",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "Apache-2.0 outside named commercial areas",
+    "source_urls": [
+      "https://github.com/FlowiseAI/Flowise",
+      "https://github.com/FlowiseAI/Flowise/blob/main/README.md",
+      "https://github.com/FlowiseAI/Flowise/blob/main/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-08-13T12:38:19Z",
+    "demo_url": "https://flowiseai.com"
+  },
+  {
+    "repo": "n8n-io/n8n",
+    "name": "n8n",
+    "category": "workflow automation platform",
+    "summary": "Source-available workflow automation system with integrations.",
+    "useful_for": "Automation recipes, credentials boundaries and run history UX.",
+    "limitation": "Sustainable Use License and enterprise exclusions; reference only.",
+    "fit": "reference",
+    "evidence": "README and license file fetched from GitHub API; repository metadata checked.",
+    "license": "Sustainable Use License / enterprise exclusions (source-available)",
+    "source_urls": [
+      "https://github.com/n8n-io/n8n",
+      "https://github.com/n8n-io/n8n/blob/master/README.md",
+      "https://github.com/n8n-io/n8n/blob/master/LICENSE"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-13T08:18:56Z",
+    "demo_url": "https://n8n.io"
+  },
+  {
+    "repo": "langchain-ai/langgraph",
+    "name": "LangGraph",
+    "category": "orchestration",
+    "summary": "Stateful graph runtime for long-running agent workflows.",
+    "useful_for": "checkpointed task lifecycle experiments",
+    "limitation": "Python framework; evaluate persistence and provider adapters locally.",
+    "fit": "shortlist",
+    "evidence": "source-inspected",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/langchain-ai/langgraph",
+      "https://docs.langchain.com/oss/python/langgraph/"
+    ],
+    "code_pointers": [
+      "libs/checkpoint-conformance/langgraph/checkpoint/conformance/"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "microsoft/autogen",
+    "name": "AutoGen",
+    "category": "orchestration",
+    "summary": "Microsoft agent framework for multi-agent applications.",
+    "useful_for": "conversation and handoff patterns",
+    "limitation": "Repository API reports CC-BY-4.0; licence/reuse scope needs legal confirmation.",
+    "fit": "consider",
+    "evidence": "documentation",
+    "license": "CC-BY-4.0",
+    "source_urls": [
+      "https://github.com/microsoft/autogen",
+      "https://microsoft.github.io/autogen/"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "crewAIInc/crewAI",
+    "name": "CrewAI",
+    "category": "orchestration",
+    "summary": "Role-oriented agent workflow framework.",
+    "useful_for": "bounded delegation ideas",
+    "limitation": "Role-play abstraction is not a reason to adopt a permanent agent fleet.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/crewAIInc/crewAI"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "openai/openai-agents-python",
+    "name": "OpenAI Agents SDK",
+    "category": "orchestration",
+    "summary": "Lightweight SDK for agent workflows, handoffs and tracing.",
+    "useful_for": "provider-native workflow comparison",
+    "limitation": "Python/API surface does not prove subscription CLI feature parity.",
+    "fit": "consider",
+    "evidence": "documentation",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/openai/openai-agents-python",
+      "https://openai.github.io/openai-agents-python/"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "huggingface/smolagents",
+    "name": "smolagents",
+    "category": "orchestration",
+    "summary": "Small agent library centred on code actions.",
+    "useful_for": "minimal-tool-agent reference",
+    "limitation": "Do not execute generated code without PaneForge policy gates.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/huggingface/smolagents",
+      "https://huggingface.co/docs/smolagents"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "agno-agi/agno",
+    "name": "Agno",
+    "category": "orchestration",
+    "summary": "Agent platform framework.",
+    "useful_for": "agent platform comparison",
+    "limitation": "Broad platform surface exceeds first prototype needs.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/agno-agi/agno",
+      "https://docs.agno.com"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "pydantic/pydantic-ai",
+    "name": "Pydantic AI",
+    "category": "orchestration",
+    "summary": "Typed Python AI agents and model interfaces.",
+    "useful_for": "schema validation patterns",
+    "limitation": "Typed output validates shape, not truth or authority.",
+    "fit": "consider",
+    "evidence": "documentation",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/pydantic/pydantic-ai"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "microsoft/semantic-kernel",
+    "name": "Semantic Kernel",
+    "category": "orchestration",
+    "summary": "Microsoft SDK for integrating LLM functions into apps.",
+    "useful_for": ".NET/Python plugin comparison",
+    "limitation": "Plugin systems require independent policy enforcement.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/microsoft/semantic-kernel"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "camel-ai/camel",
+    "name": "CAMEL",
+    "category": "orchestration",
+    "summary": "Multi-agent research framework.",
+    "useful_for": "research comparison only",
+    "limitation": "Research scaling claims need task-specific reproduction.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/camel-ai/camel"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "FoundationAgents/MetaGPT",
+    "name": "MetaGPT",
+    "category": "orchestration",
+    "summary": "Multi-agent software-company simulation framework.",
+    "useful_for": "software workflow pattern reference",
+    "limitation": "Former geekan path redirects here; catalogued once only.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/FoundationAgents/MetaGPT"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "langchain-ai/langchain",
+    "name": "LangChain",
+    "category": "orchestration",
+    "summary": "General LLM application and integration framework.",
+    "useful_for": "integration pattern reference",
+    "limitation": "Large abstraction surface; do not add it without a measured integration need.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/langchain-ai/langchain"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "run-llama/llama_index",
+    "name": "LlamaIndex",
+    "category": "memory-retrieval",
+    "summary": "Document ingestion and retrieval framework.",
+    "useful_for": "RAG comparison",
+    "limitation": "Use structured/full-text retrieval before introducing an index.",
+    "fit": "consider",
+    "evidence": "documentation",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/run-llama/llama_index"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "deepset-ai/haystack",
+    "name": "Haystack",
+    "category": "memory-retrieval",
+    "summary": "Modular retrieval and agent pipeline framework.",
+    "useful_for": "explicit retrieval pipeline reference",
+    "limitation": "Needs corpus-specific leakage and citation evaluation.",
+    "fit": "consider",
+    "evidence": "documentation",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/deepset-ai/haystack"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "microsoft/agent-framework",
+    "name": "Microsoft Agent Framework",
+    "category": "orchestration",
+    "summary": "Python and .NET framework for agent workflows.",
+    "useful_for": "cross-language comparison",
+    "limitation": "New framework requires qualification before reliance.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/microsoft/agent-framework"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "bytedance/deer-flow",
+    "name": "DeerFlow",
+    "category": "orchestration",
+    "summary": "Long-horizon agent harness with tools, memories and subagents.",
+    "useful_for": "harness failure-case reference",
+    "limitation": "Do not infer robust autonomy from its stated scope.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/bytedance/deer-flow"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "OpenBMB/ChatDev",
+    "name": "ChatDev",
+    "category": "orchestration",
+    "summary": "LLM multi-agent collaboration project for software tasks.",
+    "useful_for": "role simulation research",
+    "limitation": "Not evidence that simulated roles improve delivery.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/OpenBMB/ChatDev"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "OpenBMB/AgentVerse",
+    "name": "AgentVerse",
+    "category": "orchestration",
+    "summary": "Multi-agent task-solving and simulation framework.",
+    "useful_for": "historical framework reference",
+    "limitation": "Last push in 2024; maintenance risk.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/OpenBMB/AgentVerse"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "langchain-ai/open_deep_research",
+    "name": "Open Deep Research",
+    "category": "orchestration",
+    "summary": "Open research-agent implementation.",
+    "useful_for": "research workflow fixtures",
+    "limitation": "Do not expose web results as trusted instructions.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/langchain-ai/open_deep_research"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "mem0ai/mem0",
+    "name": "Mem0",
+    "category": "memory",
+    "summary": "Persistent memory infrastructure for agents.",
+    "useful_for": "memory API comparison",
+    "limitation": "Memory extraction can create stale or false facts.",
+    "fit": "consider",
+    "evidence": "documentation",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/mem0ai/mem0"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "letta-ai/letta",
+    "name": "Letta",
+    "category": "memory",
+    "summary": "Stateful-agent platform focused on advanced memory.",
+    "useful_for": "memory lifecycle comparison",
+    "limitation": "Keep authority ledger outside model-managed memory.",
+    "fit": "consider",
+    "evidence": "documentation",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/letta-ai/letta",
+      "https://docs.letta.com/"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "getzep/graphiti",
+    "name": "Graphiti",
+    "category": "memory",
+    "summary": "Real-time knowledge-graph memory framework.",
+    "useful_for": "time-aware provenance research",
+    "limitation": "Graph construction adds complexity before proven retrieval benefit.",
+    "fit": "consider",
+    "evidence": "source-inspected",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/getzep/graphiti",
+      "https://help.getzep.com/graphiti"
+    ],
+    "code_pointers": [
+      "graphiti_core/driver/driver.py",
+      "graphiti_core/cross_encoder/client.py"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "topoteretes/cognee",
+    "name": "Cognee",
+    "category": "memory",
+    "summary": "Self-hostable memory platform with knowledge graph.",
+    "useful_for": "local graph-memory comparison",
+    "limitation": "Do not adopt graph store without measured lookup failures.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/topoteretes/cognee"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "MemTensor/MemOS",
+    "name": "MemOS",
+    "category": "memory",
+    "summary": "Memory system claiming hybrid retrieval and skill reuse.",
+    "useful_for": "claim/evaluation comparison",
+    "limitation": "Repository token-savings claim is not PaneForge evidence.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/MemTensor/MemOS"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "memodb-io/Acontext",
+    "name": "Acontext",
+    "category": "memory",
+    "summary": "Agent skills represented as a memory layer.",
+    "useful_for": "skill-memory comparison",
+    "limitation": "Skills need versioning and policy regardless of storage.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/memodb-io/Acontext"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "supermemoryai/supermemory",
+    "name": "Supermemory",
+    "category": "memory",
+    "summary": "Local-capable memory and context engine.",
+    "useful_for": "local context-engine comparison",
+    "limitation": "Confirm tenant isolation and retention before use.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/supermemoryai/supermemory"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "qdrant/qdrant",
+    "name": "Qdrant",
+    "category": "vector-store",
+    "summary": "Vector search database.",
+    "useful_for": "optional hybrid retrieval backend",
+    "limitation": "Vectors require metadata filters and deletion testing.",
+    "fit": "consider",
+    "evidence": "documentation",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/qdrant/qdrant",
+      "https://qdrant.tech"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "chroma-core/chroma",
+    "name": "Chroma",
+    "category": "vector-store",
+    "summary": "Search infrastructure for AI applications.",
+    "useful_for": "retrieval backend comparison",
+    "limitation": "Not a source of truth for authority or evidence.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/chroma-core/chroma"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "pgvector/pgvector",
+    "name": "pgvector",
+    "category": "vector-store",
+    "summary": "Vector similarity extension for Postgres.",
+    "useful_for": "evaluate alongside existing relational state",
+    "limitation": "GitHub API returns NOASSERTION; inspect licence before copying/distribution.",
+    "fit": "consider",
+    "evidence": "documentation",
+    "license": "NOASSERTION",
+    "source_urls": [
+      "https://github.com/pgvector/pgvector"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "temporalio/temporal",
+    "name": "Temporal",
+    "category": "durable-workflow",
+    "summary": "Durable workflow service for retries and recovery.",
+    "useful_for": "task lifecycle and effect reconciliation patterns",
+    "limitation": "Heavy service; first prove a smaller transactional task store insufficient.",
+    "fit": "consider",
+    "evidence": "source-inspected",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/temporalio/temporal",
+      "https://docs.temporal.io"
+    ],
+    "code_pointers": [
+      "service/history/",
+      ".github/workflows/features-integration.yml"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "PrefectHQ/prefect",
+    "name": "Prefect",
+    "category": "scheduler",
+    "summary": "Python workflow orchestration framework.",
+    "useful_for": "scheduled workflow comparison",
+    "limitation": "Data-pipeline emphasis differs from desktop task ownership.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/PrefectHQ/prefect"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "ray-project/ray",
+    "name": "Ray",
+    "category": "scaling",
+    "summary": "Distributed compute runtime and AI libraries.",
+    "useful_for": "future distributed compute research",
+    "limitation": "100+ workers need cluster operations and do not improve coordination automatically.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/ray-project/ray",
+      "https://ray.io"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "langfuse/langfuse",
+    "name": "Langfuse",
+    "category": "observability-eval",
+    "summary": "LLM tracing, evaluation and observability platform.",
+    "useful_for": "run/evidence visibility patterns",
+    "limitation": "GitHub API returns NOASSERTION; licence gate required.",
+    "fit": "consider",
+    "evidence": "documentation",
+    "license": "NOASSERTION",
+    "source_urls": [
+      "https://github.com/langfuse/langfuse",
+      "https://langfuse.com"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "Arize-ai/phoenix",
+    "name": "Phoenix",
+    "category": "observability-eval",
+    "summary": "AI observability and evaluation toolkit.",
+    "useful_for": "eval/trace comparison",
+    "limitation": "GitHub API returns NOASSERTION; licence gate required.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "NOASSERTION",
+    "source_urls": [
+      "https://github.com/Arize-ai/phoenix"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "promptfoo/promptfoo",
+    "name": "promptfoo",
+    "category": "evaluation",
+    "summary": "Prompt, agent and RAG test framework with CI support.",
+    "useful_for": "regression and adversarial fixture patterns",
+    "limitation": "Its security features are not authorisation to scan third parties.",
+    "fit": "shortlist",
+    "evidence": "documentation",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/promptfoo/promptfoo",
+      "https://promptfoo.dev"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "SWE-bench/SWE-bench",
+    "name": "SWE-bench",
+    "category": "evaluation",
+    "summary": "Benchmark for resolving real GitHub issues.",
+    "useful_for": "coding evaluation fixture reference",
+    "limitation": "Benchmark performance does not establish desktop-agent reliability.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/SWE-bench/SWE-bench",
+      "https://www.swebench.com"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "vllm-project/vllm",
+    "name": "vLLM",
+    "category": "serving",
+    "summary": "Python LLM inference and serving engine.",
+    "useful_for": "Later GPU-hosted open-weight batch or tool-call workloads.",
+    "limitation": "Infrastructure, not an assistant or Mac desktop runtime.",
+    "fit": "consider",
+    "evidence": "documentation",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/vllm-project/vllm",
+      "https://docs.vllm.ai/"
+    ],
+    "image_url": "https://raw.githubusercontent.com/vllm-project/vllm/main/docs/assets/logos/vllm-logo-text-light.png",
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-13T07:44:38Z"
+  },
+  {
+    "repo": "sgl-project/sglang",
+    "name": "SGLang",
+    "category": "serving",
+    "summary": "Open-weight model serving and programming runtime.",
+    "useful_for": "Evaluate alongside vLLM if a future GPU service is justified.",
+    "limitation": "Not a personal-assistant UI or local Mac-first default.",
+    "fit": "consider",
+    "evidence": "documentation",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/sgl-project/sglang",
+      "https://docs.sglang.io/"
+    ],
+    "image_url": "https://raw.githubusercontent.com/sgl-project/sglang/main/assets/logo.png",
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-13T08:23:41Z"
+  },
+  {
+    "repo": "ggml-org/llama.cpp",
+    "name": "llama.cpp",
+    "category": "serving",
+    "summary": "C/C++ inference project with a server surface for local GGUF models.",
+    "useful_for": "Optional offline classification, extraction, or fallback experiments.",
+    "limitation": "Model quality, memory fit and tool reliability must be evaluated per model; it is not orchestration.",
+    "fit": "shortlist",
+    "evidence": "documentation",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/ggml-org/llama.cpp",
+      "https://github.com/ggml-org/llama.cpp/blob/master/docs/ops.md"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-13T08:02:42Z"
+  },
+  {
+    "repo": "ollama/ollama",
+    "name": "Ollama",
+    "category": "local-model-runtime",
+    "summary": "Local open-model runtime with a simple developer-facing product surface.",
+    "useful_for": "Optional local small-model experiments on Mac, isolated from subscription agent work.",
+    "limitation": "A runtime alone does not supply safe tools, memory, or task recovery.",
+    "fit": "shortlist",
+    "evidence": "documentation",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/ollama/ollama",
+      "https://ollama.com/"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-11T21:44:45Z"
+  },
+  {
+    "repo": "ml-explore/mlx-lm",
+    "name": "MLX LM",
+    "category": "apple-silicon-serving",
+    "summary": "Apple MLX package for text generation and fine-tuning on Apple silicon.",
+    "useful_for": "Mac-first controlled experiments for small local jobs.",
+    "limitation": "Python package, not an end-user assistant or provider abstraction.",
+    "fit": "shortlist",
+    "evidence": "documentation",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/ml-explore/mlx-lm",
+      "https://ml-explore.github.io/mlx/build/html/index.html"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-12T11:20:46Z"
+  },
+  {
+    "repo": "huggingface/text-generation-inference",
+    "name": "Text Generation Inference",
+    "category": "serving",
+    "summary": "Hugging Face text-generation server.",
+    "useful_for": "Historical/reference serving architecture only.",
+    "limitation": "Its README says maintenance mode and recommends vLLM, SGLang or local engines for new use.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/huggingface/text-generation-inference"
+    ],
+    "image_url": "https://huggingface.co/datasets/Narsil/tgi_assets/resolve/main/thumbnail.png",
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-03-21T11:34:22Z"
+  },
+  {
+    "repo": "BerriAI/litellm",
+    "name": "LiteLLM",
+    "category": "provider-gateway",
+    "summary": "Self-hostable OpenAI-format model gateway.",
+    "useful_for": "A later explicit routing boundary across budgeted APIs and local models.",
+    "limitation": "Core is MIT but enterprise directory has a separate licence; do not introduce it ahead of a measured multi-provider need.",
+    "fit": "consider",
+    "evidence": "source-inspected",
+    "license": "MIT outside enterprise/; enterprise separate",
+    "source_urls": [
+      "https://github.com/BerriAI/litellm",
+      "https://docs.litellm.ai/"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-13T08:23:55Z"
+  },
+  {
+    "repo": "xorbitsai/inference",
+    "name": "Xinference",
+    "category": "serving",
+    "summary": "Unified serving API for open-source language, speech and multimodal models.",
+    "useful_for": "Compare if multiple local model modalities become a current need.",
+    "limitation": "Operating a multi-model service adds hardware and lifecycle work.",
+    "fit": "consider",
+    "evidence": "documentation",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/xorbitsai/inference",
+      "https://inference.readthedocs.io/"
+    ],
+    "image_url": "https://raw.githubusercontent.com/xorbitsai/inference/main/assets/xorbits-logo.png",
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "mudler/LocalAI",
+    "name": "LocalAI",
+    "category": "local-model-runtime",
+    "summary": "Local AI engine for multiple model modalities.",
+    "useful_for": "Reference for optional self-hosted multimodal experiments.",
+    "limitation": "Broad scope means substantial configuration and model operations; not a shortcut to a reliable assistant.",
+    "fit": "consider",
+    "evidence": "source-inspected",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/mudler/LocalAI"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "mudler/LocalAGI",
+    "name": "LocalAGI",
+    "category": "local-agent-support",
+    "summary": "Local-first AI project with a Web UI and integrations.",
+    "useful_for": "Reference for local integration ideas.",
+    "limitation": "It is a separate assistant product, not a support component to embed by default.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/mudler/LocalAGI"
+    ],
+    "image_url": "https://raw.githubusercontent.com/mudler/LocalAGI/main/webui/react-ui/public/logo_1.png",
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-12T14:00:08Z"
+  },
+  {
+    "repo": "NVIDIA/TensorRT-LLM",
+    "name": "TensorRT-LLM",
+    "category": "nvidia-serving",
+    "summary": "NVIDIA-optimised LLM and visual-generation inference runtime.",
+    "useful_for": "Future PC/NVIDIA benchmark candidate only.",
+    "limitation": "NVIDIA/CUDA specific and therefore not the Mac-first path.",
+    "fit": "reference",
+    "evidence": "source-inspected",
+    "license": "Apache-2.0 with third-party notices",
+    "source_urls": [
+      "https://github.com/NVIDIA/TensorRT-LLM",
+      "https://nvidia.github.io/TensorRT-LLM/"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-13T05:15:35Z"
+  },
+  {
+    "repo": "triton-inference-server/server",
+    "name": "Triton Inference Server",
+    "category": "serving",
+    "summary": "General multi-framework inference server.",
+    "useful_for": "Reference for a future managed inference tier.",
+    "limitation": "Server operations are far beyond an initial private Mac assistant.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "BSD-3-Clause",
+    "source_urls": [
+      "https://github.com/triton-inference-server/server"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-12T05:30:45Z"
+  },
+  {
+    "repo": "pipecat-ai/pipecat",
+    "name": "Pipecat",
+    "category": "voice-runtime",
+    "summary": "Framework for real-time voice and multimodal agent pipelines.",
+    "useful_for": "Compare for a future live-voice prototype around a chosen transport/provider.",
+    "limitation": "It supplies pipeline building blocks, not device authority or durable task orchestration.",
+    "fit": "shortlist",
+    "evidence": "documentation",
+    "license": "BSD-2-Clause",
+    "source_urls": [
+      "https://github.com/pipecat-ai/pipecat",
+      "https://docs.pipecat.ai/"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-12T06:12:20Z"
+  },
+  {
+    "repo": "livekit/agents",
+    "name": "LiveKit Agents",
+    "category": "voice-runtime",
+    "summary": "Framework for realtime multimodal agent applications.",
+    "useful_for": "Evaluate transport and turn-taking components if building a self-hosted voice layer.",
+    "limitation": "A separate real-time stack may duplicate provider live capabilities; prove need first.",
+    "fit": "consider",
+    "evidence": "documentation",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/livekit/agents",
+      "https://docs.livekit.io/agents/"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-13T06:47:03Z"
+  },
+  {
+    "repo": "livekit-examples/agent-starter-react",
+    "name": "LiveKit Agent Starter React",
+    "category": "voice-frontend",
+    "summary": "React/Next.js voice-agent starter for LiveKit Agents.",
+    "useful_for": "Reference for voice UI states and interruption controls.",
+    "limitation": "Starter template, not a desktop harness or mobile companion architecture.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/livekit-examples/agent-starter-react"
+    ],
+    "checked_at": "2026-09-13"
+  },
+  {
+    "repo": "livekit/components-js",
+    "name": "LiveKit Components JS",
+    "category": "voice-ui",
+    "summary": "JavaScript UI components and hooks for LiveKit realtime apps.",
+    "useful_for": "Reference voice UI semantics if LiveKit is selected later.",
+    "limitation": "Ties the UI to the LiveKit stack.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/livekit/components-js"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-09T20:40:39Z"
+  },
+  {
+    "repo": "microsoft/magentic-ui",
+    "name": "Magentic-UI",
+    "category": "agent-workspace-reference",
+    "summary": "MIT-licensed agent workspace with React frontend, sessions, browser/task state and tests.",
+    "useful_for": "Source-level reference for explicit session state, browser takeover feedback and optimistic UI edge cases.",
+    "limitation": "A complete separate product, so reuse patterns or small independently reviewed portions only.",
+    "fit": "shortlist",
+    "evidence": "source-inspected",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/microsoft/magentic-ui"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-10T22:59:08Z"
+  },
+  {
+    "repo": "microsoft/playwright-mcp",
+    "name": "Playwright MCP",
+    "category": "browser-tooling",
+    "summary": "MCP server exposing browser automation through Playwright.",
+    "useful_for": "Reproducible browser test and observation tools with explicit scoped authority.",
+    "limitation": "Browser-only support infrastructure, not desktop computer use or a visual design system.",
+    "fit": "shortlist",
+    "evidence": "documentation",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/microsoft/playwright-mcp"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-11T22:45:15Z"
+  },
+  {
+    "repo": "modelcontextprotocol/servers",
+    "name": "MCP reference servers",
+    "category": "mcp-reference",
+    "summary": "MCP steering-group reference server implementations.",
+    "useful_for": "Protocol education and narrowly scoped server patterns.",
+    "limitation": "README explicitly says these examples are educational, not production-ready; licensing is in transition.",
+    "fit": "reference",
+    "evidence": "source-inspected",
+    "license": "mixed MIT/Apache-2.0; docs CC-BY-4.0",
+    "source_urls": [
+      "https://github.com/modelcontextprotocol/servers",
+      "https://registry.modelcontextprotocol.io/"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-03T01:42:26Z"
+  },
+  {
+    "repo": "punkpeye/fastmcp",
+    "name": "FastMCP TypeScript",
+    "category": "mcp-framework",
+    "summary": "TypeScript MCP-server framework.",
+    "useful_for": "Historical/reference TypeScript MCP server ergonomics.",
+    "limitation": "README states it supports legacy handshake MCP revisions only, not the current stateless specification.",
+    "fit": "reference",
+    "evidence": "source-inspected",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/punkpeye/fastmcp"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-11T06:40:39Z"
+  },
+  {
+    "repo": "PrefectHQ/fastmcp",
+    "name": "FastMCP Python",
+    "category": "mcp-framework",
+    "summary": "Python framework for building MCP servers; canonical successor of jlowin/fastmcp redirect.",
+    "useful_for": "Reference only if a Python MCP server becomes a current requirement.",
+    "limitation": "Avoid a framework choice until a real server is required; verify exact current MCP compatibility at implementation time.",
+    "fit": "consider",
+    "evidence": "source-inspected",
+    "license": "Apache-2.0",
+    "source_urls": [
+      "https://github.com/PrefectHQ/fastmcp",
+      "https://gofastmcp.com/"
+    ],
+    "image_url": "https://raw.githubusercontent.com/PrefectHQ/fastmcp/main/docs/assets/brand/f-watercolor-waves-2.png",
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-11T19:27:14Z"
+  },
+  {
+    "repo": "motiondivision/motion",
+    "name": "Motion",
+    "category": "animation",
+    "summary": "JavaScript, React and Vue animation library with extensive test fixtures.",
+    "useful_for": "Subtle task-card, layout and permission-state transitions.",
+    "limitation": "Animation needs a reduced-motion path and must never conceal task state.",
+    "fit": "shortlist",
+    "evidence": "source-inspected",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/motiondivision/motion",
+      "https://motion.dev/"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-13T06:45:28Z"
+  },
+  {
+    "repo": "xyflow/xyflow",
+    "name": "XYFlow",
+    "category": "visual-graph",
+    "summary": "React and Svelte libraries for node-based interfaces.",
+    "useful_for": "Optional inspectable task/provenance graph after the core receipt rail is proven.",
+    "limitation": "Graphs quickly become decorative and unreadable for ordinary work; not a default canvas.",
+    "fit": "consider",
+    "evidence": "documentation",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/xyflow/xyflow",
+      "https://reactflow.dev/"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-10T15:18:27Z"
+  },
+  {
+    "repo": "pmndrs/react-three-fiber",
+    "name": "React Three Fiber",
+    "category": "3d-ui",
+    "summary": "React renderer for Three.js scenes.",
+    "useful_for": "A contained high-end visual experiment such as a one-off assistant presence scene.",
+    "limitation": "WebGL has performance, accessibility and product-focus costs; keep out of the working surface.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/pmndrs/react-three-fiber",
+      "https://docs.pmnd.rs/react-three-fiber/"
+    ],
+    "image_url": "https://raw.githubusercontent.com/pmndrs/react-three-fiber/master/docs/banner-r3f.jpg",
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-08T06:09:37Z"
+  },
+  {
+    "repo": "pmndrs/drei",
+    "name": "Drei",
+    "category": "3d-ui",
+    "summary": "Reusable helpers and abstractions for React Three Fiber.",
+    "useful_for": "Reference helper catalogue if a deliberately small R3F visual is selected.",
+    "limitation": "Adds no business value on its own and inherits the 3D UI risks.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/pmndrs/drei",
+      "https://drei.pmnd.rs/"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-07T19:27:38Z"
+  },
+  {
+    "repo": "pmndrs/react-spring",
+    "name": "react-spring",
+    "category": "animation",
+    "summary": "Spring-physics-first animation library.",
+    "useful_for": "Compare motion feel for a few tactile interactions.",
+    "limitation": "Choose one animation system per surface; do not layer it with Motion without a concrete need.",
+    "fit": "consider",
+    "evidence": "documentation",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/pmndrs/react-spring",
+      "https://react-spring.dev/"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-09T21:17:14Z"
+  },
+  {
+    "repo": "magicuidesign/magicui",
+    "name": "Magic UI",
+    "category": "visual-components",
+    "summary": "MIT visual component library with demos.",
+    "useful_for": "Inspiration or individually reviewed presentation components.",
+    "limitation": "Avoid adopting a component-library aesthetic wholesale in a dense workbench.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "MIT",
+    "source_urls": [
+      "https://github.com/magicuidesign/magicui",
+      "https://magicui.design/docs"
+    ],
+    "image_url": "https://cdn.magicui.design/bento-grid.gif",
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-08T11:20:46Z"
+  },
+  {
+    "repo": "DavidHDev/react-bits",
+    "name": "React Bits",
+    "category": "visual-components",
+    "summary": "Animated React components and backgrounds with public demos.",
+    "useful_for": "Pattern inspiration only, such as a calm status presence experiment.",
+    "limitation": "Repository is MIT plus Commons Clause: do not copy or ship its code/assets without a separate licence review; several effects continuously render WebGL/canvas.",
+    "fit": "reference",
+    "evidence": "source-inspected",
+    "license": "MIT + Commons Clause",
+    "source_urls": [
+      "https://github.com/DavidHDev/react-bits",
+      "https://reactbits.dev/"
+    ],
+    "image_url": "https://raw.githubusercontent.com/DavidHDev/react-bits/main/public/assets/video/orb.webm",
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-11T12:33:42Z"
+  },
+  {
+    "repo": "emilk/egui",
+    "name": "egui",
+    "category": "native-ui-reference",
+    "summary": "Immediate-mode Rust GUI library.",
+    "useful_for": "Reference for fast native diagnostic or control surfaces if React/WebView proves unsuitable in a measured area.",
+    "limitation": "A new UI paradigm would complicate visual consistency and migration.",
+    "fit": "reference",
+    "evidence": "documentation",
+    "license": "MIT OR Apache-2.0",
+    "source_urls": [
+      "https://github.com/emilk/egui",
+      "https://www.egui.rs/"
+    ],
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-11T15:54:57Z"
+  },
+  {
+    "repo": "tauri-apps/tauri",
+    "name": "Tauri",
+    "category": "desktop-shell",
+    "summary": "Rust desktop framework using system WebViews and a frontend chosen by the app.",
+    "useful_for": "Leading candidate to replace Electron while retaining a React UI and moving measured native work into Rust.",
+    "limitation": "It is not inherently lower memory for a given app; migration must benchmark lifecycle, terminal I/O, WebView and recovery on target hardware.",
+    "fit": "shortlist",
+    "evidence": "source-inspected",
+    "license": "MIT OR Apache-2.0",
+    "source_urls": [
+      "https://github.com/tauri-apps/tauri",
+      "https://tauri.app/"
+    ],
+    "image_url": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/.github/splash.png",
+    "checked_at": "2026-09-13",
+    "pushed_at": "2026-09-13T01:52:51Z"
+  }
+]
