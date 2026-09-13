@@ -144,6 +144,23 @@ approval boundaries. Return a project-linked proof pack and unresolved items.
 
 ## Cost and context controls
 
+- Default reasoning, planning, research, coding, review, session naming and task
+  summaries to subscription-authenticated Codex/Claude CLI workers wherever the
+  supported CLI can complete the task. Reuse existing sessions and the dispatcher;
+  do not start a fresh agent for each UI event. Simple operations stay deterministic.
+- CLI is a transport, not proof of included billing. Verify subscription login on
+  the actual worker and isolate inherited backend API credentials. Record provider,
+  authentication route and native session ID without recording credentials.
+- When a subscription pool is exhausted, route a suitable discrete task to the
+  other available subscribed CLI or queue it with a visible explanation. Never
+  silently use an API key, purchase credits or change the selected model family.
+- Use paid APIs only for a required capability the subscribed CLI cannot supply,
+  such as embedded GPT-Live voice, within an explicitly approved extras budget.
+  The app-owned Live client-delegation bridge should dispatch to CLI workers;
+  built-in paid Responses delegation is not the default backend route.
+- Prefer brief voice planning/check-ins, disconnect while background work runs,
+  and reconnect when Robert chooses. Ending voice must preserve the task and its
+  output. Measure CLI latency before promising seamless live tool responses.
 - End the Live session to end connected-duration billing; muting is not disconnecting.
   Show elapsed connected time and estimated voice cost in details, not a giant HUD.
 - Record cumulative usage.seconds as a snapshot, not an increment. Reconcile final
@@ -160,6 +177,18 @@ approval boundaries. Return a project-linked proof pack and unresolved items.
 
 ## Delivery sequence and acceptance gates
 
+0. Foundation checkpoint: reconcile the existing workflow repair receipt before
+   building on it. The recorded machine-specific CI import failure and pending PC
+   verification are unresolved until current evidence proves otherwise. Windows
+   proof does not block an isolated Mac prototype, but it blocks parity claims.
+   The first connected Mac slice is typed request → scoped second-brain retrieval
+   → one subscription CLI worker → saved result with source and usage metadata.
+   Preconditions: working Mac dispatcher, verified subscription authentication,
+   scoped vault access, and an isolated dev profile. Acceptance: one bounded real
+   task completes; resume preserves output; API credentials are not used; quota
+   exhaustion queues or reports unavailable; cross-project access is rejected.
+   Keep live voice simulated until this slice passes. Record actual latency and
+   memory under terminal output before choosing a wider migration scope.
 1. Motion prototype: replay recorded synthetic operation events in a separate design
    playground. Check activation, search, five-worker partial start, errors and end
    voice. Main UI keeps one toggle. No fake progress in a connected production UI.
