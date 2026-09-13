@@ -87,6 +87,10 @@ Screen context defaults to the selected app/window for the active task, where su
 
 ## Device and resource view
 
+The [orchestration and MCP specification](assistant-orchestration-and-mcp.md) defines automatic tool choice and worker creation. Show a compact task activity item such as “Reading the client brief” or “Started coding on PC,” with the chosen account/device and detailed tool trace available on demand. An inspectable Tools and Context drawer shows selected sources, active capabilities, unavailable connections and the billing route. Do not make the normal user pick server names or design a workflow graph.
+
+Distinguish “using an authorised tool,” “needs account connection,” and “proposes a new integration.” Worker sessions created by the assistant appear under their owning task in Workbench. Opening that session inspects existing work rather than launching a duplicate. Context reductions retain retrievable artifacts and source links; the UI should not present a token-savings percentage without a measured comparison.
+
 Present the Mac and PC as named devices with connectivity, capability, workload, and freshness. Distinguish “can run builds,” “can control desktop,” and “can host this provider.” Last-seen telemetry must not look live.
 
 Show a simple headline such as “PC running this build” or “Queued to keep this Mac responsive.” The detail view contains memory pressure, process ownership and capacity evidence. Prefer a useful explanation to an unexplained red percentage.
