@@ -343,9 +343,13 @@ is(
   'a busy deadline that has already lapsed is not a running turn'
 )
 
-// ...and the three things that DO mean work, each on its own.
+// A pending completion notification outlives the turn. Codex's idle animation
+// keeps printing while that flag is set, but must not resurrect a finished turn.
+is(outputIsWork({ ...typing, turnPending: true }), false, 'an unannounced completion is not running work')
+
+// ...and the two things that DO mean work, each on its own.
 is(outputIsWork({ ...typing, runSince: 999_000 }), true, 'a running turn clock is work')
-is(outputIsWork({ ...typing, turnPending: true }), true, 'a submitted prompt is work')
+is(outputIsWork({ ...typing, turnPending: true, runSince: 999_000 }), true, 'a submitted prompt with its turn clock is work')
 is(
   outputIsWork({ ...typing, busyUntil: 1_000_001 }),
   true,

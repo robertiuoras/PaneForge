@@ -144,21 +144,20 @@ const RANK: Record<FleetState, number> = {
  * been submitted and no turn had begun.
  *
  * The honest question is whether a TURN is running, and the app already records that in
- * two places, both set by `beginRun` and neither set by a bare keystroke: `runSince`
- * (the turn's clock) and `turnPending` (there is something worth telling you about when
- * it next goes quiet). `busyUntil` is the third and strongest - the CLI's own footer
- * saying it is running - and covers a turn this app never saw typed.
+ * `runSince` (the turn's clock) and `busyUntil` (the CLI's own running footer).
+ * `turnPending` is only a completion notification waiting to be delivered. It survives
+ * the end of a turn, so counting it as work lets Codex's idle animation put a finished
+ * pane back into Running on every frame.
  *
  * Anything else keeps the status it had, so a pane being typed into stays exactly where
  * it is in the list until the return is pressed.
  */
 export function outputIsWork(t: {
   runSince?: number
-  turnPending: boolean
   busyUntil: number
   now: number
 }): boolean {
-  return Boolean(t.runSince) || t.turnPending || t.busyUntil > t.now
+  return Boolean(t.runSince) || t.busyUntil > t.now
 }
 
 export function fleetState(s: FleetPane): FleetState {
