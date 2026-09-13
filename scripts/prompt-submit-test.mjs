@@ -386,8 +386,6 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
   ok(live.typed === '' && live.submitLine.text === '' && live.draft.text === '' &&
     live.draft.certain && !live.meta.drafting, 'restart clears all old composer shadows')
 }
-manager.killAll?.()
-rmSync(work, { recursive: true, force: true })
 
 // ---------------------------------------------------------------------------
 // SOURCE: a busy pane is waited out, never counted as a submit.
@@ -458,5 +456,27 @@ rmSync(work, { recursive: true, force: true })
     'and the curtain outlives that wait, so the pane says a prompt is still coming')
 }
 
+// A completed Codex turn keeps its notification pending until the attention gate
+// runs. Its idle particle animation must not turn that notification back into work.
+{
+  const pane = manager.start({ cwd: work, agent: 'shell' })
+  const live = manager.sessions.get(pane.id)
+  live.proc.say(COMPOSER)
+  manager.setBusyOnScreen(pane.id, true, 'Esc to interrupt · 1s')
+  ok(live.meta.status === 'working' && Boolean(live.meta.runSince), 'a live footer starts working')
+  manager.setBusyOnScreen(pane.id, false, COMPOSER)
+  ok(live.meta.status === 'idle' && !live.meta.runSince, 'the finished footer ends the turn')
+  ok(live.turnPending, 'the completion notification is still pending')
+  for (let frame = 0; frame < 10; frame++) live.proc.say(`\r⠁  ⠈ ${COMPOSER}`)
+  ok(live.meta.status === 'idle' && !live.meta.runSince, 'idle animation cannot resurrect a finished turn')
+  ok(live.turnPending, 'idle painting preserves the completion notification')
+  manager.setBusyOnScreen(pane.id, true, 'Esc to interrupt · 1s')
+  live.proc.say('Working')
+  ok(live.meta.status === 'working' && Boolean(live.meta.runSince), 'a subsequent real turn still starts')
+  manager.kill(pane.id)
+}
+
+manager.killAll?.()
+rmSync(work, { recursive: true, force: true })
 console.log(fail.length ? `\n${fail.length} FAILED` : '\nall ok')
 process.exit(fail.length ? 1 : 0)

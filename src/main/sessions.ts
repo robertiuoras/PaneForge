@@ -3343,7 +3343,7 @@ export class SessionManager extends EventEmitter {
       // has been typed into before (`engaged` is set by the first keystroke and never cleared,
       // so the echo of typing moved the card between Running and Your move). Anything else keeps
       // the status it had, so a fresh pane stays amber 'starting' and settles into 'idle'.
-      if (outputIsWork({ ...meta, turnPending: live.turnPending, busyUntil: live.busyUntil, now }))
+      if (outputIsWork({ ...meta, busyUntil: live.busyUntil, now }))
         meta.status = 'working'
       this.emit('data', id, data)
       if (firstByte || (wasIdle && meta.status === 'working')) this.emitSessions()
