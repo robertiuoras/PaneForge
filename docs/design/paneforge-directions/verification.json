@@ -1,0 +1,149 @@
+{
+  "ok": true,
+  "strict": false,
+  "lint": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 1,
+    "findings": [
+      {
+        "code": "system_font_will_alias",
+        "severity": "info",
+        "message": "Font family will be substituted at render time: 'segoe ui' \u2192 Roboto. The renderer maps these to bundled fonts for cross-platform consistency. Use the target font name directly for consistent preview and render results.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {},
+        "sourceFile": "docs/design/paneforge-directions/index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0
+      }
+    ],
+    "filesScanned": 1
+  },
+  "runtime": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 0,
+    "findings": []
+  },
+  "layout": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 0,
+    "findings": [],
+    "duration": 42,
+    "samples": [
+      2.333,
+      7,
+      11.667,
+      16.333,
+      21,
+      25.667,
+      30.333,
+      35,
+      39.667
+    ],
+    "transitionSamples": [],
+    "transitionSamplesDropped": 0,
+    "tolerance": 2,
+    "totalIssueCount": 0,
+    "truncated": false
+  },
+  "motion": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 0,
+    "findings": [],
+    "enabled": false,
+    "samples": 0
+  },
+  "contrast": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 1,
+    "infoCount": 0,
+    "findings": [
+      {
+        "code": "contrast_aa_failure",
+        "severity": "warning",
+        "message": "Contrast is 4.41:1; WCAG AA requires 4.5:1.",
+        "text": "Voice \u2192 context \u2192 sign-in handoff \u2192 private proof.",
+        "fg": "rgb(96,108,99)",
+        "bg": "rgb(233,230,223)",
+        "ratio": 4.41,
+        "requiredRatio": 4.5,
+        "suggestedColor": "rgb(94,106,97)",
+        "large": false,
+        "selector": "div > section:nth-of-type(2) > div:nth-of-type(6)",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 76,
+          "y": 1015,
+          "width": 684.25,
+          "height": 21
+        },
+        "time": 21
+      }
+    ],
+    "enabled": true,
+    "samples": [
+      2.333,
+      11.667,
+      21,
+      30.333,
+      39.667
+    ],
+    "checked": 190,
+    "passed": 189
+  },
+  "snapshots": {
+    "enabled": true,
+    "files": [
+      "frame-00-at-2.3s.png",
+      "frame-01-at-11.7s.png",
+      "frame-02-at-21.0s.png",
+      "frame-03-at-30.3s.png",
+      "frame-04-at-39.7s.png"
+    ],
+    "times": [
+      2.333,
+      11.667,
+      21,
+      30.333,
+      39.667
+    ],
+    "findingFiles": []
+  },
+  "_meta": {
+    "version": "0.7.99",
+    "latestVersion": "0.8.36",
+    "updateAvailable": true
+  },
+  "artifact": {
+    "durationSeconds": 42,
+    "width": 1920,
+    "height": 1080,
+    "fps": 30,
+    "codec": "h264",
+    "visualReview": "Three option snapshots and decoded approval/proof video frames inspected"
+  },
+  "gallery": {
+    "passed": true,
+    "checks": [
+      "local-file loading",
+      "three option selections",
+      "reverse seeking",
+      "390px viewport without horizontal overflow",
+      "no page errors"
+    ]
+  }
+}
