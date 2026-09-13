@@ -1,0 +1,15 @@
+// Owned SVG interface icons. Provider marks are the existing local brand assets.
+const paths={grid:'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z',clock:'M12 8v5l3 2 M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0',info:'M12 11v6 M12 7h.01 M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0',folder:'M3 7V5h6l2 2h10v13H3z',check:'m5 12 4 4L19 6',chat:'M4 4h16v12H9l-5 4z',chevron:'m9 5 7 7-7 7',file:'M5 3h9l5 5v13H5z M14 3v6h5 M9 13h6 M9 17h6'};
+function icon(name){return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name].split(' M').map((p,i)=>`<path d="${i?'M':''}${p}"/>`).join('')}</svg>`}
+for(const [selector,name] of [['.rail [aria-label="Workspaces"]','grid'],['.rail [aria-label="Activity"]','clock'],['.rail [aria-label="Prototype information"]','info']])document.querySelector(selector).innerHTML=icon(name);
+for(const el of document.querySelectorAll('.folder-icon'))el.innerHTML=icon('folder');
+for(const el of document.querySelectorAll('.nav,.tree,.files button')){const node=[...el.childNodes].find(n=>n.nodeType===Node.TEXT_NODE&&/[▦◷✓⌄◇▱▤]/.test(n.textContent));if(node){const value=node.textContent;let name=value.includes('▦')?'grid':value.includes('◷')?'clock':value.includes('✓')?'check':value.includes('⌄')?'chevron':value.includes('▱')?'folder':value.includes('▤')?'file':'chat';const span=document.createElement('span');span.innerHTML=icon(name);node.textContent=value.replace(/[▦◷✓⌄◇▱▤]/g,'').trimStart();el.insertBefore(span,node)}}
+const panel=document.querySelector('#voice-panel');
+const states={idle:['Big ideas. Talk them through.','Plan the next move, ask a question, or hand off a workflow.'],listening:['I’m listening.','“Help me plan this week’s client deliveries…”'],speaking:['Let’s make room for the next idea.','“We can start with the client briefs, then prepare a plan for you to review.”']};
+for(const button of document.querySelectorAll('[data-voice-state]'))button.onclick=()=>{const state=button.dataset.voiceState;panel.dataset.voice=state;document.querySelector('#voice-title').textContent=states[state][0];document.querySelector('#voice-caption').textContent=states[state][1];document.querySelectorAll('[data-voice-state]').forEach(b=>b.setAttribute('aria-pressed',String(b===button)))};
+let visible=true;
+function pauseMotion(){document.body.classList.toggle('motion-paused',document.hidden||!visible)}
+new IntersectionObserver(entries=>{visible=entries[0].isIntersecting;pauseMotion()}).observe(panel);
+document.addEventListener('visibilitychange',pauseMotion);
+
+for(const button of document.querySelectorAll('[data-mode]'))button.onclick=()=>{document.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute('aria-pressed',String(b===button)));document.querySelectorAll('[data-mode-panel]').forEach(p=>p.hidden=p.dataset.modePanel!==button.dataset.mode);document.querySelector('#prompt').placeholder=button.dataset.mode==='code'?'Describe the code change you want…':button.dataset.mode==='chat'?'Continue this conversation…':'Describe an outcome or steer this workspace…'};
