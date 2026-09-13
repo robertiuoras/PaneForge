@@ -459,7 +459,9 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
 // A completed Codex turn keeps its notification pending until the attention gate
 // runs. Its idle particle animation must not turn that notification back into work.
 {
-  const pane = manager.start({ cwd: work, agent: 'shell' })
+  // Turn boundaries launch asynchronous Git reads. Keep their cwd outside the
+  // disposable fixture, as in the other cases, so Windows can remove it below.
+  const pane = manager.start({ cwd: root, agent: 'shell' })
   const live = manager.sessions.get(pane.id)
   live.proc.say(COMPOSER)
   manager.setBusyOnScreen(pane.id, true, 'Esc to interrupt · 1s')
@@ -477,6 +479,6 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
 }
 
 manager.killAll?.()
-rmSync(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+rmSync(work, { recursive: true, force: true })
 console.log(fail.length ? `\n${fail.length} FAILED` : '\nall ok')
 process.exit(fail.length ? 1 : 0)
