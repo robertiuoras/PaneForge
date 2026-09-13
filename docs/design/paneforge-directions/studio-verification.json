@@ -9,7 +9,11 @@
     "recommendation filter",
     "empty search",
     "local navigation targets",
-    "no page errors"
+    "no page errors",
+    "all identity images loaded",
+    "three provider selection states",
+    "one active provider",
+    "reduced-motion transitions disabled"
   ],
   "connectedAgents": 0
 }

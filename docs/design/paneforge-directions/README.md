@@ -52,3 +52,7 @@ Validation receipt is [verification.json](verification.json). Visuals and final 
 ## Personal studio revision
 
 Open `studio.html` for the latest Chat, Work and Code direction, following feedback about artificial counters, colour and orchestration jargon. Astra is a reversible personal-name placeholder. `studio-chat.png`, `studio-work.png` and `studio-code.png` are verified headless previews. Navigation, project switching, clear-view behaviour, mobile width and catalogue integration passed in `studio-verification.json`. All content is simulated; no execution, voice or actual renderer fix is connected. The earlier MP4 illustrates the earlier three directions, not this revision.
+
+### Ember identity refinement
+
+The studio now preserves the real PaneForge icon and carries its ember colour through selected states and actions. Codex and Claude paths come from the existing app; Antigravity uses the official press asset. `assets/brands/README.md` records provenance, with the Lobe Icons licence retained. Provider cards switch their selected state and composer label locally; they do not connect a provider. Typography, layered surfaces, a sample project cover and short hover/selection transitions add identity without continuous animation.
