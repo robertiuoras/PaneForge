@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Successor layouts · compare</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+body{padding:28px 24px;max-width:1100px;margin:0 auto}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin:22px 0}
+.card h3 a{color:var(--text);text-decoration:none}
+.card ul{margin:6px 0 0;padding-left:18px;color:var(--muted);font-size:13px}
+table{border-collapse:collapse;width:100%;font-size:13px}td,th{border-bottom:1px solid var(--line-soft);padding:7px 8px;text-align:left;vertical-align:top}th{color:var(--muted);font-weight:600}
+</style>
+</head>
+<body>
+<div class="brand"><img src="../paneforge-directions/assets/brands/paneforge.svg" alt="PaneForge logo">PaneForge · successor layout alternatives</div>
+<p class="eyebrow" style="margin-top:8px">Three interactive prototypes, one sample task, same content and identity. Fictional work and messages; no agent, provider or Taskdriver connection. Evaluation strip at the bottom of each page counts actions, wrong turns and recoveries for the shared five-step task.</p>
+
+<div class="grid">
+  <article class="card"><small>A</small><h3><a href="layout-a.html">Left navigation</a></h3><p>Chat / Work / Code live in the sidebar above projects and saved chats, like the current studio demo. Search box top right.</p>
+    <ul><li>Everything reachable from one column</li><li>Costs sidebar width; modes and projects compete</li></ul></article>
+  <article class="card"><small>B</small><h3><a href="layout-b.html">Top mode control</a></h3><p>A centred Chat / Work / Code segmented control in the title bar; the sidebar holds only projects and saved chats.</p>
+    <ul><li>Modes read as "where am I"; sidebar stays about content</li><li>Mode switch leaves the project list untouched</li></ul></article>
+  <article class="card"><small>C</small><h3><a href="layout-c.html">Task-first</a></h3><p>No global mode. One list of projects with their tasks and chats; the selected task carries Conversation / Result / Code tabs. ⌘K finds anything.</p>
+    <ul><li>Code is never far from the task it belongs to</li><li>Cross-project "what needs me" view is a task, not a mode</li></ul></article>
+</div>
+
+<h2>The shared task</h2>
+<table><tr><th>#</th><th>Step</th><th>Measures</th></tr>
+<tr><td>1</td><td>Start a project called "Harbour Studio launch"</td><td>Where "new" lives</td></tr>
+<tr><td>2</td><td>Switch this conversation's agent to Claude</td><td>Provider identity and switching cost</td></tr>
+<tr><td>3</td><td>Find the waiting decision and approve the focused scope</td><td>Cross-project attention and approval inspection</td></tr>
+<tr><td>4</td><td>Open the saved chat "Weekly business review"</td><td>Findability of history</td></tr>
+<tr><td>5</td><td>Return to the code for "Improve the project view"</td><td>Chat → code transition</td></tr></table>
+
+<h2 style="margin-top:22px">Keyboard, every layout</h2>
+<p class="eyebrow">⌘/Ctrl 1·2·3 views · ⌘K find anything · ⌘N new project · / search · Esc closes · Tab/Enter/Space on every control · arrows in the palette.</p>
+<p class="eyebrow">Headless evidence: <a href="validation.json">validation.json</a> · plan: <a href="../../research/successor-product-plan.md">successor-product-plan.md</a></p>
+</body>
+</html>
