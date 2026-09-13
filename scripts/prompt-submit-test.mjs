@@ -477,6 +477,6 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
 }
 
 manager.killAll?.()
-rmSync(work, { recursive: true, force: true })
+rmSync(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
 console.log(fail.length ? `\n${fail.length} FAILED` : '\nall ok')
 process.exit(fail.length ? 1 : 0)
