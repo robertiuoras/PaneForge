@@ -1,0 +1,24 @@
+{
+  "created": "2026-09-13",
+  "originPane": "s31-mtzgtmxb",
+  "originConversation": "01a09991-e729-7353-9ac5-225826dca185",
+  "sessions": [
+    {
+      "topic": "workflow",
+      "paneId": "s33-mtzkru45",
+      "cwd": "/Users/robertiuoras/Projects/PaneForge-a",
+      "provider": "claude",
+      "observedStatus": "working",
+      "nativeConversationId": null
+    },
+    {
+      "topic": "product",
+      "paneId": "s34-mtzkrul5",
+      "cwd": "/Users/robertiuoras/Projects/PaneForge-c",
+      "provider": "claude",
+      "observedStatus": "working",
+      "nativeConversationId": null
+    }
+  ],
+  "completion": "Planning work pending; native conversation IDs not yet exposed at first check."
+}
