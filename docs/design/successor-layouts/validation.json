@@ -1,0 +1,1143 @@
+{
+  "at": "2026-09-13T09:02:04.505Z",
+  "chrome": "/Users/robertiuoras/Applications/Chrome Automation.app/Contents/MacOS/Google Chrome",
+  "layouts": {
+    "a": {
+      "title": "Layout A · Left navigation",
+      "click": {
+        "layout": "a",
+        "done": true,
+        "steps": 5,
+        "actions": 11,
+        "wrongTurns": 0,
+        "recoveries": 0,
+        "stepMs": [
+          1,
+          4,
+          5,
+          2,
+          3
+        ],
+        "log": [
+          {
+            "t": 108,
+            "action": "new-project",
+            "source": "click",
+            "step": 1,
+            "result": "neutral"
+          },
+          {
+            "t": 109,
+            "action": "confirm-project",
+            "source": "click",
+            "step": 1,
+            "result": "step-complete"
+          },
+          {
+            "t": 113,
+            "action": "agent-menu",
+            "source": "click",
+            "step": 2,
+            "result": "neutral"
+          },
+          {
+            "t": 113,
+            "action": "agent:Claude",
+            "source": "click",
+            "step": 2,
+            "result": "step-complete"
+          },
+          {
+            "t": 114,
+            "action": "mode:work",
+            "source": "click",
+            "step": 3,
+            "result": "neutral"
+          },
+          {
+            "t": 116,
+            "action": "open-approval",
+            "source": "click",
+            "step": 3,
+            "result": "neutral"
+          },
+          {
+            "t": 118,
+            "action": "pick:focused",
+            "source": "click",
+            "step": 3,
+            "result": "neutral"
+          },
+          {
+            "t": 118,
+            "action": "approve",
+            "source": "click",
+            "step": 3,
+            "result": "step-complete"
+          },
+          {
+            "t": 120,
+            "action": "focus-search",
+            "source": "kbd",
+            "step": 4,
+            "result": "neutral"
+          },
+          {
+            "t": 120,
+            "action": "thread:review",
+            "source": "click",
+            "step": 4,
+            "result": "step-complete"
+          },
+          {
+            "t": 123,
+            "action": "mode:code",
+            "source": "click",
+            "step": 5,
+            "result": "task-complete"
+          }
+        ]
+      },
+      "keyboard": {
+        "layout": "a",
+        "done": true,
+        "steps": 5,
+        "actions": 20,
+        "wrongTurns": 0,
+        "recoveries": 0,
+        "stepMs": [
+          1,
+          4,
+          2,
+          1,
+          3
+        ],
+        "log": [
+          {
+            "t": 37,
+            "action": "new-project",
+            "source": "click",
+            "step": 1,
+            "result": "neutral"
+          },
+          {
+            "t": 37,
+            "action": "confirm-project",
+            "source": "click",
+            "step": 1,
+            "result": "step-complete"
+          },
+          {
+            "t": 40,
+            "action": "palette",
+            "source": "open",
+            "step": 2,
+            "result": "neutral"
+          },
+          {
+            "t": 40,
+            "action": "palette",
+            "source": "kbd",
+            "step": 2,
+            "result": "neutral"
+          },
+          {
+            "t": 41,
+            "action": "palette-pick:agent:Claude",
+            "source": "click",
+            "step": 2,
+            "result": "neutral"
+          },
+          {
+            "t": 41,
+            "action": "agent:Claude",
+            "source": "palette",
+            "step": 2,
+            "result": "step-complete"
+          },
+          {
+            "t": 41,
+            "action": "palette",
+            "source": "open",
+            "step": 3,
+            "result": "neutral"
+          },
+          {
+            "t": 41,
+            "action": "palette",
+            "source": "kbd",
+            "step": 3,
+            "result": "neutral"
+          },
+          {
+            "t": 41,
+            "action": "palette-pick:open-task:scope",
+            "source": "click",
+            "step": 3,
+            "result": "neutral"
+          },
+          {
+            "t": 42,
+            "action": "open-task:scope",
+            "source": "palette",
+            "step": 3,
+            "result": "neutral"
+          },
+          {
+            "t": 43,
+            "action": "pick:focused",
+            "source": "click",
+            "step": 3,
+            "result": "neutral"
+          },
+          {
+            "t": 43,
+            "action": "approve",
+            "source": "click",
+            "step": 3,
+            "result": "step-complete"
+          },
+          {
+            "t": 44,
+            "action": "palette",
+            "source": "open",
+            "step": 4,
+            "result": "neutral"
+          },
+          {
+            "t": 44,
+            "action": "palette",
+            "source": "kbd",
+            "step": 4,
+            "result": "neutral"
+          },
+          {
+            "t": 44,
+            "action": "palette-pick:thread:review",
+            "source": "click",
+            "step": 4,
+            "result": "neutral"
+          },
+          {
+            "t": 44,
+            "action": "thread:review",
+            "source": "palette",
+            "step": 4,
+            "result": "step-complete"
+          },
+          {
+            "t": 47,
+            "action": "palette",
+            "source": "open",
+            "step": 5,
+            "result": "neutral"
+          },
+          {
+            "t": 47,
+            "action": "palette",
+            "source": "kbd",
+            "step": 5,
+            "result": "neutral"
+          },
+          {
+            "t": 47,
+            "action": "palette-pick:mode:code",
+            "source": "click",
+            "step": 5,
+            "result": "neutral"
+          },
+          {
+            "t": 47,
+            "action": "mode:code",
+            "source": "palette",
+            "step": 5,
+            "result": "task-complete"
+          }
+        ]
+      },
+      "keys": {
+        "cmd2": "work",
+        "cmdK": true,
+        "escape": true
+      },
+      "a11y": {
+        "controlsWithoutName": 0,
+        "notFocusable": 0,
+        "imgsWithoutAlt": 0,
+        "detail": []
+      },
+      "contrast": {
+        "dark": {
+          "textOnBg": 15.89,
+          "textOnPanel": 14.28,
+          "mutedOnBg": 7.93,
+          "mutedOnPanel": 7.13,
+          "dimOnPanel": 4.77,
+          "accentInkOnPanel": 12.25
+        },
+        "light": {
+          "textOnBg": 15.54,
+          "textOnPanel": 17.06,
+          "mutedOnBg": 6.4,
+          "mutedOnPanel": 7.02,
+          "dimOnPanel": 4.47,
+          "accentInkOnPanel": 8.27
+        }
+      },
+      "reducedMotion": {
+        "navTransition": "0s",
+        "animations": 0
+      },
+      "phone": {
+        "under44": [],
+        "horizontalScroll": false,
+        "sidebarIsDrawer": true,
+        "taskdriverLinkInWork": true
+      },
+      "phoneTask": {
+        "layout": "a",
+        "done": true,
+        "steps": 5,
+        "actions": 11,
+        "wrongTurns": 0,
+        "recoveries": 0,
+        "stepMs": [
+          1,
+          1,
+          2,
+          1,
+          3
+        ],
+        "log": [
+          {
+            "t": 299,
+            "action": "new-project",
+            "source": "click",
+            "step": 1,
+            "result": "neutral"
+          },
+          {
+            "t": 300,
+            "action": "confirm-project",
+            "source": "click",
+            "step": 1,
+            "result": "step-complete"
+          },
+          {
+            "t": 301,
+            "action": "agent-menu",
+            "source": "click",
+            "step": 2,
+            "result": "neutral"
+          },
+          {
+            "t": 301,
+            "action": "agent:Claude",
+            "source": "click",
+            "step": 2,
+            "result": "step-complete"
+          },
+          {
+            "t": 302,
+            "action": "mode:work",
+            "source": "click",
+            "step": 3,
+            "result": "neutral"
+          },
+          {
+            "t": 303,
+            "action": "open-approval",
+            "source": "click",
+            "step": 3,
+            "result": "neutral"
+          },
+          {
+            "t": 303,
+            "action": "pick:focused",
+            "source": "click",
+            "step": 3,
+            "result": "neutral"
+          },
+          {
+            "t": 304,
+            "action": "approve",
+            "source": "click",
+            "step": 3,
+            "result": "step-complete"
+          },
+          {
+            "t": 304,
+            "action": "focus-search",
+            "source": "kbd",
+            "step": 4,
+            "result": "neutral"
+          },
+          {
+            "t": 305,
+            "action": "thread:review",
+            "source": "click",
+            "step": 4,
+            "result": "step-complete"
+          },
+          {
+            "t": 308,
+            "action": "mode:code",
+            "source": "click",
+            "step": 5,
+            "result": "task-complete"
+          }
+        ]
+      },
+      "pageErrors": []
+    },
+    "b": {
+      "title": "Layout B · Top mode control",
+      "click": {
+        "layout": "b",
+        "done": true,
+        "steps": 5,
+        "actions": 11,
+        "wrongTurns": 0,
+        "recoveries": 0,
+        "stepMs": [
+          1,
+          1,
+          6,
+          1,
+          3
+        ],
+        "log": [
+          {
+            "t": 107,
+            "action": "new-project",
+            "source": "click",
+            "step": 1,
+            "result": "neutral"
+          },
+          {
+            "t": 109,
+            "action": "confirm-project",
+            "source": "click",
+            "step": 1,
+            "result": "step-complete"
+          },
+          {
+            "t": 110,
+            "action": "agent-menu",
+            "source": "click",
+            "step": 2,
+            "result": "neutral"
+          },
+          {
+            "t": 110,
+            "action": "agent:Claude",
+            "source": "click",
+            "step": 2,
+            "result": "step-complete"
+          },
+          {
+            "t": 111,
+            "action": "mode:work",
+            "source": "click",
+            "step": 3,
+            "result": "neutral"
+          },
+          {
+            "t": 113,
+            "action": "open-approval",
+            "source": "click",
+            "step": 3,
+            "result": "neutral"
+          },
+          {
+            "t": 115,
+            "action": "pick:focused",
+            "source": "click",
+            "step": 3,
+            "result": "neutral"
+          },
+          {
+            "t": 116,
+            "action": "approve",
+            "source": "click",
+            "step": 3,
+            "result": "step-complete"
+          },
+          {
+            "t": 117,
+            "action": "focus-search",
+            "source": "kbd",
+            "step": 4,
+            "result": "neutral"
+          },
+          {
+            "t": 117,
+            "action": "thread:review",
+            "source": "click",
+            "step": 4,
+            "result": "step-complete"
+          },
+          {
+            "t": 120,
+            "action": "mode:code",
+            "source": "click",
+            "step": 5,
+            "result": "task-complete"
+          }
+        ]
+      },
+      "keyboard": {
+        "layout": "b",
+        "done": true,
+        "steps": 5,
+        "actions": 20,
+        "wrongTurns": 0,
+        "recoveries": 0,
+        "stepMs": [
+          1,
+          3,
+          3,
+          2,
+          4
+        ],
+        "log": [
+          {
+            "t": 44,
+            "action": "new-project",
+            "source": "click",
+            "step": 1,
+            "result": "neutral"
+          },
+          {
+            "t": 45,
+            "action": "confirm-project",
+            "source": "click",
+            "step": 1,
+            "result": "step-complete"
+          },
+          {
+            "t": 48,
+            "action": "palette",
+            "source": "open",
+            "step": 2,
+            "result": "neutral"
+          },
+          {
+            "t": 48,
+            "action": "palette",
+            "source": "kbd",
+            "step": 2,
+            "result": "neutral"
+          },
+          {
+            "t": 48,
+            "action": "palette-pick:agent:Claude",
+            "source": "click",
+            "step": 2,
+            "result": "neutral"
+          },
+          {
+            "t": 49,
+            "action": "agent:Claude",
+            "source": "palette",
+            "step": 2,
+            "result": "step-complete"
+          },
+          {
+            "t": 49,
+            "action": "palette",
+            "source": "open",
+            "step": 3,
+            "result": "neutral"
+          },
+          {
+            "t": 49,
+            "action": "palette",
+            "source": "kbd",
+            "step": 3,
+            "result": "neutral"
+          },
+          {
+            "t": 49,
+            "action": "palette-pick:open-task:scope",
+            "source": "click",
+            "step": 3,
+            "result": "neutral"
+          },
+          {
+            "t": 50,
+            "action": "open-task:scope",
+            "source": "palette",
+            "step": 3,
+            "result": "neutral"
+          },
+          {
+            "t": 51,
+            "action": "pick:focused",
+            "source": "click",
+            "step": 3,
+            "result": "neutral"
+          },
+          {
+            "t": 51,
+            "action": "approve",
+            "source": "click",
+            "step": 3,
+            "result": "step-complete"
+          },
+          {
+            "t": 52,
+            "action": "palette",
+            "source": "open",
+            "step": 4,
+            "result": "neutral"
+          },
+          {
+            "t": 52,
+            "action": "palette",
+            "source": "kbd",
+            "step": 4,
+            "result": "neutral"
+          },
+          {
+            "t": 52,
+            "action": "palette-pick:thread:review",
+            "source": "click",
+            "step": 4,
+            "result": "neutral"
+          },
+          {
+            "t": 53,
+            "action": "thread:review",
+            "source": "palette",
+            "step": 4,
+            "result": "step-complete"
+          },
+          {
+            "t": 57,
+            "action": "palette",
+            "source": "open",
+            "step": 5,
+            "result": "neutral"
+          },
+          {
+            "t": 57,
+            "action": "palette",
+            "source": "kbd",
+            "step": 5,
+            "result": "neutral"
+          },
+          {
+            "t": 57,
+            "action": "palette-pick:mode:code",
+            "source": "click",
+            "step": 5,
+            "result": "neutral"
+          },
+          {
+            "t": 57,
+            "action": "mode:code",
+            "source": "palette",
+            "step": 5,
+            "result": "task-complete"
+          }
+        ]
+      },
+      "keys": {
+        "cmd2": "work",
+        "cmdK": true,
+        "escape": true
+      },
+      "a11y": {
+        "controlsWithoutName": 0,
+        "notFocusable": 0,
+        "imgsWithoutAlt": 0,
+        "detail": []
+      },
+      "contrast": {
+        "dark": {
+          "textOnBg": 15.89,
+          "textOnPanel": 14.28,
+          "mutedOnBg": 7.93,
+          "mutedOnPanel": 7.13,
+          "dimOnPanel": 4.77,
+          "accentInkOnPanel": 12.25
+        },
+        "light": {
+          "textOnBg": 15.54,
+          "textOnPanel": 17.06,
+          "mutedOnBg": 6.4,
+          "mutedOnPanel": 7.02,
+          "dimOnPanel": 4.47,
+          "accentInkOnPanel": 8.27
+        }
+      },
+      "reducedMotion": {
+        "navTransition": "0s",
+        "animations": 0
+      },
+      "phone": {
+        "under44": [],
+        "horizontalScroll": false,
+        "sidebarIsDrawer": true,
+        "taskdriverLinkInWork": true
+      },
+      "phoneTask": {
+        "layout": "b",
+        "done": true,
+        "steps": 5,
+        "actions": 11,
+        "wrongTurns": 0,
+        "recoveries": 0,
+        "stepMs": [
+          1,
+          1,
+          3,
+          1,
+          2
+        ],
+        "log": [
+          {
+            "t": 166,
+            "action": "new-project",
+            "source": "click",
+            "step": 1,
+            "result": "neutral"
+          },
+          {
+            "t": 166,
+            "action": "confirm-project",
+            "source": "click",
+            "step": 1,
+            "result": "step-complete"
+          },
+          {
+            "t": 167,
+            "action": "agent-menu",
+            "source": "click",
+            "step": 2,
+            "result": "neutral"
+          },
+          {
+            "t": 168,
+            "action": "agent:Claude",
+            "source": "click",
+            "step": 2,
+            "result": "step-complete"
+          },
+          {
+            "t": 168,
+            "action": "mode:work",
+            "source": "click",
+            "step": 3,
+            "result": "neutral"
+          },
+          {
+            "t": 170,
+            "action": "open-approval",
+            "source": "click",
+            "step": 3,
+            "result": "neutral"
+          },
+          {
+            "t": 170,
+            "action": "pick:focused",
+            "source": "click",
+            "step": 3,
+            "result": "neutral"
+          },
+          {
+            "t": 171,
+            "action": "approve",
+            "source": "click",
+            "step": 3,
+            "result": "step-complete"
+          },
+          {
+            "t": 171,
+            "action": "focus-search",
+            "source": "kbd",
+            "step": 4,
+            "result": "neutral"
+          },
+          {
+            "t": 172,
+            "action": "thread:review",
+            "source": "click",
+            "step": 4,
+            "result": "step-complete"
+          },
+          {
+            "t": 174,
+            "action": "mode:code",
+            "source": "click",
+            "step": 5,
+            "result": "task-complete"
+          }
+        ]
+      },
+      "pageErrors": []
+    },
+    "c": {
+      "title": "Layout C · Task-first",
+      "click": {
+        "layout": "c",
+        "done": true,
+        "steps": 5,
+        "actions": 9,
+        "wrongTurns": 0,
+        "recoveries": 0,
+        "stepMs": [
+          1,
+          2,
+          5,
+          2,
+          4
+        ],
+        "log": [
+          {
+            "t": 112,
+            "action": "new-project",
+            "source": "click",
+            "step": 1,
+            "result": "neutral"
+          },
+          {
+            "t": 113,
+            "action": "confirm-project",
+            "source": "click",
+            "step": 1,
+            "result": "step-complete"
+          },
+          {
+            "t": 115,
+            "action": "agent-menu",
+            "source": "click",
+            "step": 2,
+            "result": "neutral"
+          },
+          {
+            "t": 115,
+            "action": "agent:Claude",
+            "source": "click",
+            "step": 2,
+            "result": "step-complete"
+          },
+          {
+            "t": 116,
+            "action": "task:scope",
+            "source": "click",
+            "step": 3,
+            "result": "neutral"
+          },
+          {
+            "t": 119,
+            "action": "pick:focused",
+            "source": "click",
+            "step": 3,
+            "result": "neutral"
+          },
+          {
+            "t": 120,
+            "action": "approve",
+            "source": "click",
+            "step": 3,
+            "result": "step-complete"
+          },
+          {
+            "t": 122,
+            "action": "thread:review",
+            "source": "click",
+            "step": 4,
+            "result": "step-complete"
+          },
+          {
+            "t": 125,
+            "action": "task:projectview",
+            "source": "click",
+            "step": 5,
+            "result": "task-complete"
+          }
+        ]
+      },
+      "keyboard": {
+        "layout": "c",
+        "done": true,
+        "steps": 5,
+        "actions": 20,
+        "wrongTurns": 0,
+        "recoveries": 0,
+        "stepMs": [
+          1,
+          3,
+          3,
+          1,
+          4
+        ],
+        "log": [
+          {
+            "t": 40,
+            "action": "new-project",
+            "source": "click",
+            "step": 1,
+            "result": "neutral"
+          },
+          {
+            "t": 41,
+            "action": "confirm-project",
+            "source": "click",
+            "step": 1,
+            "result": "step-complete"
+          },
+          {
+            "t": 43,
+            "action": "palette",
+            "source": "open",
+            "step": 2,
+            "result": "neutral"
+          },
+          {
+            "t": 43,
+            "action": "palette",
+            "source": "kbd",
+            "step": 2,
+            "result": "neutral"
+          },
+          {
+            "t": 43,
+            "action": "palette-pick:agent:Claude",
+            "source": "click",
+            "step": 2,
+            "result": "neutral"
+          },
+          {
+            "t": 44,
+            "action": "agent:Claude",
+            "source": "palette",
+            "step": 2,
+            "result": "step-complete"
+          },
+          {
+            "t": 44,
+            "action": "palette",
+            "source": "open",
+            "step": 3,
+            "result": "neutral"
+          },
+          {
+            "t": 45,
+            "action": "palette",
+            "source": "kbd",
+            "step": 3,
+            "result": "neutral"
+          },
+          {
+            "t": 45,
+            "action": "palette-pick:open-task:scope",
+            "source": "click",
+            "step": 3,
+            "result": "neutral"
+          },
+          {
+            "t": 45,
+            "action": "open-task:scope",
+            "source": "palette",
+            "step": 3,
+            "result": "neutral"
+          },
+          {
+            "t": 46,
+            "action": "pick:focused",
+            "source": "click",
+            "step": 3,
+            "result": "neutral"
+          },
+          {
+            "t": 46,
+            "action": "approve",
+            "source": "click",
+            "step": 3,
+            "result": "step-complete"
+          },
+          {
+            "t": 47,
+            "action": "palette",
+            "source": "open",
+            "step": 4,
+            "result": "neutral"
+          },
+          {
+            "t": 47,
+            "action": "palette",
+            "source": "kbd",
+            "step": 4,
+            "result": "neutral"
+          },
+          {
+            "t": 47,
+            "action": "palette-pick:thread:review",
+            "source": "click",
+            "step": 4,
+            "result": "neutral"
+          },
+          {
+            "t": 48,
+            "action": "thread:review",
+            "source": "palette",
+            "step": 4,
+            "result": "step-complete"
+          },
+          {
+            "t": 51,
+            "action": "palette",
+            "source": "open",
+            "step": 5,
+            "result": "neutral"
+          },
+          {
+            "t": 51,
+            "action": "palette",
+            "source": "kbd",
+            "step": 5,
+            "result": "neutral"
+          },
+          {
+            "t": 51,
+            "action": "palette-pick:mode:code",
+            "source": "click",
+            "step": 5,
+            "result": "neutral"
+          },
+          {
+            "t": 51,
+            "action": "mode:code",
+            "source": "palette",
+            "step": 5,
+            "result": "task-complete"
+          }
+        ]
+      },
+      "keys": {
+        "cmd2": "work",
+        "cmdK": true,
+        "escape": true
+      },
+      "a11y": {
+        "controlsWithoutName": 0,
+        "notFocusable": 0,
+        "imgsWithoutAlt": 0,
+        "detail": []
+      },
+      "contrast": {
+        "dark": {
+          "textOnBg": 15.89,
+          "textOnPanel": 14.28,
+          "mutedOnBg": 7.93,
+          "mutedOnPanel": 7.13,
+          "dimOnPanel": 4.77,
+          "accentInkOnPanel": 12.25
+        },
+        "light": {
+          "textOnBg": 15.54,
+          "textOnPanel": 17.06,
+          "mutedOnBg": 6.4,
+          "mutedOnPanel": 7.02,
+          "dimOnPanel": 4.47,
+          "accentInkOnPanel": 8.27
+        }
+      },
+      "reducedMotion": {
+        "navTransition": "0s",
+        "animations": 0
+      },
+      "phone": {
+        "under44": [],
+        "horizontalScroll": false,
+        "sidebarIsDrawer": true,
+        "taskdriverLinkInWork": true
+      },
+      "phoneTask": {
+        "layout": "c",
+        "done": true,
+        "steps": 5,
+        "actions": 9,
+        "wrongTurns": 0,
+        "recoveries": 0,
+        "stepMs": [
+          1,
+          2,
+          2,
+          1,
+          3
+        ],
+        "log": [
+          {
+            "t": 167,
+            "action": "new-project",
+            "source": "click",
+            "step": 1,
+            "result": "neutral"
+          },
+          {
+            "t": 168,
+            "action": "confirm-project",
+            "source": "click",
+            "step": 1,
+            "result": "step-complete"
+          },
+          {
+            "t": 169,
+            "action": "agent-menu",
+            "source": "click",
+            "step": 2,
+            "result": "neutral"
+          },
+          {
+            "t": 169,
+            "action": "agent:Claude",
+            "source": "click",
+            "step": 2,
+            "result": "step-complete"
+          },
+          {
+            "t": 170,
+            "action": "task:scope",
+            "source": "click",
+            "step": 3,
+            "result": "neutral"
+          },
+          {
+            "t": 171,
+            "action": "pick:focused",
+            "source": "click",
+            "step": 3,
+            "result": "neutral"
+          },
+          {
+            "t": 172,
+            "action": "approve",
+            "source": "click",
+            "step": 3,
+            "result": "step-complete"
+          },
+          {
+            "t": 172,
+            "action": "thread:review",
+            "source": "click",
+            "step": 4,
+            "result": "step-complete"
+          },
+          {
+            "t": 175,
+            "action": "task:projectview",
+            "source": "click",
+            "step": 5,
+            "result": "task-complete"
+          }
+        ]
+      },
+      "pageErrors": []
+    }
+  },
+  "failures": []
+}
