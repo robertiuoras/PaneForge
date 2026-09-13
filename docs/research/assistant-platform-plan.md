@@ -10,6 +10,10 @@ This is a research and design baseline, not an implementation approval or a clai
 
 ## What the earlier research establishes
 
+Start with the [research index and decision gates](assistant-research-index.md) for the complete scope, including mobile/public distribution, memory/model routing, agentic development and efficient UI observation.
+
+The [orchestration and MCP research extension](assistant-orchestration-and-mcp.md) specifies Robert's additional requirement: the assistant chooses relevant authorised tools, manages context efficiently, and starts/steers shell and agent sessions itself. It covers deferred tool discovery, code composition, provider continuity, ACP tradeoffs and evaluation fixtures.
+
 Antigravity's local dossier, *PaneForge Architecture, Frontier Model Capabilities, and 1:1 Custom Harness Blueprint*, contains useful product ideas: a shared assistant/code workspace, clearer session states, visible device placement, and separation between presentation and execution. Its images are design references, not proof of implemented features or performance.
 
 Several technical claims require correction:
