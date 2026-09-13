@@ -97,6 +97,95 @@ The optimiser cannot modify its budgets, approvals, benchmark answers, held-out 
 
 Prepare one local subscribed worker qualification, one deterministic UI fixture with image review, one real backend regression, and one disconnect/restart fixture. Add the PR verification workflow without credentials. Demonstrate the full proposal-to-reviewed-candidate path, including a deliberate failing test that remains failed. Only then expand coverage and scheduled improvement frequency. This is the smallest useful demonstration of the requested self-developing system.
 
+## Shared preview and desktop UI decision
+
+Use the same React component source, design tokens, local fonts/assets and motion
+code in the browser review build and the Tauri app. The existing standalone HTML
+designs remain concepts until converted; they are not already shared app components.
+Keep the first preview small: companion activation, Agent / Code / Chat switching,
+appearance colours and a file-search result. Reuse actual component props/events
+with synthetic task data. Mock only the desktop/tool boundary, never maintain a
+second copy of the visual implementation. No general plugin framework is needed.
+
+Tauri runs HTML/CSS/JavaScript in the platform WebView: WKWebView on Mac and
+WebView2 on Windows. Therefore shared source gives close visual/interaction
+parity, not a guarantee of identical pixels or performance. Font rendering, blur,
+GPU/canvas effects, device pixel ratio, input handling and WebView versions require
+checking. Safari/WebKit is the closer Mac browser preview; browser-engine testing
+still does not replace the packaged WKWebView build.[^10]
+
+For each candidate update:
+
+1. Build the shared React preview with fixed viewport, fonts, locale, fixture seed
+   and motion timestamps. Test keyboard navigation, accessible names, overflow,
+   empty/loading/error states and reduced motion before image review.
+2. Capture selected meaningful states and a short interaction recording for motion
+   changes. Keep separate visual baselines per engine/OS; do not compare Mac text
+   pixels directly against Linux Chromium. Record SHA, scenario, engine/version,
+   viewport, pixel ratio, theme, reduced-motion setting and artifact paths.
+3. A subscribed CLI reviewer reads the changed regions and runtime trace. It must
+   identify a specific observed defect or improvement against the task rubric.
+   It cannot approve its own baseline replacement or override failing assertions.
+4. Run the same journeys in an isolated Tauri Mac candidate. Verify real event
+   delivery, resize, scaling, streaming terminal output, sleep/resume and recovery.
+   Measure frame times and memory under load; attractive browser motion alone is
+   not native performance evidence. Add Windows proof before Windows distribution.
+5. Present before/after images and the clickable preview together in the existing
+   design gallery, with known limitations. Taste changes get Robert's review;
+   release stays within the separately recorded release authority.
+
+## Image-led design exploration and demos
+
+Use GPT Image 2.5 for visual decisions: workspace composition, companion appearance,
+material/lighting studies and storyboard frames. Current official API identifiers
+are `gpt-image-2.5-sunburst` and `gpt-image-2.5-flare`; the selected runtime must
+actually expose the requested model before claiming it was used.[^11]
+
+Start each exploration with one design question, the current screenshot and fixed
+constraints: PaneForge name, orange default with matching theme logo, one sidebar,
+compact companion above Agent / Code / Chat, recognisable provider marks and ample
+working space. Prepare four clearly different directions in a contact sheet with
+the same sample content and viewport. Refine Robert's selected direction using
+the existing reference instead of generating endless unrelated screens.
+
+Keep the generated concept, implemented browser preview and native capture visibly
+labelled. Generated pixels establish a direction, not a completed feature or a
+golden test baseline. Translate the chosen concept into the shared components;
+build animation as CSS/SVG/React motion and record it from the runnable preview.
+Storyboard images can guide a demo video, but do not prove actual interaction.
+
+Use included image-generation tools when the active product explicitly provides
+them. Do not assume a CLI command makes image generation subscription-funded:
+the Image/Responses API is separately billed. For an API route, require an approved
+image allowance; record actual model, quality, dimensions, usage and estimated cost.
+No automatic image generation on every commit and no paid generation in PR CI.
+
+## Concrete CI implementation order
+
+The pipeline above is planned, not installed by this reconciliation. This checkout
+currently has release packaging only under `.github/workflows/release.yml`.
+
+1. Add `.github/workflows/verify.yml` for pull requests and integration-branch pushes:
+   checkout without persisted credentials, pinned Node version, `npm ci`,
+   `npm run typecheck`, the existing fast suite and a frontend build. Use read-only
+   repository permissions and no subscription/API/signing secrets. Prove the job
+   on a real candidate and a deliberately failing branch before calling it a gate.
+2. Add the first shared-component fixture and a headless preview check alongside
+   existing UI-lab tooling. Upload its structured receipt, selected captures and
+   failure trace even when assertions fail. Existing screenshot scripts containing
+   real CLI/PTY launches are not deterministic PR fixtures.
+3. Connect the existing local dispatcher to one authorised improvement request.
+   Record base SHA, scope, acceptance check, provider/session and budget. The worker
+   returns a candidate diff; ordinary CI checks it independently. A failing gate
+   permits bounded diagnosis, not weakened tests or unlimited retries.
+4. Show a single review entry with the issue, change, test results, before/after,
+   interactive preview, usage and rollback commit. Add scheduled proposal discovery
+   only after this complete path works. Extend the existing scheduler and surface
+   jobs in Taskdriver's Agents tab rather than adding another daemon.
+5. Configure required-check protection and release promotion only within authority.
+   A workflow file alone does not prove branch protection or an automatic updater
+   is safe. Preserve active tasks and verify the delivered version after release.
+
 ## Sources
 
 [^1]: OpenAI, [Non-interactive Codex](https://learn.chatgpt.com/docs/non-interactive-mode); installed `codex exec --help` also exposes image input and structured output. No real provider request was made in this research.
@@ -108,4 +197,6 @@ Prepare one local subscribed worker qualification, one deterministic UI fixture 
 [^7]: Playwright, [Trace viewer](https://playwright.dev/docs/trace-viewer).
 [^8]: Playwright, [Accessibility testing](https://playwright.dev/docs/accessibility-testing).
 [^9]: Tauri, [WebDriver](https://v2.tauri.app/develop/tests/webdriver/).
+[^10]: Tauri, [Process model](https://v2.tauri.app/concept/process-model/).
+[^11]: OpenAI, [Image generation](https://developers.openai.com/api/docs/guides/image-generation), checked 13 September 2026. No image API call was made in this reconciliation.
 [^10]: WebdriverIO, [Tauri plugin setup](https://webdriver.io/docs/desktop-testing/tauri/plugin-setup/).

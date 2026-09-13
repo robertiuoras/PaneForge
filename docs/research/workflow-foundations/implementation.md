@@ -42,7 +42,37 @@ Both are local prototypes, not connected agent execution.
 
 ## Verification and rollout
 
-Implementation checkpoint, not a completion receipt. Mac checks passed in the
-implementation session; GitHub CI exposed a machine-specific test import that
-still needs correction. PC verification and the final verification receipt remain
-pending. No production app release is part of this task.
+Reconciled on 13 September 2026. The original Linux CI failure and subsequent
+Windows fixture failure are resolved; no production app release is part of this task.
+
+- The original failure was a hard-coded Mac import and executable path in
+  `promptlab/outcome-join.test.mjs`. The existing portable fix derives both from
+  the test module. It was already published by another workflow session; the
+  stale Mac copy was aligned rather than inventing a second implementation.
+- Fresh native Windows verification found `cwd_and_backend_keys_are_not_inherited`
+  inspected the PowerShell wrapper arguments instead of the wrapped Codex arguments.
+  Reusing the existing `underlying_argv` helper fixes the fixture without changing
+  the subscription runner or weakening the credential-isolation assertions.
+- Published shared-source commit: `84fdff21211018108e7b86dddf3f7250508fa5f5`.
+  [GitHub compatibility run 34754726375](https://github.com/robertiuoras/claude-memory/actions/runs/34754726375)
+  passed both `handoff-contract` on Linux and the new `windows-research-contract`.
+  The latter now exercises the native Windows wrapper offline on every matching
+  push/PR. This is a working CI improvement, not a proposed schedule.
+- Mac: all ten command groups in the compatibility/repair verification passed on
+  an isolated checkout at `a25dbbdbb`; the changed research fixture was rerun and
+  passed after the Windows correction. The installed Mac outcome test also passed.
+- Native PC: provider handoff tests passed, followed by research, prompt library,
+  hook receipts, both nudges, outcome attribution, craft and vault tests. The vault
+  suite reports 43 passing tests. Python checks used the already-installed Python
+  3.12 executable because `python` in SSH resolved to the Windows Store alias.
+  No Python installation or global PATH change was needed for these checks.
+- The PC fast-forwarded to the published commit and the test's Git blob was verified
+  against that commit. Mac local alignment commits are `802820e52` and `0ecccf1d2`;
+  unrelated dirty files and divergent shared-repo history were preserved. This
+  reconciliation does not claim the entire Mac shared checkout is synchronized.
+
+The checks are offline fixtures and bounded local process tests, with no paid model
+calls. They establish repair regression coverage, not real subscription login,
+perfect second-brain retrieval, full Windows app parity or an autonomous improvement
+system. The next connected Mac slice still needs a real subscription qualification
+and end-to-end task/recovery evidence.

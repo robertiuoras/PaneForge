@@ -178,9 +178,10 @@ approval boundaries. Return a project-linked proof pack and unresolved items.
 ## Delivery sequence and acceptance gates
 
 0. Foundation checkpoint: reconcile the existing workflow repair receipt before
-   building on it. The recorded machine-specific CI import failure and pending PC
-   verification are unresolved until current evidence proves otherwise. Windows
-   proof does not block an isolated Mac prototype, but it blocks parity claims.
+   building on it. The original CI import failure is resolved; see the updated
+   [workflow receipt](workflow-foundations/implementation.md) for native Mac/PC
+   checks and the additional Windows fixture correction. These offline fixtures
+   do not establish real provider authentication or full Windows app parity.
    The first connected Mac slice is typed request → scoped second-brain retrieval
    → one subscription CLI worker → saved result with source and usage metadata.
    Preconditions: working Mac dispatcher, verified subscription authentication,
@@ -238,3 +239,16 @@ unavailable quota fields unknown. Do not imply an exact remaining allowance from
 token counts alone. Provide configurable session and monthly voice budgets, a
 warning before the limit, and an explicit disconnect at the chosen cap; allow for
 reporting delay. Never silently switch an exhausted subscription worker to API.
+
+## Reference-led companion preview, 13 September
+
+The workspace HTML prototype now has a centred colour-aware orb above Agent /
+Code / Chat. Its single toggle or Option-V expands a transcript and clickable
+simulated task chip horizontally without moving the work area. The chip opens
+explicit sample task details; no workers, microphone or model service are connected.
+Headless checks cover toggle/shortcut, appearance persistence, task details, fixed
+mode-bar position, narrow-screen overflow, image loading and reduced motion.
+
+For implementation, use the shared React preview/desktop approach in the
+[development pipeline](agentic-development-pipeline.md#shared-preview-and-desktop-ui-decision).
+The current HTML prototype is a design reference, not yet shared React source.
