@@ -4,7 +4,7 @@ Research date: 2026-09-13. Proposed architecture and experiments, not an impleme
 
 ## Recommendation
 
-Use GPT-Live 1 as Robert's preferred conversational surface. PaneForge owns durable tasks, provider routing, approvals, evidence and recovery. Eligible subscribed Claude/Codex workers handle project work; paid API calls have an explicit independent budget. The client-side delegation bridge must be tested for authentication, latency, interruption and resume before relying on it.
+Use GPT-Live 1 sparingly for starting or steering workflows, live questions while working, and reviewing decisions. Voice is off by default and is never required for ordinary controls; text remains available. PaneForge owns durable tasks, provider routing, approvals, evidence and recovery. Eligible subscribed Claude/Codex workers handle project work; paid API calls have an explicit independent budget. The client-side delegation bridge must be tested for authentication, latency, interruption and resume before relying on it.
 
 GPT-Live 1 is not just TTS. It is full-duplex conversation with listening, speaking, interruption and delegation to a backend agent. It takes audio/text, not image/video input. Computer observation belongs to a suitable backend model or structured tool. See [model capabilities and pricing](https://developers.openai.com/api/docs/models/gpt-live-1) and [delegation](https://developers.openai.com/api/docs/guides/live-delegation).
 
@@ -33,14 +33,6 @@ For backend efficiency: select relevant client facts and task state, discover MC
 
 Evaluate cost per successfully completed workflow, including human correction time. Cheap failed attempts can cost more than one strong-model pass. A two-week pilot should record connected minutes, paid backend cost, subscription limits, task completion, corrections and actual time returned to Robert. Choose a hard extras budget before enabling billing; this document does not authorise one.
 
-## Business ideas worth testing
+## Deferred commercial exploration
 
-These are hypotheses from Robert's existing service work, not market-demand findings or income promises. The strongest starting point is to make existing delivery more profitable, then sell the repeatable part.
-
-1. **Client delivery desk for small agencies.** Buyer: an agency owner losing time between brief, files, execution and client review. Product: one scoped request becomes tracked work plus a private proof pack and approval. Charge for a narrow implementation and monitored service first; learn the recurring workflow before offering SaaS. Validate paid interest with existing contacts and measure correction time and retention.
-2. **Voice brief to reviewed job pack for service teams.** Buyer: a small service business capturing work while away from a desk. Voice plus selected photos becomes a draft scope, checklist and client update. Differentiate on the completed job pack and evidence, not generic transcription. Validate names, quantities and missing details; humans approve commitments and delivery.
-3. **Proof-backed retainer reporting.** Buyer: agencies that struggle to demonstrate work performed. Connect completed tasks and selected analytics to a client-readable report with source links and clear next decisions. Begin as a module in current delivery, not a separate app. Validate whether clients read it and whether it reduces report preparation or review friction.
-
-Proposed product split: PaneForge is Robert's local execution workbench; Taskdriver is the mobile/control and client-work surface. A Brezo brand could package one proven service workflow if Robert intends that name. Public retrieval of brezo.ai did not establish an operating product in this pass, so no existing Brezo features or domain ownership are assumed.
-
-Avoid starting with a general assistant sold as capable of every computer task. Select one paid workflow, define completion and exception handling, then widen only after repeated delivery evidence. No autonomous selling, external messages or publication is authorised by these ideas.
+Robert owns brezo.ai and has parked the startup exploration while scaling Taskdriver.ai toward $10k+ per month as an agency. The existing ideas and future validation questions are filed in [Brezo](../ideas/brezo/README.md). No scheduled follow-up or startup implementation is authorised.
