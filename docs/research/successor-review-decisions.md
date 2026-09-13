@@ -7,7 +7,7 @@ These are product requirements and research conclusions, not implemented backend
 `../design/paneforge-directions/workspace.html` now includes Agent, Code and Chat
 views; one search entry; consistent owned SVG navigation icons; existing local
 PaneForge, Codex and Claude marks; and an original SVG live-companion study with
-idle/listening/speaking controls. Speech, microphone, agents and terminal execution
+one Start voice / End voice control and Option+V shortcut. The voice dock is compact and centred above Agent / Code / Chat. The double left rail is replaced by one sidebar with local preview panels for Second brain, Skills & prompts and Routines. Speech, microphone, agents and terminal execution
 are simulated. Motion stops offscreen or when hidden and respects reduced motion.
 
 Headless Chromium checks passed: three view switches, speaking state, loaded brand
