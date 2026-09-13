@@ -56,6 +56,8 @@ export type Agent = string
 export interface Project {
   name: string
   path: string
+  /** Broad local starting folders, not individual repositories. */
+  scope?: 'projects' | 'computer'
   /** epoch ms of the newest Claude Code transcript for this path, 0 if never used */
   lastUsed: number
   isGit: boolean
@@ -2174,6 +2176,7 @@ export interface Api {
   /** Aggregate GitHub installer-asset downloads, not unique people or IP telemetry. */
   ownerStats(): Promise<OwnerStats>
   listProjects(): Promise<Project[]>
+  listSessionFolders(): Promise<Project[]>
   /** make a project folder from a typed name; null when the name may not be one */
   createProject(name: string): Promise<Project | null>
   /**

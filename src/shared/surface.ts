@@ -38,6 +38,7 @@ export const SURFACE: Surface = {
   ownerAccess: ['invoke', 'owner:access'],
   ownerStats: ['invoke', 'owner:stats'],
   listProjects: ['invoke', 'projects:list'],
+  listSessionFolders: ['invoke', 'projects:sessionFolders'],
   createProject: ['invoke', 'projects:create'],
   routeProjects: ['invoke', 'projects:route'],
   listAgents: ['invoke', 'agents:list', true],

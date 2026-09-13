@@ -34,7 +34,7 @@ interface Props {
  */
 export default function NewSessionDialog({
   defaultWhere = 'local',
-  projects,
+  projects: projectRows,
   defaultAgent,
   defaultModels,
   onDefaultsChange,
@@ -84,6 +84,10 @@ export default function NewSessionDialog({
   const input = useRef<HTMLInputElement>(null)
   // Only ever shown when the list is empty, to say WHICH folder came up empty.
   const [root, setRoot] = useState('')
+  const [startingFolders, setStartingFolders] = useState<Project[]>([])
+  const projects = useMemo(() => [...startingFolders, ...projectRows.filter((p) =>
+    !startingFolders.some((folder) => folder.path === p.path))], [startingFolders, projectRows])
+  useEffect(() => { void api.listSessionFolders().then(setStartingFolders) }, [root])
 
   useEffect(() => input.current?.focus(), [])
   useEffect(() => void api.getConfig().then((c) => setRoot(c.root)), [])
@@ -238,8 +242,8 @@ export default function NewSessionDialog({
         // The saved default decides WHERE it opens; only a picker pressed THIS time pins the
         // pane there (`stayHere`). A default is not a pin: with `defaultSessionWhere: 'local'`
         // every pane carried the pin and the pressure card could suggest moving nothing.
-        where: where !== 'auto' ? where : undefined,
-        stayHere: touched && where === 'local' ? true : undefined
+        where: proj?.scope ? 'local' : where !== 'auto' ? where : undefined,
+        stayHere: proj?.scope || (touched && where === 'local') ? true : undefined
       }
     })
   }
@@ -251,7 +255,9 @@ export default function NewSessionDialog({
     setWhereError('')
     try {
       const destination = await onStart(reqs)
-      if (touched && destination) await api.setConfig({ defaultSessionWhere: where === 'auto' ? 'auto' : destination })
+      if (touched && destination && reqs.every((req) => !projects.find((p) => p.path === req.cwd)?.scope)) {
+        await api.setConfig({ defaultSessionWhere: where === 'auto' ? 'auto' : destination })
+      }
     } catch {
       setWhereError('Could not start or save this session choice. Please try again.')
     } finally {
@@ -316,9 +322,10 @@ export default function NewSessionDialog({
               <span className="tick" data-tick="1" onClick={(e) => e.stopPropagation()}>
                 <Checkbox checked={ticked.includes(p.path)} onChange={() => toggle(p.path)} />
               </span>
-              <span className="proj-name">{p.name}</span>
+              <span className="proj-name" title={p.scope ? `${p.path} · Starts on this computer` : undefined}>{p.name}</span>
+              {p.scope && <span className="tag">{p.scope === 'projects' ? 'projects folder · local' : 'home folder · local'}</span>}
               {p.checkoutOf && <span className="tag">copy of {p.checkoutOf}</span>}
-              {!p.isGit && !p.checkoutOf && <span className="tag">no git</span>}
+              {!p.isGit && !p.checkoutOf && !p.scope && <span className="tag">no git</span>}
               <span className="proj-age">{ago(p.lastUsed)}</span>
             </div>
           ))}
@@ -342,7 +349,7 @@ export default function NewSessionDialog({
               <span className="tag">new folder</span>
             </button>
           )}
-          {shown.length === 0 &&
+          {(shown.length === 0 || (!q.trim() && projectRows.length === 0)) &&
             copies.length === 0 &&
             !newName &&
             (q.trim() ? (
@@ -356,7 +363,7 @@ export default function NewSessionDialog({
                */
               <div className="empty first-run">
                 <div>
-                  Nothing to open in <code>{root || '...'}</code>.
+                  No projects found in <code>{root || '...'}</code>.
                 </div>
                 <div>Point PaneForge at the folder your projects live in.</div>
                 <button className="primary small" onClick={chooseRoot}>

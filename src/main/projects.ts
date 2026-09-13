@@ -7,7 +7,7 @@
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { projectsRoot } from './config'
 import { looksLikeRoster, readRoster } from './clients'
 import { CLIENTS_DIR, clientLabel } from '../shared/clientName'
@@ -91,6 +91,24 @@ export function listProjects(root = projectsRoot()): Project[] {
   // folder, and the lane a pane lands in is `laneFor`'s decision as it is everywhere else.
   projects.push(...clientRows(root, used, owners))
   return projects.sort((a, b) => b.lastUsed - a.lastUsed || a.name.localeCompare(b.name))
+}
+
+/** Local shortcuts belong only to the session picker, never routing or project workflows. */
+export function listSessionFolders(root = projectsRoot()): Project[] {
+  const used = lastUsedByPathSlug()
+  const startingFolders: Project[] = [
+    {
+      name: 'All projects', path: root, scope: 'projects',
+      lastUsed: used.get(slug(root)) ?? 0, isGit: existsSync(join(root, '.git'))
+    },
+    {
+      name: 'This computer', path: homedir(), scope: 'computer',
+      lastUsed: used.get(slug(homedir())) ?? 0, isGit: existsSync(join(homedir(), '.git'))
+    }
+  ]
+  // A configured home root already has the same destination; React rows use path keys.
+  return startingFolders.filter((p, i) => existsSync(p.path) &&
+    !startingFolders.slice(0, i).some((other) => resolve(other.path) === resolve(p.path)))
 }
 
 /**
