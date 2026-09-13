@@ -57,3 +57,5 @@ No application code, dependencies, credentials, OS settings, agent schedules or 
 - [Revised studio prototype](../design/paneforge-directions/studio.html): restrained palette and Astra placeholder; simulated interactions only.
 
 - [Grok Bot competitor update](grok-bot-competitor.md): confirmed persistent teammates, marketplace, expanded subscription access, employee workflows and value evidence. Refines the earlier instructions-only treatment of roles.
+
+- [Personal assistant execution, motion and usage plan](personal-assistant-execution-and-motion.md): compact companion, event-driven animations, subscription workers, voice metering and accent settings.

@@ -6,7 +6,16 @@ for(const el of document.querySelectorAll('.nav,.tree,.files button')){const nod
 const panel=document.querySelector('#voice-panel');
 let voiceOn=false;
 const voiceButton=document.querySelector('#voice-toggle');
-function toggleVoice(){voiceOn=!voiceOn;panel.dataset.voice=voiceOn?'speaking':'idle';voiceButton.setAttribute('aria-pressed',String(voiceOn));voiceButton.setAttribute('aria-label',voiceOn?'End voice preview':'Start voice preview');voiceButton.innerHTML=(voiceOn?'End voice':'Start voice')+' <kbd>⌥ V</kbd>';document.querySelector('#voice-status').textContent=voiceOn?'Voice preview active · microphone off':'Preview · microphone off'}
+function toggleVoice(){
+  voiceOn=!voiceOn;
+  panel.dataset.voice=voiceOn?'speaking':'idle';
+  voiceButton.setAttribute('aria-pressed',String(voiceOn));
+  voiceButton.setAttribute('aria-expanded',String(voiceOn));
+  voiceButton.setAttribute('aria-label',voiceOn?'End companion preview':'Start companion preview');
+  document.querySelector('#voice-status').textContent=voiceOn
+    ?'Companion preview active. Synthetic event only. Microphone off. No agents connected.'
+    :'Companion preview off. Microphone off. No agents connected.';
+}
 voiceButton.onclick=toggleVoice;
 document.addEventListener('keydown',event=>{if(event.altKey&&event.code==='KeyV'&&!event.repeat&&!event.ctrlKey&&!event.metaKey){event.preventDefault();toggleVoice()}});
 let visible=true;
@@ -28,3 +37,15 @@ document.querySelector('#new-chat').onclick=()=>{document.querySelector('[data-m
 // Sidebar navigation opens the view containing the selected work.
 for(const button of document.querySelectorAll('.sidebar [data-filter],.sidebar [data-folder],.sidebar [data-query],.sidebar [data-agent]'))button.addEventListener('click',()=>document.querySelector('[data-mode="agent"]').click());
 document.querySelector('.search').addEventListener('input',()=>document.querySelector('[data-mode="agent"]').click());
+
+// Personal accent, scoped to this preview. Provider trademarks keep their own colours.
+const accents={orange:['#ffae70','#ed672e'],blue:['#b1d9ff','#438ad7'],violet:['#d4c0ff','#9462d4'],mint:['#a9e9d3','#369c7d']};
+let accent='orange';
+function setAccent(name){if(!accents[name])return;accent=name;const [light,deep]=accents[name];document.documentElement.style.setProperty('--personal-accent',light);document.documentElement.style.setProperty('--personal-accent-deep',deep);const logo=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"><defs><linearGradient id="a" x2="0" y2="1"><stop stop-color="${light}"/><stop offset="1" stop-color="${deep}"/></linearGradient></defs><rect width="1024" height="1024" rx="227" fill="#12151c"/><g fill="url(#a)"><rect x="241" y="241" width="207" height="543" rx="33"/><rect x="492" y="241" width="292" height="249" rx="33"/><rect x="492" y="534" width="292" height="249" rx="33"/></g></svg>`;document.querySelectorAll('img[src*="paneforge.svg"],img[data-personal-logo]').forEach(img=>{img.dataset.personalLogo='true';img.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(logo)});try{localStorage.setItem('paneforge-workspace-accent',name)}catch{}document.querySelectorAll('[data-accent]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.accent===name)))}
+try{const saved=localStorage.getItem('paneforge-workspace-accent');if(accents[saved])accent=saved}catch{}
+setAccent(accent);
+document.querySelector('#appearance').insertAdjacentHTML('afterbegin',icon('grid'));
+document.querySelector('#appearance').onclick=()=>{document.querySelector('#tool-title').textContent='Appearance';document.querySelector('#tool-content').innerHTML='<p>Make PaneForge yours. Your accent also colours the PaneForge logo.</p><div class="accent-options" role="group" aria-label="Accent colour">'+Object.entries(accents).map(([name,colours])=>`<button data-accent="${name}" aria-pressed="${name===accent}" style="--swatch:${colours[0]}"><span aria-hidden="true"></span>${name[0].toUpperCase()+name.slice(1)}</button>`).join('')+'</div><p>Orange is the default. Claude and Codex keep their original brand colours.</p>';document.querySelectorAll('[data-accent]').forEach(b=>b.onclick=()=>setAccent(b.dataset.accent));document.querySelector('#tool-dialog').showModal()};
+
+// Inspect a simulated operation without starting a worker.
+document.querySelector('#companion-action').onclick=()=>{document.querySelector('#tool-title').textContent='Two Codex sessions';document.querySelector('#tool-content').innerHTML='<p class="sample-label">SIMULATED OPERATION · NO SESSIONS LAUNCHED</p><h3>1. Research the launch brief</h3><p>Queued · Harbour Studio · subscription worker</p><h3>2. Review the project files</h3><p>Queued · Harbour Studio · subscription worker</p><p>In the connected app, this chip opens the real task record with session links, progress and output. It changes to running only after the workers confirm startup.</p>';document.querySelector('#tool-dialog').showModal()};
