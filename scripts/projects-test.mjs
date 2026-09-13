@@ -13,7 +13,7 @@
 
 import { buildSync } from 'esbuild'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -142,7 +142,7 @@ ok('a suffix on its own proves nothing', alone.size === 0, [...alone.keys()].joi
     ok('the project list builds without a window', false, String(e).slice(0, 200))
   }
   if (built) {
-    const { listProjects } = await import(pathToFileURL(file).href)
+    const { listProjects, listSessionFolders } = await import(pathToFileURL(file).href)
     const desk = mkdtempSync(join(tmpdir(), 'pf-desk-'))
     mkdirSync(join(desk, 'PaneForge'), { recursive: true })
     mkdirSync(join(desk, 'clients', 'alison'), { recursive: true })
@@ -150,6 +150,11 @@ ok('a suffix on its own proves nothing', alone.size === 0, [...alone.keys()].joi
     writeFileSync(join(desk, 'clients', 'alison', 'README.md'), '# A4 Advocate (Adie Bradley)\n', 'utf8')
     writeFileSync(join(desk, 'clients', 'pia-team', 'README.md'), '# PIA Team\n', 'utf8')
     const rows = listProjects(desk)
+    const folders = listSessionFolders(desk)
+    ok('All projects opens the configured root', folders[0].scope === 'projects' && folders[0].path === desk)
+    ok('This computer opens home, not Desktop or a filesystem root', folders[1].scope === 'computer' && folders[1].path === homedir())
+    ok('broad folders never enter routing or project workflows', rows.every(r => !r.scope && r.path !== desk && r.path !== homedir()))
+    ok('home used as the projects root has one shortcut', listSessionFolders(homedir()).length === 1)
     const alison = rows.find((r) => r.path === join(desk, 'clients', 'alison'))
     ok('a client on the roster is its own row', Boolean(alison), rows.map((r) => r.name).join(', '))
     ok('...named so the list says who it is AND where it lives', alison?.name === 'Adie Bradley | clients', alison?.name)

@@ -29,7 +29,7 @@ import { mayReturnLane } from '../shared/laneReturn'
 import { revealTarget, within } from '../shared/reveal'
 import { revealTargetFor } from '../shared/revealPane'
 import { clientForText, rosterRoot } from './clients'
-import { createProject, listProjects } from './projects'
+import { createProject, listProjects, listSessionFolders } from './projects'
 import { routeCandidates } from './projectAliases'
 import { routePrompt } from '../shared/projectRoute'
 import { sendOrOpen } from '../shared/sendOrOpen'
@@ -1458,6 +1458,7 @@ startAway((a) => {
 })
 
 ipcMain.handle('projects:list', () => listProjects())
+ipcMain.handle('projects:sessionFolders', () => listSessionFolders())
 ipcMain.handle('projects:create', (_e, name: string) => createProject(name))
 ipcMain.handle('projects:route', (_e, text: string) => routeText(text))
 ipcMain.handle('agents:list', (_e, force?: boolean) => listAgents(force))

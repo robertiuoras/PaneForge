@@ -14,12 +14,14 @@ const bundle = await build({
     const host=document.createElement('div');host.id='pf-device-fixture';document.body.append(host);
     let view=createRoot(host), launch=[], outcome='remote';
     window.__pfDeviceFixture={
-      async open(peers=true) {
+      async open(peers=true, scope='') {
         flushSync(()=>view.render(null));
         const config=await window.__pfDeviceApi.getConfig();
         const agents=await window.__pfDeviceApi.listAgents();
+        const projects=scope==='empty' ? [] : scope ? (await window.__pfDeviceApi.listSessionFolders()).filter(p=>p.scope===scope)
+          : [{name:'Device preference test',path:'/tmp/pf-device-choice'}];
         flushSync(()=>view.render(<Picker defaultWhere={config.defaultSessionWhere ?? 'local'}
-          projects={[{name:'Device preference test',path:'/tmp/pf-device-choice'}]}
+          projects={projects}
           defaultAgent='shell' defaultModels={{}} agents={agents}
           peers={peers?[{id:'test-peer',name:'Test PC'}]:[]}
           onStart={async r=>{launch=r;return outcome}} onCancel={()=>{}} onDefaultsChange={()=>{}}
@@ -46,7 +48,7 @@ try {
   eq((await picks())[0].selected,'true','local default selected')
   await c.evaluate('document.querySelectorAll("#pf-device-fixture .where-picks button")[1].click()')
   eq(await c.evaluate('window.api.getConfig().then(c=>c.defaultSessionWhere)'),'local','selection alone does not change preference')
-  const go=()=>c.evaluate("document.querySelector('#pf-device-fixture .dialog-row button.primary').click()")
+  const go=(name='Device preference test')=>c.evaluate(`[...document.querySelectorAll('#pf-device-fixture .proj')].find(p=>p.querySelector('.proj-name')?.textContent===${JSON.stringify(name)}).click()`)
   const saved=async(value)=>{for(let i=0;i<30;i++){if(await c.evaluate('window.api.getConfig().then(c=>c.defaultSessionWhere)')===value)return;await new Promise(r=>setTimeout(r,40))}throw Error('preference did not save')}
   await go()
   await saved('remote')
@@ -56,6 +58,8 @@ try {
   eq((await picks()).length,1,'offline peer has one available destination')
   eq((await picks())[0].selected,'true','offline remote selects local for current launch')
   eq(await c.evaluate('window.api.getConfig().then(c=>c.defaultSessionWhere)'),'remote','offline display preserves saved preference')
+  // Only an explicit destination choice is saved; an offline fallback is temporary.
+  await c.evaluate('document.querySelector("#pf-device-fixture .where-picks button").click()')
   await c.evaluate('window.__pfDeviceFixture.outcome("local")')
   await go()
   await saved('local')
@@ -65,6 +69,21 @@ try {
   await c.evaluate('document.querySelectorAll("#pf-device-fixture .where-picks button")[1].click(); window.__pfDeviceFixture.outcome(null)')
   await go()
   eq(await c.evaluate('window.api.getConfig().then(c=>c.defaultSessionWhere)'),'local','failed launch does not replace last successful choice')
+  for (const scope of ['projects', 'computer']) {
+    await c.evaluate(`window.api.setConfig({defaultSessionWhere:'remote'}); window.__pfDeviceFixture.outcome('local')`)
+    await c.evaluate(`window.__pfDeviceFixture.open(true,${JSON.stringify(scope)})`)
+    eq(await c.evaluate('document.querySelectorAll("#pf-device-fixture .proj").length'),2,`${scope} shortcuts appear in the real picker`)
+    await c.evaluate('document.querySelectorAll("#pf-device-fixture .where-picks button")[1].click()')
+    await go(scope === 'projects' ? 'All projects' : 'This computer')
+    const request=await c.evaluate('window.__pfDeviceFixture.launch()[0]')
+    const folder=await c.evaluate(`window.api.listSessionFolders().then(rows=>rows.find(p=>p.scope===${JSON.stringify(scope)}))`)
+    eq(request.cwd,folder.path,`${scope} launch uses the actual starting folder`)
+    eq(request.title,folder.name,`${scope} launch keeps its descriptive title`)
+    eq([request.where,request.stayHere],['local',true],`${scope} cannot be offloaded to another computer`)
+    eq(await c.evaluate('window.api.getConfig().then(c=>c.defaultSessionWhere)'),'remote',`${scope} does not overwrite the ordinary-project destination preference`)
+  }
+  await c.evaluate('window.__pfDeviceFixture.open(true,"empty")')
+  eq(await c.evaluate('Boolean(document.querySelector("#pf-device-fixture .first-run button"))'),true,'shortcuts preserve Choose projects folder recovery when no projects exist')
   console.log(`session-device: ${checks} checks passed`)
 } finally {
   await c.evaluate(`window.__pfDeviceFixture?.close(); delete window.__pfDeviceFixture; delete window.__pfDeviceApi; window.api.setConfig({defaultSessionWhere:${JSON.stringify(original ?? 'local')}})`)
