@@ -55,3 +55,5 @@ No application code, dependencies, credentials, OS settings, agent schedules or 
 - [100-project research library](open-source-harness-catalogue/index.html): searchable catalogue, source and licence evidence, demo links and source/test dossiers.
 - [Feature value decisions](open-source-harness-catalogue/feature-value-matrix.md): measured evidence versus inference, with build/test/defer/cut criteria.
 - [Revised studio prototype](../design/paneforge-directions/studio.html): restrained palette and Astra placeholder; simulated interactions only.
+
+- [Grok Bot competitor update](grok-bot-competitor.md): confirmed persistent teammates, marketplace, expanded subscription access, employee workflows and value evidence. Refines the earlier instructions-only treatment of roles.

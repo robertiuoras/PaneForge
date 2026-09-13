@@ -12,9 +12,9 @@ Taskdriver owns the business record: clients, enquiries, projects, briefs, appro
 
 Taskdriver mobile shows business progress, captures instructions and presents decisions. It should link to a desktop session when useful, rather than recreate an entire IDE on a phone. PaneForge should not become another CRM, invoice system or campaign reporting database.
 
-## Roles are saved working instructions, not permanently awake employees
+## Skills, persistent teammates and execution sessions
 
-A role packages a purpose, relevant skills, approved data access and a definition of a good result. A worker is an actual execution session. One worker can use a marketing role today and research tomorrow; a complex task may need several workers. Having ten roles does not require ten concurrent model sessions. The provider/model is a separate execution choice, not an employee identity.
+A skill packages a reusable method. A persistent teammate can own an ongoing responsibility, scoped memory, routines and results across conversations. A worker is the actual execution session used to do a task. Having ten persistent identities does not require ten continuously generating model sessions. The provider/model is a separate execution choice. This refines the original instructions-only proposal after identifying Grok Bot; see [the competitor research](grok-bot-competitor.md).
 
 | Capability | Useful first workflow | Canonical home | Measure | Initial decision |
 | --- | --- | --- | --- | --- |
@@ -25,7 +25,7 @@ A role packages a purpose, relevant skills, approved data access and a definitio
 | Engineering | Implement scoped changes with tests and preview | PaneForge Code, linked Taskdriver task when business work | Accepted changes, regressions and human review time | Start here |
 | Finance support | Prepare reconciliations or invoice drafts from authorised records | Taskdriver business workflow | Reconciliation exceptions and corrections | Add for a real recurring workload; no independent payments |
 | CEO / strategy | Weekly business review grounded in pipeline, delivery capacity and financial records | Taskdriver business review; discuss in Chat | Decisions adopted and outcomes reviewed | A review workflow, not an autonomous boss |
-| Grok / social research | Potential provider for a specific research source | Relevant research task | Source coverage and incremental cost against existing tools | Exact product and integration unresolved |
+| Grok Bot | External persistent teammate product and comparison candidate | External service; future Taskdriver linkage only if supported | Accepted work, correction minutes and usage | Product identified; integration and account entitlement unverified |
 
 Default method: deterministic code for calculations, formatting, dispatch and status; one capable subscription worker for an ambiguous bounded task; specialist delegation only for independent work or a justified separate review. Use event-triggered or scheduled runs for recurring work, not an always-thinking agent for each department. Add retrieval when repeated context lookup warrants it, and test smaller/open-weight models on narrow tasks before letting them make consequential decisions.
 
