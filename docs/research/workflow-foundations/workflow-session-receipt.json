@@ -1,0 +1,50 @@
+{
+  "brief": "/Users/robertiuoras/Projects/PaneForge-b/docs/research/workflow-foundations/workflow-session.md",
+  "startHere": "/Users/robertiuoras/Projects/PaneForge-b/docs/research/workflow-foundations/START-HERE.md",
+  "status": "complete",
+  "acknowledgedAt": "2026-09-13T19:05:00+10:00",
+  "cwd": "/Users/robertiuoras/Projects/PaneForge-a",
+  "branch": "lane-a",
+  "lane": "a",
+  "pane": "s33-mtzkru45",
+  "provider": "claude-code",
+  "model": "claude-fable-5-1",
+  "nativeConversationId": "4bc145da-4875-4634-8d3c-163f9cf97ba2",
+  "bridgeSessionId": "session_019XtXD7jPPX7e9S8WGf5me1",
+  "claudeCodeVersion": "2.1.270",
+  "device": "mac",
+  "owns": [
+    "docs/research/workflow-foundations/workflow-plan.md",
+    "docs/research/workflow-foundations/workflow-session-receipt.json"
+  ],
+  "sibling": "product-session (separate chat, PaneForge-b lane)",
+  "mode": "planning-only, included subscription, no agents, no install, no scheduler/auth changes",
+  "completedAt": "2026-09-13T08:57:39.721Z",
+  "deliverables": [
+    "docs/research/workflow-foundations/workflow-plan.md",
+    "docs/research/workflow-foundations/workflow-usage-evidence.md"
+  ],
+  "evidence": {
+    "codexWeeklyWindow": {
+      "planType": "pro",
+      "windowMinutes": 10080,
+      "resetsAt": "2026-09-19T08:26:31Z",
+      "readings": {
+        "2026-09-13T01:09Z": 0,
+        "2026-09-13T04:00Z": 20,
+        "2026-09-13T08:00Z": 38,
+        "2026-09-13T08:48Z": 41
+      },
+      "secondaryWindow": null
+    },
+    "nativeGoalRegistered": false,
+    "agentsSpawned": 0,
+    "claudeMemoryEdits": 0,
+    "spend": "none"
+  },
+  "unresolved": [
+    "D3: gate/move the promptlab research Codex job",
+    "G3: permission for 8 fresh one-shot canary sessions",
+    "D9: Codex prompt-time parity wanted?"
+  ]
+}
