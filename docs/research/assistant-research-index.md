@@ -41,3 +41,8 @@ The sequence is a proposed set of experiments, not authority to install framewor
 Antigravity's research was read and corrected where primary sources disagreed. This pack covers the requested architecture, assistant orchestration, UI direction, device operation, mobile/public concerns, memory, skills, lightweight models, CI/CD and edge cases. It establishes a research baseline with explicit experiments, not a complete implementation specification for every subsystem. Detailed designs should follow the evidence from those experiments rather than freezing untested assumptions now.
 
 No application code, dependencies, credentials, OS settings, agent schedules or release configuration were changed for this research. Documentation follows the assigned lane workflow; commit, merge/push and release are separate states, established by their Git/tool receipts.
+
+## Design and economics follow-up
+
+- [Three visual directions and animated study](../design/paneforge-directions/README.md)
+- [Voice economics and commercial hypotheses](voice-economics-and-opportunities.md)
