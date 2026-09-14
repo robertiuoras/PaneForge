@@ -55,22 +55,10 @@ check(entries[0].at === 123, 'a surviving live tag preserves its original identi
 runSeed()
 check(entries.length === 2 && serial === 1, 'repeated repair never duplicates existing prompt tags')
 
-const replay = src.slice(src.indexOf('const replayBuffer = '))
-const done = replay.slice(0, replay.indexOf('reshape(t, f)'))
-check(done.includes('deepSeeded.current = true'), 'the restore replay arms one deeper draw')
-check(
-  done.includes('!list.length') && !done.includes('!mirrorRef.current'),
-  'the deeper draw is only for a pane whose rail came back EMPTY, including a mirror with a host log'
-)
-check(
-  done.indexOf('seedMarks()') < done.indexOf('deepSeeded.current'),
-  'the deeper draw is decided AFTER the ordinary seed has had its go'
-)
-check(done.includes('host.current?.offsetParent'), 'a hidden pane is not charged for the deeper draw')
-check(
-  /const deepSeeded = useRef\(false\)/.test(src),
-  'the deeper draw happens at most once per pane'
-)
+const initial = src.slice(src.indexOf('let initialReplay:'), src.indexOf('const replayBuffer ='))
+check(initial.includes('api.replayHistory(sessionId)'), 'initial restore uses the ordered full-history snapshot')
+check(!initial.includes('getBuffer('), 'initial restore never appends an unordered raw tail')
+check(!src.includes('deepSeeded'), 'a hidden pane cannot consume a deferred history recovery')
 
 console.log(failed ? `\n${failed} failed` : '\nall ok')
 process.exit(failed ? 1 : 0)
