@@ -25,6 +25,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   readlinkSync,
   renameSync,
   rmSync,
@@ -37,18 +38,17 @@ import { execFile, execFileSync } from 'node:child_process' // sync-on-purpose: 
 import { createServer } from 'node:net'
 import { hideCopyFolder } from './hideCopy'
 import { homedir } from 'node:os'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, relative, resolve } from 'node:path'
 
 /**
  * Every lane label, in the order they are handed out: `<repo>-a`, then `-b`, and so on.
- * Past the end of this list the folder is genuinely oversubscribed and the session shares.
+ * A full pool refuses the launch instead of sharing another session's checkout.
  *
  * Letters rather than numbers because a pane already carries a NUMBER (its Ctrl+N switch
  * key), and two digits on one card with nothing to say which is which is the confusion this
  * replaced. It is also the alphabet scripts/lane.mjs has always used for the same folders.
  */
 const LANE_LABELS = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'] as const
-const MAX_LANES = LANE_LABELS.length
 
 /**
  * Dev-server port a lane starts from when the project never names one.
@@ -364,8 +364,7 @@ function composeProject(repo: string, label: string): string {
  * treated as the first lane.
  */
 function laneIndex(label: string): number {
-  const letter = LANE_LABELS.indexOf(label as (typeof LANE_LABELS)[number])
-  if (letter >= 0) return letter + 2
+  if (/^[a-z]$/.test(label)) return label.charCodeAt(0) - 'a'.charCodeAt(0) + 2
   const n = Number(label.replace(/^\D+/, ''))
   return Number.isInteger(n) && n >= 2 ? n : 2
 }
@@ -839,13 +838,27 @@ function seedLane(repo: string, lane: string): void {
  * Where a new session in `cwd` should really run, given the folders live sessions
  * already hold.
  *
- * Returns `cwd` unchanged when nothing else is using it, when it is not a git
- * repo (there is no safe way to split a plain folder), or when every lane is
- * taken. Creating a lane is a few git calls and only happens on the second and
+ * Returns `cwd` unchanged when nothing else is using its checkout or when it is not a git
+ * repo (there is no safe way to split a plain folder). A full pool refuses the launch.
+ * Creating a lane is a few git calls and only happens on the second and
  * later session in one repo, so the common launch pays nothing.
  */
 export async function resolveLane(cwd: string, taken: string[]): Promise<Lane> {
-  const clash = taken.some((t) => samePath(t, cwd))
+  ensureLaneFolder(cwd)
+  if (!existsSync(cwd)) throw new Error(`Folder no longer exists: ${cwd}. Open its current location.`)
+  // Client folders share their checkout's index even when their paths differ.
+  // Keep a removed client folder reserved through its nearest surviving parent.
+  const checkoutOf = async (folder: string): Promise<string> => {
+    let at = resolve(folder)
+    while (!existsSync(at) && dirname(at) !== at) at = dirname(at)
+    const top = await git(at, ['rev-parse', '--show-toplevel'])
+    return top.ok && top.out ? top.out : folder
+  }
+  const [checkout, occupied] = await Promise.all([
+    checkoutOf(cwd),
+    Promise.all(taken.map(checkoutOf))
+  ])
+  const clash = occupied.some((t) => samePath(t, checkout))
   if (!clash) return { cwd }
 
   const repo = await mainRepo(cwd)
@@ -855,22 +868,32 @@ export async function resolveLane(cwd: string, taken: string[]): Promise<Lane> {
 
   const parent = dirname(repo)
   const name = basename(repo)
-  for (const label of LANE_LABELS) {
+  const subfolder = relative(checkout, realpathSync(cwd))
+  let labels: readonly string[] = LANE_LABELS
+  try {
+    const config = JSON.parse(readFileSync(join(repo, '.lanes.json'), 'utf8'))
+    if (Array.isArray(config.pool) && config.pool.length) {
+      labels = config.pool.filter((label: unknown) => typeof label === 'string' && /^[a-z]$/.test(label))
+    }
+  } catch { /* the default pool applies when there is no configuration */ }
+  for (const label of labels) {
     const path = join(parent, `${name}-${label}`)
-    if (taken.some((t) => samePath(t, path))) continue
+    if (occupied.some((t) => samePath(t, path))) continue
+    const target = join(path, subfolder)
 
     const branch = `lane-${label}`
     if (existsSync(path)) {
       // Left behind by an earlier session and nobody is in it: reuse rather than
       // pile up folders. Anything at that path that is not this repo is skipped.
       if (!(await isWorktreeOf(path, repo))) continue
+      if (!existsSync(target)) continue
       seedLane(repo, path)
       const head = await git(path, ['rev-parse', '--abbrev-ref', 'HEAD'])
       // Reusing a copy is the catch-up path: one made before this app hid them, or one a
       // person un-hid, goes back out of Finder here rather than needing a command.
       hideCopyFolder(path)
       return {
-        cwd: path,
+        cwd: target,
         lane: label,
         branch: head.ok ? head.out : branch,
         ...(await laneExtras(path, label))
@@ -879,17 +902,26 @@ export async function resolveLane(cwd: string, taken: string[]): Promise<Lane> {
 
     // New branch off whatever the repo has checked out now. If the branch already
     // exists from a previous lane, check that out instead of failing.
+    if (subfolder) {
+      const existing = await git(repo, ['show-ref', '--verify', `refs/heads/${branch}`])
+      const folder = await git(repo, ['cat-file', '-t', `${existing.ok ? branch : 'HEAD'}:${subfolder.replace(/\\/g, '/')}`])
+      if (!folder.ok || folder.out !== 'tree') {
+        if (existing.ok) continue
+        throw new Error(`Client or project folder is missing from the lane's commit: ${subfolder}. Commit its current location first.`)
+      }
+    }
     let made = await git(repo, ['worktree', 'add', '-b', branch, path])
     if (!made.ok) made = await git(repo, ['worktree', 'add', path, branch])
     if (!made.ok) {
-      return { cwd, note: `Could not create a worktree lane: ${made.out.split('\n')[0]}` }
+      throw new Error(`Could not create a worktree lane: ${made.out.split('\n')[0]}`)
     }
     seedLane(repo, path)
     hideCopyFolder(path)
-    return { cwd: path, lane: label, branch, ...(await laneExtras(path, label)) }
+    if (!existsSync(target)) throw new Error(`Client or project folder is missing from the new lane: ${target}. Commit its current location first.`)
+    return { cwd: target, lane: label, branch, ...(await laneExtras(path, label)) }
   }
 
-  return { cwd, note: `All ${MAX_LANES} lanes for ${name} are in use - this session shares the folder.` }
+  throw new Error(`No free lane containing this folder in ${name}. Finish an existing session or expand its lane pool.`)
 }
 
 /**
@@ -914,7 +946,11 @@ export async function resolveLane(cwd: string, taken: string[]): Promise<Lane> {
  */
 export function ensureLaneFolder(cwd: string): void {
   if (existsSync(cwd)) return
-  const m = new RegExp(`^(.+)-(${LANE_LABELS.join('|')})$`).exec(cwd)
+  // A saved client session points inside its lane, not at the lane root itself.
+  const parent = dirname(cwd)
+  if (parent !== cwd && !existsSync(parent)) ensureLaneFolder(parent)
+  if (existsSync(cwd)) return
+  const m = /^(.+)-([a-z])$/.exec(cwd)
   if (!m) return
   const [, repo, label] = m
   // Only ever rebuild a lane OF a real repo. Any other folder ending in `-a` is somebody's
@@ -961,7 +997,9 @@ export function ensureLaneFolder(cwd: string): void {
  * the id from there would strip nothing and print a letter that contradicts the folder.
  */
 export async function detectLane(cwd: string): Promise<string | undefined> {
-  const m = new RegExp(`^(.+)-(${LANE_LABELS.join('|')}|w\\d+)$`).exec(basename(cwd))
+  const top = await git(cwd, ['rev-parse', '--show-toplevel'])
+  if (top.ok && top.out) cwd = top.out
+  const m = /^(.+)-([a-z]|w\d+)$/.exec(basename(cwd))
   if (!m) return undefined
   const repo = join(dirname(cwd), m[1])
   if (!existsSync(join(repo, '.git'))) return undefined

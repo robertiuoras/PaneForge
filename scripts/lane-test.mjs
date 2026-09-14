@@ -45,7 +45,7 @@ await build({
   platform: 'node',
   logLevel: 'silent'
 })
-const { resolveLane } = await import(`file:///${bundle.replace(/\\/g, '/')}`)
+const { resolveLane, detectLane } = await import(`file:///${bundle.replace(/\\/g, '/')}`)
 
 let failed = 0
 const ok = (name, cond) => {
@@ -68,6 +68,10 @@ mkdirSync(join(repo, 'backend'), { recursive: true })
 writeFileSync(join(repo, 'app.js'), 'console.log(1)\n')
 writeFileSync(join(repo, '.gitignore'), 'node_modules/\n.env\n.env.local\nbackend/.env\n.claude/\n')
 writeFileSync(join(repo, 'backend', 'keep.txt'), 'x\n')
+for (const folder of ['clients/active', 'archive/clients/finished']) {
+  mkdirSync(join(repo, folder), { recursive: true })
+  writeFileSync(join(repo, folder, 'README.md'), folder)
+}
 git(repo, 'init', '-q', '-b', 'main')
 git(repo, 'config', 'user.email', 'test@example.com')
 git(repo, 'config', 'user.name', 'test')
@@ -124,6 +128,51 @@ mkdirSync(plain, { recursive: true })
 const shared = (await resolveLane(plain, [plain]))
 ok('a folder that is not a repo is shared with a warning', shared.cwd === plain && Boolean(shared.note))
 
+const active = join(repo, 'clients', 'active')
+const archived = join(repo, 'archive', 'clients', 'finished')
+const activeA = join(laneA, 'clients', 'active')
+const archivedB = join(laneB, 'archive', 'clients', 'finished')
+ok('a client beside a root session gets a lane and keeps client scope',
+  (await resolveLane(active, [repo])).cwd === activeA)
+ok('different client folders in one checkout clash',
+  (await resolveLane(archived, [active])).cwd === join(laneA, 'archive', 'clients', 'finished'))
+ok('a client subfolder reserves its entire lane',
+  (await resolveLane(archived, [repo, activeA])).cwd === archivedB)
+ok('a root session cannot share a client subfolder checkout',
+  (await resolveLane(repo, [active])).cwd === laneA)
+ok('a separate free worktree stays separate',
+  (await resolveLane(activeA, [active])).cwd === activeA)
+let missingRefused = false
+try { await resolveLane(join(repo, 'clients', 'finished'), [repo]) }
+catch (error) { missingRefused = /no longer exists|missing/i.test(error.message) }
+ok('a stale archived-client path is refused instead of becoming a root session', missingRefused)
+writeFileSync(join(repo, '.lanes.json'), JSON.stringify({ pool: ['main', 'a', 'b'] }))
+let fullRefused = false
+try { await resolveLane(archived, [active, activeA, archivedB]) }
+catch (error) { fullRefused = /No free lane/.test(error.message) }
+ok('the configured full pool refuses to share a checkout or allocate outside the pool', fullRefused)
+writeFileSync(join(repo, '.lanes.json'), JSON.stringify({ pool: ['main', 'a', 'b', 'c'] }))
+mkdirSync(join(repo, 'clients', 'uncommitted'), { recursive: true })
+let uncommittedRefused = false
+try { await resolveLane(join(repo, 'clients', 'uncommitted'), [repo, activeA, archivedB]) }
+catch (error) { uncommittedRefused = /Commit its current location/.test(error.message) }
+ok('an uncommitted client cannot consume an unusable new worktree', uncommittedRefused && !existsSync(join(root, 'demo-c')))
+writeFileSync(join(repo, '.lanes.json'), JSON.stringify({ pool: ['main', 'x'] }))
+const custom = await resolveLane(active, [repo])
+ok('a configured custom letter keeps client scope and has its own port offset', custom.cwd === join(root, 'demo-x', 'clients', 'active') && custom.port >= 3024)
+ok('custom lane letters are detected', (await detectLane(join(root, 'demo-x'))) === 'x')
+ok('nested client folders retain their custom lane identity', (await detectLane(custom.cwd)) === 'x')
+rmSync(join(root, 'demo-x'), { recursive: true, force: true })
+ok('custom nested lane folders can be restored', (await resolveLane(custom.cwd, [repo])).cwd === custom.cwd)
+git(repo, 'branch', 'lane-c')
+mkdirSync(join(repo, 'clients', 'new'), { recursive: true })
+writeFileSync(join(repo, 'clients', 'new', 'README.md'), 'new client\n')
+git(repo, 'add', 'clients/new/README.md')
+git(repo, 'commit', '-qm', 'add new client')
+writeFileSync(join(repo, '.lanes.json'), JSON.stringify({ pool: ['main', 'c', 'd'] }))
+ok('a stale free branch is skipped for a lane that contains the new client',
+  (await resolveLane(join(repo, 'clients', 'new'), [repo])).cwd === join(root, 'demo-d', 'clients', 'new') && !existsSync(join(root, 'demo-c')))
+
 // The junction failure, in the two shapes that hit it.
 const realDep = join(repo, 'node_modules', 'left-pad', 'index.js')
 const subDep = join(repo, 'backend', 'node_modules', 'dep', 'index.js')
@@ -132,6 +181,8 @@ ok('git worktree remove leaves the original dependencies alone', existsSync(real
 rmSync(laneB, { recursive: true, force: true })
 ok('deleting a lane folder leaves the original dependencies alone', existsSync(realDep))
 ok('deleting a lane folder leaves subfolder dependencies alone', existsSync(subDep))
+ok('a saved nested client cwd restores its swept lane without losing scope',
+  (await resolveLane(archivedB, [repo, activeA])).cwd === archivedB && existsSync(join(archivedB, 'README.md')))
 
 rmSync(root, { recursive: true, force: true })
 console.log(failed ? `\n${failed} failed` : '\nall passed')

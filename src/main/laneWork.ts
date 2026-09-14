@@ -22,7 +22,7 @@
 
 import { execFile } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, relative, resolve } from 'node:path'
 import { feedDraft, LANE_OPTIONS } from '../shared/draft'
 import type { LaneMergeResult, LaneWork } from '../shared/types'
 
@@ -100,6 +100,28 @@ const git = (cwd: string, args: string[], timeout = 20000): Promise<GitRun> =>
 const gitOut = (cwd: string, args: string[], timeout = 20000): Promise<GitRun> =>
   run(cwd, args, timeout, true)
 
+function physicalPath(p: string): string {
+  let head = resolve(p)
+  const rest: string[] = []
+  // The deepest part that exists gets resolved and the rest is kept as spelt: a pane
+  // names a folder that may not be on disk (a chat's cwd inside a lane that was swept),
+  // and a half-resolved path must not compare unequal to a fully resolved one.
+  for (;;) {
+    try {
+      head = realpathSync(head)
+      break
+    } catch {
+      const up = dirname(head)
+      if (up === head) break
+      rest.unshift(basename(head))
+      head = up
+    }
+  }
+  return join(head, ...rest)
+    .replace(/[\\/]+$/, '')
+    .toLowerCase()
+}
+
 /** Windows paths differ in case and slash direction for the same folder. */
 export function samePath(a: string, b: string): boolean {
   // realpath, not resolve alone: every path git hands back is already real, and on macOS
@@ -107,28 +129,7 @@ export function samePath(a: string, b: string): boolean {
   // symlinked parent therefore compared unequal to the same lane as git spells it, and
   // laneWork() called the folder "not a lane" of its own repo. A path that is not on disk
   // keeps the old answer rather than throwing.
-  const norm = (p: string): string => {
-    let head = resolve(p)
-    const rest: string[] = []
-    // The deepest part that exists gets resolved and the rest is kept as spelt: a pane
-    // names a folder that may not be on disk (a chat's cwd inside a lane that was swept),
-    // and a half-resolved path must not compare unequal to a fully resolved one.
-    for (;;) {
-      try {
-        head = realpathSync(head)
-        break
-      } catch {
-        const up = dirname(head)
-        if (up === head) break
-        rest.unshift(basename(head))
-        head = up
-      }
-    }
-    return join(head, ...rest)
-      .replace(/[\\/]+$/, '')
-      .toLowerCase()
-  }
-  return norm(a) === norm(b)
+  return physicalPath(a) === physicalPath(b)
 }
 
 /** The main checkout of whatever repo this folder belongs to, worktree or not. */
@@ -467,9 +468,8 @@ export async function laneFolders(repo: string): Promise<string[]> {
 
 /** Is `child` that folder, or somewhere inside it? */
 function inside(child: string, parent: string): boolean {
-  const norm = (p: string): string => resolve(p).replace(/[\\/]+$/, '').toLowerCase()
-  const c = norm(child)
-  const p = norm(parent)
+  const c = physicalPath(child)
+  const p = physicalPath(parent)
   return c === p || c.startsWith(p + '\\') || c.startsWith(p + '/')
 }
 
@@ -689,8 +689,11 @@ export function trackTyped(previous: string, data: string): { line: string; subm
  * another session in the original, anything unreadable.
  */
 export async function returnToBase(cwd: string, taken: string[]): Promise<string | null> {
-  const work = await laneWork(cwd)
+  const top = await gitOut(cwd, ['rev-parse', '--show-toplevel'])
+  if (!top.ok || !top.out) return null
+  const work = await laneWork(top.out)
   if (!work || !work.empty) return null
-  if (taken.some((t) => samePath(t, work.repo))) return null
-  return work.repo
+  if (taken.some((t) => inside(t, work.repo))) return null
+  const target = join(work.repo, relative(top.out, realpathSync(cwd)))
+  return existsSync(target) ? target : null
 }

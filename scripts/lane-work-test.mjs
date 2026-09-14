@@ -18,7 +18,7 @@
 
 import { buildSync } from 'esbuild'
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -306,7 +306,16 @@ const commit = (cwd, file, text, msg) => {
   const { repo, lane } = fixture('return')
   const back = (await lw.returnToBase(lane, []))
   check('an empty lane goes back to the project folder', Boolean(back) && lw.samePath(back, repo), String(back))
+  const client = join('archive', 'clients', 'finished')
+  mkdirSync(join(repo, client), { recursive: true })
+  mkdirSync(join(lane, client), { recursive: true })
+  check('a nested client returns to the same client in base', lw.samePath((await lw.returnToBase(join(lane, client), [])) ?? '', join(repo, client)))
+  check('a nested client stays in its lane while base is occupied', (await lw.returnToBase(join(lane, client), [repo])) === null)
   check('...unless another session is in it', (await lw.returnToBase(lane, [repo])) === null)
+  check('...or another session holds a client subfolder', (await lw.returnToBase(lane, [join(repo, 'archive', 'clients', 'finished')])) === null)
+  const alias = `${repo}-alias`
+  symlinkSync(repo, alias, process.platform === 'win32' ? 'junction' : 'dir')
+  check('...including a symlinked path to a removed client subfolder', (await lw.returnToBase(lane, [join(alias, 'archive', 'clients', 'finished')])) === null)
   commit(lane, 'feature.js', 'export const f = 1\n', 'add feature')
   check('a lane with commits stays put', (await lw.returnToBase(lane, [])) === null)
   check('the main checkout is never sent anywhere', (await lw.returnToBase(repo, [])) === null)
