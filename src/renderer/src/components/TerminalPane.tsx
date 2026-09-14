@@ -1328,8 +1328,6 @@ function TerminalPane({
    * on this desk get. The pane now presses Fix for itself, once.
    */
   const needRestoreFix = useRef(false)
-  /** One deeper redraw for a restored pane whose rail came back empty - see `replayBuffer`. */
-  const deepSeeded = useRef(false)
   /** When this pane last had a byte printed at it. See `restoreFixLag`. */
   const lastByteAt = useRef(0)
   /**
@@ -3601,28 +3599,49 @@ function TerminalPane({
     // Settle rather than fire: the agent is resuming and painting its own banner over the
     // replay, and a repair made mid-paint is undone by the next frame.
     let fixTimer: number | undefined
+    let fixDeadline = 0
     const armRestoreFix = (): void => {
       if (!needRestoreFix.current) return
+      if (!host.current?.offsetParent || asleepRef.current) {
+        fixDeadline = 0
+        window.clearTimeout(fixTimer)
+        return
+      }
+      // Codex keeps animating between turns. Prefer a quiet frame, but do not let
+      // that traffic postpone this one repair forever.
+      const now = Date.now()
+      if (!fixDeadline) fixDeadline = now + 5000
       window.clearTimeout(fixTimer)
-      fixTimer = window.setTimeout(runRestoreFix, RESTORE_FIX_MS)
+      fixTimer = window.setTimeout(runRestoreFix, Math.max(0, Math.min(RESTORE_FIX_MS, fixDeadline - now)))
     }
     armFix.current = armRestoreFix
 
-    // Replay whatever the pty printed before this pane existed (new pane on an
-    // existing session, or a remount).
-    // The replay is queued rather than started: every pane on a restored desk mounts in
-    // one tick, and eight 400 kB parses at once is the whole of "after a restart it is
-    // super laggy". See `replayQueue.ts`.
+    // Initial restore uses the same ordered disk snapshot as Fix. A 400 kB raw
+    // tail can contain nothing but Codex animation, with its base screen gone.
+    // Main flushes deltas before pane:reset, so an async read cannot append old
+    // frames after live output. Keep later deltas behind any staged-width replay.
     let gone = false
+    let initialReplay: (() => void) | undefined
+    let finishInitialReplay: (() => void) | undefined
+    let replayDeltas: string[] | null = null
     queueReplay({
       id: sessionId,
       priority: () => (activeRef.current ? 0 : visibleRef.current ? 1 : 2),
       run: () =>
         new Promise<void>((settle) => {
           if (gone) return settle()
-          void api.getBuffer(sessionId).then((b) => {
-            if (gone || !b) return settle()
-            replayBuffer(b, settle)
+          finishInitialReplay = initialReplay = () => {
+            finishInitialReplay = undefined
+            settle()
+          }
+          void api.replayHistory(sessionId).then((ok) => {
+            if (!ok || gone) {
+              initialReplay = undefined
+              finishInitialReplay?.()
+            }
+          }).catch(() => {
+            initialReplay = undefined
+            finishInitialReplay?.()
           })
         })
     })
@@ -3644,30 +3663,6 @@ function TerminalPane({
         // The replay IS the conversation this pane is being reopened into, so its
         // prompts get their tags back. See seedMarks.
         seedMarks()
-        // ...and when it got NONE, the replay is the reason, not the reader. Main holds a
-        // pane's live replay in memory for every pane, so it is capped at 400 KB - and an
-        // agent CLI's output is almost all repaint frames, so those 400 KB are worth very
-        // little conversation. Measured 2026-09-04 over this desk's own 301 history logs
-        // above 50 KB, rendered through a headless xterm at each log's own width and read
-        // by `seedPrompts`:
-        //
-        //     last 0.4 MB  ->    351 tags,  103 of 237 panes with NO tag at all
-        //     last 1.0 MB  ->    693 tags,   53 with none
-        //     last 2.0 MB  -> 1,062 tags,   33 with none
-        //     last 4.0 MB  -> 1,320 tags,   27 with none
-        //
-        // So a restored pane came back with 30.8% of its own prompts tagged, and a third
-        // of them came back with none: "the tag to scroll to my prompt does nothing" is
-        // most of the time "the prompt was never replayed". `redrawHistory` already reads
-        // the LOG at the 4 MiB replay budget and re-seeds off it - 118 ms once, measured -
-        // so a pane whose rail came back empty is given that one deeper draw. Only then:
-        // a rail with tags on it has what it needs, and this must not cost every pane.
-        if (!list.length && !deepSeeded.current) {
-          deepSeeded.current = true
-          // A hidden pane cannot be measured and is not being read; it gets the deeper
-          // draw the moment somebody presses Fix, or reopens it.
-          if (host.current?.offsetParent) void paneRedraw.get(sessionId)?.()
-        }
       }
       // Its real shape before a byte lands. xterm opens at 80x24 and the fit otherwise
       // arrives a frame or two later, which is the first half of "after the update
@@ -3915,6 +3910,30 @@ function TerminalPane({
 
     const offReset = api.onPaneReset((id, snapshot) => {
       if (id !== sessionId) return
+      if (initialReplay) {
+        const settle = initialReplay
+        initialReplay = undefined
+        if (!snapshot) return settle()
+        for (const m of list.splice(0)) m.marker.dispose()
+        publish()
+        window.clearTimeout(wipeTimer)
+        wipeSnap = null
+        keep = makeKeeper()
+        replayDeltas = []
+        pendingDataWrites++
+        // Discard any live bytes already parsed before main's snapshot boundary.
+        // RIS is queued with the snapshot, never an imperative reset ahead of writes.
+        replayBuffer('\x1bc' + snapshot, () => {
+          const deltas = replayDeltas ?? []
+          replayDeltas = null
+          pendingDataWrites--
+          for (const data of deltas) writeData(data)
+          drainTyped()
+          // The next pane's replay may start only after these deltas were parsed.
+          t.write('', settle)
+        })
+        return
+      }
       // A reconnect replaces the buffer, but it is not a request to leave the part of the
       // conversation the reader was inspecting. xterm resets the viewport to its tail as
       // it writes the replacement, so keep its distance from that tail and restore it once
@@ -3978,8 +3997,7 @@ function TerminalPane({
       })
     })
 
-    const off = api.onData((id, data) => {
-      if (id !== sessionId) return
+    const writeData = (data: string): void => {
       if (!sawOutput) setBlank(false)
       sawOutput = true
       lastByteAt.current = Date.now()
@@ -4008,6 +4026,11 @@ function TerminalPane({
         pendingDataWrites--
         drainTyped()
       })
+    }
+    const off = api.onData((id, data) => {
+      if (id !== sessionId) return
+      if (replayDeltas) replayDeltas.push(data)
+      else writeData(data)
     })
 
     /**
@@ -4413,6 +4436,8 @@ function TerminalPane({
       // every keystroke to a session that is gone.
       // A pane that goes away before its replay is picked must not hold the queue up.
       gone = true
+      finishInitialReplay?.()
+      initialReplay = undefined
       dropReplay(sessionId)
       syncedPanes.delete(sessionId)
       paneTerms.delete(sessionId)

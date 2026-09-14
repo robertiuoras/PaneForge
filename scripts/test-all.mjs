@@ -248,6 +248,7 @@ const TESTS = [
   ['pathlink', 'pathlink-test.mjs'],
   ['terminalpathlink', 'terminal-path-link-test.mjs'],
   ['restorereader', 'restore-reader-test.mjs'],
+  ['restorestream', 'restore-stream-test.mjs'],
   ['headlessfocus', 'headless-focus-test.mjs'],
   ['revealpane', 'reveal-pane-test.mjs'],
   ['gamemode', 'gamemode-test.mjs'],

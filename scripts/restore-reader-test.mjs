@@ -26,7 +26,7 @@ try{
 // Exercise the actual reset handler: a full log omits a screen of trailing repaint
 // blanks that the live buffer had. Keeping tail distance used to move the reader.
 const resetFrom=src.indexOf('    const offReset = api.onPaneReset(')
-const resetTo=src.indexOf('\n    const off = api.onData(',resetFrom)
+const resetTo=src.indexOf('\n    const writeData =',resetFrom)
 assert(resetFrom>0&&resetTo>resetFrom)
 const resetCode=transformSync(src.slice(resetFrom,resetTo),{loader:'ts'}).code
 const term=new Terminal({cols:85,rows:30,allowProposedApi:true})
@@ -36,7 +36,7 @@ let reset
 const pin={current:false},intent={current:0}
 new Function('api','t','pinned','scrollIntent','setScrolledUp',`
 const sessionId='test',list=[],publish=()=>{},dead=false,setBlank=()=>{},window={clearTimeout(){}},wipeTimer=0,makeKeeper=()=>x=>x,withoutReplayQueries=x=>x,seedMarks=()=>{},drainTyped=()=>{};
-let sawOutput=false,wipeSnap=null,keep=x=>x,readingSnapshot=false,pendingDataWrites=0;
+let initialReplay, sawOutput=false,wipeSnap=null,keep=x=>x,readingSnapshot=false,pendingDataWrites=0;
 ${resetCode}
 `)({onPaneReset:fn=>{reset=fn}},term,pin,intent,()=>{})
 try{
