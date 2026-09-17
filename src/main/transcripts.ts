@@ -1239,3 +1239,55 @@ function clean(raw: string): string | undefined {
   if (s.length > PROMPT_CHARS) s = s.slice(0, PROMPT_CHARS - 1).trimEnd() + '…'
   return s
 }
+
+/**
+ * Why a conversation could not be verified, in words a log line can carry.
+ *
+ * `resumableTranscript` answers a path or null, and null is every failure at once: no
+ * id, a file the CLI files somewhere else, a file that is there but has never been
+ * answered. A pane on this desk was refused sleep `conversation-unverified` nineteen
+ * times over two days with nothing beside the refusal to say WHICH of those it was
+ * (2026-09-17, panes `s15-mu3zrr31` and `s42-mu5gkqxf`), so the log could not settle it
+ * and the diagnosis had to start from scratch. This names the file that was looked at,
+ * whether it is there, how big it is and the mark that was searched for.
+ *
+ * It decides nothing: `resumableTranscript` is still the answer the sleep is gated on.
+ */
+export interface ResumeEvidence {
+  /** the file the resume was looked for in, or null when no path could be built */
+  file: string | null
+  exists: boolean
+  /** bytes, when the file is there */
+  bytes?: number
+  /** what a reply looks like in this CLI's transcript */
+  mark: string
+  /** whether that mark was found - the half `resumableTranscript` turns into a path */
+  reply: boolean
+}
+
+export function resumeEvidence(cwd: string, resumeId?: string, agent = 'claude'): ResumeEvidence {
+  const mark = agent === 'antigravity'
+    ? String(AGY_REPLY_MARK)
+    : agent === 'codex'
+      ? 'response_item/message/assistant'
+      : String(REPLY_MARK)
+  if (!resumeId) return { file: null, exists: false, mark, reply: false }
+  const file = agent === 'antigravity'
+    ? antigravityTranscriptFile(resumeId)
+    : agent === 'codex'
+      ? codexTranscriptPath(cwd, resumeId)
+      : transcriptPath(cwd, resumeId)
+  if (!file) return { file: null, exists: false, mark, reply: false }
+  let bytes: number | undefined
+  try {
+    bytes = statSync(file).size
+  } catch {
+    return { file, exists: false, mark, reply: false }
+  }
+  const reply = agent === 'antigravity'
+    ? file.endsWith('.jsonl') && hasReply(file, AGY_REPLY_MARK)
+    : agent === 'codex'
+      ? hasCodexReply(file)
+      : hasReply(file)
+  return { file, exists: true, bytes, mark, reply }
+}

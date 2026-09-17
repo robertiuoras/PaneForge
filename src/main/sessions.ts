@@ -77,7 +77,7 @@ export interface AutoClearArm {
   tokens?: number
 }
 import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from './pipe'
-import { forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeIdFor, transcriptPath } from './transcripts'
+import { forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeEvidence, resumeIdFor, transcriptPath } from './transcripts'
 import { liveModelFor } from './paneModel'
 // How hard a Codex pane thinks. The rule is `shared/effort.ts`, the disk is
 // `main/effort.ts`, the levels each model offers come from Codex itself.
@@ -1283,7 +1283,19 @@ export class SessionManager extends EventEmitter {
       const at = Date.now()
       if (!live.sleepRefusalShown || at - (live.sleepRefusalLoggedAt ?? 0) >= 5 * 60_000) {
         live.sleepRefusalLoggedAt = at
-        logReclaim({ action: 'sleep-refused', pane: id, ...decision, resumeId, refusal: 'conversation-unverified', shown: live.sleepRefusalShown === true })
+        // WHICH of the several ways a conversation goes unverified this was. The refusal
+        // on its own is every failure at once - no id, a file the CLI keeps somewhere
+        // else, a file that is there and has never been answered - so nineteen of these
+        // lines over two days could not settle the question and the diagnosis started
+        // from nothing (2026-09-17, panes `s15-mu3zrr31` and `s42-mu5gkqxf`). The check
+        // decides nothing; `resumable` above is still the gate.
+        const seen = resumeEvidence(resumeCwd, resumeId, live.meta.agent)
+        logReclaim({
+          action: 'sleep-refused', pane: id, ...decision, resumeId, refusal: 'conversation-unverified',
+          resumeCwd, transcript: seen.file, transcriptExists: seen.exists, transcriptBytes: seen.bytes,
+          replyMark: seen.mark, reply: seen.reply,
+          shown: live.sleepRefusalShown === true
+        })
       }
       // The same sentence the terminal gets, on the card that was pressed. The second
       // press goes through - that is what `sleepRefusalShown` is for - so the sentence
