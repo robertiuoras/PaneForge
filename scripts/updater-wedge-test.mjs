@@ -156,6 +156,14 @@ const h=stub.__handlers,calls=stub.__calls,at=()=>calls.length
   ok(u.getUpdateState().phase!=='checking','a hung check is dropped on its own clock, with nobody asking')
   ok(/wedged/.test(logged()),'the wedge is written down rather than recovered in silence')
   ok(/network unknown|online|OFFLINE/.test(logged()),'and it says what the network was doing when it started')
+  // electron-updater's own end of the dropped request lands a few ms after the drop as
+  // net::ERR_TIMED_OUT (fifteen times on 2026-09-17 alone). It cannot be aborted, so it
+  // is recognised: one line, no red badge, no retry over a check already started over.
+  let mark=logged().length
+  h['error'](new Error('net::ERR_TIMED_OUT'))
+  await sleep(40)
+  ok(u.getUpdateState().phase!=='error','the late end of a dropped check is not an error')
+  ok(/late answer/.test(logged().slice(mark))&&!/state error/.test(logged().slice(mark)),'...and is one line, not error + state error')
   stub.__hang(false)
   b=at(); await u.checkForUpdates()
   ok(at()===b+1,'and the next check runs clean')
@@ -166,7 +174,7 @@ const h=stub.__handlers,calls=stub.__calls,at=()=>calls.length
   stub.__hang(true)
   void u.checkForUpdates()
   await sleep(0)
-  let mark=logged().length
+  mark=logged().length
   const wedgesBefore=JSON.parse(fs.readFileSync(path.join(el.__dir,'update-health.json'),'utf8')).wedges
   const until=Date.now()+220; while(Date.now()<until){}
   await sleep(60)
@@ -322,7 +330,8 @@ const env = {
   // slept" here, the way 17 minutes is in the app.
   PF_WAKE_TICK_MS: '20',
   PF_SLEEP_GAP_MS: '150',
-  PF_WAKE_SETTLE_MS: '120'
+  PF_WAKE_SETTLE_MS: '120',
+  PF_LATE_ANSWER_MS: '400'
 }
 
 let bad = 0

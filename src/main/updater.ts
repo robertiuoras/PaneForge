@@ -204,6 +204,16 @@ setInterval(() => wake.tick(Date.now()), Number(process.env.PF_WAKE_TICK_MS) || 
 let droppedAt = 0
 
 /**
+ * How long after a drop electron-updater's own end of that request is still expected.
+ * Its socket timeout fires within seconds of the wake that dropped the phase; a minute
+ * is generous and still far inside the 10-minute poll, so it cannot reach the next check.
+ */
+const LATE_ANSWER_MS = Number(process.env.PF_LATE_ANSWER_MS) || 60_000
+
+/** The shapes a request that died with the network fails in. A 404 is never one. */
+const NETWORK_FAILURE = /net::ERR_|did not answer within|ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|socket hang up|network/i
+
+/**
  * What the network looked like when the current phase began.
  *
  * A wedge cannot explain itself: the promise that never settled is inside
@@ -1238,6 +1248,15 @@ export function initUpdater(onChange: Emit, enabled: boolean): void {
       if (isProbing()) {
         log('probe error', message.slice(0, 160))
         if (/404/.test(message)) borrowGhToken(u, () => void pollOnce())
+        return
+      }
+      // The check this is the end of was already dropped - by the sleep or wedge timer, a
+      // few seconds ago - and the phase has moved on. electron-updater cannot be told to
+      // abort a check, so its request fails on its own clock and lands here as
+      // `net::ERR_TIMED_OUT`; it used to write `error`, two `state error` lines and a
+      // three-minute retry over a check already started over. One line, no badge.
+      if (droppedAt && Date.now() - droppedAt < LATE_ANSWER_MS && !budgetFor(state.phase) && NETWORK_FAILURE.test(message)) {
+        log('late answer', `${message.slice(0, 160)} - the end of the check dropped ${Math.round((Date.now() - droppedAt) / 1000)}s ago, already started over`)
         return
       }
       // electron-updater fires this several times for one failed check (the feed, the
