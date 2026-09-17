@@ -693,6 +693,31 @@ if (cmd === 'list') {
   }
   const out = await call(channel, args)
   console.log(out === undefined ? 'ok' : JSON.stringify(out))
+} else if (cmd === 'cost') {
+  // What the live app's window is spending. `ps` gives a lifetime average and `sample`
+  // names only the busy thread, so this is the only reading that says which FUNCTION,
+  // taken by the installed app against its own window.
+  const i = rest.indexOf('--seconds')
+  const seconds = i >= 0 && rest[i + 1] ? Number(rest[i + 1]) : 10
+  const cost = await call('app:renderCost', [seconds])
+  if (!cost) fail(1, 'no window to profile - is the app running?')
+  console.log(
+    `${cost.spanMs} ms profiled, window up ${cost.upMinutes} min, heap ${cost.heapMb} MB\n` +
+      `${cost.busyPct.toFixed(1)}% of one core in JS, ${cost.idlePct.toFixed(1)}% idle\n` +
+      (cost.busyPct < 20
+        ? 'JS is not the cost here: the time is going on paint, the GPU, or another process.\n'
+        : 'JS is the cost: the rows below are where it went.\n')
+  )
+  for (const r of cost.rows.filter((r) => r.pct >= 0.4)) {
+    console.log(
+      `${r.pct.toFixed(1).padStart(5)}%  ${(r.us / 1000).toFixed(0).padStart(6)}ms  ${r.name}${r.where ? '  ' + r.where : ''}`
+    )
+  }
+} else if (cmd === 'reload') {
+  // Draw the desk again from the record main holds. Panes, ptys and conversations live in
+  // main and survive it - the same recovery renderWatch.ts performs on a wedged window.
+  const done = await call('app:reloadWindow', [])
+  console.log(done ? 'the window is drawing itself again' : 'no window to reload')
 } else if (cmd === 'send') {
   // The same escape hatch for the `send` half of surface.ts. `call` cannot reach these -
   // a send channel has no reply to wait on - and some of them are the only way to say a
@@ -711,7 +736,7 @@ if (cmd === 'list') {
 } else {
   fail(
     1,
-    `unknown command "${cmd ?? ''}" - use: list | open | open-many | devices | needs-login | login | tell | close | rename | type | hold | call | send`
+    `unknown command "${cmd ?? ''}" - use: list | open | open-many | devices | needs-login | login | tell | close | rename | type | hold | cost | reload | call | send`
   )
 }
 }

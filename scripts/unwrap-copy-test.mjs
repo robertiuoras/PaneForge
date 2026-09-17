@@ -216,4 +216,37 @@ const endsThenProse = [
 const tail = unwrapForClipboard(endsThenProse)
 assert.ok(tail.includes('week and nobody'), 'prose after the address keeps its space')
 
-console.log('unwrap copy: 25 assertions passed')
+// A link Claude Code wrapped inside its own two-space left margin: every continuation row
+// is indented, and the address is full of `=`, so the paragraph read as code, the indent
+// stayed on, and `BLOCK_START` called each row its own block - the whole link pasted with
+// the breaks still in it (Robert, 2026-09-18, an Upwork OAuth URL over five rows).
+const indented = [
+  'https://www.upwork.com/ab/account-security/oauth2/authorize?response_type=code&cl',
+  '  ient_id=https%3A%2F%2Fchatgpt.com%2Foauth%2Fcodex%2FekprnYCbs55f%2Fclient.json&st',
+  '  ate=N0nSel68Xc5bn3nLDKGquQ&code_challenge=-HsYTBBkG77gyjQoPUOJN2A9r6GVHgA39DqMYNy',
+  '  PjHU&code_challenge_method=S256&redirect_uri=http%3A%2F%2F127.0.0.1%3A49342%2Fcal',
+  '  lback%2FekprnYCbs55f&resource=https%3A%2F%2Fmcp.upwork.com%2Fmcp',
+].join('\n')
+const indentedOut = unwrapForClipboard(indented)
+assert.equal(indentedOut.split('\n').length, 1, 'an indented wrapped link comes back as one line')
+assert.ok(!/\s/.test(indentedOut), 'and carries no whitespace anywhere in it')
+assert.ok(
+  indentedOut.endsWith('&resource=https%3A%2F%2Fmcp.upwork.com%2Fmcp'),
+  'the last fragment is on the end of the address',
+)
+assert.ok(indentedOut.includes('code&client_id='), 'the first break closes up')
+
+// ...and an indented row that is NOT one token is somebody's layout, not a wrap: a link
+// with an indented sentence under it keeps both rows.
+const linkThenIndentedProse = [
+  'The signed report link for this run is https://app.taskdriver.ai/connect/r?id=99a1',
+  '  and a note somebody typed underneath it, which stays on its own line.',
+].join('\n')
+assert.equal(
+  unwrapForClipboard(linkThenIndentedProse).split('\n').length,
+  2,
+  'an indented sentence under a link is not glued onto it',
+)
+
+
+console.log('unwrap copy: 30 assertions passed')

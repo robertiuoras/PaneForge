@@ -144,6 +144,8 @@ export const SURFACE: Surface = {
   installUpdateAnyway: ['send', 'game:installAnyway'],
   gameStatus: ['invoke', 'game:status'],
   appVisibleNow: ['invoke', 'app:visibleNow'],
+  renderCost: ['invoke', 'app:renderCost'],
+  reloadWindow: ['invoke', 'app:reloadWindow'],
   appOnBatteryNow: ['invoke', 'app:batteryNow'],
   setGameManual: ['invoke', 'game:manual'],
   pendingRestore: ['invoke', 'restore:pending'],

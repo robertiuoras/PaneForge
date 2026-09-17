@@ -672,6 +672,11 @@ ok(!server.running, 'the gate test server stopped cleanly')
     // starts either way, this only says on which machine, and the deadline answers alone.
     'offload:answer',
     'activity:list',
+    // A CPU profile of this app's own window, and the reload that answers a window which
+    // has accumulated too much. Neither types, reaches a pty, or leaves the machine: the
+    // profile is function names out of this build, and the reload is the same recovery
+    // renderWatch.ts already performs on its own.
+    'app:renderCost', 'app:reloadWindow',
     // What has happened to each copy of each project: a reading of a file this app wrote
     // itself, naming folders and chat titles the sidebar already draws. Nothing in it can
     // be pressed and nothing in it types.

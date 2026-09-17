@@ -204,11 +204,29 @@ export function unwrapForClipboard(text: string): string {
     // prose join, which puts a SPACE in the middle of the address. A row 40 characters
     // long ending mid-URL was wrapped by the terminal; nothing else writes one.
     const inUrl = prev !== null && (openUrl || URL_TAIL.test(prev));
-    const urlWrap = openable && inUrl && /^[^\s]/.test(line) && prev.length >= MIN_WIDTH;
+    // ...and the row underneath may be INDENTED. Claude Code draws its answers with a
+    // two-space left margin, so a link it wrapped arrives with every continuation row
+    // carrying that margin. `stripRenderedIndent` cannot take it off - a query string is
+    // full of `=`, so the paragraph reads as code - and `BLOCK_START` then calls every
+    // indented row its own block, which is why an OAuth link copied out of a Claude pane
+    // still pasted with the breaks in it (Robert, 2026-09-18). An indented row only
+    // continues the address when it is ONE token: a wrap has no room for a space, and a
+    // line somebody typed under a link is not a lone unbroken word.
+    const body = line.trim();
+    const flush = /^[^\s]/.test(line);
+    const lone = body !== '' && !/\s/.test(body);
+    const urlWrap =
+      prev !== null &&
+      prev.trim() !== '' &&
+      body !== '' &&
+      inUrl &&
+      prev.length >= MIN_WIDTH &&
+      !BLOCK_END.test(prev) &&
+      (flush ? !BLOCK_START.test(line) : lone);
     if (urlWrap) {
-      const glued = `${prev}${line}`;
+      const glued = `${prev}${body}`;
       out[out.length - 1] = glued;
-      openUrl = stillInUrl(true, glued, line);
+      openUrl = stillInUrl(true, glued, body);
     }
     // ...and belt and braces: any other join of a row that ends inside a URL closes with
     // nothing too. A space here is never right, whatever decided to join the rows.

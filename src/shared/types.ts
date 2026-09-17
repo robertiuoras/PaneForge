@@ -2170,6 +2170,18 @@ export interface RestoreAnswer {
 }
 
 /** Shape exposed on window.api by the preload script. */
+/** One function in a window's CPU profile - see shared/renderCost.ts. */
+export type RenderCostRow = { name: string; where: string; us: number; pct: number }
+/** What a window is spending, as `app:renderCost` answers it. */
+export type RenderCostReading = {
+  spanMs: number
+  busyPct: number
+  idlePct: number
+  rows: RenderCostRow[]
+  heapMb: number
+  upMinutes: number
+}
+
 export interface Api {
   /** Available only to the authenticated PaneForge repository owner. */
   ownerAccess(): Promise<boolean>
@@ -2840,6 +2852,10 @@ export interface Api {
   onLinkState(cb: (state: LinkState) => void): () => void
   /** the window state right now, for the page's first paint (the push can arrive first) */
   appVisibleNow(): Promise<boolean>
+  /** A CPU profile of THIS window, taken by the app against itself. */
+  renderCost(seconds?: number): Promise<RenderCostReading | null>
+  /** Throw away the window's accumulated state and draw the desk again. */
+  reloadWindow(): Promise<boolean>
   /** on battery right now, for the page's first paint (the push can arrive first) */
   appOnBatteryNow(): Promise<boolean>
   /** game started or ended, or something joined/left the queue waiting on it */

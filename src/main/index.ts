@@ -1,4 +1,5 @@
 import { flushLogsOnExit } from './logWrite'
+import { profileRenderer, reloadRenderer } from './renderCost'
 import { execFile, spawn } from 'node:child_process'
 import { existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
@@ -3612,6 +3613,13 @@ ipcMain.handle('app:visibleNow', () => !!win && !win.isMinimized() && win.isVisi
 // Same race, same answer: the push can land before the page is listening, so the first
 // paint asks instead of waiting to be told.
 ipcMain.handle('app:batteryNow', () => onBatteryNow())
+// What this window is spending, measured against ITSELF. `ps` reports a lifetime average
+// and `sample` names only the busy thread, so before this there was no way to ask the
+// installed app - the one carrying days of accumulated state - where its time was going.
+ipcMain.handle('app:renderCost', (_e, seconds?: number) => profileRenderer(seconds ?? 10))
+// ...and the answer to a window that has accumulated too much: draw the desk again from
+// the record main holds. Panes, ptys and conversations all live in main and survive it.
+ipcMain.handle('app:reloadWindow', () => reloadRenderer())
 /**
  * The renderer's idle clock ran out - see shared/idlequit.ts for every refusal that had
  * to pass first.

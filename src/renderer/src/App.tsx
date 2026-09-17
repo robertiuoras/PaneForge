@@ -110,6 +110,7 @@ import {
   countdownEnd,
   DEFAULT_MASCOT,
   KEEP_MINUTES,
+  keepHoldMs,
   paneWord,
   type ActedPane,
   type MascotConfig,
@@ -4193,6 +4194,8 @@ export default function App(): JSX.Element {
    * shape that gets a feature switched off.
    */
   const keptUntil = useRef<Record<string, number>>({})
+  /** How many times in a row somebody has kept each pane; the hold grows with it. */
+  const keepPresses = useRef<Record<string, number>>({})
   const mascotOnRef = useRef(DEFAULT_MASCOT.enabled)
   mascotOnRef.current = config?.mascot?.enabled ?? DEFAULT_MASCOT.enabled
 
@@ -4490,11 +4493,16 @@ export default function App(): JSX.Element {
     // never (2026-09-07). Robert, 2026-09-10: "random noises in paneforge". The sound
     // announces a decision a person can act on, so it waits until there is one to look at.
     //
-    // A SLEEP countdown is silent on purpose: sleeping takes nothing away - the card, the
-    // screen and the conversation all stay - so it is worth drawing and not worth a noise.
+    // A SLEEP countdown used to be silent here, on the reading that sleeping takes nothing
+    // away. It takes the AGENT away: the CLI is killed and the turn you were waiting on is
+    // over, and the card saying so sits in a corner of a window that is usually behind
+    // something else. Every countdown that ran on this machine on 2026-09-17 was a sleep -
+    // 38 of 38 `due` lines - so "it closed without making a sound" was the whole feature
+    // being silent, not a sound that failed (Robert, 2026-09-18). One bowl for the stretch,
+    // same as a close.
     const t = window.setTimeout(() => {
       if (!soundOn.current) return
-      if (!closeSoonsRef.current.some((c) => !c.sleep)) return
+      if (!closeSoonsRef.current.length) return
       // `playAction`, never `playEvent`: the pane a sweep picks is usually the one that
       // just finished, so the `done` chime lands a moment before this and the 900ms guard
       // ate it.
@@ -4503,9 +4511,9 @@ export default function App(): JSX.Element {
     return () => window.clearTimeout(t)
   }, [anySoon])
   // The ticks belong to the SOONEST deadline: the last ten seconds of the stack, once,
-  // whichever card they are counting - and never a sleep's, which is silent.
+  // whichever card they are counting - a sleep's included, see the alert above.
   useEffect(() => {
-    if (!closeSoon || closeSoon.sleep) return
+    if (!closeSoon) return
     if (!soundOn.current) return
     const ticks: number[] = []
     // Ten, not five. The countdown is fifteen seconds and five put the first sound two
@@ -4824,8 +4832,24 @@ export default function App(): JSX.Element {
   const keepOpen = useCallback((ids: string[]) => {
     // The third way an `armed` line ends without a close, and the only one somebody chose.
     skipClose(ids, 'you kept it open')
-    const until = Date.now() + KEEP_MINUTES * 60_000
-    for (const id of ids) keptUntil.current[id] = until
+    // Each press on the same pane holds it longer - see `keepHoldMs`. A flat ten minutes
+    // meant the identical card came back at minute ten and took the pane then, which is
+    // the press reading as though it did nothing.
+    const now = Date.now()
+    for (const id of ids) {
+      const presses = (keepPresses.current[id] ?? 0) + 1
+      keepPresses.current[id] = presses
+      const hold = keepHoldMs(presses)
+      keptUntil.current[id] = now + hold
+      api.logReclaim({
+        event: 'kept',
+        id,
+        name: paneWordRef.current(id),
+        presses,
+        minutes: Math.round(hold / 60_000)
+      })
+    }
+    const until = now + keepHoldMs(Math.max(...ids.map((id) => keepPresses.current[id] ?? 1)))
     // A move called off needs the handoff sweeps' OWN hold as well, or the next minute
     // tick arms the identical countdown again - which is the shape that gets a feature
     // switched off. The sweep lock goes back with it.
