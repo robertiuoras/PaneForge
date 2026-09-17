@@ -801,7 +801,12 @@ function pick(
   const cap = Math.min(Math.max(0, cfg.maxPerSweep), room)
   for (const p of eligible) {
     if (out.length >= cap) break
-    const host = hostFor(peers, p.projectName)
+    // ...and never back where it came from. `budgetPlan` has always passed `arrivedFrom`
+    // here; this rung did not, so a pane the Mac handed to the PC was handed straight back
+    // by the PC's own idle sweep ten minutes later - "pc session cme back to mac randomly"
+    // (Robert, 2026-09-17). Each desk only ever writes its own half of that, so the loop
+    // is invisible in either machine's log.
+    const host = hostFor(peers, p.projectName, p.arrivedFrom)
     if (!host) continue
     out.push({ id: p.id, ...host, idleMs: now - quietSince(p) })
   }

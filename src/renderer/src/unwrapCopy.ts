@@ -60,7 +60,24 @@ const BLOCK_END = /\|\s*$/;
 // encodes it the space comes back as `%20` (Robert, 2026-09-12: a copied link arriving as
 // `.../report-email/Wi2CoTjd0nr8Ns5qxiLcQsjPBkazp5HgoER hr6uzAlU`). So a break inside a
 // URL is closed with nothing at all.
-const URL_TAIL = /(?:^|\s)(?:https?:\/\/|www\.)[^\s]*$/;
+const URL_TAIL = /(?:^|[\s(<\[])(?:https?:\/\/|www\.)[^\s]*$/;
+
+/**
+ * ...and a URL long enough to take THREE rows has a middle row with no `https://` on it,
+ * so `URL_TAIL` - which looks for the scheme on the row it is testing - says no about
+ * exactly the row that is deepest inside the address. That row then fell through to the
+ * prose join and got a space put in it, which is the `%20` still coming back from Codex
+ * and antigravity panes, whose frames are narrower than Claude Code's and so break a link
+ * into more pieces (Robert, 2026-09-17).
+ *
+ * `stillInUrl` carries the reading forward rather than re-deriving it: once a row is known
+ * to end inside an address, a fragment glued onto it carrying no whitespace of its own
+ * leaves it ending inside that same address.
+ */
+function stillInUrl(open: boolean, joined: string, added: string): boolean {
+  if (open && !/\s/.test(added.trim())) return true;
+  return URL_TAIL.test(joined);
+}
 
 function isFull(line: string, width: number): boolean {
   return line.length >= width - SLACK;
@@ -160,6 +177,8 @@ export function unwrapForClipboard(text: string): string {
   const fullWidth = Math.max(...lines.map((l) => l.length));
 
   const out: string[] = [];
+  // Whether the last row in `out` ends inside a URL. See `stillInUrl`.
+  let openUrl = false;
   const from: number[] = [];
   lines.forEach((line, i) => {
     const prev = out.length ? out[out.length - 1] : null;
@@ -184,14 +203,23 @@ export function unwrapForClipboard(text: string): string {
     // the wrap column, the URL row read as "not full", and the break fell through to the
     // prose join, which puts a SPACE in the middle of the address. A row 40 characters
     // long ending mid-URL was wrapped by the terminal; nothing else writes one.
-    const urlWrap = openable && URL_TAIL.test(prev) && /^[^\s]/.test(line) && prev.length >= MIN_WIDTH;
-    if (urlWrap) out[out.length - 1] = `${prev}${line}`;
+    const inUrl = prev !== null && (openUrl || URL_TAIL.test(prev));
+    const urlWrap = openable && inUrl && /^[^\s]/.test(line) && prev.length >= MIN_WIDTH;
+    if (urlWrap) {
+      const glued = `${prev}${line}`;
+      out[out.length - 1] = glued;
+      openUrl = stillInUrl(true, glued, line);
+    }
     // ...and belt and braces: any other join of a row that ends inside a URL closes with
     // nothing too. A space here is never right, whatever decided to join the rows.
-    else if (joinable) out[out.length - 1] = URL_TAIL.test(prev) ? `${prev}${line.trim()}` : `${prev} ${line.trim()}`;
-    else {
+    else if (joinable) {
+      const glued = inUrl ? `${prev}${line.trim()}` : `${prev} ${line.trim()}`;
+      out[out.length - 1] = glued;
+      openUrl = stillInUrl(inUrl, glued, line);
+    } else {
       out.push(line);
       from.push(i);
+      openUrl = URL_TAIL.test(line);
     }
   });
   const joined = out.join('\n');

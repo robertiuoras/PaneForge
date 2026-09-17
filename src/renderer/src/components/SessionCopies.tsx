@@ -25,10 +25,20 @@ export default function SessionCopies({ session, boards, onOpen }: {
     } else other.push(held)
   }
   const opened = describePlace({ cwd: session.cwd, lane: session.lane })
+  // ONE chip per card, whatever else this chat happens to be holding.
+  //
+  // A chat that has visited three other projects holds a work folder in each, and each
+  // used to get its own chip. Four chips wrap the card onto extra rows, and a sidebar of
+  // those fits three cards on a 16-inch screen (Robert, 2026-09-17: "theres too many
+  // other copies 4 ... i can barely see even 3 sessions cards on the left"). The other
+  // holds are still worth knowing about, so they move into this chip's tooltip, where
+  // they cost no height. Releasing them is the lane board's job, not a card's.
   const copies = [
-    { cwd: primary?.dir ?? session.cwd, lane: primary?.lane ?? session.lane, held: primary, primary: true },
-    ...other.map(held => ({ cwd: held.dir, lane: held.lane, held, primary: false }))
+    { cwd: primary?.dir ?? session.cwd, lane: primary?.lane ?? session.lane, held: primary, primary: true }
   ]
+  const elsewhere = other
+    .map(held => describePlace({ cwd: held.dir, lane: held.lane }).short)
+    .join('\n')
   return <>{copies.map(copy => {
     const place = describePlace({ cwd: copy.cwd, lane: copy.lane })
     const mark = copy.held?.conflicted ? ' stuck' : copy.held?.ready ? ' done' : copy.held && laneBusy(copy.held) ? ' busy' : ''
@@ -40,6 +50,7 @@ export default function SessionCopies({ session, boards, onOpen }: {
       title={`${copy.held ? 'Assigned work folder: ' : ''}${place.full}\n${copy.cwd}` +
         (moved ? `\nSession opened in ${opened.role}: ${session.cwd}. Its assigned work folder is shown here.` : '') +
         '\nCopy numbers identify folders, not the number of open sessions.' +
+        (copy.primary && elsewhere ? `\n\nThis chat is also holding a work folder in:\n${elsewhere}` : '') +
         (place.kind === 'lane' ? '\nClick to inspect saved commits and uncommitted files.' : '')}
       onClick={event => {
         event.stopPropagation()

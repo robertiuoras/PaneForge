@@ -180,9 +180,27 @@ export function preferRemoteOf(cfg?: { preferRemote?: unknown }): PreferRemote {
  * others are the person's own files on this disk, which no push carries over.
  */
 const LOCAL_PATH = /(?:^|[\s"'`(=])(?:~\/|\$HOME\/|\/Users\/|\/Volumes\/|\/private\/|\/tmp\/|[A-Za-z]:\\)[^\s"'`)]*/g
-/** Something serving on this machine, or the shape of a port on it. */
-const LOCAL_SERVER =
+/**
+ * A brief about running an app on a port - a dev server, a localhost address.
+ *
+ * This used to pin the pane to THIS machine, on the reading that a server serving here is
+ * a thing the other machine does not have. Robert reversed it on 2026-09-17: "from now on
+ * any app local host is run remotely on pc". A dev server is the single most expensive
+ * thing a pane starts on a 16 GB laptop - `next-server` was 8.5 GB of the desk the hour he
+ * said it - and the PC has the memory, so this is now a reason to START it over there
+ * rather than a reason to keep it here.
+ *
+ * It only ever decides where a pane OPENS. A project ALREADY serving from this machine
+ * still keeps its panes here (`PlaceInput.devServer`), because that server is reachable on
+ * this screen and nowhere else, and so does anything about the screen itself.
+ */
+const SERVER_WORK =
   /\b(?:localhost|127\.0\.0\.1|0\.0\.0\.0|dev[- ]server|npm run (?:dev|start|serve)|(?:on |at )?port \d{2,5}|:\d{4,5}\b)/i
+
+/** Why this brief is about running an app on a port, or undefined. */
+export function serverWork(prompt: string | undefined): string | undefined {
+  return SERVER_WORK.exec((prompt ?? '').trim())?.[0]
+}
 /** This screen: a browser or a picture of something drawn on it. */
 const LOCAL_SCREEN = /\b(?:screenshot|screen ?shot|browser|chrome|safari|cdp|devtools|on (?:the )?screen)\b/i
 /**
@@ -214,8 +232,6 @@ export function pinnedByPrompt(prompt: string | undefined, cwd?: string): string
     if (inside && path.toLowerCase().startsWith(inside + '/')) continue
     return `it names a file on this machine (${path.length > 40 ? path.slice(0, 37) + '...' : path})`
   }
-  const server = LOCAL_SERVER.exec(p)
-  if (server) return `it is about something serving on this machine (${server[0]})`
   const screen = LOCAL_SCREEN.exec(p)
   if (screen) return `it is about this screen (${screen[0]})`
   const word = LOCAL_WORD.exec(p)
@@ -274,6 +290,14 @@ export function placeNewPane(i: PlaceInput): Placement {
 
   if (i.where === 'remote') return { where: 'remote', reason: 'you chose the other machine' }
   if (i.mode === 'always') return { where: 'remote', reason: 'set to always start this work on the other machine' }
+  // An app on a port starts on the other machine. Below every refusal above, so a brief
+  // about this screen, a file only on this disk, a bare + or a project kept here still
+  // wins; and below the `devServer` rule, so a project already serving from here is not
+  // split across two machines. See `SERVER_WORK`.
+  if (i.mode !== 'never') {
+    const server = serverWork(i.prompt)
+    if (server) return { where: 'remote', reason: `it runs an app on a port (${server}), and those run on the other machine` }
+  }
   // `auto` never moves a pane at START. Every earlier cut of this rule - pane count,
   // battery (2026-09-02), then the memory verdict at 'warn' (2026-09-03), then only at
   // 'critical' - put a pane the person had just asked for on the other screen, and each

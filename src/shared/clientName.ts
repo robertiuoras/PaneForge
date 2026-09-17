@@ -541,14 +541,20 @@ export function clientLabel(entry: ClientEntry): string {
  * Naming a pane off the FIRST sentence typed is a guess made from one reading, and it is
  * wrong as often as it is right: the first thing asked in a repo is usually an errand
  * ("what did we ship yesterday") and the card then wears that errand for the rest of the
- * day. Repetition is the evidence that was missing. Three asks that share a word are not
- * a sentence about the work, they ARE the work, and a pane can be named for it without a
+ * day. Repetition is the evidence that was missing. Asks that share a word are not a
+ * sentence about the work, they ARE the work, and a pane can be named for it without a
  * model, a request, or a fence around one folder.
  *
- * So this is the rule outside a client roster: the folder name stands until the desk has
- * said the same thing three times, and only then does the card take a subject.
+ * TWO, not three, since 2026-09-17. Three asks is most of a session: a pane in the
+ * `assistant` repo spent an afternoon on an Upwork bot still wearing `assistant`, because
+ * the third agreeing ask only arrives once the work is nearly done (Robert: "im working
+ * in assitant folder session on upwork bot should be renamed to upwork or upwork bot at
+ * least after 1-2 prompts not immediately of course"). Two agreeing asks inside a window
+ * of four is still repetition - one sentence can never name a card - and it lands while
+ * the name is still worth having. A subject that turns out to be an errand is replaced by
+ * the next two asks that agree, since the window keeps moving.
  */
-export const TOPIC_MIN_ASKS = 3
+export const TOPIC_MIN_ASKS = 2
 
 /** How many recent asks are looked at, so a subject that has moved on stops matching. */
 export const TOPIC_WINDOW = 4
@@ -598,7 +604,13 @@ const TOPIC_STOP = new Set(
     'good bad better best right wrong sure okay yeah yes not dont cant wont sorry thanks thank ' +
     'now today tomorrow yesterday really actually basically simply file files code stuff work ' +
     'working works worked run runs running fix fixes fixed add adds added change changes changed ' +
-    'were able thats theyre youre gonna going already'
+    'were able thats theyre youre gonna going already ' +
+    // Sequence and errand words. They never name work, and at two agreeing asks - see
+    // `TOPIC_MIN_ASKS` - one of them landing in two asks by chance is enough to name a
+    // card: `continue the handoff and work its next steps` twice read as `And Work Its
+    // Next`. A word that survives this list and still repeats is about the job.
+    'next steps step again back about please need needs want wants help into over with ' +
+    'from this that here there when what then also still just even only very such'
   ).split(' ').concat(SESSION_WORDS)
 )
 

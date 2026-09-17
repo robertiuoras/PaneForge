@@ -176,4 +176,44 @@ assert.ok(
   'a prose join over a URL tail uses no space either',
 )
 
-console.log('unwrap copy: 20 assertions passed')
+// A link long enough to take THREE rows. The middle row carries no `https://`, so the test
+// for "this row ends inside an address" said no about the row deepest inside it, and the
+// prose join put a space there - the `%20` still arriving from Codex and antigravity panes,
+// whose frames are narrower and so break a link into more pieces (Robert, 2026-09-17).
+const threeRow = [
+  'The signed report link for this run is https://app.taskdriver.ai/connect/report-email',
+  '/Wi2CoTjd0nr8Ns5qxiLcQsjPBkazp5HgoERhr6uzAlUq9vTbNmKx4JfGh2DpWcYs7ZeRtLu6AoIn3Bv',
+  'Ey8QkXdCfHjMgPzNrTwUaSbVl0 and it stops working after seven days have gone by ok',
+].join('\n')
+const threeOut = unwrapForClipboard(threeRow)
+assert.ok(
+  threeOut.includes(
+    'https://app.taskdriver.ai/connect/report-email/Wi2CoTjd0nr8Ns5qxiLcQsjPBkazp5HgoERhr6uzAlUq9vTbNmKx4JfGh2DpWcYs7ZeRtLu6AoIn3BvEy8QkXdCfHjMgPzNrTwUaSbVl0',
+  ),
+  'a URL wrapped over three rows rejoins with no space anywhere in it',
+)
+assert.ok(!/Bv Ey8Qk/.test(threeOut), 'and no space lands at the second break')
+
+// ...and a link the CLI printed inside brackets. The scheme is hard against the bracket, so
+// the "a URL starts here" test - which wanted whitespace or the line start in front of it -
+// read the row as ordinary prose and broke the address the same way.
+const bracketed = [
+  'Open the report (https://app.taskdriver.ai/connect/report-email/Wi2CoTjd0nr8Ns5qxiL',
+  'cQsjPBkazp5HgoERhr6uzAlU) before the end of the week please, it expires after that',
+].join('\n')
+assert.ok(
+  unwrapForClipboard(bracketed).includes('Ns5qxiLcQsjPBkazp5Hgo'),
+  'a bracketed URL rejoins without a space too',
+)
+
+// The reading has to STOP at the end of the address: a row glued on that carries a space of
+// its own ends the link, so the row after it is ordinary prose and keeps its space.
+const endsThenProse = [
+  'Grab it from https://app.taskdriver.ai/connect/report-email/Wi2CoTjd0nr8Ns5qxiLcQsj',
+  'PBkazp5HgoERhr6uzAlU today because the sign-in window closes at the end of the week',
+  'and nobody can reopen it for her once that has happened, so it is worth doing now.',
+].join('\n')
+const tail = unwrapForClipboard(endsThenProse)
+assert.ok(tail.includes('week and nobody'), 'prose after the address keeps its space')
+
+console.log('unwrap copy: 25 assertions passed')

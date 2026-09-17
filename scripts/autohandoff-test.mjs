@@ -487,6 +487,20 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
     const plan = autoHandoffPlan(panes, { ...over, over: 1 }, two, DEFAULT_AUTO_HANDOFF, {}, NOW)
     eq('but another machine may still take it', plan.map((p) => p.device).join(','), 'mini')
     eq('and hostFor is where that is decided', hostFor(peers, 'proj', 'pc'), null)
+
+    // ...and the OTHER rung has to refuse it too. `budgetPlan` passed `arrivedFrom` from
+    // the start; `pick` - the pressure and idle-clock rung - did not, so a pane the Mac
+    // handed to the PC was handed straight back by the PC's own sweep ten minutes later
+    // (Robert, 2026-09-17: "fix issue pc session cme back to mac randomly"). Each desk
+    // only writes its own half of that, so the logs never showed a loop.
+    const quiet = [
+      big({ id: 'came', arrivedFrom: 'pc', lastKeyboard: NOW - 40 * MIN }),
+      big({ id: 'me', focused: true })
+    ]
+    eq('the pressure rung never hands a pane back either', autoHandoffPlan(quiet, over, peers, DEFAULT_AUTO_HANDOFF, {}, NOW).length, 0)
+    eq('...nor does the idle clock', idleOffloadPlan(quiet, peers, { ...DEFAULT_AUTO_HANDOFF, offloadIdleMinutes: 30 }, {}, NOW).length, 0)
+    const twoPeers = [...peers, { device: 'mini', deviceName: 'Mini', online: true, projects: [{ name: 'proj', path: '/mini/proj' }] }]
+    eq('but a third machine may take it', idleOffloadPlan(quiet, twoPeers, { ...DEFAULT_AUTO_HANDOFF, offloadIdleMinutes: 30 }, {}, NOW).map((p) => p.device).join(','), 'mini')
   }
 
   // A plan that cannot converge. The cap has to be on how many are MOVED, not on how many

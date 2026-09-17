@@ -275,21 +275,27 @@ is(clientLabel({ slug: 'x', name: 'y'.repeat(80), aliases: [] }).length, 60, 'an
 const say = (...asks) => repeatedTopic(asks)
 
 is(say('the invoice reminder emails'), '', 'one ask is not a subject')
-is(say('invoice reminders', 'the invoice template'), '', 'twice is not a subject either')
+// Two asks that agree ARE. Three was most of a session: a pane in the `assistant` repo
+// worked on an Upwork bot all afternoon still wearing `assistant` (Robert, 2026-09-17).
 is(
-  say('sort the invoice reminders', 'fix the invoice template', 'invoice numbering is wrong'),
+  say('sort the invoice reminders', 'fix the invoice template'),
   'Sort Invoice Reminders',
-  'three asks about invoices name the pane, as a phrase'
+  'two asks about invoices name the pane, as a phrase'
+)
+is(
+  say('build the upwork bot proposal step', 'the upwork bot keeps timing out'),
+  'Build Upwork Bot Proposal',
+  'and the pane in a repo takes the subject, not the folder name'
 )
 is(
   say('what did we ship', 'is the mac lagging', 'make a dev release'),
   '',
-  'three unrelated asks name nothing'
+  'unrelated asks name nothing'
 )
 is(
-  say('invoice reminders', 'invoice template', 'deploy the site', 'the site deploy failed'),
-  '',
-  'a subject that has scrolled out of the window stops counting'
+  say('invoice reminders', 'deploy the site', 'the site deploy failed', 'ship it'),
+  'Deploy Site',
+  'the newest agreeing pair wins as the window moves on'
 )
 ok(
   say(
