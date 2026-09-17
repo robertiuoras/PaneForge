@@ -129,6 +129,7 @@ import {
   readStamp,
   reclaimPlan,
   reclaimedMb,
+  sleepHoldMs,
   type Reclaim,
   type ReclaimPane
 } from '../../shared/reclaim'
@@ -4179,6 +4180,8 @@ export default function App(): JSX.Element {
    * main will not do is not a reason to take the pane off the CLOSE clock too.
    */
   const sleepHeld = useRef<Record<string, number>>({})
+  /** How many times in a row main has refused to sleep each pane; the hold grows with it. */
+  const sleepRefusals = useRef<Record<string, number>>({})
   /** What the pending close is expected to give back, for the sentence afterwards. */
   // Keyed by the countdown it belongs to: two armed closes are two different numbers.
   const pendingMb = useRef<Record<string, number>>({})
@@ -4600,12 +4603,20 @@ export default function App(): JSX.Element {
               } catch {
                 slept = null
               }
-              if (slept) return
+              if (slept) {
+                delete sleepRefusals.current[id]
+                return
+              }
               // Main said no (its own line says why). Not asked again for a while: the
               // pane is still idle, so the next sweep would arm the same card and the
               // desk would count to zero every fifteen seconds for as long as it stays.
-              sleepHeld.current[id] = Date.now() + KEEP_MINUTES * 60_000
-              skipClose([id], 'the app refused to sleep it - see the sleep-refused line above')
+              // A second refusal is a standing one, so the wait doubles each time
+              // (`sleepHoldMs`): ten minutes, twenty, forty, up to two hours.
+              const refusals = (sleepRefusals.current[id] ?? 0) + 1
+              sleepRefusals.current[id] = refusals
+              const hold = sleepHoldMs(refusals)
+              sleepHeld.current[id] = Date.now() + hold
+              skipClose([id], `the app refused to sleep it (${refusals === 1 ? 'first time' : `${refusals} times`}) - see the sleep-refused line above; not asked again for ${Math.round(hold / 60_000)} min`)
             })()
           }
           return

@@ -227,6 +227,23 @@ export function sleepPressureOf(
   return level === 'over' ? 'over' : level === 'tight' ? 'tight' : 'ok'
 }
 
+/**
+ * How long the idle sweep leaves a pane alone after main refused to sleep it.
+ *
+ * The first refusal costs the same ten minutes a Keep press does. A pane refused again
+ * is refused for a reason that is not going away by itself - a conversation that cannot
+ * be verified is the one seen - so the hold doubles each time, to two hours: the log
+ * stops filling with armed/due/refused every ten minutes, and the pane is still asked
+ * often enough that a fix (a rollout finally found, a transcript answered) is noticed.
+ * The count belongs to the sweep and clears when a sleep goes through.
+ */
+export const SLEEP_HOLD_MS = 10 * 60_000
+export const SLEEP_HOLD_MAX_MS = 2 * 60 * 60_000
+export function sleepHoldMs(refusals: number): number {
+  const n = Math.max(1, Math.floor(refusals))
+  return Math.min(SLEEP_HOLD_MAX_MS, SLEEP_HOLD_MS * 2 ** (n - 1))
+}
+
 export const DEFAULT_RECLAIM: ReclaimConfig = {
   enabled: true,
   minIdleMinutes: 15,

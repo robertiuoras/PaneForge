@@ -916,7 +916,17 @@ const replies = new Map<string, { size: number; mtimeMs: number; yes: boolean }>
  */
 const REPLY_SCAN_BYTES = 256 * 1024
 
-export function hasReply(file: string): boolean {
+/**
+ * What a reply looks like in each CLI's own transcript. Antigravity's `transcript.jsonl`
+ * has no `assistant` row at all - its answers are `PLANNER_RESPONSE` steps - so every
+ * antigravity pane read as "never answered", was refused sleep `conversation-unverified`
+ * for the life of the app, and was re-armed by the idle sweep every ten minutes
+ * (2026-09-16, pane `s15-mu3zrr31`, 2+ hours of armed/due/refused).
+ */
+const REPLY_MARK = /"type":"assistant"/
+const AGY_REPLY_MARK = /"type":"PLANNER_RESPONSE"/
+
+export function hasReply(file: string, mark: RegExp = REPLY_MARK): boolean {
   let st: { size: number; mtimeMs: number }
   try {
     st = statSync(file)
@@ -934,10 +944,10 @@ export function hasReply(file: string): boolean {
     } finally {
       closeSync(fd)
     }
-    yes = /"type":"assistant"/.test(head.toString('utf8'))
+    yes = mark.test(head.toString('utf8'))
     // Only a file bigger than the chunk can still be hiding one, and only then is the
     // whole read worth making.
-    if (!yes && st.size > head.length) yes = /"type":"assistant"/.test(readFileSync(file, 'utf8'))
+    if (!yes && st.size > head.length) yes = mark.test(readFileSync(file, 'utf8'))
   } catch {
     yes = false
   }
@@ -949,7 +959,7 @@ export function hasReply(file: string): boolean {
 export function resumableTranscript(cwd: string, resumeId: string, agent = 'claude'): string | null {
   if (agent === 'antigravity') {
     const file = antigravityTranscriptFile(resumeId)
-    return file && file.endsWith('.jsonl') && hasReply(file) ? file : null
+    return file && file.endsWith('.jsonl') && hasReply(file, AGY_REPLY_MARK) ? file : null
   }
   const file = agent === 'codex' ? codexTranscriptPath(cwd, resumeId) : transcriptPath(cwd, resumeId)
   return file && (agent === 'codex' ? hasCodexReply(file) : hasReply(file)) ? file : null

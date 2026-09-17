@@ -30,7 +30,7 @@ buildSync({
   platform: 'node',
   outfile
 })
-const { reclaimPlan, idleClosePlan, idleSleepPlan, idleCloseAt, sameDeadline, unread, readStamp, reclaimedMb, pressureSleepMs, sleepPressureOf, DEFAULT_RECLAIM, IDLE_CLOSE_MINUTES, IDLE_SLEEP_MINUTES } = createRequire(import.meta.url)(outfile)
+const { reclaimPlan, idleClosePlan, idleSleepPlan, idleCloseAt, sameDeadline, unread, readStamp, reclaimedMb, pressureSleepMs, sleepPressureOf, sleepHoldMs, SLEEP_HOLD_MS, SLEEP_HOLD_MAX_MS, DEFAULT_RECLAIM, IDLE_CLOSE_MINUTES, IDLE_SLEEP_MINUTES } = createRequire(import.meta.url)(outfile)
 
 let checks = 0
 function check(what, ok, detail) {
@@ -1153,6 +1153,18 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   eq('a pane 27 minutes from sleeping does not', soon(3 * 60_000), false)
   const free = [autoPane('q', 3 * 60_000, { sleepsSoon: soon(3 * 60_000) }), autoPane('keep', 29 * 60_000, { sleepsSoon: true }), autoPane('me', 0, { focused: true })]
   eq('...and the budget rung moves it', budgetPlan(free, peers, { ...DEFAULT_AUTO_HANDOFF, budgetMinMb: 1 }, {}, NOW, 2).map((p) => p.id).join(','), 'q')
+}
+
+// A refusal main will repeat is not asked about every ten minutes for ever: the hold
+// doubles per refusal in a row, to two hours (2026-09-16, s15-mu3zrr31, armed/due/refused
+// every ~10 min for 2+ hours on a conversation that could not be verified).
+{
+  eq('the first refusal holds the pane for the same ten minutes a Keep press does', sleepHoldMs(1), SLEEP_HOLD_MS)
+  eq('the second doubles it', sleepHoldMs(2), 2 * SLEEP_HOLD_MS)
+  eq('the fourth is eighty minutes', sleepHoldMs(4), 8 * SLEEP_HOLD_MS)
+  eq('...and it stops at two hours', sleepHoldMs(9), SLEEP_HOLD_MAX_MS)
+  eq('a count that makes no sense reads as the first', sleepHoldMs(0), SLEEP_HOLD_MS)
+  eq('two hours is the cap, however many', sleepHoldMs(40), SLEEP_HOLD_MAX_MS)
 }
 
 console.log(`reclaim: ${checks} checks passed`)

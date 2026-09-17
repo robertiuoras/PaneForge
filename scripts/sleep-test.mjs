@@ -331,8 +331,12 @@ is(
   const deadline = app.slice(at, app.indexOf('const mb = pendingMb.current[key] ?? 0', at))
   assert.match(deadline, /source: 'renderer-idle-sweep',\s*pressure: soon\.pressure/, 'the deadline hands main the pressure it was armed under')
   assert.match(deadline, /idleMs: soon\.idleMs/, '...and how long the pane had been quiet')
-  assert.match(deadline, /skipClose\(\[id\], 'the app refused to sleep it/, 'a refusal is written down where the arm was')
-  assert.match(deadline, /sleepHeld\.current\[id\] = /, '...and holds the pane off the sleep clock instead of re-arming it every sweep')
+  assert.match(deadline, /skipClose\(\[id\], `the app refused to sleep it/, 'a refusal is written down where the arm was')
+  assert.match(deadline, /sleepHeld\.current\[id\] = Date\.now\(\) \+ hold/, '...and holds the pane off the sleep clock instead of re-arming it every sweep')
+  // Every ten minutes for two hours, armed/due/refused, on a pane whose refusal was not
+  // going to change (2026-09-16, s15-mu3zrr31): the hold now doubles per refusal.
+  assert.match(deadline, /const hold = sleepHoldMs\(refusals\)/, '...for a wait that grows with each refusal in a row')
+  assert.match(deadline, /if \(slept\) \{\s*delete sleepRefusals\.current\[id\]/, '...and a sleep that goes through starts the count over')
   const arm = app.slice(app.indexOf('armSleepRef.current = (plan, pressure) => {'), app.indexOf('armCloseRef.current = (plan, why, log) => {'))
   assert.match(arm, /sleepHeld\.current\[p\.id\]/, 'the sleep arm reads that hold')
   assert.match(arm, /seconds: Math\.round\(\(deadline - now\) \/ 1000\)/, 'the armed line says how long the card really counts')
@@ -391,6 +395,24 @@ is(
 
   is(resumeIdFor('codex-pane'), id, 'a rollout the pane can prove it typed into is its conversation, whenever it was created')
   ok(resumableTranscript(cwd, id, 'codex') === rollout, '...and that conversation is resumable, so the pane may sleep')
+
+  // An antigravity transcript has no `assistant` row: its answers are PLANNER_RESPONSE
+  // steps. Read for `assistant`, every antigravity pane was "never answered", refused
+  // sleep `conversation-unverified` for the life of the app, and re-armed by the idle
+  // sweep every ten minutes (2026-09-16, pane s15-mu3zrr31, 2+ hours of it).
+  const gemini = join(work, 'gemini-home')
+  process.env.PF_GEMINI_HOME = gemini
+  const agyId = 'a1012c04-2365-4628-81b4-7b5f50961ee2'
+  const agyLogs = join(gemini, 'antigravity-cli', 'brain', agyId, '.system_generated', 'logs')
+  mkdirSync(agyLogs, { recursive: true })
+  const agyFile = join(agyLogs, 'transcript.jsonl')
+  // Row shapes copied from a real transcript.jsonl of 2026-09-16.
+  const asked = JSON.stringify({ step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE', created_at: '2026-09-16T11:03:04Z', content: '<USER_REQUEST>\nwhich post is best\n</USER_REQUEST>' })
+  const answered = JSON.stringify({ step_index: 1, source: 'AGENT', type: 'PLANNER_RESPONSE', status: 'DONE', created_at: '2026-09-16T11:03:09Z', content: 'The third one.' })
+  writeFileSync(agyFile, asked + '\n')
+  is(resumableTranscript(cwd, agyId, 'antigravity'), null, 'an antigravity conversation nobody has answered is not resumable')
+  writeFileSync(agyFile, asked + '\n' + answered + '\n')
+  is(resumableTranscript(cwd, agyId, 'antigravity'), agyFile, '...and one with a PLANNER_RESPONSE step is - that is what an antigravity reply looks like')
 
   // The proof is the typed line, never the folder alone: a rollout in the same folder
   // this pane never said anything into belongs to somebody else.
