@@ -160,6 +160,33 @@ const h=stub.__handlers,calls=stub.__calls,at=()=>calls.length
   b=at(); await u.checkForUpdates()
   ok(at()===b+1,'and the next check runs clean')
 
+  // The 154 "wedges" of 2026-09-15..17 were the machine asleep with a check in flight -
+  // started inside a two-second dark wake, timed at the next one. The process stopping
+  // is what a sleep looks like from inside: a heartbeat that skips its gap.
+  stub.__hang(true)
+  void u.checkForUpdates()
+  await sleep(0)
+  let mark=logged().length
+  const wedgesBefore=JSON.parse(fs.readFileSync(path.join(el.__dir,'update-health.json'),'utf8')).wedges
+  const until=Date.now()+220; while(Date.now()<until){}
+  await sleep(60)
+  ok(u.getUpdateState().phase!=='checking','a check the machine slept through is dropped')
+  ok(/slept checking/.test(logged().slice(mark))&&!/wedged/.test(logged().slice(mark)),'...and is written down as a sleep, not a wedge')
+  ok(!/wedged idle/.test(logged().slice(mark)),'...once, not again by the race that fires on the same wake')
+  const afterSleep=JSON.parse(fs.readFileSync(path.join(el.__dir,'update-health.json'),'utf8'))
+  ok(afterSleep.wedges===wedgesBefore&&afterSleep.sleeps>=1,'a sleep is counted apart from the wedges ('+afterSleep.sleeps+' sleep, '+afterSleep.wedges+' wedges)')
+  stub.__hang(false)
+  // The poll fired inside the wake defers rather than starting a check that dies with it.
+  u.setAutoCheck(true)
+  b=at()
+  await u.pollOnce()
+  await sleep(40)
+  ok(at()===b&&/just woke/.test(logged()),'a poll landing right after a wake waits instead of checking')
+  u.setAutoCheck(false)
+  await sleep(160)
+  b=at(); await u.checkForUpdates()
+  ok(at()===b+1,'and a check after the settle runs clean')
+
   // The reported symptom itself: a percentage that stops moving. 33% is 30 MiB of the
   // 95.8 MB v0.4.62 zip - the exact number this Mac sat on.
   h['download-progress']({percent:33})
@@ -290,7 +317,12 @@ const env = {
   PF_CHECK_BUDGET_MS: '150',
   PF_DOWNLOAD_BUDGET_MS: '150',
   PF_PROBE_BUDGET_MS: '150',
-  PF_POLL_WATCHDOG_MS: '200'
+  PF_POLL_WATCHDOG_MS: '200',
+  // The heartbeat, shrunk with the budgets: a 220ms synchronous block is "the machine
+  // slept" here, the way 17 minutes is in the app.
+  PF_WAKE_TICK_MS: '20',
+  PF_SLEEP_GAP_MS: '150',
+  PF_WAKE_SETTLE_MS: '120'
 }
 
 let bad = 0

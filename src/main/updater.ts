@@ -22,6 +22,7 @@ import { freshRun, noteAnswer, noteTimeout, probeStuck, stuckWords, type ProbeRu
 import { applyAtLaunch } from '../shared/launchInstall'
 import { pickRelease } from '../shared/pickRelease'
 import { pickWinTag } from '../shared/winFeed'
+import { TICK_MS, WAKE_SETTLE_MS, WakeWatch } from '../shared/wakeWatch'
 import type { UpdateState } from '../shared/types'
 import { lastShip } from './laneBoard'
 import {
@@ -191,6 +192,18 @@ const PROBE_BUDGET_MS = Number(process.env.PF_PROBE_BUDGET_MS) || 5 * 60_000
 let phaseAt = Date.now()
 
 /**
+ * Whether this process was running. See shared/wakeWatch.ts: every one of the 154
+ * "wedges" this Mac recovered between 2026-09-15 and 09-17 was a check started inside a
+ * two-second dark wake and timed at the next one. A hang and a sleep look the same on
+ * every clock; the heartbeat is the only thing that tells them apart.
+ */
+const wake = new WakeWatch(Date.now())
+setInterval(() => wake.tick(Date.now()), Number(process.env.PF_WAKE_TICK_MS) || TICK_MS).unref?.()
+
+/** When a phase was last dropped without an answer, for the answer that lands after. */
+let droppedAt = 0
+
+/**
  * What the network looked like when the current phase began.
  *
  * A wedge cannot explain itself: the promise that never settled is inside
@@ -221,11 +234,25 @@ function budgetFor(phase: UpdateState['phase']): number {
 
 /** Drop a transient phase nothing ever finished, and let the next check start clean. */
 function unwedge(): void {
+  const now = Date.now()
+  // Before asking: the timer that got here may have fired before the heartbeat did.
+  wake.tick(now)
   const held = `${state.phase} ${state.version ?? ''}`.trim()
-  const secs = Math.round((Date.now() - phaseAt) / 1000)
-  const cause = `${phaseNet || 'network unknown'} when it started, ${netWord()} now`
-  log('wedged', `${held} never finished after ${secs}s (${cause}) - dropping it and looking again`)
-  noteWedge(`${held} after ${secs}s, ${cause}`)
+  const secs = Math.round((now - phaseAt) / 1000)
+  const slept = wake.sleptSince(phaseAt)
+  if (slept) {
+    // Not a wedge: nothing hung, the machine was asleep with the request in flight. The
+    // clock number is kept because it is what the old lines showed, and the sleep is the
+    // explanation of it. Counted apart from wedges, so the health line stops reading
+    // "154 wedges" for a laptop that spent three nights with its lid shut.
+    log('slept', `${held} was in flight when the machine slept for ${Math.round(slept / 1000)}s (${secs}s on the clock) - dropping it and looking again`)
+    noteSleep()
+  } else {
+    const cause = `${phaseNet || 'network unknown'} when it started, ${netWord()} now`
+    log('wedged', `${held} never finished after ${secs}s (${cause}) - dropping it and looking again`)
+    noteWedge(`${held} after ${secs}s, ${cause}`)
+  }
+  droppedAt = now
   macStaging = ''
   if (restoreStagedReady()) return
   // Not 'error': nothing the user asked for failed, and the next check is one tick away.
@@ -311,7 +338,7 @@ function busy(): boolean {
 // like nothing to do. One small file survives the restart and turns that into a number.
 const HEALTH = () => join(app.getPath('userData'), 'update-health.json')
 
-type Health = { lastGood: number; wedges: number; lastWedge?: string; superseded: number }
+type Health = { lastGood: number; wedges: number; lastWedge?: string; superseded: number; sleeps: number }
 
 function readHealth(): Health {
   try {
@@ -320,10 +347,11 @@ function readHealth(): Health {
       lastGood: Number(raw.lastGood) || 0,
       wedges: Number(raw.wedges) || 0,
       lastWedge: raw.lastWedge,
-      superseded: Number(raw.superseded) || 0
+      superseded: Number(raw.superseded) || 0,
+      sleeps: Number(raw.sleeps) || 0
     }
   } catch {
-    return { lastGood: 0, wedges: 0, superseded: 0 }
+    return { lastGood: 0, wedges: 0, superseded: 0, sleeps: 0 }
   }
 }
 
@@ -350,6 +378,12 @@ function noteGood(): void {
 function noteWedge(what: string): void {
   const h = readHealth()
   writeHealth({ ...h, wedges: h.wedges + 1, lastWedge: `${new Date().toISOString()} ${what}` })
+}
+
+/** A check the machine slept through. Its own count: it says nothing about the feed. */
+function noteSleep(): void {
+  const h = readHealth()
+  writeHealth({ ...h, sleeps: h.sleeps + 1 })
 }
 
 // --- a staged build nobody ever installs ------------------------------------
@@ -444,9 +478,10 @@ function installAtLaunch(version: string): boolean {
 /** At launch, say how long it has been since the feed last answered this machine. */
 function logHealth(): void {
   const h = readHealth()
-  if (!h.lastGood) return log('health', `no good update check on record yet (${h.wedges} wedge(s) recovered)`)
+  const slept = h.sleeps ? `, ${h.sleeps} check(s) lost to the machine sleeping` : ''
+  if (!h.lastGood) return log('health', `no good update check on record yet (${h.wedges} wedge(s) recovered${slept})`)
   const hours = Math.round((Date.now() - h.lastGood) / 3_600_000)
-  const line = `last good update check ${hours}h ago, ${h.wedges} wedge(s) recovered${h.lastWedge ? `, last ${h.lastWedge}` : ''}`
+  const line = `last good update check ${hours}h ago, ${h.wedges} wedge(s) recovered${h.lastWedge ? `, last ${h.lastWedge}` : ''}${slept}`
   // Three days without the feed answering is not a slow week - something is wrong that no
   // single failure reported, and this is the line to search for when it is noticed later.
   log(hours >= 72 ? 'health STALE' : 'health', line)
@@ -1294,8 +1329,28 @@ function arm(ms: number): void {
  */
 const POLL_WATCHDOG_MS = Number(process.env.PF_POLL_WATCHDOG_MS) || 6 * 60_000
 
+/** Polls deferred since the last check ran, so the one that runs can say how many. */
+let deferredWakes = 0
+
 /** One turn of the background poll. Exported so the test can drive it without timers. */
 export async function pollOnce(): Promise<void> {
+  const now = Date.now()
+  wake.tick(now)
+  // The poll's timer is due by the time a dark wake comes round, so it is the first
+  // thing to run on one - and a check started then is the whole wedge story above. Wait
+  // out the wake instead: a dark wake is over long before the settle, so its deferred
+  // turn fires at the NEXT wake and defers again; a real wake runs the check once the
+  // network has had its twenty seconds. One line per run of them, not one per wake.
+  if (auto && wake.justWoke(now)) {
+    if (!deferredWakes) log('poll', `the machine just woke - a check started now would die with a dark wake, so it waits ${Math.round(WAKE_SETTLE_MS / 1000)}s`)
+    deferredWakes++
+    arm(WAKE_SETTLE_MS + 500)
+    return
+  }
+  if (deferredWakes) {
+    log('poll', `checking after ${deferredWakes} wake(s) that went straight back to sleep`)
+    deferredWakes = 0
+  }
   if (auto) arm(POLL_WATCHDOG_MS)
   try {
     // A build already downloaded used to end the story: no further check ever ran, so a
@@ -1430,7 +1485,10 @@ export async function checkForUpdates(): Promise<UpdateState> {
       // recorded the same way and greps the same: `wedged` is the word in the log.
       // Deliberately not 'error' - nothing the user asked for failed, and the next check
       // is one poll away. A red badge for a check the network ate is a lie.
-      unwedge()
+      // Only while the phase is still held: after a sleep the timer and this race both
+      // fire on the same wake, and the second of them used to write `wedged idle never
+      // finished after 0s` over a phase already dropped.
+      if (budgetFor(state.phase)) unwedge()
       return state
     }
     set({ phase: 'error', error: message })
