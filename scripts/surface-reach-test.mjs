@@ -61,6 +61,8 @@ const DESK_SIDE = {
   // on every submitted line and is still the answer to "have I asked this", so the lookup
   // stays reachable from outside the window.
   priorPrompt: 'pf-ctl call prompt:prior - the recall skill, no chip in the window',
+  renderCost: 'pf cost [--seconds N] - profiling a window from outside it is the whole point',
+  reloadWindow: 'pf reload - handing back a window nobody can reach to press Cmd+R in',
   // The whole point of it is that the ask comes from OUTSIDE the window: a scheduled job
   // that hit a login wall. The window only ever answers one - `openLogin` and the card.
   needsLogin: 'pf needs-login <site> --url <url> - a script that cannot type a password',
