@@ -2011,6 +2011,12 @@ function TerminalPane({
       // repaint can undo it.
       cols: START_COLS,
       rows: START_ROWS,
+      // An OSC 8 hyperlink - the kind Claude Code prints around a path or a URL - has no
+      // handler of its own in xterm 5: its fallback is `window.open()` with no URL and
+      // the address set on the blank page after, and this app denies every window a
+      // page opens. So the link did nothing, and main logged `about:blank` as a fault
+      // twelve times over a week. Handed to the OS the same way a typed link is.
+      linkHandler: { activate: (_e, uri) => api.openExternal(uri) },
       fontFamily: 'Cascadia Mono, Consolas, monospace',
       fontSize,
       // Blinking costs a FULL WebGL frame per pane per blink, forever, even when the

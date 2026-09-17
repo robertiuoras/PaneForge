@@ -100,6 +100,7 @@ import {
 import { snapPlan } from '../shared/deskSnap'
 import { crashTestHook, installCrashGuard, logProblem, onCrashReport } from './crash'
 import { onOpenProblem, openLink, openLocal } from './openUrl'
+import { nothingToOpen } from '../shared/openUrl'
 import { startFaultNotify } from './faultNotify'
 import { stopRenderWatch, watchRenderer } from './renderWatch'
 import {
@@ -690,6 +691,13 @@ function createWindow(): void {
     createWindow()
   })
   win.webContents.setWindowOpenHandler(({ url }) => {
+    // `about:blank` is xterm's own OSC 8 link handler: `window.open()` with no URL, then
+    // the address set on the page it got back - which this handler denies, so the link
+    // never opened and the blank page was logged as a fault twelve times over a week.
+    // The pane's terminal now opens those links itself (`linkHandler` in
+    // TerminalPane.tsx); a blank target still arriving here is a page asking for nothing,
+    // and is refused without a fault line: there is no link in it to diagnose.
+    if (nothingToOpen(url)) return { action: 'deny' }
     // A rejected openExternal is an UNHANDLED REJECTION, which crash.ts then records as a
     // fault: four `Failed to open URL` lines in paneforge-errors.log came from these two
     // calls. There is nothing to do about a link the OS would not open.

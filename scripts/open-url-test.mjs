@@ -9,7 +9,7 @@
 
 import { buildSync } from 'esbuild'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -178,6 +178,15 @@ if (!/DRIVE DONE/.test(out)) {
   console.log('FAIL the drive stopped before the end of its checks')
   fail.push('drive')
 }
+
+// Where the twelve `about:blank` lines of 2026-09-10..16 came from: xterm's own OSC 8
+// link fallback is `window.open()` with no URL, which the window-open handler denies, so
+// the link never opened and the blank page was logged as a fault. The pane now opens
+// those links itself, and a blank target is refused before it can read as a failed link.
+const pane = readFileSync(join(ROOT, 'src/renderer/src/components/TerminalPane.tsx'), 'utf8')
+const idx = readFileSync(join(ROOT, 'src/main/index.ts'), 'utf8')
+ok(/linkHandler: \{ activate: \(_e, uri\) => api\.openExternal\(uri\) \}/.test(pane), 'the terminal hands an OSC 8 link to the OS itself')
+ok(/setWindowOpenHandler\(\(\{ url \}\) => \{[\s\S]*?if \(nothingToOpen\(url\)\) return \{ action: 'deny' \}[\s\S]*?openLink\(url, 'a link in a pane'\)/.test(idx), 'a blank window-open is refused before it can be logged as a link that failed')
 
 console.log(fail.length ? `\n${fail.length} failed` : '\nOK - a link that will not open names itself')
 process.exit(fail.length ? 1 : 0)
