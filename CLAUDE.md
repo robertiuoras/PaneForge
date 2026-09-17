@@ -199,6 +199,11 @@ Install once, update from app; hand-reinstall = defect.
 - `phaseAt`/phase; `CHECK_BUDGET_MS` 2min, `DOWNLOAD_BUDGET_MS` 45min, `PROBE_BUDGET_MS` 5min,
   `POLL_WATCHDOG_MS` 6min. Quit gated `stagedInstallable()`, never `phase==='ready'`.
 - `update-health.json`: feed+wedges; 3d->`STALE`. `npm run test:updater`, `npm run test:wedge`.
+- A phase "never finished" with 10-17 min on the clock is the laptop ASLEEP, not a hang: macOS dark-wakes
+  a shut laptop for 2s every 15-17 min (`pmset -g log`), the poll starts a check, the socket dies with the
+  sleep. `shared/wakeWatch.ts` heartbeat (5s tick, >30s gap) tells them apart: `slept` line, `health.sleeps`,
+  poll defers `WAKE_SETTLE_MS` (20s) after a wake, the dropped request's `net::ERR_TIMED_OUT` is one
+  `late answer` line. 154 "wedges" 2026-09-15..17 were this.
 
 ## ...and a pane that says it is working, on a frame nobody repainted
 
@@ -822,6 +827,10 @@ Scrollback is renderer memory; `test:restore` hands the agent `--resume` (conver
 - Prompt tags: rail is KEYSTROKES so replay registers none; `seedMarks` scans for `❯ <text>` echo once
   while rail empty; keeps ONE tag per prompt. `test:promptecho`.
 
+- Every CLI's transcript has its own reply mark: Claude `"type":"assistant"`, antigravity
+  `"type":"PLANNER_RESPONSE"` (`hasReply(file, mark)`). Read with the wrong one, a pane is
+  `conversation-unverified` for ever and never sleeps (2026-09-16, s15). The idle sweep's hold after a
+  refusal doubles per refusal (`sleepHoldMs`, 10 min -> 2 h). `npm run test:sleep`.
 - A pane restored ASLEEP claims its conversation in `start()` BEFORE the early return
   (`noteSession`): every desk write asks `resumeIdFor`, which reads that claim, so a
   restart with the pane still asleep wrote `resumeId: null` and the next one woke it fresh
