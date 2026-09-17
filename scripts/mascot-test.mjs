@@ -51,6 +51,8 @@ const {
   MIN_COUNTDOWN_MS,
   countdownEnd,
   KEEP_MINUTES,
+  keepHoldMs,
+  KEEP_HOLD_MAX_MS,
   DEFAULT_MASCOT,
   dueDash,
   DASH_EVERY_MS,
@@ -709,5 +711,13 @@ const desk = [
   )
   check('the countdown can never end before it can be read', MIN_COUNTDOWN_MS <= CLOSE_COUNTDOWN_MS)
 }
+
+// Keeping the SAME pane again holds it longer: a flat ten minutes meant the identical
+// card armed at minute ten and took the pane anyway (Robert, 2026-09-18).
+check('the first press is the plain ten minutes', keepHoldMs(1) === KEEP_MINUTES * 60_000)
+check('the second doubles it', keepHoldMs(2) === 2 * KEEP_MINUTES * 60_000)
+check('the fourth is eighty minutes', keepHoldMs(4) === 8 * KEEP_MINUTES * 60_000)
+check('and it stops at two hours', keepHoldMs(9) === KEEP_HOLD_MAX_MS)
+check('a count that makes no sense reads as the first', keepHoldMs(0) === KEEP_MINUTES * 60_000)
 
 console.log(`mascot: ${checks} checks passed`)
