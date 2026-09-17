@@ -184,6 +184,11 @@ const reclaimEvents = []
 const deps = {
   canSleep, sleepRefusal, resumeIdFor: () => resumeIdNow,
   resumableTranscript: () => verified ? '/fixture/rollout.jsonl' : null,
+  // The refusal says WHICH failure it was, so the fixture has to answer that too. It
+  // decides nothing - `resumableTranscript` above is still the gate.
+  resumeEvidence: () => verified
+    ? { file: '/fixture/rollout.jsonl', exists: true, bytes: 4096, mark: 'response_item/message/assistant', reply: true }
+    : { file: '/fixture/rollout.jsonl', exists: true, bytes: 4096, mark: 'response_item/message/assistant', reply: false },
   ledgerSleep: () => ledgerChanges++, killPaneStrays() {}, stopPipe() {},
   recordEnd() {}, logReclaim: row => reclaimEvents.push(row), basename: () => 'fixture', SLEEP_MARK: 'asleep',
   // sleep() reads the one shared list of reasons rather than a hand-written copy (the two
@@ -245,6 +250,16 @@ is(decision.processPid, 1, 'decision identifies the process it will stop')
 is(decision.thresholdMs, 30_000, 'decision explains the shortened pressure threshold')
 is(reclaimEvents.at(-1).action, 'sleep', 'successful sleep has a separate completion record')
 is(reclaimEvents.filter(row => row.refusal === 'conversation-unverified').length, 1, 'repeated missing-conversation refusals write one diagnostic')
+// A refusal that names only itself cannot be diagnosed from the log: nineteen of them
+// over two days on this desk said `conversation-unverified` and nothing about which file
+// was looked at (2026-09-17, panes `s15-mu3zrr31` and `s42-mu5gkqxf`).
+const unverified = reclaimEvents.find(row => row.refusal === 'conversation-unverified')
+is(unverified.transcript, '/fixture/rollout.jsonl', 'the refusal names the file it looked in')
+is(unverified.transcriptExists, true, '...whether that file is there')
+is(unverified.transcriptBytes, 4096, '...how big it is')
+is(unverified.replyMark, 'response_item/message/assistant', '...and the mark it searched for')
+is(unverified.reply, false, '...and that the mark was not found, which is the actual refusal')
+is(unverified.resumeCwd, '/fixture', 'the refusal names the folder the resume was looked for in')
 is(kills, 1, 'verified sleep ends the process once')
 live.meta.asleep = undefined
 live.meta.status = 'idle'
