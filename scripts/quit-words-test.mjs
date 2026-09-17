@@ -58,6 +58,11 @@ const idx = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
 ok('index.ts asks quitWhere for the words', /quitWhere\(focused, lastFocusAt, Date\.now\(\)\)/.test(idx))
 ok('focus is recorded on focus', /app\.on\('browser-window-focus'/.test(idx))
 ok('...and on blur, which is the reading that matters', /app\.on\('browser-window-blur'/.test(idx))
+// 2026-09-15T14:44:52Z's "something asked from outside" was a logout: loginwindow's
+// saveLogoutPersistentState sits in the unified log nine seconds before the quit line.
+// macOS tells every app before it quits them, and that word is now the cause on record.
+ok('a logout, restart or shutdown names itself before before-quit runs', /powerMonitor\.on\('shutdown', \(\) => quitting\('the system is logging out, restarting or shutting down'\)\)/.test(idx))
+ok('...so the outside sentence no longer lists a logout as a possibility', !/a logout\)/.test(quitWhere(false, NOW - 99_000, NOW)) && /names itself/.test(quitWhere(false, NOW - 99_000, NOW)))
 
 rmSync(work, { recursive: true, force: true })
 console.log(`quit-words: ${n} checks passed`)

@@ -28,6 +28,6 @@ export function quitWhere(focused: boolean, lastFocusAt: number, now: number): s
   if (since < FROM_KEYBOARD_MS) return KEYBOARD
   return (
     `no window of ours has had focus for ${Math.round(since / 1000)}s, so this did NOT come from ` +
-    'this keyboard - something asked from outside (pkill, osascript, a launchd job, a logout)'
+    'this keyboard - something asked from outside (pkill, osascript or a launchd job; a logout or shutdown names itself)'
   )
 }

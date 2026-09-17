@@ -4189,6 +4189,12 @@ app.whenReady().then(() => {
   startMainWatch()
   // OS sleep preserves processes, but pending app buffers must also be recoverable
   // if the battery runs out before the next wake. Do not end or restart any agent.
+  // A logout, restart or shutdown quits every app through the same Apple event a
+  // `pkill` never sends, and the "something asked from outside" quit of
+  // 2026-09-15T14:44:52Z was one: loginwindow's saveLogoutPersistentState is in the
+  // unified log nine seconds before the quit line. macOS posts this to every app before
+  // the quit event, so the cause is on record by the time `before-quit` writes it.
+  powerMonitor.on('shutdown', () => quitting('the system is logging out, restarting or shutting down'))
   powerMonitor.on('suspend', () => {
     noteDesk(true)
     history.flushSync()
