@@ -562,6 +562,14 @@ function checkLastAttempt(): void {
 // collapse the burst into a single reported failure.
 let lastError = ''
 let lastErrorAt = 0
+// The last error the `error` handler LOOKED at, whatever it decided to do about it -
+// including the ones it deliberately said nothing about. `lastError` cannot answer for
+// those: it is only written on the path that reports, so a swallowed error leaves it
+// untouched and the echo below reads as a fresh failure.
+let sawError = ''
+let sawErrorAt = 0
+/** How long after the event the same error is still the same failure, not a new one. */
+const ERROR_ECHO_MS = 5_000
 // How many times in a row the feed has 404'd while a release finishes uploading.
 let publishRetries = 0
 
@@ -1236,6 +1244,10 @@ export function initUpdater(onChange: Emit, enabled: boolean): void {
     )
     u.on('error', (e: Error) => {
       const message = e?.message ?? String(e)
+      // Stamped before any judgement, so the rejection that follows this event knows the
+      // error was already handled even when handling it meant saying nothing.
+      sawError = message
+      sawErrorAt = Date.now()
       // `failFast()` can give a ready-state probe back its turn before electron-updater
       // emits the error from that original request. A completed Windows download is still
       // installable, as is a Mac bundle staged on disk, so keep the restart notification.
@@ -1510,6 +1522,14 @@ export async function checkForUpdates(): Promise<UpdateState> {
       if (budgetFor(state.phase)) unwedge()
       return state
     }
+    // electron-updater emits its `error` event and THEN rejects the promise this awaited,
+    // with the same error, a millisecond later. Every judgement about that error was
+    // already made in the handler above - the late answer, the Mac feed fallback, the
+    // assets still uploading - so repeating it here wrote a second `state error` line for
+    // one failure (2026-09-17T16:48:03, `net::ERR_NETWORK_CHANGED`, twice) and, worse,
+    // overruled a handler that had deliberately stayed quiet. One failure is one failure,
+    // whichever end of electron-updater it arrives from.
+    if (message === sawError && Date.now() - sawErrorAt < ERROR_ECHO_MS) return state
     set({ phase: 'error', error: message })
   }
   return state

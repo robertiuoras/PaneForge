@@ -122,7 +122,8 @@ const fail=[]
 const ok=(c,n)=>{console.log((c?'PASS ':'FAIL ')+n);if(!c)fail.push(n)}
 const logFile=path.join(el.__dir,'updater.log')
 fs.rmSync(logFile,{force:true})
-u.initUpdater(()=>{},false)
+const seen=[]
+u.initUpdater((st)=>seen.push(st),false)
 const h=stub.__handlers,calls=stub.__calls,at=()=>calls.length
 ok(Object.keys(h).length>=5,'wired all updater events')
 ;(async()=>{
@@ -140,6 +141,25 @@ ok(Object.keys(h).length>=5,'wired all updater events')
   ok(u.getUpdateState().phase==='error','error surfaces')
   ok(u.getUpdateState().error==='sha512 checksum mismatch','error text kept')
   b=at(); await u.checkForUpdates(); ok(at()===b+1,'retry allowed after error')
+
+  // One dropped network, two "update failed" lines. electron-updater hands the same
+  // error to its error EVENT and then to the rejection of the promise checkOnce awaited,
+  // a millisecond apart, and both used to reach the badge - which is what the installed
+  // app recorded at 2026-09-17T16:48:03 for a single net::ERR_NETWORK_CHANGED. Counted
+  // off the state the window is told about, because that is what draws the card.
+  {
+    // The check just above answered nothing, so the phase is still 'checking' and a poll
+    // would refuse - land it somewhere a check is allowed to start.
+    h['error'](new Error('landing the phase somewhere a check may start'))
+    const before=seen.length
+    stub.__feed(new Error('net::ERR_NETWORK_CHANGED'))
+    await u.pollOnce(); await new Promise((r)=>setTimeout(r,10))
+    const said=seen.slice(before).filter((st)=>st.phase==='error'&&/ERR_NETWORK_CHANGED/.test(st.error||'')).length
+    ok(said===1,'one dropped network is reported once, not twice ('+said+')')
+    ok(u.getUpdateState().phase==='error','the failure still reaches the badge')
+    stub.__feed(null)
+  }
+
   h['update-downloaded']({version:'0.3.9'}); ok(u.getUpdateState().phase==='ready','ready after download')
   b=at(); await u.checkForUpdates(); ok(at()===b,'no check while a build waits to install')
 
