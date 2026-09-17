@@ -35,8 +35,14 @@ try {
   const assistantBoard = { repo: '/projects/assistant', lanes: [{ ...held, lane: 'e', dir: '/projects/assistant-e' }] }
   assert.equal(text(render(assistant, [assistantBoard])), 'copy 6', 'a single visible session retains its actual assigned slot')
   const cross = { repo: '/projects/PaneForge', lanes: [{ ...held, lane: 'd', dir: '/projects/PaneForge-d' }] }
-  assert.equal(text(render(assistant, [assistantBoard, cross])), 'copy 6PaneForge copy 5', 'cross-project assignments keep project names and do not overwrite each other')
-  assert.equal(text(render(assistant, [cross, assistantBoard])), text(render(assistant, [assistantBoard, cross])), 'board order does not hide assignments')
+  // ONE chip per card. A chat that has visited other projects holds a work folder in each,
+  // and a chip apiece wrapped the card onto extra rows until three cards filled the sidebar
+  // (Robert, 2026-09-17). The other holds move into the tooltip, where they cost no height.
+  assert.equal(text(render(assistant, [assistantBoard, cross])), 'copy 6', 'a card wears one work folder, whatever else the chat holds')
+  assert.match(render(assistant, [assistantBoard, cross]), /also holding a work folder in/, '...and the others are named in its tooltip')
+  assert.match(render(assistant, [assistantBoard, cross]), /PaneForge copy 5/, '...by project and copy number')
+  assert.equal(text(render(assistant, [cross, assistantBoard])), text(render(assistant, [assistantBoard, cross])), 'board order does not change what is drawn')
+  assert.doesNotMatch(render(assistant, [assistantBoard]), /also holding a work folder in/, 'a chat holding one folder says nothing extra')
   assert.equal(text(render(session, [{ ...board, lanes: [{ ...held, peer: true }] }])), 'copy 2', 'remote claims never change a local work folder')
   assert.equal(text(render(session, [{ ...board, lanes: [{ ...held, ownerPane: 'other' }] }])), 'copy 2', 'another session does not change the badge')
   assert.equal(text(render({ ...session, cwd: held.dir, lane: undefined })), 'copy 3', 'restored lane without optional metadata shows its one assigned folder')
@@ -47,5 +53,5 @@ try {
   assert.deepEqual(opened, ['/projects/taskdriver.ai-b'], 'click inspects assigned folder, not launch folder')
   assert.equal(stopped, true)
   assert.equal(text(render(session, [{ ...board, lanes: [{ ...held, conflicted: true }] }])), 'copy 3 stuck')
-  console.log('session copies: 13 checks passed')
+  console.log('session copies: 16 checks passed')
 } finally { rmSync(work, { recursive: true, force: true }) }

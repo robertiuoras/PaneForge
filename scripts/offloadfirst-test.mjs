@@ -125,10 +125,12 @@ ok(pinned('open C:\\Users\\Gamer\\brief.txt'), 'a Windows home path pins')
 ok(pinned('check /Volumes/Data/export.csv'), 'a volume pins')
 is(pinned('fix /Users/robert/Projects/taskdriver/src/app.ts'), undefined, 'a path INSIDE the project travels')
 is(pinned('fix /users/ROBERT/projects/taskdriver/src/app.ts'), undefined, '...whatever its case')
-ok(pinned('the page on localhost:3006 is blank'), 'localhost pins')
-ok(pinned('hit http://127.0.0.1:3000/api'), 'a loopback address pins')
-ok(pinned('the dev server keeps crashing'), 'a dev server pins')
-ok(pinned('run npm run dev and check the console'), 'npm run dev pins')
+// An app on a port no longer pins to this machine - it is a reason to start the pane on
+// the other one instead (Robert, 2026-09-17). See `serverWork` and the case further down.
+is(pinned('the page on localhost:3006 is blank'), undefined, 'localhost no longer pins')
+is(pinned('hit http://127.0.0.1:3000/api'), undefined, 'nor does a loopback address')
+is(pinned('the dev server keeps crashing'), undefined, 'nor a dev server')
+is(pinned('run npm run dev and check the console'), undefined, 'nor npm run dev')
 ok(pinned('take a screenshot of the settings page'), 'a screenshot pins')
 ok(pinned('drive chrome through cdp and click the button'), 'a browser pins')
 ok(pinned('do this on my mac please'), 'naming this machine pins')
@@ -170,10 +172,37 @@ ok(
   placeNewPane(at({ prompt: 'compare with ~/Desktop/old.png' })).reason.includes('Desktop/old.png'),
   '...and the reason names the file'
 )
+// --- an app on a port starts on the other machine ---------------------------------------
+
 is(
-  placeNewPane(at({ prompt: 'the page on localhost:3006 is blank', mode: 'always' })).where,
+  placeNewPane(at({ prompt: 'the page on localhost:3006 is blank' })).where,
+  'remote',
+  'a brief about localhost starts on the other machine'
+)
+ok(
+  placeNewPane(at({ prompt: 'run npm run dev and check it' })).reason.includes('port'),
+  '...and says why'
+)
+// Every refusal above it still wins.
+is(
+  placeNewPane(at({ prompt: 'take a screenshot of localhost:3000' })).where,
   'local',
-  '...even set to always'
+  'a brief about this screen stays here, port or no port'
+)
+is(
+  placeNewPane(at({ prompt: 'localhost:3000 is blank', devServer: 'dev' })).where,
+  'local',
+  'a project already serving from here is not split across two machines'
+)
+is(
+  placeNewPane(at({ prompt: 'localhost:3000 is blank', mode: 'never' })).where,
+  'local',
+  'and the switch set to never still means never'
+)
+is(
+  placeNewPane(at({ prompt: 'localhost:3000 is blank', peerAlive: false })).where,
+  'local',
+  'with no other machine online it stays here'
 )
 
 // The control: an unmeasured folder is a folder nobody has asked about, and guessing
@@ -261,6 +290,7 @@ const cases = [
   at({ devServer: 'dev' }),
   at({ prompt: 'look at ~/Downloads/x.pdf' }),
   at({ prompt: 'localhost:3000 is down' }),
+  at({ prompt: 'localhost:3000 is down', peerAlive: false }),
   at({ where: 'local' }),
   at({ where: 'remote' })
 ]
