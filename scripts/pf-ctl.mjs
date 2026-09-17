@@ -127,10 +127,24 @@ async function sessions() {
   return (await call('sessions:list', [])) ?? []
 }
 
-/** A title names at most one pane for automation; ids always win. */
+/**
+ * A title names at most one pane for automation; ids always win.
+ *
+ * A bare NUMBER is the pane's place on the desk - the number drawn on its card, the one
+ * Ctrl+<n> reaches, and the only name Robert ever uses for a pane ("check PaneForge
+ * session 12"). It was the one name this CLI could not answer to: `pf list` printed
+ * `s45-mu5kq7f9` and no number at all, so another session asked about pane 12 looked at
+ * that list, found no 12, and told him it did not exist (2026-09-17). The order here is
+ * the order `sessions:list` returns, which is the sidebar's own order.
+ */
 function resolve(list, ref) {
   const byId = list.find((s) => s.id === ref)
   if (byId) return byId
+  if (/^\d+$/.test(ref)) {
+    const at = list[Number(ref) - 1]
+    if (!at) fail(1, `there is no pane ${ref} - the desk has ${list.length}`)
+    return at
+  }
   const byTitle = list.filter((s) => s.title === ref)
   if (byTitle.length > 1)
     fail(1, `"${ref}" names ${byTitle.length} panes - use an id: ${byTitle.map((s) => s.id).join(', ')}`)
@@ -465,7 +479,8 @@ function placeTranscript(cwd, id) {
 
 if (cmd === 'list') {
   const list = await sessions()
-  for (const s of list) console.log([s.id, s.status, s.title, s.cwd].join('\t'))
+  // The number leads, because it is the name on the card. See `resolve`.
+  for (const [i, s] of list.entries()) console.log([i + 1, s.id, s.status, s.title, s.cwd].join('\t'))
   // A sign-in request is not a pane yet - it is a card waiting for somebody - so it is
   // listed too, and says which computer it is waiting on.
   const logins = (await call('login:list', [])) ?? []

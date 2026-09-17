@@ -89,6 +89,7 @@
     "type-profile": "node scripts/type-profile.mjs",
     "test:panejob": "node scripts/panejob-test.mjs",
     "test:quietstate": "node scripts/quiet-state-test.mjs",
+    "test:mirrorrepair": "node scripts/mirror-repair-test.mjs",
     "test:panebackjobs": "node scripts/pane-backjobs-test.mjs",
     "test:panebound": "node scripts/panebound-test.mjs",
     "test:offloadfirst": "node scripts/offloadfirst-test.mjs",

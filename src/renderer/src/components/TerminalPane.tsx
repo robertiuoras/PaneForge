@@ -1359,9 +1359,17 @@ function TerminalPane({
    */
   const runRestoreFix = (): void => {
     if (!needRestoreFix.current) return
-    // `autoFixUi` is "do not poke a CLI on my behalf", and this is a poke. A mirror is the
-    // other machine's pty, and that machine is repairing its own pane.
-    if (!autoFixRef.current || mirrorRef.current) {
+    // `autoFixUi` is "do not poke a CLI on my behalf", and this is a poke.
+    //
+    // A MIRROR takes this repair too, since 2026-09-17. The old reading was "that machine
+    // is repairing its own pane", and it is wrong about the only tear a mirror actually
+    // gets: the far desk's bytes were painted for the far desk's grid, and they land here
+    // in whatever grid this window has. The far pane looks perfect over there, so nothing
+    // over there ever asks for a repaint, and the mirror stayed torn until Fix was pressed
+    // by hand - "remote view of pc session always looks broken and display should be fixed
+    // itself at all times" (Robert). `repair()` has always been safe on a mirror: it asks
+    // the FAR agent to repaint, which is the one thing that can fix a frame from here.
+    if (!autoFixRef.current) {
       needRestoreFix.current = false
       return
     }
@@ -4393,10 +4401,16 @@ function TerminalPane({
       settle = window.setTimeout(() => {
         if (!autoFixRef.current || Date.now() - mountedAt < 3000) return
         if (!host.current?.offsetParent) return
-        // A mirror changing shape means the far end resized, and the far end has
-        // already asked its own agent to repaint. Asking again from here would poke
-        // a CLI mid-paint over the network for no reason.
-        if (mirrorRef.current) return
+        // A mirror changing ROWS means the far end resized, and the far end has already
+        // asked its own agent to repaint. Asking again from here would poke a CLI
+        // mid-paint over the network for no reason.
+        //
+        // A mirror changing COLUMNS is this window's own doing, and the far end cannot
+        // see it: its pane is the right shape over there. Every absolute column the far
+        // CLI printed is now clamped into a narrower grid here, which is the overlapping,
+        // half-overwritten rows Robert sent a picture of. So a width change is repaired
+        // from here, and only a width change.
+        if (mirrorRef.current && !rewrapped) return
         api.redraw(sessionId)
         try {
           t.refresh(0, t.rows - 1)
