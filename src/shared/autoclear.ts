@@ -168,6 +168,15 @@ export function clampSeconds(n: unknown): number {
 export interface AutoClearAsk {
   paneId: string
   steps: string[]
+  /**
+   * The handoff file the steps were mined from, sent by the hook that read it. The main
+   * process re-resolves the pane's handoff at arm time, and by then handoff-inject.sh may
+   * have rotated that file to `.prev.md` - so a fresh lookup falls through to an older,
+   * unscoped handoff from another job while the steps still come from this one (2026-09-18,
+   * s10-mu6dpr56: `Start from:` named an Alison property-report file, `Done means:` listed
+   * tax-return steps). Only the file the steps came from can anchor the brief.
+   */
+  handoffPath?: string
   prompt: string
   seconds: number
   /**
@@ -210,6 +219,11 @@ export function readAsk(raw: unknown): AutoClearAsk | null {
   const steps = Array.isArray(o.steps)
     ? o.steps.filter((s): s is string => typeof s === 'string' && !!s.trim()).slice(0, 12)
     : []
+  // Typed into the resume prompt verbatim, so only a plain absolute handoff path is kept.
+  const handoffPath =
+    typeof o.handoffPath === 'string' && /^\/[^\s\0]{1,512}\/session-handoff[A-Za-z0-9._-]*\.md$/.test(o.handoffPath)
+      ? o.handoffPath
+      : ''
   // Nothing to resume means nothing to list. Steps that arrive anyway are dropped rather
   // than drawn, or the card would promise to carry on with work the clear is not carrying.
   return {
@@ -218,7 +232,8 @@ export function readAsk(raw: unknown): AutoClearAsk | null {
     prompt: noResume ? '' : prompt,
     seconds: clampSeconds(o.seconds),
     noResume,
-    ...(model && !noResume ? { model } : {})
+    ...(model && !noResume ? { model } : {}),
+    ...(handoffPath && !noResume ? { handoffPath } : {})
   }
 }
 
@@ -234,6 +249,25 @@ export function readAsk(raw: unknown): AutoClearAsk | null {
  *
  * A `noResume` clear forges nothing - it types no prompt at all, deliberately.
  */
+/**
+ * Which file the brief should name. The file the steps were mined from wins; if the
+ * inject hook has since rotated it to `.prev.md`, that sibling is the same handoff and
+ * still wins. Only when neither exists does the pane's freshly resolved handoff stand in.
+ */
+export function briefAnchor(
+  ask: Pick<AutoClearAsk, 'handoffPath'>,
+  resolved: string | null,
+  exists: (p: string) => boolean
+): string | null {
+  const mined = ask.handoffPath
+  if (mined) {
+    if (exists(mined)) return mined
+    const rotated = mined.replace(/\.md$/, '.prev.md')
+    if (exists(rotated)) return rotated
+  }
+  return resolved
+}
+
 export function resumeBrief(ask: AutoClearAsk, handoffPath: string | null): string {
   if (ask.noResume || !ask.prompt) return ''
   return forgePrompt({

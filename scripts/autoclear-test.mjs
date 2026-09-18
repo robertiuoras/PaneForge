@@ -45,7 +45,7 @@ write(
 )
 const file = join(out, 'ac.mjs')
 buildSync({ absWorkingDir: root, entryPoints: [entry], bundle: true, platform: 'node', format: 'esm', logLevel: 'warning', outfile: file })
-const { clearChunks, resumeOf, clampSeconds, readAsk, resumeBrief, dropFor, armDecision, clearCommandFor, quietEnoughToArm, ARM_QUIET_MS,
+const { clearChunks, resumeOf, clampSeconds, readAsk, resumeBrief, briefAnchor, dropFor, armDecision, clearCommandFor, quietEnoughToArm, ARM_QUIET_MS,
   expiryDecision, dropWords, DRAFT_RETRY_MS, chunkDelayMs,
   CLEAR_SETTLE_MS, SUBMIT_GAP_MS, SUBMIT_RETRIES_MS, CLEAR_PROMPT_START_MS,
   DEFAULT_AUTOCLEAR, MIN_SECONDS, MAX_SECONDS, queuedPromptDecision } =
@@ -532,6 +532,22 @@ console.log('the resume prompt is forged, so it names the handoff and what done 
   ok('and still says what done means', noPath.includes('Done means:'))
 
   const noSteps = resumeBrief(readAsk({ paneId: 'p1', prompt: 'Continue the handoff.', seconds: 30 }), null)
+
+  // 2026-09-18, s10-mu6dpr56: the hook mined tax-return steps from the pane handoff, then
+  // handoff-inject.sh rotated that file to .prev.md before the app armed; a fresh lookup fell
+  // through to an older unscoped Alison handoff, so `Start from:` and `Done means:` named
+  // two different jobs. The file the steps came from - or its rotated sibling - must win.
+  const mined = '/Users/x/.claude/projects/-p/memory/session-handoff.pane-s10-abc.md'
+  const stale = '/Users/x/.claude/projects/-p/memory/session-handoff.md'
+  const withPath = readAsk({ paneId: 'p1', prompt: 'Continue the handoff.', seconds: 30, steps: ['Rewrite AU/READY-TO-LODGE.md'], handoffPath: mined })
+  ok('readAsk keeps the handoff path the steps were mined from', withPath?.handoffPath === mined)
+  ok('readAsk drops a handoff path that is not a session-handoff file', !readAsk({ paneId: 'p1', prompt: 'x', seconds: 30, handoffPath: '/etc/passwd' })?.handoffPath)
+  ok('brief anchors on the mined file while it exists', briefAnchor(withPath, stale, (p) => p === mined) === mined)
+  ok('brief follows the mined file to .prev.md once the inject hook rotated it', briefAnchor(withPath, stale, (p) => p === mined.replace(/\.md$/, '.prev.md')) === mined.replace(/\.md$/, '.prev.md'))
+  ok('brief falls back to the resolved path only when the mined file is gone entirely', briefAnchor(withPath, stale, () => false) === stale)
+  ok('no mined path means the resolved path', briefAnchor(readAsk({ paneId: 'p1', prompt: 'x', seconds: 30 }), stale, () => true) === stale)
+  const rotatedBrief = resumeBrief(withPath, briefAnchor(withPath, stale, (p) => p.endsWith('.prev.md')))
+  ok('the typed brief names the rotated tax handoff, not the unscoped one', rotatedBrief.includes(mined.replace(/\.md$/, '.prev.md')) && !rotatedBrief.includes('\n- ' + stale))
   ok('a handoff with no steps still gets a done line', noSteps.includes('is finished, or is named as blocked'))
 
   const quiet = resumeBrief(readAsk({ paneId: 'p1', noResume: true, seconds: 30 }), '/x/h.md')
