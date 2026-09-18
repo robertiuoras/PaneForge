@@ -2151,7 +2151,16 @@ function lastTouched(dir, porcelain, branch) {
 }
 
 /** Work sitting in a lane: uncommitted files, and commits the release does not have. */
+// Set only for the span of one `status` call - see there. Every other caller reads live,
+// because `release` and `ready` change what a lane holds between two reads.
+let workMemo = null
 function laneWork(id) {
+  if (workMemo?.has(id)) return workMemo.get(id)
+  const w = laneWorkNow(id)
+  workMemo?.set(id, w)
+  return w
+}
+function laneWorkNow(id) {
   const dir = laneDir(id)
   if (!existsSync(dir)) return { dirty: false, ahead: 0, touchedAt: 0 }
   // A folder that is not a worktree answers every git command with an error, and the
@@ -3625,11 +3634,30 @@ function autoPromote(state) {
   return { checked: true, tag: ripe.tag_name, ...promote(String(ripe.tag_name ?? '').replace(/^v/, '')) }
 }
 
-function status(session) {
+function status(session, { held = false } = {}) {
   const state = reap(read())
   // Asking is not writing, except when the asking found something to throw away: an
   // expired reservation that is only ever computed and never stored is not expired at all.
   if (reaped) write(state)
+  // One answer per lane for the whole of this status: `busyLanes` and `shippable` below
+  // ask `laneWork` for the same held lanes the table just measured, and each ask was a
+  // fresh `git status` + `git cherry`. Nothing writes between here and the return, so the
+  // second reading could only ever agree with the first.
+  workMemo = new Map()
+  try {
+    return statusOf(state, session, held)
+  } finally {
+    workMemo = null
+  }
+}
+
+function statusOf(state, session, held) {
+  // A lane nobody holds has no chat in it, and the prompt hook - which runs `status` on
+  // EVERY prompt in every chat - prints only held lanes. Measuring the other eight
+  // (two `rev-parse`, a `git status`, a `git cherry` each) was 41 of the 49 child
+  // processes behind a 1.0s hook, 2-5s under load. `--held` reads them off the ledger
+  // alone; the app's board and a person's `status` still measure every lane.
+  const workOf = (id) => (held && !state.lanes[id]?.session ? { dirty: false, ahead: 0, touchedAt: 0 } : laneWork(id))
   return {
     main: MAIN,
     // What this repository is, in the three words a caller needs to phrase anything: the
@@ -3647,7 +3675,7 @@ function status(session) {
       // out of Finder here. Setting a flag that is already set costs one no-op call and
       // means nobody ever has to run a command to tidy their own Projects folder.
       hideLane(id)
-      const w = laneWork(id)
+      const w = workOf(id)
       return {
         lane: id,
         dir: laneDir(id),
@@ -4161,7 +4189,7 @@ try {
       else if (p?.reason) console.log(`Stable promotion of ${p.tag} waits: ${p.reason}`)
     }
   } else if (cmd === 'doctor') console.log(doctor())
-  else if (cmd === 'status') console.log(JSON.stringify(status(session), null, 2))
+  else if (cmd === 'status') console.log(JSON.stringify(status(session, { held: argv.includes('--held') }), null, 2))
   else {
     console.error(`Unknown command "${cmd}".`)
     process.exit(1)

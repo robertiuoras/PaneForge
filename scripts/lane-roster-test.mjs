@@ -252,6 +252,32 @@ if (existsSync(INSTALLED)) {
   console.log('skip  installed copy (claude-memory not on this machine)')
 }
 
+// ------------------------------------------------------------------ `status --held`
+//
+// The hook prints held lanes only, so it asks for held lanes only: `--held` reads an
+// unheld lane off the ledger (never dirty, never ahead) and still measures a held one.
+// Without it every prompt measured all nine checkouts - 41 of the hook's 49 child
+// processes were git asking about lanes the table would never print.
+{
+  const statusOf = (...args) => JSON.parse(lane('status', '--session', 'sess-b', ...args))
+  lane('claim', '--session', 'sess-c', '--prefer', 'c', '--cwd', repo)
+  const cDir = statusOf().lanes.find((l) => l.lane === 'c').dir
+  lane('release', '--session', 'sess-c')
+  writeFileSync(join(cDir, 'stray.txt'), 'left behind\n')
+  writeFileSync(join(dirOf['sess-a'], 'edit.txt'), 'mid-edit\n')
+  const full = statusOf()
+  const held = statusOf('--held')
+  const c = (s) => s.lanes.find((l) => l.lane === 'c')
+  const aRow = (s) => s.lanes.find((l) => l.lane === 'a')
+  ok('an unheld lane is nobody\'s', c(full).heldBy === null && c(held).heldBy === null, JSON.stringify(c(held)))
+  ok('a full status measures the unheld lane', c(full).dirty === true, JSON.stringify(c(full)))
+  ok('--held does not measure the unheld lane', c(held).dirty === false && c(held).ahead === 0, JSON.stringify(c(held)))
+  ok('--held still measures a held lane', aRow(held).dirty === true, JSON.stringify(aRow(held)))
+  ok('--held and full status agree on every held row', JSON.stringify(full.lanes.filter((l) => l.heldBy)) === JSON.stringify(held.lanes.filter((l) => l.heldBy)))
+  rmSync(join(cDir, 'stray.txt'), { force: true })
+  rmSync(join(dirOf['sess-a'], 'edit.txt'), { force: true })
+}
+
 rmSync(root, { recursive: true, force: true })
 console.log(failed ? `\n${failed} failed` : '\nall ok')
 process.exit(failed ? 1 : 0)

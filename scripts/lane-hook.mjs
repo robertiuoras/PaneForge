@@ -326,7 +326,8 @@ if (event === 'prompt') {
   let stuck = null
   let orphan = null
   try {
-    const s = JSON.parse(lane(repo, 'status', '--session', session).out)
+    // `--held`: only held lanes are printed, so only held lanes are measured.
+    const s = JSON.parse(lane(repo, 'status', '--session', session, '--held').out)
     const held = s.lanes.filter((l) => l.heldBy)
     const pad = Math.max(...held.map((l) => l.lane.length), 1)
     roster = held.map((l) => {

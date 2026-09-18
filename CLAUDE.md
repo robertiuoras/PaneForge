@@ -52,7 +52,9 @@ scripts/lane.mjs status --repo <dir>` shows who holds what.
   chat that cleared itself (new session id, same pane) stops being drawn as a second chat
   in a second copy. A hold with no pane id - claimed by hand, or from outside the app - is
   left alone.
-- `npm run test:lanes`.
+- The prompt hook's roster asks `status --held`: lanes nobody holds are read off the ledger, not
+  measured (41 of 49 child processes were git on lanes the table never prints). `npm run
+  test:lanes` (roster test pins it).
 - Your first edit of a file another lane has already changed is told so, with that lane's
   line ranges (`guard` exits 0 with text). Same region: message that chat before editing.
   `npm run test:laneoverlap`.
