@@ -80,6 +80,16 @@ buildSync({
   logLevel: 'silent'
 })
 
+buildSync({
+  absWorkingDir: root,
+  entryPoints: ['src/shared/promptLanded.ts'],
+  bundle: true,
+  format: 'cjs',
+  platform: 'node',
+  outfile: join(work, 'landed.bundle.cjs'),
+  logLevel: 'silent'
+})
+
 const req = createRequire(join(work, 'x.cjs'))
 const { SessionManager } = req('./sessions.bundle.cjs')
 
@@ -103,7 +113,8 @@ const manager = new SessionManager()
 const started = manager.start({ cwd: root, agent: 'shell', prompt: PROMPT })
 const proc = manager.sessions.get(started.id).proc
 const typed = () => proc.writes.join('')
-const returns = () => proc.writes.filter((w) => w === '\r').length
+const returnsOf = (p) => p.writes.filter((w) => w === '\r').length
+const returns = () => returnsOf(proc)
 
 // 1. A CLI that is still painting its startup is not ready, however long it takes.
 //    PF_PROMPT_START_MS is 120 here, so a blind timer would have typed long ago.
@@ -367,6 +378,108 @@ ok(
 )
 manager.kill(eaten.id)
 
+// THE PROMPT WENT IN AND THE APP SAID IT DID NOT.
+//
+// `write()` starts the run clock on the return this very confirm is trying to prove:
+// `ourWrite('\r')` -> `beginRun` -> `runSince = Date.now()`, and `typedAt` is read a line
+// later, so the stamp is always a hair OLDER than the thing it proves. The comparison
+// `runSince >= typedAt` therefore passes only when the CLI's own footer happens to
+// re-anchor the clock past it (`anchorRun`). Measured in autoclear-app.log 2026-09-17..18:
+// 8 panes settled "prompt submitted - a turn started", 16 gave up 24s later as
+// "prompt left UNSENT: still painting" - every one of them while the agent was answering
+// the prompt it said had not been sent. 09:57:19 s16-mu6saugo and 10:16:41 s15-mu6q4smz
+// are two of them, and the session reading this line is the pane from the first.
+//
+// The frame below is this pane's own, off `history/s16-mu6saugo.log`: the busy footer, the
+// marker, the rule under it. The composer is EMPTY - the prompt left it - which is the
+// reading the give-up was missing.
+const ANSWERING =
+  '\r\n⏺ reading the log now\r\n· Leavening… (3m 56s · esc to interrupt)\r\n❯ \r\n' +
+  '────────────────────────────────────────────────────────────\r\n  ⏵⏵ bypass permissions on\r\n'
+{
+  const acPath = join(work, 'userData', 'autoclear-app.log')
+  const answering = manager.start({ cwd: root, agent: 'shell' })
+  const aProc = manager.sessions.get(answering.id).proc
+  let aDone = 0
+  const RESUME2 = 'Continue the handoff: work its Next steps in order, and do not re-do finished items.'
+  manager.queuePrompt(answering.id, RESUME2, 0, 40, () => aDone++, 5000)
+  await sleep(120)
+  aProc.say(COMPOSER)
+  await sentReturnAt(aProc)
+  const afterReturn = returnsOf(aProc)
+  // The agent answers, and keeps answering past the whole confirm budget - which is the
+  // window the old code spent and then called the prompt unsent.
+  const budget = Number(process.env.PF_PROMPT_CONFIRM_MS) * Number(process.env.PF_PROMPT_ENTER_TRIES)
+  const until = Date.now() + budget + 400
+  while (Date.now() < until) {
+    aProc.say(ANSWERING)
+    await sleep(50)
+  }
+  await sleep(300)
+  const ac = readFileSync(acPath, 'utf8')
+  const mine = ac.split('\n').filter((l) => l.includes(answering.id)).join('\n')
+  ok(!/UNSENT/.test(mine), 'a prompt the agent is answering is never called UNSENT', mine)
+  ok(aDone === 1, 'and it settles exactly once', String(aDone))
+  ok(returnsOf(aProc) === afterReturn, 'no second return is fed into the turn it started', String(returnsOf(aProc)))
+  manager.kill(answering.id)
+}
+
+// ...and the failure this path exists for still reads as the failure. Same painting pane,
+// but the composer is holding the prompt: the return was eaten and nobody sent it.
+{
+  const acPath = join(work, 'userData', 'autoclear-app.log')
+  const stuck = manager.start({ cwd: root, agent: 'shell' })
+  const sProc = manager.sessions.get(stuck.id).proc
+  const STUCK_PROMPT = 'Continue the handoff: work its Next steps in order.'
+  let sDone = 0
+  manager.queuePrompt(stuck.id, STUCK_PROMPT, 0, 40, () => sDone++, 5000)
+  await sleep(120)
+  sProc.say(COMPOSER)
+  await sentReturnAt(sProc)
+  const budget = Number(process.env.PF_PROMPT_CONFIRM_MS) * Number(process.env.PF_PROMPT_ENTER_TRIES)
+  const until = Date.now() + budget + 600
+  while (Date.now() < until) {
+    sProc.say(
+      '\r\n· Starting MCP servers (0/4) (12s · esc to interrupt)\r\n❯ ' +
+        STUCK_PROMPT +
+        '\r\n────────────────────────────────────────────────────────────\r\n'
+    )
+    await sleep(50)
+  }
+  await sleep(300)
+  const mine = readFileSync(acPath, 'utf8').split('\n').filter((l) => l.includes(stuck.id)).join('\n')
+  ok(/UNSENT/.test(mine), 'a prompt still sitting in the composer is still called UNSENT', mine)
+  ok(sDone === 1, 'and that settles once too', String(sDone))
+  manager.kill(stuck.id)
+}
+
+// The reading itself, on the frames it has to tell apart.
+{
+  const { promptStillInBox } = req('./landed.bundle.cjs')
+  const P = 'Continue the handoff: work its Next steps in order.'
+  ok(
+    promptStillInBox('\u00b7 Leavening\u2026 (3m 56s \u00b7 esc to interrupt)\n\u276f \n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n', P) === false,
+    'an empty composer under a busy footer says the prompt left'
+  )
+  ok(
+    promptStillInBox('\u00b7 Starting MCP servers (0/4) (12s)\n\u276f ' + P + '\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n', P) === true,
+    'a composer holding it says it is still there'
+  )
+  // Claude Code echoes a SUBMITTED message with the same marker. The composer is the last
+  // one drawn, and reading the echo instead is the false "unsent" this whole case is about.
+  ok(
+    promptStillInBox('> ' + P + '\n\u23fa working on it\n\u276f \n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n', P) === false,
+    'the echo of a submitted message is not the composer'
+  )
+  // A long prompt wraps onto indented rows, and only the first carries the marker.
+  ok(
+    promptStillInBox('\u276f ' + P.slice(0, 30) + '\n  ' + P.slice(30) + '\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n', P) === true,
+    'a wrapped composer is still one composer'
+  )
+  ok(promptStillInBox('\u23fa nothing that looks like a composer at all\n', P) === null, 'a frame with no composer answers null, never a guess')
+  ok(promptStillInBox('\u276f \n', 'go') === null, 'a prompt too short to recognise answers null')
+}
+
 // A pane that closes mid-wait settles too - otherwise the curtain outlives the pty.
 const dying = manager.start({ cwd: root, agent: 'shell' })
 let dead2 = 0
@@ -412,6 +525,11 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
   // logged UNSENT with five retries unused. `handoverMaxMs` always sized the curtain as
   // `budgetMs + PROMPT_CONFIRM_MS * PROMPT_ENTER_TRIES`; only this branch disagreed.
   ok(/Date\.now\(\) >= confirmUntil\)/.test(fn), 'and the wait must still be bounded')
+  // ...and the give-up is not the last word: the composer is read before a prompt the
+  // agent is answering is written off as unsent.
+  ok(/promptStillInBox\(painted, prompt\)/.test(fn), 'the give-up reads the composer before it calls a prompt unsent')
+  ok(/box === false/.test(fn) && /settle\('sent'\)/.test(fn), 'an empty composer settles it as sent')
+
   ok(!/Date\.now\(\) >= deadline\)/.test(fn), 'the confirm may not expire on the WAIT deadline')
   ok(
     /confirmUntil = typedAt \+ PROMPT_CONFIRM_MS \* PROMPT_ENTER_TRIES/.test(

@@ -119,6 +119,7 @@ import { allAgents, buildArgs, colourEnv, hasAgent, modelValue, resolveEnv } fro
 import { homedir } from 'node:os'
 import { allowsCwd, scrubForeignKeys } from '../shared/paneTrust'
 import { anchoredStart, readsBusy, composerHeld, type BusyReason } from '../shared/busy'
+import { promptStillInBox } from '../shared/promptLanded'
 import { resumeVerdict, RESUME_POLL_MS } from '../shared/resumeCheck'
 import { exitPlan, exitWords } from '../shared/exitClose'
 import { readsCloudWork, cloudHeld } from '../shared/cloudWork'
@@ -3672,8 +3673,22 @@ export class SessionManager extends EventEmitter {
             // is now WAITED OUT rather than counted as a submit; only a turn, a person, or
             // the deadline ends this.
             if (Date.now() >= confirmUntil) {
+              // ...AND A PANE THAT IS ANSWERING IS NOT A PANE THAT WAS NEVER ASKED. The turn
+              // proof above cannot fire for the app's own return - `ourWrite('\r')` runs
+              // `beginRun`, which stamps `runSince` a hair BEFORE `typedAt` is read - so it
+              // only ever passed when the CLI's footer re-anchored the clock past it. In
+              // `autoclear-app.log` over 2026-09-17..18 that was 8 panes; 16 landed here
+              // instead and were called unsent while the agent was writing the answer. The
+              // second reading is the composer itself, which is the thing this whole path
+              // exists to protect: empty, and the prompt went in.
+              const box = promptStillInBox(painted, prompt)
+              if (box === false) {
+                acLog(`${id} prompt submitted - it is no longer in the composer`)
+                return settle('sent')
+              }
               acLog(
-                `${id} prompt left UNSENT: still painting ${PROMPT_CONFIRM_MS * PROMPT_ENTER_TRIES}ms after the return`
+                `${id} prompt left UNSENT: still painting ${PROMPT_CONFIRM_MS * PROMPT_ENTER_TRIES}ms after the return` +
+                  (box ? ', and the composer still holds it' : ', and no composer could be read')
               )
               return settle('unsent')
             }
