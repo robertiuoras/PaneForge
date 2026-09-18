@@ -91,6 +91,7 @@ import TerminalPane, {
   paneInsert,
   paneRepair,
   paneRedraw,
+  paneOwedHistory,
   syncedPanes
 } from './components/TerminalPane'
 import {
@@ -2535,7 +2536,25 @@ export default function App(): JSX.Element {
      * its lines. Nothing is repainted under a reader by this: the redraw runs on the
      * transition, and a pane already at full depth never appears in `regrown` again.
      */
-    for (const id of regrown) void paneRedraw.get(id)?.()
+    for (const id of regrown) {
+      // ...but not in front of the person who has just switched to it. A hidden pane is
+      // rebuilt at once, because nobody can see it happen; a VISIBLE one is owed the
+      // rebuild instead (`paneOwedHistory`), and gets it when it goes off screen or when
+      // the reader scrolls to the top of what the trim left. Measured 2026-09-18: the
+      // rebuild is 149 ms and every row on screen is replaced.
+      if (visibleIds.has(id)) paneOwedHistory.add(id)
+      else {
+        paneOwedHistory.delete(id)
+        void paneRedraw.get(id)?.()
+      }
+    }
+    // A pane owed one that has since gone off screen is paid here - the sweep runs on
+    // every change of `visibleIds`, so this is that pane's first moment out of sight.
+    for (const id of [...paneOwedHistory]) {
+      if (visibleIds.has(id)) continue
+      paneOwedHistory.delete(id)
+      void paneRedraw.get(id)?.()
+    }
     if (applied) {
       console.info(
         `capacity: ${capacity.level}, trimmed ${applied} pane(s), freed ~${savingMb(trims)} MB` +

@@ -522,5 +522,29 @@ ok('and never off the sampler variable', !/lastPressure/.test(offerBody))
   ok('...and not when something will', assess({ ...cramped, willMove: true }).say === false)
 }
 
+// ---------------------------------------------------------------------------
+// SOURCE: the regrow rebuild is never spent under the reader.
+//
+// Raising `scrollback` brings no lines back, so a pane that grows again is re-rendered
+// from main's raw log - measured 2026-09-18 in the dev copy, 149 ms and all 20,066 rows
+// replaced on a 4 MB log. Robert, 2026-09-18: "display breaks/slowly loads going down".
+// A hidden pane may be rebuilt at once; a visible one is OWED it until it goes off screen
+// or the reader scrolls to the top of what the trim left.
+{
+  const app = readFileSync(new URL('../src/renderer/src/App.tsx', import.meta.url), 'utf8')
+  const pane = readFileSync(new URL('../src/renderer/src/components/TerminalPane.tsx', import.meta.url), 'utf8')
+  const sweep = app.slice(app.indexOf('const regrown: string[] = []'), app.indexOf('capacity: ${capacity.level}'))
+  ok('a visible pane is owed the rebuild rather than given it',
+    /if \(visibleIds\.has\(id\)\) paneOwedHistory\.add\(id\)/.test(sweep))
+  ok('and it is paid once the pane is off screen',
+    /for \(const id of \[\.\.\.paneOwedHistory\]\)/.test(sweep))
+  ok('the unconditional rebuild of every regrown pane is gone',
+    !/for \(const id of regrown\) void paneRedraw/.test(app))
+  ok('the reader reaching the top of what is left spends it too',
+    /paneOwedHistory\.has\(sessionId\) && t\.buffer\.active\.viewportY === 0/.test(pane))
+  ok('a closed pane is not left owed one',
+    /paneOwedHistory\.delete\(sessionId\)/.test(pane.slice(pane.indexOf('paneRedraw.delete(sessionId)'))))
+}
+
 console.log(failed ? `\n${failed} failed` : '\nall passed')
 process.exit(failed ? 1 : 0)
