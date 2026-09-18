@@ -514,8 +514,12 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
   ok(/runSince \?\? 0\) >= typedAt/.test(fn), 'a turn newer than the return is the only proof it went in')
   // ...for a PROMPT. `write()` stamps `runSince` on every return it sends, so a slash
   // command - which starts no turn - would otherwise be proven by this app's own keystroke.
-  ok(/proof !== 'idle' && \(still\.meta\.runSince/.test(fn),
+  ok(/proof !== 'idle' && [^\n]*\(still\.meta\.runSince/.test(fn),
     'and a command ignores that stamp, because the return this sends is what set it')
+  // ...and neither does a turn, while the composer is still drawing the prompt: the CLI's
+  // busy footer re-anchors `runSince` whether or not the return went in.
+  ok(/heldNow !== true && \(still\.meta\.runSince/.test(fn),
+    'a turn is not proof while the composer still holds the prompt')
   ok(/proof === 'idle' && idle\(still\) && \(still\.meta\.lastOutput \?\? 0\) > typedAt/.test(fn),
     'a command is proven by the pane PRINTING something, never by silence')
   ok(/if \(!idle\(still\)\) \{[\s\S]*?return confirm\(\)/.test(fn), 'a painting pane must be waited out, not settled')

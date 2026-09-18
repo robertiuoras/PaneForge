@@ -3571,13 +3571,20 @@ export class SessionManager extends EventEmitter {
     // when it stopped", which is the newest output and nothing older.
     let seen = 0
     let painted = ''
-    const idle = (live: Live): boolean => {
+    // `painted` is only ever as new as the last time somebody asked for it, so anything
+    // reading it has to refresh it first - the confirm's composer reading runs on ticks
+    // where `idle()` is not called at all, and a stale frame there is a frame from before
+    // the return was even sent.
+    const repaint = (live: Live): void => {
       const text = strip(live.buffer.read())
       if (text.length < seen) seen = 0
       if (text.length > seen) {
         painted = text.slice(seen).slice(-PROMPT_TAIL_CHARS)
         seen = text.length
       }
+    }
+    const idle = (live: Live): boolean => {
+      repaint(live)
       return Date.now() - live.meta.lastOutput >= PROMPT_QUIET_MS && !readsBusy(painted) && !composerHeld(painted)
     }
 
@@ -3631,7 +3638,17 @@ export class SessionManager extends EventEmitter {
           // slash command - which starts no turn of its own - that stamp is this app's own
           // bookkeeping coming back as evidence. Proof 'idle' therefore ignores it and
           // waits for the pane to actually print something.
-          if (proof !== 'idle' && (still.meta.runSince ?? 0) >= typedAt) {
+          // ...AND A TURN IS NOT PROOF WHILE THE COMPOSER STILL HOLDS THE PROMPT. The CLI's
+          // busy footer re-anchors `runSince` (`anchorRun`) whether or not the return went
+          // in, so a pane that is merely PAINTING - `Starting MCP servers (0/4) (12s · esc
+          // to interrupt)` over a composer with the whole prompt typed into it - satisfies
+          // the turn proof while nobody has sent anything. The composer is the second
+          // reading and it outranks the clock: `true` means it is still in the box, so keep
+          // waiting; `null` (torn frame, nothing readable) may never be read as either
+          // answer, so the turn proof still stands there.
+          repaint(still)
+          const heldNow = proof !== 'idle' ? promptStillInBox(painted, prompt) : null
+          if (proof !== 'idle' && heldNow !== true && (still.meta.runSince ?? 0) >= typedAt) {
             acLog(`${id} prompt submitted - a turn started`)
             return settle('sent')
           }
