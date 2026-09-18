@@ -160,6 +160,8 @@ const TESTS = [
   ['lanesweep', 'lane-sweep-test.mjs'],
   ['lanework', 'lane-work-test.mjs'],
   ['lanemergehold', 'lane-mergehold-test.mjs'],
+  // A lane whose hooks rewrite its ledger every turn is not dirty forever.
+  ['laneledger', 'lane-ledger-test.mjs'],
   ['issues', 'issues-dialog-test.mjs'],
   // Was on disk and in no list, so it went red at two renames and nobody heard: it still
   // wanted `lane a` and `main checkout` months after both were replaced.
