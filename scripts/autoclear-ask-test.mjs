@@ -13,7 +13,7 @@ assert.ok(from >= 0 && to > from, 'autoclear ask handler is present as a bounded
 const handlerSource = transformSync(source.slice(from, to), { loader: 'ts', format: 'cjs', target: 'node20' }).code
 const NOW = 1_000_000_000
 const shared = buildSync({entryPoints:[join(root,'src/shared/autoclear.ts')],bundle:true,platform:'node',format:'esm',write:false}).outputFiles[0].text
-const {hasFreshPaneHandoff} = await import('data:text/javascript;base64,'+Buffer.from(shared).toString('base64'))
+const {hasFreshPaneHandoff, briefAnchor} = await import('data:text/javascript;base64,'+Buffer.from(shared).toString('base64'))
 
 function invoke(agent, handoff) {
   let handler
@@ -24,7 +24,7 @@ function invoke(agent, handoff) {
     list: () => [pane],
     armAutoClear(id, plan) { arms++; return { ok: true, id, plan } }
   }
-  new Function('ipcMain', 'readAutoClearAsk', 'remote', 'manager', 'clearCommandFor', 'backJobOf', 'handoffFor', 'resumeBrief', 'hasFreshPaneHandoff', 'Date', handlerSource)(
+  new Function('ipcMain', 'readAutoClearAsk', 'remote', 'manager', 'clearCommandFor', 'backJobOf', 'handoffFor', 'resumeBrief', 'hasFreshPaneHandoff', 'briefAnchor', 'existsSync', 'Date', handlerSource)(
     ipcMain,
     (raw) => raw,
     { owns: () => false },
@@ -34,6 +34,8 @@ function invoke(agent, handoff) {
     () => handoff,
     (_ask, path) => `resume ${path ?? 'none'}`,
     (id, hand) => hasFreshPaneHandoff(id, hand, NOW),
+    briefAnchor,
+    () => false,
     { now: () => NOW }
   )
   const result = handler({}, { paneId: 'pane1', prompt: 'continue', steps: ['untrusted step'], seconds: 30, noResume: false })
