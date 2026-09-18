@@ -175,6 +175,26 @@ export function feedDraft(
     return { state: { text, certain, inPaste }, submitted }
   }
 
+  /**
+   * An unbracketed paste: several lines arriving in ONE chunk.
+   *
+   * Bracketed paste is the tidy path - xterm wraps the text in ESC [200~ / ESC [201~ when
+   * the CLI has asked for it, and the newlines inside are content. But a paste reaches a
+   * pty unbracketed often enough to matter (a shell pane, a CLI that has not turned the
+   * mode on yet, a write that did not come from xterm's own paste), and then every line
+   * of it reads as its own Enter.
+   *
+   * Measured on this desk's own prompt archive 2026-09-19: one pasted web page filed 64
+   * prompts in under half a second (2026-09-18T14:36:23Z), so that pane's rail carried 64
+   * tags for one ask. Two more bursts of 20 and 21 the same way.
+   *
+   * A person cannot press Enter twice inside one chunk of keystrokes, so a newline with
+   * anything after it in the same chunk is not a submission - it is content, and the
+   * chunk's own trailing Enter (or the next one typed) sends the whole block as the one
+   * prompt it is.
+   */
+  const burst = o.paste && /[\r\n]/.test(chunk.replace(/[\r\n]+$/, ''))
+
   const submit = (): void => {
     submitted.push(text.trim())
     text = ''
@@ -274,6 +294,11 @@ export function feedDraft(
     }
 
     if (code === 13 || code === 10) {
+      if (code === 13 && chunk[i + 1] === '\n') i++
+      if (burst && i < chunk.length - 1) {
+        text = cap(text + '\n', o)
+        continue
+      }
       if (o.enterSubmits) submit()
       continue
     }
