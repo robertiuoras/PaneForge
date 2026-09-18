@@ -143,6 +143,21 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
     check('never sleeps a pane with an unsent draft', !ids(idleSleepPlan(drafting, { ...DEFAULT_RECLAIM, idleSleepMinutes: 5 }, NOW)).includes('x'))
   }
   {
+    // 2026-09-18, pane s15-mu6q4smz: a pressure sweep armed a sleep countdown on a pane
+    // mid-autoclear - `/clear` had landed and the resume prompt was still queued behind
+    // an idle-composer wait, saved only by a hand-pressed Keep. `owedPrompt` is the
+    // general fact ("the app owes this pane a prompt") that closes the gap, refused in
+    // the one shared `keepable` every rung below reads.
+    const owed = [pane({ id: 'x', owedPrompt: true }), pane({ id: 'keep' })]
+    eq('never closes a pane the app owes a prompt, under pressure', ids(reclaimPlan(owed, over, DEFAULT_RECLAIM, NOW)), 'keep')
+    check('never closes a pane the app owes a prompt on the idle clock', !ids(idleClosePlan(owed, { ...DEFAULT_RECLAIM, idleCloseMinutes: 5 }, NOW)).includes('x'))
+    check('never sleeps a pane the app owes a prompt on the idle clock', !ids(idleSleepPlan(owed, { ...DEFAULT_RECLAIM, idleSleepMinutes: 5 }, NOW)).includes('x'))
+    check('never sleeps a pane the app owes a prompt under memory pressure', !ids(idleSleepPlan(owed, { ...DEFAULT_RECLAIM, idleSleepMinutes: 5 }, NOW, true, 'over')).includes('x'))
+    // Cleared field: the same pane is eligible again the moment the prompt settles.
+    const settled = [pane({ id: 'x', owedPrompt: false }), pane({ id: 'keep' })]
+    check('sleeps it once the owed prompt settles', ids(idleSleepPlan(settled, { ...DEFAULT_RECLAIM, idleSleepMinutes: 5 }, NOW)).includes('x'))
+  }
+  {
     // ...and the other half of `needsYou`, which is the only pane anybody ever wants
     // closed. The state is one word for two facts - an agent that ASKED something, and an
     // agent that FINISHED and is sitting at its composer - and refusing the state to

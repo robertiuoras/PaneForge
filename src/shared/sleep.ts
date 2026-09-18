@@ -37,6 +37,14 @@ export interface SleepPane {
   /** An unsent prompt would be lost when the CLI process is stopped. */
   drafting?: boolean
   /**
+   * The app itself owes this pane a prompt (`Session.owedPrompt`) - queued, being typed,
+   * or waiting for an idle composer, with no turn having proven it sent yet. Stopping the
+   * CLI here loses it exactly as `drafting` would, whoever queued it: autoclear's resume,
+   * a restore, `pf open --prompt`. Found missing 2026-09-18 (a pressure sweep armed a
+   * sleep on a pane mid-autoclear handover).
+   */
+  owedPrompt?: boolean
+  /**
    * Something the pane is running that is not a turn: a shell command (`paneJob.ts`) or
    * a background job an agent left behind (`paneBackJobs.ts`).
    *
@@ -64,7 +72,7 @@ export interface SleepPane {
 export function canSleep(p: SleepPane): boolean {
   if (p.status === 'exited' || p.asleep) return false
   if (p.mirror) return false
-  if (p.busy || p.asking || p.drafting) return false
+  if (p.busy || p.asking || p.drafting || p.owedPrompt) return false
   if (p.job || p.backJob) return false
   return true
 }
@@ -76,6 +84,7 @@ export function sleepRefusal(p: SleepPane): string {
   if (p.mirror) return 'This pane belongs to another machine - sleep it over there.'
   if (p.asking) return 'This pane is waiting for an answer.'
   if (p.drafting) return 'This pane has an unsent prompt.'
+  if (p.owedPrompt) return 'This pane has a prompt still being sent.'
   if (p.busy) return 'This pane is mid-turn.'
   if (p.job) return `This pane is running ${p.job}.`
   if (p.backJob) return `This pane left ${p.backJob} running.`

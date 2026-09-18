@@ -1225,6 +1225,9 @@ export class SessionManager extends EventEmitter {
       busy: Boolean(live.meta.runSince) || live.busyUntil > Date.now(),
       asking: Boolean(live.meta.ask),
       drafting: Boolean(live.meta.drafting),
+      // `handoverUntil` covers the beat between a queued prompt settling and the next one
+      // starting (the model-switch-then-resume chain) that `owedPrompt` alone would miss.
+      owedPrompt: Boolean(live.meta.owedPrompt) || (live.meta.handoverUntil ?? 0) > Date.now(),
       job: live.meta.job,
       backJob: live.meta.backJob
     }
@@ -1238,6 +1241,7 @@ export class SessionManager extends EventEmitter {
       thresholdMs: Number.isFinite(evidence?.thresholdMs) ? evidence!.thresholdMs : undefined,
       status: live.meta.status, processPid: live.proc?.pid, agent: live.meta.agent,
       busy: reading.busy, asking: reading.asking, drafting: reading.drafting,
+      owedPrompt: reading.owedPrompt,
       job: Boolean(reading.job), backJob: Boolean(reading.backJob),
       lastKeyboard: live.meta.lastKeyboard, lastOutput: live.meta.lastOutput,
       // The two numbers "was it still running" is actually asked in. `lastOutput` alone
@@ -3429,6 +3433,26 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
+   * The app owes this pane a prompt, or has just stopped owing it one.
+   *
+   * Set the moment `queuePrompt` accepts a prompt for a pane, cleared the moment it
+   * settles - sent, dropped or abandoned. This is the general fact `handoverUntil` is one
+   * particular case of (an autoclear resume waiting on an idle composer): a pane between
+   * two turns is not idle, whichever caller queued the prompt - a restore, `pf open
+   * --prompt`, a split-dialog brief, or autoclear's own resume. `shared/reclaim.ts`,
+   * `shared/sleep.ts` and `shared/autoHandoff.ts` all refuse on it so a sleep/close/move
+   * sweep cannot take a pane out from under a prompt this app is still trying to deliver -
+   * see `Session.owedPrompt` for the incident that found it missing.
+   */
+  private setOwedPrompt(id: string, owed: boolean): void {
+    const live = this.sessions.get(id)
+    if (!live) return
+    if (Boolean(live.meta.owedPrompt) === owed) return
+    live.meta.owedPrompt = owed || undefined
+    this.emitSessions()
+  }
+
+  /**
    * A person taking the pane back mid-handover.
    *
    * `tookOverAt` is what actually cancels the queued resume prompt, and it is a SECOND
@@ -3483,6 +3507,10 @@ export class SessionManager extends EventEmitter {
     known?: string
   ): void {
     if (!prompt) return onSettled?.()
+    // The app owes this pane a prompt from here until `settle` below runs, whatever the
+    // caller is - autoclear's resume, a restore, `pf open --prompt`, a split brief. See
+    // `Session.owedPrompt`.
+    this.setOwedPrompt(id, true)
     // ON DISK BEFORE A BYTE OF IT IS TYPED. Everything below is a wait, and a wait that
     // lives only in memory is a prompt the app forgets when the pane is recreated - which
     // is exactly what happened to two briefs on 2026-09-07 (see `shared/queuedPrompts.ts`).
@@ -3502,6 +3530,7 @@ export class SessionManager extends EventEmitter {
       settled = true
       if (end === 'sent') noteSubmitted(key)
       else noteDropped(key, end)
+      this.setOwedPrompt(id, false)
       onSettled?.()
     }
     const deadline = Date.now() + Math.max(0, budgetMs) + Math.max(0, extraDelay)

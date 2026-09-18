@@ -334,6 +334,8 @@ function reclaimPaneOf(
     watched: !!s.watched,
     asking: !!s.ask,
     drafting: !!s.drafting,
+    // The app itself owes this pane a prompt - see `ReclaimPane.owedPrompt`.
+    owedPrompt: !!s.owedPrompt,
     handingOff: !!s.handingOff,
     // "Keep this pane open" from the card's right-click. See `ReclaimPane.pinned`.
     pinned,
@@ -2672,6 +2674,8 @@ export default function App(): JSX.Element {
         // A live question is drawn on a screen and lives in no transcript: resuming over
         // there comes back with the question gone and nobody asked. Never moved.
         asking: !!s.ask || !!s.bell,
+        // The app itself owes this pane a prompt - see `AutoPane.owedPrompt`.
+        owedPrompt: !!s.owedPrompt,
         // Only the budget rule reads this, and only to pick a busy pane LAST. When one is
         // picked, main queues it and moves it the moment the turn ends.
         busy: s.runSince !== undefined,
@@ -2890,6 +2894,8 @@ export default function App(): JSX.Element {
         // finished pane and this sweep had never closed anything on this desk.
         asking: !!s.ask,
         drafting: !!s.drafting,
+        // The app itself owes this pane a prompt - see `ReclaimPane.owedPrompt`.
+        owedPrompt: !!s.owedPrompt,
         // A pane already on its way to the other machine is not this sweep's to close:
         // the same memory comes back either way, and closing it loses the move.
         handingOff: !!s.handingOff,
@@ -7123,6 +7129,8 @@ export default function App(): JSX.Element {
           busy: !!s.runSince,
           asking: !!s.ask,
           drafting: !!s.drafting,
+          // The app itself owes this pane a prompt - see `SleepPane.owedPrompt`.
+          owedPrompt: !!s.owedPrompt,
           job: s.job,
           backJob: s.backJob
         }

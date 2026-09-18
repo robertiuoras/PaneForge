@@ -67,6 +67,10 @@ ok(canSleep({ ...idle, focused: true, visible: true }), 'the pane whose menu is 
 is(canSleep({ ...idle, busy: true }), false, 'a turn is running')
 is(canSleep({ ...idle, asking: true }), false, 'the pane is owed an answer')
 is(canSleep({ ...idle, drafting: true }), false, 'an unsent prompt would be lost')
+// 2026-09-18, s15-mu6q4smz: a pressure sweep armed a sleep on a pane between `/clear`
+// landing and its resume prompt going in - the general fact `owedPrompt` covers, whoever
+// queued the prompt.
+is(canSleep({ ...idle, owedPrompt: true }), false, 'the app itself owes this pane a prompt')
 is(canSleep({ ...idle, job: 'npm' }), false, 'a shell pane running a command')
 is(canSleep({ ...idle, backJob: 'node' }), false, 'a background job the turn left behind')
 is(canSleep({ ...idle, mirror: true }), false, "another machine's pty is not ours to end")
@@ -80,6 +84,7 @@ is(sleepRefusal(idle), '', 'no refusal, no sentence')
 ok(/mid-turn/.test(sleepRefusal({ ...idle, busy: true })), 'busy says so')
 ok(/waiting for an answer/.test(sleepRefusal({ ...idle, asking: true })), 'a question says so')
 ok(/unsent prompt/.test(sleepRefusal({ ...idle, drafting: true })), 'a draft says so')
+ok(/still being sent/.test(sleepRefusal({ ...idle, owedPrompt: true })), 'an owed prompt says so')
 ok(/npm/.test(sleepRefusal({ ...idle, job: 'npm' })), 'the job is named')
 ok(/another machine/.test(sleepRefusal({ ...idle, mirror: true })), 'a mirror says whose it is')
 // The order matters: an asking pane that is also busy is asked about first, because the

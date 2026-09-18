@@ -178,6 +178,22 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
     '...and it is not queueable either, because nothing will announce that it finished',
     queueable({ state: 'working', asking: false, backJob: 'npm run build' }) === false
   )
+  // The app itself owing this pane a prompt (autoclear's resume, `pf open --prompt`, a
+  // restore) is the same kind of refusal: moving restarts the CLI on the far end, losing
+  // the prompt exactly as a live question would. 2026-09-18, s15-mu6q4smz: a sweep armed a
+  // sleep on a pane mid-autoclear, and this is the same gap in the move rungs.
+  check(
+    'a pane the app owes a prompt is not movable',
+    movable({ state: 'ready', asking: false, owedPrompt: true }) === false
+  )
+  check(
+    '...and not queueable either',
+    queueable({ state: 'ready', asking: false, owedPrompt: true }) === false
+  )
+  check(
+    'control - the same pane with nothing owed is movable',
+    movable({ state: 'ready', asking: false, owedPrompt: false }) === true
+  )
   check(
     'control - the same pane with nothing running is movable',
     movable({ state: 'ready', asking: false }) === true

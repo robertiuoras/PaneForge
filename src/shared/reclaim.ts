@@ -333,6 +333,16 @@ export interface ReclaimPane {
   /** An unsent prompt exists, or the app cannot prove that the composer is empty. */
   drafting?: boolean
   /**
+   * The app itself owes this pane a prompt - `queuePrompt` has one typed, being typed, or
+   * waiting for an idle composer, and no turn has proven it sent (`Session.owedPrompt`).
+   *
+   * A pane between two turns is not idle. Found missing 2026-09-18: a pressure sweep armed
+   * a sleep countdown on a pane mid-autoclear, between `/clear` landing and its resume
+   * prompt being typed, and only a hand-pressed Keep saved the queued prompt from being
+   * typed into a dead pane. Refused in `keepable`, the one place every sweep below shares.
+   */
+  owedPrompt?: boolean
+  /**
    * The command a SHELL pane is running right now, when there is one.
    *
    * `busy` already carries this through `runSince`, and this is the second, independent
@@ -566,6 +576,7 @@ export function reclaimPlan(
         !p.handingOff &&
         !p.asking &&
         !p.drafting &&
+        !p.owedPrompt &&
         !p.busy &&
         !p.job &&
         !p.backJob &&
@@ -864,6 +875,7 @@ function keepable(p: ReclaimPane, personHere = true): boolean {
     !p.handingOff &&
     !p.asking &&
     !p.drafting &&
+    !p.owedPrompt &&
     !p.busy &&
     !p.job &&
     !p.backJob &&

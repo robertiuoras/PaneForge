@@ -304,6 +304,22 @@ export interface Session {
    * the clock runs out, whatever main did or failed to do.
    */
   handoverUntil?: number
+  /**
+   * The app owes this pane a prompt: `queuePrompt` (`src/main/sessions.ts`) has one typed,
+   * being typed, or waiting for an idle composer, and no turn has proven it sent yet.
+   *
+   * A pane in this state is not idle, it is BETWEEN two turns - the fact 2026-09-18 found
+   * missing: `sleep-refused 2026-09-18 mu6q4smz` shows a pressure sweep arming a sleep
+   * countdown on s15 while `/clear` had landed and the resume prompt was still queued
+   * behind an idle-composer wait (`autoclear-app.log` 10:15:45-10:16:17), armed at
+   * 10:16:09 and only saved because Robert pressed Keep by hand. Set true the moment a
+   * prompt is accepted by `queuePrompt` and cleared the moment it settles - sent, dropped
+   * or abandoned - so every automatic sleep/close/move rung can refuse it in one place
+   * (`shared/reclaim.ts` `keepable`, `shared/sleep.ts` `canSleep`,
+   * `shared/autoHandoff.ts` `movable`/`queueable`) rather than each re-deriving the same
+   * autoclear timing.
+   */
+  owedPrompt?: boolean
   autoClearPrompt?: string
   autoClearSteps?: string[]
   /**

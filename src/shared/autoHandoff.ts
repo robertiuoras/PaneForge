@@ -257,6 +257,14 @@ export interface AutoPane {
    */
   asking: boolean
   /**
+   * The app itself owes this pane a prompt (`Session.owedPrompt`) - `queuePrompt` has one
+   * typed, being typed, or waiting for an idle composer, with no turn having proven it
+   * sent. Moving a pane restarts its CLI on the far end, so a queued prompt would be lost
+   * exactly as a live question would be. Found missing 2026-09-18 alongside the same gap
+   * in `shared/reclaim.ts` and `shared/sleep.ts`.
+   */
+  owedPrompt?: boolean
+  /**
    * A turn is in flight right now.
    *
    * Only the budget rule reads it, and it reads it to ORDER rather than to refuse: a busy
@@ -414,10 +422,20 @@ export function travels(p: Pick<AutoPane, 'agent' | 'resumeId' | 'movedTo'>): bo
 export function movable(
   p: Pick<
     AutoPane,
-    'state' | 'asking' | 'backJob' | 'machineBound' | 'shareable' | 'stayHere' | 'ask' | 'cwd'
+    | 'state'
+    | 'asking'
+    | 'owedPrompt'
+    | 'backJob'
+    | 'machineBound'
+    | 'shareable'
+    | 'stayHere'
+    | 'ask'
+    | 'cwd'
   >
 ): boolean {
   if (p.asking) return false
+  // The app owes this pane a prompt - see `AutoPane.owedPrompt`.
+  if (p.owedPrompt) return false
   // Killing the pty takes the background work with it, and there is no turn boundary to
   // wait for. See `AutoPane.backJob`.
   if (p.backJob) return false
@@ -457,10 +475,20 @@ export function movable(
 export function queueable(
   p: Pick<
     AutoPane,
-    'state' | 'asking' | 'backJob' | 'machineBound' | 'shareable' | 'stayHere' | 'ask' | 'cwd'
+    | 'state'
+    | 'asking'
+    | 'owedPrompt'
+    | 'backJob'
+    | 'machineBound'
+    | 'shareable'
+    | 'stayHere'
+    | 'ask'
+    | 'cwd'
   >
 ): boolean {
   if (p.asking) return false
+  // The app owes this pane a prompt - see `AutoPane.owedPrompt`.
+  if (p.owedPrompt) return false
   if (p.backJob) return false
   if (p.machineBound) return false
   if (p.shareable === false) return false
