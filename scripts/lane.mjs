@@ -1108,8 +1108,12 @@ function autoResolve(dir, files) {
 function catchUp(id, { keepConflict = false } = {}) {
   const dir = laneDir(id)
   if (id === 'main' || !existsSync(dir)) return { moved: false, conflicts: [], dirty: false }
-  // Never merge on top of someone's uncommitted edit.
-  if (gitSafe(dir, ...WORK_STATUS).out) return { moved: false, conflicts: [], dirty: true }
+  // Never merge on top of someone's uncommitted edit. A file the repo itself declares
+  // machine-written is not one: it is committed first, so a lane whose hook rewrites its
+  // ledger at every turn boundary is not dirty forever (see commitMachineWritten).
+  if (gitSafe(dir, ...WORK_STATUS).out && !commitMachineWritten(dir)) {
+    return { moved: false, conflicts: [], dirty: true }
+  }
   // Already contains master -> nothing to do (and no empty merge commit).
   if (gitSafe(dir, 'merge-base', '--is-ancestor', MB, 'HEAD').ok) {
     return { moved: false, conflicts: [], dirty: false }
@@ -1147,6 +1151,90 @@ function catchUp(id, { keepConflict = false } = {}) {
   // stalled lane-b for a day and made auto-sync pop "unmerged files" every run.
   if (!keepConflict || !conflicts.length) gitSafe(dir, 'merge', '--abort')
   return { moved: false, conflicts, dirty: false }
+}
+
+/**
+ * A dirty path is not somebody's uncommitted edit when the repository itself says a
+ * machine writes it: its .gitattributes gives it a `union` or `take-incoming` merge
+ * driver, which is only ever declared for append-only ledgers, logs and per-session
+ * checkpoints. (2026-09-19, claude-memory lane-a: the session holding the lane rewrote
+ * its checkpoint json, three ledger jsonl files and the prompt log at EVERY hook
+ * boundary, so the lane read as dirty on every retry and never caught up with master
+ * until somebody merged it by hand.)
+ *
+ * Asked of git (`check-attr`), never of a path list, so nothing here knows any repo's
+ * layout. Every dirty path must qualify: one hand edit beside them keeps the old
+ * refusal. Nothing is committed while a merge or rebase is open, and an unmerged path
+ * never qualifies whatever its driver says.
+ */
+const MACHINE_MERGE_DRIVERS = new Set(['union', 'take-incoming'])
+const LEDGER_SUBJECT = 'chore: session ledger + prompt log'
+
+function machineWrittenPaths(dir) {
+  if (gitSafe(dir, 'rev-parse', '--verify', '--quiet', 'MERGE_HEAD').ok) return null
+  if (gitSafe(dir, 'rev-parse', '--verify', '--quiet', 'REBASE_HEAD').ok) return null
+  // Raw, not through git(): its trim() eats the leading space of ` M path`, and the
+  // first path in the list would come back one character short.
+  let status
+  try {
+    status = execFileSync('git', [...WORK_STATUS, '-z'], {
+      cwd: dir,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: hookTimeout(GIT_TIMEOUT_MS),
+      killSignal: 'SIGKILL'
+    })
+  } catch {
+    return null
+  }
+  if (!status) return null
+  const paths = []
+  const fields = status.split('\0')
+  for (let i = 0; i < fields.length; i++) {
+    const entry = fields[i]
+    if (!entry) continue
+    const x = entry[0]
+    const y = entry[1]
+    const path = entry.slice(3)
+    // A rename or copy carries its source in the next field; the source path is the
+    // one that vanished, which no ledger does.
+    if (x === 'R' || x === 'C') return null
+    if (x === 'U' || y === 'U' || (x === 'A' && y === 'A') || (x === 'D' && y === 'D')) return null
+    if (!path) return null
+    paths.push(path)
+  }
+  if (!paths.length) return null
+  // `-z --stdin`: one path per NUL in, `path NUL attr NUL value NUL` out.
+  let attr
+  try {
+    attr = execFileSync('git', ['check-attr', '-z', '--stdin', 'merge'], {
+      cwd: dir,
+      input: paths.join('\0') + '\0',
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout: hookTimeout(GIT_TIMEOUT_MS),
+      killSignal: 'SIGKILL'
+    })
+  } catch {
+    return null
+  }
+  const answered = new Map()
+  const out = attr.split('\0')
+  for (let i = 0; i + 2 < out.length; i += 3) answered.set(out[i], out[i + 2])
+  for (const p of paths) {
+    if (!MACHINE_MERGE_DRIVERS.has(answered.get(p))) return null
+  }
+  return paths
+}
+
+/** Commit the machine-written dirt so the lane can merge; false when it is a real edit. */
+function commitMachineWritten(dir) {
+  const paths = machineWrittenPaths(dir)
+  if (!paths) return false
+  if (!gitSafe(dir, 'add', '--', ...paths).ok) return false
+  if (!gitSafe(dir, 'commit', '-q', '--no-verify', '-m', LEDGER_SUBJECT, '--', ...paths).ok) return false
+  // Still dirty means something was written between the two reads: not ours to judge.
+  return !gitSafe(dir, ...WORK_STATUS).out
 }
 
 /**
@@ -2786,6 +2874,9 @@ function ready(session, wanted) {
   if (!id) throw new Error('this session holds no lane')
   // Declaring work finished is the other way a reservation becomes real.
   if (state.lanes[id]) delete state.lanes[id].tentative
+  // The same allowance catchUp makes: a lane dirty with nothing but the files its own
+  // hooks write is committed for, not refused.
+  if (git(laneDir(id), ...WORK_STATUS)) commitMachineWritten(laneDir(id))
   const dirty = git(laneDir(id), ...WORK_STATUS)
   if (dirty) throw new Error(`commit your changes first:\n${dirty}`)
 
