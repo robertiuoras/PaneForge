@@ -129,7 +129,7 @@ import { startContinuation } from './continuation'
 import { handoffCandidates } from '../shared/handoffSteps'
 import { receiveHandoff, sendHandoff, shareable } from './handoff'
 import { RESUME_CONFIRM_MS } from '../shared/resumeCheck'
-import { clearCommandFor, hasFreshPaneHandoff, readAsk as readAutoClearAsk, resumeBrief } from '../shared/autoclear'
+import { briefAnchor, clearCommandFor, hasFreshPaneHandoff, readAsk as readAutoClearAsk, resumeBrief } from '../shared/autoclear'
 import { handoffFor, verifiedPaneHandoff } from './handoffSteps'
 import { briefForTask } from './backlogStore'
 import { startAutoClearWatch, stopAutoClearWatch } from './autoclearWatch'
@@ -3048,7 +3048,7 @@ ipcMain.handle('autoclear:ask', (_e, raw: unknown) => {
       return { ok: false, reason: 'that session has no fresh pane handoff to continue' }
     }
   }
-  return manager.armAutoClear(ask.paneId, { ...ask, prompt: resumeBrief(ask, handoff?.path ?? null), command })
+  return manager.armAutoClear(ask.paneId, { ...ask, prompt: resumeBrief(ask, briefAnchor(ask, handoff?.path ?? null, (p) => existsSync(p))), command })
 })
 ipcMain.handle('autoclear:cancel', (_e, id: string) => manager.cancelAutoClear(String(id), 'cancelled'))
 ipcMain.handle('autoclear:takeover', (_e, id: string) => manager.takeOver(String(id)))
