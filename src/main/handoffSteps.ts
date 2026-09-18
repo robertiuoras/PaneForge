@@ -62,6 +62,21 @@ function claudeHome(): string {
  * on this desk is a pane that has never written one, and stat-ing six absent paths for
  * every pane on every session list is the cost this avoids.
  */
+/** The newest readable candidate on disk, by stat alone - the same choice the full read makes. */
+function newest(candidates: string[]): { path: string | null; mtimeMs: number } {
+  let top: { path: string | null; mtimeMs: number } = { path: null, mtimeMs: 0 }
+  for (const p of candidates) {
+    try {
+      const st = statSync(p)
+      if (st.mtimeMs <= top.mtimeMs || st.size > 64 * 1024) continue
+      top = { path: p, mtimeMs: st.mtimeMs }
+    } catch {
+      /* absent */
+    }
+  }
+  return top
+}
+
 export function handoffFor(cwd: string, paneId: string, now = Date.now()): HandoffReading {
   const key = `${paneId} ${cwd}`
   const hit = cache.get(key)
@@ -70,20 +85,24 @@ export function handoffFor(cwd: string, paneId: string, now = Date.now()): Hando
   // reading the chip took moments earlier - of a handoff that then said None - refused a
   // clear whose steps were already written (2026-09-04, s10-mtm6ccmk, 206k tokens). The
   // stat is the cheap half; the absent-file case still costs nothing for CACHE_MS.
+  const candidates = handoffCandidates(cwd, paneId, claudeHome(), symlinked)
+  // The stat covers EVERY candidate, not only the file the cache chose: the clear hook
+  // writes a NEW pane-scoped handoff and asks inside the same second, while the idle sweep
+  // has kept a reading of the older unscoped project handoff warm. Re-statting that one
+  // file found it unchanged, and the arm read `open: 0` off it - `NOTHING_OPEN` for a pane
+  // whose own handoff had two steps on disk (2026-09-18, s15-mu6q4smz, twice in a day).
+  // The absent case is the same shape: a pane cached as "never wrote one" has to see its
+  // first handoff at once. Five stats per throttle window is the whole cost.
   if (hit && now - hit.at < CACHE_MS) {
-    if (!hit.reading.path) return hit.reading
     if (now - hit.statAt < STAT_THROTTLE_MS) return hit.reading
-    try {
-      if (statSync(hit.reading.path).mtimeMs === hit.reading.mtimeMs) {
-        hit.statAt = now
-        return hit.reading
-      }
-    } catch {
-      /* gone - read again */
+    const top = newest(candidates)
+    if (top.path === hit.reading.path && top.mtimeMs === hit.reading.mtimeMs) {
+      hit.statAt = now
+      return hit.reading
     }
   }
   let best: HandoffReading = NONE
-  for (const p of handoffCandidates(cwd, paneId, claudeHome(), symlinked)) {
+  for (const p of candidates) {
     try {
       const st = statSync(p)
       if (st.mtimeMs <= best.mtimeMs) continue

@@ -183,8 +183,50 @@ console.log(`\n${pass} cases passed`)
 // steps were already on disk (2026-09-04, s10-mtm6ccmk at 206k tokens, `NOTHING_OPEN`).
 {
   const main = readFileSync(join(process.cwd(), 'src/main/handoffSteps.ts'), 'utf8')
-  const served = /if \(hit && now - hit\.at < CACHE_MS\) \{[\s\S]*?statSync\(hit\.reading\.path\)\.mtimeMs === hit\.reading\.mtimeMs/.test(main)
-  assert.ok(served, 'handoffFor serves a cached reading only while the handoff on disk has the same mtime')
+  const served = /if \(hit && now - hit\.at < CACHE_MS\) \{[\s\S]*?top\.mtimeMs === hit\.reading\.mtimeMs/.test(main)
+  assert.ok(served, 'handoffFor serves a cached reading only while the newest handoff on disk is the one it read')
   assert.ok(!/if \(hit && now - hit\.at < CACHE_MS\) return hit\.reading/.test(main), 'a wall-clock-only cache hit must not be served')
   console.log('ok   a rewritten handoff is read again inside the cache window')
+}
+
+// A cached reading is only the file it CHOSE, too: the hook writes a NEW pane-scoped
+// handoff and asks for the clear inside the same second, while the idle sweep has kept a
+// 30s reading of the older unscoped project handoff warm. Re-statting only that file finds
+// it unchanged and the arm reads `open: 0` off it - `NOTHING_OPEN` for a pane whose own
+// handoff had two steps on disk (2026-09-18, s15-mu6q4smz, 196k tokens, twice in one day).
+{
+  const { mkdtempSync, mkdirSync, writeFileSync, utimesSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const home = mkdtempSync(join(tmpdir(), 'pf-handoff-'))
+  process.env.PF_CLAUDE_HOME = home
+  const { buildSync } = await import('esbuild')
+  const built = join(home, 'handoffSteps.mjs')
+  buildSync({ absWorkingDir: process.cwd(), entryPoints: [join(process.cwd(), 'src/main/handoffSteps.ts')], bundle: true, platform: 'node', format: 'esm', logLevel: 'warning', outfile: built })
+  const { handoffFor, clearHandoffCache } = await import(pathToFileURL(built).href)
+  const { slugFor } = await import('../src/shared/handoffSteps.ts')
+  const cwd = '/Users/x/Projects/proj'
+  const dir = join(home, 'projects', slugFor(cwd), 'memory')
+  mkdirSync(dir, { recursive: true })
+  const at = (p, sec) => utimesSync(p, sec, sec)
+  const unscoped = join(dir, 'session-handoff.md')
+  writeFileSync(unscoped, '# Handoff\n\n## Next steps\n\nnone\n')
+  at(unscoped, 1_000_000)
+  const t0 = Date.now()
+  clearHandoffCache()
+  assert.strictEqual(handoffFor(cwd, 's15', t0).open, 0, 'the unscoped handoff reads as finished')
+  const pane = join(dir, 'session-handoff.pane-s15.md')
+  writeFileSync(pane, '# Handoff\n\n## Next steps\n\n1. Add the revenue check.\n2. Prove the digest writes.\n')
+  at(pane, 1_000_100)
+  const fresh = handoffFor(cwd, 's15', t0 + 1_000)
+  assert.strictEqual(fresh.path, pane, 'a pane handoff created inside the cache window is the one read')
+  assert.strictEqual(fresh.open, 2, 'and its open steps are counted')
+  console.log('ok   a handoff CREATED inside the cache window is read, not the older one the cache chose')
+  // The absent case is the same shape: a pane cached as "never wrote one" must see its first handoff.
+  clearHandoffCache()
+  assert.strictEqual(handoffFor(cwd, 's16', t0).path, unscoped)
+  const pane16 = join(dir, 'session-handoff.pane-s16.md')
+  writeFileSync(pane16, '# Handoff\n\n## Next steps\n\n1. One thing.\n')
+  at(pane16, 1_000_200)
+  assert.strictEqual(handoffFor(cwd, 's16', t0 + 1_000).path, pane16, 'a second pane sees its own first handoff at once')
+  console.log('ok   a pane whose reading was cached sees its own first handoff at once')
 }
