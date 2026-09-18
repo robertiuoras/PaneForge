@@ -126,7 +126,28 @@ function stripRenderedIndent(lines: string[]): string[] {
     if (rows.some((r) => MARKER_ROW.test(r) || CODEY.test(r))) continue;
     const indents = rows.map(indentOf);
     const ragged = indents.some((n) => n >= 2) && indents.some((n) => n === 0);
-    if (!ragged) continue;
+    // ...and the margin is just as much the CLI's when it is on EVERY row.
+    //
+    // The ragged reading above only fires where one row happened to lose the margin, and
+    // a block that keeps it throughout then kept its indent, which `BLOCK_START` reads as
+    // "every row here is its own block" - so nothing in it ever joined. Measured on a
+    // letter copied out of a Claude pane 2026-09-19: 18 rows, 6 sentences broken mid-way,
+    // and `unwrapForClipboard` returned the text untouched. Pasted into a PDF field, that
+    // is six line breaks in the middle of the answer.
+    //
+    // A margin that is the same on every row carries no information: taking it off cannot
+    // change the shape of anything, and it is the only thing standing between a wrapped
+    // paragraph and the join it needs. The paragraph still has to READ as wrapped prose -
+    // no bullets, no table rows, nothing code-shaped (all refused above), wide enough to
+    // have been wrapped, and most of its rows full - so an indented code block or a quoted
+    // excerpt is left exactly as it is.
+    const uniform =
+      !ragged && indents.every((n) => n >= 2) && indents.every((n) => n === indents[0]);
+    if (uniform) {
+      const width = Math.max(...rows.map((r) => r.length));
+      const full = rows.filter((r) => isFull(r, width)).length / rows.length;
+      if (width < MIN_WIDTH || full < MIN_FULL_SHARE) continue;
+    } else if (!ragged) continue;
     for (const i of para) out[i] = lines[i].replace(/^ +/, '');
   }
   return out;
