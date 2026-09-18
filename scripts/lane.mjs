@@ -4054,18 +4054,17 @@ try {
     }
   }
 
-  if (cmd === 'claim')
+  if (cmd === 'claim') {
     // The hook always says where its chat is; a chat typing this itself usually does not,
     // and its own working directory is the answer it would have given. Better a folder
     // that might be a PaneForge checkout than a hold nothing can put a name to.
-    console.log(
-      JSON.stringify(
-        claim(session, arg('cwd') ?? process.cwd(), arg('prefer'), argv.includes('--tentative'), argv.includes('--visitor')),
-        null,
-        2
-      )
-    )
-  else if (cmd === 'guard') {
+    const info = claim(session, arg('cwd') ?? process.cwd(), arg('prefer'), argv.includes('--tentative'), argv.includes('--visitor'))
+    // `--status`: the held-only roster in the same answer, so the prompt hook starts this
+    // 4,000-line engine once per prompt instead of twice (claim, then status): measured
+    // ~150 ms of the hook's remaining ~500 ms was the second node start.
+    if (argv.includes('--status')) info.status = status(session, { held: true })
+    console.log(JSON.stringify(info, null, 2))
+  } else if (cmd === 'guard') {
     const reason = guard(session, arg('path'))
     if (reason) {
       console.log(reason)

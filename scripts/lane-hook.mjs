@@ -289,7 +289,9 @@ if (event === 'prompt') {
     '--cwd',
     cwd,
     ...(prefer ? ['--prefer', prefer] : []),
-    ...(visitor ? ['--visitor'] : [])
+    ...(visitor ? ['--visitor'] : []),
+    // The roster comes back in the same answer - one engine start per prompt, not two.
+    '--status'
   )
   if (r.code !== 0) {
     // Every lane busy is worth saying out loud: the alternative is two chats quietly
@@ -326,8 +328,10 @@ if (event === 'prompt') {
   let stuck = null
   let orphan = null
   try {
-    // `--held`: only held lanes are printed, so only held lanes are measured.
-    const s = JSON.parse(lane(repo, 'status', '--session', session, '--held').out)
+    // Held lanes only (`status --held`): only held lanes are printed, so only held lanes
+    // are measured. Carried on the claim's own answer, so no second engine start.
+    const s = info.status
+    if (!s) throw new Error('claim carried no status')
     const held = s.lanes.filter((l) => l.heldBy)
     const pad = Math.max(...held.map((l) => l.lane.length), 1)
     roster = held.map((l) => {
