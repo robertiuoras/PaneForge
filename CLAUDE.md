@@ -29,7 +29,7 @@ Profiles (`src/main/profile.ts`) give the copy its own userData, single-instance
 taskbar button. Never `npm run setup`, `Stop-Process PaneForge`, or the NSIS installer.
 
 A packaged app opened by hand out of a `dist/` folder, with no profile named, is never the daily
-driver: it opens `/Applications/PaneForge.app` and quits when that copy is not older
+driver: it opens `/Applications/PaneForge.app` and quits, whichever is newer
 (`shared/strayLaunch.ts`, `npm run test:straylaunch`). A `npm run try` copy carries a profile,
 a headless copy is refused, a checkout with no installed app is left alone.
 

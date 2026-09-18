@@ -11,8 +11,8 @@
 // build did not ship, and every chat on the machine was refused its lane.
 //
 // The rule: a packaged app running out of a build folder, with no profile named, is
-// never the daily driver. When an installed copy exists and is not older, this process
-// opens that one and leaves. Every other answer leaves the app exactly as it was - a
+// never the daily driver. When an installed copy exists, this process opens that one and
+// leaves, whichever of the two is newer. Every other answer leaves the app exactly as it was - a
 // `npm run try` copy carries a profile, a test copy is headless, and a checkout with no
 // installed app at all is somebody's only PaneForge.
 
@@ -24,7 +24,6 @@ export type StrayVerdict =
   | 'not packaged'
   | 'no installed copy'
   | 'this is the installed copy'
-  | 'the installed copy is older'
 
 export interface StrayState {
   /** `process.execPath` of this process. */
@@ -81,7 +80,9 @@ export function strayLaunch(s: StrayState): StrayVerdict {
   if (s.headless) return 'headless'
   if (!s.installed) return 'no installed copy'
   if (sameApp(s.execPath, s.installed.path)) return 'this is the installed copy'
-  if (compareVersions(s.installed.version, s.version) < 0) return 'the installed copy is older'
+  // Newer or older does not matter: Robert never opens a dist/ copy on purpose (a build
+  // under test comes through `npm run try` and wears a profile), and "only one PaneForge
+  // at a time" (2026-09-18) means the installed one, whatever version it is.
   return 'go'
 }
 

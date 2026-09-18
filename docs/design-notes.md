@@ -4966,6 +4966,6 @@ ship, and every chat on the machine was refused its lane for the morning.
 
 `shared/strayLaunch.ts` decides at launch, before the window: packaged, under
 `dist/<electron-builder folder>`, no profile, not headless, an installed copy at a different
-path that is not older -> `open -a` it and quit, named in `updater.log`. Unpackaged and
+path, whichever is newer (Robert 2026-09-18: "should only have 1 at a time") -> `open -a` it and quit, named in `updater.log`. Unpackaged and
 `npm run try` copies (profile `dev`) are refused first. Windows has no installed-path
 reader yet, so it answers `no installed copy` there.

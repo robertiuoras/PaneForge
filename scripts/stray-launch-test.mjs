@@ -1,4 +1,4 @@
-// A build folder's leftover app hands the desk to the installed one, and the six times it
+// A build folder's leftover app hands the desk to the installed one, and the five times it
 // must not.
 //
 //   node scripts/stray-launch-test.mjs
@@ -35,8 +35,8 @@ const base = { execPath: DIST, version: '0.8.183', profile: '', headless: false,
 ok('2026-09-18: 0.8.183 from dist/ with 0.8.217 installed goes', strayLaunch(base) === 'go')
 ok('same version installed still goes (the build folder is never the driver)',
   strayLaunch({ ...base, version: '0.8.217' }) === 'go')
-ok('a newer build under test is left alone',
-  strayLaunch({ ...base, version: '0.8.218' }) === 'the installed copy is older')
+ok('a newer dist/ build still hands off - only one PaneForge at a time',
+  strayLaunch({ ...base, version: '0.8.218' }) === 'go')
 ok('npm run try carries a profile and is left alone',
   strayLaunch({ ...base, profile: 'dev' }) === 'a named profile')
 ok('a headless test copy is left alone',

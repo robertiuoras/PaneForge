@@ -39,6 +39,7 @@ import { get } from 'node:https'
 import { dirname, join } from 'node:path'
 import { app } from 'electron'
 import { spawnQuiet } from './spawnQuiet'
+import { inBuildFolder } from '../shared/strayLaunch'
 
 const OWNER = 'robertiuoras'
 const REPO = 'PaneForge'
@@ -79,6 +80,11 @@ export function bundlePath(): string {
   const bundle = dirname(dirname(dirname(exec)))
   if (!bundle.endsWith('.app')) return ''
   if (!/\/(PaneForge|PaneForge-[^/]*)\.app$/.test(bundle)) return ''
+  // A copy running out of a build folder is never swapped: the swap replaces the RUNNING
+  // bundle, so a stale dist/ copy pressing Restart now would install the update into
+  // dist/ and relaunch from there - and the next `npm run build` overwrites the desk
+  // (2026-09-18, 0.8.183 from dist/ staged 0.8.217 into itself). shared/strayLaunch.ts.
+  if (inBuildFolder(exec)) return ''
   return bundle
 }
 
