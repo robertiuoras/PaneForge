@@ -4952,3 +4952,20 @@ the small chip" was two presses). A right-click fires pointerdown first, so reac
 Move or Close on a sleeping row spawned its CLI on the way to the menu. Robert: "allow me
 to just right click not wake it up and move it". `touchPane(id, wake)` now takes whether
 this press may wake, and both the row and the pane pass `e.button !== 2`.
+
+
+## A build folder's leftover app took the desk (2026-09-18)
+
+0.8.217 installed at 01:37Z and came up. The last window was closed at 01:38Z, which quits
+the app. The relaunch at 01:39Z read `launch v0.8.183 ... start=normal` - from
+`~/Projects/PaneForge/dist/mac-arm64/PaneForge.app`, electron-builder output left behind on
+1 September. Spotlight knew four bundles called PaneForge (installed, staged, two `dist/`
+folders), so "open PaneForge" was a coin toss. The stale copy then wrote its own lane hooks
+into `~/.claude/settings.json`, pointing at `dev-profile.mjs` a 17-day-old build did not
+ship, and every chat on the machine was refused its lane for the morning.
+
+`shared/strayLaunch.ts` decides at launch, before the window: packaged, under
+`dist/<electron-builder folder>`, no profile, not headless, an installed copy at a different
+path that is not older -> `open -a` it and quit, named in `updater.log`. Unpackaged and
+`npm run try` copies (profile `dev`) are refused first. Windows has no installed-path
+reader yet, so it answers `no installed copy` there.

@@ -194,6 +194,7 @@ const TESTS = [
   ['blindlist', 'updater-blindlist-test.mjs'],
   ['updateprobe', 'update-probe-test.mjs'],
   ['launchinstall', 'launch-install-test.mjs'],
+  ['straylaunch', 'stray-launch-test.mjs'],
   ['devicewatch', 'device-watch-test.mjs'],
   ['projects', 'projects-test.mjs'],
   ['cardfit', 'card-fit-test.mjs'],

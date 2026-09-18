@@ -71,6 +71,7 @@ import type { LanePane } from './laneBoard'
 import { resolveRevealTarget } from './revealPath'
 import { which } from './which'
 import { ensureDesktopShortcut, syncLaunchAtLogin } from './winShortcut'
+import { handOffToInstalled } from './strayLaunch'
 import { priorPrompt, recordPrompt } from './promptArchive'
 import { splitPrompt } from './splitPrompt'
 import { adminStatus, disableAdminMode, enableAdminMode, relaunchViaTask } from './admin'
@@ -362,10 +363,20 @@ function quitReason(): string {
   return `nothing in the app asked - ${quitWhere(focused, lastFocusAt, Date.now())}`
 }
 
+// A leftover `dist/` build opened by hand is never the daily driver: it hands the desk to
+// the installed copy and leaves (shared/strayLaunch.ts, the 0.8.183 morning). Decided
+// once the lock is ours, so a running installed copy still gets the argv as a second
+// instance, and before any window or pane exists, so nothing is lost by leaving.
+const stray = app.isPackaged ? handOffToInstalled() : null
 if (!app.requestSingleInstanceLock(launchRequest)) {
   quitting('another copy already holds the single-instance lock')
   app.quit()
+} else if (stray && stray.verdict === 'go') {
+  updateLog(`stray launch ${process.execPath} handed the desk to ${stray.installed}`)
+  quitting(`a build folder copy - the installed app at ${stray.installed} was opened instead`)
+  app.quit()
 } else {
+  if (stray && stray.verdict !== 'not a build folder') updateLog(`stray launch ${stray.verdict}`)
   app.on('second-instance', (_e, argv, _cwd, extra) => {
     // Mid-update the installer launches the new exe while this one is still holding the
     // lock, so that launch arrives here as a second instance. Raising the window then
