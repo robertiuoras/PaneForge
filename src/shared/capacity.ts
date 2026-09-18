@@ -268,6 +268,14 @@ export function assess(m: Machine): Verdict {
         : 'ok'
   const lagWords = `load is ${(m.load ?? 0).toFixed(1)} per core`
 
+  // Trimming scrollback gives back MEMORY and nothing else, so only a memory verdict may
+  // spend a pane's lines. A lag verdict used to trim too: on a desk at load 2.7 per core
+  // with a third of its memory free, every hidden pane was cut to TRIMMED_SCROLLBACK and
+  // re-rendered from up to 4 MB of raw log the moment it was switched to - six panes at
+  // once when a grid opened (fix.log 2026-09-18, every redraw at rows=2059). That rebuild,
+  // top to bottom in front of the reader, is "display breaks / slowly loads going down".
+  // Same rule `sleepPressureOf` (shared/reclaim.ts) keeps for the sleep clock.
+  const trim = why === 'memory'
   if (pressure === 'critical') {
     const head = why === 'lag' ? `This machine is struggling - ${lagWords}.` : 'This machine is out of memory.'
     return {
@@ -275,7 +283,7 @@ export function assess(m: Machine): Verdict {
       usedMb,
       nextPaneMb,
       roomFor: null,
-      trim: true,
+      trim,
       offload: peer,
       over,
       why,
@@ -283,7 +291,9 @@ export function assess(m: Machine): Verdict {
       say: true,
       advice: peer
         ? `${head} Panes here hold ~${usedMb} MB; start the next one on the paired device.`
-        : `${head} Panes here hold ~${usedMb} MB and background scrollback is being trimmed.`,
+        : trim
+          ? `${head} Panes here hold ~${usedMb} MB and background scrollback is being trimmed.`
+          : `${head} Panes here hold ~${usedMb} MB.`,
     }
   }
 
@@ -300,14 +310,16 @@ export function assess(m: Machine): Verdict {
       usedMb,
       nextPaneMb,
       roomFor: Math.min(roomFor, 1),
-      trim: true,
+      trim,
       offload: peer,
       over,
       why,
       say: !ladder,
       advice: peer
         ? `${head} Each pane here costs ~${nextPaneMb} MB - the paired device can take the next one.`
-        : `${head} Each pane here costs ~${nextPaneMb} MB; background panes are trimmed to keep this responsive.`,
+        : trim
+          ? `${head} Each pane here costs ~${nextPaneMb} MB; background panes are trimmed to keep this responsive.`
+          : `${head} Each pane here costs ~${nextPaneMb} MB.`,
     }
   }
 
