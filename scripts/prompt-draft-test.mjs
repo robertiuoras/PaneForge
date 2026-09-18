@@ -62,7 +62,32 @@ check('Enter submits and clears', (() => {
   const r = feed([...'hello', '\r', ...'world'])
   return r.submitted.length === 1 && r.submitted[0] === 'hello' && r.text === 'world'
 })())
-check('two lines in one chunk are both reported', feed(['a\rb\r']).submitted.length === 2)
+// --- a paste that never announced itself -----------------------------------
+// One pasted web page filed 64 prompts in half a second (prompt archive,
+// 2026-09-18T14:36:23Z), so that pane's rail drew 64 tags for one ask. Nobody presses
+// Enter twice inside one chunk of keystrokes, so those newlines are content.
+check('two lines in one chunk are ONE paste', (() => {
+  const r = feed(['a\rb\r'])
+  return r.submitted.length === 1 && r.submitted[0] === 'a\nb'
+})())
+check('a pasted page is one prompt', (() => {
+  const page = ['Skip to main content', 'Private ruling application form', 'Last updated 2024']
+  const r = feed([page.join('\r') + '\r'])
+  return r.submitted.length === 1 && r.submitted[0] === page.join('\n')
+})())
+check('a paste with no trailing Enter waits for one', (() => {
+  const r = feed(['one\rtwo\rthree'])
+  return r.submitted.length === 0 && r.text === 'one\ntwo\nthree'
+})())
+check('windows newlines in a paste are one break each', (() => {
+  const r = feed(['one\r\ntwo\r\n'])
+  return r.submitted.length === 1 && r.submitted[0] === 'one\ntwo'
+})())
+check('a bracketed paste is unchanged', (() => {
+  const r = feed([ESC + '[200~one\rtwo' + ESC + '[201~', '\r'])
+  return r.submitted.length === 1 && r.submitted[0] === 'one\ntwo'
+})())
+check('an ordinary Enter still submits on its own', feed([...'hello', '\r']).submitted.length === 1)
 
 // --- escapes: the case that broke this once --------------------------------
 

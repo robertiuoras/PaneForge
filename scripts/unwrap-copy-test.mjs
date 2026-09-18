@@ -249,4 +249,31 @@ assert.equal(
 )
 
 
-console.log('unwrap copy: 30 assertions passed')
+// --- the whole block wearing the CLI's margin -------------------------------
+// Copied out of a Claude pane 2026-09-19 and pasted into a PDF form field: 18 rows with
+// six sentences broken mid-way, because every row of those paragraphs carried the two
+// spaces Claude Code draws its answers with, and an indent on every row read as "each of
+// these rows is its own block".
+const margined = [
+  'I was a tax resident of New Zealand for the whole income year 1 July 2025 to 30 June 2026, and a foreign resident of Australia.',
+  '',
+  '  I carry on business as a sole trader under ABN 99149699032. I have no employees. The business was mainly carried on in Auckland,',
+  '  New Zealand during the income year.',
+  '',
+  '  While in Australia I performed services for clients found through the Airtasker platform, at those clients\' own premises. I did',
+  '  not have an office, workshop, depot, storage facility, agent or any other fixed place of business in Australia at any time.',
+].join('\n')
+const marginedOut = unwrapForClipboard(margined)
+assert.ok(
+  marginedOut.includes('carried on in Auckland, New Zealand during the income year.'),
+  'a paragraph wearing the margin on every row is rejoined',
+)
+assert.ok(!/\n {2}/.test(marginedOut), 'and the margin itself does not reach the clipboard')
+assert.equal(marginedOut.split('\n').filter((l) => l.trim()).length, 3, 'one line per paragraph')
+
+// An indented block that is NOT wrapped prose keeps its shape: short lines are somebody's
+// layout, whatever the margin looks like.
+const indentedList = ['  Auckland', '  Wellington', '  Christchurch'].join('\n')
+assert.equal(unwrapForClipboard(indentedList), indentedList, 'a short indented block is left alone')
+
+console.log('unwrap copy: 34 assertions passed')
