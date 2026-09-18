@@ -61,8 +61,19 @@ ok(
 // core keeps `assess` at `over` for hours here, so this is the ordinary case, not an edge.
 const { readFileSync } = await import('node:fs')
 const app = readFileSync(new URL('../src/renderer/src/App.tsx', import.meta.url), 'utf8')
-const loop = /for \(const id of regrown\)[\s\S]{0,200}?paneRedraw\.get\(id\)/.exec(app)?.[0] ?? ''
-ok('the regrow re-render is not skipped for the focused pane', loop !== '' && !/activeId/.test(loop), JSON.stringify(loop.slice(0, 120)))
+//
+// It is no longer spent the instant the pane is switched to, though: the rebuild is 149 ms
+// and replaces every row (measured 2026-09-18, 4 MB log, dev copy), which is the "display
+// breaks/slowly loads" Robert reported. A pane on screen is OWED the rebuild instead and
+// paid when it goes off screen, or the moment the reader scrolls to the top of what the
+// trim left - so the lines still come back, never under the reader.
+const loop = /for \(const id of regrown\) \{[\s\S]{0,1200}?\n    \}/.exec(app)?.[0] ?? ''
+ok('the regrow re-render still reaches the pane somebody is looking at', loop !== '' &&
+  /paneOwedHistory\.add\(id\)/.test(loop) && /paneRedraw\.get\(id\)/.test(loop),
+  JSON.stringify(loop.slice(0, 160)))
+ok('the focused pane is never skipped by id', loop !== '' && !/activeId/.test(loop))
+ok('...and a pane owed one is paid when it leaves the screen',
+  /for \(const id of \[\.\.\.paneOwedHistory\]\)[\s\S]{0,300}paneRedraw\.get\(id\)/.test(app))
 
 const { trimPlan } = await import('../src/shared/capacity.ts').catch(() => ({}))
 if (trimPlan) {

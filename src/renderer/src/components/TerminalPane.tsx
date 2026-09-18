@@ -337,6 +337,22 @@ export const paneRepair = new Map<string, () => void>()
  */
 export const paneRedraw = new Map<string, () => Promise<boolean>>()
 
+/**
+ * Panes owed a re-render from history, because a trim deleted their lines while nobody
+ * was looking and the depth has since been given back.
+ *
+ * Raising `scrollback` brings nothing back - the lines are gone - so the pane has to be
+ * rebuilt from main's raw log, and that rebuild is not free: measured 2026-09-18 in the
+ * dev copy on a 4 MB log, `redrawHistory` takes 149 ms and replaces all 20,066 rows. Doing
+ * that to a pane the person has just switched to IS the "display breaks / slowly loads"
+ * Robert reported, so App leaves a visible pane HERE instead of rebuilding it under the
+ * reader. It is paid either when the pane goes off screen (App) or the moment the reader
+ * actually asks for the history by scrolling to the top of what is left (below) - which is
+ * the only moment the missing lines are what is being looked at.
+ */
+export const paneOwedHistory = new Set<string>()
+;(window as unknown as { __pfOwedHistory?: Set<string> }).__pfOwedHistory = paneOwedHistory
+
 /** Per-pane render counter, exposed on the window for probes. See the component body. */
 export const renderCount = new Map<string, number>()
 ;(window as unknown as { __pfRenders?: Map<string, number> }).__pfRenders = renderCount
@@ -2801,6 +2817,12 @@ function TerminalPane({
       const follow = nearBottom()
       pinned.current = follow
       setScrolledUp(!follow)
+      // The reader has reached the top of what a trim left behind: this is the one moment
+      // the deleted lines are the thing being looked for, so the rebuild is spent now.
+      if (paneOwedHistory.has(sessionId) && t.buffer.active.viewportY === 0) {
+        paneOwedHistory.delete(sessionId)
+        void paneRedraw.get(sessionId)?.()
+      }
       // Immediately, and again from the frame: a scroll that moves the view without
       // repainting still moved every prompt the pairs are drawn against.
       syncGeom()
@@ -4447,6 +4469,7 @@ function TerminalPane({
       window.clearInterval(busyTick)
       paneRepair.delete(sessionId)
       paneRedraw.delete(sessionId)
+      paneOwedHistory.delete(sessionId)
       paneArmClear.delete(sessionId)
       paneFeed.delete(sessionId)
       paneMarks.delete(sessionId)
