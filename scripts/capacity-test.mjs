@@ -156,6 +156,24 @@ ok('critical STILL never touches the focused pane', at(critPlan, 'focused') === 
   JSON.stringify(critPlan))
 ok('the plan only lists panes that change', critPlan.length === 2)
 
+// A LAG verdict trims nothing. Trimming gives back MEMORY (~5%), and a desk at load 2.7
+// per core with a third of its memory free is short of none: measured 2026-09-18 on the
+// installed app, every fix.log redraw that day reported rows=2059 - TRIMMED_SCROLLBACK
+// plus the 59-row grid - because each hidden pane had been cut to 2,000 lines under the
+// lag verdict and, on being switched to, was re-rendered from up to 4 MB of raw log in
+// front of the person who had just arrived (six panes at once at 10:33:05, 10:40:58 and
+// 10:50:20). That rebuild is "display breaks / slowly loads going down". Same rule as
+// `sleepPressureOf`: only a memory verdict may spend a pane's lines.
+const lagCrit = assess(machine({ localPanes: 3, load: LAG_HARD + 1 }))
+const lagWarn = assess(machine({ localPanes: 3, load: LAG_WARN + 0.1 }))
+ok('a lag-only critical verdict is over', lagCrit.level === 'over' && lagCrit.why === 'lag')
+ok('a lag-only critical verdict trims nothing', lagCrit.trim === false)
+ok('a lag-only warn verdict trims nothing', lagWarn.level === 'tight' && lagWarn.trim === false)
+ok('a lag verdict plans no trim', trimPlan(panes, lagCrit).length === 0, JSON.stringify(trimPlan(panes, lagCrit)))
+ok('a lag verdict still lets a trimmed pane grow back', trimPlan(panes, lagCrit, TRIMMED_SCROLLBACK).length === 3)
+ok('a lag verdict does not claim to be trimming', !/trimmed/.test(lagCrit.advice) && !/trimmed/.test(lagWarn.advice), lagCrit.advice)
+ok('a memory verdict still trims', crit.why === 'memory' && crit.trim === true && thrash.trim === true)
+
 // Recovery: pressure passes and the short panes are allowed to grow back. Without this a
 // laptop that was briefly busy would stay permanently degraded.
 const restore = trimPlan(panes, assess(machine({ localPanes: 3 })), TRIMMED_SCROLLBACK)
