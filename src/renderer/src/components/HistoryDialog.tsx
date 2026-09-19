@@ -175,7 +175,7 @@ export default function HistoryDialog({ agents, onResume, onClose }: Props): JSX
           className="search"
           aria-label="Search session history"
           autoFocus
-          placeholder="Search everything every agent printed"
+          placeholder="Search by what you asked, or anything an agent printed"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
