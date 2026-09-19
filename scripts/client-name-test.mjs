@@ -192,7 +192,7 @@ is(topicTitle('pizzasrus invoice reminder emails'), 'Pizzasrus Invoice Reminder'
 is(topicTitle('look at it'), '', 'nothing but joining words is not a subject')
 is(
   topicTitle("i'm looking for a cheap car"),
-  'Looking For Cheap Car',
+  'Cheap Car',
   'half a contraction is not the first word of a card'
 )
 is(
@@ -230,6 +230,20 @@ is(topicTitle('update all the dependencies and run the tests'), 'Updating Depend
 is(topicTitle('fix'), '', 'a verb with nothing after it is not a subject')
 
 is(topicTitle('/clear'), '', 'a slash command is a command, not a subject')
+
+// ── broken English is still a name ─────────────────────────────────────────────────────
+// Robert's asks open on the typing, not on the subject: the thing a session is about
+// arrives four or five words in, often misspelt. Naming off the FRONT gave cards called
+// `Cacan See Hubspot Api`, `Access To Both Hello` and `Clicking On Teh Gpt` (2026-09-19,
+// "its still terrible and not reflecting the work/idea of the session").
+is(topicTitle('cacan u see hubspot api and see how a contact is made'), 'Checking HubSpot API', 'a doubled keystroke is repaired, and the acronym is spelled')
+is(topicTitle('can you check how we blew so quickly openai billing api for gpt live?'), 'Checking OpenAI Billing', 'the subject four words in, spelled the way the product is')
+is(topicTitle('can u anaylse ram ad account meta see any improvements immediately?'), 'RAM Ad Meta Improvements', 'a misspelt verb does not eat the subject')
+is(topicTitle('im clicking on teh gpt live button but it doesnt look active enough'), 'Clicking On GPT Live', 'teh is the, and GPT keeps its shape')
+is(topicTitle('continue from last session'), '', 'an ask about the session names nothing at all')
+is(topicTitle('upwork bot is it running or not i havent seen it on this device'), 'Upwork Bot Running', 'the negation is not the subject')
+ok(!topicTitle('what is this session i cant see the history why').includes('Cant'), 'cant is never a word on a card')
+
 is(topicTitle('ok'), '', 'too short to identify a pane')
 is(topicTitle(''), '', 'nothing typed')
 ok(topicTitle('rewrite the onboarding email sequence for new leads').length <= 26, 'capped')
@@ -245,7 +259,7 @@ is(
 )
 is(
   topicTitle('can you measure right now why im lagging?'),
-  'Measure Right Now',
+  'Measure Lagging',
   'a name may not end on a dangling why'
 )
 is(
@@ -322,7 +336,7 @@ is(topicKeywords('fix the invoice template').join(' '), 'invoice template', 'run
   )
   ok(/Fable|Models/.test(named), `the phrase carries the repeated word, got "${named}"`)
   ok(!/Were|Able/.test(named), `and never the runway, got "${named}"`)
-  is(topicTitle('so you were able to switch models for me'), 'Switch Models For Me', 'the runway is cut even without an anchor')
+  is(topicTitle('so you were able to switch models for me'), 'Switch Models', 'the runway is cut even without an anchor')
   is(topicTitle('please look at this again', new Set(['invoice'])), '', 'an ask holding no anchor names nothing')
 }
 
