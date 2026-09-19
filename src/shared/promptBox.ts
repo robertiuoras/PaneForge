@@ -317,6 +317,41 @@ export function composerAt(
   return { top, bottom, width }
 }
 
+/**
+ * The words actually ON SCREEN in a pane's composer, unsent.
+ *
+ * `Live.draft` is a reconstruction from the keystrokes THIS app process relayed, so a
+ * pane typed into before the process started, or restored from disk, has nothing in it
+ * however full its composer looks. The terminal's own buffer has no such gap: whatever
+ * the CLI painted is there to read. This is that read - `composerAt` for the box, then
+ * each row between its marker and its right-hand edge, joined the way a wrapped line
+ * was one line before the box wrapped it.
+ *
+ * `null` means no composer was found, which is not the same answer as an empty one.
+ */
+export function composerText(
+  read: (row: number) => string,
+  cursorRow: number,
+  opts: { maxUp?: number; maxDown?: number; codexCols?: number } = {}
+): string | null {
+  const box = composerAt(read, cursorRow, opts)
+  if (!box) return null
+  let out = ''
+  for (let r = box.top; r <= box.bottom; r++) {
+    const text = read(r)
+    // Only the FIRST row carries the CLI's prompt marker; the rows under it are indented
+    // to line up with it, which is `leadingBlanks` - the same pair `inputRows` in
+    // TerminalPane uses to decide where a row's own text starts.
+    const from = r === box.top || frameAt(text) >= 0 ? inputStart(text) : leadingBlanks(text)
+    const to = Math.max(from, inputEnd(text))
+    // A row that reaches the box's own edge ran out of columns, so the next row is the
+    // same line continued; one that stops short ended because the person pressed return.
+    const wrapped = to >= box.width - 1
+    out += text.slice(from, to) + (wrapped ? '' : '\n')
+  }
+  return out.trim()
+}
+
 /** Trailing blanks off, which is how every row here is compared. */
 function trimmed(text: string): string {
   let end = text.length

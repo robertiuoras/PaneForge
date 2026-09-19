@@ -8,6 +8,8 @@
  * frames are reassembled here and decoded only when whole.
  */
 
+import { formatTokens } from './tokenTally'
+
 export const OP_HANDSHAKE = 0
 export const OP_FRAME = 1
 
@@ -81,6 +83,10 @@ export interface PresenceCounts {
   oldestRunSince?: number
   /** epoch ms the app came up - the elapsed clock while everything is idle */
   appStart: number
+  /** tokens every agent on this machine has spent since local midnight */
+  tokensToday?: number
+  /** the same, over the last seven days including today */
+  tokensWeek?: number
 }
 
 /** The few fields of a pane the presence reads, so a caller can pass anything shaped like one. */
@@ -191,36 +197,82 @@ export const NO_PRESENCE_STATUS: PresenceStatus = {
   error: null
 }
 
+
 /** Discord rejects details/state over 128 chars, and a name list can be any length. */
 const TEXT_MAX = 128
 
 /**
- * What the two lines say and which parts show at all.
+ * How many text lines Discord will draw. Two, and it has always been two.
  *
- * Every string is a template and every empty string means "the built-in wording",
- * so a config that has never been touched produces the exact bytes it always did
- * and the settings fields can show the defaults as placeholders rather than as
- * saved values somebody now has to maintain.
+ * A rich presence is: the application's name, `details`, `state`, one elapsed clock and
+ * up to two buttons. There is no third text field to send, so "add another row" cannot
+ * mean another line on the card - it means another line in the LIST, and which two of
+ * them are on top. Rows past the second are kept, not sent, and the settings tab says
+ * so rather than letting a row be written that silently goes nowhere.
+ */
+export const VISIBLE_ROWS = 2
+/** Discord takes at most two buttons on an activity, and drops the activity over three. */
+export const MAX_BUTTONS = 2
+
+/** When a row has anything to say. */
+export type RowWhen = 'always' | 'running' | 'idle'
+
+/**
+ * One line of the card, as the user arranged it.
+ *
+ * Every row is a template over the same tokens, so the card is not three fixed fields
+ * any more - the numbers line can be moved under the projects line, the projects line
+ * can be the only one, and a row that says the week's tokens can be added under either.
+ * The wording used to be three separate settings (`details`, `state`, `idleDetails`)
+ * which could not be reordered, could not be turned off one at a time, and had one
+ * fixed meaning each; `migrateRows` turns an old config into the same three rows.
+ */
+export interface DiscordRow {
+  /** stable across reorders, so the editor's fields keep their identity */
+  id: string
+  /** the template; a row that renders to nothing is skipped and the next one moves up */
+  text: string
+  when: RowWhen
+  on: boolean
+}
+
+/** The clickable line under the card. Discord shows it to everyone except its owner. */
+export interface DiscordButton {
+  id: string
+  label: string
+  url: string
+  on: boolean
+}
+
+/**
+ * What the two lines say, which parts show, and what the buttons are.
+ *
+ * The legacy wording fields are still here because a config written before the rows
+ * existed has them and nothing else; `migrateRows` is the only thing that reads them.
  */
 export interface DiscordStyle {
-  /** line one while a turn is running; '' = `{running}/{total} {sessions} running` */
-  details: string
-  /** line two while a turn is running; '' = `on {projects}` */
-  state: string
-  /** line one while nothing is running; '' = `{total} {sessions} idle` */
-  idleDetails: string
-  /** include the project-names line at all */
-  projects: boolean
+  /** the whole card's wording, in the order the user put it */
+  rows: DiscordRow[]
   /** show Discord's elapsed clock under the lines */
   elapsed: boolean
-  /** say anything at all while no turn is running */
-  whileIdle: boolean
-  /** show the link button under the presence at all */
-  link: boolean
-  /** what the button says; '' = `toolstash.xyz/paneforge` */
-  linkLabel: string
-  /** where it goes; '' = the PaneForge page */
-  linkUrl: string
+  /** up to MAX_BUTTONS links under the presence */
+  buttons: DiscordButton[]
+  /** @deprecated read once, by the migration */
+  details?: string
+  /** @deprecated read once, by the migration */
+  state?: string
+  /** @deprecated read once, by the migration */
+  idleDetails?: string
+  /** @deprecated read once, by the migration */
+  projects?: boolean
+  /** @deprecated read once, by the migration */
+  whileIdle?: boolean
+  /** @deprecated read once, by the migration */
+  link?: boolean
+  /** @deprecated read once, by the migration */
+  linkLabel?: string
+  /** @deprecated read once, by the migration */
+  linkUrl?: string
 }
 
 export const DEFAULT_DETAILS = '{running}/{total} {sessions} running'
@@ -228,6 +280,74 @@ export const DEFAULT_STATE = 'on {projects}'
 export const DEFAULT_IDLE_DETAILS = '{total} {sessions} idle'
 export const DEFAULT_LINK_LABEL = 'toolstash.xyz/paneforge'
 export const DEFAULT_LINK_URL = 'https://toolstash.xyz/paneforge'
+
+export const DEFAULT_ROWS: DiscordRow[] = [
+  { id: 'running', text: DEFAULT_DETAILS, when: 'running', on: true },
+  { id: 'projects', text: DEFAULT_STATE, when: 'running', on: true },
+  { id: 'idle', text: DEFAULT_IDLE_DETAILS, when: 'idle', on: true }
+]
+
+export const DEFAULT_DISCORD_STYLE: DiscordStyle = {
+  rows: DEFAULT_ROWS.map((r) => ({ ...r })),
+  elapsed: true,
+  buttons: [
+    { id: 'link', label: DEFAULT_LINK_LABEL, url: DEFAULT_LINK_URL, on: true }
+  ]
+}
+
+/** A row id nothing else on the card is using. */
+export function newRowId(taken: ReadonlyArray<{ id: string }>): string {
+  const used = new Set(taken.map((r) => r.id))
+  for (let i = 1; ; i++) if (!used.has(`row${i}`)) return `row${i}`
+}
+
+/**
+ * An old config's wording, as rows - and a config that already has rows, untouched.
+ *
+ * The three legacy fields were templates with an EMPTY string meaning "the built-in
+ * wording", so the fallback has to happen here: a row carrying '' would render to
+ * nothing and be skipped, which would silently blank the card of anyone who had never
+ * touched the settings.
+ */
+export function migrateRows(raw: Partial<DiscordStyle> | undefined): DiscordStyle {
+  const base = raw ?? {}
+  if (Array.isArray(base.rows) && base.rows.length) {
+    return {
+      rows: base.rows.map((r) => ({ ...r })),
+      elapsed: base.elapsed !== false,
+      buttons: Array.isArray(base.buttons) && base.buttons.length
+        ? base.buttons.map((b) => ({ ...b }))
+        : DEFAULT_DISCORD_STYLE.buttons.map((b) => ({ ...b }))
+    }
+  }
+  const rows: DiscordRow[] = [
+    { id: 'running', text: base.details || DEFAULT_DETAILS, when: 'running', on: true },
+    {
+      id: 'projects',
+      text: base.state || DEFAULT_STATE,
+      when: 'running',
+      on: base.projects !== false
+    },
+    {
+      id: 'idle',
+      text: base.idleDetails || DEFAULT_IDLE_DETAILS,
+      when: 'idle',
+      on: base.whileIdle !== false
+    }
+  ]
+  return {
+    rows,
+    elapsed: base.elapsed !== false,
+    buttons: [
+      {
+        id: 'link',
+        label: base.linkLabel || DEFAULT_LINK_LABEL,
+        url: base.linkUrl || DEFAULT_LINK_URL,
+        on: base.link !== false
+      }
+    ]
+  }
+}
 
 /**
  * The art asset the card draws, by the name it was uploaded under in the Discord
@@ -245,39 +365,31 @@ export const PRESENCE_IMAGE_TEXT = 'PaneForge'
 const LABEL_MAX = 32
 const URL_MAX = 512
 
-export const DEFAULT_DISCORD_STYLE: DiscordStyle = {
-  details: '',
-  state: '',
-  idleDetails: '',
-  projects: true,
-  elapsed: true,
-  whileIdle: true,
-  link: true,
-  linkLabel: '',
-  linkUrl: ''
-}
-
 /**
- * The link under the presence, as Discord will accept it - or null.
+ * The links under the presence, as Discord will accept them.
  *
- * A URL cannot be put in `details` or `state`: Discord renders those as plain
- * text, markdown and all, so `[PaneForge](https://…)` shows up literally and a
- * bare link shows up unclickable. `buttons` is the only clickable surface a rich
- * presence has, and it is the one that carries a real href.
+ * A URL cannot be put in a text row: Discord renders those as plain text, markdown and
+ * all, so `[PaneForge](https://…)` shows up literally and a bare link shows up
+ * unclickable. `buttons` is the only clickable surface a rich presence has.
  *
- * Two things worth knowing before reading a profile and calling this broken:
- * Discord does not show a presence button to the account it belongs to - only
- * other people see it - and it drops the whole button if the URL is not http(s).
+ * Two things worth knowing before reading a profile and calling this broken: Discord
+ * does not show a presence button to the account it belongs to - only other people see
+ * it - and it drops the WHOLE activity, not just the button, over a malformed URL. So a
+ * button that cannot be sent is left out here rather than sent and refused.
  */
-export function buildButton(style: DiscordStyle): { label: string; url: string } | null {
-  if (!style.link) return null
-  // Trimmed BEFORE the fallback, not after: a field the user cleared can hold
-  // spaces, and `'  ' || default` keeps the spaces - which then trims to nothing
-  // and threw the button away instead of falling back like an empty field does.
-  const url = style.linkUrl.trim() || DEFAULT_LINK_URL
-  if (!/^https?:\/\//i.test(url) || url.length > URL_MAX) return null
-  const label = (style.linkLabel.trim() || DEFAULT_LINK_LABEL).slice(0, LABEL_MAX)
-  return { label, url }
+export function buildButtons(style: DiscordStyle): { label: string; url: string }[] {
+  const out: { label: string; url: string }[] = []
+  for (const b of style.buttons ?? []) {
+    if (!b.on) continue
+    // Trimmed BEFORE the fallback, not after: a field the user cleared can hold
+    // spaces, and `'  ' || default` keeps the spaces - which then trims to nothing
+    // and threw the button away instead of falling back like an empty field does.
+    const url = (b.url ?? '').trim() || DEFAULT_LINK_URL
+    if (!/^https?:\/\//i.test(url) || url.length > URL_MAX) continue
+    out.push({ label: ((b.label ?? '').trim() || DEFAULT_LINK_LABEL).slice(0, LABEL_MAX), url })
+    if (out.length >= MAX_BUTTONS) break
+  }
+  return out
 }
 
 /** The legend under the template fields, and the whole of what a template may say. */
@@ -288,8 +400,15 @@ export const DISCORD_TOKENS: ReadonlyArray<readonly [string, string]> = [
   ['{asleep}', 'panes asleep - stopped to save memory, one press wakes them'],
   ['{sessions}', '"session" or "sessions", matching the total'],
   ['{projects}', 'the project folders being worked in'],
-  ['{project}', 'the first of those folders']
+  ['{project}', 'the first of those folders'],
+  ['{tokens}', 'tokens every agent here has spent since midnight, as 1.2M'],
+  ['{tokensWeek}', 'the same over the last seven days']
 ]
+
+/** Whether anything on the card asks for the token numbers, which cost a disk walk. */
+export function needsTokens(style: DiscordStyle): boolean {
+  return (style.rows ?? []).some((r) => r.on && /\{tokens(Week)?\}/.test(r.text))
+}
 
 function fill(tpl: string, c: PresenceCounts, names: string[], dropped: number): string {
   const projects = names.join(', ') + (dropped ? ` +${dropped} more` : '')
@@ -301,6 +420,8 @@ function fill(tpl: string, c: PresenceCounts, names: string[], dropped: number):
     .replace(/\{sessions\}/g, c.total === 1 ? 'session' : 'sessions')
     .replace(/\{projects\}/g, projects)
     .replace(/\{project\}/g, names[0] ?? '')
+    .replace(/\{tokensWeek\}/g, formatTokens(c.tokensWeek ?? 0))
+    .replace(/\{tokens\}/g, formatTokens(c.tokensToday ?? 0))
     .replace(/\s+/g, ' ')
     .trim()
 }
@@ -324,11 +445,56 @@ export function renderLine(tpl: string, c: PresenceCounts): string {
 }
 
 /**
+ * Every row that has something to say right now, in the user's own order.
+ *
+ * A row is dropped for any of three reasons and they are not the same reason: it is
+ * switched off, it is for the other half of the day, or it rendered to nothing. The
+ * last one is what makes the list feel like rows rather than slots - `on {projects}`
+ * with nothing running has no text, so it takes no line and whatever is under it moves
+ * up, which is exactly what the old `projects` switch did by hand.
+ */
+/**
+ * A row whose own subject has gone missing says nothing at all.
+ *
+ * `on {projects}` with no project to name renders as the bare word `on`, which is what
+ * a card with a dangling preposition on it looks like. The old fixed second line dodged
+ * this with a switch beside it - once any row can hold any token, the row itself has to
+ * know. Only the two name tokens can come out empty: every number renders as a digit
+ * and both token totals render as `0`.
+ */
+function rowSpeaks(tpl: string, c: PresenceCounts): boolean {
+  return !(/\{projects?\}/.test(tpl) && c.names.length === 0)
+}
+
+export function chosenRows(
+  c: PresenceCounts,
+  style: DiscordStyle
+): { id: string; text: string }[] {
+  const running = c.running > 0
+  const out: { id: string; text: string }[] = []
+  for (const row of style.rows ?? []) {
+    if (!row.on) continue
+    if (row.when === 'running' && !running) continue
+    if (row.when === 'idle' && running) continue
+    if (!rowSpeaks(row.text, c)) continue
+    const text = renderLine(row.text, c)
+    if (!text) continue
+    out.push({ id: row.id, text })
+    if (out.length >= VISIBLE_ROWS) break
+  }
+  return out
+}
+
+/** The same, as the two lines themselves. */
+export function visibleRows(c: PresenceCounts, style: DiscordStyle): string[] {
+  return chosenRows(c, style).map((r) => r.text)
+}
+
+/**
  * The presence itself. An empty desk returns null - a profile advertising
  * "0/0 sessions" all day is worse than no presence at all - and the caller sends
- * that as a clear. So does an idle desk with the idle line switched off, and a
- * pair of templates that render to nothing at all: an activity with no text is a
- * blank badge on the profile, which reads as a bug rather than as a setting.
+ * that as a clear. So does a card with no row left to draw: an activity with no text
+ * is a blank badge on the profile, which reads as a bug rather than as a setting.
  */
 export function buildActivity(
   c: PresenceCounts,
@@ -337,20 +503,12 @@ export function buildActivity(
   now: number = Date.now()
 ): Record<string, unknown> | null {
   if (c.total <= 0) return null
-  const running = c.running > 0
-  if (!running && !style.whileIdle) return null
-
-  const details = renderLine(
-    running ? style.details || DEFAULT_DETAILS : style.idleDetails || DEFAULT_IDLE_DETAILS,
-    c
-  )
-  const wantsState = running && style.projects && c.names.length > 0
-  const state = wantsState ? renderLine(style.state || DEFAULT_STATE, c) : ''
-  if (!details && !state) return null
+  const rows = visibleRows(c, style)
+  if (!rows.length) return null
 
   const activity: Record<string, unknown> = {}
-  if (details) activity.details = details
-  if (state) activity.state = state
+  activity.details = rows[0]
+  if (rows[1]) activity.state = rows[1]
   activity.assets = { large_image: PRESENCE_IMAGE, large_text: PRESENCE_IMAGE_TEXT }
   if (style.elapsed) {
     // Discord counts UP from this stamp, so a start in the future is not a small error -
@@ -358,10 +516,10 @@ export function buildActivity(
     // including mirrored panes, `oldestRunSince` can be the OTHER machine's clock, and
     // two machines are never exactly in step. Clamp rather than drop: a turn that began
     // a moment ago is the truth being approximated, and no timer at all would be worse.
-    const started = running ? (c.oldestRunSince ?? c.appStart) : c.appStart
+    const started = c.running > 0 ? (c.oldestRunSince ?? c.appStart) : c.appStart
     activity.timestamps = { start: Math.min(started, now) }
   }
-  const button = buildButton(style)
-  if (button) activity.buttons = [button]
+  const buttons = buildButtons(style)
+  if (buttons.length) activity.buttons = buttons
   return activity
 }

@@ -40,7 +40,7 @@ buildSync({
   outfile: moveFile
 })
 const { keysToPoint } = createRequire(import.meta.url)(moveFile)
-const { boxedRow, composerAt, frameAt, sameBox, inputStart, inputEnd, leadingBlanks, pickerBelow, promptTop } = createRequire(import.meta.url)(outfile)
+const { boxedRow, composerAt, composerText, frameAt, sameBox, inputStart, inputEnd, leadingBlanks, pickerBelow, promptTop } = createRequire(import.meta.url)(outfile)
 
 let checks = 0
 const check = (what, ok, detail) => {
@@ -327,4 +327,28 @@ for (const row of [CC_FIRST, CC_SECOND, ZSH, BASH, '│ >                  │']
   eq('an empty composer has nowhere to click to',
     keysToPoint([{ start: 2, end: 2, full: false }], { row: 0, col: 2 }, { row: 0, col: 6 }), '')
 }
+// ---------- what the composer SAYS, for a caller who cannot see it ----------
+//
+// `pf composer` used to print main's reconstruction from relayed keystrokes, which is
+// empty for a pane typed into before this app process started. These rows are the
+// screen, which is the copy that survives that.
+{
+  const rows = [CC_TOP, CC_FIRST, CC_SECOND, CC_BOTTOM]
+  const read = (r) => rows[r] ?? ''
+  eq('a two-row framed composer reads as the two lines typed into it',
+    composerText(read, 2),
+    'fix the badge on the sidebar card\nand then run the tests')
+  eq('one row of it is that one line', composerText((r) => [CC_TOP, CC_FIRST, CC_BOTTOM][r] ?? '', 1),
+    'fix the badge on the sidebar card')
+  check('a shell draws no composer, so there is nothing to read',
+    composerText((r) => [BASH, 'total 24', 'drwxr-xr-x 4 robert'][r] ?? '', 1) === null)
+  {
+    // An empty box is an EMPTY answer, never a missing one: the caller says "nothing
+    // unsent" for the first and "could not read it" for the second.
+    const empty = ['\u256d' + '\u2500'.repeat(20) + '\u256e', '\u2502 > ' + ' '.repeat(16) + '\u2502', '\u2570' + '\u2500'.repeat(20) + '\u256f']
+    eq('an empty composer is an empty answer, not a missing one',
+      composerText((r) => empty[r] ?? '', 1), '')
+  }
+}
+
 console.log(`prompt box: ${checks} checks passed`)

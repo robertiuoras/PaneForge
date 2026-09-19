@@ -62,17 +62,6 @@ export const SETTINGS: SettingEntry[] = [
   { tab: 'voice', label: "Model", find: "Model" },
   { tab: 'voice', label: "Language", find: "Language" },
   { tab: 'voice', label: "Let me talk to a pane with the push-to-talk key, and the mic on a phone", find: "Let me talk to a pane with the push-to-talk key, and the mic on a phone" },
-  { tab: 'discord', label: "Show what the desk is doing on Discord", find: "Show what the desk is doing on Discord Rich presence on your profile, refreshed as turns start and finish. Counts and project folder names only, never a byte of what a pane says. Needs the Discord app running; off tells Discord nothing at all." },
-  { tab: 'discord', label: "What Discord will show", find: "What Discord will show" },
-  { tab: 'discord', label: "Name the projects being worked in", find: "Name the projects being worked in The second line. Folder names of the panes whose turn is running - off leaves only the numbers, which says you are busy without saying on what." },
-  { tab: 'discord', label: "Show the elapsed clock", find: "Show the elapsed clock Discord counts up from the oldest running turn, or from when PaneForge started while everything is idle." },
-  { tab: 'discord', label: "Keep showing something while nothing is running", find: "Keep showing something while nothing is running Off clears the presence the moment the last turn finishes, so your profile only says PaneForge while there is actually work happening." },
-  { tab: 'discord', label: "First line, while a turn is running", find: "First line, while a turn is running" },
-  { tab: 'discord', label: "Second line", find: "Second line" },
-  { tab: 'discord', label: "First line, while nothing is running", find: "First line, while nothing is running" },
-  { tab: 'discord', label: "Put a clickable link under it", find: "Put a clickable link under it Discord draws the two lines above as plain text, so a URL written into them is not a link. A button is the only clickable thing a rich presence has - and Discord shows it to everyone except you, so your own profile will not have it." },
-  { tab: 'discord', label: "Button text", find: "Button text" },
-  { tab: 'discord', label: "Where it goes", find: "Where it goes" },
   { tab: 'system', label: "Administrator", find: "Administrator" },
   { tab: 'system', label: "Always start as administrator, with no UAC prompt", find: "Always start as administrator, with no UAC prompt Registers a Windows scheduled task once (one approval, ever) and points your shortcuts at it. Every agent pane then inherits admin rights." },
   { tab: 'system', label: "Updates", find: "Updates" },
@@ -82,7 +71,6 @@ export const SETTINGS: SettingEntry[] = [
   { tab: 'system', label: "…and ask first, like every other restart", find: "…and ask first, like every other restart Off, an update restart is the one restart that never asks - it was the app's own idea, so it hands the desk straight back. On, it offers the panes exactly as a quit or a crash does." },
   { tab: 'system', label: "After a restart or a crash", find: "After a restart or a crash" },
   { tab: 'system', label: "Transcript retention", find: "Transcript retention" },
-  { tab: 'system', label: "Right now", find: "Right now" },
   { tab: 'appearance', label: "Theme", find: "Theme" },
   { tab: 'appearance', label: "Your colour", find: "Your colour" },
   { tab: 'appearance', label: "Preview", find: "Preview" },
@@ -92,7 +80,12 @@ export const SETTINGS: SettingEntry[] = [
   { tab: 'appearance', label: "Corners", find: "Corners" },
   { tab: 'appearance', label: "Density", find: "Density" },
   { tab: 'sounds', label: "Volume", find: "Volume" },
-  { tab: 'sounds', label: "Your own sounds", find: "Your own sounds" }
+  { tab: 'sounds', label: "Your own sounds", find: "Your own sounds" },
+  { tab: 'discord', label: "Show what the desk is doing on Discord", find: "Show what the desk is doing on Discord Rich presence on your profile, refreshed as turns start and finish. Counts, project folder names and your own token totals - never a byte of what a pane says. Needs the Discord app running; off tells Discord nothing at all." },
+  { tab: 'discord', label: "What other people see", find: "What other people see" },
+  { tab: 'discord', label: "Lines", find: "Lines" },
+  { tab: 'discord', label: "Show the elapsed clock", find: "Show the elapsed clock Discord counts up from the oldest running turn, or from when PaneForge started while everything is idle." },
+  { tab: 'discord', label: "Buttons", find: "Buttons" }
 ]
 
 /**

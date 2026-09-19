@@ -102,6 +102,8 @@
     "test:sessionchoice": "node scripts/session-choice-test.mjs",
     "test:routecli": "node scripts/route-cli-test.mjs",
     "test:discord": "node scripts/discord-presence-test.mjs",
+    "test:pulls": "node scripts/pulls-test.mjs",
+    "test:tokentally": "node scripts/token-tally-test.mjs",
     "test:discordbrand": "node scripts/discord-brand-test.mjs",
     "test:remotelogin": "node scripts/remote-login-test.mjs",
     "test:loginkeys": "node scripts/login-keys-test.mjs",

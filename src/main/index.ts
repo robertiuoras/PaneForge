@@ -24,7 +24,9 @@ import { startMainWatch, stopMainWatch } from './mainWatch'
 import { SessionManager, setSilenceAlert, type WriteOrigin } from './sessions'
 import { DataPump } from './dataPump'
 import { DiscordPresence } from './discordPresence'
-import { countPresence, type PresenceCounts } from '../shared/discordRpc'
+import { countPresence, needsTokens, type PresenceCounts } from '../shared/discordRpc'
+import { tokenSpend } from './tokenUsage'
+import { readPulls } from './pulls'
 import { quitWhere } from '../shared/quitWords'
 import { mayReturnLane } from '../shared/laneReturn'
 import { revealTarget, within } from '../shared/reveal'
@@ -936,7 +938,17 @@ const presence = new DiscordPresence({
   onStatus: (s) => send('discord:status', s)
 })
 function presenceCounts(): PresenceCounts {
-  return countPresence(allSessions(), appStartedAt)
+  const counts = countPresence(allSessions(), appStartedAt)
+  // The token numbers cost a walk of every transcript written this week (7.6s of async
+  // I/O on this Mac, 7,546 files), so they are counted only while a row on the card
+  // actually says one. `tokenSpend` answers from its own cache and refreshes behind
+  // itself; nothing here waits on the disk.
+  if (needsTokens(getConfig().discordStyle)) {
+    const spend = tokenSpend()
+    counts.tokensToday = spend.today
+    counts.tokensWeek = spend.week
+  }
+  return counts
 }
 // A card that goes on its own is a row in the list, never a pane that just vanished:
 // `shared/exitClose.ts` decides, and this is the one place that says it happened.
@@ -2311,6 +2323,39 @@ ipcMain.handle('config:set', (_e, patch: Partial<Config>) => {
  * the lines it stored, or the reason it refused - all of it read back off the pipe.
  */
 ipcMain.handle('discord:status', () => presence.status())
+// What is waiting on GitHub, asked only when the dialog that shows it is opened. The
+// folders come from the renderer because the desk it draws includes mirrored panes,
+// whose repositories are the other machine's and are skipped by the lookup itself.
+/**
+ * What is typed into a pane and not sent.
+ *
+ * Asked of the SCREEN first: the composer's text lives in the renderer's terminal buffer,
+ * which is the only copy that survives a restore or an app restart. `Live.draft` is a
+ * reconstruction from the keystrokes this process relayed, so it is empty for a pane that
+ * was typed into before the process started - the answer that made `pf composer` say
+ * "nothing unsent" about a pane with a full composer on screen. The reconstruction is
+ * still the fallback, for a pane with no live renderer (asleep, hidden behind a wedged
+ * window, or a window that did not answer), and the answer says WHICH of the two it is.
+ */
+ipcMain.handle('sessions:draft', async (_e, id: string) => {
+  const kept = manager.draftOf(id)
+  if (!kept) return null
+  if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+    try {
+      const seen = (await win.webContents.executeJavaScript(
+        `window.__pfComposer ? window.__pfComposer(${JSON.stringify(id)}) : null`,
+        true
+      )) as string | null
+      if (typeof seen === 'string') return { text: seen, certain: true, from: 'screen' as const }
+    } catch {
+      // A window that cannot answer is the fallback's whole reason for existing.
+    }
+  }
+  return { ...kept, from: 'keystrokes' as const }
+})
+ipcMain.handle('pulls:list', (_e, cwds: string[], refresh?: boolean) =>
+  readPulls(Array.isArray(cwds) ? cwds : [], !!refresh)
+)
 
 ipcMain.handle('config:pickRoot', async () => {
   const r = await dialog.showOpenDialog({

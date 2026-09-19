@@ -672,6 +672,14 @@ ok(!server.running, 'the gate test server stopped cleanly')
     // starts either way, this only says on which machine, and the deadline answers alone.
     'offload:answer',
     'activity:list',
+    // Reads only: open pull requests and what is uncommitted, for folders the caller
+    // already has a pane on. Writes nothing and starts nothing - `gh pr list`, `git
+    // status`, `git rev-list`.
+    'pulls:list',
+    // Reads the unsent line out of a pane's composer. It is text already drawn on that
+    // pane's own screen, which a phone mirrors byte for byte; reading it types nothing
+    // and clears nothing.
+    'sessions:draft',
     // A CPU profile of this app's own window, and the reload that answers a window which
     // has accumulated too much. Neither types, reaches a pty, or leaves the machine: the
     // profile is function names out of this build, and the reload is the same recovery

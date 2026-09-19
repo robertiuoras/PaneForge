@@ -94,6 +94,8 @@ export const SURFACE: Surface = {
   soundData: ['invoke', 'sounds:data'],
   removeSound: ['invoke', 'sounds:remove'],
   renameSound: ['invoke', 'sounds:rename'],
+  pulls: ['invoke', 'pulls:list'],
+  draft: ['invoke', 'sessions:draft'],
   discordStatus: ['invoke', 'discord:status'],
   onDiscordStatus: ['on', 'discord:status'],
   reveal: ['send', 'shell:reveal'],

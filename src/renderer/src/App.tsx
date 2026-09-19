@@ -43,6 +43,7 @@ import LoginCard from './components/LoginCard'
 import RemoteLoginView from './components/RemoteLoginView'
 import UsersDialog from './components/UsersDialog'
 import ToolsDialog from './components/ToolsDialog'
+import PullsDialog from './components/PullsDialog'
 import IssuesDialog, { readIssueErrors, rememberIssueError } from './components/IssuesDialog'
 import type { StopSoon } from '../../shared/deadDev'
 import ActivityFlyout from './components/ActivityFlyout'
@@ -797,6 +798,8 @@ export default function App(): JSX.Element {
   const [swarm, setSwarm] = useState(false)
   const [users, setUsers] = useState(false)
   const [toolsOpen, setToolsOpen] = useState(false)
+  // The GitHub screen. Opened from Tools, never polled - see `main/pulls.ts`.
+  const [pullsOpen, setPullsOpen] = useState(false)
   const [issues, setIssues] = useState(false)
   const [issueErrors, setIssueErrors] = useState<string[]>(() => {
     try { return readIssueErrors(sessionStorage.getItem('paneforge-issue-errors')) } catch { return [] }
@@ -6777,7 +6780,13 @@ export default function App(): JSX.Element {
         onBoard={() => { const session = sessions.find(row => row.id === activeId); if (session) { setToolsOpen(false); setBoard(session.cwd) } }}
         onSwarm={() => { setToolsOpen(false); setSwarm(true) }}
         onHelp={() => { setToolsOpen(false); setHelp(true) }}
-        onSettings={() => { setToolsOpen(false); setSettings(true) }} />}
+        onPulls={() => { setToolsOpen(false); setPullsOpen(true) }} />}
+      {pullsOpen && (
+        <PullsDialog
+          cwds={sessions.filter(s => !s.remote).map(s => s.cwd).filter(Boolean)}
+          onClose={() => setPullsOpen(false)}
+        />
+      )}
       {issues && ownerAccess && <IssuesDialog boards={laneBoards} sessions={sessions} errors={issueErrors} onClose={() => setIssues(false)} />}
       {swarm && config && (
         <SwarmDialog

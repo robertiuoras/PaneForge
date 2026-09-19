@@ -28,6 +28,7 @@ import type { RunningDev } from './devList'
 
 import type { AgentInfo, AgentSpec } from './agents'
 import type { DiscordStyle, PresenceStatus } from './discordRpc'
+import type { PullsAnswer } from './pulls'
 // Same type-level-only cycle as goals: handoff.ts imports Session from here.
 import type { HandoffItem } from './handoff'
 import type { DeviceMark } from './deviceWatch'
@@ -37,6 +38,7 @@ import type { CustomSound, SoundConfig } from './sounds'
 import type { ThemeConfig } from './theme'
 import type { OwnerStats } from './ownerStats'
 
+export type { PullsAnswer }
 export type { CustomSound, DiscordStyle, RevealTarget, RouteMatch, RouteResult, SoundConfig, ThemeConfig }
 export type { OwnerStats }
 
@@ -2446,6 +2448,22 @@ export interface Api {
   soundData(id: string): Promise<Uint8Array | null>
   removeSound(id: string): Promise<SoundConfig>
   renameSound(id: string, name: string): Promise<SoundConfig>
+  /**
+   * What is typed into a pane and not sent yet, reconstructed from the keystrokes this
+   * app relayed. `certain` false means the line was edited in a way the app could not
+   * follow and is a guess; null means there is no such pane.
+   */
+  /**
+   * What is typed into a pane and not sent. `from` says which reading answered: `screen`
+   * is the terminal buffer itself, `keystrokes` the reconstruction main keeps for a pane
+   * whose window could not be asked - see `sessions:draft` in `main/index.ts`.
+   */
+  draft(id: string): Promise<{ text: string; certain: boolean; from: 'screen' | 'keystrokes' } | null>
+  /**
+   * Open pull requests and unfinished local work, for the repositories behind the
+   * folders given. Read on demand: this is a dialog's question, never a poll.
+   */
+  pulls(cwds: string[], refresh?: boolean): Promise<PullsAnswer>
   /** what Discord itself last said about the presence - accepted, refused, or not running */
   discordStatus(): Promise<PresenceStatus>
   onDiscordStatus(cb: (status: PresenceStatus) => void): () => void
