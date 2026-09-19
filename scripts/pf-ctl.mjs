@@ -23,6 +23,7 @@
  *   node scripts/pf-ctl.mjs close <title-or-id>
  *   node scripts/pf-ctl.mjs rename <title-or-id> <name...>
  *   node scripts/pf-ctl.mjs type <title-or-id> <text...>
+ *   node scripts/pf-ctl.mjs composer <title-or-id> [--json]
  *   node scripts/pf-ctl.mjs hold [--bundle ID|--name APP|--pid N] [--reason R] [--ttl MIN] [--this]
  *   node scripts/pf-ctl.mjs hold list | hold release <id>
  *
@@ -678,6 +679,25 @@ if (cmd === 'list') {
   await new Promise((r) => setTimeout(r, 800))
   await send('pty:write', [s.id, '\r'])
   console.log(`typed into ${s.id} (${s.title})`)
+} else if (cmd === 'composer') {
+  // Read a pane's prompt box WITHOUT touching it. Every other pane command here writes -
+  // `type`, `tell`, `send` - and the terminal history a script can reach holds repaints
+  // rather than a document, so "what is chat 1 halfway through typing" had no answer at
+  // all. Nothing is submitted and nothing is cleared: the draft is left as it was found.
+  const ref = rest.shift()
+  if (!ref) fail(1, 'composer needs a pane: pf-ctl composer <title-or-id> [--json]')
+  const s = resolve(await sessions(), ref)
+  if (!s) fail(1, `no pane named "${ref}"`)
+  const out = await call('sessions:composer', [s.id])
+  if (rest.includes('--json')) {
+    console.log(JSON.stringify(out))
+  } else if (!out) {
+    // A refusal and an empty box are different answers, and a script that cannot tell
+    // them apart will report a lost draft as "nothing was typed".
+    fail(1, `could not see a prompt box in ${s.id} (${s.title}) - it may be a plain shell, mid-repaint, or running on another machine`)
+  } else {
+    console.log(out.text)
+  }
 } else if (cmd === 'call') {
   // The escape hatch, and deliberately the last one: every `invoke` channel in surface.ts
   // is already published, so a setting that only has a switch in the dialog can still be

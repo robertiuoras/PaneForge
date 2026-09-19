@@ -122,6 +122,7 @@
     "test:remotereset": "node scripts/remote-reset-test.mjs",
     "test:stickyselect": "node scripts/sticky-select-test.mjs",
     "test:attach": "node scripts/attach-test.mjs",
+    "test:composer": "node scripts/composer-read-test.mjs",
     "test:promptbox": "node scripts/prompt-box-test.mjs",
     "test:autoanswer": "node scripts/auto-answer-test.mjs",
     "test:askclick": "node scripts/ask-click-test.mjs",
