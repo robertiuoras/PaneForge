@@ -22,7 +22,9 @@
  *   node scripts/pf-ctl.mjs login [url] [--site NAME] [--host user@ip] [--port N] [--machine WORDS]
  *   node scripts/pf-ctl.mjs close <title-or-id>
  *   node scripts/pf-ctl.mjs rename <title-or-id> <name...>
+ *   node scripts/pf-ctl.mjs composer <number-title-or-id>   what is typed but not sent
  *   node scripts/pf-ctl.mjs type <title-or-id> <text...>
+ *   node scripts/pf-ctl.mjs composer <title-or-id> [--json]
  *   node scripts/pf-ctl.mjs hold [--bundle ID|--name APP|--pid N] [--reason R] [--ttl MIN] [--this]
  *   node scripts/pf-ctl.mjs hold list | hold release <id>
  *
@@ -654,6 +656,35 @@ if (cmd === 'list') {
   const now = (await sessions()).find((x) => x.id === s.id)
   if (now?.title !== name) fail(1, `sessions:rename answered but ${s.id} is still "${now?.title ?? '?'}"`)
   console.log(`renamed ${s.id} (${was} -> ${name})`)
+} else if (cmd === 'composer') {
+  // What is typed into a pane and NOT sent - the one thing every other read here misses.
+  // The pty log carries the redraw stream, so a line sitting in a CLI's composer is
+  // invisible in it; the app reconstructs the line from the keystrokes it relayed, which
+  // is what this prints. Reads only: nothing is typed, submitted or cleared.
+  const ref = rest.shift()
+  if (!ref) fail(1, 'composer needs a pane: pf-ctl composer <number-title-or-id>')
+  const pane = resolve(await sessions(), ref)
+  if (!pane) fail(1, `no pane called "${ref}"`)
+  const draft = await call('sessions:draft', [pane.id])
+  if (!draft) fail(1, `pane ${pane.id} is not running, so it has no composer`)
+  // An empty line with `certain` true is the one shape that really means nothing is
+  // pending. Everything else is said out loud rather than printed as if it were the
+  // screen: a line the app could not follow is a guess, and a pane typed into before
+  // this app process started relayed nothing and has no draft at all.
+  const screen = draft.from === 'screen'
+  if (!draft.text) {
+    console.error(
+      screen
+        ? `pane ${pane.id} has nothing unsent`
+        : draft.certain
+          ? `pane ${pane.id} has nothing unsent that this app relayed - its window could not be asked, so a line typed before the app started would not show here`
+          : `pane ${pane.id} has nothing the app can vouch for - it relayed no keystrokes for the current line`
+    )
+    process.exit(screen || draft.certain ? 0 : 1)
+  }
+  if (!screen && !draft.certain)
+    console.error(`(uncertain - the line was edited in a way the app could not follow, so this may be incomplete)`)
+  console.log(draft.text)
 } else if (cmd === 'tell') {
   // One line into a pane, queued for the gap between its turns rather than typed into
   // the middle of one - the same door the sign-in card reports back through.
@@ -678,6 +709,25 @@ if (cmd === 'list') {
   await new Promise((r) => setTimeout(r, 800))
   await send('pty:write', [s.id, '\r'])
   console.log(`typed into ${s.id} (${s.title})`)
+} else if (cmd === 'composer') {
+  // Read a pane's prompt box WITHOUT touching it. Every other pane command here writes -
+  // `type`, `tell`, `send` - and the terminal history a script can reach holds repaints
+  // rather than a document, so "what is chat 1 halfway through typing" had no answer at
+  // all. Nothing is submitted and nothing is cleared: the draft is left as it was found.
+  const ref = rest.shift()
+  if (!ref) fail(1, 'composer needs a pane: pf-ctl composer <title-or-id> [--json]')
+  const s = resolve(await sessions(), ref)
+  if (!s) fail(1, `no pane named "${ref}"`)
+  const out = await call('sessions:composer', [s.id])
+  if (rest.includes('--json')) {
+    console.log(JSON.stringify(out))
+  } else if (!out) {
+    // A refusal and an empty box are different answers, and a script that cannot tell
+    // them apart will report a lost draft as "nothing was typed".
+    fail(1, `could not see a prompt box in ${s.id} (${s.title}) - it may be a plain shell, mid-repaint, or running on another machine`)
+  } else {
+    console.log(out.text)
+  }
 } else if (cmd === 'call') {
   // The escape hatch, and deliberately the last one: every `invoke` channel in surface.ts
   // is already published, so a setting that only has a switch in the dialog can still be

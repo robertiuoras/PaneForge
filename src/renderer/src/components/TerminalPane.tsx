@@ -60,7 +60,7 @@ import {
   type MarkerHost
 } from '../../../shared/markAnchor'
 import { chipSpot, type ChipBox } from '../../../shared/copyChip'
-import { composerAt, frameAt, inputEnd, inputStart, leadingBlanks, pickerBelow, promptTop } from '../../../shared/promptBox'
+import { composerAt, composerText, frameAt, inputEnd, inputStart, leadingBlanks, pickerBelow, promptTop } from '../../../shared/promptBox'
 import { findPathTokens } from '../../../shared/pathToken'
 import { completedSlash, seedPrompts, promptRow } from '../../../shared/promptEcho'
 import { START_COLS, START_ROWS } from '../../../shared/paneGrid'
@@ -344,6 +344,20 @@ export const paneRepair = new Map<string, () => void>()
  * and only ever runs because somebody pressed Fix. See `redrawHistory`.
  */
 export const paneRedraw = new Map<string, () => Promise<boolean>>()
+
+/**
+ * What a pane's composer says RIGHT NOW, for a caller outside the window.
+ *
+ * `Live.draft` in main is a reconstruction from the keystrokes this app process relayed,
+ * so a pane typed into before the process started - or restored from disk - has no draft
+ * at all however full its box looks on screen. The terminal buffer has no such gap, and
+ * it lives here, in the renderer. Main asks for it with `executeJavaScript`, the same
+ * way the renderer watchdog asks whether this window is still answering.
+ */
+export const paneComposer = new Map<string, () => string | null>()
+;(window as unknown as { __pfComposer?: (id: string) => string | null }).__pfComposer = (
+  id: string
+) => paneComposer.get(id)?.() ?? null
 
 /**
  * Panes owed a re-render from history, because a trim deleted their lines while nobody
@@ -4241,6 +4255,15 @@ function TerminalPane({
       }
     }
     paneRedraw.set(sessionId, redrawHistory)
+    paneComposer.set(sessionId, () => {
+      const b = t.buffer.active
+      if (b.type === 'alternate') return null
+      return composerText((row) => b.getLine(row)?.translateToString(true) ?? '', b.baseY + b.cursorY, {
+        codexCols: agent === 'codex' ? t.cols : undefined,
+        maxUp: agent === 'codex' ? t.rows : undefined,
+        maxDown: agent === 'codex' ? t.rows : undefined
+      })
+    })
     paneRepair.set(sessionId, repair)
     paneArmClear.set(sessionId, () => {
       const away = keep.arm()
@@ -4496,6 +4519,7 @@ function TerminalPane({
       window.clearInterval(busyTick)
       paneRepair.delete(sessionId)
       paneRedraw.delete(sessionId)
+      paneComposer.delete(sessionId)
       paneOwedHistory.delete(sessionId)
       paneArmClear.delete(sessionId)
       paneFeed.delete(sessionId)

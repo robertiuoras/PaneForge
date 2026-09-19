@@ -1761,6 +1761,26 @@ export class SessionManager extends EventEmitter {
     return true
   }
 
+  /**
+   * What is sitting unsent in a pane's composer, for a caller that is not looking at it.
+   *
+   * The app has no composer of its own - the text lives inside the CLI's line editor,
+   * inside the pty - so this is `Live.draft`, the same reconstruction from relayed
+   * keystrokes that `drafting` and the rail already run on. Which is why it answers
+   * `certain` as well as `text`: an arrow key, a Tab completion or anything the parser
+   * could not follow leaves a line the app can no longer vouch for, and a caller acting
+   * on an uncertain draft as if it were the screen would be acting on a guess.
+   *
+   * A pane whose text was typed before this app process started has no draft at all:
+   * nothing relayed those keystrokes. `null` means no such pane; an empty `text` with
+   * `certain` true is the one shape that really means nothing is pending.
+   */
+  draftOf(id: string): { text: string; certain: boolean } | null {
+    const live = this.sessions.get(id)
+    if (!live) return null
+    return { text: live.draft.text, certain: live.draft.certain }
+  }
+
   write(id: string, data: string, origin: WriteOrigin = 'desk'): void {
     const live = this.sessions.get(id)
     if (!live || !live.proc) return

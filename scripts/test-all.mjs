@@ -32,7 +32,10 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 // name -> the script file, in the order they run. Cheapest first is deliberate: a broken
 // build should say so in a second rather than after the slow ones.
 const TESTS = [
+  ['claudemd', 'claudemd-size-test.mjs'],
   ['copylogic', 'copy-logic-test.mjs'],
+  ['tokentally', 'token-tally-test.mjs'],
+  ['pulls', 'pulls-test.mjs'],
   ['changednothing', 'changed-nothing-test.mjs'],
   ['laneheartbeat', 'lane-heartbeat-test.mjs'],
   ['lanereclaim', 'lane-reclaim-test.mjs'],
@@ -81,6 +84,7 @@ const TESTS = [
   ['dropimage', 'drop-image-test.mjs'],
   ['favicon', 'favicon-test.mjs'],
   ['promptbox', 'prompt-box-test.mjs'],
+  ['composer', 'composer-read-test.mjs'],
   ['promptforge', 'prompt-forge-test.mjs'],
   ['taskbrief', 'task-brief-test.mjs'],
   ['interventions', 'interventions-test.mjs'],

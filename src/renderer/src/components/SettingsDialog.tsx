@@ -27,29 +27,15 @@ import type {
   Agent,
   AdminStatus,
   Config,
-  DiscordStyle,
   RestoreMode,
   UpdateState,
   VoiceStatus,
   VoiceConfig
 } from '@shared/types'
-import {
-  DEFAULT_DETAILS,
-  DEFAULT_DISCORD_STYLE,
-  DEFAULT_IDLE_DETAILS,
-  DEFAULT_LINK_LABEL,
-  DEFAULT_LINK_URL,
-  DEFAULT_STATE,
-  DISCORD_TOKENS,
-  NO_PRESENCE_STATUS,
-  PRESENCE_IMAGE_TEXT,
-  buildActivity,
-  type PresenceCounts,
-  type PresenceStatus
-} from '@shared/discordRpc'
 import { DEFAULT_THEME } from '@shared/theme'
 import AgentLogo from './AgentLogo'
 import AppearanceTab from './AppearanceTab'
+import DiscordTab from './DiscordTab'
 import SoundsTab from './SoundsTab'
 import InstallConsole from './InstallConsole'
 import VaultDialog from './VaultDialog'
@@ -183,9 +169,6 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
   const [busy, setBusy] = useState('')
   const [msg, setMsg] = useState('')
   const [rescan, setRescan] = useState(0)
-  // Which half of the Discord tab's preview is on screen. The idle wording is the half
-  // nobody would otherwise see until the desk went quiet, which is too late to edit it.
-  const [preview, setPreview] = useState<'busy' | 'idle'>('busy')
 
   useEffect(() => {
     api.adminStatus().then(setAdmin)
@@ -233,8 +216,6 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
   const setModelFor = (id: Agent, model: string): void =>
     onChange({ defaultModels: { ...config.defaultModels, [id]: model } })
 
-  const setDiscord = (patch: Partial<DiscordStyle>): void =>
-    onChange({ discordStyle: { ...config.discordStyle, ...patch } })
 
   // The settings themselves that the query hits, best first, and the tabs they are on.
   // The rail alone could only ever say WHICH PAGE a thing is on, so finding a switch still
@@ -1316,160 +1297,7 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
           )}
 
 
-          {tab === 'discord' && (
-            <>
-              <Switch
-                checked={config.discordPresence}
-                onChange={(v) => onChange({ discordPresence: v })}
-                label="Show what the desk is doing on Discord"
-                hint="Rich presence on your profile, refreshed as turns start and finish. Counts and project folder names only, never a byte of what a pane says. Needs the Discord app running; off tells Discord nothing at all."
-              />
-
-              {config.discordPresence && (
-                <>
-                  <DiscordStatus />
-
-                  <div className="setting">
-                    <div className="setting-row">
-                      <label>What Discord will show</label>
-                      <Segmented
-                        value={preview}
-                        onChange={(v) => setPreview(v as 'busy' | 'idle')}
-                        options={[
-                          { value: 'busy', label: 'A turn running' },
-                          { value: 'idle', label: 'Nothing running' }
-                        ]}
-                      />
-                    </div>
-                    <DiscordPreview style={config.discordStyle} when={preview} />
-                  </div>
-
-                  <div className="switches">
-                    <Switch
-                      checked={config.discordStyle.projects}
-                      onChange={(v) => setDiscord({ projects: v })}
-                      label="Name the projects being worked in"
-                      hint="The second line. Folder names of the panes whose turn is running - off leaves only the numbers, which says you are busy without saying on what."
-                    />
-                    <Switch
-                      checked={config.discordStyle.elapsed}
-                      onChange={(v) => setDiscord({ elapsed: v })}
-                      label="Show the elapsed clock"
-                      hint="Discord counts up from the oldest running turn, or from when PaneForge started while everything is idle."
-                    />
-                    <Switch
-                      checked={config.discordStyle.whileIdle}
-                      onChange={(v) => setDiscord({ whileIdle: v })}
-                      label="Keep showing something while nothing is running"
-                      hint="Off clears the presence the moment the last turn finishes, so your profile only says PaneForge while there is actually work happening."
-                    />
-                  </div>
-
-                  <div className="setting">
-                    <label>First line, while a turn is running</label>
-                    <input
-                      className="search"
-                      value={config.discordStyle.details}
-                      placeholder={DEFAULT_DETAILS}
-                      spellCheck={false}
-                      onChange={(e) => setDiscord({ details: e.target.value })}
-                    />
-                  </div>
-
-                  <div className="setting">
-                    <label>Second line</label>
-                    <input
-                      className="search"
-                      value={config.discordStyle.state}
-                      placeholder={DEFAULT_STATE}
-                      spellCheck={false}
-                      disabled={!config.discordStyle.projects}
-                      onChange={(e) => setDiscord({ state: e.target.value })}
-                    />
-                  </div>
-
-                  <div className="setting">
-                    <label>First line, while nothing is running</label>
-                    <input
-                      className="search"
-                      value={config.discordStyle.idleDetails}
-                      placeholder={DEFAULT_IDLE_DETAILS}
-                      spellCheck={false}
-                      disabled={!config.discordStyle.whileIdle}
-                      onChange={(e) => setDiscord({ idleDetails: e.target.value })}
-                    />
-                  </div>
-
-                  <div className="setting">
-                    <Switch
-                      checked={config.discordStyle.link}
-                      onChange={(v) => setDiscord({ link: v })}
-                      label="Put a clickable link under it"
-                      hint="Discord draws the two lines above as plain text, so a URL written into them is not a link. A button is the only clickable thing a rich presence has - and Discord shows it to everyone except you, so your own profile will not have it."
-                    />
-                  </div>
-
-                  {config.discordStyle.link && (
-                    <>
-                      <div className="setting">
-                        <label>Button text</label>
-                        <input
-                          className="search"
-                          value={config.discordStyle.linkLabel}
-                          placeholder={DEFAULT_LINK_LABEL}
-                          spellCheck={false}
-                          maxLength={32}
-                          onChange={(e) => setDiscord({ linkLabel: e.target.value })}
-                        />
-                      </div>
-                      <div className="setting">
-                        <label>Where it goes</label>
-                        <input
-                          className="search"
-                          value={config.discordStyle.linkUrl}
-                          placeholder={DEFAULT_LINK_URL}
-                          spellCheck={false}
-                          onChange={(e) => setDiscord({ linkUrl: e.target.value.trim() })}
-                        />
-                        <div className="hint">
-                          Must start with http:// or https:// - Discord throws the whole presence
-                          away over a malformed button, not just the button. Text is cut at 32
-                          characters.
-                        </div>
-                      </div>
-                    </>
-                  )}
-
-                  <div className="setting">
-                    <div className="hint">
-                      An empty line means the greyed-out wording in it. Write whatever you like
-                      around these, which stand in for the numbers:
-                    </div>
-                    <div className="token-legend">
-                      {DISCORD_TOKENS.map(([token, what]) => (
-                        <div key={token}>
-                          <code>{token}</code>
-                          <span>{what}</span>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="hint">
-                      Discord cuts a line off past 128 characters, so a long project list drops
-                      its tail for a "+2 more" rather than being chopped mid-word.
-                    </div>
-                    <div>
-                      <button
-                        className="ghost small"
-                        onClick={() => onChange({ discordStyle: { ...DEFAULT_DISCORD_STYLE } })}
-                      >
-                        Back to the default wording
-                      </button>
-                    </div>
-                  </div>
-                </>
-              )}
-            </>
-          )}
+          {tab === 'discord' && <DiscordTab config={config} onChange={onChange} />}
 
           {tab === 'system' && (
             <>
@@ -1618,136 +1446,6 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
   )
 }
 
-/**
- * What Discord itself last said, rather than what the app meant to send.
- *
- * This tab used to show an application-id field and a name looked up from the public API,
- * which described the INTENT and never the outcome - the one question it could not answer
- * is the only one anyone ever asks, which is "is this actually on my profile". Discord
- * acknowledges every presence by echoing back what it stored, so that ack is the answer,
- * and a refused frame now says so instead of looking identical to an accepted one.
- *
- * The last line is the part that closes the real complaint: everything up to Discord can
- * be right and other people can still see nothing, because hiding it is Discord's own
- * switch and not something an application is allowed to read or set.
- */
-function DiscordStatus(): JSX.Element {
-  const [status, setStatus] = useState<PresenceStatus>(NO_PRESENCE_STATUS)
-  useEffect(() => {
-    void api.discordStatus().then(setStatus)
-    return api.onDiscordStatus(setStatus)
-  }, [])
-
-  const at =
-    status.acceptedAt !== null ? new Date(status.acceptedAt).toLocaleTimeString() : null
-  const named = status.appName ? /paneforge/i.test(status.appName) : false
-
-  return (
-    <div className="setting">
-      <label>Right now</label>
-      {!status.connected ? (
-        <div className="hint warn">
-          No Discord to talk to. PaneForge looks for it again every minute, so starting
-          Discord is enough - nothing here needs touching.
-        </div>
-      ) : status.error ? (
-        <div className="hint warn">Discord refused the last presence: {status.error}</div>
-      ) : status.cleared ? (
-        <div className="hint">
-          Connected{status.user ? <> as <b>{status.user}</b></> : null} - and told Discord to
-          show nothing, because no pane is open{at ? `, at ${at}` : ''}.
-        </div>
-      ) : at ? (
-        <div className={named ? 'hint' : 'hint warn'}>
-          Discord accepted this at <b>{at}</b>
-          {status.user ? (
-            <>
-              {' '}
-              for <b>{status.user}</b>
-            </>
-          ) : null}
-          , headed <b>{status.appName ?? 'nothing'}</b>
-          {named ? '' : ' - which is not PaneForge'}
-          {status.lines.length ? `: ${status.lines.join(' / ')}` : '.'}
-        </div>
-      ) : (
-        <div className="hint">Connected to Discord, waiting to send the first presence.</div>
-      )}
-      <div className="hint">
-        That is everything this app controls. If your friends still see nothing while the
-        line above says accepted, it is one of Discord's own switches, and no application
-        can read or change them: Discord → Settings → Activity Privacy, with both{' '}
-        <b>Display current activity as a status message</b> and{' '}
-        <b>Share your detected activities with others</b> on - and Activity Status on for
-        the server they are looking at you in. A presence is desktop-only either way; the
-        phone and browser apps never show one.
-      </div>
-    </div>
-  )
-}
-
-/**
- * A desk that stands in for yours while you edit the wording. Fixed numbers rather than
- * the live ones on purpose: the point of the preview is that a template can be judged
- * with an empty desk and no Discord open, and real counts of 0/0 would render every
- * template as the same nothing.
- */
-const SAMPLE_BUSY: PresenceCounts = {
-  running: 2,
-  total: 5,
-  names: ['PaneForge', 'Toolstash', 'Manic-s-Auction-House'],
-  oldestRunSince: 0,
-  asleep: 1,
-  appStart: 0
-}
-const SAMPLE_IDLE: PresenceCounts = { running: 0, total: 5, names: [], asleep: 2, appStart: 0 }
-
-/**
- * The activity as Discord will draw it - the application's real name on top, then
- * exactly the lines `buildActivity` will send. It is the same pure function the main
- * process calls, so a preview that looks right cannot be a presence that reads wrong.
- */
-function DiscordPreview({
-  style,
-  when
-}: {
-  style: DiscordStyle
-  when: 'busy' | 'idle'
-}): JSX.Element {
-  const activity = buildActivity(when === 'busy' ? SAMPLE_BUSY : SAMPLE_IDLE, style) as {
-    details?: string
-    state?: string
-    timestamps?: unknown
-    buttons?: { label: string; url: string }[]
-  } | null
-  // The header is the application's name and the application is now a constant, so this
-  // is not a lookup any more - it is the same literal the presence sends as its tooltip.
-  const header = PRESENCE_IMAGE_TEXT
-  return (
-    <div className="discord-card">
-      <div className="dc-art" aria-hidden="true">
-        {header.slice(0, 1).toUpperCase()}
-      </div>
-      <div className="dc-lines">
-        <div className="dc-name">{header}</div>
-        {activity ? (
-          <>
-            {activity.details && <div className="dc-line">{activity.details}</div>}
-            {activity.state && <div className="dc-line">{activity.state}</div>}
-            {activity.timestamps && <div className="dc-line dim">12:34 elapsed</div>}
-            {activity.buttons?.map((b) => (
-              <div className="dc-button" key={b.url}>
-                {b.label}
-              </div>
-            ))}
-          </>
-        ) : (
-          <div className="dc-line dim">Nothing at all - your profile shows no activity.</div>
-        )}
-      </div>
-    </div>
-  )
-}
 
 /** Kicks the install (or removal, or update) off once per agent id the console opens for. */
 function Installer({ id, mode }: { id: string; mode: 'install' | 'uninstall' | 'update' }): null {

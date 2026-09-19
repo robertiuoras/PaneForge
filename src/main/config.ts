@@ -8,7 +8,7 @@ import { homedir, hostname } from 'node:os'
 import { dirname, join } from 'node:path'
 import { app } from 'electron'
 import type { Config, RemoteConfig, SwarmRole } from '../shared/types'
-import { DEFAULT_DISCORD_STYLE } from '../shared/discordRpc'
+import { DEFAULT_DISCORD_STYLE, migrateRows } from '../shared/discordRpc'
 import { DEFAULT_AUTO_HANDOFF, IDLE_OFFLOAD_MINUTES } from '../shared/autoHandoff'
 import { DEFAULT_AUTOCLEAR } from '../shared/autoclear'
 import { DEFAULT_MASCOT } from '../shared/mascot'
@@ -193,7 +193,7 @@ function defaults(): Config {
     sounds: { ...DEFAULT_SOUNDS, custom: [] },
     hiddenBlurbs: [],
     discordPresence: true,
-    discordStyle: { ...DEFAULT_DISCORD_STYLE },
+    discordStyle: migrateRows(DEFAULT_DISCORD_STYLE),
     grid: false,
     gridSizes: {},
     gridLayout: 'tiled',
@@ -345,9 +345,12 @@ export function getConfig(): Config {
       // Merged for the usual reason: a config written before this existed has no key at
       // all, and the watcher would then read `undefined.tokens` as its threshold.
       autoClear: { ...DEFAULT_AUTOCLEAR, ...(base.autoClear ?? {}), ...(raw.autoClear ?? {}) },
-      // Same reason: every config written before the Discord tab existed has no
-      // `discordStyle` at all, and `buildActivity` would then read `undefined.details`.
-      discordStyle: { ...base.discordStyle, ...(raw.discordStyle ?? {}) },
+      // Not merged but MIGRATED: a config written before the Discord tab existed has
+      // no `discordStyle` at all, and one written before the rows has three fixed
+      // wording fields instead of a list. `migrateRows` answers both, and a merge
+      // would have left the old fields sitting beside an empty `rows` - which renders
+      // as a card with nothing on it.
+      discordStyle: migrateRows(raw.discordStyle ?? base.discordStyle),
       // Merged so a config from before the sound picker existed lands on the three
       // sounds the app has always made, rather than on `undefined` and silence. The
       // uploads list is taken as-is: an empty one is a real answer, not a missing key.

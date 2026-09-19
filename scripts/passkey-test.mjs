@@ -672,6 +672,14 @@ ok(!server.running, 'the gate test server stopped cleanly')
     // starts either way, this only says on which machine, and the deadline answers alone.
     'offload:answer',
     'activity:list',
+    // Reads only: open pull requests and what is uncommitted, for folders the caller
+    // already has a pane on. Writes nothing and starts nothing - `gh pr list`, `git
+    // status`, `git rev-list`.
+    'pulls:list',
+    // Reads the unsent line out of a pane's composer. It is text already drawn on that
+    // pane's own screen, which a phone mirrors byte for byte; reading it types nothing
+    // and clears nothing.
+    'sessions:draft',
     // A CPU profile of this app's own window, and the reload that answers a window which
     // has accumulated too much. Neither types, reaches a pty, or leaves the machine: the
     // profile is function names out of this build, and the reload is the same recovery
@@ -681,6 +689,10 @@ ok(!server.running, 'the gate test server stopped cleanly')
     // itself, naming folders and chat titles the sidebar already draws. Nothing in it can
     // be pressed and nothing in it types.
     'lanes:timeline',
+    // Reviewed 2026-09-19. Reads a pane's prompt box back by replaying its own bytes
+    // through an off-screen terminal. It types nothing, submits nothing and clears
+    // nothing - the same class as `sessions:buffer`, which it is built out of.
+    'sessions:composer',
     'sessions:contextUsage', 'sessions:continuationStatus',
     'autoclear:cancel', 'autoclear:takeover',
     // Local starting-folder metadata only, like projects:list; no file or session writes.

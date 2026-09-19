@@ -44,8 +44,14 @@ const {
   FrameStream,
   encodeFrame,
   buildActivity,
-  buildButton,
+  buildButtons,
+  chosenRows,
+  migrateRows,
+  needsTokens,
   DEFAULT_DISCORD_STYLE,
+  DEFAULT_ROWS,
+  MAX_BUTTONS,
+  VISIBLE_ROWS,
   DEFAULT_LINK_LABEL,
   DEFAULT_LINK_URL,
   DISCORD_APP_ID,
@@ -120,71 +126,121 @@ function check(name, ok, extra = '') {
   const desk = { running: 2, total: 5, names: ['PaneForge', 'Toolstash'], oldestRunSince: 500, ...base }
   const style = (over) => ({ ...DEFAULT_DISCORD_STYLE, ...over })
 
-  // The whole point of empty-string defaults: an untouched config must send the same
-  // bytes the version before the tab existed sent.
-  const same = JSON.stringify(buildActivity(desk)) === JSON.stringify(buildActivity(desk, style({})))
-  check('style: an untouched style is byte-identical to no style at all', same)
+  // An untouched config sends what it has always sent - the rows arrived as a
+  // rearrangement of the wording, not a change to it.
+  const plain = buildActivity(desk)
+  check('rows: the default card is the numbers then the projects',
+    plain.details === '2/5 sessions running' && plain.state === 'on PaneForge, Toolstash',
+    JSON.stringify([plain.details, plain.state]))
 
-  const custom = buildActivity(desk, style({ details: 'forging on {project}', state: '{running} of {total} busy' }))
-  check('style: custom first line', custom.details === 'forging on PaneForge', custom.details)
-  check('style: custom second line', custom.state === '2 of 5 busy', custom.state)
+  const rows = (list) => ({ ...DEFAULT_DISCORD_STYLE, rows: list })
+  const row = (over) => ({ id: 'r', text: '', when: 'always', on: true, ...over })
 
-  const tokens = buildActivity(desk, style({ details: '{idle} {sessions} waiting, {projects}' }))
-  check('style: {idle} is total minus running', tokens.details === '3 sessions waiting, PaneForge, Toolstash', tokens.details)
+  // The whole point of the list: which line is on top is the user's, not the app's.
+  const swapped = buildActivity(desk, rows([DEFAULT_ROWS[1], DEFAULT_ROWS[0], DEFAULT_ROWS[2]]))
+  check('rows: moving a line up puts it on top',
+    swapped.details === 'on PaneForge, Toolstash' && swapped.state === '2/5 sessions running',
+    JSON.stringify([swapped.details, swapped.state]))
 
-  const noProjects = buildActivity(desk, style({ projects: false }))
-  check('style: projects off drops the second line', noProjects.state === undefined && !!noProjects.details)
+  const off = buildActivity(desk, rows([{ ...DEFAULT_ROWS[0], on: false }, DEFAULT_ROWS[1]]))
+  check('rows: switching one off hands its place to the one under it',
+    off.details === 'on PaneForge, Toolstash' && off.state === undefined, JSON.stringify(off))
 
-  const noClock = buildActivity(desk, style({ elapsed: false }))
-  check('style: elapsed off sends no timestamps', noClock.timestamps === undefined)
+  // Discord draws two lines. A third is kept in the list and simply never sent, which
+  // is the one thing about this that cannot be fixed by writing more code.
+  const three = buildActivity(desk, rows([
+    row({ id: 'a', text: 'one' }), row({ id: 'b', text: 'two' }), row({ id: 'c', text: 'three' })
+  ]))
+  check('rows: only the first two reach the card',
+    three.details === 'one' && three.state === 'two' && !JSON.stringify(three).includes('three'),
+    JSON.stringify(three))
+  check('rows: and the list says which two', 
+    chosenRows(desk, rows([row({ id: 'a', text: 'one' }), row({ id: 'b', text: 'two' }), row({ id: 'c', text: 'three' })]))
+      .map((r) => r.id).join(',') === 'a,b')
+  check('rows: two is the number Discord draws', VISIBLE_ROWS === 2)
 
   const quiet = { running: 0, total: 3, names: [], ...base }
-  check('style: idle off is a clear, not a line', buildActivity(quiet, style({ whileIdle: false })) === null)
-  check('style: a running desk is unaffected by the idle switch', buildActivity(desk, style({ whileIdle: false })) !== null)
-  const idleText = buildActivity(quiet, style({ idleDetails: 'desk of {total} asleep' }))
-  check('style: custom idle line', idleText.details === 'desk of 3 asleep', idleText.details)
+  const always = rows([row({ id: 'a', text: '{total} {sessions}', when: 'always' })])
+  check('rows: an always row shows in both halves',
+    buildActivity(desk, always).details === '5 sessions' &&
+      buildActivity(quiet, always).details === '3 sessions')
+  check('rows: a running-only row says nothing on a quiet desk',
+    buildActivity(quiet, rows([row({ text: 'busy', when: 'running' })])) === null)
+  check('rows: an idle-only row says nothing while a turn runs',
+    buildActivity(desk, rows([row({ text: 'resting', when: 'idle' })])) === null)
 
-  // A template that renders to nothing must not become a blank badge on the profile.
-  check('style: an all-blank presence is a clear', buildActivity(desk, style({ details: '   ', projects: false })) === null)
+  // A row whose words come out empty takes no line, and the one under it moves up -
+  // which is what the old "name the projects" switch did by hand.
+  const emptied = buildActivity(quiet, rows([
+    row({ id: 'a', text: 'on {projects}' }), row({ id: 'b', text: '{total} idle' })
+  ]))
+  check('rows: a row that renders to nothing gives up its line',
+    emptied.details === '3 idle' && emptied.state === undefined, JSON.stringify(emptied))
+
+  check('rows: custom wording', buildActivity(desk, rows([row({ text: 'forging on {project}' })])).details === 'forging on PaneForge')
+  check('rows: {idle} is total minus running',
+    buildActivity(desk, rows([row({ text: '{idle} {sessions} waiting, {projects}' })])).details ===
+      '3 sessions waiting, PaneForge, Toolstash')
+
+  const noClock = buildActivity(desk, { ...DEFAULT_DISCORD_STYLE, elapsed: false })
+  check('style: elapsed off sends no timestamps', noClock.timestamps === undefined)
+  check('style: a card with nothing on it is a clear, never a blank badge',
+    buildActivity(desk, rows([row({ text: '   ' })])) === null)
+  check('style: a list with no rows at all is a clear', buildActivity(desk, rows([])) === null)
 
   const longNames = { running: 9, total: 9, names: [...Array(30)].map((_, i) => `some-quite-long-project-name-${i}`), ...base }
-  const longLine = buildActivity(longNames, style({ state: 'working on {projects} right now' }))
-  check('style: a custom line is capped too', longLine.state.length <= 128, String(longLine.state.length))
-  check('style: capping keeps the tail of the template', / right now$/.test(longLine.state), longLine.state)
+  const longLine = buildActivity(longNames, rows([row({ text: 'working on {projects} right now' })]))
+  check('style: a custom line is capped too', longLine.details.length <= 128, String(longLine.details.length))
+  check('style: capping keeps the tail of the template', / right now$/.test(longLine.details), longLine.details)
 
-  // ---------- the link ----------
-  // A URL in `details`/`state` is drawn as text, so the only clickable thing a
-  // rich presence has is `buttons`. These pin the shape Discord accepts, because
-  // a malformed button is not ignored - it costs the whole frame.
+  // ---------- the token rows ----------
+  const spent = { ...desk, tokensToday: 1_480_000, tokensWeek: 9_200_000 }
+  const spend = buildActivity(spent, rows([row({ text: '{tokens} today, {tokensWeek} this week' })]))
+  check('tokens: written the way a card can be read', spend.details === '1.5M today, 9.2M this week', spend.details)
+  check('tokens: a desk that has not counted yet says 0, never undefined',
+    buildActivity(desk, rows([row({ text: '{tokens} today' })])).details === '0 today')
+  check('tokens: nothing asks for the disk walk unless a row says so',
+    needsTokens(DEFAULT_DISCORD_STYLE) === false &&
+      needsTokens(rows([row({ text: 'spent {tokensWeek}' })])) === true &&
+      needsTokens(rows([row({ text: 'spent {tokens}', on: false })])) === false)
+
+  // ---------- an old config ----------
+  // The three fixed wording fields became three rows. An empty field meant "the
+  // built-in wording", so the migration has to fill it in rather than carry the blank.
+  const old = migrateRows({ details: '', state: 'building {project}', idleDetails: '', projects: true, whileIdle: false, link: true, linkLabel: 'Site', linkUrl: 'https://x.dev' })
+  check('old config: three rows, in the order the card drew them',
+    old.rows.map((r) => `${r.id}:${r.when}:${r.on}`).join(' ') === 'running:running:true projects:running:true idle:idle:false',
+    JSON.stringify(old.rows))
+  check('old config: an empty field keeps its built-in wording',
+    old.rows[0].text === '{running}/{total} {sessions} running' && old.rows[1].text === 'building {project}')
+  check('old config: the link becomes the first button',
+    old.buttons.length === 1 && old.buttons[0].label === 'Site' && old.buttons[0].url === 'https://x.dev')
+  check('old config: one that already has rows is left alone',
+    migrateRows({ rows: [row({ id: 'z', text: 'kept' })], elapsed: false, buttons: [] }).rows[0].id === 'z')
+
+  // ---------- the buttons ----------
+  // A URL in a text row is drawn as text, so the only clickable thing a rich presence
+  // has is `buttons`. A malformed one is not ignored - it costs the whole frame.
   const linked = buildActivity(desk)
   check(
     'link: the default presence carries the toolstash button',
-    Array.isArray(linked.buttons) &&
-      linked.buttons.length === 1 &&
-      linked.buttons[0].label === DEFAULT_LINK_LABEL &&
-      linked.buttons[0].url === DEFAULT_LINK_URL,
+    Array.isArray(linked.buttons) && linked.buttons.length === 1 &&
+      linked.buttons[0].label === DEFAULT_LINK_LABEL && linked.buttons[0].url === DEFAULT_LINK_URL,
     JSON.stringify(linked.buttons)
   )
-  check('link: the switch turns it off', buildActivity(desk, style({ link: false })).buttons === undefined)
-  const named = buildActivity(desk, style({ linkLabel: 'Get PaneForge', linkUrl: 'https://toolstash.xyz/x' }))
-  check(
-    'link: a custom label and url are used',
-    named.buttons[0].label === 'Get PaneForge' && named.buttons[0].url === 'https://toolstash.xyz/x',
-    JSON.stringify(named.buttons)
-  )
-  // Discord rejects the frame rather than the field, so anything it would refuse
-  // has to be dropped here.
-  check('link: a non-http url is dropped', buildButton(style({ linkUrl: 'javascript:alert(1)' })) === null)
-  check('link: a bare domain is dropped', buildButton(style({ linkUrl: 'toolstash.xyz/paneforge' })) === null)
-  check(
-    'link: a long label is cut to 32 characters',
-    buildButton(style({ linkLabel: 'x'.repeat(80) })).label.length === 32
-  )
-  check(
-    'link: a label of only spaces falls back to nothing rather than a blank button',
-    buildButton(style({ linkLabel: '   ' })).label === DEFAULT_LINK_LABEL
-  )
-  // An empty desk is still a clear: the button must not keep a dead presence alive.
+  const btn = (list) => buildButtons({ ...DEFAULT_DISCORD_STYLE, buttons: list })
+  const B = (over) => ({ id: 'b', label: 'x', url: 'https://a.dev', on: true, ...over })
+  check('link: the switch turns it off', btn([B({ on: false })]).length === 0)
+  check('link: a custom label and url are used',
+    btn([B({ label: 'Get PaneForge', url: 'https://toolstash.xyz/x' })])[0].label === 'Get PaneForge')
+  check('link: two buttons are sent', btn([B({ id: 'a' }), B({ id: 'b' })]).length === 2)
+  check('link: a third is dropped, because Discord refuses the frame over it',
+    btn([B({ id: 'a' }), B({ id: 'b' }), B({ id: 'c' })]).length === MAX_BUTTONS)
+  check('link: a non-http url is dropped', btn([B({ url: 'javascript:alert(1)' })]).length === 0)
+  check('link: a bare domain is dropped', btn([B({ url: 'toolstash.xyz/paneforge' })]).length === 0)
+  check('link: a long label is cut to 32 characters', btn([B({ label: 'x'.repeat(80) })])[0].label.length === 32)
+  check('link: a label of only spaces falls back rather than drawing a blank button',
+    btn([B({ label: '   ' })])[0].label === DEFAULT_LINK_LABEL)
   check('link: no desk means no presence at all', buildActivity({ total: 0, running: 0, names: [], ...base }) === null)
 }
 

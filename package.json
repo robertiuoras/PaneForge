@@ -102,6 +102,8 @@
     "test:sessionchoice": "node scripts/session-choice-test.mjs",
     "test:routecli": "node scripts/route-cli-test.mjs",
     "test:discord": "node scripts/discord-presence-test.mjs",
+    "test:pulls": "node scripts/pulls-test.mjs",
+    "test:tokentally": "node scripts/token-tally-test.mjs",
     "test:discordbrand": "node scripts/discord-brand-test.mjs",
     "test:remotelogin": "node scripts/remote-login-test.mjs",
     "test:loginkeys": "node scripts/login-keys-test.mjs",
@@ -122,6 +124,7 @@
     "test:remotereset": "node scripts/remote-reset-test.mjs",
     "test:stickyselect": "node scripts/sticky-select-test.mjs",
     "test:attach": "node scripts/attach-test.mjs",
+    "test:composer": "node scripts/composer-read-test.mjs",
     "test:promptbox": "node scripts/prompt-box-test.mjs",
     "test:autoanswer": "node scripts/auto-answer-test.mjs",
     "test:askclick": "node scripts/ask-click-test.mjs",
@@ -309,7 +312,8 @@
     "test:updateprobe": "node scripts/update-probe-test.mjs",
     "test:launchinstall": "node scripts/launch-install-test.mjs",
     "test:straylaunch": "node scripts/stray-launch-test.mjs",
-    "shot:installed": "node scripts/window-shot.mjs --owner PaneForge"
+    "shot:installed": "node scripts/window-shot.mjs --owner PaneForge",
+    "test:claudemd": "node scripts/claudemd-size-test.mjs"
   },
   "dependencies": {
     "@lydell/node-pty": "1.2.0-beta.12",
