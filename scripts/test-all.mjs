@@ -277,6 +277,7 @@ const TESTS = [
   ['notes', 'release-notes-test.mjs'],
   ['trydiff', 'try-diff-test.mjs'],
   ['sidehidden', 'side-hidden-test.mjs'],
+  ['uploadretry', 'release-upload-retry-test.mjs'],
   ['pickrelease', 'pickrelease-test.mjs'],
   ['promote', 'promote-test.mjs'],
   ['phone', 'phone-test.mjs'],
