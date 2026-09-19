@@ -159,10 +159,12 @@ import { listBackJobs, type BackJob } from './backJobs'
 import { DEFAULT_AUTO_HANDOFF } from '../shared/autoHandoff'
 import {
   clearDesk,
+  completeDeskRecovery,
   MAX_DESK_AGE_MS,
   MAX_RESTORE,
   paneMissing,
   readDesk,
+  readPreviousDesk,
   saveDesk,
   saveDeskOnExit,
   setDeskHold,
@@ -370,26 +372,31 @@ function quitReason(): string {
 // the installed copy and leaves (shared/strayLaunch.ts, the 0.8.183 morning). Decided
 // once the lock is ours, so a running installed copy still gets the argv as a second
 // instance, and before any window or pane exists, so nothing is lost by leaving.
-const stray = app.isPackaged ? handOffToInstalled() : null
 if (!app.requestSingleInstanceLock(launchRequest)) {
   quitting('another copy already holds the single-instance lock')
   app.quit()
-} else if (stray && stray.verdict === 'go') {
-  updateLog(`stray launch ${process.execPath} handed the desk to ${stray.installed}`)
-  quitting(`a build folder copy - the installed app at ${stray.installed} was opened instead`)
-  app.quit()
 } else {
-  if (stray && stray.verdict !== 'not a build folder') updateLog(`stray launch ${stray.verdict}`)
-  app.on('second-instance', (_e, argv, _cwd, extra) => {
-    // Mid-update the installer launches the new exe while this one is still holding the
-    // lock, so that launch arrives here as a second instance. Raising the window then
-    // would undo the whole point of the silent update: it pops a dying app to the front
-    // over whatever the user is doing. Take the args, leave the focus alone.
-    if (!installStarted) focusWindow(true)
-    // The other copy's parse when it sent one; its raw argv only as a fallback for a
-    // launcher that predates this and cannot pass anything across.
-    openRequest(isOpenRequest(extra) ? extra : parseOpenArgs(argv))
-  })
+  // The old installed app holds this lock until its update swap exits. A build-folder
+  // copy launched in that gap must quit as the lock loser before it can hand control
+  // back to an installed process that is deliberately ignoring second-instance focus.
+  const stray = app.isPackaged ? handOffToInstalled() : null
+  if (stray && stray.verdict === 'go') {
+    updateLog(`stray launch ${process.execPath} handed the desk to ${stray.installed}`)
+    quitting(`a build folder copy - the installed app at ${stray.installed} was opened instead`)
+    app.quit()
+  } else {
+    if (stray && stray.verdict !== 'not a build folder') updateLog(`stray launch ${stray.verdict}`)
+    app.on('second-instance', (_e, argv, _cwd, extra) => {
+      // Mid-update the installer launches the new exe while this one is still holding the
+      // lock, so that launch arrives here as a second instance. Raising the window then
+      // would undo the whole point of the silent update: it pops a dying app to the front
+      // over whatever the user is doing. Take the args, leave the focus alone.
+      if (!installStarted) focusWindow(true)
+      // The other copy's parse when it sent one; its raw argv only as a fallback for a
+      // launcher that predates this and cannot pass anything across.
+      openRequest(isOpenRequest(extra) ? extra : parseOpenArgs(argv))
+    })
+  }
 }
 
 /** The usable area of whichever display the window was last on. */
@@ -3990,11 +3997,10 @@ function restoreStaggerMs(): number {
   return Number.isFinite(n) && n > 0 ? n : 0
 }
 
-function restorePanes(specs: StartSessionRequest[]): void {
+function restorePanes(specs: StartSessionRequest[], previous = false): void {
   // One restore per launch. A second answer from a dialog that somehow sent twice
   // would otherwise open every pane again beside the first set.
-  if (restoredThisRun) return
-  clearDesk()
+  if (restoredThisRun && !previous) return
   restoredThisRun = true
   const gap = restoreStaggerMs()
   // Started in order whatever the gap is: a pane's number is its place in this list, so
@@ -4006,7 +4012,14 @@ function restorePanes(specs: StartSessionRequest[]): void {
   // list is rewritten from what actually restored, so it cannot grow stale entries.
   const wasPinned = new Set(getConfig().pinnedPanes ?? [])
   const nowPinned: string[] = []
-  const opening = specs.slice(0, MAX_RESTORE)
+  const failed: StartSessionRequest[] = []
+  let deskClaimed = false
+  // A previous desk may overlap with panes that survived the failed restore. Keep the
+  // current cards and skip only the exact conversation or screen already represented.
+  const openIds = new Set(manager.snapshot().flatMap((s) => [s.resumeId, s.scrollbackId].filter(Boolean)))
+  const opening = specs.filter((s) => !openIds.has(s.resumeId) && !openIds.has(s.scrollbackId)).slice(0, MAX_RESTORE)
+  let remaining = [...opening]
+  if (remaining.length) setDeskHold({ specs: remaining, at: Date.now(), clean: false, reason: 'live' })
   // Two cards can be saved pointing at ONE folder - the desk is written per pane and
   // nothing in it notices - and restore starts each pane where it was saved, so both
   // agents came up in one working tree (Alison and Jacob in `clients`, 2026-09-04). The
@@ -4039,8 +4052,11 @@ function restorePanes(specs: StartSessionRequest[]): void {
         const unavailable = req.agent !== 'shell' && !named
         const meta = manager.start({
           ...req,
-          resume: named,
-          resumeId: named ? req.resumeId : undefined,
+          // An asleep placeholder must keep the exact id even when it cannot be checked
+          // right now. `wake()` verifies it again before spawning; dropping it here made
+          // one restart erase a conversation that was still on disk.
+          resume: named || unavailable,
+          resumeId: named || unavailable ? req.resumeId : undefined,
           prompt: undefined,
           // Everything but the pane being looked at comes back with no agent in it. The
           // card, its place and its screen are all there; a press starts the CLI in the
@@ -4052,6 +4068,16 @@ function restorePanes(specs: StartSessionRequest[]): void {
             ? `Another chat is already in ${basename(req.cwd)} - opening this one gives it its own copy`
             : req.laneNote
         })
+        // Keep the old handoff until a replacement pane really exists. A relaunch can
+        // fail before any saved pane starts, and consuming the desk first made that
+        // transient failure permanent.
+        if (!deskClaimed) {
+          clearDesk({ specs, at: Date.now(), clean: false, reason: 'live' })
+          deskClaimed = true
+        }
+        remaining = remaining.filter((candidate) => candidate !== req)
+        setDeskHold(remaining.length ? { specs: remaining, at: Date.now(), clean: false, reason: 'live' } : null)
+        saveDesk(manager.snapshot(), 'live')
         if (req.scrollbackId && wasPinned.has(req.scrollbackId)) nowPinned.push(meta.id)
         // A prompt this pane was owed when the app went down. The pane it is replacing was
         // named by the desk, and the ledger is keyed by that id, so this is the moment the
@@ -4059,7 +4085,8 @@ function restorePanes(specs: StartSessionRequest[]): void {
         // held on its new id if it came back asleep.
         manager.deliverOwed(req.scrollbackId ?? meta.id, meta.id, !meta.asleep && meta.status !== 'exited')
       } catch {
-        // Folder moved or the agent is no longer installed - skip that pane only.
+        // A partial restore retains the rows it could not open alongside live panes.
+        failed.push(req)
       }
     }
     if (gap) setTimeout(open, i * gap)
@@ -4077,22 +4104,29 @@ function restorePanes(specs: StartSessionRequest[]): void {
     else done()
   }
   settle(() => {
-  if (wasPinned.size || nowPinned.length) {
-    // Restore can wait behind an offer or stagger. Keep pins added while it was
-    // waiting, and replace only ids that belonged to panes this restore replaced.
-    const restoredOldIds = new Set(opening.map((req) => req.scrollbackId).filter(Boolean))
-    const current = getConfig().pinnedPanes ?? []
-    const mergedPins = [...new Set([...current.filter((id) => !restoredOldIds.has(id)), ...nowPinned])]
-    if (current.join(',') !== mergedPins.join(',')) {
-      setConfig({ pinnedPanes: mergedPins })
-      // ...and SAY so. `setConfig` writes the file and broadcasts nothing - only the
-      // `config:set` handler sends `config:changed` - so this translation reached no
-      // window at all, and a window that had already read the config was holding the ids
-      // of the panes these ones replaced. Every restored pane then drew as not kept, and
-      // most of them come back ASLEEP, which is exactly what the close clock takes.
-      send('config:changed', getConfig())
+    if (failed.length) {
+      setDeskHold(remaining.length ? { specs: remaining, at: Date.now(), clean: false, reason: 'live' } : null)
+      saveDesk(manager.snapshot(), 'live')
+    } else if (deskClaimed) {
+      completeDeskRecovery()
+      saveDesk(manager.snapshot(), 'live')
     }
-  }
+    if (wasPinned.size || nowPinned.length) {
+      // Restore can wait behind an offer or stagger. Keep pins added while it was
+      // waiting, and replace only ids that belonged to panes this restore replaced.
+      const restoredOldIds = new Set(opening.map((req) => req.scrollbackId).filter(Boolean))
+      const current = getConfig().pinnedPanes ?? []
+      const mergedPins = [...new Set([...current.filter((id) => !restoredOldIds.has(id)), ...nowPinned])]
+      if (current.join(',') !== mergedPins.join(',')) {
+        setConfig({ pinnedPanes: mergedPins })
+        // ...and SAY so. `setConfig` writes the file and broadcasts nothing - only the
+        // `config:set` handler sends `config:changed` - so this translation reached no
+        // window at all, and a window that had already read the config was holding the ids
+        // of the panes these ones replaced. Every restored pane then drew as not kept, and
+        // most of them come back ASLEEP, which is exactly what the close clock takes.
+        send('config:changed', getConfig())
+      }
+    }
   })
 }
 
@@ -4112,20 +4146,41 @@ function describe(spec: StartSessionRequest, i: number): RestorePane {
   // Same reading as the restore itself, or the dialog offers a pane under a line of
   // somebody else's work and then opens it empty.
   const held = spec.resumeId ? resumableTranscript(spec.resumeCwd ?? spec.cwd, spec.resumeId, spec.agent) : null
-  const resumeId = held && !heldElsewhere(held, spec.cwd) ? spec.resumeId : undefined
+  const verifiedResumeId = held && !heldElsewhere(held, spec.cwd) ? spec.resumeId : undefined
   return {
     id: String(i),
     cwd: spec.cwd,
     title: spec.title || basename(spec.cwd),
     agent,
     model: spec.model,
-    resumeId,
-    lastPrompt: lastPrompt(spec.cwd, resumeId),
+    // Preserve the source id even when it cannot be verified at offer time. The
+    // restore path turns it into an asleep placeholder and wake validates again.
+    resumeId: spec.resumeId,
+    lastPrompt: lastPrompt(spec.cwd, verifiedResumeId),
     gone: paneMissing(spec) ? 'folder' : installed ? undefined : 'agent',
     // Carried through the dialog so the ANSWERED restore is the same restore the silent
     // one is - see `RestorePane.scrollbackId`.
     scrollbackId: spec.scrollbackId,
     asleep: spec.asleep
+  }
+}
+
+function makeRestoreOffer(desk: { specs: StartSessionRequest[]; at: number; clean: boolean }, previous = false): RestoreOffer {
+  const all = desk.specs.map(describe)
+  const panes = all.slice(0, MAX_RESTORE)
+  const plan = restorePlan(panes.filter((p) => !p.gone).length, {
+    totalMb: totalMb(),
+    pressure: readPressure(),
+    localPanes: manager.list().filter((s) => !s.asleep).length
+  })
+  return {
+    panes,
+    extra: all.slice(MAX_RESTORE),
+    at: desk.at,
+    clean: desk.clean,
+    fits: plan.fits,
+    memoryNote: plan.note,
+    previous
   }
 }
 
@@ -4208,34 +4263,26 @@ function offerRestore(): void {
     restorePanes(desk.specs)
     return
   }
-  const all = desk.specs.map(describe)
-  const panes = all.slice(0, MAX_RESTORE)
-  // Read here rather than off `lastPressure`: this runs during boot, before the sampler
-  // has necessarily had its first tick, and a stale `normal` would tick every pane on the
-  // one launch where that is the whole complaint.
-  const plan = restorePlan(panes.filter((p) => !p.gone).length, {
-    totalMb: totalMb(),
-    pressure: readPressure(),
-    // Same reading as `publishCapacity`: a sleeping pane is not an agent.
-    localPanes: manager.list().filter((s) => !s.asleep).length
-  })
-  offer = {
-    panes,
-    extra: all.slice(MAX_RESTORE),
-    at: desk.at,
-    clean: desk.clean,
-    fits: plan.fits,
-    memoryNote: plan.note
-  }
+  offer = makeRestoreOffer(desk)
   // Until the question is answered the desk stands, even though the app currently
   // has no panes: an unanswered offer must survive a second restart, a pane opened
   // over it, and a mis-click that closes the dialog. `saveDesk` writes these panes in
   // front of the live ones until `setDeskHold(null)`.
   setDeskHold(desk)
-  updateLog('desk', `offered ${panes.length} pane(s)${all.length > panes.length ? ` (+${all.length - panes.length} more not offered)` : ''}`)
+  updateLog('desk', `offered ${offer.panes.length} pane(s)${offer.extra.length ? ` (+${offer.extra.length} more not offered)` : ''}`)
 }
 
 ipcMain.handle('restore:pending', () => offer)
+
+ipcMain.handle('restore:previous', () => {
+  if (offer) return offer
+  const desk = readPreviousDesk()
+  if (!desk?.specs.length) return null
+  offer = makeRestoreOffer(desk, true)
+  setDeskHold(desk)
+  updateLog('desk', `offered previous desk with ${offer.panes.length} pane(s)`)
+  return offer
+})
 
 ipcMain.on('restore:answer', (_e, answer: RestoreAnswer) => {
   const pending = offer
@@ -4268,7 +4315,7 @@ ipcMain.on('restore:answer', (_e, answer: RestoreAnswer) => {
     }))
   // `--open` and a restore are both allowed to have happened: whatever is already on
   // screen stays, the restored panes join it.
-  restorePanes(specs)
+  restorePanes(specs, pending.previous)
 })
 
 app.whenReady().then(() => {

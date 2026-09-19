@@ -21,7 +21,8 @@ function installedCopy(): { path: string; version: string } | null {
 }
 
 /**
- * Decide, and when the answer is `go`, open the installed copy. The caller quits.
+ * Decide, and when the answer is `go`, release the caller's single-instance lock and
+ * open the installed copy. The caller quits.
  * Returns the verdict and the installed path so the quit line can name both.
  */
 export function handOffToInstalled(): { verdict: StrayVerdict; installed: string } {
@@ -36,8 +37,10 @@ export function handOffToInstalled(): { verdict: StrayVerdict; installed: string
   })
   if (verdict === 'go' && installed) {
     // `open -a` goes through LaunchServices, so the copy comes up as a normal launch of
-    // its own bundle, single-instance lock and all. Our lock is released by the quit.
+    // its own bundle, single-instance lock and all. Release ours first: otherwise a
+    // normal build-folder handoff is delivered back here as a second-instance event.
     try {
+      app.releaseSingleInstanceLock()
       spawn('open', ['-a', installed.path], { detached: true, stdio: 'ignore', windowsHide: true }).unref()
     } catch {
       return { verdict: 'no installed copy', installed: '' }

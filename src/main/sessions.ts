@@ -718,7 +718,10 @@ export class SessionManager extends EventEmitter {
         lane: s.meta.lane,
         // The conversation this pane is actually in, so restoring reopens THAT one
         // rather than whatever happens to be newest in the folder by then.
-        resumeId: resumeIdFor(s.meta.id),
+        // An unavailable asleep placeholder keeps the exact requested id until wake
+        // can validate it. A failed lookup must not turn this preservation path into
+        // an unnamed fresh session on the following restart.
+        resumeId: resumeIdFor(s.meta.id) ?? (s.meta.asleep ? s.req.resumeId : undefined),
         resumeCwd: s.req.resumeCwd,
         // ...and what was on screen in it. `resumeId` restores the AGENT's memory and
         // not one line of the terminal, which is why a pane comes back blank after an

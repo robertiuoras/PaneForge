@@ -278,6 +278,8 @@ const TESTS = [
   ['trydiff', 'try-diff-test.mjs'],
   ['sidehidden', 'side-hidden-test.mjs'],
   ['uploadretry', 'release-upload-retry-test.mjs'],
+  ['updaterelaunchlock', 'update-relaunch-lock-test.mjs'],
+  ['restorepanes', 'restore-panes-test.mjs'],
   ['pickrelease', 'pickrelease-test.mjs'],
   ['promote', 'promote-test.mjs'],
   ['phone', 'phone-test.mjs'],
