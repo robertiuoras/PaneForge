@@ -2445,7 +2445,12 @@ export interface Api {
    * app relayed. `certain` false means the line was edited in a way the app could not
    * follow and is a guess; null means there is no such pane.
    */
-  draft(id: string): Promise<{ text: string; certain: boolean } | null>
+  /**
+   * What is typed into a pane and not sent. `from` says which reading answered: `screen`
+   * is the terminal buffer itself, `keystrokes` the reconstruction main keeps for a pane
+   * whose window could not be asked - see `sessions:draft` in `main/index.ts`.
+   */
+  draft(id: string): Promise<{ text: string; certain: boolean; from: 'screen' | 'keystrokes' } | null>
   /**
    * Open pull requests and unfinished local work, for the repositories behind the
    * folders given. Read on demand: this is a dialog's question, never a poll.

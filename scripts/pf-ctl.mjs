@@ -670,13 +670,18 @@ if (cmd === 'list') {
   // pending. Everything else is said out loud rather than printed as if it were the
   // screen: a line the app could not follow is a guess, and a pane typed into before
   // this app process started relayed nothing and has no draft at all.
+  const screen = draft.from === 'screen'
   if (!draft.text) {
-    console.error(draft.certain
-      ? `pane ${pane.id} has nothing unsent`
-      : `pane ${pane.id} has nothing the app can vouch for - it relayed no keystrokes for the current line`)
-    process.exit(draft.certain ? 0 : 1)
+    console.error(
+      screen
+        ? `pane ${pane.id} has nothing unsent`
+        : draft.certain
+          ? `pane ${pane.id} has nothing unsent that this app relayed - its window could not be asked, so a line typed before the app started would not show here`
+          : `pane ${pane.id} has nothing the app can vouch for - it relayed no keystrokes for the current line`
+    )
+    process.exit(screen || draft.certain ? 0 : 1)
   }
-  if (!draft.certain)
+  if (!screen && !draft.certain)
     console.error(`(uncertain - the line was edited in a way the app could not follow, so this may be incomplete)`)
   console.log(draft.text)
 } else if (cmd === 'tell') {

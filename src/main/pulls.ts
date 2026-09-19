@@ -13,6 +13,7 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { basename } from 'node:path'
+import { repoWords } from '../shared/pulls'
 import { which } from './which'
 import type { BranchRow, PullRow, PullsAnswer, RepoPulls } from '../shared/pulls'
 
@@ -229,7 +230,7 @@ export async function readPulls(cwds: string[], refresh = false): Promise<PullsA
     const remote = await remoteName(root)
     const repo: RepoPulls = {
       path: root,
-      name: basename(root),
+      name: repoWords(basename(root)),
       remote,
       main,
       pulls: [],

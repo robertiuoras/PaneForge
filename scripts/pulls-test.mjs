@@ -26,7 +26,7 @@ buildSync({
   platform: 'node',
   outfile: out
 })
-const { pullWords, needsSomebody, waitingCount, branchWords, sortPulls, agoWords, unsavedWords } =
+const { pullWords, needsSomebody, waitingCount, branchWords, sortPulls, agoWords, unsavedWords, repoWords } =
   createRequire(import.meta.url)(out)
 
 let failed = 0
@@ -118,6 +118,15 @@ const pull = (over) => ({
   check('work only here says so', branchWords(b({}), 'master') === '3 changes only on this machine')
   check('pushed work names the branch it is not in', branchWords(b({ pushed: true }), 'master') === '3 changes not in master yet')
   check('one change is not "1 changes"', branchWords(b({ ahead: 1 }), 'master') === '1 change only on this machine')
+}
+
+// ---------- which project, which copy ----------
+{
+  check('a plain folder is its own name', repoWords('PaneForge') === 'PaneForge')
+  check('a lane copy names the project and the copy', repoWords('PaneForge-f') === 'PaneForge, copy 7')
+  check('the first letter copy is copy 2', repoWords('PaneForge-a') === 'PaneForge, copy 2')
+  check('a legacy w-copy keeps its number', repoWords('PaneForge-w2') === 'PaneForge, copy 2')
+  check('a real project ending in a letter is left alone', repoWords('right-key-alison') === 'right-key-alison')
 }
 
 // ---------- when ----------

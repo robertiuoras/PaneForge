@@ -1,3 +1,5 @@
+import { copyNumber, copySuffixOf } from './place'
+
 /**
  * What is waiting on GitHub for the projects open on this desk, in words.
  *
@@ -147,4 +149,19 @@ export function agoWords(at: number, now: number): string {
   if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`
   const days = Math.round(hours / 24)
   return `${days} day${days === 1 ? '' : 's'} ago`
+}
+
+/**
+ * The project's own name, and which copy of it this folder is.
+ *
+ * The heading used to be the folder's basename, so the lane copies of PaneForge read
+ * `PaneForge-f` - the app's own scratch suffix, on a screen whose reader has never
+ * heard of a worktree. `copySuffixOf`/`copyNumber` already turn that suffix into the
+ * number the rest of the app says out loud, so the heading says the same thing.
+ */
+export function repoWords(folder: string): string {
+  const project = copySuffixOf(folder)
+  if (!project) return folder
+  const n = copyNumber(folder.slice(project.length + 1))
+  return n === null ? folder : `${project}, copy ${n}`
 }

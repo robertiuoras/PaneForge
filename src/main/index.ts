@@ -2310,7 +2310,33 @@ ipcMain.handle('discord:status', () => presence.status())
 // What is waiting on GitHub, asked only when the dialog that shows it is opened. The
 // folders come from the renderer because the desk it draws includes mirrored panes,
 // whose repositories are the other machine's and are skipped by the lookup itself.
-ipcMain.handle('sessions:draft', (_e, id: string) => manager.draftOf(id))
+/**
+ * What is typed into a pane and not sent.
+ *
+ * Asked of the SCREEN first: the composer's text lives in the renderer's terminal buffer,
+ * which is the only copy that survives a restore or an app restart. `Live.draft` is a
+ * reconstruction from the keystrokes this process relayed, so it is empty for a pane that
+ * was typed into before the process started - the answer that made `pf composer` say
+ * "nothing unsent" about a pane with a full composer on screen. The reconstruction is
+ * still the fallback, for a pane with no live renderer (asleep, hidden behind a wedged
+ * window, or a window that did not answer), and the answer says WHICH of the two it is.
+ */
+ipcMain.handle('sessions:draft', async (_e, id: string) => {
+  const kept = manager.draftOf(id)
+  if (!kept) return null
+  if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+    try {
+      const seen = (await win.webContents.executeJavaScript(
+        `window.__pfComposer ? window.__pfComposer(${JSON.stringify(id)}) : null`,
+        true
+      )) as string | null
+      if (typeof seen === 'string') return { text: seen, certain: true, from: 'screen' as const }
+    } catch {
+      // A window that cannot answer is the fallback's whole reason for existing.
+    }
+  }
+  return { ...kept, from: 'keystrokes' as const }
+})
 ipcMain.handle('pulls:list', (_e, cwds: string[], refresh?: boolean) =>
   readPulls(Array.isArray(cwds) ? cwds : [], !!refresh)
 )
