@@ -267,6 +267,21 @@ check('staging the height recovers lines a straight write loses', lostStaged < l
 const unshrunk = await staging(120, 40, 40)
 eq('...and at the height it was painted at, with no shrink, nothing is lost', antiRef.filter((l) => !unshrunk.has(l)).length, 0)
 
+// ...and that refusal is a MEASUREMENT, not caution. A pane written by a build before the
+// height was recorded has nothing on disk, and the only height signal in the bytes is
+// antigravity's own cursor-up arithmetic - which is not the terminal's height: a terminal
+// CLAMPS an up-move at its top row, so this fixture, painted at 40 rows, moves up 55.
+// Staging on that number tears the pane worse than writing it straight: measured here,
+// against the 40-row reference, into a 30-row pane - 12 logical lines lost with no stage,
+// 8 at the true 40, 31 at the 55 the bytes suggest. Anyone tempted to infer a height from
+// the bytes has to beat these numbers first.
+const upMoves = [...ANTI.matchAll(/\x1b\[(\d{0,4})A/g)].map((m) => (m[1] === '' ? 1 : Number(m[1])))
+const guessed = Math.max(...upMoves) + 1
+check('the bytes own up-moves overshoot the height they were painted at', guessed > 40, `up to ${guessed - 1}, painted at 40`)
+const guessedSet = await staging(120, guessed, 30)
+const lostGuessing = antiRef.filter((l) => !guessedSet.has(l)).length
+check('CONTROL - a height GUESSED from the bytes loses more than no stage at all', lostGuessing > lostStraight, `${lostGuessing} lost guessing vs ${lostStraight} straight`)
+
 // ------------------------------------------------------------- 6. the wiring, part two
 
 const history = readFileSync(join(root, 'src/main/history.ts'), 'utf8')
