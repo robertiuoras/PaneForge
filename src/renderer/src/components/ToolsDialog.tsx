@@ -1,17 +1,17 @@
 import { useEffect, useState } from 'react'
 import type { DeskRow } from '@shared/desk'
 import { fleetRow } from '@shared/fleet'
-import { BoardIcon, SwarmIcon, GearIcon, BellIcon } from './Icons'
+import { BoardIcon, SwarmIcon, BellIcon } from './Icons'
 import useDialogFocus from './useDialogFocus'
 
-export default function ToolsDialog({ waiting, hasSession, onFocus, onBoard, onSwarm, onHelp, onSettings, onClose }: {
+export default function ToolsDialog({ waiting, hasSession, onFocus, onBoard, onSwarm, onHelp, onPulls, onClose }: {
   waiting: DeskRow[]
   hasSession: boolean
   onFocus(row: DeskRow): void
   onBoard(): void
   onSwarm(): void
   onHelp(): void
-  onSettings(): void
+  onPulls(): void
   onClose(): void
 }): JSX.Element {
   const [attention, setAttention] = useState(false)
@@ -39,7 +39,7 @@ export default function ToolsDialog({ waiting, hasSession, onFocus, onBoard, onS
           <button className="ghost tool-action" disabled={!hasSession} onClick={onBoard}><BoardIcon /><span><strong>Project board</strong><small>{hasSession ? 'Review tasks and shared project notes' : 'Open a session to see its project board'}</small></span></button>
           <button className="ghost tool-action" onClick={onSwarm}><SwarmIcon /><span><strong>Start a swarm</strong><small>Brief several agents on a shared mission</small></span></button>
           <button className="ghost tool-action" onClick={onHelp}><span className="tool-help" aria-hidden="true">?</span><span><strong>Keyboard shortcuts</strong><small>Move around without reaching for the toolbar</small></span></button>
-          <button className="ghost tool-action" onClick={onSettings}><GearIcon /><span><strong>Settings</strong><small>Adjust sessions, appearance and automation</small></span></button>
+          <button className="ghost tool-action" onClick={onPulls}><span className="tool-help" aria-hidden="true">↗</span><span><strong>Waiting on GitHub</strong><small>Open pull requests, and changes that never left this machine</small></span></button>
         </>}
       </div>
     </div>

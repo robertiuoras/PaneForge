@@ -2992,20 +2992,48 @@ input[type='range']::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px var(--ac
    profile - name in white above two smaller lines beside a square - because the whole
    job of the panel is to answer "what will people actually see" without opening
    Discord to find out. */
-.discord-card { display: flex; gap: 10px; align-items: center; margin-top: 7px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r-sm); background: #06060a; }
-.dc-art { flex: none; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 8px; background: linear-gradient(140deg, #5865f2, #3b45b5); color: #fff; font-weight: 700; font-size: 18px; }
-.dc-lines { min-width: 0; }
-.dc-name { color: var(--text); font-size: 13px; font-weight: 600; }
-.dc-line { color: #c9c9d6; font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
-.dc-line.dim { color: var(--muted); }
-/* The presence button, drawn the way Discord draws it: full width of the card's text
-   column, not a pill. Not a real <a> - pressing it here would take the user to the page
-   they are configuring a link to, which is never what a preview should do. */
-.dc-button {
-  margin-top: 7px; padding: 5px 10px; text-align: center;
-  background: #4e5058; color: #fff; border-radius: 4px;
-  font-size: 12px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+/* Discord's own profile activity card, at its own sizes and in its own colours. This
+   is the one surface in the app that does NOT derive from the accent: it is a replica,
+   and a replica tinted to match PaneForge would be a picture of PaneForge. Numbers are
+   Discord's dark theme - #232428 card, #b5bac1 heading, #dbdee1 body, 60px art with the
+   little app badge on its corner, 32px buttons at 3px radius. */
+.discord-card {
+  margin-top: 7px; padding: 16px; border-radius: 8px;
+  background: #232428; color: #dbdee1;
+  font-family: 'gg sans', 'Noto Sans', ui-sans-serif, system-ui, sans-serif;
 }
+.dc-head { margin-bottom: 8px; color: #b5bac1; font-size: 12px; font-weight: 700; line-height: 16px; text-transform: uppercase; }
+.dc-body { display: flex; gap: 16px; align-items: flex-start; }
+.dc-art {
+  position: relative; flex: none; display: grid; place-items: center;
+  width: 60px; height: 60px; border-radius: 8px;
+  background: linear-gradient(140deg, #5865f2, #3b45b5); color: #fff; font-weight: 700; font-size: 24px;
+}
+/* The small application icon Discord tucks into the artwork's bottom-right corner,
+   cut out of the card with a ring of the card's own colour. */
+.dc-badge { position: absolute; right: -6px; bottom: -6px; width: 20px; height: 20px; border-radius: 50%; background: #1e1f22; border: 2px solid #232428; }
+.dc-lines { min-width: 0; }
+.dc-name { color: #f2f3f5; font-size: 14px; font-weight: 600; line-height: 18px; }
+.dc-line { color: #dbdee1; font-size: 14px; line-height: 18px; overflow-wrap: anywhere; }
+.dc-empty { color: #b5bac1; font-size: 14px; line-height: 18px; }
+/* The presence button, drawn the way Discord draws it: the full width of the card, not
+   a pill. Not a real <a> - pressing it here would take the user to the page they are
+   configuring a link to, which is never what a preview should do. */
+.dc-button {
+  margin-top: 8px; height: 32px; display: grid; place-items: center; padding: 0 10px;
+  background: #4e5058; color: #fff; border-radius: 3px;
+  font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* One line of the card while it is being written: its switch, when it shows, where it
+   sits, and a sentence saying whether it reached the card at all. */
+.row-list { display: grid; gap: 8px; margin-top: 6px; }
+.row-edit { display: grid; gap: 6px; padding: 9px 10px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface-2); }
+.row-edit.off { opacity: 0.62; }
+.re-top { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.re-moves { margin-left: auto; display: flex; gap: 4px; }
+.re-moves button { min-width: 28px; }
+.hint.dim { opacity: 0.8; }
 
 /* Two columns so the token and its meaning line up down the list; the token itself is
    what gets copied, so it keeps the monospace it is typed in. */
@@ -4979,6 +5007,28 @@ html.login-open .panes { padding-right: calc(var(--login-w, 50vw) + 6px); }
 .tool-action strong { font-size: 13px; font-weight: 550; }
 .tool-action small { color: var(--muted); font-size: 12px; white-space: normal; overflow-wrap: anywhere; }
 .tools-empty { padding: 24px 12px; text-align: center; }
+
+/* The GitHub screen, built on the same rows as Tools so the two read as one place.
+   Badge type is the 12px/510 step measured off Linear in design-vault/linear.app.md.
+   The dot is the row's own sentence in colour, so it never disagrees with the words
+   beside it (`dotClass` and `pullWords` read the same fields). */
+.pulls-dialog { width: 560px; overflow: hidden; }
+.pulls-dialog > .pulls-body { min-height: 0; flex: 1 1 auto; overflow-y: auto; }
+.pulls-dialog .dialog-head > button:last-child { margin-left: auto; }
+.pulls-repo { margin-bottom: 16px; }
+.pr-head { display: flex; align-items: baseline; gap: 8px; padding: 0 2px 2px; border-bottom: 1px solid var(--line); }
+.pr-head strong { font-size: 13px; font-weight: 550; }
+.pr-head small { color: var(--muted); font-size: 12px; font-weight: 510; }
+/* A row nothing can be pressed on is not drawn as a button: local work has no page to
+   open, and a button that does nothing is the worst thing on a screen like this. */
+.pr-row.flat { background: none; border: 1px solid transparent; cursor: default; }
+.pr-dot { flex: 0 0 8px; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.pr-dot.good { background: var(--ok); }
+.pr-dot.bad { background: var(--danger); }
+.pr-dot.running { background: var(--warn); }
+.pr-dot.waiting { background: var(--accent); }
+.pr-dot.draft { background: var(--muted); }
+.pr-dot.local { background: var(--info); }
 .tools-empty p { color: var(--muted); line-height: 1.5; }
 .issues-dialog { width: min(680px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); }
 .issues-dialog .dialog-head > button { margin-left: auto; }
