@@ -164,8 +164,9 @@ function Repo({ repo, now }: { repo: RepoPulls; now: number }): JSX.Element | nu
 /** The dot's colour is the row's own sentence, not a severity scale of its own. */
 function dotClass(p: PullRow): string {
   if (p.draft) return 'draft'
-  if (p.checks === 'failing' || !p.mergeable || p.review === 'changes') return 'bad'
-  if (p.checks === 'running') return 'running'
+  if (p.checks === 'failing' || p.mergeable === false || p.review === 'changes') return 'bad'
+  if (p.checks === 'running' || p.checks === 'unknown' || p.mergeable === null) return 'running'
+  if (needsSomebody(p)) return 'waiting'
   if (p.review === 'approved') return 'good'
-  return needsSomebody(p) ? 'waiting' : 'good'
+  return 'good'
 }

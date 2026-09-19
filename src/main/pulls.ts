@@ -13,7 +13,7 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { basename } from 'node:path'
-import { repoWords } from '../shared/pulls'
+import { checksOf, mergeableOf, repoWords } from '../shared/pulls'
 import { which } from './which'
 import type { BranchRow, PullRow, PullsAnswer, RepoPulls } from '../shared/pulls'
 
@@ -79,21 +79,6 @@ async function remoteName(cwd: string): Promise<string | null> {
   }
 }
 
-function checksOf(rollup: unknown): PullRow['checks'] {
-  const rows = Array.isArray(rollup) ? (rollup as Record<string, string>[]) : []
-  if (!rows.length) return 'none'
-  let running = false
-  for (const r of rows) {
-    // A check run says `status` then `conclusion`; an old-style status context says
-    // `state` and nothing else. Both shapes come back in the same array.
-    const done = r.conclusion || r.state
-    if (r.status && r.status !== 'COMPLETED') running = true
-    if (done === 'FAILURE' || done === 'ERROR' || done === 'TIMED_OUT' || done === 'CANCELLED')
-      return 'failing'
-  }
-  return running ? 'running' : 'passing'
-}
-
 function reviewOf(decision: string): PullRow['review'] {
   if (decision === 'APPROVED') return 'approved'
   if (decision === 'CHANGES_REQUESTED') return 'changes'
@@ -125,9 +110,7 @@ async function pullsFor(cwd: string, me: string): Promise<PullRow[]> {
     updatedAt: Date.parse(r.updatedAt ?? '') || 0,
     checks: checksOf(r.statusCheckRollup),
     review: reviewOf(String(r.reviewDecision ?? '')),
-    // `UNKNOWN` is GitHub still working it out, and calling that a clash would put a
-    // red sentence on a pull request that is fine a second later.
-    mergeable: r.mergeable !== 'CONFLICTING',
+    mergeable: mergeableOf(r.mergeable),
     mine: String(r.author?.login ?? '') === me
   }))
 }

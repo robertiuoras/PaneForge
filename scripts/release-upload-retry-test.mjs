@@ -11,14 +11,14 @@
 // with no retry turns one 504 into a failed build for a version that had already compiled
 // (this exact run). `.github/workflows/release.yml` wraps both upload steps in a
 // three-try, backing-off loop for exactly that reason. This test reads the SHIPPING
-// workflow text and fails if either upload step regresses back to a bare, unretried call -
-// a bash `run:` block cannot be unit-tested directly, so the shipping text is the thing to
-// pin. Confirmed to fail against the pre-4f7be26 file (a bare `gh release upload ... &&`
+// workflow text and fails if either upload step regresses back to a bare, unretried call.
+// The upload fragments are also executed below with shell stubs for GitHub and sleep. Confirmed to fail against the pre-4f7be26 file (a bare `gh release upload ... &&`
 // with no loop around it).
 //
 //   node scripts/release-upload-retry-test.mjs
 
 import { readFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -60,6 +60,41 @@ for (const title of ['Upload update feed and versioned artifacts', 'Upload fixed
     `"${title}" has no upload call outside the retry loop`,
     uploads.length > 0 && firstLoop !== -1 && uploads.every((i) => i > firstLoop)
   )
+}
+
+// Execute the shipping shell, substituting only its external effects. This catches a
+// loop that exists syntactically but stops retrying or reports exhausted attempts as success.
+for (const title of ['Upload update feed and versioned artifacts', 'Upload fixed-name copies']) {
+  const step = findStep(title)
+  if (!step) continue
+  const run = step.split('run: |\n')[1]
+    ?.split('\n').map((line) => line.replace(/^          /, '')).join('\n')
+  const start = run?.indexOf(title.includes('versioned') ? 'upload() {' : 'for try in 1 2 3; do') ?? -1
+  ok(`"${title}" has an executable upload fragment`, start >= 0)
+  if (start < 0) continue
+  // Stop at the next workflow comment outside the run block.
+  const fragment = run.slice(start).split(/\n\s{0,6}# One job|\n      # electron-builder/)[0]
+  for (const [failures, attempts, succeeds] of [[0, 1, true], [1, 2, true], [3, 3, false]]) {
+    const script = `set -euo pipefail
+version=test
+files=(artifact.zip)
+calls=0
+gh() {
+  calls=$((calls + 1))
+  printf 'CALL %s\\n' "$*"
+  [ "$calls" -gt "${failures}" ]
+}
+sleep() { printf 'WAIT %s\\n' "$1"; }
+${fragment}
+`
+    const result = spawnSync('bash', ['-c', script], { encoding: 'utf8', timeout: 5000 })
+    const calls = result.stdout?.split('\n').filter((line) => line.startsWith('CALL ')) || []
+    ok(`"${title}" ${failures} failures: ${attempts} attempts and ${succeeds ? 'success' : 'failure'}`,
+      !result.error && (result.status === 0) === succeeds && calls.length === attempts,
+      result.stderr || String(result.error || result.status))
+    ok(`"${title}" each attempt stays idempotent`, calls.every((line) => line.includes('--clobber')))
+    if (failures === 1) ok(`"${title}" waits before retry`, result.stdout.includes('WAIT 20'))
+  }
 }
 
 console.log(failed ? `\n${failed} failed` : '\nall good')
