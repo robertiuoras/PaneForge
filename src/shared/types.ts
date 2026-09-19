@@ -408,6 +408,14 @@ export interface Session {
    */
   replayCols?: number
   /**
+   * The height that restored part was painted at, when it has one.
+   *
+   * Beside `replayCols` because width is not the whole shape: antigravity draws its frame
+   * in cursor-up arithmetic against the terminal's HEIGHT, and the same bytes at the same
+   * width lose lines at the wrong number of rows. See `shared/replayWidth.ts`.
+   */
+  replayRows?: number
+  /**
    * This pane is on its way to another device, or waiting for its turn to end so it can be.
    *
    * On the session rather than in the sender, because two other things have to see it: the
@@ -1217,6 +1225,14 @@ export interface HistoryEntry {
    * width the pane was resized to.
    */
   cols?: number
+  /**
+   * The pty's height while this session ran.
+   *
+   * Antigravity's frame is cursor-UP arithmetic against the terminal HEIGHT, so a replay
+   * written at the wrong number of rows loses lines however wide it is. Written on change,
+   * debounced, beside `cols`.
+   */
+  rows?: number
   /** asks that were work (never a slash command); 40 and 1 are different sessions */
   asks?: number
   /**

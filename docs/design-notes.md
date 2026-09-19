@@ -4089,11 +4089,28 @@ of the screen.
   `runSince`, under the SAME switch as a turn the transport cut in half.
 - **Which restarts ask is one rule with one switch** — `askAfterUpdate` (Settings → Updates), off by
   default and inert while `restoreAfterUpdate` is off.
-- **It is replayed at the width it was PAINTED at, and Fix cannot do this job.** Agent CLIs draw in absolute
-  column moves and a terminal CLAMPS. `restoredTail` carries the old width out with the bytes (`colsOf`),
-  `Session.replayCols` takes it to the pane, and the pane writes that part of the buffer at that width and
-  hands the terminal back — **only the part before the restore mark**, and only while the mark is there. The
-  resize goes in the write CALLBACK, never after the call. `shared/replayWidth.ts`, `npm run test:replaywidth`.
+- **It is replayed at the SIZE it was PAINTED at, and Fix cannot do this job.** Agent CLIs draw in absolute
+  column moves and a terminal CLAMPS. `restoredTail` carries the size out with the bytes (`sizeOf`),
+  `Session.replayCols`/`replayRows` take it to the pane, and the pane writes that part of the buffer at that
+  shape and hands the terminal back. The resize goes in the write CALLBACK, never after the call.
+  `shared/replayWidth.ts`, `npm run test:replaywidth`.
+- **The RECORDED width was wrong on nearly every pane** (measured 2026-09-19, this machine). `history/<id>.json`
+  is written at launch (START_COLS 120) and again only at a clean end, so every crash, watchdog relaunch and
+  kill restores at 120: 9 of 9 live panes recorded 120 over logs painting `\x1b[156G`, and 111 of 352 history
+  files had no `.json` at all. Even a clean end records the LAST width, not the width the tail was painted at —
+  71 of 71 Claude Code logs here paint to 154-157 against a recorded 80-120, Codex 22 logs paint 87-119 against
+  83-91. So the staged width is `max(recorded, paintedWidth(bytes))`, the widest column any CSI `n G` or
+  `r;c H`/`f` in them addresses; 400 KB scans in under 10 ms. A buffer with no restore mark is ALL old — the
+  mark is written by the restore and the ring buffer can drop it, and refusing there refused the pane most in
+  need of it.
+- **Rows, because antigravity counts lines UP.** Its frame is cursor-up arithmetic against the terminal
+  HEIGHT: the same bytes at 120 columns lose 50/59/0/51/83 logical lines at 24/30/40/47/56 rows (40 being the
+  height they were painted at). Claude Code and Codex do not care. So `history.ts` keeps rows beside cols
+  (`noteCols(id, cols, rows)`, `sizeOf`), writes the size on CHANGE on a 2 s `unref`'d timer — never
+  synchronously on the resize path, see the 2026-09-07 main-thread freeze — and `splitReplay` stages
+  `split.rows`. In the app, over three real conversations restored in a headless dev copy: the Claude pane
+  lost 56 of 173 logical lines before this and 0 after; antigravity 59 of 784 before, 0 after; Codex 0 both
+  ways. Fix could only reach `max(90, 120, 120) = 120 < 156` and brought 56 down to 53.
 - **It presses Fix for itself** — `repair()` once, `RESTORE_FIX_MS` (1.2s) after output stops. It is
   `autoFixUi`'s; a mirror is refused; a hidden pane is FLAGGED rather than repaired against a 0x0 host.
   `test:restorefix`, whose control is a new pane recording ZERO repairs.

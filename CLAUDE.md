@@ -826,9 +826,12 @@ Scrollback is renderer memory; `test:restore` hands the agent `--resume` (conver
   boundary. `test:scrollback`.
 - Display clock is `openedAt` not `createdAt`; mid-turn pane continues via `queuePrompt`, off
   `runSince`. `askAfterUpdate` picks which restarts ask, off by default.
-- Replayed at PAINTED width (Fix can't do this): `restoredTail` carries old width (`colsOf`),
-  `Session.replayCols` writes that buffer part at that width — only before the restore mark. Resize in
-  write CALLBACK. `shared/replayWidth.ts`, `npm run test:replaywidth`.
+- Replayed at PAINTED size, which is `max(recorded, paintedWidth(the bytes))` — the recorded width is the
+  LAUNCH width on every pane the app was killed out of, so the bytes decide (`paintedWidth`, widest CHA/CUP
+  column). No restore mark = the whole buffer is old. Resize in write CALLBACK.
+- Rows are staged too (`replayRows`, `sizeOf`, size written on change debounced 2s): antigravity's frame is
+  cursor-up arithmetic against the HEIGHT, Claude Code and Codex only care about width.
+  `shared/replayWidth.ts`, `npm run test:replaywidth`.
 - Presses Fix for itself: `repair()` once, `RESTORE_FIX_MS` (1.2s) after output stops; mirror refused,
   hidden pane FLAGGED not repaired. `test:restorefix`.
 - Prompt tags: rail is KEYSTROKES so replay registers none; `seedMarks` scans for `❯ <text>` echo once

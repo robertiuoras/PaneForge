@@ -145,6 +145,14 @@ interface Props {
    */
   replayCols?: number
   /**
+   * The height that same restored part was painted at, when one is known.
+   *
+   * Width is not the whole shape: antigravity draws its frame by counting lines UP from
+   * the cursor, so the same bytes at the same width lose lines at the wrong number of
+   * rows. See `shared/replayWidth.ts`.
+   */
+  replayRows?: number
+  /**
    * This pane's process has not printed a byte yet.
    *
    * `blank` below is the renderer's own version of the same question and it stopped being
@@ -883,6 +891,7 @@ function TerminalPane({
   grid = null,
   pty = null,
   replayCols,
+  replayRows,
   booting,
   asleep,
   termTheme,
@@ -943,6 +952,9 @@ function TerminalPane({
   // terminal can read it. See `Props.replayCols`.
   const replayColsRef = useRef(replayCols)
   replayColsRef.current = replayCols
+  /** ...and its height, which antigravity's cursor-up frame is drawn against. */
+  const replayRowsRef = useRef(replayRows)
+  replayRowsRef.current = replayRows
   /**
    * The replay is mid-flight and the terminal is deliberately the WRONG shape for its box.
    *
@@ -3707,19 +3719,22 @@ function TerminalPane({
       // The second half, and the one no repaint can undo: the restored part of this
       // buffer was painted in absolute column moves at the OLD pane's width, and a
       // terminal clamps a column it cannot reach. See `shared/replayWidth.ts`.
-      const split = splitReplay(b, replayColsRef.current, t.cols)
+      const split = splitReplay(b, replayColsRef.current, t.cols, replayRowsRef.current)
       if (!split) {
         t.write(keep(b), done)
         return
       }
       const back = t.cols
+      const backRows = t.rows
       replaying.current = true
-      t.resize(Math.max(20, split.cols), t.rows)
+      // Rows as well as columns: antigravity's frame is drawn by counting lines up from
+      // the cursor, so a replay at the wrong height loses lines however wide it is.
+      t.resize(Math.max(20, split.cols), split.rows ?? t.rows)
       // In the write CALLBACK, never after the call: xterm parses what it is given on its
       // own schedule, so a resize issued straight after `write` can land before the bytes
       // it is meant to be wider than.
       t.write(keep(split.before), () => {
-        t.resize(back, t.rows)
+        t.resize(back, backRows)
         replaying.current = false
         // ...and a fit, because a resize that arrived while `replaying` was set was
         // refused, and because a pane put back by hand is only right until the next one.
@@ -4089,6 +4104,7 @@ function TerminalPane({
           cols: t.cols,
           grid: t.rows,
           replayCols: replayColsRef.current ?? null,
+          replayRows: replayRowsRef.current ?? null,
           mirror: mirrorRef.current,
           asleep: asleepRef.current,
           sinceByteMs: lastByteAt.current ? now - lastByteAt.current : null,
@@ -5369,6 +5385,7 @@ function samePaneProps(a: Props, b: Props): boolean {
     a.autoAnswerN === b.autoAnswerN &&
     a.autoAnswerHeld === b.autoAnswerHeld &&
     a.replayCols === b.replayCols &&
+    a.replayRows === b.replayRows &&
     a.booting === b.booting &&
     sameAsk(a.ask, b.ask) &&
     sameGrid(a.mirror, b.mirror) &&

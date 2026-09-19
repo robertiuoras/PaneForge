@@ -14,7 +14,7 @@ import { ensureLaneFolder } from './lanes'
 import { which } from './which'
 import { specFor } from './agents'
 import { memoryPrelude } from './board'
-import { colsOf, endAll, gistFor, noteCols, recordData, recordEnd, recordStart, tail } from './history'
+import { endAll, gistFor, noteCols, recordData, recordEnd, recordStart, sizeOf, tail } from './history'
 import { jobTable } from './backJobs'
 import { backJobInfo } from './usage'
 import { forgetHandoff, handoffFor } from './handoffSteps'
@@ -47,7 +47,7 @@ import { doneEnough } from '../shared/closeWhenDone'
 import { folderName, laneOfCheckout, projectOf } from '../shared/place'
 import { dropStale, lentGrid, watchedBorrow, type Borrow } from '../shared/paneSize'
 import { START_COLS, START_ROWS } from '../shared/paneGrid'
-import { RESTORE_MARK_TEXT } from '../shared/replayWidth'
+import { paintedWidth, RESTORE_MARK_TEXT } from '../shared/replayWidth'
 import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, SUBMIT_GAP_MS, armDecision, clearChunks, hasFreshPaneHandoff, resumeOf, dropFor, dropWords, expiryDecision, queuedPromptDecision, quietEnoughToArm, standDownFor, type DropReason, type QueuedPromptVerdict } from '../shared/autoclear'
 import { acLog } from './autoclearLog'
 import { dropAllFor, noteAccepted, noteNativeAccepted, noteDropped, noteSubmitted, owedAfterRestore } from './queuedPrompts'
@@ -298,15 +298,19 @@ const SLEEP_MARK = '\x1b[0m\r\n\x1b[2m\u00b7 asleep \u00b7\x1b[0m\r\n'
  * not try to be the live terminal's own scrollback: the cap is the buffer's, so what
  * comes back is the same amount a pane already keeps in memory, not the whole day.
  */
-function restoredTail(scrollbackId: string | undefined): { text: string; cols: number } {
-  if (!scrollbackId) return { text: '', cols: 0 }
+function restoredTail(scrollbackId: string | undefined): { text: string; cols: number; rows: number } {
+  if (!scrollbackId) return { text: '', cols: 0, rows: 0 }
   const back = tail(scrollbackId, BUFFER_LIMIT)
-  if (!back) return { text: '', cols: 0 }
-  // The width those bytes were PAINTED at, carried out to the pane with them. A CLI draws
+  if (!back) return { text: '', cols: 0, rows: 0 }
+  // The shape those bytes were PAINTED at, carried out to the pane with them. A CLI draws
   // in absolute column moves, and a terminal clamps one it cannot reach - so replayed into
   // a narrower pane the old screen collapses onto its right-hand edge and the reopened
-  // pane's history is unreadable. See `shared/replayWidth.ts`.
-  return { text: back + RESTORE_MARK, cols: colsOf(scrollbackId) }
+  // pane's history is unreadable. The RECORDED width is only a floor: it is written at
+  // launch and again only at a clean end, so a pane the app was killed out of records 120
+  // over a log painting to 156. The bytes themselves say what they were drawn for.
+  // See `shared/replayWidth.ts`.
+  const size = sizeOf(scrollbackId)
+  return { text: back + RESTORE_MARK, cols: Math.max(size.cols, paintedWidth(back)), rows: size.rows }
 }
 /**
  * A slash command that is still running after this long is real work, not
@@ -877,6 +881,8 @@ export class SessionManager extends EventEmitter {
     if (back.text) {
       live.buffer.set(back.text)
       if (back.cols > 0) meta.replayCols = back.cols
+      // ...and its height, which antigravity's cursor-up frame is drawn against.
+      if (back.rows > 0) meta.replayRows = back.rows
       // ...and into THIS session's own log, because the next desk will name this id, not
       // the one it was read from (`scrollbackId: s.meta.id` in `snapshot`). A pane that
       // came back asleep prints nothing, so its log held only the marks, and the restart
@@ -884,7 +890,7 @@ export class SessionManager extends EventEmitter {
       // bytes with a 2.3 MB predecessor on disk. Robert: "cant scroll up session 2 and
       // see the history of it". Bounded by `BUFFER_LIMIT`, the same cap `tail` reads.
       recordData(id, back.text)
-      if (back.cols > 0) noteCols(id, back.cols)
+      if (back.cols > 0) noteCols(id, back.cols, back.rows)
     }
     this.sessions.set(id, live)
     if (born) {
@@ -2268,9 +2274,10 @@ export class SessionManager extends EventEmitter {
     if (!s) return
     s.cols = Math.max(cols, 20)
     s.rows = Math.max(rows, 5)
-    // History replays this pane's raw bytes at whatever width they were written for, so
-    // the last one wins. In memory only - a dragged window resizes many times a second.
-    noteCols(id, s.cols)
+    // History replays this pane's raw bytes at whatever shape they were written for, so
+    // the last one wins. Debounced onto the metadata - a dragged window resizes many
+    // times a second, and a size only in memory is lost to every crash.
+    noteCols(id, s.cols, s.rows)
     s.borrowed = borrowed
     // Carried on the session itself so a device mirroring this pane can draw it at the
     // size it actually is. Only pushed when the numbers moved: a window drag is dozens

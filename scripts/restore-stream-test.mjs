@@ -71,7 +71,11 @@ for (const mode of ['plain', 'staged', 'cancel']) {
     t: term, f: {}, keep: x => x, withoutReplayQueries: x => x,
     needRestoreFix: { current: false }, armRestoreFix: noop, pinned: { current: true }, setBlank: noop,
     seedMarks: () => marks++, reshape: noop, replayColsRef: { current: 120 }, replaying: { current: false },
-    splitReplay: bytes => staged ? { before: bytes, after: '\x1b[9;1HSTAGED END', cols: 120 } : null,
+    // The old pane's SHAPE, not just its width: antigravity's frame is drawn against the
+    // terminal height, so the staged replay is written at both and handed back at both.
+    replayRowsRef: { current: 24 },
+    splitReplay: (bytes, _cols, _now, rows) =>
+      staged ? { before: bytes, after: '\x1b[9;1HSTAGED END', cols: 120, rows } : null,
     list, publish: noop, pendingDataWrites: 0, drainTyped: () => typed++, sawOutput: false,
     lastByteAt: { current: 0 }, lastBusyCheck: Date.now(), checkBusy: noop, settle2: undefined,
     window: { clearTimeout: noop, setTimeout: noop }, armWipeCheck: noop, bumpTotal: noop,
@@ -94,6 +98,7 @@ for (const mode of ['plain', 'staged', 'cancel']) {
   assert.equal(row(7), 'AFTER SNAPSHOT', 'new deltas follow the entire snapshot')
   if (staged) assert.equal(row(8), 'STAGED END', 'staged tail was parsed before later deltas')
   assert.equal(term.cols, 91, 'live deltas use the current width')
+  assert.equal(term.rows, 59, 'and the pane is handed back its own height after a staged replay')
   assert.equal(disposed, 1, 'obsolete pre-snapshot markers are disposed')
   assert.equal(marks > 0 && typed > 0, true)
   term.dispose()

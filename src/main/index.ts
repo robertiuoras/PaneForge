@@ -2917,7 +2917,7 @@ function runHandoff(device: string, request: HandoffRequest): Promise<HandoffIte
       },
       moved: (id, device) => manager.setMovedTo(id, device),
       tailOf: (id, bytes) => history.tail(id, bytes),
-      tailColsOf: (id) => history.colsOf(id),
+      tailColsOf: (id) => history.sizeOf(id).cols,
       transcriptFileFor: (cwd, resumeId, agent) => agent === 'codex' ? codexTranscriptPath(cwd, resumeId) : transcriptPath(cwd, resumeId),
       canResume: (dev, agent) => remote.canResumeHandoff(dev, agent),
       deliver: (dev, payload, file) => remote.handoffTo(dev, payload, file),

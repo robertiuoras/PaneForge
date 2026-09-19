@@ -20,7 +20,7 @@ import {
   writeSync,
   writeFileSync
 } from 'node:fs'
-import { open, readFile } from 'node:fs/promises'
+import { open, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { app } from 'electron'
 // One stripper, not two: the live tee in `pipe.ts` needs the same rules a chunk at a
@@ -57,8 +57,22 @@ const outstanding = new Map<string, Array<{ offset: number; text: string }>>()
  * One chain per session id, because a slow write on one pane may not hold up any other.
  */
 const writing = new Map<string, Promise<void>>()
-/** Last known pty width per live session; written into the metadata when it ends. */
+/** Last known pty width per live session; written into the metadata when it changes. */
 const widths = new Map<string, number>()
+/** ...and its height, which antigravity's frame is drawn against. */
+const heights = new Map<string, number>()
+/**
+ * How long a pane's size may sit in memory before it reaches the disk.
+ *
+ * It has to reach it: the metadata is written at launch and again only at a clean END, so
+ * every crash, watchdog relaunch and kill left the LAUNCH width on disk - 9 of 9 live
+ * panes here recorded 120 over logs painting to 156. But a window being dragged calls this
+ * dozens of times a second, so the write is debounced and asynchronous. See the 2026-09-07
+ * freeze below for what a synchronous one on a stalled disk costs.
+ */
+const SIZE_FLUSH_MS = 2000
+const sizeDirty = new Set<string>()
+let sizeTimer: NodeJS.Timeout | null = null
 let flushTimer: NodeJS.Timeout | null = null
 
 function dir(): string {
@@ -118,6 +132,7 @@ export function recordStart(s: Session): void {
       model: s.model,
       startedAt: s.createdAt,
       cols: s.cols,
+      rows: s.rows,
       bytes: 0
     }
     // sync-on-purpose: one small file, once per pane launch, and a session killed before
@@ -224,34 +239,68 @@ export function chatNameFor(resumeId: string): { title: string; about?: string }
 }
 
 /**
- * The pane's current width, for replaying its transcript at the width it was written for.
+ * The pane's current size, for replaying its transcript at the shape it was written for.
  *
- * Held in memory and written when the session ends, never per resize: a window being
- * dragged fires this many times a second and this is a JSON file on disk. `recordStart`
- * writes the launch width, so a session killed without an end still has a usable one.
+ * Kept in memory and written to the metadata on CHANGE, debounced: a window being dragged
+ * fires this dozens of times a second and this is a JSON file on disk, so the write waits
+ * `SIZE_FLUSH_MS` and is never synchronous.
  */
-export function noteCols(id: string, cols: number): void {
+export function noteCols(id: string, cols: number, rows?: number): void {
   if (!enabled || !(cols > 0)) return
+  const wasCols = widths.get(id)
+  const wasRows = heights.get(id)
   widths.set(id, cols)
+  if (rows && rows > 0) heights.set(id, rows)
+  if (wasCols === cols && (!rows || wasRows === rows)) return
+  sizeDirty.add(id)
+  if (!sizeTimer) {
+    sizeTimer = setTimeout(() => void flushSizes(), SIZE_FLUSH_MS)
+    sizeTimer.unref?.()
+  }
+}
+
+/** The debounced half of `noteCols`: one small JSON rewrite per pane whose size moved. */
+async function flushSizes(): Promise<void> {
+  sizeTimer = null
+  const ids = [...sizeDirty]
+  sizeDirty.clear()
+  for (const id of ids) {
+    const cols = widths.get(id)
+    if (!cols) continue
+    const rows = heights.get(id)
+    try {
+      const entry = JSON.parse(await readFile(metaFile(id), 'utf8')) as HistoryEntry
+      if (entry.cols === cols && entry.rows === rows) continue
+      entry.cols = cols
+      if (rows && rows > 0) entry.rows = rows
+      await writeFile(metaFile(id), JSON.stringify(entry), 'utf8')
+    } catch {
+      /* no metadata yet, or an unwritable profile - the size is a nicety, never fatal */
+    }
+  }
 }
 
 /**
- * The width a session's output was painted at, or 0 when nothing on disk says.
+ * The SIZE a session's output was painted at; 0 for either number nothing on disk says.
  *
  * Asked of a session that is usually GONE - a restored pane replaying the log of the pane
- * it is coming back from - so the live map is only the first place to look. `writeEnd`
- * puts the last known width into the metadata on the way out, and `recordStart` wrote the
- * launch width before that, so a session killed without an end still answers something
- * usable. See `shared/replayWidth.ts` for what the answer is for.
+ * it is coming back from - so the live maps are only the first place to look. It is a best
+ * reading and not the truth: the replay widens it again off the bytes themselves
+ * (`paintedWidth` in `shared/replayWidth.ts`), because a recorded width can be the launch
+ * width of a pane that was killed.
  */
-export function colsOf(id: string): number {
-  const live = widths.get(id)
-  if (live && live > 0) return live
+export function sizeOf(id: string): { cols: number; rows: number } {
+  const liveCols = widths.get(id) ?? 0
+  const liveRows = heights.get(id) ?? 0
+  if (liveCols > 0 && liveRows > 0) return { cols: liveCols, rows: liveRows }
   try {
     const entry = JSON.parse(readFileSync(metaFile(id), 'utf8')) as HistoryEntry
-    return entry.cols && entry.cols > 0 ? entry.cols : 0
+    return {
+      cols: liveCols > 0 ? liveCols : entry.cols && entry.cols > 0 ? entry.cols : 0,
+      rows: liveRows > 0 ? liveRows : entry.rows && entry.rows > 0 ? entry.rows : 0
+    }
   } catch {
-    return 0
+    return { cols: liveCols, rows: liveRows }
   }
 }
 
@@ -302,6 +351,7 @@ function writeEnd(id: string, resumeId?: string): void {
     if (resumeId) entry.resumeId = resumeId
     entry.bytes = sizes.get(id) ?? entry.bytes
     entry.cols = widths.get(id) ?? entry.cols
+    entry.rows = heights.get(id) ?? entry.rows
     // sync-on-purpose: the quit path calls this for every open pane, and an asynchronous
     // write handed over on the way out never lands
     writeFileSync(metaFile(id), JSON.stringify(entry), 'utf8')
@@ -310,6 +360,8 @@ function writeEnd(id: string, resumeId?: string): void {
   }
   sizes.delete(id)
   widths.delete(id)
+  heights.delete(id)
+  sizeDirty.delete(id)
 }
 
 /**
