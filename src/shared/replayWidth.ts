@@ -87,23 +87,32 @@ const MOVES = /\x1b\[(?:(\d{1,4})G|\d{1,4};(\d{1,4})[Hf])/g
  * The staged width is the wider of what was recorded and what the bytes themselves paint,
  * and `rows` is the height they were painted at, carried through untouched.
  *
+ * Staged for either reason: the bytes want more COLUMNS than the pane has, or they were
+ * painted at a different HEIGHT - antigravity prints no column move at all, so its frame
+ * is never too wide and is ruined by the rows alone. A rows-only stage keeps the pane's
+ * own width (`Math.max`), so nothing is ever written narrower than it already is.
+ *
  * Null whenever there is nothing to gain or nothing to trust: no bytes, a terminal with no
- * width yet, nothing wider than the pane already is, or a width too small to be a real
+ * width yet, nothing to widen and no height to correct, or a width too small to be a real
  * pane. A buffer with no restore mark in it is not a refusal - it is all old.
  */
 export function splitReplay(
   bytes: string,
   wroteAt: number | undefined,
   now: number,
-  rows?: number
+  rows?: number,
+  nowRows?: number
 ): ReplaySplit | null {
   if (!bytes || !(now > 0)) return null
   // ONE PAST the widest move, because a pane exactly that wide still clamps the word
   // written AT its last column: measured 2026-09-19 on a real Claude log painting to 156,
   // replayed into a 90-column pane - staged at 156 it loses 20 logical lines, at 157 none.
   const painted = paintedWidth(bytes)
-  const cols = Math.max(wroteAt ?? 0, painted ? painted + 1 : 0)
-  if (cols < 20 || cols <= now) return null
+  const wide = Math.max(wroteAt ?? 0, painted ? painted + 1 : 0)
+  if (wide < 20) return null
+  const wrongHeight = Boolean(rows && rows > 0 && nowRows && nowRows > 0 && rows !== nowRows)
+  if (wide <= now && !wrongHeight) return null
+  const cols = Math.max(wide, now)
   // The LAST mark, not the first: a log tail can carry a mark from an earlier restart, and
   // everything before the newest one is old output either way.
   const i = bytes.lastIndexOf(RESTORE_MARK_TEXT)

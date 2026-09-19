@@ -137,8 +137,13 @@ const pane = readFileSync(join(root, 'src/renderer/src/components/TerminalPane.t
 const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
 const types = readFileSync(join(root, 'src/shared/types.ts'), 'utf8')
 
-check('the pane asks splitReplay before it replays', pane.includes('splitReplay(b, replayColsRef.current, t.cols, replayRowsRef.current)'))
-check('and resizes inside the write callback, not after the call', /t\.write\(keep\(split\.before\), \(\) => \{\s*\n\s*t\.resize\(back/.test(pane))
+check('the pane asks splitReplay before it replays', pane.includes('splitReplay(b, replayColsRef.current, t.cols, replayRowsRef.current, t.rows)'))
+check('the first replay writes through the stage', pane.includes('writeStaged(b, done, keep)'))
+// Fix re-renders the same bytes; written raw at the pane's width they tear exactly the way
+// the first replay used to, so the button meant to mend a pane broke a mended one.
+check('...and so does Fix', pane.includes("writeStaged('\\x1bc' + bytes, () => {"))
+check('nothing on the pane writes a reset snapshot raw', !pane.includes("t.write('\\x1bc' + bytes"))
+check('and resizes inside the write callback, not after the call', /t\.write\(prep\(split\.before\), \(\) => \{\s*\n\s*t\.resize\(back/.test(pane))
 check('a fit landing mid-replay is refused', pane.includes('if (replaying.current) return false'))
 check('the prop is compared, or the pane stops updating for it', pane.includes('a.replayCols === b.replayCols'))
 check('main records the width the restored bytes were painted at', sessions.includes('meta.replayCols = back.cols'))
@@ -210,6 +215,31 @@ eq('written at the staged width and resized to 90, nothing is lost', lostAtStage
 const antiSplit = splitReplay(ANTI, 120, 90, 40)
 eq('the recorded height is carried to the pane', antiSplit?.rows, 40)
 eq('...and is undefined when nothing recorded one', splitReplay(ANTI, 120, 90)?.rows, undefined)
+
+// The real antigravity case, as the app meets it: a log recording 83 columns, painted at
+// 40 rows, reopened in a pane 120 wide and 30 tall. Nothing here is wider than the pane,
+// so a staging gated on WIDTH alone refuses - and the height, which is the only thing
+// wrong, never reaches the terminal.
+const antiReal = splitReplay(ANTI, 83, 120, 40, 30)
+eq('a pane whose HEIGHT is wrong is staged even though its width is fine', antiReal?.rows, 40)
+eq('...at the pane own width, never narrower than it already is', antiReal?.cols, 120)
+eq('nothing wrong at all: no stage', splitReplay(ANTI, 83, 120, 40, 40), null)
+eq('...and no recorded height is no reason to stage either', splitReplay(ANTI, 83, 120, undefined, 30), null)
+
+/** Written at one shape, handed back at the pane's: what the staged replay actually does. */
+const staging = async (writeCols, writeRows, finalRows) => {
+  const { Terminal: T } = require_('@xterm/headless')
+  const t = new T({ cols: writeCols, rows: writeRows, allowProposedApi: true, scrollback: 20000 })
+  await new Promise((res) => t.write(ANTI, res))
+  t.resize(writeCols, finalRows)
+  const b = t.buffer.active
+  const rows = [], wrapped = []
+  for (let y = 0; y < b.length; y++) {
+    rows.push(b.getLine(y)?.translateToString(true) ?? '')
+    wrapped.push(Boolean(b.getLine(y)?.isWrapped))
+  }
+  return new Set(logicalLines(rows, wrapped))
+}
 const antiLost = async (rows) => {
   const ref = await renderPane(ANTI, 120, 120, 40)
   const got = await renderPane(ANTI, 120, 120, rows)
@@ -222,6 +252,21 @@ check('CONTROL - a real antigravity frame written at the wrong height loses line
 eq('written at the height it was painted at, nothing is lost', rightRows, 0)
 check('logical lines is the reading, not rows', typeof logicalLines === 'function')
 
+const antiRef = (await renderPane(ANTI, 120, 120, 40)).lines.filter((l) => l.length > 8)
+const staged30 = await staging(antiReal.cols, antiReal.rows, 30)
+const straight30 = await staging(120, 30, 30)
+const lostStraight = antiRef.filter((l) => !straight30.has(l)).length
+const lostStaged = antiRef.filter((l) => !staged30.has(l)).length
+check('CONTROL - written straight into a 30-row pane, lines are gone', lostStraight > 0, `${lostStraight} lost`)
+// Written at 40 rows and handed back to 30 it holds every line the 30-row write loses to
+// the frame arithmetic, and then some: measured on this fixture 12 lost straight, 8 after
+// staging, 0 when the pane is never shrunk at all. The remainder is xterm's own row
+// shrink, which DISCARDS the rows below the cursor - a stage cannot give those back, and
+// the pane really is 30 rows tall.
+check('staging the height recovers lines a straight write loses', lostStaged < lostStraight, `${lostStaged} lost staged vs ${lostStraight} straight`)
+const unshrunk = await staging(120, 40, 40)
+eq('...and at the height it was painted at, with no shrink, nothing is lost', antiRef.filter((l) => !unshrunk.has(l)).length, 0)
+
 // ------------------------------------------------------------- 6. the wiring, part two
 
 const history = readFileSync(join(root, 'src/main/history.ts'), 'utf8')
@@ -232,6 +277,8 @@ check('...and answers both', /export function sizeOf\(id: string\)/.test(history
 check('the size is written on a debounced, unref-d timer, never on the resize itself', /SIZE_FLUSH_MS[\s\S]{0,400}unref\?\.\(\)/.test(history))
 check('nothing sync on that path', !/writeFileSync\(metaFile\(id\), JSON\.stringify\(entry\), 'utf8'\)[\s\S]{0,80}sizeDirty/.test(history))
 check('the pane resizes its rows from the split', pane.includes('split.rows ?? t.rows'))
+check('...and tells splitReplay how tall it is now', pane.includes('splitReplay(b, replayColsRef.current, t.cols, replayRowsRef.current, t.rows)'))
+check('the stage resizes inside the write callback', /t\.write\(prep\(split\.before\), \(\) => \{\s*\n\s*t\.resize\(back, backRows\)/.test(pane))
 check('the rows prop is compared, or the pane stops updating for it', pane.includes('a.replayRows === b.replayRows'))
 check('the session carries the height to the renderer', types.includes('replayRows?: number'))
 

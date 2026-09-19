@@ -3694,6 +3694,39 @@ function TerminalPane({
         })
     })
 
+    /**
+     * Write a replayed buffer at the shape its restored part was painted for, then hand
+     * the pane its own shape back. Shared by the first replay and by Fix: Fix used to
+     * write the same bytes raw at the pane's width, so a restore that came back whole
+     * (antigravity 2 of 784 lines lost) was TORN by the button meant to mend it (59 lost,
+     * measured 2026-09-19 in the dev copy). See `shared/replayWidth.ts`.
+     */
+    const writeStaged = (b: string, done: () => void, prep: (s: string) => string = (s) => s): void => {
+      const split = splitReplay(b, replayColsRef.current, t.cols, replayRowsRef.current, t.rows)
+      if (!split) {
+        t.write(prep(b), done)
+        return
+      }
+      const back = t.cols
+      const backRows = t.rows
+      replaying.current = true
+      // Rows as well as columns: antigravity's frame is drawn by counting lines up from
+      // the cursor, so a replay at the wrong height loses lines however wide it is.
+      t.resize(Math.max(20, split.cols), split.rows ?? t.rows)
+      // In the write CALLBACK, never after the call: xterm parses what it is given on its
+      // own schedule, so a resize issued straight after `write` can land before the bytes
+      // it is meant to be wider than.
+      t.write(prep(split.before), () => {
+        t.resize(back, backRows)
+        replaying.current = false
+        // ...and a fit, because a resize that arrived while `replaying` was set was
+        // refused, and because a pane put back by hand is only right until the next one.
+        reshape(t, f)
+        if (split.after) t.write(prep(split.after), done)
+        else done()
+      })
+    }
+
     const replayBuffer = (b: string, settle: () => void): void => {
       b = withoutReplayQueries(b)
       sawOutput = true
@@ -3719,29 +3752,7 @@ function TerminalPane({
       // The second half, and the one no repaint can undo: the restored part of this
       // buffer was painted in absolute column moves at the OLD pane's width, and a
       // terminal clamps a column it cannot reach. See `shared/replayWidth.ts`.
-      const split = splitReplay(b, replayColsRef.current, t.cols, replayRowsRef.current)
-      if (!split) {
-        t.write(keep(b), done)
-        return
-      }
-      const back = t.cols
-      const backRows = t.rows
-      replaying.current = true
-      // Rows as well as columns: antigravity's frame is drawn by counting lines up from
-      // the cursor, so a replay at the wrong height loses lines however wide it is.
-      t.resize(Math.max(20, split.cols), split.rows ?? t.rows)
-      // In the write CALLBACK, never after the call: xterm parses what it is given on its
-      // own schedule, so a resize issued straight after `write` can land before the bytes
-      // it is meant to be wider than.
-      t.write(keep(split.before), () => {
-        t.resize(back, backRows)
-        replaying.current = false
-        // ...and a fit, because a resize that arrived while `replaying` was set was
-        // refused, and because a pane put back by hand is only right until the next one.
-        reshape(t, f)
-        if (split.after) t.write(keep(split.after), done)
-        else done()
-      })
+      writeStaged(b, done, keep)
     }
 
     /**
@@ -4019,7 +4030,7 @@ function TerminalPane({
         readingSnapshot = false
       }
       pendingDataWrites++
-      t.write('\x1bc' + bytes, () => {
+      writeStaged('\x1bc' + bytes, () => {
         pendingDataWrites--
         if (dead) return
         if (scrollIntent.current === intent) {

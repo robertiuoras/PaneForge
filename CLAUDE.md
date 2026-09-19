@@ -832,6 +832,10 @@ Scrollback is renderer memory; `test:restore` hands the agent `--resume` (conver
 - Rows are staged too (`replayRows`, `sizeOf`, size written on change debounced 2s): antigravity's frame is
   cursor-up arithmetic against the HEIGHT, Claude Code and Codex only care about width.
   `shared/replayWidth.ts`, `npm run test:replaywidth`.
+- Staged for a wrong HEIGHT as well as a narrow width (`splitReplay(..., rows, nowRows)`), and Fix writes
+  through the same stage (`writeStaged`): written raw, Fix tore a pane the restore had brought back whole
+  (antigravity 2 -> 59 of 784 lines, 2026-09-19). A pane with no rows on disk - every pane from before this
+  build, once - is still torn at the wrong height; the bytes carry no height to read.
 - Presses Fix for itself: `repair()` once, `RESTORE_FIX_MS` (1.2s) after output stops; mirror refused,
   hidden pane FLAGGED not repaired. `test:restorefix`.
 - Prompt tags: rail is KEYSTROKES so replay registers none; `seedMarks` scans for `❯ <text>` echo once
