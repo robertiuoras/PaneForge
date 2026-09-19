@@ -17,8 +17,6 @@ Read-only inspection of this checkout established these useful foundations and g
 | `.github/workflows/release.yml` | Tag/release/manual packaging, typecheck, Mac/Windows build jobs, asset handling | No pull-request trigger or `npm test` step in this workflow; live branch protection was not inspected |
 | `scripts/test-all.mjs` | Deliberately windowless, networkless, no-real-agent fast suite | It excludes the live UI suites; a passing default test run is not visual proof |
 | `scripts/ui-lab.mjs` and `ui-lab-test.mjs` | Owned headless/offscreen app, checkout identity check, viewport/region controls, actual CDP PNG capture and smoke assertions | Native window chrome, focus, installed-app behaviour or good design |
-| `scripts/window-shot.mjs` | Actual macOS window image without raising its window | Needs an on-screen window and Screen Recording permission; largest-window owner heuristic is not reliable identity for many instances |
-| `scripts/shots.mjs` | Separate profile, real PNGs and presentation scenarios | Some scenarios launch real PTYs/CLIs, so they are unsuitable as deterministic routine CI fixtures |
 | Geometry/source tests | Useful layout arithmetic, plumbing and source invariants | They do not render CSS or examine pixels |
 
 There is no first-class golden-image comparison or structured screenshot-to-review manifest in the inspected paths. Build on the headless UI lab, with seeded fake sessions and deterministic tool responses. Do not replace valuable unit checks with expensive agent screenshots.

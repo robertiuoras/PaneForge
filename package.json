@@ -235,7 +235,6 @@
     "test:sounds": "node scripts/sound-test.mjs",
     "test:blurbs": "node scripts/blurb-test.mjs",
     "test:laneargs": "node scripts/lane-args-test.mjs",
-    "shots": "node scripts/shots.mjs",
     "test:phone": "node scripts/phone-test.mjs",
     "test:passkey": "node scripts/passkey-test.mjs",
     "test:panesize": "node scripts/pane-size-test.mjs",
@@ -312,7 +311,6 @@
     "test:updateprobe": "node scripts/update-probe-test.mjs",
     "test:launchinstall": "node scripts/launch-install-test.mjs",
     "test:straylaunch": "node scripts/stray-launch-test.mjs",
-    "shot:installed": "node scripts/window-shot.mjs --owner PaneForge",
     "test:claudemd": "node scripts/claudemd-size-test.mjs"
   },
   "dependencies": {
