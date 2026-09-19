@@ -721,6 +721,8 @@ ok(!server.running, 'the gate test server stopped cleanly')
     // Read-only worktree paths, already exposed by lanes:board to paired clients.
     'lanes:folders', 'admin:status',
     'app:profile', 'agents:locate', 'update:state', 'update:check', 'game:status',
+    // Previous-desk preview starts no panes; accepting it uses gated restore:answer.
+    'restore:previous',
     'app:visibleNow', 'game:manual', 'restore:pending', 'board:get', 'board:tasks',
     'board:memory', 'history:list', 'history:search', 'history:read', 'recents:list',
     'phone:state',

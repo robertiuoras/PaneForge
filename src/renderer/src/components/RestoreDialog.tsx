@@ -60,7 +60,7 @@ export default function RestoreDialog({ offer, onRestore, onFresh, onDismiss }: 
     >
       <div className="dialog restore" onMouseDown={(e) => e.stopPropagation()}>
         <div className="dialog-head">
-          <strong>Restore your last session?</strong>
+          <strong>{offer.previous ? 'Restore previous desk?' : 'Restore your last session?'}</strong>
           <span className="hint">{when(offer)}</span>
         </div>
         <Blurb id="restore" />
@@ -117,7 +117,7 @@ export default function RestoreDialog({ offer, onRestore, onFresh, onDismiss }: 
             title="Skips this question next time. Change it under Settings."
           />
           <button className="ghost" onClick={onFresh}>
-            Start fresh
+            {offer.previous ? 'Keep current desk' : 'Start fresh'}
           </button>
           <button
             ref={restore}

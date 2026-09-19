@@ -12,7 +12,7 @@ import { copyNumber, copySuffixOf } from './place'
  */
 
 /** How GitHub's checks came back. `none` is a repository that runs none. */
-export type CheckState = 'passing' | 'failing' | 'running' | 'none'
+export type CheckState = 'passing' | 'failing' | 'running' | 'unknown' | 'none'
 /** What the reviewers said. `waiting` is asked-and-unanswered. */
 export type ReviewState = 'approved' | 'changes' | 'waiting' | 'none'
 
@@ -28,8 +28,8 @@ export interface PullRow {
   updatedAt: number
   checks: CheckState
   review: ReviewState
-  /** false when GitHub says it cannot go in as it stands */
-  mergeable: boolean
+  /** true or false only after GitHub has finished working it out; null means it has not. */
+  mergeable: boolean | null
   /** true when it was opened by the account this machine is signed in as */
   mine: boolean
 }
@@ -76,6 +76,48 @@ export interface PullsAnswer {
 }
 
 /**
+ * Turn GitHub's two check formats into the small set of states the screen can explain.
+ *
+ * A rollup mixes modern check runs (`status`/`conclusion`) with legacy commit statuses
+ * (`state`). Only an explicit success is passing. That keeps a new GitHub conclusion
+ * from being presented as a green check before this app knows what it means.
+ */
+export function checksOf(rollup: unknown): CheckState {
+  const rows = Array.isArray(rollup) ? (rollup as Record<string, unknown>[]) : []
+  if (!rows.length) return 'none'
+  let running = false
+  let unknown = false
+  for (const row of rows) {
+    const state = String(row.state ?? '').toUpperCase()
+    if (state) {
+      if (state === 'FAILURE' || state === 'ERROR') return 'failing'
+      if (state === 'PENDING' || state === 'EXPECTED') running = true
+      else if (state !== 'SUCCESS') unknown = true
+      continue
+    }
+
+    const status = String(row.status ?? '').toUpperCase()
+    const conclusion = String(row.conclusion ?? '').toUpperCase()
+    if (status !== 'COMPLETED') {
+      running = true
+      continue
+    }
+    if (conclusion === 'FAILURE' || conclusion === 'ERROR' || conclusion === 'TIMED_OUT' || conclusion === 'CANCELLED' || conclusion === 'ACTION_REQUIRED' || conclusion === 'STARTUP_FAILURE')
+      return 'failing'
+    if (conclusion !== 'SUCCESS' && conclusion !== 'NEUTRAL' && conclusion !== 'SKIPPED') unknown = true
+  }
+  if (running) return 'running'
+  return unknown ? 'unknown' : 'passing'
+}
+
+/** GitHub returns UNKNOWN while it calculates mergeability, which is neither answer. */
+export function mergeableOf(value: unknown): PullRow['mergeable'] {
+  if (value === 'MERGEABLE') return true
+  if (value === 'CONFLICTING') return false
+  return null
+}
+
+/**
  * The one sentence a row leads with, worst news first.
  *
  * Order is deliberate and is not severity for its own sake: a draft is not waiting on
@@ -85,16 +127,19 @@ export interface PullsAnswer {
 export function pullWords(p: PullRow): string {
   if (p.draft) return 'Still being written'
   if (p.checks === 'failing') return 'Its tests went red'
-  if (!p.mergeable) return 'Clashes with the main copy'
+  if (p.mergeable === false) return 'Clashes with the main copy'
   if (p.review === 'changes') return 'Someone asked for changes'
   if (p.checks === 'running') return 'Tests still running'
-  if (p.review === 'approved') return 'Approved - it can go in'
+  if (p.checks === 'unknown') return 'GitHub has not confirmed its checks yet'
+  if (p.mergeable === null) return 'GitHub is still checking whether it can go in'
+  if (p.review === 'approved' && p.checks === 'none') return 'Approved, but no checks have run'
+  if (p.review === 'approved' && p.checks === 'passing' && p.mergeable) return 'Approved - it can go in'
   return 'Nobody has looked at it yet'
 }
 
 /** Rows that want something from a person, so the button can carry a number. */
 export function needsSomebody(p: PullRow): boolean {
-  return !p.draft && (p.checks === 'failing' || p.review === 'changes' || p.review === 'waiting' || p.review === 'none')
+  return !p.draft && (p.checks === 'failing' || p.mergeable === false || p.review === 'changes' || p.review === 'waiting' || p.review === 'none' || (p.review === 'approved' && p.checks === 'none'))
 }
 
 /**

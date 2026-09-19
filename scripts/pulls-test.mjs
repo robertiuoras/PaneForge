@@ -26,7 +26,7 @@ buildSync({
   platform: 'node',
   outfile: out
 })
-const { pullWords, needsSomebody, waitingCount, branchWords, sortPulls, agoWords, unsavedWords, repoWords } =
+const { checksOf, mergeableOf, pullWords, needsSomebody, waitingCount, branchWords, sortPulls, agoWords, unsavedWords, repoWords } =
   createRequire(import.meta.url)(out)
 
 let failed = 0
@@ -58,6 +58,9 @@ const pull = (over) => ({
   check('changes asked for', pullWords(pull({ review: 'changes' })) === 'Someone asked for changes')
   check('still running', pullWords(pull({ checks: 'running' })) === 'Tests still running')
   check('approved says it can go in', pullWords(pull({ review: 'approved' })) === 'Approved - it can go in')
+  check('approved without checks says so', pullWords(pull({ review: 'approved', checks: 'none' })) === 'Approved, but no checks have run')
+  check('approval does not overrule unfinished checks', pullWords(pull({ review: 'approved', checks: 'running' })) === 'Tests still running')
+  check('approval does not overrule unknown mergeability', pullWords(pull({ review: 'approved', mergeable: null })) === 'GitHub is still checking whether it can go in')
   check('and the default is the honest one', pullWords(pull({})) === 'Nobody has looked at it yet')
   // No sentence here may use a word the reader would have to look up.
   const banned = /\b(merge conflict|rebase|upstream|HEAD|ref|commit-ish|CI)\b/i
@@ -73,8 +76,10 @@ const pull = (over) => ({
 {
   check('a draft waits on nobody', needsSomebody(pull({ draft: true })) === false)
   check('an approved, green one waits on nobody', needsSomebody(pull({ review: 'approved' })) === false)
+  check('an approved pull without checks needs verification', needsSomebody(pull({ review: 'approved', checks: 'none' })) === true)
   check('an unreviewed one waits on somebody', needsSomebody(pull({})) === true)
   check('a red one waits on somebody', needsSomebody(pull({ checks: 'failing' })) === true)
+  check('a conflicted approved one still waits on somebody', needsSomebody(pull({ review: 'approved', mergeable: false })) === true)
 
   const answer = {
     at: 0,
@@ -96,6 +101,18 @@ const pull = (over) => ({
   check('unsaved edits count once, however many files', waitingCount(dirty) === 3, String(waitingCount(dirty)))
   check('and say how many', unsavedWords(4) === '4 files changed and not saved into the project yet')
   check('one file is not "1 files"', unsavedWords(1).startsWith('1 file changed'))
+}
+
+// ---------- GitHub status data ----------
+{
+  check('a legacy pending context is still running', checksOf([{ state: 'PENDING' }]) === 'running')
+  check('a legacy success context passes', checksOf([{ state: 'SUCCESS' }]) === 'passing')
+  check('an action-required check is failing', checksOf([{ status: 'COMPLETED', conclusion: 'ACTION_REQUIRED' }]) === 'failing')
+  check('an unrecognised completed conclusion is not passing', checksOf([{ status: 'COMPLETED', conclusion: 'FUTURE_VALUE' }]) === 'unknown')
+  check('a completed check without a conclusion is not passing', checksOf([{ status: 'COMPLETED' }]) === 'unknown')
+  check('only GitHub MERGEABLE is positive', mergeableOf('MERGEABLE') === true)
+  check('a conflict is negative', mergeableOf('CONFLICTING') === false)
+  check('unknown mergeability stays unknown', mergeableOf('UNKNOWN') === null)
 }
 
 // ---------- the order ----------

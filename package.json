@@ -55,6 +55,7 @@
     "test:notes": "node scripts/release-notes-test.mjs",
     "test:trydiff": "node scripts/try-diff-test.mjs",
     "test:sidehidden": "node scripts/side-hidden-test.mjs",
+    "test:uploadretry": "node scripts/release-upload-retry-test.mjs",
     "test:promote": "node scripts/promote-test.mjs",
     "test:dropimage": "node scripts/drop-image-test.mjs",
     "test:favicon": "node scripts/favicon-test.mjs",

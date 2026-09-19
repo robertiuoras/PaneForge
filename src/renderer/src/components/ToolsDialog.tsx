@@ -4,12 +4,13 @@ import { fleetRow } from '@shared/fleet'
 import { BoardIcon, SwarmIcon, BellIcon } from './Icons'
 import useDialogFocus from './useDialogFocus'
 
-export default function ToolsDialog({ waiting, hasSession, onFocus, onBoard, onSwarm, onHelp, onPulls, onClose }: {
+export default function ToolsDialog({ waiting, hasSession, onFocus, onBoard, onSwarm, onRestorePrevious, onHelp, onPulls, onClose }: {
   waiting: DeskRow[]
   hasSession: boolean
   onFocus(row: DeskRow): void
   onBoard(): void
   onSwarm(): void
+  onRestorePrevious(): void
   onHelp(): void
   onPulls(): void
   onClose(): void
@@ -38,6 +39,7 @@ export default function ToolsDialog({ waiting, hasSession, onFocus, onBoard, onS
           <button className="ghost tool-action" onClick={() => setAttention(true)}><BellIcon /><span><strong>Needs attention</strong><small>{waiting.length ? `${waiting.length} session${waiting.length === 1 ? '' : 's'} ready for you` : 'Nothing waiting for you'}</small></span></button>
           <button className="ghost tool-action" disabled={!hasSession} onClick={onBoard}><BoardIcon /><span><strong>Project board</strong><small>{hasSession ? 'Review tasks and shared project notes' : 'Open a session to see its project board'}</small></span></button>
           <button className="ghost tool-action" onClick={onSwarm}><SwarmIcon /><span><strong>Start a swarm</strong><small>Brief several agents on a shared mission</small></span></button>
+          <button className="ghost tool-action" onClick={onRestorePrevious}><span className="tool-help" aria-hidden="true">↶</span><span><strong>Restore previous desk…</strong><small>Review the desk kept before an interrupted restore</small></span></button>
           <button className="ghost tool-action" onClick={onHelp}><span className="tool-help" aria-hidden="true">?</span><span><strong>Keyboard shortcuts</strong><small>Move around without reaching for the toolbar</small></span></button>
           <button className="ghost tool-action" onClick={onPulls}><span className="tool-help" aria-hidden="true">↗</span><span><strong>Waiting on GitHub</strong><small>Open pull requests, and changes that never left this machine</small></span></button>
         </>}

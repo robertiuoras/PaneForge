@@ -2193,6 +2193,8 @@ export interface RestoreOffer {
   fits: number
   /** Why fewer than all are ticked. Empty when everything fits. */
   memoryNote: string
+  /** An explicit request to recover the desk saved before an interrupted restore. */
+  previous?: boolean
 }
 
 export interface RestoreAnswer {
@@ -2681,6 +2683,8 @@ export interface Api {
    * still loading when main makes that decision.
    */
   pendingRestore(): Promise<RestoreOffer | null>
+  /** The separately retained desk from an interrupted restore, if one exists. */
+  previousRestore(): Promise<RestoreOffer | null>
   answerRestore(answer: RestoreAnswer): void
 
   /** tasks + shared memory for one project folder */

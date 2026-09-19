@@ -6780,6 +6780,13 @@ export default function App(): JSX.Element {
         }}
         onBoard={() => { const session = sessions.find(row => row.id === activeId); if (session) { setToolsOpen(false); setBoard(session.cwd) } }}
         onSwarm={() => { setToolsOpen(false); setSwarm(true) }}
+        onRestorePrevious={() => {
+          setToolsOpen(false)
+          void api.previousRestore().then((previous) => {
+            if (previous) setRestore(previous)
+            else flash('No earlier desk is available to restore.')
+          })
+        }}
         onHelp={() => { setToolsOpen(false); setHelp(true) }}
         onPulls={() => { setToolsOpen(false); setPullsOpen(true) }} />}
       {pullsOpen && (
@@ -7406,6 +7413,7 @@ export default function App(): JSX.Element {
           }}
           onFresh={() => {
             setRestore(null)
+            if (restore.previous) return
             api.answerRestore({ accept: false, ids: [] })
           }}
           // Dismissed rather than answered: main is told nothing, keeps the desk and

@@ -40,7 +40,8 @@ function check(name, ok, extra = '') {
   if (!ok) failed++
 }
 
-const now = Date.now()
+// A fixed local afternoon keeps today's noon fixtures in the past on every machine.
+const now = new Date(2026, 8, 19, 15, 0, 0).getTime()
 const at = (ms) => new Date(ms).toISOString()
 
 /** A real assistant row, with only the timestamp moved. */

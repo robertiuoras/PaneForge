@@ -152,6 +152,7 @@ export const SURFACE: Surface = {
   appOnBatteryNow: ['invoke', 'app:batteryNow'],
   setGameManual: ['invoke', 'game:manual'],
   pendingRestore: ['invoke', 'restore:pending'],
+  previousRestore: ['invoke', 'restore:previous'],
   answerRestore: ['send', 'restore:answer'],
   board: ['invoke', 'board:get'],
   saveTasks: ['invoke', 'board:tasks'],

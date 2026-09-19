@@ -52,11 +52,13 @@ function exitFile(): string {
 function clearFile(): string {
   return join(app.getPath('userData'), 'desk.clear')
 }
+/** Marks a handoff whose replacement desk has not reached disk yet. */
+function recoveryFile(): string {
+  return join(app.getPath('userData'), 'desk.recover')
+}
 /**
- * The desk before the last `clearDesk`. One generation, never read by the app: a
- * "Start fresh" click or a bug that empties the desk is then a rename away from undone
- * instead of gone, which is what the 2026-09-03 loss of eleven panes needed and did not
- * have.
+ * The desk before the last `clearDesk`. Ordinary startup reads it only when the
+ * in-progress handoff marker says the replacement never reached disk.
  */
 function prevFile(): string {
   return join(app.getPath('userData'), 'desk.prev.json')
@@ -92,6 +94,7 @@ let inflight: Promise<void> | null = null
 let writeNumber = 0
 let lastGeneration = 0
 let clearedThrough = 0
+let recoveryAfterGeneration: number | null = null
 
 function generation(previous = 0): number {
   lastGeneration = Math.max(lastGeneration + 1, Date.now(), previous + 1)
@@ -128,10 +131,39 @@ export function readDesk(): Desk | null {
   }
   lastGeneration = Math.max(lastGeneration, live?.writtenAt ?? 0, terminal?.writtenAt ?? 0, clearedAt)
   clearedThrough = Math.max(clearedThrough, clearedAt)
-  if (clearedAt > 0 && clearedAt >= Math.max(live?.writtenAt ?? 0, terminal?.writtenAt ?? 0)) return null
-  if (!terminal) return live
-  if (!live || (terminal.writtenAt ?? 0) >= (live.writtenAt ?? 0)) return terminal
-  return live
+  const current = clearedAt > 0 && clearedAt >= Math.max(live?.writtenAt ?? 0, terminal?.writtenAt ?? 0)
+    ? null
+    : !terminal || (live && (live.writtenAt ?? 0) > (terminal.writtenAt ?? 0))
+      ? live
+      : terminal
+  // A relaunch can die between staggered starts, before the replacement snapshot
+  // has landed. The marker makes that interrupted handoff an ordinary startup
+  // offer again; the explicit Tools action can also read old backups directly.
+  if ((!current || !current.specs.length) && existsSync(recoveryFile())) {
+    const previous = readPreviousDesk()
+    if (previous?.specs.length) return previous
+  }
+  return current
+}
+
+/**
+ * The desk saved before a clear. It is exposed only by the explicit Tools recovery
+ * action; ordinary startup never consults it, so Start fresh stays fresh.
+ */
+export function readPreviousDesk(): Desk | null {
+  try {
+    const raw = JSON.parse(readFileSync(prevFile(), 'utf8')) as Partial<Desk>
+    if (!Array.isArray(raw.specs)) return null
+    return {
+      specs: raw.specs.filter((s) => s && typeof s.cwd === 'string'),
+      at: typeof raw.at === 'number' ? raw.at : 0,
+      clean: Boolean(raw.clean),
+      reason: raw.reason === 'quit' || raw.reason === 'update' ? raw.reason : 'live',
+      writtenAt: typeof raw.writtenAt === 'number' && Number.isFinite(raw.writtenAt) ? raw.writtenAt : 0
+    }
+  } catch {
+    return null
+  }
 }
 
 /** What the next write would be, or null when it would change nothing on disk. */
@@ -185,6 +217,7 @@ async function drain(): Promise<void> {
         if (sealed) return
         await rename(tmp, file())
         if ((next.desk.writtenAt ?? 0) > clearedThrough) lastWritten = next.sig
+        finishDeskRecovery(next.desk)
       } catch {
         /* read-only profile - the running app is unaffected */
       }
@@ -204,6 +237,18 @@ function writeDeskSync(next: { desk: Desk; sig: string }): void {
     writeFileSync(tmp, JSON.stringify(next.desk, null, 2), 'utf8')
     renameSync(tmp, exitFile())
     lastWritten = next.sig
+    finishDeskRecovery(next.desk)
+  } catch {
+    /* read-only profile - the running app is unaffected */
+  }
+}
+
+function finishDeskRecovery(desk: Desk): void {
+  if (recoveryAfterGeneration === null || (desk.writtenAt ?? 0) <= recoveryAfterGeneration || !desk.specs.length) return
+  recoveryAfterGeneration = null
+  try {
+    rmSync(recoveryFile(), { force: true })
+    rmSync(prevFile(), { force: true })
   } catch {
     /* read-only profile - the running app is unaffected */
   }
@@ -211,23 +256,38 @@ function writeDeskSync(next: { desk: Desk; sig: string }): void {
 
 /**
  * Forget the desk. Called once the panes have been handed back, or turned down.
- * The file is kept one generation back as `desk.prev.json`, never deleted outright.
+ * Keep a recovery copy until a completed restore has persisted its replacement.
  */
-export function clearDesk(): void {
+export function clearDesk(recoveryDesk?: Desk): void {
+  recoveryAfterGeneration = null
   lastWritten = ''
   waiting = null
   try {
     const previous = readDesk()
-    // An already-issued async rename cannot be cancelled, so make its old snapshot lose.
-    // sync-on-purpose: a user clearing the desk must survive an immediately following quit
+    const savedPrevious = recoveryDesk ?? readPreviousDesk()
+    // An explicit previous-desk recovery must keep its source snapshot while
+    // panes are staggered in. Also never replace a useful backup with the empty
+    // terminal desk left by an interrupted handoff.
+    // sync-on-purpose: preserve recovery before any current-desk file is removed
+    if (recoveryDesk?.specs.length) writeFileSync(prevFile(), JSON.stringify(recoveryDesk, null, 2), 'utf8')
+    else if (previous?.specs.length || !savedPrevious?.specs.length) writeFileSync(prevFile(), JSON.stringify(previous, null, 2), 'utf8')
+    if (recoveryDesk?.specs.length) writeFileSync(recoveryFile(), 'restore in progress', 'utf8')
+    else rmSync(recoveryFile(), { force: true })
+    // Preserve the backup before masking the current desk. An already-issued async
+    // rename cannot be cancelled, so make its old snapshot lose.
+    // sync-on-purpose: clearing the desk must survive an immediately following quit
     writeFileSync(clearFile(), String(clearedThrough = generation()), 'utf8')
-    if (previous) writeFileSync(prevFile(), JSON.stringify(previous, null, 2), 'utf8')
-    else if (existsSync(file())) renameSync(file(), prevFile())
     rmSync(file(), { force: true })
     rmSync(exitFile(), { force: true })
   } catch {
     /* nothing to clear */
   }
+}
+
+/** Finish recovery after the first nonempty restored desk has reached disk. */
+export function completeDeskRecovery(): void {
+  recoveryAfterGeneration = lastGeneration
+  lastWritten = ''
 }
 
 /**

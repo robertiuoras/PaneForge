@@ -484,7 +484,7 @@ const mainSrc = readFileSync(join(here, '..', 'src', 'main', 'index.ts'), 'utf8'
 // Comments stripped, or the source's own note explaining why `lastPressure` is the WRONG
 // one to read counts as a use of it - a test that fails on the sentence describing the fix.
 const offerBody = mainSrc
-  .slice(mainSrc.indexOf('function offerRestore('), mainSrc.indexOf("ipcMain.handle('restore:pending'"))
+  .slice(mainSrc.indexOf('function makeRestoreOffer('), mainSrc.indexOf("ipcMain.handle('restore:pending'"))
   .replace(/\/\*[\s\S]*?\*\//g, '')
   .replace(/^\s*\/\/.*$/gm, '')
 ok('the restore offer asks the kernel now', /restorePlan\(/.test(offerBody) && /readPressure\(\)/.test(offerBody))

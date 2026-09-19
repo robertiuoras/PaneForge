@@ -147,3 +147,5 @@ Tests: `npm run test:laneautomerge`.
 | `src/shared/place.ts` | What a pane is allowed to say about where it is. |
 
 Tests: `npm run test:lanes`.
+
+For unattended proposals and outside contributions, see [Lanes and pull requests](pull-requests.md).
