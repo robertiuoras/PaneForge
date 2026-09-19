@@ -60,6 +60,7 @@ export const SURFACE: Surface = {
   wakeSession: ['invoke', 'sessions:wake'],
   quitIdle: ['invoke', 'app:quitIdle'],
   getBuffer: ['invoke', 'sessions:buffer'],
+  paneComposer: ['invoke', 'sessions:composer'],
   whatsNew: ['invoke', 'app:whatsNew'],
   tour: ['invoke', 'app:tour'],
   tourCheck: ['invoke', 'app:tourCheck'],

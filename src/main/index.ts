@@ -37,6 +37,7 @@ import { sendOrOpen } from '../shared/sendOrOpen'
 import { owedCount } from './queuedPrompts'
 import type { RouteResult } from '../shared/projectRoute'
 import { DEFAULT_PHONE_PORT, getConfig, projectsRoot, setConfig, setConfigStrict } from './config'
+import { composerOf } from './composerRead'
 import { whatsNew } from './whatsNew'
 import { tour, tourCheck } from './tour'
 import { addSample, dropSample } from './tourSample'
@@ -1931,6 +1932,21 @@ ipcMain.handle('sessions:kill', (_e, id: string) => {
 ipcMain.handle('sessions:buffer', (_e, id: string) =>
   remote.owns(id) ? remote.buffer(id) : manager.buffer(id)
 )
+/**
+ * The pane's prompt box, read back. `main/composerRead.ts` replays the live buffer
+ * through a terminal nobody can see and reads the rows out - nothing is typed, nothing is
+ * submitted, and the draft is left exactly as it was.
+ *
+ * A mirrored pane is refused rather than guessed at: its bytes are painted on the machine
+ * that owns the pty, and the local replay of a link is half a frame behind whatever
+ * somebody over there is in the middle of writing.
+ */
+ipcMain.handle('sessions:composer', async (_e, id: string) => {
+  if (remote.owns(id)) return null
+  const s = manager.list().find((x) => x.id === id)
+  if (!s) return null
+  return composerOf(manager.buffer(id), s.cols || 120, s.rows || 30, s.agent)
+})
 /**
  * The same pane, further back than the in-memory replay reaches - off its transcript.
  *

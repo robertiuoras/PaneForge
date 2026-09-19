@@ -681,6 +681,10 @@ ok(!server.running, 'the gate test server stopped cleanly')
     // itself, naming folders and chat titles the sidebar already draws. Nothing in it can
     // be pressed and nothing in it types.
     'lanes:timeline',
+    // Reviewed 2026-09-19. Reads a pane's prompt box back by replaying its own bytes
+    // through an off-screen terminal. It types nothing, submits nothing and clears
+    // nothing - the same class as `sessions:buffer`, which it is built out of.
+    'sessions:composer',
     'sessions:contextUsage', 'sessions:continuationStatus',
     'autoclear:cancel', 'autoclear:takeover',
     // Local starting-folder metadata only, like projects:list; no file or session writes.

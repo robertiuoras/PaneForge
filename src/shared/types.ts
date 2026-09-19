@@ -2397,6 +2397,14 @@ export interface Api {
   /** replay of everything the pty printed so far, for re-attaching a pane */
   getBuffer(id: string): Promise<string>
   /**
+   * What is TYPED into that pane's prompt box and not sent - read off a terminal, never
+   * off the pane itself. Answers `null` when nothing drew a composer, when the pane is
+   * mirrored (its bytes are produced on the other machine), or when the box could not be
+   * found; an empty box answers a reading with empty text, so "I could not see it" and
+   * "nothing is typed" can be told apart. Types nothing and submits nothing.
+   */
+  paneComposer(id: string): Promise<import('./composerRead').ComposerRead | null>
+  /**
    * Further back than `getBuffer` can reach: the last `bytes` of this pane's transcript,
    * ANSI and all, straight off the log on disk.
    *

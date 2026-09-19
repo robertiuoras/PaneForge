@@ -81,6 +81,7 @@ const TESTS = [
   ['dropimage', 'drop-image-test.mjs'],
   ['favicon', 'favicon-test.mjs'],
   ['promptbox', 'prompt-box-test.mjs'],
+  ['composer', 'composer-read-test.mjs'],
   ['promptforge', 'prompt-forge-test.mjs'],
   ['taskbrief', 'task-brief-test.mjs'],
   ['interventions', 'interventions-test.mjs'],
