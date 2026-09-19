@@ -317,31 +317,6 @@ without taking focus.
 Windows Smart App Control blocks freshly built unsigned binaries, that Electron is
 already trusted, and skipping electron-builder makes it start in seconds.
 
-### Screenshots of the real app
-
-```
-npm run shots                                   focus.png + grid.png
-npm run shots -- --keep                         skip the build
-npm run shots -- --dirs a,b,c,d                 which projects are in frame
-npm run shots -- --agents claude,codex,shell,shell
-npm run shots -- --out <dir>                    default: ../toolstash/public/paneforge
-```
-
-Electron can photograph its own window through CDP, which needs no Screen Recording
-permission from the OS and no screen recorder. `npm run shots` launches a capture copy on
-its own `shots` profile, starts four panes in real folders, types `/help` into the agent
-ones (answered locally, so a screenshot costs no tokens), and writes `focus.png` and
-`grid.png`. Drop those two into `toolstash/public/paneforge/` and the product page swaps
-its drawn preview for them with no other change.
-
-**Read every line in the frame before publishing one.** These are photographs of your
-machine, and the first three runs of this produced, entirely truthfully: a home folder in
-the path bar, a statusline with plan and usage percentages, "less than 25% of your weekly
-limit left", a signed-out CLI showing a login URL with a live challenge token, a "do you
-trust the files in this folder?" box, and the commit subjects of a private repo. Point it
-at folders whose contents you are happy to show, using agents that are signed in and have
-already been run there.
-
 Agents live in one place: `src/shared/agents.ts`. A new CLI is one entry - binary,
 launch args, resume args, model flag, install command, colour - and it appears in
 every picker. The same shape is what *Add agent* in Settings writes, so nothing
