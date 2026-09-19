@@ -1,3 +1,5 @@
+import { pick, repair, SPELLING } from './topicWords'
+
 // Which CLIENT a pane is working for, so its card says so without anybody typing it.
 //
 // A pane is named `basename(cwd)` and that is the right default everywhere except one
@@ -193,7 +195,10 @@ export function titleCase(slug: string): string {
   return normalise(slug)
     .split(' ')
     .filter(Boolean)
-    .map((w) => w[0].toUpperCase() + w.slice(1))
+    // An acronym title-cased by the generic rule reads as a misspelling - `Api`, `Gpt`,
+    // `Ghl` - and a product loses the capital inside it (`Hubspot`, `Openai`). Both are
+    // shapes the reader knows, so getting them wrong is the loudest way to look automated.
+    .map((w) => SPELLING[w] ?? w[0].toUpperCase() + w.slice(1))
     .join(' ')
 }
 
@@ -421,7 +426,15 @@ export function topicTitle(prompt: string, anchor?: ReadonlySet<string>): string
   if (!line || line.startsWith('/')) return ''
   // One clause: `fix the remote screen and also can you see the screenshot` is about the
   // remote screen, and everything after `and` is another ask. Punctuation ends it too.
-  let s = normalise(line.split(/[,.;:?!()]/)[0] ?? '')
+  // How it was MEANT, before anything is read off it. `cacan u see hubspot api` opens on
+  // a doubled keystroke, so the runway stripper met a word it did not know and stopped -
+  // and the card read `Cacan See Hubspot Api`. Repairing first lets every later rule see
+  // the sentence the person typed.
+  const mend = (t: string) => normalise(t).split(' ').map(repair).join(' ')
+  // Every word of the whole line, for weighing only: a word the ask comes back to later
+  // is the one it is about, and the clause below is usually too short to show that.
+  const pool = mend(line).split(' ').filter(Boolean)
+  let s = mend(line.split(/[,.;:?!()]/)[0] ?? '')
   for (;;) {
     const cut = s.replace(RUNWAY, '')
     if (cut === s) break
@@ -491,7 +504,22 @@ export function topicTitle(prompt: string, anchor?: ReadonlySet<string>): string
     if (at < 0) return ''
     if (!words.slice(0, 4).some((w) => anchor.has(w))) words = words.slice(Math.max(0, at - 1))
   }
-  words = words.slice(0, doing ? 3 : 4)
+  // The best words, not the first ones. Taking them off the front only works for a
+  // sentence that opens on its subject, and an ask rarely does: `do u have access to both
+  // hello@... can u find the latest ghl verification code` gave `Access To Both Hello`,
+  // with the whole subject still ahead of the cut. Scored against the rest of the line and
+  // put back in the order they were typed - see `shared/topicWords.ts`.
+  // A verb that took a particle with it - `Setting Up`, `Speeding Up` - has already spent
+  // two words of the card, so the subject gets one fewer: `set up meta ads for the new
+  // offer` is `Setting Up Meta Ads`, and `offer` is what the ads are FOR.
+  const room = doing ? (doing.includes(' ') ? 2 : 3) : 4
+  // An ask holding no word worth underlining names NOTHING. Falling back to its first
+  // few words is how `continue from last session` became a card called `From Last`: the
+  // words were only ever there to carry the sentence, and the folder name it replaced
+  // said more.
+  const best = pick(words, pool, room)
+  if (!best.length) return ''
+  words = best
   // A label may not end on a word that is only there to join it to the words that were
   // cut off. Taking the first four words of "pizzasrus and the invoice template" left a
   // card called `Pizzasrus And`, which reads as an unfinished sentence rather than a name
