@@ -570,7 +570,7 @@ export interface ReceiveDeps {
   historyDir(): string
   /**
    * Record the width the arriving screen was painted at, against the id it is written
-   * under. `restoredTail` asks `colsOf` for exactly this a moment later, and an unknown
+   * under. `restoredTail` asks `sizeOf` for exactly this a moment later, and an unknown
    * width means the far desk's frame is replayed raw into this one.
    */
   noteTailCols?(id: string, cols: number): void

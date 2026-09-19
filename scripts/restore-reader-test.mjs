@@ -37,6 +37,7 @@ const pin={current:false},intent={current:0}
 new Function('api','t','pinned','scrollIntent','setScrolledUp',`
 const sessionId='test',list=[],publish=()=>{},dead=false,setBlank=()=>{},window={clearTimeout(){}},wipeTimer=0,makeKeeper=()=>x=>x,withoutReplayQueries=x=>x,seedMarks=()=>{},drainTyped=()=>{};
 let initialReplay, sawOutput=false,wipeSnap=null,keep=x=>x,readingSnapshot=false,pendingDataWrites=0;
+const writeStaged=(b,done)=>t.write(b,done); // the stage itself is proved by replay-width-test
 ${resetCode}
 `)({onPaneReset:fn=>{reset=fn}},term,pin,intent,()=>{})
 try{

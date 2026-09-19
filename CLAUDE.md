@@ -430,8 +430,12 @@ flight; memory at `FOOTPRINT_MS` 20s (`dueForFootprint`), new pane forces one.
 `restoreAsleep` (`shared/restoreTurn.ts`) refuses first pane, prompt-launched, mid-turn
 (`test:restoreturn`). `history.ts` -> `userData/history/<id>.log`, `tail()` `BUFFER_LIMIT`, no
 ANSI-strip; desk must carry `scrollbackId` (`test:scrollback`). Clock `openedAt`; mid-turn
-via `queuePrompt`; `askAfterUpdate` off. PAINTED width: `colsOf` -> `Session.replayCols`
-before the restore mark, resize in write CALLBACK (`shared/replayWidth.ts`,
+via `queuePrompt`; `askAfterUpdate` off. PAINTED size: `max(recorded, paintedWidth(bytes))`
+(the record is the LAUNCH width on every crash-killed pane, so the bytes decide) and the
+recorded ROWS (`sizeOf`, `replayRows`; antigravity's frame is cursor-up arithmetic against
+the HEIGHT) -> staged before the restore mark, resize in write CALLBACK; Fix writes through
+the same stage (`writeStaged` - raw, it tore a mended pane 2 -> 59/784, 2026-09-19); a pane
+with no rows on disk is torn once, the bytes carry no height (`shared/replayWidth.ts`,
 `test:replaywidth`). Self-Fix `repair()` once, `RESTORE_FIX_MS` 1.2s; mirror refused, hidden
 FLAGGED (`test:restorefix`). Rail = KEYSTROKES; `seedMarks` scans `❯ <text>` once
 (`test:promptecho`). Reply mark per CLI (Claude `"type":"assistant"`, antigravity

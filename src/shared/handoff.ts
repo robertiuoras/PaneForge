@@ -67,9 +67,9 @@ export interface HandoffPayload {
    * no repaint can repair it because the wreckage is in the SCROLLBACK. Fix asks the CLI
    * to redraw the screen and the CLI has nothing to say about scrollback.
    *
-   * The restore path already solved this (`restoredTail` -> `colsOf` -> `replayCols`,
+   * The restore path already solved this (`restoredTail` -> `sizeOf` -> `replayCols`,
    * see `shared/replayWidth.ts`); the receiver only ever wrote the .log and never the
-   * metadata `colsOf` reads, so the answer came back 0 and the width was dropped in
+   * metadata `sizeOf` reads, so the answer came back 0 and the width was dropped in
    * silence. Measured PC -> Mac, 2026-08-23.
    *
    * Optional: a sender older than this says nothing and the receiver replays raw, exactly

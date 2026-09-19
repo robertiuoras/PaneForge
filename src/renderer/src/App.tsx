@@ -6622,6 +6622,7 @@ export default function App(): JSX.Element {
               // A restored pane replays the screen of the pane it came back from, painted
               // in absolute column moves at THAT pane's width. See shared/replayWidth.ts.
               replayCols={s.replayCols}
+              replayRows={s.replayRows}
               /* Its CLI has not said anything yet. A restored pane is never `blank`, so
                  without this it sat there wearing yesterday's screen and saying nothing
                  for the seconds the agent spends booting. */

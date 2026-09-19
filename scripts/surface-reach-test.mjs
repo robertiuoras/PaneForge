@@ -61,6 +61,7 @@ const DESK_SIDE = {
   // on every submitted line and is still the answer to "have I asked this", so the lookup
   // stays reachable from outside the window.
   priorPrompt: 'pf-ctl call prompt:prior - the recall skill, no chip in the window',
+  paneComposer: 'pf-ctl call sessions:composer - reads what is typed into a pane and not sent, no control in the window (db22552a)',
   // What is typed into a pane and not sent. The window already SHOWS it - it is the
   // composer on screen - so the only caller that needs asking is another chat:
   // `pf composer <pane>` reads it over the phone server.
