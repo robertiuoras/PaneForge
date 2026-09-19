@@ -2441,6 +2441,12 @@ export interface Api {
   removeSound(id: string): Promise<SoundConfig>
   renameSound(id: string, name: string): Promise<SoundConfig>
   /**
+   * What is typed into a pane and not sent yet, reconstructed from the keystrokes this
+   * app relayed. `certain` false means the line was edited in a way the app could not
+   * follow and is a guess; null means there is no such pane.
+   */
+  draft(id: string): Promise<{ text: string; certain: boolean } | null>
+  /**
    * Open pull requests and unfinished local work, for the repositories behind the
    * folders given. Read on demand: this is a dialog's question, never a poll.
    */

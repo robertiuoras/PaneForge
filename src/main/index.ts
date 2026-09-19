@@ -2310,6 +2310,7 @@ ipcMain.handle('discord:status', () => presence.status())
 // What is waiting on GitHub, asked only when the dialog that shows it is opened. The
 // folders come from the renderer because the desk it draws includes mirrored panes,
 // whose repositories are the other machine's and are skipped by the lookup itself.
+ipcMain.handle('sessions:draft', (_e, id: string) => manager.draftOf(id))
 ipcMain.handle('pulls:list', (_e, cwds: string[], refresh?: boolean) =>
   readPulls(Array.isArray(cwds) ? cwds : [], !!refresh)
 )

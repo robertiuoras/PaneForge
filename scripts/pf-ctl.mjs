@@ -22,6 +22,7 @@
  *   node scripts/pf-ctl.mjs login [url] [--site NAME] [--host user@ip] [--port N] [--machine WORDS]
  *   node scripts/pf-ctl.mjs close <title-or-id>
  *   node scripts/pf-ctl.mjs rename <title-or-id> <name...>
+ *   node scripts/pf-ctl.mjs composer <number-title-or-id>   what is typed but not sent
  *   node scripts/pf-ctl.mjs type <title-or-id> <text...>
  *   node scripts/pf-ctl.mjs hold [--bundle ID|--name APP|--pid N] [--reason R] [--ttl MIN] [--this]
  *   node scripts/pf-ctl.mjs hold list | hold release <id>
@@ -654,6 +655,30 @@ if (cmd === 'list') {
   const now = (await sessions()).find((x) => x.id === s.id)
   if (now?.title !== name) fail(1, `sessions:rename answered but ${s.id} is still "${now?.title ?? '?'}"`)
   console.log(`renamed ${s.id} (${was} -> ${name})`)
+} else if (cmd === 'composer') {
+  // What is typed into a pane and NOT sent - the one thing every other read here misses.
+  // The pty log carries the redraw stream, so a line sitting in a CLI's composer is
+  // invisible in it; the app reconstructs the line from the keystrokes it relayed, which
+  // is what this prints. Reads only: nothing is typed, submitted or cleared.
+  const ref = rest.shift()
+  if (!ref) fail(1, 'composer needs a pane: pf-ctl composer <number-title-or-id>')
+  const pane = resolve(await sessions(), ref)
+  if (!pane) fail(1, `no pane called "${ref}"`)
+  const draft = await call('sessions:draft', [pane.id])
+  if (!draft) fail(1, `pane ${pane.id} is not running, so it has no composer`)
+  // An empty line with `certain` true is the one shape that really means nothing is
+  // pending. Everything else is said out loud rather than printed as if it were the
+  // screen: a line the app could not follow is a guess, and a pane typed into before
+  // this app process started relayed nothing and has no draft at all.
+  if (!draft.text) {
+    console.error(draft.certain
+      ? `pane ${pane.id} has nothing unsent`
+      : `pane ${pane.id} has nothing the app can vouch for - it relayed no keystrokes for the current line`)
+    process.exit(draft.certain ? 0 : 1)
+  }
+  if (!draft.certain)
+    console.error(`(uncertain - the line was edited in a way the app could not follow, so this may be incomplete)`)
+  console.log(draft.text)
 } else if (cmd === 'tell') {
   // One line into a pane, queued for the gap between its turns rather than typed into
   // the middle of one - the same door the sign-in card reports back through.
