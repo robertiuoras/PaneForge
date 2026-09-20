@@ -87,22 +87,22 @@ export function claudeQuotaBlock(payload: unknown, model?: string): ClaudeQuotaB
 }
 
 function readUsage(model?: string): Promise<ClaudeQuotaBlock | null> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     execFile(
       GUARDECK_USAGE,
       ['usage', '--provider', 'claude', '--source', 'web', '--format', 'json', '--json-only', '--no-credits'],
       { timeout: 20_000, maxBuffer: 1024 * 1024 },
       (error, stdout) => {
         if (error) {
-          console.warn(`Claude quota preflight unavailable: ${error.message}`)
-          resolve(null)
+          reject(new Error(`Could not check Claude usage before opening it: ${error.message}`))
           return
         }
         try {
           resolve(claudeQuotaBlock(JSON.parse(stdout), model))
         } catch (cause) {
-          console.warn(`Claude quota preflight returned invalid data: ${String((cause as Error)?.message ?? cause)}`)
-          resolve(null)
+          reject(new Error(
+            `Could not check Claude usage before opening it: ${String((cause as Error)?.message ?? cause)}`
+          ))
         }
       }
     )
