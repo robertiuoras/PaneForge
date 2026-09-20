@@ -48,7 +48,7 @@ export function codexTurnInProgress(tail: string): boolean | undefined {
     }
     if (row.type !== 'response_item') continue
     if (p.type === 'message' && p.role === 'assistant') {
-      if (p.phase === 'final') return false
+      if (p.phase === 'final_answer' || p.phase === 'final') return false
       if (p.phase === 'commentary') return true
     }
     if (['reasoning', 'function_call', 'function_call_output', 'custom_tool_call', 'custom_tool_call_output'].includes(p.type)) return true

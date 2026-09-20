@@ -49,10 +49,11 @@ const HOUR = 3600_000
 
 const record = (type, payload) => JSON.stringify({ type, payload })
 const working = record('response_item', { type: 'custom_tool_call', name: 'exec' })
-const final = record('response_item', { type: 'message', role: 'assistant', phase: 'final' })
+const final = record('response_item', { type: 'message', role: 'assistant', phase: 'final_answer' })
 ok('native tool work is unfinished despite an idle footer', codexTurnInProgress(working) === true)
 ok('commentary is not completion', codexTurnInProgress(record('response_item', { type: 'message', role: 'assistant', phase: 'commentary' })) === true)
 ok('final answer ends native work', codexTurnInProgress(working + '\n' + final) === false)
+ok('legacy final phase remains complete', codexTurnInProgress(working + '\n' + record('response_item', { type: 'message', role: 'assistant', phase: 'final' })) === false)
 ok('metadata after final does not reopen work', codexTurnInProgress(final + '\n' + record('event_msg', { type: 'token_count' })) === false)
 ok('explicit abort is not auto-continued', codexTurnInProgress(working + '\n' + record('event_msg', { type: 'turn_aborted' })) === false)
 ok('task completion is not auto-continued', codexTurnInProgress(working + '\n' + record('event_msg', { type: 'task_complete' })) === false)
