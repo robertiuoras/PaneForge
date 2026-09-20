@@ -32,6 +32,30 @@ export interface RestoredClock {
   wasWorking?: boolean
 }
 
+/** Native Codex evidence outranks a terminal footer that can disappear during tools.
+ * Unknown/truncated records are not evidence of completion. Read only this exact
+ * conversation's tail; never infer unfinished work from another pane's transcript.
+ */
+export function codexTurnInProgress(tail: string): boolean | undefined {
+  for (const line of tail.split('\n').reverse()) {
+    let row: any
+    try { row = JSON.parse(line) } catch { continue }
+    const p = row?.payload
+    if (!p) continue
+    if (row.type === 'event_msg') {
+      if (p.type === 'task_complete' || p.type === 'turn_aborted') return false
+      if (p.type === 'task_started') return true
+    }
+    if (row.type !== 'response_item') continue
+    if (p.type === 'message' && p.role === 'assistant') {
+      if (p.phase === 'final') return false
+      if (p.phase === 'commentary') return true
+    }
+    if (['reasoning', 'function_call', 'function_call_output', 'custom_tool_call', 'custom_tool_call_output'].includes(p.type)) return true
+  }
+  return undefined
+}
+
 /**
  * The clock a restored pane starts with.
  *

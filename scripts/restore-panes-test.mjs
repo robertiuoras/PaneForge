@@ -30,10 +30,11 @@ const code = transformSync(`${functionSource('restoreStaggerMs')}\n${functionSou
   loader: 'ts', format: 'cjs', target: 'node20'
 }).code
 
-function run({ failures = [], stagger = false } = {}) {
+function run({ failures = [], stagger = false, inProgress, asleep = false, wasWorking = false } = {}) {
   const calls = []
   const timers = []
   const sessions = []
+  const requests = []
   let starts = 0
   const context = {
     restoredThisRun: false,
@@ -43,8 +44,9 @@ function run({ failures = [], stagger = false } = {}) {
     getConfig: () => ({ recover: { enabled: false }, pinnedPanes: [] }),
     clashingRestores: specs => specs.map(() => false),
     resumableTranscript: () => ({ id: 'verified' }),
+    rolloutTurn: () => ({ inProgress }),
     heldElsewhere: () => false,
-    restoreAsleep: () => false,
+    restoreAsleep: req => !req.wasWorking,
     basename: path => path,
     setConfig: () => {},
     send: () => {},
@@ -55,6 +57,7 @@ function run({ failures = [], stagger = false } = {}) {
     manager: {
       snapshot: () => sessions,
       start: req => {
+        requests.push(req)
         calls.push(['start', req.title])
         if (failures.includes(starts++)) throw new Error('start failed')
         const session = { id: `new-${starts}`, title: req.title, resumeId: req.resumeId, scrollbackId: req.scrollbackId }
@@ -69,11 +72,12 @@ function run({ failures = [], stagger = false } = {}) {
   }
   vm.createContext(context)
   new vm.Script(code).runInContext(context)
-  const specs = ['one', 'two'].map(title => ({ cwd: '/desk', title, agent: 'codex', resumeId: title, scrollbackId: title }))
+  const specs = ['one', 'two'].map(title => ({ cwd: '/desk', title, agent: 'codex', resumeId: title, scrollbackId: title, wasWorking, asleep }))
   context.restorePanes(specs)
   return {
     calls: () => JSON.parse(JSON.stringify(calls)),
     timers,
+    requests,
     runTimer: () => timers.shift()?.fn()
   }
 }
@@ -100,3 +104,49 @@ assert.deepEqual(staggered.calls().slice(-2), [['complete'], ['save', ['one', 't
   'successful completion requests a final durable snapshot before consuming recovery')
 
 console.log('restore panes: failure, interruption, and completed recovery checks passed')
+
+const interrupted = run({ inProgress: true })
+assert.equal(interrupted.requests[1].wasWorking, true, 'native unfinished turn repairs a false saved flag')
+assert.equal(interrupted.requests[1].asleep, false, 'missed working pane wakes for continuation')
+assert.equal(run({ inProgress: false }).requests[1].wasWorking, false, 'finished native turn stays finished')
+assert.equal(run({ inProgress: false, wasWorking: true }).requests[1].wasWorking, false, 'native completion overrides a stale working flag')
+assert.equal(run({ wasWorking: true }).requests[1].wasWorking, true, 'unknown native state preserves saved recovery evidence')
+assert.equal(run({ inProgress: true, asleep: true }).requests[1].asleep, true, 'explicit sleep is preserved')
+
+// Exercise the real offer -> answer IPC path, where display rows used to discard
+// wasWorking and silently turn every interrupted conversation into an idle pane.
+const offerStart = source.indexOf('function makeRestoreOffer(')
+const offerEnd = source.indexOf('\n/**', offerStart)
+const answerStart = source.indexOf("ipcMain.on('restore:answer'")
+const answerEnd = source.indexOf('\n\napp.whenReady()', answerStart)
+const offered = [
+  { cwd: '/one', title: 'finished', agent: 'codex', resumeId: 'done', wasWorking: false },
+  { cwd: '/two', title: 'interrupted', agent: 'claude', resumeId: 'exact-thread', resumeCwd: '/original',
+    wasWorking: true, openedAt: 123, lastRunMs: 456, engaged: true, scrollbackId: 'old-pane',
+    lane: 'c', laneEnv: { PORT: '3002' }, arrivedFrom: 'pc', effort: { mode: 'manual', manual: 'high' } },
+  { cwd: '/missing', title: 'missing', agent: 'codex', resumeId: 'missing' }
+]
+let answerHandler
+let restored
+const offerContext = {
+  offeredSpecs: [], offer: null, MAX_RESTORE: 12,
+  describe: (s, i) => ({ id: String(i), cwd: s.cwd, title: s.title, agent: s.agent, gone: i === 2 ? 'folder' : undefined }),
+  restorePlan: () => ({ fits: 2, note: '' }), totalMb: () => 10000, readPressure: () => 0,
+  manager: { list: () => [], snapshot: () => [] }, setDeskHold: () => {}, setConfig: () => {},
+  updateLog: () => {}, clearDesk: () => {}, saveDesk: () => {},
+  restorePanes: (specs, previous) => { restored = { specs, previous } },
+  ipcMain: { on: (_channel, handler) => { answerHandler = handler } }
+}
+vm.createContext(offerContext)
+new vm.Script(transformSync(source.slice(offerStart, offerEnd) + '\n' + source.slice(answerStart, answerEnd),
+  { loader: 'ts', format: 'cjs', target: 'node20' }).code).runInContext(offerContext)
+offerContext.offer = offerContext.makeRestoreOffer({ specs: offered, at: 100, clean: false }, true)
+answerHandler(null, { accept: true, ids: ['1', '2', 'made-up'] })
+assert.deepEqual(JSON.parse(JSON.stringify(restored)), { specs: [offered[1]], previous: true },
+  'selected pane retains exact launch/recovery state; missing and unknown rows cannot start')
+assert.equal(offerContext.offer, null)
+assert.equal(offerContext.offeredSpecs.length, 0, 'consumed selection does not leak into the next offer')
+restored = undefined
+answerHandler(null, { accept: true, ids: ['1'] })
+assert.equal(restored, undefined, 'duplicate answer never continues the same turn twice')
+console.log('restore offer: exact conversation, interrupted turn, selection and duplicate answer checks passed')
