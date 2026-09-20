@@ -1734,8 +1734,11 @@ async function startOrSend(
   }
   const cfg = getConfig()
   const mode = preferRemoteOf(cfg.autoHandoff)
-  // Set to keep everything here: no round trip over the link, no line in the log.
-  if (mode === 'never' && !req.device) return here()
+  // Set to keep automatic placements here: no round trip over the link, no line in the
+  // log. An explicit "Another device" press still has to reach `placeNewPane`, whose
+  // person-picked rule outranks this saved preference. Returning here unconditionally
+  // made the Desktop chip look selected while opening the pane on this Mac.
+  if (mode === 'never' && req.where !== 'remote' && !req.device) return here()
 
   const project = projectNameOf(req.cwd)
   let target: ReturnType<typeof projectOn> = null
