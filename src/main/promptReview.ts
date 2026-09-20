@@ -54,6 +54,26 @@ export function removePromptReview(id: string): void {
   }
 }
 
+/** Exact prompts for one live pane, oldest first, bounded to the rail's capacity. */
+export function promptsForSession(id: string, limit = 80): PromptReviewEntry[] {
+  const rows: PromptReviewEntry[] = []
+  try {
+    for (const line of readFileSync(file(id), 'utf8').split('\n')) {
+      if (!line) continue
+      try {
+        const row: unknown = JSON.parse(line)
+        if (valid(row) && row.sessionId === id) rows.push(row)
+      } catch {
+        /* tolerate a torn final append and keep every complete row */
+      }
+    }
+  } catch {
+    /* first prompt, removed history, or invalid id */
+  }
+  rows.sort((a, b) => a.at - b.at)
+  return rows.slice(-Math.max(0, limit))
+}
+
 function localDay(at: number): number {
   const d = new Date(at)
   return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()

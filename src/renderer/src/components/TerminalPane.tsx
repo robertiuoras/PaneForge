@@ -831,6 +831,8 @@ interface Mark {
    */
   full: string
   at: number
+  /** Exact-ledger identity, used to merge repeated identical prompts without collapsing them. */
+  ledger?: string
 }
 
 /**
@@ -1903,7 +1905,9 @@ function TerminalPane({
    */
   const jumpTo = (m: Mark): void => {
     const t = term.current
-    if (!t) return
+    // The prompt ledger outlives xterm's finite scrollback. Keep that prompt in the index,
+    // but never pretend its old row can still be reached.
+    if (!t || m.marker.line < 0) return
     const at = lineOf(m)
     if (at < 0) return
     const b = t.buffer.active
@@ -1927,8 +1931,9 @@ function TerminalPane({
     const i = marks.findIndex((x) => x.id === m.id)
     // `landingRow` includes its lower bound. The preceding tag owns its marker row, so
     // start immediately after it: consecutive prompts can share their 24-character key.
-    const lo = i > 0 ? lineOf(marks[i - 1]) + 1 : 0
-    const next = i >= 0 ? marks[i + 1] : undefined
+    const previous = i > 0 ? marks.slice(0, i).reverse().find((x) => x.marker.line >= 0) : undefined
+    const lo = previous ? lineOf(previous) + 1 : 0
+    const next = i >= 0 ? marks.slice(i + 1).find((x) => x.marker.line >= 0) : undefined
     const hi = next ? lineOf(next) : b.length
     const land = landingRow(row, at, m.key, lo, hi, agent === 'codex' ? 'codex' : 'claude')
     t.scrollToLine(Math.max(0, land - LANDING_LEAD_ROWS))
@@ -1970,10 +1975,11 @@ function TerminalPane({
     const end = Math.max(0, t.buffer.active.length - 1)
     const i = mark === undefined ? marks.length - 1 : marks.findIndex((m) => m.id === mark)
     const turn = i >= 0 ? marks[i] : undefined
-    const next = i >= 0 ? marks[i + 1] : undefined
+    const next = i >= 0 ? marks.slice(i + 1).find((m) => m.marker.line >= 0) : undefined
     const one = mark !== undefined
     const prompt = turn ? turn.full || turn.text : ''
-    const reply = turn ? cleanReply(rowsOf(lineOf(turn) + 1, next ? lineOf(next) - 1 : end)) : ''
+    const liveTurn = turn?.marker.line !== undefined && turn.marker.line >= 0
+    const reply = liveTurn ? cleanReply(rowsOf(lineOf(turn) + 1, next ? lineOf(next) - 1 : end)) : ''
     const both = prompt && reply ? prompt + '\n\n' + reply : ''
     const out: CopyChoice[] = []
     // The row's LABEL and the word the toast says are not the same thing: a receipt
@@ -1987,7 +1993,7 @@ function TerminalPane({
     // email, DM or quote is a reply somebody is about to paste somewhere, and the message
     // alone is what they want - not the sentence introducing it and not the tool line
     // above that. `draftBlock` reads the left margin the CLI draws around a draft.
-    const draft = turn
+    const draft = liveTurn && turn
       ? draftBlock(rowsOf(lineOf(turn) + 1, next ? lineOf(next) - 1 : end))
       : ''
     add('draft', 'The drafted message', 'Drafted message', draft)
@@ -2002,7 +2008,7 @@ function TerminalPane({
       add('prompt', 'Copy this prompt', 'Prompt', prompt)
       add('reply', 'Copy its reply', 'Reply', reply)
       add('both', 'Copy both', 'Prompt and reply', both)
-      if (turn) out.push({ key: 'go', label: 'Go to it', preview: '', run: () => jumpTo(turn) })
+      if (turn && liveTurn) out.push({ key: 'go', label: 'Go to it', preview: '', run: () => jumpTo(turn) })
       return out
     }
     read('read', 'Read the last reply')
@@ -2540,9 +2546,11 @@ function TerminalPane({
       anchorMark(markerHost, entry, marker, {
         alive: () => !dead && list.indexOf(entry) >= 0,
         drop: () => {
-          const at = list.indexOf(entry)
-          if (at < 0) return
-          list.splice(at, 1)
+          if (list.indexOf(entry) < 0) return
+          // Scrollback is finite but the prompt index is not. The disposed marker stays
+          // at -1 so the side tag disappears honestly while the exact prompt remains in
+          // the disclosure list and can still be copied.
+          entry.line = -1
           publish()
         },
         changed: publish
@@ -2587,14 +2595,22 @@ function TerminalPane({
       // `seedPrompts`. Row by row this gave three tags for one ask and a tag on a line of
       // test output, because a replayed screen holds every repaint of the prompt block.
       const found = seedPrompts(rows, agent === 'codex' ? 'codex' : 'claude')
-      const known = new Set(list.map((entry) => entry.key))
+      const known = new Map<string, Mark[]>()
+      for (const entry of list) known.set(entry.key, [...(known.get(entry.key) ?? []), entry])
       // Same cap as the live rail, and the same end of the list: past this many the tags
       // are a solid bar, and the newest are the ones being looked for.
       for (const f of found.slice(-MARK_CAP)) {
         const key = echoKey(f.text)
-        if (known.has(key)) continue
+        const existing = known.get(key)?.shift()
+        if (existing?.marker.line !== undefined && existing.marker.line >= 0) continue
         const marker = t.registerMarker(f.line - cursor)
         if (!marker) continue
+        if (existing) {
+          existing.marker = marker
+          existing.line = marker.line
+          anchor(existing, marker)
+          continue
+        }
         const entry: Mark = {
           id: marker.id,
           marker,
@@ -2606,14 +2622,64 @@ function TerminalPane({
         }
         anchor(entry, marker)
         list.push(entry)
-        known.add(key)
       }
-      list.sort((a, b) => a.marker.line - b.marker.line)
+      list.sort((a, b) => {
+        if (a.marker.line < 0) return b.marker.line < 0 ? a.at - b.at : -1
+        if (b.marker.line < 0) return 1
+        return a.marker.line - b.marker.line
+      })
       while (list.length > MARK_CAP) list.shift()?.marker.dispose()
       if (list.length) {
         publish()
         syncTotal()
       }
+    }
+
+    /** Merge the durable exact-prompt ledger with whatever rows xterm can still reach. */
+    const restorePromptMarks = async (): Promise<void> => {
+      let saved
+      try {
+        saved = await api.panePrompts(sessionId)
+      } catch {
+        return
+      }
+      if (dead) return
+      for (const row of saved) {
+        let entry = list.find((m) => m.ledger === row.id)
+        if (!entry) entry = list.find((m) => !m.ledger && m.key === echoKey(row.text))
+        if (entry) {
+          entry.ledger = row.id
+          entry.at = row.at
+          entry.full = row.text
+          entry.text = flatDraft(row.text, RAIL_LABEL_CHARS)
+          continue
+        }
+        // A disposed xterm marker is a typed, stable sentinel for an archived prompt. It
+        // cannot draw or jump, but gives the existing rail model an honest line=-1 state.
+        const marker = t.registerMarker(0)
+        if (!marker) continue
+        marker.dispose()
+        list.push({
+          id: marker.id,
+          marker,
+          line: -1,
+          text: flatDraft(row.text, RAIL_LABEL_CHARS),
+          full: row.text,
+          at: row.at,
+          key: echoKey(row.text),
+          ledger: row.id
+        })
+      }
+      const order = new Map(saved.map((row, index) => [row.id, index]))
+      list.sort((a, b) => {
+        const ai = a.ledger === undefined ? -1 : (order.get(a.ledger) ?? -1)
+        const bi = b.ledger === undefined ? -1 : (order.get(b.ledger) ?? -1)
+        if (ai !== bi) return ai - bi
+        return lineOf(a) - lineOf(b)
+      })
+      while (list.length > MARK_CAP) list.shift()?.marker.dispose()
+      publish()
+      syncTotal()
     }
 
     const addMark = (text: string, full: string): void => {
@@ -3705,12 +3771,14 @@ function TerminalPane({
               initialReplay = undefined
               awaitingInitialReplay = false
               if (sawOutput && !gone) setBlank(false)
+              if (!gone) void restorePromptMarks()
               finishInitialReplay?.()
             }
           }).catch(() => {
             initialReplay = undefined
             awaitingInitialReplay = false
             if (sawOutput && !gone) setBlank(false)
+            if (!gone) void restorePromptMarks()
             finishInitialReplay?.()
           })
         })
@@ -3767,6 +3835,7 @@ function TerminalPane({
         // The replay IS the conversation this pane is being reopened into, so its
         // prompts get their tags back. See seedMarks.
         seedMarks()
+        void restorePromptMarks()
       }
       // Its real shape before a byte lands. xterm opens at 80x24 and the fit otherwise
       // arrives a frame or two later, which is the first half of "after the update
@@ -5196,9 +5265,12 @@ function TerminalPane({
             <div className="prompt-index-list">
               {marks.map((mark, index) => <button
                 key={mark.id}
-                title={markLabel(mark, Math.max(railNow, mark.at))}
+                title={mark.marker.line < 0
+                  ? `${markLabel(mark, Math.max(railNow, mark.at))} · older than terminal scrollback · click to copy`
+                  : markLabel(mark, Math.max(railNow, mark.at))}
                 onClick={event => {
-                  jumpTo(mark)
+                  if (mark.marker.line < 0) putOnClipboard(mark.full || mark.text, 'Prompt')
+                  else jumpTo(mark)
                   const details = event.currentTarget.closest('details')
                   if (details) {
                     details.open = false

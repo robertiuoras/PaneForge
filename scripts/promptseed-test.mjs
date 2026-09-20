@@ -39,8 +39,8 @@ check(!body.includes('t.reset()'), 'redraw cannot reset ahead of queued terminal
 const reset = src.slice(src.indexOf('const offReset = '), src.indexOf('const off = api.onData'))
 check(reset.includes('m.marker.dispose()') && reset.includes('seedMarks()'), 'ordered reset replaces obsolete tags and seeds the new snapshot')
 
-// `seedMarks` may only add tags to a rail that has none: a pane that has been typed into
-// owns its own tags and must never get a second one for the same prompt.
+// `seedMarks` deduplicates existing tags and may rebind retained archived tags when their
+// prompt echo is still present in the restored terminal snapshot.
 const seed = src.slice(src.indexOf('const seedMarks = (): void =>'))
 const actualSeed = src.slice(src.indexOf('const seedMarks = (): void =>'), src.indexOf('const addMark = ', src.indexOf('const seedMarks = (): void =>')))
 const executable = transformSync(actualSeed, { loader: 'ts', target: 'node20' }).code
@@ -54,6 +54,14 @@ check(entries.length === 2 && entries[1].key === 'two', 'a partial rail recovers
 check(entries[0].at === 123, 'a surviving live tag preserves its original identity and time')
 runSeed()
 check(entries.length === 2 && serial === 1, 'repeated repair never duplicates existing prompt tags')
+
+const anchorBody = src.slice(src.indexOf('const anchor = (entry: Mark'), src.indexOf('const seedMarks = (): void =>'))
+check(anchorBody.includes('entry.line = -1') && !anchorBody.includes('list.splice'), 'scrollback eviction retains the prompt index entry')
+const restore = src.slice(src.indexOf('const restorePromptMarks = async'), src.indexOf('const addMark = ', src.indexOf('const restorePromptMarks = async')))
+check(restore.includes('api.panePrompts(sessionId)'), 'the rail restores exact prompts from the durable session ledger')
+check(restore.includes('marker.dispose()') && restore.includes('line: -1'), 'ledger-only prompts cannot masquerade as live jump targets')
+const indexView = src.slice(src.indexOf('<summary>Prompts ·'), src.indexOf('{placed.map', src.indexOf('<summary>Prompts ·')))
+check(indexView.includes("putOnClipboard(mark.full || mark.text, 'Prompt')"), 'an evicted prompt stays usable from the index by copying it')
 
 const initial = src.slice(src.indexOf('let initialReplay:'), src.indexOf('const replayBuffer ='))
 check(initial.includes('api.replayHistory(sessionId)'), 'initial restore uses the ordered full-history snapshot')

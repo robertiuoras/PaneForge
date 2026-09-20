@@ -37,6 +37,10 @@ api.recordPromptReview(session, 'exact first line\nexact second line', now - 1_0
 api.recordPromptReview({ ...session, id: 'pane_2', agent: 'claude' }, 'older this week', now - 2 * day)
 api.recordPromptReview({ ...session, id: 'pane_old' }, 'outside the week', now - 8 * day)
 
+assert.deepEqual(api.promptsForSession('pane_1').map((x) => x.text), ['exact first line\nexact second line'])
+assert.deepEqual(api.promptsForSession('pane_2').map((x) => x.text), ['older this week'])
+assert.deepEqual(api.promptsForSession('../escape'), [])
+
 const tokens = { today: 123, week: 456, at: now }
 const history = [{ ...session, startedAt: now - 500, bytes: 0 }, { ...session, id: 'silent', agent: 'antigravity', startedAt: now - 400, bytes: 0 }]
 let report = api.promptReview(tokens, now, history)

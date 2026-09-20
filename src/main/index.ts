@@ -27,7 +27,7 @@ import { DataPump } from './dataPump'
 import { DiscordPresence } from './discordPresence'
 import { countPresence, needsTokens, type PresenceCounts } from '../shared/discordRpc'
 import { tokenSpend, tokenSpendFresh } from './tokenUsage'
-import { promptReview, recordPromptReview, removePromptReview } from './promptReview'
+import { promptReview, promptsForSession, recordPromptReview, removePromptReview } from './promptReview'
 import { readPulls } from './pulls'
 import { quitWhere } from '../shared/quitWords'
 import { mayReturnLane } from '../shared/laneReturn'
@@ -3862,6 +3862,7 @@ ipcMain.handle('vault:open', (_e, vault: string, note?: string) => vaultOpen(vau
 
 ipcMain.handle('history:list', () => history.list())
 ipcMain.handle('review:daily', async () => promptReview(await tokenSpendFresh(), Date.now(), history.list()))
+ipcMain.handle('sessions:prompts', (_e, id: string) => promptsForSession(id))
 ipcMain.handle('history:search', (_e, q: string) => history.search(q))
 ipcMain.handle('history:read', (_e, id: string) => history.read(id))
 ipcMain.handle('history:delete', (_e, id: string) => {

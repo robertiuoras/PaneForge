@@ -72,6 +72,7 @@ for (const mode of ['plain', 'staged', 'cancel']) {
     t: term, f: {}, keep: x => x, withoutReplayQueries: x => x,
     needRestoreFix: { current: false }, armRestoreFix: noop, pinned: { current: true }, setBlank: noop,
     seedMarks: () => marks++, reshape: noop, replayColsRef: { current: 120 }, replaying: { current: false },
+    restorePromptMarks: async () => {},
     // The old pane's SHAPE, not just its width: antigravity's frame is drawn against the
     // terminal height, so the staged replay is written at both and handed back at both.
     replayRowsRef: { current: 24 },

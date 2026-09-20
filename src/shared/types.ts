@@ -2925,6 +2925,8 @@ export interface Api {
    * an agent CLI once, headlessly - so it is only ever called from a press.
    */
   splitPrompt(text: string): Promise<SplitAnswer>
+  /** Exact submitted prompts retained even after terminal scrollback evicts their rows. */
+  panePrompts(id: string): Promise<PromptReviewEntry[]>
   /** Record that a draft was actually sent. Fire-and-forget. */
   promptUsed(draft: string, meta: { cwd?: string; agent?: string; id?: string }): void
 
