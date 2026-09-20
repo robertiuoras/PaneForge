@@ -223,7 +223,7 @@ console.log(`\n${pass} cases passed`)
   console.log('ok   a handoff CREATED inside the cache window is read, not the older one the cache chose')
   // The absent case is the same shape: a pane cached as "never wrote one" must see its first handoff.
   clearHandoffCache()
-  assert.strictEqual(handoffFor(cwd, 's16', t0).path, unscoped)
+  assert.strictEqual(normalize(handoffFor(cwd, 's16', t0).path), normalize(unscoped))
   const pane16 = join(dir, 'session-handoff.pane-s16.md')
   writeFileSync(pane16, '# Handoff\n\n## Next steps\n\n1. One thing.\n')
   at(pane16, 1_000_200)

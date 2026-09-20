@@ -23,6 +23,7 @@ export async function startFixtureServer({ port = 0 } = {}) {
     sockets = new Set(),
     requests = [],
     controls = [];
+  const creations = new Map();
   const state = () => {
     const { projects, ...rest } = data;
     return rest;
@@ -40,7 +41,9 @@ export async function startFixtureServer({ port = 0 } = {}) {
     projectId = "demo",
     laneId = "lane-b",
     provider = "codex",
+    requestId,
   }) => {
+    if (requestId && creations.has(requestId)) return creations.get(requestId);
     const number = next++;
     const created = {
       schemaVersion: 1,
@@ -64,6 +67,7 @@ export async function startFixtureServer({ port = 0 } = {}) {
       status: "idle",
     };
     data.sessions.push(created);
+    if (requestId) creations.set(requestId, created);
     return created;
   };
   const controller = (text, clientId, via) => {
@@ -142,6 +146,10 @@ export async function startFixtureServer({ port = 0 } = {}) {
         return send(res, 200, state());
       if (req.method === "GET" && path === "/api/projects")
         return send(res, 200, { projects: data.projects });
+      if (req.method === "GET" && path.startsWith("/api/history/imported")) {
+        const record = { id: "imported_fixture", title: "Earlier build report", provider: "codex", nativeSessionId: "fixture-retained-native", startedAt: null, endedAt: null, sourceKind: "metadata", readOnly: true, resumable: false, transcript: { available: true, bytes: 700000, text: "Retained fixture output. <script>never execute</script>", truncated: true } };
+        return send(res, 200, path === "/api/history/imported" ? { items: [record], malformed: [], total: 1, truncated: false } : record);
+      }
       if (req.method === "GET" && /^\/api\/projects\/[^/]+\/lanes$/.test(path))
         return send(res, 200, {
           lanes: [
@@ -169,6 +177,18 @@ export async function startFixtureServer({ port = 0 } = {}) {
         let result = { ok: true };
         let match;
         if (path === "/api/sessions") result = create(body);
+        else if (path === "/api/terminal/launch") {
+          const target = session(body.sessionId);
+          if (target.activeTurn || target.executionState === "running") return send(res, 409, { error: "Conversation is running." });
+          data.terminals ||= [];
+          let terminal = data.terminals.find((item) => item.sessionId === target.id && !item.exited);
+          if (!terminal) {
+            terminal = { id: `terminal-${target.id}`, sessionId: target.id, exited: false,
+              code: { machine: "mac", provider: "codex", nativeSessionId: target.nativeSessionId, host: "mac" } };
+            data.terminals.push(terminal);
+          }
+          result = { id: terminal.id };
+        }
         else if (
           (match = path.match(/^\/api\/sessions\/([^/]+)$/)) &&
           req.method === "PATCH"

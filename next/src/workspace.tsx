@@ -46,10 +46,18 @@ import {
   type WorkspaceSession,
 } from "./workspace-model";
 import { Review } from "./review";
+import { ImportedHistory } from "./imported-history";
 const RawTerminal = lazy(() => import("./workspace-terminal"));
 const pretty = (value: unknown) =>
   typeof value === "string" ? value : JSON.stringify(value, null, 2);
 const human = (value: string) => value.replaceAll("_", " ");
+const ACTION_KEY = "paneforge-next.pending-action";
+function savedAction(): { signature: string; requestId: string } | null {
+  try {
+    const value = JSON.parse(localStorage.getItem(ACTION_KEY) || "null");
+    return typeof value?.signature === "string" && typeof value?.requestId === "string" ? value : null;
+  } catch { return null; }
+}
 const time = (value?: string) =>
   value && Number.isFinite(Date.parse(value))
     ? new Date(value).toLocaleTimeString([], {
@@ -83,7 +91,7 @@ export function WorkspaceApp() {
   const [typed, setTyped] = useState(false);
   const [raw, setRaw] = useState(false);
   const [view, setView] = useState(() =>
-    window.location.hash === "#review" ? "review" : "workspace",
+    window.location.hash === "#review" ? "review" : window.location.hash === "#history" ? "history" : "workspace",
   );
   const [globalDraft, setGlobalDraft] = useState(() =>
     saved("paneforge-assistant-draft"),
@@ -96,7 +104,7 @@ export function WorkspaceApp() {
   const assistantPreparing = useRef(false);
   const handled = useRef(new Set<string>());
   const pendingAction = useRef<{ signature: string; requestId: string } | null>(
-    null,
+    savedAction(),
   );
   const eventRevision = useRef(0);
   const sessions = workspace.sessions.filter((s) => s.kind !== "assistant");
@@ -127,7 +135,7 @@ export function WorkspaceApp() {
     setWorkspace((current) => ({ ...current, projects: projects.projects }));
   }, [updateState]);
   useEffect(() => {
-    const syncView = () => setView(window.location.hash === "#review" ? "review" : "workspace");
+    const syncView = () => setView(window.location.hash === "#review" ? "review" : window.location.hash === "#history" ? "history" : "workspace");
     window.addEventListener("hashchange", syncView);
     return () => window.removeEventListener("hashchange", syncView);
   }, []);
@@ -320,12 +328,19 @@ export function WorkspaceApp() {
     const signature = JSON.stringify({ action, args });
     if (pendingAction.current?.signature !== signature)
       pendingAction.current = { signature, requestId: crypto.randomUUID() };
+    // Persist before creating anything: an uncertain response or app restart must
+    // reuse the same server receipt instead of creating a second conversation.
+    try { localStorage.setItem(ACTION_KEY, JSON.stringify(pendingAction.current)); }
+    catch { throw Error("Could not save this request for recovery. Nothing was submitted."); }
     const id = encodeURIComponent(String(args.sessionId || ""));
     if (action === "create_and_submit") {
       const next = await api<WorkspaceSession>("/api/sessions", {
         projectId: args.projectId,
         laneId: args.laneId,
         provider: args.provider,
+        title: args.title,
+        text: args.text,
+        requestId: pendingAction.current.requestId,
       });
       try {
         await api(
@@ -363,6 +378,7 @@ export function WorkspaceApp() {
       }
       setRaw(false);
       pendingAction.current = null;
+      try { localStorage.removeItem(ACTION_KEY); } catch { /* A retained receipt is safe to retry. */ }
       await refresh();
       return { sessionId: next.id };
     }
@@ -381,6 +397,7 @@ export function WorkspaceApp() {
       requestId: pendingAction.current.requestId,
     });
     pendingAction.current = null;
+    try { localStorage.removeItem(ACTION_KEY); } catch { /* A retained receipt is safe to retry. */ }
     await refresh();
     return { sessionId: String(args.sessionId) };
   }
@@ -593,6 +610,7 @@ export function WorkspaceApp() {
             <ListChecks size={16} />
             Review
           </button>
+          {!reviewOnly && <button className={`index-link ${view === "history" ? "selected" : ""}`} onClick={() => { window.location.hash = "history"; setView("history"); }}><FileText size={16} />Saved history</button>}
           <div className="index-heading projects-heading">
             <span className="eyebrow">PROJECTS</span>
           </div>
@@ -623,7 +641,7 @@ export function WorkspaceApp() {
             </p>
           </div>
         </nav>
-        {view === "review" ? <Review setNotice={setNotice} reviewOnly={reviewOnly} /> : <>
+        {view === "history" && !reviewOnly ? <ImportedHistory /> : view === "review" ? <Review setNotice={setNotice} reviewOnly={reviewOnly} onContinue={(id) => { setSelectedId(id); setView("workspace"); window.location.hash = ""; }} /> : <>
         <main className="agent-field" id="agent-field" tabIndex={-1}>
           <div className="field-heading">
             <div>
@@ -889,6 +907,7 @@ export function WorkspaceApp() {
                   fallback={<p className="muted">Opening saved output…</p>}
                 >
                   <RawTerminal
+                    key={selected.id}
                     session={selected}
                     terminals={state.terminals || []}
                     setNotice={setNotice}

@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { startFixtureServer } from "./fixture-server.mjs";
+import { requireRenderPc } from "./render-location.mjs";
+requireRenderPc();
 const artifactDir = new URL("../.local/stage1-evidence/", import.meta.url);
 await mkdir(artifactDir, { recursive: true });
 const report = {
@@ -44,7 +47,7 @@ try {
     page.on("pageerror", (error) => errors.push(error.message));
     page.on("console", (message) => {
       if (message.type() === "error") {
-        if (injectingFailure && message.text().includes("409 (Conflict)"))
+        if (injectingFailure && /409 \(Conflict\)|503 \(Service Unavailable\)/.test(message.text()))
           expectedFailureConsole.push(message.text());
         else errors.push(message.text());
       }
@@ -80,7 +83,7 @@ try {
       );
       check("objective-grouped agents");
       await page.screenshot({
-        path: new URL(`${viewport.name}-workspace.png`, artifactDir).pathname,
+        path: fileURLToPath(new URL(`${viewport.name}-workspace.png`, artifactDir)),
         fullPage: true,
       });
       await page
@@ -137,8 +140,7 @@ try {
         .waitFor();
       check("lazy raw terminal attaches existing terminal and replays output");
       await page.screenshot({
-        path: new URL(`${viewport.name}-raw-terminal.png`, artifactDir)
-          .pathname,
+        path: fileURLToPath(new URL(`${viewport.name}-raw-terminal.png`, artifactDir)),
         fullPage: true,
       });
       await page
@@ -247,6 +249,17 @@ try {
       check(
         "create validates lane; create/rename/brief reuse supervisor endpoints and preserve distinct IDs",
       );
+      await page.getByRole("button", { name: "Open raw terminal", exact: false }).click();
+      assert.equal(await page.getByRole("button", { name: "Resume in CLI", exact: true }).isDisabled(), true);
+      server.update("workspace-15", { executionState: "idle", activeTurn: null });
+      await page.getByRole("button", { name: "Resume in CLI", exact: true }).click();
+      await page.locator(".xterm").waitFor();
+      const launched = server.requests.filter((request) => request.path === "/api/terminal/launch");
+      assert.equal(launched.length, 1);
+      assert.equal(launched[0].body.sessionId, "workspace-15");
+      assert.equal(server.state().terminals.find((item) => item.sessionId === "workspace-15").code.nativeSessionId, "codex-native-15");
+      await page.getByRole("button", { name: "Close raw terminal", exact: false }).click();
+      check("CLI resume waits for idle and targets the existing conversation");
       await page.getByRole("button", { name: "Type a command" }).click();
       await page
         .getByRole("textbox", { name: "Workspace command" })
@@ -354,6 +367,43 @@ try {
       check(
         "injected brief rejection stays visible, keeps draft and exact created identity, and does not retry creation",
       );
+      // Simulate a committed create whose response is lost, then restart the UI.
+      await page.route("**/api/sessions", async route => {
+        if (route.request().method() !== "POST") return route.continue();
+        await route.fetch();
+        await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Creation response lost" }) });
+      });
+      await page.getByRole("button", { name: "New agent", exact: true }).click();
+      await page.getByRole("textbox", { name: "Agent title" }).fill("Recover lost creation");
+      await page.getByRole("textbox", { name: "Objective", exact: true }).fill("Reuse this request after reload.");
+      await page.getByRole("button", { name: "Create & brief agent" }).click();
+      await page.getByText("Creation response lost", { exact: true }).waitFor();
+      const lostId = server.requests.filter(r => r.path === "/api/sessions").at(-1).body.requestId;
+      assert.ok(lostId);
+      await page.unroute("**/api/sessions");
+      await page.reload();
+      await page.getByText("Fixture supervisor connected", { exact: true }).waitFor();
+      await page.getByRole("button", { name: "New agent", exact: true }).click();
+      assert.equal(await page.getByRole("textbox", { name: "Objective", exact: true }).inputValue(), "Reuse this request after reload.");
+      await page.getByRole("button", { name: "Create & brief agent" }).click();
+      await page.getByRole("complementary").getByText("codex-native-19", { exact: true }).waitFor();
+      assert.equal(server.requests.filter(r => r.path === "/api/sessions").at(-1).body.requestId, lostId);
+      assert.equal(server.state().sessions.filter(s => s.id === "workspace-19").length, 1);
+      assert.equal(await page.evaluate(() => localStorage.getItem("paneforge-next.pending-action")), null);
+      assert.deepEqual(errors, []);
+      check("lost creation response and reload reuse the saved request identity without a duplicate session");
+      await page.getByRole("button", { name: "Saved history", exact: true }).click();
+      await page.getByText("Earlier build report", { exact: true }).waitFor();
+      await page.getByRole("button", { name: "Read saved output", exact: true }).click();
+      await page.getByText("Retained fixture output. <script>never execute</script>", { exact: true }).waitFor();
+      await page.getByText("Showing a bounded preview. The complete transcript remains preserved on disk.", { exact: true }).waitFor();
+      assert.equal(await page.getByRole("main").getByRole("button", { name: /resume|reply/i }).count(), 0);
+      await page.reload();
+      await page.getByText("Earlier build report", { exact: true }).waitFor();
+      await page.getByRole("textbox", { name: "Search saved history" }).fill("not in preserved history");
+      await page.getByText("No matching records", { exact: true }).waitFor();
+      assert.deepEqual(errors, []);
+      check("preserved history is readable, escaped, explicitly partial, reloadable and non-resumable");
       run.requests = server.requests.map((r) => ({
         method: r.method,
         path: r.path,
@@ -363,7 +413,7 @@ try {
       run.result = "failed";
       run.error = error.stack;
       await page.screenshot({
-        path: new URL(`${viewport.name}-failure.png`, artifactDir).pathname,
+        path: fileURLToPath(new URL(`${viewport.name}-failure.png`, artifactDir)),
         fullPage: true,
       });
       throw error;
@@ -389,7 +439,7 @@ console.log(
         checks: run.checks.length,
         consoleErrors: run.consoleErrors.length,
       })),
-      artifacts: artifactDir.pathname,
+      artifacts: fileURLToPath(artifactDir),
     },
     null,
     2,

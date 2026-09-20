@@ -40,13 +40,48 @@ const allowedLink = (value: string) => {
   }
 };
 
-export function Review({ setNotice, reviewOnly = false }: { setNotice: (value: string) => void; reviewOnly?: boolean }) {
+type ReplyDraft = { text: string; requestId: string };
+const DRAFT_KEY = "paneforge-review-replies";
+function savedDrafts(): Record<string, ReplyDraft> {
+  try {
+    const value = JSON.parse(localStorage.getItem(DRAFT_KEY) || "{}");
+    const drafts: Record<string, ReplyDraft> = {};
+    for (const [id, draft] of Object.entries(value)) {
+      const item = draft as ReplyDraft | null;
+      if (item && typeof item.text === "string" && typeof item.requestId === "string") drafts[id] = { text: item.text, requestId: item.requestId };
+    }
+    return drafts;
+  } catch { return {}; }
+}
+
+export function Review({ setNotice, reviewOnly = false, onContinue }: { setNotice: (value: string) => void; reviewOnly?: boolean; onContinue?: (sessionId: string) => void }) {
   const [response, setResponse] = useState<ReviewsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [range, setRange] = useState<Range>("hour");
   const [showAll, setShowAll] = useState(false);
   const [query, setQuery] = useState("");
   const [updating, setUpdating] = useState<string | null>(null);
+  const [drafts, setDrafts] = useState(savedDrafts);
+  const [sending, setSending] = useState<string | null>(null);
+  function saveDrafts(next: Record<string, ReplyDraft>) {
+    setDrafts(next);
+    try { localStorage.setItem(DRAFT_KEY, JSON.stringify(next)); }
+    catch { setNotice("This reply is kept in this window, but could not be saved for restart."); }
+  }
+  async function reply(review: ReviewResult) {
+    const draft = drafts[review.id];
+    if (sending || !draft?.text.trim() || !review.nativeSessionId) return;
+    setSending(review.id);
+    try {
+      const result = await api<{ sessionId: string; nativeSessionId: string }>(`/api/reviews/${encodeURIComponent(review.id)}/reply`, draft);
+      if (!result.sessionId || result.nativeSessionId !== review.nativeSessionId) throw Error("The original conversation was not confirmed.");
+      const next = { ...drafts }; delete next[review.id]; saveDrafts(next);
+      setNotice("Reply sent to the original conversation.");
+      onContinue?.(result.sessionId);
+    } catch (error) {
+      setNotice(`Reply was not confirmed. Your draft is saved for retry: ${(error as Error).message}`);
+    } finally { setSending(null); }
+  }
 
   const refresh = async () => {
     setLoading(true);
@@ -135,6 +170,11 @@ export function Review({ setNotice, reviewOnly = false }: { setNotice: (value: s
         <section><h3>Original prompt</h3><p className="review-copy">{review.prompt || "No original prompt was recorded."}</p></section>
         <section><h3>Outcome</h3><p className="review-copy">{review.report || "No report was recorded."}</p>{review.proof && <p className="review-proof">Proof: {review.proof}</p>}{review.evidence?.length ? <ul className="review-evidence" aria-label="Evidence">{review.evidence.map((entry, index) => <li key={`${entry}-${index}`}>{entry}</li>)}</ul> : null}</section>
         <div className="review-links"><button className="quiet" onClick={() => void openLink(review, { label: "Open report", url: "https://report.local" }, -1)}><ExternalLink size={14} />Open report</button>{review.links.map((link, index) => <button key={`${link.url}-${index}`} className="quiet" onClick={() => void openLink(review, link, index)} disabled={!allowedLink(link.url)} title={allowedLink(link.url) ? link.url : "Unsupported link address"}><ExternalLink size={14} />{link.label || "Open link"}</button>)}</div>
+        {!reviewOnly && review.nativeSessionId && <form className="review-reply" onSubmit={(event) => { event.preventDefault(); void reply(review); }}>
+          <label htmlFor={`reply-${review.id}`}>Continue this conversation</label>
+          <textarea id={`reply-${review.id}`} value={drafts[review.id]?.text || ""} disabled={sending !== null} placeholder="Ask for a change or tell the agent what to do next…" maxLength={24000} onChange={(event) => saveDrafts({ ...drafts, [review.id]: { text: event.target.value, requestId: crypto.randomUUID() } })} />
+          <button className="primary" type="submit" disabled={sending !== null || !drafts[review.id]?.text.trim()}>{sending === review.id ? "Sending…" : "Send reply"}</button>
+        </form>}
         <footer>{review.kind === "result" ? <button className="primary" disabled={updating === review.id} onClick={() => void acknowledge(review, !review.reviewedAt)}><Check size={15} />{updating === review.id ? "Saving…" : review.reviewedAt ? "Mark unreviewed" : "Mark reviewed"}</button> : <p className="review-pending">{review.kind === "decision" ? "Decision remains pending." : review.kind === "blocked" ? "Block remains pending." : "This closed session has no completion result."}</p>}{review.cwd && <code>{review.cwd}</code>}</footer>
       </article>)}
     </section>

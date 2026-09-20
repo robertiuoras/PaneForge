@@ -5,8 +5,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { build } from 'esbuild'
 import { createRequire } from 'node:module'
+import { fileURLToPath } from 'node:url'
 
-const repo = new URL('..', import.meta.url).pathname
+const repo = fileURLToPath(new URL('..', import.meta.url))
 const temp = mkdtempSync(join(tmpdir(), 'pf-prompt-review-'))
 const out = join(temp, 'prompt-review.cjs')
 

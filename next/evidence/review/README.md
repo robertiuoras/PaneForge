@@ -12,6 +12,21 @@ failure, successful and failed report opening, decision separation, undo, closed
 labels, and retained-history search. The separate review-server-test.mjs exercises the
 real host's route boundary, origin/host checks, and inability to control live sessions.
 
+The 2026-09-21 screenshots were rendered on `DESKTOP-CMSUCM1`, Windows, at
+`C:\Users\Gamer\rbuild\next`, after a successful remote TypeScript/Vite build.
+The review test also passed rejected reply, preserved draft after reload, retry with
+the same request ID, and selection of the confirmed original conversation. These
+reply endpoints were mocked; live provider continuation needs its separate runtime test.
+
+`node scripts/remote-render.mjs review` now checks the designated PC over SSH and
+uses the existing shared `claude-config/rbuild.mjs` transport. The two browser test
+entry points call `render-location.mjs` before launching Chromium. A direct Mac
+invocation was verified to refuse execution. After adding that guard, the initial
+wrapper rerun correctly deferred on an SSH connection reset despite Tailscale showing
+the PC online. This is failure-path evidence, not a successful rerun of the wrapper.
+There is no local rendering fallback. These tests exercise browser rendering only;
+no video rendering job was requested or executed as part of this verification.
+
 Runtime verification on 2026-09-20 used `npm run try -- --minimized --headless
 --profile=dev-b`. The real Electron preload saved a synthetic shell-session result;
 the shell was explicitly closed, and the Review HTTP host connected to those real IPC

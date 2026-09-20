@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { startFixtureServer } from "./fixture-server.mjs";
+import { requireRenderPc } from "./render-location.mjs";
+
+requireRenderPc();
 
 const now = Date.now();
 const reviews = [
@@ -21,6 +25,7 @@ const reviews = [
 let failAck = true;
 let failOpen = true;
 const opens = [];
+const replies = [];
 const artifactDir = new URL("../evidence/review/", import.meta.url);
 await mkdir(artifactDir, { recursive: true });
 const browser = await chromium.launch({ channel: "chrome", headless: true });
@@ -35,6 +40,11 @@ try {
     const id = request.url().split("/").at(-2);
     const review = reviews.find((item) => item.id === id);
     if (!review) return route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ error: "Review not found" }) });
+    if (request.url().endsWith("/reply")) {
+      replies.push(request.postDataJSON());
+      if (replies.length === 1) return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Fixture reply unavailable" }) });
+      return route.fulfill({ contentType: "application/json", body: JSON.stringify({ sessionId: "workspace-12", nativeSessionId: "codex-native-12" }) });
+    }
     if (request.url().endsWith("/open")) {
       const body = request.postDataJSON();
       opens.push({ id, index: body.index });
@@ -61,9 +71,24 @@ try {
   assert.equal(await page.evaluate(() => window.location.hash), "");
   await page.getByRole("button", { name: "Review", exact: true }).click();
   await page.getByRole("heading", { name: "See what finished." }).waitFor();
-  await page.screenshot({ path: new URL("desktop.png", artifactDir).pathname, fullPage: true });
+  const reply = page.getByRole("textbox", { name: "Continue this conversation" });
+  await reply.fill("Please check the final result again.");
+  await page.getByRole("button", { name: "Send reply", exact: true }).click();
+  await page.getByText(/Reply was not confirmed/).waitFor();
+  await page.reload();
+  await reply.waitFor();
+  assert.equal(await reply.inputValue(), "Please check the final result again.", "reply draft survives reload after rejected send");
+  await page.getByRole("button", { name: "Send reply", exact: true }).click();
+  await page.getByRole("heading", { name: "Move the work forward." }).waitFor();
+  assert.equal(replies.length, 2);
+  assert.equal(replies[0].requestId, replies[1].requestId, "retry retains idempotency key");
+  assert.equal(await page.evaluate(() => localStorage.getItem("paneforge-selected-session")), "workspace-12");
+  await page.getByRole("button", { name: "Review", exact: true }).click();
+  await reply.waitFor();
+  assert.equal(await reply.inputValue(), "", "confirmed send clears draft");
+  await page.screenshot({ path: fileURLToPath(new URL("desktop.png", artifactDir)), fullPage: true });
   await page.setViewportSize({ width: 900, height: 800 });
-  await page.screenshot({ path: new URL("compact.png", artifactDir).pathname, fullPage: true });
+  await page.screenshot({ path: fileURLToPath(new URL("compact.png", artifactDir)), fullPage: true });
   assert.equal(await page.getByText("Workspace shell built", { exact: true }).count(), 1);
   assert.equal(await page.getByText("fixture build log retained", { exact: true }).count(), 1);
   assert.equal(await page.getByText("Choose release timing", { exact: true }).count(), 1);
@@ -90,7 +115,7 @@ try {
   await page.getByRole("button", { name: "Mark reviewed" }).waitFor();
   await page.getByPlaceholder("Search prompt, title, or report").fill("retained");
   assert.equal(await page.getByText("Older retained report", { exact: true }).count(), 1);
-  console.log(JSON.stringify({ result: "passed", checks: ["hash selects review", "responsive synthetic screenshots", "failed open leaves result pending", "acknowledgement failure remains visible", "successful report open acknowledges informational result", "decision open remains pending", "undo returns a result to pending", "closed history avoids completion claim", "reviewed history is searchable"], artifacts: artifactDir.pathname }));
+  console.log(JSON.stringify({ result: "passed", checks: ["reply draft survives rejection and reload", "retry reuses request id", "confirmed reply selects original session", "hash selects review", "responsive synthetic screenshots", "failed open leaves result pending", "acknowledgement failure remains visible", "successful report open acknowledges informational result", "decision open remains pending", "undo returns a result to pending", "closed history avoids completion claim", "reviewed history is searchable"], artifacts: artifactDir.pathname }));
 } finally {
   await context.close();
   await server.close();

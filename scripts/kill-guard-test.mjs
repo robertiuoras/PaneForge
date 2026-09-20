@@ -20,7 +20,8 @@ function ok(what, cond) {
   }
 }
 
-const DEV_COPY = `${root}/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron . --minimized`
+// This is a written macOS process chain, independent of the checkout name or host OS.
+const DEV_COPY = '/fixtures/PaneForge-b/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron . --minimized'
 const INSTALLED = '/Applications/PaneForge.app/Contents/MacOS/PaneForge'
 const AGENT = '/Users/someone/.local/bin/claude --dangerously-skip-permissions'
 const SHELL = '-bash'
