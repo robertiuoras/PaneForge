@@ -80,3 +80,37 @@ test('requires an explicit target directory', () => {
   try { assert.throws(() => migrateHistory({ source: f.source }), /--target is required/) }
   finally { rmSync(f.root, { recursive: true, force: true }) }
 })
+
+test('repeat import rejects altered staging and preserves a damaged backup for investigation', () => {
+  const f = fixture()
+  try {
+    const first = migrateHistory({ source: f.source, target: f.target, apply: true })
+    const staged = join(first.stagingPath, 'records', first.records[0].migrationKey, 'transcript.log')
+    const original = readFileSync(staged)
+    writeFileSync(staged, 'changed stage')
+    assert.throws(() => migrateHistory({ source: f.source, target: f.target, apply: true }), /staged hash verification failed/)
+    writeFileSync(staged, original)
+    const backup = join(first.backupPath, 'history', 'pane_1', 'transcript.log')
+    writeFileSync(backup, 'changed backup')
+    assert.throws(() => migrateHistory({ source: f.source, target: f.target, apply: true }), /backup hash verification failed/)
+    assert.equal(readFileSync(backup, 'utf8'), 'changed backup')
+    assert.deepEqual(readFileSync(join(f.source, 'history', 'pane_1.log')), original)
+  } finally { rmSync(f.root, { recursive: true, force: true }) }
+})
+
+test('empty history writes a readable report and manifest conflicts are counted', () => {
+  const f = fixture()
+  try {
+    const first = migrateHistory({ source: f.source, target: f.target, apply: true })
+    const manifest = join(first.stagingPath, 'records', first.records[0].migrationKey, 'manifest.json')
+    const value = JSON.parse(readFileSync(manifest, 'utf8'))
+    writeFileSync(manifest, JSON.stringify({ ...value, sourceHash: 'unexpected' }))
+    const repeated = migrateHistory({ source: f.source, target: f.target, apply: true })
+    assert.equal(repeated.counts.conflicts, 1)
+    assert.equal(repeated.counts.alreadyPresent, 0)
+    rmSync(join(f.source, 'history'), { recursive: true })
+    mkdirSync(join(f.source, 'history'))
+    const empty = migrateHistory({ source: f.source, target: f.target, apply: true })
+    assert.equal(JSON.parse(readFileSync(join(empty.stagingPath, 'import-report.json'))).counts.discovered, 0)
+  } finally { rmSync(f.root, { recursive: true, force: true }) }
+})

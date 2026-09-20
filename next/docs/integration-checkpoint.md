@@ -18,11 +18,11 @@
 
 ## Verification
 
-- `node --test tests/*.test.mjs`: **99 passing** after the dependency update.
+- `node --test tests/*.test.mjs`: **102 passing** after CLI continuity and migration-integrity checks.
 - Isolated server on port `4333`, temporary data profile: `/api/health` and `/api/state` returned cleanly before any session or CLI startup.
 - Bounded included-plan Codex journey: live preflight selected `gpt-5.6-sol` at `low`; a read-only first turn completed and stored the exact original prompt plus a claimed final review. A review follow-up was accepted and completed on the same native conversation ID. After restart on the same profile, the idle session and both durable reviews remained present. The receipt was redacted to IDs, status, model/effort, and review counts. A separate headless Chat to Mac CLI to Chat probe selected `gpt-5.6-luna` at `medium`: the first Chat turn, `codex exec resume` on its exact native identity, transcript reconciliation, and final Chat turn all completed, with seven reconciled items. Its temporary native ID is retained only in the local redacted execution receipt.
 - Remote PC browser verification was performed by the root worker only: 20 desktop and 20 compact fixture checks passed, plus Review checks. No local browser was used.
 
-## Remaining gap
+## PC execution proof and remaining gap
 
-PC Code execution and remote rendering cannot be claimed from this machine because the PC SSH/authentication route has been intermittent. The guarded dispatch is covered by unit tests and routes selected model/effort; it must receive a real PC completion receipt before release claims build execution.
+A real guarded PC Code request completed on DESKTOP-CMSUCM1 using included-plan Codex `gpt-5.6-luna` / `medium`. Exact native thread `01a0bfba-bec3-7170-be87-d89f0175b6ad` recorded `task_complete` and the requested final response `PC_CODE_OK` after reading an isolated non-client fixture. The runner removed API credentials and forced ChatGPT login. Root read retained redacted receipt `/tmp/paneforge-next-pc-code-proof-receipt-20260921.json`; no duplicate job was launched. This proves bounded remote dispatch, routing and native completion, not a substantive build, sustained transport reliability, or installed native-app acceptance. Remote rendering has separate PC fixture evidence.
