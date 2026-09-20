@@ -1,0 +1,27 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "PaneForge Next",
+  "version": "0.1.0",
+  "identifier": "ai.paneforge.next",
+  "build": { "frontendDist": "../dist" },
+  "app": {
+    "windows": [{
+      "title": "PaneForge Next",
+      "url": "http://127.0.0.1:4321",
+      "width": 1280,
+      "height": 850,
+      "minWidth": 375,
+      "minHeight": 600,
+      "backgroundColor": "#10100f",
+      "theme": "Dark",
+      "dragDropEnabled": false
+    }],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' http://127.0.0.1:4321 ws://127.0.0.1:4321; img-src 'self' data:; object-src 'none'; frame-ancestors 'none'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "resources": { "resources/runtime": "runtime" }
+  }
+}
