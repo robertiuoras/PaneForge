@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "startedAt": "2026-09-20T16:08:05.614Z",
+  "startedAt": "2026-09-20T16:12:28.945Z",
   "mode": "headless deterministic fixtures; no provider calls",
   "runs": [
     {
@@ -198,5 +198,5 @@
       "result": "passed"
     }
   ],
-  "finishedAt": "2026-09-20T16:08:32.589Z"
+  "finishedAt": "2026-09-20T16:12:56.513Z"
 }

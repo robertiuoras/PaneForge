@@ -38,3 +38,7 @@ A fresh read-only dry run after `1048a09e` discovered 184 retained records: 65 m
 ## Preserved-history follow-up proof
 
 The updated UI archive `paneforge-next-ui-history-20260921.tar.gz` (SHA-256 `000dd9268704efc8b56d3d1981aaba19972e63b7468291d57e91bf33a70921f2`) passed on `DESKTOP-CMSUCM1`: 20 workspace checks at each desktop and compact size, zero unexpected console errors, and the Review suite. The additional check covers escaped, explicitly partial, non-resumable saved-history output and reload/search. PC TypeScript and production builds passed. Receipt timestamps: `2026-09-20T16:07:41.7420846Z` to `2026-09-20T16:08:38.5593211Z`. Returned artifacts: `/tmp/pc-next-ui-history-20260921-result.tar.gz`. These are deterministic fixture checks, not an installed-user-profile acceptance claim.
+
+## Final saved-history search verification
+
+PC job `pc-next-ui-search-20260921` passed on DESKTOP-CMSUCM1 at 2026-09-20T16:13:02Z. Input archive SHA256 `72b6b0ac5a1a73ecfcabea5979758595f0a6dbb2ee4b9b4676d7e132cee155b4`. TypeScript/Vite build, 20 desktop and 20 compact workspace checks (zero console errors), and 12 Review checks passed. Returned built assets and evidence were retained for packaging. Rendering occurred only on the PC through the existing native remote shell and outbound SCP; inbound SSH remains blocked.
