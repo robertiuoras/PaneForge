@@ -482,7 +482,9 @@ assert.deepEqual(A.buildArgs(claude, { resume: true }), fallback('--continue'))
 // Codex has a named resume subcommand, so the exact id is never replaced by --last.
 assert.deepEqual(A.buildArgs(spec('codex'), { resume: true, resumeId: 'x' }), [
   'resume',
-  'x'
+  'x',
+  '-c',
+  'tui.resume_cwd="current"'
 ])
 // The model still lands after the resume form, whichever one was used.
 assert.deepEqual(

@@ -1009,6 +1009,12 @@ export function buildArgs(
       ? [...spec.resumeArgs]
       : [...(spec.args ?? [])]
   if (spec.alwaysArgs?.length) argv.unshift(...spec.alwaysArgs)
+  // A PaneForge pane's cwd is its intentional destination, including after a lane or
+  // cross-machine handoff. Codex otherwise asks whether to use the old session cwd when
+  // those paths differ, which blocks unattended resumes. Keep this process-scoped so the
+  // person's global Codex preference is untouched.
+  if (spec.id === 'codex' && opts.resume)
+    argv.push('-c', 'tui.resume_cwd="current"')
   // How hard the pane starts out thinking. Codex only, and only when the pane was opened
   // with that reading switched on: it is a `-c` override of `model_reasoning_effort` for
   // THIS process, so nothing on disk changes and the person's own config.toml is left
