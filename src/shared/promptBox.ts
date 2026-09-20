@@ -257,7 +257,16 @@ export function composerAt(
     if (top >= 0) {
       for (let r = top + 1; r <= cursorRow + (opts.maxDown ?? 8); r++) {
         const text = read(r)
-        if (!text.trim() && /^ {2}\S.* · /.test(read(r + 1))) {
+        const footer = read(r + 1)
+        // Codex 0.155 replaced the `model · cwd` footer with a right-aligned context
+        // meter. Without recognising that footer, a wrapped draft had no composer:
+        // click-to-place fell back to its final drawn row and sent arrows from the wrong
+        // logical offset, which is especially visible through a delayed remote echo.
+        if (
+          !text.trim() &&
+          (/^ {2}\S.* · /.test(footer) ||
+            /^ {2}(?:tab to queue message|esc to interrupt)\b.*\b\d+% context left$/.test(footer))
+        ) {
           if (cursorRow < r) return { top, bottom: r - 1, width: opts.codexCols }
           break
         }

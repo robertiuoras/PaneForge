@@ -248,6 +248,13 @@ for (const row of [CC_FIRST, CC_SECOND, ZSH, BASH, '│ >                  │']
     eq('a long visible Codex draft starts at its first row', span?.top, 1);
     eq('a long visible Codex draft includes its final row', span?.bottom, 30);
   }
+  // Captured from Codex 0.155.1. Its replacement footer has no middle dot, so the old
+  // status-row proof missed the box and exposed only the final continuation row.
+  const current = ['', '› ' + 'x'.repeat(73), '  ' + 'x'.repeat(23), '',
+    '  tab to queue message                                   100% context left'];
+  const currentSpan = composerAt(r => current[r] ?? '', 2, { codexCols: 76 });
+  eq('Codex 0.155 context footer still closes the draft', currentSpan?.top, 1);
+  eq('Codex 0.155 wrapped draft includes its first row', currentSpan?.bottom, 2);
 }
 // Captured live 2026-09-11 off this checkout, Claude Code 2.1.268 and Codex 0.153.4 in a
 // headless dev copy at 77 columns - the frames a person sees when they click around a
