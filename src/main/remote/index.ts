@@ -87,7 +87,7 @@ export class Remote extends EventEmitter {
     super()
     this.me = () => {
       const c = getConfig().remote
-      return { id: c.id, name: c.name, platform: process.platform, version: app.getVersion(), handoffResume: ['claude', 'codex'], person: this.person }
+      return { id: c.id, name: c.name, platform: process.platform, version: app.getVersion(), handoffResume: ['claude', 'codex'], promptSubmit: true, person: this.person }
     }
     this.host = new RemoteHost(backend, this.me, () => getConfig().remote.code)
     this.host.on('changed', () => this.changed())
@@ -258,6 +258,13 @@ export class Remote extends EventEmitter {
     const cut = splitId(id)
     if (!cut) return
     this.clients.get(cut.peer)?.send({ ...msg, id: cut.local })
+  }
+
+  /** Submit an app-dispatched prompt on the device that owns this mirrored pane. */
+  sendPrompt(id: string, text: string): boolean {
+    const cut = splitId(id)
+    if (!cut) return false
+    return this.clients.get(cut.peer)?.sendPrompt(cut.local, text) === true
   }
 
   /** Start a pane on another device - the "new session over there" path. */

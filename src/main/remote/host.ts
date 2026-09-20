@@ -33,6 +33,8 @@ export interface HostBackend {
   buffer(id: string): string
   log(id: string, bytes: number): string
   write(id: string, data: string): void
+  /** Submit an app-dispatched job through the owner's composer-aware prompt path. */
+  sendPrompt(id: string, text: string): void
   resize(
     id: string,
     cols: number,
@@ -441,6 +443,12 @@ export class RemoteHost extends EventEmitter {
           this.writingGuest = guest
           try { this.backend.write(id, String(m.data ?? '')) }
           finally { this.writingGuest = null }
+          return
+        case 'prompt':
+          // One intent crosses the link. The pane owner can see its composer state, so it
+          // performs the delayed Return and idle retry there instead of trusting a second
+          // network frame to arrive after the pasted text.
+          this.backend.sendPrompt(id, String(m.text ?? ''))
           return
         case 'resize':
           // A mirror asking to BORROW the size, which is what stops the far end drawing
