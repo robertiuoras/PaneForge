@@ -89,6 +89,7 @@ function backend() {
   const started = []
   const submitted = []
   const kept = new Set()
+  const closeDone = []
   // What a guest asked this desk to hand BACK, and what this desk answers with. The
   // answer is settable because the interesting cases are the ones that are not a plain
   // yes: a pane mid-turn (queued over there), a refusal, and a backend too old to know
@@ -106,6 +107,7 @@ function backend() {
     started,
     submitted,
     kept,
+    closeDone,
     setHistory(id, data) {
       histories[id] = data
     },
@@ -145,6 +147,7 @@ function backend() {
       clearAttention: () => {},
       setKeepOpen: (id, keep) => (keep ? kept.add(id) : kept.delete(id), true),
       isKeepOpen: (id) => kept.has(id),
+      armCloseWhenDone: (id) => (closeDone.push(id), true),
       kill: () => {},
       restart: () => null,
       rename: () => {},
@@ -347,6 +350,8 @@ async function main() {
   ok('Keep open is saved by the owning machine', await client.setKeepOpen('s1', true))
   ok('the owner stored Keep open for that pane', be.kept.has('s1'))
   ok('the updated owner reading returns to the mirror', await until(() => client.list().find((s) => s.id === '@HOSTID/s1')?.keepOpen === true))
+  ok('a mirrored pane can be armed to close on its owning machine', client.send({ t: 'closeDone', id: 's1' }))
+  ok('the owner receives that close-when-done request', await until(() => be.closeDone.join() === 's1'), JSON.stringify(be.closeDone))
 
   ok('scrollback arrives on attach', await until(() => client.buffer('s1') === 'SECRET-SCROLLBACK-s1'))
   ok('attaching is reported to the host', await until(() => host.list()[0]?.watching === 1))

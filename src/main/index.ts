@@ -1178,6 +1178,7 @@ const remote = new Remote({
     return true
   },
   isKeepOpen: (id) => (getConfig().pinnedPanes ?? []).includes(id),
+  armCloseWhenDone: (id) => manager.armCloseWhenDone(id),
   kill: (id) => manager.kill(id),
   restart: (id) => continuationOwnsSource(id) ? null : manager.restart(id),
   rename: (id, title) => manager.rename(id, title),
@@ -1979,7 +1980,7 @@ ipcMain.handle('sessions:clientUndo', (_e, id: string) => manager.undoClientName
 // A pane that has finished what it was opened for, said while it is open rather than
 // asked for at the open. The rule that decides WHEN is `shared/closeWhenDone.ts`.
 ipcMain.handle('sessions:closeWhenDone', (_e, id: string, reportTo?: string) =>
-  manager.armCloseWhenDone(id, reportTo)
+  remote.owns(id) ? remote.armCloseWhenDone(id) : manager.armCloseWhenDone(id, reportTo)
 )
 // How hard a Codex pane thinks. Nothing is typed here: the choice is remembered and the
 // pane acts on it at its next turn boundary. See `shared/effort.ts`.
