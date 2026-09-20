@@ -18,7 +18,7 @@ const c = await connect(process.env.PF_PORT ?? '9334')
 const id='cursor-test', device=`cursor-test-${Date.now()}`, code=crypto.randomUUID()
 let proc, host, peer, buffer='', queue=Promise.resolve(), slow=false
 const dataListeners=[], sessionListeners=[], writes=[]
-const session={id,title:'Remote cursor disposable test',cwd:'/tmp/pf-editor-parity',agent:'codex',status:'idle',createdAt:Date.now(),cols:159,rows:45}
+const session={id,title:'Remote cursor disposable test',cwd:root,agent:'codex',status:'idle',createdAt:Date.now(),cols:159,rows:45}
 try {
  const env={...process.env,TERM:'xterm-256color'}
  for(const key of ['OPENAI_API_KEY','ANTHROPIC_API_KEY','OPENAI_BASE_URL'])delete env[key]
@@ -36,7 +36,7 @@ try {
   resize:(_,cols,rows)=>{if(cols===session.cols&&rows===session.rows)return;session.cols=cols;session.rows=rows;proc.resize(cols,rows);for(const cb of sessionListeners)cb([session])},
   redraw:()=>{},setBusy:()=>{},clearAttention:()=>{},kill:()=>{},restart:()=>null,rename:()=>{},switchAgent:()=>null,
   projects:async()=>[],agents:async()=>[],jobs:async()=>[],
-  onData:cb=>(dataListeners.push(cb),()=>{}),onSessions:cb=>(sessionListeners.push(cb),()=>{}),onAttention:()=>()=>{}
+  onData:cb=>(dataListeners.push(cb),()=>{}),onTyped:()=>()=>{},onSessions:cb=>(sessionListeners.push(cb),()=>{}),onAttention:()=>()=>{}
  }
  host=new RemoteHost(backend,()=>({id:device,name:'Disposable cursor test',platform:process.platform,version:'0.0.0-test'}),()=>code)
  host.start(0)
@@ -45,21 +45,29 @@ try {
  const result=await c.evaluate(`window.api.pairRemote(${JSON.stringify({address:'127.0.0.1',port:host.server.address().port,code,name:'Disposable cursor test'})})`)
  assert.ok(result.ok,result.error)
  await c.evaluate(`window.api.watchRemote(${JSON.stringify(device)},['${id}'])`)
- await pause(1500)
- const remoteId=(await c.evaluate(`window.api.listSessions().then(a=>a.find(s=>s.title==='Remote cursor disposable test')?.id)`))
+ let remoteId
+ for(const deadline=Date.now()+10_000;Date.now()<deadline&&!remoteId;){
+  remoteId=await c.evaluate(`window.api.listSessions().then(a=>a.find(s=>s.title==='Remote cursor disposable test')?.id)`)
+  if(!remoteId)await pause(100)
+ }
  assert.ok(remoteId,'test mirror must appear')
  const q=JSON.stringify(remoteId)
  await c.evaluate(`document.querySelector('.row[data-id="'+${q}+'"]')?.click()`)
  await pause(400)
- const inspect=()=>c.evaluate(`(()=>{const p=window.__pf[${q}],t=p.term,b=t.buffer.active,s=p.inputRows();return {cols:t.cols,span:s,cursor:[b.cursorX,b.baseY+b.cursorY],lines:s?.rows.map((r,i)=>b.getLine(s.top+i).translateToString(true).slice(r.start,r.end)),keys:p.clickKeys().map(x=>x.length)}})()`)
+ const inspect=()=>c.evaluate(`(()=>{const p=window.__pf[${q}],t=p.term,b=t.buffer.active,s=p.inputRows(),cursor=b.baseY+b.cursorY;return {cols:t.cols,span:s,cursor:[b.cursorX,cursor],lines:s?.rows.map((r,i)=>b.getLine(s.top+i).translateToString(true).slice(r.start,r.end)),screen:Array.from({length:Math.min(t.rows,cursor+5)},(_,i)=>[i,b.getLine(i)?.translateToString(true),b.getLine(i)?.isWrapped]),keys:p.clickKeys().map(x=>x.length)}})()`)
  // This directory was previously trusted by the disposable native-editor checks.
- const first=await inspect()
- assert.ok(first.lines?.some(x=>/Ask Codex|Try |Implement|Find and fix|Explain/.test(x)),'expected a ready Codex composer; refusing trust/auth dialogs')
+ let first
+ for(const deadline=Date.now()+30_000;Date.now()<deadline;){
+  first=await inspect()
+  if(first.lines?.some(x=>/Ask Codex|Try |Implement|Find and fix|Explain/.test(x)))break
+  await pause(250)
+ }
+ assert.ok(first.lines?.some(x=>/Ask Codex|Try |Implement|Find and fix|Explain/.test(x)),`expected a ready Codex composer; refusing trust/auth dialogs: ${JSON.stringify(first)}`)
  await c.evaluate(`window.__pf[${q}].term.focus()`)
  await c.send('Input.insertText',{text:'x'.repeat(first.cols+20)})
  await pause(700)
  const before=await inspect()
- assert.equal(before.lines.join(''),'x'.repeat(first.cols+20),'draft must be visible')
+ assert.equal(before.lines.join(''),'x'.repeat(first.cols+20),`draft must be visible: ${JSON.stringify(before)}`)
  const target={col:before.span.rows[0].start+4,row:before.span.top}
  const point=await c.evaluate(`(()=>{const t=window.__pf[${q}].term,r=document.querySelector('.pane[data-id="'+${q}+'"] .xterm-screen')?.getBoundingClientRect()??t.element.querySelector('.xterm-screen').getBoundingClientRect();return {x:r.x+(${target.col}+0.5)*r.width/t.cols,y:r.y+(${target.row}-t.buffer.active.viewportY+0.5)*r.height/t.rows}})()`)
  slow=true
