@@ -36,7 +36,7 @@ buildSync({
   platform: 'node',
   outfile
 })
-const { restoredClock, continueAfterRestore, restoreAsleep, deskToWrite } = createRequire(import.meta.url)(outfile)
+const { restoredClock, continueAfterRestore, restoreAsleep, deskToWrite, codexTurnInProgress } = createRequire(import.meta.url)(outfile)
 
 let n = 0
 const ok = (what, cond) => {
@@ -46,6 +46,19 @@ const ok = (what, cond) => {
 
 const NOW = 1_760_000_000_000
 const HOUR = 3600_000
+
+const record = (type, payload) => JSON.stringify({ type, payload })
+const working = record('response_item', { type: 'custom_tool_call', name: 'exec' })
+const final = record('response_item', { type: 'message', role: 'assistant', phase: 'final' })
+ok('native tool work is unfinished despite an idle footer', codexTurnInProgress(working) === true)
+ok('commentary is not completion', codexTurnInProgress(record('response_item', { type: 'message', role: 'assistant', phase: 'commentary' })) === true)
+ok('final answer ends native work', codexTurnInProgress(working + '\n' + final) === false)
+ok('metadata after final does not reopen work', codexTurnInProgress(final + '\n' + record('event_msg', { type: 'token_count' })) === false)
+ok('explicit abort is not auto-continued', codexTurnInProgress(working + '\n' + record('event_msg', { type: 'turn_aborted' })) === false)
+ok('task completion is not auto-continued', codexTurnInProgress(working + '\n' + record('event_msg', { type: 'task_complete' })) === false)
+ok('a new turn supersedes completion', codexTurnInProgress(final + '\n' + record('event_msg', { type: 'task_started' })) === true)
+ok('partial tail retains prior valid evidence', codexTurnInProgress(working + '\n{"type":') === true)
+ok('missing evidence is unknown, not finished', codexTurnInProgress('{"type":') === undefined)
 
 // ---------------------------------------------------------------- the clock
 {
@@ -122,8 +135,8 @@ ok('snapshot() writes when the pane really opened', /openedAt: s\.meta\.openedAt
 ok('snapshot() writes the last turn length', /lastRunMs: s\.meta\.lastRunMs/.test(sessions))
 ok('snapshot() writes whether the pane was engaged', /engaged: s\.meta\.engaged/.test(sessions))
 ok(
-  'snapshot() reads mid-turn off runSince, the only honest reading of it',
-  /wasWorking: Boolean\(s\.meta\.runSince\)/.test(sessions)
+  'snapshot() reconciles the native turn and falls back to the clock',
+  /wasWorking:[\s\S]*?rolloutTurn\(codexTranscriptPath[\s\S]*?\.inProgress[\s\S]*?\?\? Boolean\(s\.meta\.runSince\)/.test(sessions)
 )
 ok('start() takes its clock from restoredClock', /restoredClock\(req, Date\.now\(\)\)/.test(sessions))
 ok('start() uses that openedAt', /openedAt: clock\.openedAt/.test(sessions))
@@ -149,7 +162,7 @@ ok(
 ok('a pane slept on purpose comes back asleep', /asleep: Boolean\(s\.meta\.asleep\)/.test(sessions))
 
 const index = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
-ok('the restore asks restoreAsleep, per pane, in order', /restoreAsleep\(req, i, recoverOn\)/.test(index))
+ok('the restore asks restoreAsleep with reconciled state, per pane, in order', /restoreAsleep\(restored, i, recoverOn\)/.test(index))
 // "Keep this pane open" is a promise about a pane, and a restored pane is a NEW session
 // with a new id - so the promise is carried across by the one field that names the pane
 // being replaced. Without this the pin was renderer state and every restart dropped it.

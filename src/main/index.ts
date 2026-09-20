@@ -131,6 +131,7 @@ import {
   nativeTranscriptPage
 } from './transcripts'
 import { codexContextUsage, receivedContinuation } from './contextUsage'
+import { rolloutTurn } from './effort'
 import { startContinuation } from './continuation'
 import { handoffCandidates } from '../shared/handoffSteps'
 import { receiveHandoff, sendHandoff, shareable } from './handoff'
@@ -4060,14 +4061,9 @@ function confidentRoute(text: string): string | undefined {
 }
 
 /**
- * Bring panes back. Each one resumes the agent's own last conversation
- * (`claude --continue`), so a restart costs a redraw rather than the thread you were
- * in. Nothing is typed into them: a pane that comes back mid-turn must sit there
- * with the cursor in its prompt box, not re-send work the agent already did.
- *
- * The desk is dropped before the first pane starts, never after. A crash while
- * restoring would otherwise leave the app reopening the same panes on every launch,
- * for ever, with no way in the UI to say no.
+ * Reopen exact saved conversations. Interrupted turns use the configured recovery
+ * prompt once their CLI is ready; completed turns are never continued automatically.
+ * Keep unstarted/failed panes recoverable until the new desk is durably saved.
  */
 let restoredThisRun = false
 
@@ -4141,8 +4137,12 @@ function restorePanes(specs: StartSessionRequest[], previous = false): void {
         // asleep. Starting it fresh would replace work the desk promised to preserve.
         // A shell has no conversation state, so its existing fresh-shell restore remains.
         const unavailable = req.agent !== 'shell' && !named
+        // Older snapshots can say idle despite an interrupted native turn. Reconcile
+        // only a verified conversation; explicit sleep remains authoritative below.
+        const restored = { ...req, wasWorking: named && req.agent === 'codex'
+          ? rolloutTurn(file).inProgress ?? req.wasWorking : req.wasWorking }
         const meta = manager.start({
-          ...req,
+          ...restored,
           // An asleep placeholder must keep the exact id even when it cannot be checked
           // right now. `wake()` verifies it again before spawning; dropping it here made
           // one restart erase a conversation that was still on disk.
@@ -4152,7 +4152,7 @@ function restorePanes(specs: StartSessionRequest[], previous = false): void {
           // Everything but the pane being looked at comes back with no agent in it. The
           // card, its place and its screen are all there; a press starts the CLI in the
           // conversation it was in. See `shared/restoreTurn.ts` for the measurement.
-          asleep: unavailable || req.asleep || clash[i] || restoreAsleep(req, i, recoverOn),
+          asleep: unavailable || req.asleep || clash[i] || restoreAsleep(restored, i, recoverOn),
           laneNote: unavailable
             ? 'Saved conversation could not be verified. It remains asleep; start a new session only if you want to replace it.'
             : clash[i]
@@ -4227,6 +4227,8 @@ function restorePanes(specs: StartSessionRequest[], previous = false): void {
  * the window is still loading its own JavaScript.
  */
 let offer: RestoreOffer | null = null
+// Keep launch state in the main process; dialog rows are only display/selection data.
+let offeredSpecs: StartSessionRequest[] = []
 
 /** A saved pane described for the dialog, with the reasons it cannot come back. */
 function describe(spec: StartSessionRequest, i: number): RestorePane {
@@ -4257,7 +4259,8 @@ function describe(spec: StartSessionRequest, i: number): RestorePane {
 }
 
 function makeRestoreOffer(desk: { specs: StartSessionRequest[]; at: number; clean: boolean }, previous = false): RestoreOffer {
-  const all = desk.specs.map(describe)
+  offeredSpecs = desk.specs.map((spec) => ({ ...spec }))
+  const all = offeredSpecs.map(describe)
   const panes = all.slice(0, MAX_RESTORE)
   const plan = restorePlan(panes.filter((p) => !p.gone).length, {
     totalMb: totalMb(),
@@ -4377,7 +4380,9 @@ ipcMain.handle('restore:previous', () => {
 
 ipcMain.on('restore:answer', (_e, answer: RestoreAnswer) => {
   const pending = offer
+  const saved = offeredSpecs
   offer = null
+  offeredSpecs = []
   setDeskHold(null)
   if (answer?.always) setConfig({ restoreAfterRestart: 'always' })
   if (!pending) return
@@ -4393,17 +4398,10 @@ ipcMain.on('restore:answer', (_e, answer: RestoreAnswer) => {
   const wanted = new Set(answer.ids ?? [])
   const specs = pending.panes
     .filter((p) => wanted.has(p.id) && !p.gone)
-    .map((p) => ({
-      cwd: p.cwd,
-      title: p.title,
-      agent: p.agent,
-      model: p.model,
-      resumeId: p.resumeId,
-      // The two fields that only the desk knows and only this map can lose: the pane's
-      // screen and its pin both hang off the id it is coming back as.
-      scrollbackId: p.scrollbackId,
-      asleep: p.asleep
-    }))
+    // Resume the exact saved request, including wasWorking, clocks, resumeCwd,
+    // lane ownership and effort. Rebuilding from display rows lost these fields,
+    // so accepting the dialog could never continue an interrupted turn.
+    .flatMap((p) => saved[Number(p.id)] ? [{ ...saved[Number(p.id)] }] : [])
   // `--open` and a restore are both allowed to have happened: whatever is already on
   // screen stays, the restored panes join it.
   restorePanes(specs, pending.previous)
