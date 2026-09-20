@@ -78,6 +78,7 @@ export interface AutoClearArm {
 }
 import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from './pipe'
 import { codexAcceptedPrompt, forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeEvidence, resumeIdFor, transcriptPath } from './transcripts'
+import { recordPromptReview } from './promptReview'
 import { liveModelFor } from './paneModel'
 // How hard a Codex pane thinks. The rule is `shared/effort.ts`, the disk is
 // `main/effort.ts`, the levels each model offers come from Codex itself.
@@ -3652,6 +3653,9 @@ export class SessionManager extends EventEmitter {
         return settle('unsent')
       }
       ourWrite('\r')
+      // Renderer submissions record at `prompt:used`; queued continuations and handoffs
+      // bypass that event, so capture their typed prompt here on the first return only.
+      if (tries === 0) recordPromptReview(live.meta, prompt)
       noteSubmittedPrompt(id, prompt)
       acLog(`${id} return sent (try ${tries + 1}/${PROMPT_ENTER_TRIES})`)
       const typedAt = Date.now()
