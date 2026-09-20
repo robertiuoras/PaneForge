@@ -21,7 +21,7 @@
 //   node scripts/test-all.mjs             every test below
 //   node scripts/test-all.mjs rail theme  only the ones whose name contains one of these
 
-import { execFileSync, spawn, execSync } from 'node:child_process'
+import { execFileSync, spawn, spawnSync, execSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { cpus, loadavg, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -29,9 +29,17 @@ import { fileURLToPath } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 
+// This suite includes browser rendering. Route before creating workers or temp
+// profiles, including when invoked indirectly by the lane coordinator.
+if (process.platform !== 'win32') {
+  const remote = spawnSync(process.execPath, [join(root, 'scripts', 'test-remote.mjs'), ...process.argv.slice(2)], { cwd: root, stdio: 'inherit' })
+  process.exit(remote.status ?? 1)
+}
+
 // name -> the script file, in the order they run. Cheapest first is deliberate: a broken
 // build should say so in a second rather than after the slow ones.
 const TESTS = [
+  ['remotesuite', 'test-remote-test.mjs'],
   ['promptreview', 'prompt-review-test.mjs'],
   ['review', 'review-test.mjs'],
   ['claudemd', 'claudemd-size-test.mjs'],
