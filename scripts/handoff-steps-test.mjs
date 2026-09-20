@@ -9,7 +9,7 @@
 import assert from 'node:assert'
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { join, normalize } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 const { openNextSteps, actionableNextSteps, stepsWord } = await import(
@@ -218,7 +218,7 @@ console.log(`\n${pass} cases passed`)
   writeFileSync(pane, '# Handoff\n\n## Next steps\n\n1. Add the revenue check.\n2. Prove the digest writes.\n')
   at(pane, 1_000_100)
   const fresh = handoffFor(cwd, 's15', t0 + 1_000)
-  assert.strictEqual(fresh.path, pane, 'a pane handoff created inside the cache window is the one read')
+  assert.strictEqual(normalize(fresh.path), normalize(pane), 'a pane handoff created inside the cache window is the one read')
   assert.strictEqual(fresh.open, 2, 'and its open steps are counted')
   console.log('ok   a handoff CREATED inside the cache window is read, not the older one the cache chose')
   // The absent case is the same shape: a pane cached as "never wrote one" must see its first handoff.
@@ -227,6 +227,6 @@ console.log(`\n${pass} cases passed`)
   const pane16 = join(dir, 'session-handoff.pane-s16.md')
   writeFileSync(pane16, '# Handoff\n\n## Next steps\n\n1. One thing.\n')
   at(pane16, 1_000_200)
-  assert.strictEqual(handoffFor(cwd, 's16', t0 + 1_000).path, pane16, 'a second pane sees its own first handoff at once')
+  assert.strictEqual(normalize(handoffFor(cwd, 's16', t0 + 1_000).path), normalize(pane16), 'a second pane sees its own first handoff at once')
   console.log('ok   a pane whose reading was cached sees its own first handoff at once')
 }
