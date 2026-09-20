@@ -11,6 +11,7 @@ use std::{
     time::Duration,
 };
 use tauri::Manager;
+mod updates;
 
 const PORT: &str = "4321";
 const HEALTH_ATTEMPTS: usize = 80;
@@ -166,6 +167,14 @@ fn wait_for_supervisor(revision: &str, data: &std::path::Path) -> Result<(), Str
     Err("PaneForge supervisor did not become healthy on port 4321 within 8 seconds; it was left running for a later retry.".to_string())
 }
 
+fn supervisor_data(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    Ok(app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("Could not locate PaneForge data storage: {error}"))?
+        .join("supervisor"))
+}
+
 fn start_supervisor(app: &tauri::AppHandle) -> Result<(), String> {
     let root = runtime_root(app)?;
     let node = node_path(&root);
@@ -174,11 +183,7 @@ fn start_supervisor(app: &tauri::AppHandle) -> Result<(), String> {
             "PaneForge Next is incomplete: its bundled Node runtime is missing".to_string(),
         );
     }
-    let data = app
-        .path()
-        .app_data_dir()
-        .map_err(|error| format!("Could not locate PaneForge data storage: {error}"))?
-        .join("supervisor");
+    let data = supervisor_data(app)?;
     fs::create_dir_all(&data)
         .map_err(|error| format!("Could not create PaneForge data storage: {error}"))?;
     let revision = runtime_revision(&root);
@@ -186,7 +191,7 @@ fn start_supervisor(app: &tauri::AppHandle) -> Result<(), String> {
         return require_matching_supervisor(actual, &revision, &data);
     }
     let path = supervisor_path(&node)?;
-    let _child = Command::new(&node)
+    let mut child = Command::new(&node)
         .arg(root.join("scripts/start.mjs"))
         .current_dir(&root)
         .env("PANEFORGE_PORT", PORT)
@@ -194,6 +199,7 @@ fn start_supervisor(app: &tauri::AppHandle) -> Result<(), String> {
         .env("PANEFORGE_DIST_DIR", root.join("dist"))
         .env("PANEFORGE_REVISION", &revision)
         .env("PANEFORGE_NOTIFICATIONS", "1")
+        .env("PANEFORGE_NATIVE_CONTROL", "1")
         .env("PATH", path)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -202,6 +208,10 @@ fn start_supervisor(app: &tauri::AppHandle) -> Result<(), String> {
         .map_err(|error| {
             format!("PaneForge Next could not start its bundled supervisor: {error}")
         })?;
+    // Reap an owned supervisor when it exits, including idle update shutdown.
+    thread::spawn(move || {
+        let _ = child.wait();
+    });
     wait_for_supervisor(&revision, &data)
 }
 
@@ -392,10 +402,13 @@ async fn request_microphone_permission(
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![request_microphone_permission])
         .setup(|app| {
             start_supervisor(&app.handle())
-                .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error).into())
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
+            updates::start(app.handle().clone());
+            Ok(())
         })
         .run(tauri::generate_context!())
         .expect("PaneForge Next could not start");
