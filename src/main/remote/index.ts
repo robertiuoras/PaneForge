@@ -187,6 +187,13 @@ export class Remote extends EventEmitter {
     return true
   }
 
+  /** Arm a mirrored pane on the machine that owns its pty. */
+  armCloseWhenDone(id: string): boolean {
+    const cut = splitId(id)
+    const client = cut ? this.clients.get(cut.peer) : undefined
+    return Boolean(cut && client?.send({ t: 'closeDone', id: cut.local }))
+  }
+
   /** Does this id belong to another device? */
   owns(id: string): boolean {
     const cut = splitId(id)

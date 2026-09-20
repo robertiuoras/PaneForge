@@ -51,6 +51,8 @@ export interface HostBackend {
   clearAttention(id: string): void
   setKeepOpen?(id: string, keep: boolean): boolean
   isKeepOpen?(id: string): boolean
+  /** Arm an owned pane to close after its current job has really finished. */
+  armCloseWhenDone?(id: string): boolean
   kill(id: string): void
   restart(id: string): Session | null
   rename(id: string, title: string): void
@@ -514,6 +516,9 @@ export class RemoteHost extends EventEmitter {
         case 'kill':
           guest.attached.delete(id)
           this.backend.kill(id)
+          return
+        case 'closeDone':
+          this.backend.armCloseWhenDone?.(id)
           return
         case 'restart':
           this.backend.restart(id)
