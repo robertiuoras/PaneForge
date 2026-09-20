@@ -1,0 +1,35 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {execFileSync} from 'node:child_process';
+import {mkdtempSync,readFileSync,writeFileSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {createHash,createPublicKey,verify} from 'node:crypto';
+
+test('packaging CLI produces cryptographically bound updater versions',t=>{
+ const dir=mkdtempSync(join(tmpdir(),'next-signing-test-'));
+ t.after(()=>rmSync(dir,{recursive:true,force:true}));
+ const cli=fileURLToPath(new URL('../node_modules/@tauri-apps/cli/tauri.js',import.meta.url));
+ const key=join(dir,'test.key'),artifact=join(dir,'test.bin');
+ const env={...process.env,CI:'true'};
+ for(const name of Object.keys(env))if(name.startsWith('TAURI_SIGNING_'))delete env[name];
+ const run=args=>execFileSync(process.execPath,[cli,...args],{env,stdio:'ignore',timeout:15000});
+ run(['signer','generate','--ci','--password','','--write-keys',key]);
+ const data=Buffer.from('Disposable updater signing fixture');writeFileSync(artifact,data);
+ run(['signer','sign','--private-key-path',key,'--password','','--app-version','0.1.1',artifact]);
+ const publicLines=Buffer.from(readFileSync(key+'.pub','utf8').trim(),'base64').toString().trim().split(/\r?\n/);
+ const publicBytes=Buffer.from(publicLines[1],'base64');
+ const lines=Buffer.from(readFileSync(artifact+'.sig','utf8').trim(),'base64').toString().trim().split(/\r?\n/);
+ const signature=Buffer.from(lines[1],'base64');
+ const comment=lines[2].replace(/^trusted comment: /,'');
+ const publicKey=createPublicKey({key:Buffer.concat([Buffer.from('302a300506032b6570032100','hex'),publicBytes.subarray(10)]),format:'der',type:'spki'});
+ assert.equal(signature.subarray(0,2).toString(),'ED');
+ assert.equal(verify(null,createHash('blake2b512').update(data).digest(),publicKey,signature.subarray(10)),true);
+ const globalSignature=Buffer.from(lines[3],'base64');
+ const signedComment=value=>Buffer.concat([signature.subarray(10),Buffer.from(value)]);
+ assert.equal(verify(null,signedComment(comment),publicKey,globalSignature),true);
+ assert.ok(comment.split('\t').includes('version:0.1.1'));
+ assert.equal(verify(null,signedComment(comment.replace('version:0.1.1','version:0.1.2')),publicKey,globalSignature),false);
+ assert.equal(verify(null,createHash('blake2b512').update('tampered').digest(),publicKey,signature.subarray(10)),false);
+});
