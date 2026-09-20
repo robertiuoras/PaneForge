@@ -474,9 +474,11 @@ const claude = spec('claude')
 // Bypass permissions can only be reached from argv, so Claude Code always leads with the
 // flag - every form below carries it, exactly once, in front.
 const bypass = (...rest) => ['--dangerously-skip-permissions', ...rest]
-assert.deepEqual(A.buildArgs(claude, { resume: true, resumeId: 'chat-a' }), bypass('--resume', 'chat-a'))
-// No id (or an agent with no way to take one): the old behaviour, unchanged.
-assert.deepEqual(A.buildArgs(claude, { resume: true }), bypass('--continue'))
+const fallback = (...rest) => bypass(...rest, '--fallback-model', 'sonnet,opus')
+const opusFallback = (...rest) => bypass(...rest, '--fallback-model', 'sonnet')
+assert.deepEqual(A.buildArgs(claude, { resume: true, resumeId: 'chat-a' }), fallback('--resume', 'chat-a'))
+// No id still uses the CLI's ordinary most-recent-conversation resume form.
+assert.deepEqual(A.buildArgs(claude, { resume: true }), fallback('--continue'))
 // Codex has a named resume subcommand, so the exact id is never replaced by --last.
 assert.deepEqual(A.buildArgs(spec('codex'), { resume: true, resumeId: 'x' }), [
   'resume',
@@ -485,9 +487,17 @@ assert.deepEqual(A.buildArgs(spec('codex'), { resume: true, resumeId: 'x' }), [
 // The model still lands after the resume form, whichever one was used.
 assert.deepEqual(
   A.buildArgs(claude, { resume: true, resumeId: 'c', model: 'claude-opus-5' }),
-  bypass('--resume', 'c', '--model', 'claude-opus-5')
+  opusFallback('--resume', 'c', '--model', 'claude-opus-5')
 )
-assert.deepEqual(A.buildArgs(claude, {}), bypass())
+assert.deepEqual(A.buildArgs(claude, {}), fallback())
+assert.deepEqual(
+  A.buildArgs(claude, { model: 'claude-sonnet-5' }),
+  bypass('--model', 'claude-sonnet-5', '--fallback-model', 'opus')
+)
+assert.deepEqual(
+  A.buildArgs(claude, { model: 'claude-fable-5-1' }),
+  fallback('--model', 'claude-fable-5-1')
+)
 // A fresh pane starts in bypass too, and the flag is never doubled up.
 const fresh = A.buildArgs(claude, {})
 assert.equal(

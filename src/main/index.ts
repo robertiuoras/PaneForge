@@ -61,6 +61,7 @@ import { startDisplayAwake } from './awake'
 import { attachGlass, glassSupported } from './glass'
 import { invalidateAgents, listAgents, specFor } from './agents'
 import { codexInstalledVersion, codexLatest, forgetCodexVersion } from './codexModels'
+import { guardClaudeUsage } from './claudeQuota'
 import { isOutdated, versionOf } from '../shared/codexCatalogue'
 import { gitInfo } from './git'
 import { projectRoot } from './projectRoot'
@@ -1173,7 +1174,10 @@ const remote = new Remote({
   switchAgent: (id, agent, model) => continuationOwnsSource(id) ? null : manager.switchAgent(id, agent, model),
   // A guest's launch goes through the same lane split a local one does: two agents
   // in one repo must not share a checkout just because one of them is remote.
-  startSession: async (req) => manager.start(await laneFor(req)),
+  startSession: async (req) => {
+    await guardClaudeUsage(req.agent, req.model, req.asleep)
+    return manager.start(await laneFor(req))
+  },
   // A pane handed here from another device: pull its branch, drop its transcript
   // where the CLI will look, start it as an ordinary local pane. The lane split
   // applies exactly as it would to a local launch - two agents in one repo must
@@ -1183,7 +1187,10 @@ const remote = new Remote({
       {
         root: projectsRoot,
         place: (req) => laneFor(req),
-        start: (req) => manager.start(req),
+        start: async (req) => {
+          await guardClaudeUsage(req.agent, req.model, req.asleep)
+          return manager.start(req)
+        },
         historyDir: () => join(app.getPath('userData'), 'history'),
         noteTailCols: (id, cols) => history.noteCols(id, cols),
         claudeProjectDir: projectDir,
@@ -1694,6 +1701,10 @@ async function startOrSend(
       req = { ...req, asleep: true, prompt: undefined, laneNote: 'Saved conversation could not be verified. It remains asleep; start a new session only if you want to replace it.' }
     } else req = { ...req, resume: false, resumeId: undefined }
   }
+  // GuardDeck reads the existing authenticated usage feed; this does not spend a model
+  // request. Do it before both branches: reuse can send new work to an existing pane,
+  // while the other branch opens a CLI that may immediately submit the seeded prompt.
+  await guardClaudeUsage(req.agent, req.model, req.asleep)
   // A row that says "this is where this work happens" - a client - goes back to the pane
   // that is already open there rather than opening a second one beside it. Live panes
   // only: a session that has exited is a row in History, and History is where somebody
@@ -3951,10 +3962,11 @@ function isOpenRequest(value: unknown): value is OpenRequest {
  * for, which is a worse failure than doing nothing: the whole point of the feature is
  * that the folder a session opens in stops being a surprise.
  */
-function openRequest(req: OpenRequest): void {
+async function openRequest(req: OpenRequest): Promise<void> {
   const target = req.open ?? (req.route ? confidentRoute(req.route) : undefined)
   if (!target) return
   try {
+    await guardClaudeUsage(undefined, req.model)
     manager.start({
       cwd: target,
       prompt: req.prompt ?? req.route ?? undefined,

@@ -77,6 +77,7 @@ const TESTS = [
   ['mainsyncio', 'main-sync-io-test.mjs'],
   ['elapsed', 'elapsed-test.mjs'],
   ['usage', 'usage-test.mjs'],
+  ['claudequota', 'claude-quota-test.mjs'],
   ['railplace', 'rail-place-test.mjs'],
   ['cursorclick', 'cursor-click-test.mjs'],
   ['stickyselect', 'sticky-select-test.mjs'],
