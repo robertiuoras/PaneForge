@@ -1174,6 +1174,7 @@ const remote = new Remote({
   switchAgent: (id, agent, model) => continuationOwnsSource(id) ? null : manager.switchAgent(id, agent, model),
   // A guest's launch goes through the same lane split a local one does: two agents
   // in one repo must not share a checkout just because one of them is remote.
+  sendPrompt: (id, text) => manager.sendPrompt(id, text),
   startSession: async (req) => {
     await guardClaudeUsage(req.agent, req.model, req.asleep)
     return manager.start(await laneFor(req))
@@ -2115,11 +2116,7 @@ onDeskChanged = (): void => {
 ipcMain.on('pty:prompt', (_e, id: string, text: string) => {
   if (!text) return
   if (remote.owns(id)) {
-    // The link has no prompt op, so this is the separate-keystroke half only: two
-    // messages rather than one write with the CR glued on. Timing on the other machine
-    // is that machine's own composer, which this side cannot read.
-    remote.send(id, { t: 'write', data: text })
-    setTimeout(() => remote.send(id, { t: 'write', data: '\r' }), 600)
+    remote.sendPrompt(id, text)
     return
   }
   manager.sendPrompt(id, text)

@@ -778,6 +778,8 @@ interface CodexMeta {
 const CODEX_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 /** Opening metadata can carry a large native rollout payload, but never needs an unbounded read. */
 const CODEX_META_LINE_BYTES = 64 * 1024
+/** A fresh prompt receipt is near the rollout tail; keep the proof bounded on long chats. */
+const CODEX_PROMPT_RECEIPT_BYTES = 2 * 1024 * 1024
 
 /** Direct validation of an already uniquely claimed local rollout. */
 function codexMatches(file: string, cwd: string, id: string): boolean {
@@ -888,6 +890,53 @@ export function codexTranscriptPath(cwd: string, resumeId: string): string | nul
   }
   const matches = codexRollouts().map(codexMeta).filter((row): row is CodexMeta => Boolean(row)).filter((row) => row.id === resumeId && sameCwd(row.cwd, cwd))
   return matches.length === 1 ? matches[0].file : null
+}
+
+/**
+ * Did this exact pane's native Codex rollout accept this exact prompt after `since`?
+ *
+ * The terminal can temporarily have no readable composer while Codex queues a follow-up
+ * behind an active turn. In that state screen paint is deliberately inconclusive, but the
+ * native user-message row is an authoritative receipt. The read stays at the rollout tail
+ * because this is only used seconds after Enter was sent.
+ */
+export function codexAcceptedPrompt(id: string, prompt: string, since: number): boolean {
+  const file = transcriptFor(id)
+  if (!file || !prompt) return false
+  let fd = -1
+  try {
+    const size = statSync(file).size
+    const start = Math.max(0, size - CODEX_PROMPT_RECEIPT_BYTES)
+    const buf = Buffer.alloc(size - start)
+    fd = openSync(file, 'r')
+    const read = readSync(fd, buf, 0, buf.length, start)
+    let text = buf.toString('utf8', 0, read)
+    if (start > 0) {
+      const firstLine = text.indexOf('\n')
+      if (firstLine < 0) return false
+      text = text.slice(firstLine + 1)
+    }
+    for (const line of text.split('\n')) {
+      let row: { timestamp?: string | number; type?: string; payload?: { type?: string; role?: string; content?: unknown } }
+      try {
+        row = JSON.parse(line) as typeof row
+      } catch {
+        continue
+      }
+      const at = typeof row.timestamp === 'number' ? row.timestamp : typeof row.timestamp === 'string' ? Date.parse(row.timestamp) : NaN
+      if (!Number.isFinite(at) || at < since) continue
+      if (row.type !== 'response_item' || row.payload?.type !== 'message' || row.payload.role !== 'user') continue
+      const content = row.payload.content
+      if (!Array.isArray(content)) continue
+      if (content.some((part) => typeof part === 'object' && part !== null &&
+        (part as { type?: string }).type === 'input_text' && (part as { text?: string }).text === prompt)) return true
+    }
+  } catch {
+    return false
+  } finally {
+    if (fd >= 0) closeSync(fd)
+  }
+  return false
 }
 
 /**

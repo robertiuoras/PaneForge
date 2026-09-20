@@ -59,6 +59,8 @@ export interface PeerIdentity {
   version: string
   /** Providers whose conversation imports preserve the source until resume is verified. */
   handoffResume?: string[]
+  /** The owner can accept one prompt intent and perform its verified submit sequence locally. */
+  promptSubmit?: boolean
   /**
    * Whether somebody is at that device's screen, as of the moment it said so.
    *
@@ -541,6 +543,7 @@ function identityOf(m: Msg): PeerIdentity {
     platform: String(m.platform ?? ''),
     version: String(m.version ?? ''),
     ...(typeof m.person === 'boolean' ? { person: m.person } : {}),
+    ...(m.promptSubmit === true ? { promptSubmit: true } : {}),
     ...(Array.isArray(m.handoffResume) ? { handoffResume: m.handoffResume.filter((p): p is string => p === 'claude' || p === 'codex') } : {})
   }
 }

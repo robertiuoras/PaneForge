@@ -853,9 +853,10 @@ function onTheClock(p: ReclaimPane, personHere = true, now = 0, idleMs = 0): boo
  * outcome, not a candidate.
  */
 function sleepable(p: ReclaimPane, personHere = true, pressure: SleepPressure = 'ok'): boolean {
-  // A sleeping pane is the OUTCOME of this clock, never a candidate for it. `keepable`
-  // no longer refuses one - the close clock takes it - so the refusal lives here.
-  if (p.asleep) return false
+  // A sleeping pane is the OUTCOME of this clock, never a candidate for it. An exited
+  // pane has already given its process back and has nothing left to sleep. `keepable`
+  // deliberately accepts both for the close clock, so these refusals live here.
+  if (p.asleep || p.state === 'exited') return false
   // Held off the clock, handed back under pressure. `keepable` reads `pinned` itself, so
   // the pressure case has to blank it to get the rest of the refusal set.
   if (pressure !== 'ok') return keepable({ ...p, pinned: false }, personHere)

@@ -216,6 +216,28 @@ export class RemoteClient extends EventEmitter {
   }
 
   /**
+   * Give the pane owner one prompt intent, so text and submission cannot be split by a
+   * reconnect. Older owners did not advertise that operation, so keep their exact
+   * two-keystroke protocol until both devices have upgraded.
+   */
+  sendPrompt(localId: string, text: string): boolean {
+    if (!this.conn?.ready) return false
+    if (this.conn.peer.promptSubmit === true) {
+      this.conn.send({ t: 'prompt', id: localId, text })
+      return true
+    }
+    const conn = this.conn
+    conn.send({ t: 'write', id: localId, data: text })
+    const timer = setTimeout(() => {
+      // Never send the Return into a replacement connection: its owner cannot know
+      // whether the text frame reached the old one before it died.
+      if (this.conn === conn && conn.ready) conn.send({ t: 'write', id: localId, data: '\r' })
+    }, 600)
+    timer.unref()
+    return true
+  }
+
+  /**
    * A message somebody is WATCHING for went out and nothing came back: is this link alive?
    *
    * Closing a pane is that message - the row only goes when the far end's next pane list

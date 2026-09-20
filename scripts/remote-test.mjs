@@ -87,6 +87,7 @@ function backend() {
   const resized = []
   const returned = []
   const started = []
+  const submitted = []
   // What a guest asked this desk to hand BACK, and what this desk answers with. The
   // answer is settable because the interesting cases are the ones that are not a plain
   // yes: a pane mid-turn (queued over there), a refusal, and a backend too old to know
@@ -102,6 +103,7 @@ function backend() {
     resized,
     returned,
     started,
+    submitted,
     setHistory(id, data) {
       histories[id] = data
     },
@@ -132,6 +134,7 @@ function backend() {
         typed.push([id, data])
         if (data.endsWith('\r')) for (const cb of listeners.typed) cb(id, data.trim(), 'phone')
       },
+      sendPrompt: (id, text) => submitted.push([id, text]),
       resize: (id, cols, rows, borrowed, viewer) =>
         resized.push([id, cols, rows, borrowed === true, viewer]),
       returnSize: (id, viewer) => returned.push([id, viewer]),
@@ -203,6 +206,28 @@ async function main() {
     )
   }
 
+  // ------------------------------------------------------- old-owner prompt fallback
+  // Devices update independently. An older owner still needs the split write/Return
+  // protocol, but a reconnect between those frames must not submit into the replacement
+  // connection, where nobody can know whether its owner saw the text.
+  {
+    const legacy = new RemoteClient(
+      { id: 'OLD', name: 'Old desk', address: '127.0.0.1', port: 1, code: 'ABCD-EFGH', auto: false },
+      () => ({ id: 'NEW', name: 'New desk', platform: 'darwin', version: 'test' })
+    )
+    const sent = []
+    const first = { ready: true, peer: { id: 'OLD', name: 'Old desk', platform: 'win32', version: 'old' }, send: (m) => sent.push(m) }
+    legacy.conn = first
+    ok('an older owner receives the prompt text', legacy.sendPrompt('s1', 'legacy job') && sent[0]?.data === 'legacy job')
+    legacy.conn = { ...first, send: (m) => sent.push({ ...m, replacement: true }) }
+    await wait(650)
+    ok(
+      'a replacement connection never receives the old prompt Return',
+      sent.length === 1 && !sent.some((m) => m.replacement || m.data === '\r'),
+      JSON.stringify(sent)
+    )
+  }
+
   // ------------------------------------------------------------------- invites
   // The one line that replaced three typed fields. Everything here is about the round
   // trip surviving the way a person actually moves it: selected with a stray quote, sent
@@ -251,7 +276,7 @@ async function main() {
   const code = newCode()
   const port = await freePort()
   const be = backend()
-  const identity = { id: 'HOSTID', name: 'Desk PC', platform: 'win32', version: '0.0.0-test' }
+  const identity = { id: 'HOSTID', name: 'Desk PC', platform: 'win32', version: '0.0.0-test', promptSubmit: true }
   const host = new RemoteHost(be.api, () => identity, () => code)
   host.start(port)
   ok('listener comes up', await until(() => host.listening))
@@ -445,6 +470,20 @@ async function main() {
   ok('keystrokes reach the far pty', await until(() => be.typed.some(([id, d]) => id === 's1' && d === 'npm test\r')))
   await new Promise(resolve => setTimeout(resolve, 60))
   ok('writing viewer does not receive its own prompt a second time', !prompts.some(([, line]) => line === 'npm test'))
+
+  // App-dispatched work is one wire intent. Splitting its text and Return across two
+  // frames allowed a reconnect between them to leave the text visibly pasted but idle.
+  client.sendPrompt('s1', 'run the queued job')
+  ok(
+    'a remote app prompt reaches the owner as one submit intent',
+    await until(() => be.submitted.some(([id, text]) => id === 's1' && text === 'run the queued job')),
+    JSON.stringify(be.submitted)
+  )
+  ok(
+    'the atomic prompt path does not also type raw text or Return',
+    !be.typed.some(([id, data]) => id === 's1' && (data === 'run the queued job' || data === '\r')),
+    JSON.stringify(be.typed)
+  )
 
   // A finished turn over there raises a hand here.
   let raised = null

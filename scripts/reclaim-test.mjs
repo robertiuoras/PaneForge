@@ -921,6 +921,7 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
     ['is being handed over', { handingOff: true }],
     ['is running a command', { job: 'npm' }],
     ['left a background job', { backJob: 'npm' }],
+    ['has already exited', { state: 'exited' }],
     ['is already asleep', { asleep: NOW - HOUR }]
   ]) {
     const p = [pane({ id: 'x', lastKeyboard: NOW - 9 * HOUR, ...extra }), pane({ id: 'pad', lastKeyboard: NOW })]
