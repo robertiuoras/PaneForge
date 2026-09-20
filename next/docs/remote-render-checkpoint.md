@@ -42,3 +42,7 @@ The updated UI archive `paneforge-next-ui-history-20260921.tar.gz` (SHA-256 `000
 ## Final saved-history search verification
 
 PC job `pc-next-ui-search-20260921` passed on DESKTOP-CMSUCM1 at 2026-09-20T16:13:02Z. Input archive SHA256 `72b6b0ac5a1a73ecfcabea5979758595f0a6dbb2ee4b9b4676d7e132cee155b4`. TypeScript/Vite build, 20 desktop and 20 compact workspace checks (zero console errors), and 12 Review checks passed. Returned built assets and evidence were retained for packaging. Rendering occurred only on the PC through the existing native remote shell and outbound SCP; inbound SSH remains blocked.
+
+## Normal transport verification and recurrence
+
+After a peer reported spontaneous SSH recovery, root independently verified Mac-to-PC echo and SFTP `pwd`. The normal `scripts/remote-render.mjs workspace` path then completed through `rbuild.mjs`: 20 desktop and 20 compact checks, no console errors, exit 0. The render launcher now stages only current browser inputs, excluding the measured 3.2 GB Rust target, 330 MB packaged runtime, and 243 MB download artifacts. A subsequent preflight failed closed with exit 3 when inbound SSH began resetting again; no local browser was started. Recovery was temporary, with no repair or root cause established.

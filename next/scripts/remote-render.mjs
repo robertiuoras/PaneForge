@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { hostname, homedir } from "node:os";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { hostname, homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { requireRenderPc } from "./render-location.mjs";
@@ -30,8 +30,21 @@ if (!existsSync(rbuild)) {
   console.error("Rendering deferred: the established remote build transport is unavailable. Nothing was rendered locally.");
   process.exit(3);
 }
-// Fixed job names only. rbuild snapshots this working tree and preserves the remote exit code.
-const run = spawnSync(process.execPath, [rbuild, "--repo", root, "--", "node", "scripts/remote-render.mjs", process.argv[2]], {
-  cwd: root, stdio: "inherit", env: { ...process.env, RBUILD_HOST: "Gamer@100.78.1.77" },
-});
-process.exit(run.status ?? 1);
+// Native packaging creates gigabytes of Rust/runtime output. Send only the current
+// render inputs, including uncommitted edits, through the established transport.
+const stage = mkdtempSync(join(tmpdir(), "paneforge-render-"));
+const snapshot = join(stage, "paneforge-next-render");
+let status = 1;
+try {
+  mkdirSync(snapshot);
+  for (const input of ["src", "scripts", "server", "tests", "public", "package.json", "package-lock.json", "index.html", "tsconfig.json", "vite.config.ts"]) {
+    if (existsSync(join(root, input))) cpSync(join(root, input), join(snapshot, input), { recursive: true });
+  }
+  const run = spawnSync(process.execPath, [rbuild, "--repo", snapshot, "--", "node", "scripts/remote-render.mjs", process.argv[2]], {
+    cwd: snapshot, stdio: "inherit", env: { ...process.env, RBUILD_HOST: "Gamer@100.78.1.77" },
+  });
+  status = run.status ?? 1;
+} finally {
+  rmSync(stage, { recursive: true, force: true });
+}
+process.exit(status);
