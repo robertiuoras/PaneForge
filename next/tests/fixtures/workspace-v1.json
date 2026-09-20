@@ -1,0 +1,202 @@
+{
+  "schemaVersion": 1,
+  "fixture": true,
+  "provider": { "status": "ready" },
+  "projects": [
+    { "id": "demo", "name": "Workspace", "path": "/fixtures/workspace" },
+    { "id": "checks", "name": "Verification", "path": "/fixtures/checks" }
+  ],
+  "sessions": [
+    {
+      "schemaVersion": 1,
+      "id": "workspace-12",
+      "sessionNumber": 12,
+      "title": "Build the workspace shell",
+      "objective": "Make agent progress understandable without reading a terminal.",
+      "group": "Ship a dependable workspace",
+      "projectId": "demo",
+      "laneId": "lane-b",
+      "laneName": "lane-b",
+      "cwd": "/fixtures/workspace-b",
+      "machine": "macOS fixture",
+      "provider": "codex",
+      "nativeSessionId": "codex-native-12",
+      "providerThreadId": "codex-native-12",
+      "requestedModel": "gpt-6-astra",
+      "requestedEffort": "xhigh",
+      "confirmedModel": "gpt-6-astra",
+      "confirmedEffort": "high",
+      "permissions": {
+        "approvalPolicy": "on-request",
+        "sandbox": "workspace-write"
+      },
+      "executionState": "running",
+      "proofState": "unverified",
+      "revision": 2,
+      "activeTurn": "turn-12",
+      "status": "running",
+      "items": [
+        {
+          "id": "brief-12",
+          "type": "userMessage",
+          "text": "Build an objective-led workspace. Keep terminal output on demand."
+        },
+        {
+          "id": "update-12",
+          "type": "agentMessage",
+          "text": "The Live rail and objective groups are in place. I’m checking compact layouts and preserving the selected session across reconnects."
+        },
+        {
+          "id": "cmd-12",
+          "type": "commandExecution",
+          "command": "npm run build",
+          "aggregatedOutput": "TypeScript and renderer build completed. Interaction checks are still required.",
+          "status": "completed",
+          "exitCode": 0
+        },
+        {
+          "id": "files-12",
+          "type": "fileChange",
+          "changes": [
+            { "path": "src/workspace.tsx" },
+            { "path": "src/workspace.css" }
+          ],
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "id": "workspace-13",
+      "sessionNumber": 13,
+      "title": "Review session continuity",
+      "objective": "Check workspace and native provider IDs survive reconnects.",
+      "group": "Ship a dependable workspace",
+      "projectId": "demo",
+      "laneId": "lane-c",
+      "laneName": "lane-c",
+      "cwd": "/fixtures/workspace-c",
+      "machine": "Windows fixture",
+      "provider": "claude",
+      "nativeSessionId": "claude-native-13",
+      "requestedModel": "fixture-claude-model",
+      "requestedEffort": "high",
+      "confirmedModel": null,
+      "confirmedEffort": null,
+      "permissions": { "approvalPolicy": "ask" },
+      "executionState": "completed",
+      "proofState": "verified",
+      "revision": 4,
+      "activeTurn": null,
+      "status": "idle",
+      "items": [
+        {
+          "id": "update-13",
+          "type": "agentMessage",
+          "text": "The fixture reconnect retained both IDs. The recorded evidence is attached for review."
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "id": "workspace-14",
+      "sessionNumber": 14,
+      "title": "Resolve interrupted verification",
+      "objective": "Inspect the saved provider outcome before any retry.",
+      "group": "Verify the release candidate",
+      "projectId": "checks",
+      "laneId": "lane-a",
+      "laneName": "lane-a",
+      "cwd": "/fixtures/checks-a",
+      "machine": "macOS fixture",
+      "provider": "codex",
+      "nativeSessionId": "codex-native-14",
+      "requestedModel": "gpt-6-astra",
+      "requestedEffort": "high",
+      "confirmedModel": null,
+      "confirmedEffort": null,
+      "executionState": "uncertain",
+      "proofState": "unverified",
+      "revision": 1,
+      "activeTurn": null,
+      "status": "uncertain",
+      "error": "The connection ended before the final provider event. The result is unconfirmed.",
+      "items": [
+        {
+          "id": "update-14",
+          "type": "agentMessage",
+          "text": "The previous output is preserved. Review it before resubmitting work."
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "id": "controller",
+      "kind": "assistant",
+      "title": "Workspace controller",
+      "objective": "Coordinate agents",
+      "cwd": "/fixtures/workspace",
+      "projectId": "demo",
+      "provider": "codex",
+      "nativeSessionId": "codex-controller-native",
+      "executionState": "waiting",
+      "proofState": "unverified",
+      "revision": 0,
+      "items": [],
+      "workspaceActions": [],
+      "voiceHistory": []
+    }
+  ],
+  "receipts": [
+    {
+      "schemaVersion": 1,
+      "id": "fixture-build-receipt",
+      "sessionId": "workspace-12",
+      "intentId": "fixture-brief-12",
+      "action": "build_check",
+      "state": "observed",
+      "requestedAt": "2026-09-20T06:10:00Z",
+      "observedAt": "2026-09-20T06:11:00Z",
+      "evidence": [
+        { "kind": "fixture-command-exit", "ref": "npm run build · exit 0" },
+        {
+          "kind": "proof-limit",
+          "ref": "Build success does not verify interactions."
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "id": "fixture-review-receipt",
+      "sessionId": "workspace-13",
+      "intentId": "fixture-review-13",
+      "action": "continuity_check",
+      "state": "observed",
+      "requestedAt": "2026-09-20T06:10:00Z",
+      "observedAt": "2026-09-20T06:12:00Z",
+      "evidence": [
+        {
+          "kind": "fixture-test",
+          "ref": "identity-reconnect.json · simulated pass"
+        }
+      ]
+    }
+  ],
+  "approvals": [],
+  "terminals": [
+    {
+      "id": "terminal-12",
+      "sessionId": "workspace-12",
+      "cols": 90,
+      "rows": 18,
+      "owner": null,
+      "code": {
+        "machine": "mac",
+        "provider": "codex",
+        "nativeSessionId": "codex-native-12",
+        "checkout": "/fixtures/workspace-b",
+        "host": null
+      }
+    }
+  ]
+}
