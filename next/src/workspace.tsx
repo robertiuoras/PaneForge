@@ -46,6 +46,7 @@ import {
   type WorkspaceSession,
 } from "./workspace-model";
 import { Review } from "./review";
+import { ImportedHistory } from "./imported-history";
 const RawTerminal = lazy(() => import("./workspace-terminal"));
 const pretty = (value: unknown) =>
   typeof value === "string" ? value : JSON.stringify(value, null, 2);
@@ -90,7 +91,7 @@ export function WorkspaceApp() {
   const [typed, setTyped] = useState(false);
   const [raw, setRaw] = useState(false);
   const [view, setView] = useState(() =>
-    window.location.hash === "#review" ? "review" : "workspace",
+    window.location.hash === "#review" ? "review" : window.location.hash === "#history" ? "history" : "workspace",
   );
   const [globalDraft, setGlobalDraft] = useState(() =>
     saved("paneforge-assistant-draft"),
@@ -134,7 +135,7 @@ export function WorkspaceApp() {
     setWorkspace((current) => ({ ...current, projects: projects.projects }));
   }, [updateState]);
   useEffect(() => {
-    const syncView = () => setView(window.location.hash === "#review" ? "review" : "workspace");
+    const syncView = () => setView(window.location.hash === "#review" ? "review" : window.location.hash === "#history" ? "history" : "workspace");
     window.addEventListener("hashchange", syncView);
     return () => window.removeEventListener("hashchange", syncView);
   }, []);
@@ -609,6 +610,7 @@ export function WorkspaceApp() {
             <ListChecks size={16} />
             Review
           </button>
+          {!reviewOnly && <button className={`index-link ${view === "history" ? "selected" : ""}`} onClick={() => { window.location.hash = "history"; setView("history"); }}><FileText size={16} />Saved history</button>}
           <div className="index-heading projects-heading">
             <span className="eyebrow">PROJECTS</span>
           </div>
@@ -639,7 +641,7 @@ export function WorkspaceApp() {
             </p>
           </div>
         </nav>
-        {view === "review" ? <Review setNotice={setNotice} reviewOnly={reviewOnly} onContinue={(id) => { setSelectedId(id); setView("workspace"); window.location.hash = ""; }} /> : <>
+        {view === "history" && !reviewOnly ? <ImportedHistory /> : view === "review" ? <Review setNotice={setNotice} reviewOnly={reviewOnly} onContinue={(id) => { setSelectedId(id); setView("workspace"); window.location.hash = ""; }} /> : <>
         <main className="agent-field" id="agent-field" tabIndex={-1}>
           <div className="field-heading">
             <div>

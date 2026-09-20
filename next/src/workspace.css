@@ -1240,3 +1240,4 @@ dd {
 .review-reply label { font-size: 12px; color: #c2cbd0; }
 .review-reply textarea { min-height: 78px; width: 100%; resize: vertical; padding: 10px; border: 1px solid #465158; border-radius: 6px; background: #171d21; color: #d9e0e3; font: inherit; font-size: 12px; }
 .review-reply button { justify-self: end; font-size: 11px; }
+.saved-history-output { max-height: 420px; overflow: auto; }

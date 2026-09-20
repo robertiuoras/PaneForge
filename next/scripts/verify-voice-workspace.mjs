@@ -392,6 +392,18 @@ try {
       assert.equal(await page.evaluate(() => localStorage.getItem("paneforge-next.pending-action")), null);
       assert.deepEqual(errors, []);
       check("lost creation response and reload reuse the saved request identity without a duplicate session");
+      await page.getByRole("button", { name: "Saved history", exact: true }).click();
+      await page.getByText("Earlier build report", { exact: true }).waitFor();
+      await page.getByRole("button", { name: "Read saved output", exact: true }).click();
+      await page.getByText("Retained fixture output. <script>never execute</script>", { exact: true }).waitFor();
+      await page.getByText("Showing a bounded preview. The complete transcript remains preserved on disk.", { exact: true }).waitFor();
+      assert.equal(await page.getByRole("main").getByRole("button", { name: /resume|reply/i }).count(), 0);
+      await page.reload();
+      await page.getByText("Earlier build report", { exact: true }).waitFor();
+      await page.getByRole("textbox", { name: "Search saved history" }).fill("not in preserved history");
+      await page.getByText("No matching records", { exact: true }).waitFor();
+      assert.deepEqual(errors, []);
+      check("preserved history is readable, escaped, explicitly partial, reloadable and non-resumable");
       run.requests = server.requests.map((r) => ({
         method: r.method,
         path: r.path,

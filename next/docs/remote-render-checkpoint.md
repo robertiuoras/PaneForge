@@ -29,7 +29,7 @@ Native repair conversation `01a0bf60-35c6-71c0-be34-f908635bf784`, pane `s4-mu9y
 
 The underlying token failure remains unresolved. An elevated sshd restart is a diagnostic candidate, not an established fix. After any authorized elevated repair, verify a fresh Mac-to-PC echo and SFTP transfer and correlate fresh OpenSSH logs.
 
-Lane c's earlier remote Chrome `proof.png` proves that bounded browser operation only. Video encoding and video artifact return remain unverified. No claim of complete browser/video remote verification is justified by the partial evidence.
+Lane c's earlier remote Chrome `proof.png` proves that bounded browser operation only. The later independent synthetic video job passed PC FFmpeg encode, decode and outbound artifact return, documented in [video-proof-checkpoint.md](video-proof-checkpoint.md). This proves the PC media tools and alternate return transport, not an integrated PaneForge video-rendering workflow or repaired inbound SSH.
 
 ## Related migration readiness
 
