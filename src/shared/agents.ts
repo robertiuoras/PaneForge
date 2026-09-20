@@ -1020,9 +1020,26 @@ export function buildArgs(
   if (spec.id === 'codex' && opts.effort?.trim())
     argv.push('-c', `model_reasoning_effort="${opts.effort.trim()}"`)
   const model = opts.model?.trim()
-  if (!model) return argv
-  if (spec.modelStyle === 'arg') argv.push(model)
-  else if (spec.modelFlag) argv.push(spec.modelFlag, model)
+  if (model) {
+    if (spec.modelStyle === 'arg') argv.push(model)
+    else if (spec.modelFlag) argv.push(spec.modelFlag, model)
+  }
+  // Claude Code can recover an overloaded primary inside the SAME turn. Without this it
+  // gives the composer back with "Selected model is at capacity", and the pane remains
+  // idle until somebody notices, changes model and repeats the ask. The CLI retries the
+  // primary at the start of the next turn, so this is a temporary fallback rather than a
+  // silent change to the pane's selected model. Do not offer the selected family back to
+  // itself: a Sonnet-at-capacity pane tries Opus, an Opus pane tries Sonnet, and Fable (or
+  // the CLI's unpinned default) has both ordinary families available in that order.
+  if (spec.id === 'claude') {
+    const selected = model?.toLowerCase() ?? ''
+    const fallback = selected.includes('sonnet')
+      ? 'opus'
+      : selected.includes('opus')
+        ? 'sonnet'
+        : 'sonnet,opus'
+    argv.push('--fallback-model', fallback)
+  }
   return argv
 }
 

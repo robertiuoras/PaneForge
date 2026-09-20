@@ -418,7 +418,7 @@ t('only a Codex pane is launched with the level', () => {
   const codex = { id: 'codex', bin: 'codex', args: [] }
   const claude = { id: 'claude', bin: 'claude', args: [] }
   assert.deepEqual(buildArgs(codex, { effort: 'medium' }), ['-c', 'model_reasoning_effort="medium"'])
-  assert.deepEqual(buildArgs(claude, { effort: 'medium' }), [])
+  assert.deepEqual(buildArgs(claude, { effort: 'medium' }), ['--fallback-model', 'sonnet,opus'])
   assert.deepEqual(buildArgs(codex, {}), [])
 })
 
