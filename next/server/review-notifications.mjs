@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 
 const validId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,120}$/.test(value);
 const atomic = (file, value) => {
@@ -13,7 +14,13 @@ const atomic = (file, value) => {
 // copy there, never loosen that consumer's path validation for another app.
 export function noticePaths(record, home = homedir()) {
   if (!validId(record?.id)) throw Error('Invalid review notice identity');
-  const id = `next_${record.id}`;
+  // GuardDeck receipts contain only their notice identity. Bind that identity to
+  // the retained result so an old click cannot acknowledge a corrected report.
+  const version = createHash('sha256').update(JSON.stringify([
+    record.id, record.createdAt, record.nativeSessionId, record.kind,
+    record.prompt, record.report, record.proof, record.links, record.evidence,
+  ])).digest('hex').slice(0, 16);
+  const id = `next_${record.id.slice(0, 80)}_${version}`;
   const root = join(home, '.claude', 'guarddeck');
   return {
     id,
@@ -25,7 +32,7 @@ export function noticePaths(record, home = homedir()) {
 export function deliverReviewNotice(record) {
   if (process.platform !== 'darwin' || process.env.PANEFORGE_NOTIFICATIONS !== '1' || record.notify !== true) return false;
   const paths = noticePaths(record);
-  if (existsSync(paths.receipt)) return false;
+  if (reviewNoticeReceipt(record)) return false;
   if (!['result', 'decision', 'blocked'].includes(record.kind)) throw Error('Invalid review notice kind');
   // The supervisor owns reportPath; this operation only copies retained HTML.
   const report = readFileSync(record.reportPath);

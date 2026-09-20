@@ -7,7 +7,8 @@ import { noticePaths, deliverReviewNotice, reviewNoticeReceipt, acknowledgeRevie
 
 test('GuardDeck paths are namespaced and reject path traversal', () => {
   const paths = noticePaths({ id: 'turn_123' }, '/fixture');
-  assert.equal(paths.report, join('/fixture', 'Library', 'Application Support', 'claude-orchestrator-next', 'reviews', 'next_turn_123.html'));
+  assert.match(paths.id, /^next_turn_123_[a-f0-9]{16}$/);
+  assert.equal(paths.report, join('/fixture', 'Library', 'Application Support', 'claude-orchestrator-next', 'reviews', `${paths.id}.html`));
   assert.throws(() => noticePaths({ id: '../escape' }));
 });
 test('isolated notices persist once; informational review receipts cannot clear decisions', { skip: process.platform !== 'darwin' }, () => {
@@ -34,6 +35,10 @@ test('isolated notices persist once; informational review receipts cannot clear 
     assert.ok(reviewNoticeReceipt(record));
     assert.equal(reviewNoticeReceipt({ ...record, kind: 'decision' }), null);
     assert.equal(deliverReviewNotice(record), false);
+    const corrected = { ...record, report: 'A corrected result needs another review' };
+    assert.notEqual(noticePaths(corrected).id, paths.id);
+    assert.equal(reviewNoticeReceipt(corrected), null);
+    assert.equal(deliverReviewNotice(corrected), true);
   } finally {
     if (oldHome === undefined) delete process.env.HOME; else process.env.HOME = oldHome;
     if (oldEnabled === undefined) delete process.env.PANEFORGE_NOTIFICATIONS; else process.env.PANEFORGE_NOTIFICATIONS = oldEnabled;

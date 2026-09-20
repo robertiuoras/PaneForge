@@ -24,3 +24,7 @@ Native repair conversation `01a0bf60-35c6-71c0-be34-f908635bf784`, pane `s4-mu9y
 The underlying token failure remains unresolved. An elevated sshd restart is a diagnostic candidate, not an established fix. After any authorized elevated repair, verify a fresh Mac-to-PC echo and SFTP transfer and correlate fresh OpenSSH logs.
 
 Lane c's earlier remote Chrome `proof.png` proves that bounded browser operation only. Video encoding and video artifact return remain unverified. No claim of complete browser/video remote verification is justified by the partial evidence.
+
+## Related migration readiness
+
+A read-only dry run against the Mac's actual PaneForge history discovered 65 importable metadata records, all retained as identity-unverified/read-only by the importer. It reported 38 logs exceeding the 8 MiB bound and 119 orphan logs without readable metadata. Zero records were imported and no activation occurred. The private report is `/tmp/paneforge-next-migration-dryrun-20260921.json`. This is not lossless migration acceptance: the importer must preserve and expose those source exceptions before cutover can be considered.
