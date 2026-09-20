@@ -26,7 +26,7 @@ const require = createRequire(import.meta.url)
  * disposable node-pty process.
  */
 export class TerminalService {
-  constructor ({ dataDir, onChange = () => {}, allowedOrigin = 'http://localhost:4317', spawnPty, prepareTerminal, startCodeTurn, sessionLock = () => null } = {}) {
+  constructor ({ dataDir, onChange = () => {}, allowedOrigin = 'http://localhost:4317', spawnPty, prepareTerminal, startCodeTurn, sessionLock = () => null, onMacCliExit = () => {} } = {}) {
     if (!dataDir) throw new Error('TerminalService requires dataDir')
     this.dataDir = dataDir
     this.journalPath = join(dataDir, 'terminal.jsonl')
@@ -36,6 +36,7 @@ export class TerminalService {
     this.prepareTerminal = prepareTerminal ?? (this.spawnPty === defaultPcPty ? defaultPcTerminal : async () => ({}))
     this.startCodeTurn = startCodeTurn ?? startPcCodeTurn
     this.sessionLock = sessionLock
+    this.onMacCliExit = onMacCliExit
     this.terminals = new Map()
     this.clients = new Map()
     this.wss = new WebSocketServer({ noServer: true, maxPayload: MAX_MESSAGE_BYTES })
@@ -344,6 +345,12 @@ export class TerminalService {
     this.broadcast(terminal, { type: 'exit', exitCode: terminal.exitCode })
     this.broadcastOwner(terminal)
     this.changed()
+    // A Mac terminal is an exact native Codex continuation. Its CLI can add
+    // turns while the browser is disconnected, so reconcile the saved thread
+    // before allowing the conversation to accept another browser turn.
+    if (terminal.code?.machine === 'mac' && terminal.code?.provider === 'codex' && terminal.code.nativeSessionId) {
+      void Promise.resolve(this.onMacCliExit({ sessionId: terminal.sessionId, nativeSessionId: terminal.code.nativeSessionId, terminalId: terminal.id, exitCode: terminal.exitCode })).catch(() => {})
+    }
   }
 
   disconnect (ws) {

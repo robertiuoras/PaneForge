@@ -317,3 +317,22 @@ test('renewal refuses an active terminal before changing the native conversation
  await assert.rejects(t.sessions.renew(s.id,{requestId:'renew-cli'}),/CLI/);
  assert.equal(s.nativeSessionId,native);assert.equal(t.codex.calls.length,0);
 }finally{t.close();}});
+
+test('Mac CLI reconciliation refreshes the exact native history before Chat can continue',async()=>{const t=fixture();try{
+ const s=t.sessions.get('thread-a');s.activeTurn=null;s.status='idle';s.items=[{id:'before',type:'agentMessage',text:'before'}];
+ let release;const paused=new Promise(resolve=>{release=resolve});
+ t.codex.rpc=async method=>{if(method==='thread/resume')return {thread:{cwd:'/synthetic/checkout'}};if(method==='thread/items/list'){await paused;return {data:[{turnId:'cli-turn',item:{id:'cli-answer',type:'agentMessage',text:'CLI native result'}}],nextCursor:null};}if(method==='thread/turns/list')return {data:[{id:'cli-turn',status:'completed'}]};if(method==='turn/start')return {turn:{id:'chat-after-cli'}};throw Error(`unexpected ${method}`)};
+ const reconciling=t.sessions.reconcileMacCliExit(s.id,{nativeSessionId:'native-a',terminalId:'terminal-a'});
+ await assert.rejects(t.sessions.turn(s.id,{text:'after CLI',requestId:'after-cli'}),/transcript is reconciling/);
+ release();assert.equal(await reconciling,true);assert.equal(s.cliReconciliation,undefined);assert.equal(s.items.at(-1).text,'CLI native result');
+ await t.sessions.turn(s.id,{text:'after CLI',requestId:'after-cli'});assert.equal(s.requests['after-cli'].state,'accepted');assert.equal(s.activeTurn,'chat-after-cli');
+}finally{t.close();}});
+
+test('Mac CLI release fences Chat until the exact native thread is reconciled',async()=>{const t=fixture();try{
+ const s=t.sessions.get('thread-a');s.activeTurn=null;s.status='idle';
+ t.codex.close=()=>queueMicrotask(()=>t.codex.emit('disconnected',Error('Mac CLI owns the native thread')));
+ await t.sessions.releaseForMacCli(s.id,{nativeSessionId:'native-a',terminalId:'terminal-a'});
+ assert.equal(s.cliReconciliation.phase,'opening-cli');
+ await assert.rejects(t.sessions.turn(s.id,{text:'after CLI',requestId:'after-cli'}),/transcript is reconciling/);
+ await assert.rejects(t.sessions.renew(s.id,{requestId:'renew-after-cli'}),/CLI/);
+}finally{t.close();}});
