@@ -1,29 +1,35 @@
 {
-  "name": "paneforge-next-stage-one",
+  "name": "paneforge-next",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "node scripts/fixture-server.mjs",
+    "server": "node scripts/start.mjs",
     "review": "node scripts/review-server.mjs",
     "web": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
-    "test": "node scripts/verify-voice-workspace.mjs",
-    "test:review": "node scripts/review-server-test.mjs && node scripts/verify-review.mjs"
+    "test": "node --test tests/*.test.mjs && node scripts/remote-render.mjs workspace",
+    "test:review": "node scripts/review-server-test.mjs && node scripts/remote-render.mjs review"
   },
   "dependencies": {
     "react": "19.1.1",
     "react-dom": "19.1.1",
+    "react-markdown": "10.1.0",
+    "remark-gfm": "4.0.1",
     "lucide-react": "0.468.0",
-    "@xterm/xterm": "5.5.0"
+    "@xterm/xterm": "5.5.0",
+    "@xterm/addon-fit": "0.10.0",
+    "node-pty": "1.1.0",
+    "ws": "8.18.3"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "2.8.4",
     "@types/react": "19.1.16",
     "@types/react-dom": "19.1.9",
     "typescript": "5.9.3",
     "vite": "7.1.12",
     "@vitejs/plugin-react": "5.0.4",
-    "playwright": "1.55.1",
-    "ws": "8.18.3"
+    "playwright": "1.55.1"
   }
 }
