@@ -161,16 +161,21 @@ function writeRecord(record, dest) {
   const manifest = join(dir, 'manifest.json')
   if (existsSync(manifest)) {
     const was = JSON.parse(readFileSync(manifest, 'utf8'))
-    if (was.sourceHash === record.sourceHash) return 'alreadyPresent'
-    return 'conflict'
+    if (was.sourceHash !== record.sourceHash) return 'conflicts'
+    for (const [source, name] of [[record.metadata, 'metadata.json'], [record.log, 'transcript.log']]) {
+      if (source && (!safeFile(join(dir, name)) || fileHash(join(dir, name)) !== source.sha256)) {
+        throw new Error(`staged hash verification failed for ${record.sourceId}`)
+      }
+    }
+    return 'alreadyPresent'
   }
   mkdirSync(dir, { recursive: true })
   const metadataHash = record.metadata && copyWithHash(record.metadata.path, join(dir, 'metadata.json'))
   const logHash = record.log && copyWithHash(record.log.path, join(dir, 'transcript.log'))
   const stagedMetadata = record.metadata && JSON.parse(readFileSync(join(dir, 'metadata.json'), 'utf8'))
   const verification = {
-    metadata: !record.metadata || metadataHash === record.metadata.sha256,
-    log: !record.log || logHash === record.log.sha256,
+    metadata: !record.metadata || (metadataHash === record.metadata.sha256 && fileHash(join(dir, 'metadata.json')) === record.metadata.sha256),
+    log: !record.log || (logHash === record.log.sha256 && fileHash(join(dir, 'transcript.log')) === record.log.sha256),
     legacyPaneId: !record.metadata || (stagedMetadata.id === undefined ? record.legacyPaneId === record.sourceId : stagedMetadata.id === record.legacyPaneId),
     nativeSessionId: !record.metadata || (stagedMetadata.resumeId ?? null) === record.nativeSessionId
   }
@@ -200,14 +205,18 @@ export function migrateHistory({ source, target, apply = false }) {
   const backup = report.backupPath
   const staging = report.stagingPath
   mkdirSync(backup, { recursive: true })
+  mkdirSync(staging, { recursive: true })
   // The backup is an exact source snapshot for every importable raw file.
   for (const record of discovered.records) {
     const b = join(backup, 'history', record.sourceId)
     mkdirSync(b, { recursive: true })
-    const metadataHash = record.metadata && copyWithHash(record.metadata.path, join(b, 'metadata.json'))
-    const logHash = record.log && copyWithHash(record.log.path, join(b, 'transcript.log'))
-    if ((record.metadata && metadataHash !== record.metadata.sha256) || (record.log && logHash !== record.log.sha256)) {
-      throw new Error(`backup hash verification failed for ${record.sourceId}`)
+    for (const [source, name] of [[record.metadata, 'metadata.json'], [record.log, 'transcript.log']]) {
+      if (!source) continue
+      const output = join(b, name)
+      if (!existsSync(output)) copyWithHash(source.path, output)
+      if (!safeFile(output) || fileHash(output) !== source.sha256) {
+        throw new Error(`backup hash verification failed for ${record.sourceId}`)
+      }
     }
   }
   for (const record of discovered.records) {
