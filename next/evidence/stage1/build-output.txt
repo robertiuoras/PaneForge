@@ -1,0 +1,15 @@
+
+> paneforge-next-stage-one@0.1.0 build
+> tsc --noEmit && vite build
+
+vite v7.1.12 building for production...
+transforming...
+✓ 1587 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                                0.45 kB │ gzip:  0.29 kB
+dist/assets/workspace-terminal-LZoznX6r.css    4.08 kB │ gzip:  1.66 kB
+dist/assets/index-LzjjEVuU.css                16.04 kB │ gzip:  4.50 kB
+dist/assets/index-C5YoN-yo.js                233.01 kB │ gzip: 72.83 kB
+dist/assets/workspace-terminal-w99mpo6V.js   292.09 kB │ gzip: 72.75 kB
+✓ built in 2.52s

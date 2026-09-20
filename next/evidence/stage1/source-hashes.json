@@ -1,0 +1,21 @@
+{
+  "at": "2026-09-20T06:49:40.338Z",
+  "sha256": {
+    "next/.gitignore": "8062d969dcfffb753f38207b8dd14763c02a89fbe2b41643c7c624f4c564ea5b",
+    "next/index.html": "9b09b092b405dffc24f2732f99ea26cf6f110eb5e24304214ae259efa2e73729",
+    "next/package-lock.json": "4ce125d6e8ba8f34e684b9fbd10883ce30fc34b44d27d8fc47e10d0d9889fb85",
+    "next/package.json": "0e640da1c110935ab0799604a7133b157a52595e4b274734bd7e088c5bd907e4",
+    "next/public/voice-processor.js": "edf9bd9e04af265b8d3a96a7215b1e39ba3313a7cb9f1612fa7aa4c8c94884e4",
+    "next/scripts/fixture-server.mjs": "cab13d7d2b6996273eb2109a2352975578f516de086f18026220320e502c3c6c",
+    "next/scripts/verify-voice-workspace.mjs": "d5a19811dfbebdcabf90df88e5a32dda2e42e6cd06073fcc2ca011b780d350f9",
+    "next/src/main.tsx": "79a77c865ae85d34dd404b2b90ffcaff2902e41bddfa634dd363370db675edf6",
+    "next/src/voice.ts": "dbb7ab3253d8d203d6ff9db9a3d42008c527dfabc587b5363e47964718c22f42",
+    "next/src/workspace-model.ts": "d710fa2d1506fa71fef7ad541f91cf4f78ae4fcb12cb2c50efbd14237f46a659",
+    "next/src/workspace-terminal.tsx": "e167088596d1463a50569604ee21581c5f3dcb052528c6ec9322dcfe9a57a8db",
+    "next/src/workspace.css": "4da254b8c2a4636bac9cd6fa2bed83bc0892e946e7bd80a2ce5e0996d22488dc",
+    "next/src/workspace.tsx": "04e8f562e8242dcdea304ef6219f5ee0fd25654de34297e995148e0f2fdbaca9",
+    "next/tests/fixtures/workspace-v1.json": "1735704626331bd3b1c4c0d601c004391f0029faff859e8759411988186fad3f",
+    "next/tsconfig.json": "c7a8217ed6f9e82fe77a2baefb806c03062db2dec1722742dafb76ac3631b47e",
+    "next/vite.config.ts": "5677cbc4fbc37db751b4b8e0d8d6ef9ca733f1b7a01f278a8a653b9f5ec4741b"
+  }
+}

@@ -1,0 +1,20 @@
+
+> paneforge-next-stage-one@0.1.0 test
+> node scripts/verify-voice-workspace.mjs
+
+{
+  "result": "passed",
+  "runs": [
+    {
+      "viewport": "desktop",
+      "checks": 17,
+      "consoleErrors": 0
+    },
+    {
+      "viewport": "compact",
+      "checks": 17,
+      "consoleErrors": 0
+    }
+  ],
+  "artifacts": "/Users/robertiuoras/Projects/PaneForge-b/next/.local/stage1-evidence/"
+}

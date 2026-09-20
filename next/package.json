@@ -1,0 +1,27 @@
+{
+  "name": "paneforge-next-stage-one",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/fixture-server.mjs",
+    "web": "vite --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build",
+    "test": "node scripts/verify-voice-workspace.mjs"
+  },
+  "dependencies": {
+    "react": "19.1.1",
+    "react-dom": "19.1.1",
+    "lucide-react": "0.468.0",
+    "@xterm/xterm": "5.5.0"
+  },
+  "devDependencies": {
+    "@types/react": "19.1.16",
+    "@types/react-dom": "19.1.9",
+    "typescript": "5.9.3",
+    "vite": "7.1.12",
+    "@vitejs/plugin-react": "5.0.4",
+    "playwright": "1.55.1",
+    "ws": "8.18.3"
+  }
+}
