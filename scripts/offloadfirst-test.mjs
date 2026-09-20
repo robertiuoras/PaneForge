@@ -395,6 +395,15 @@ api.startRemote = async () => { throw new Error('peer disconnected') }
 const fallback = await offload([fresh])
 ok(fallback.length === 1 && fallback[0] === fresh, 'failed offload retains the original local request')
 
+// Main has a fast path for the saved "always here" preference. It lives before the
+// shared placement function, so a shared-unit test alone cannot catch it swallowing the
+// person's explicit Desktop press. Keep that integration boundary pinned too.
+const mainSource = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
+ok(
+  mainSource.includes("mode === 'never' && req.where !== 'remote' && !req.device"),
+  'the saved never preference does not swallow an explicit remote pick in main'
+)
+
 rmSync(work, { recursive: true, force: true })
 if (failed) {
   console.error(`offloadfirst: ${failed} of ${checks} checks FAILED`)
