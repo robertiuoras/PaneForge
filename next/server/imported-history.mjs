@@ -1,4 +1,4 @@
-import { closeSync, existsSync, lstatSync, openSync, readFileSync, readSync, readdirSync, statSync } from 'node:fs'
+import { closeSync, constants, existsSync, lstatSync, openSync, readFileSync, readSync, readdirSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 const KEY = /^[a-f0-9]{64}$/
@@ -11,6 +11,7 @@ const MAX_TRANSCRIPT_BYTES = 512000
 function regular(path, max = Infinity) {
   try { const details = lstatSync(path); return details.isFile() && details.size <= max ? statSync(path) : null } catch { return null }
 }
+function directory(path) { try { return lstatSync(path).isDirectory() } catch { return false } }
 
 function string(value, max = 1000) { return typeof value === 'string' && value.length <= max ? value : null }
 function timestamp(value) { return Number.isFinite(value) ? value : null }
@@ -56,12 +57,14 @@ function scan(dataDir) {
   const records = new Map()
   const malformed = []
   if (!existsSync(root)) return { records, malformed }
+  if (!directory(root)) return { records, malformed: ['migration staging is not a real directory'] }
   let runs
-  try { runs = readdirSync(root).filter((name) => NAME.test(name) && lstatSync(join(root, name)).isDirectory()).sort() } catch { return { records, malformed: ['migration staging is unreadable'] } }
+  try { runs = readdirSync(root).filter((name) => NAME.test(name) && directory(join(root, name))).sort() } catch { return { records, malformed: ['migration staging is unreadable'] } }
   for (const runId of runs) {
     const recordRoot = join(root, runId, 'records')
+    if (!directory(recordRoot)) { malformed.push({ runId, reason: 'records directory is missing or not a real directory' }); continue }
     let keys
-    try { keys = readdirSync(recordRoot).filter((key) => KEY.test(key) && lstatSync(join(recordRoot, key)).isDirectory()).sort() } catch { continue }
+    try { keys = readdirSync(recordRoot).filter((key) => KEY.test(key) && directory(join(recordRoot, key))).sort() } catch { malformed.push({ runId, reason: 'records directory is unreadable' }); continue }
     for (const key of keys) {
       const result = manifestRecord(root, runId, key)
       if (result.malformed) { malformed.push({ runId, id: opaqueId(key), reason: result.malformed }); continue }
@@ -79,8 +82,8 @@ export function listImportedHistory({ dataDir, query = '', limit = DEFAULT_LIMIT
   if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new Error('History limit is invalid')
   const needle = query.trim().toLowerCase()
   const { records, malformed } = scan(dataDir)
-  const items = [...records.values()].filter((record) => !needle || [record.title, record.provider, record.model, record.nativeSessionId].filter(Boolean).join(' ').toLowerCase().includes(needle)).sort((a, b) => (b.endedAt ?? b.startedAt ?? 0) - (a.endedAt ?? a.startedAt ?? 0) || a.id.localeCompare(b.id)).slice(0, limit).map(publicRecord)
-  return { items, malformed }
+  const matching = [...records.values()].filter((record) => !needle || [record.title, record.provider, record.model, record.nativeSessionId].filter(Boolean).join(' ').toLowerCase().includes(needle)).sort((a, b) => (b.endedAt ?? b.startedAt ?? 0) - (a.endedAt ?? a.startedAt ?? 0) || a.id.localeCompare(b.id))
+  return { items: matching.slice(0, limit).map(publicRecord), malformed, total: matching.length, truncated: matching.length > limit }
 }
 
 export function readImportedHistoryDetail({ dataDir, id, maxBytes = DEFAULT_TRANSCRIPT_BYTES } = {}) {
@@ -91,7 +94,8 @@ export function readImportedHistoryDetail({ dataDir, id, maxBytes = DEFAULT_TRAN
   if (!record) return null
   const transcript = { ...record.transcript, text: '', truncated: false }
   if (record._transcriptPath) {
-    const descriptor = openSync(record._transcriptPath, 'r')
+    let descriptor
+    try { descriptor = openSync(record._transcriptPath, constants.O_RDONLY | constants.O_NOFOLLOW) } catch { return null }
     const bytes = Math.min(maxBytes, transcript.bytes)
     const buffer = Buffer.allocUnsafe(bytes)
     let read = 0
