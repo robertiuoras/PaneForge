@@ -1,0 +1,200 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-09-20T15:54:14.525Z",
+  "mode": "headless deterministic fixtures; no provider calls",
+  "runs": [
+    {
+      "viewport": {
+        "width": 1440,
+        "height": 1000,
+        "name": "desktop"
+      },
+      "checks": [
+        "default structured shell; raw terminal collapsed",
+        "objective-grouped agents",
+        "select preserves workspace/native identity and unknown model confirmation",
+        "exception filter",
+        "search filter",
+        "evidence expansion without proof promotion",
+        "lazy raw terminal attaches existing terminal and replays output",
+        "closing raw terminal disposes renderer",
+        "reconnect keeps draft/identity, updates execution, never upgrades proof",
+        "reload restores selected session and draft",
+        "typed session brief uses existing session turn API exactly once",
+        "create validates lane; create/rename/brief reuse supervisor endpoints and preserve distinct IDs",
+        "CLI resume waits for idle and targets the existing conversation",
+        "typed global control creates and presents another distinct session",
+        "simulated voice and typed controller share workspace behavior; voice stop leaves agent running",
+        "compact/desktop fit and reduced-motion behavior",
+        "no console or uncaught page errors",
+        "injected brief rejection stays visible, keeps draft and exact created identity, and does not retry creation",
+        "lost creation response and reload reuse the saved request identity without a duplicate session"
+      ],
+      "consoleErrors": [],
+      "expectedFailureConsole": [
+        "Failed to load resource: the server responded with a status of 409 (Conflict)",
+        "Failed to load resource: the server responded with a status of 503 (Service Unavailable)"
+      ],
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/api/sessions/workspace-12/turn"
+        },
+        {
+          "method": "POST",
+          "path": "/api/sessions"
+        },
+        {
+          "method": "PATCH",
+          "path": "/api/sessions/workspace-15"
+        },
+        {
+          "method": "POST",
+          "path": "/api/sessions/workspace-15/turn"
+        },
+        {
+          "method": "POST",
+          "path": "/api/terminal/launch"
+        },
+        {
+          "method": "POST",
+          "path": "/api/sessions/controller/turn"
+        },
+        {
+          "method": "POST",
+          "path": "/api/workspace/ack"
+        },
+        {
+          "method": "POST",
+          "path": "/api/workspace/ack"
+        },
+        {
+          "method": "POST",
+          "path": "/api/sessions"
+        },
+        {
+          "method": "PATCH",
+          "path": "/api/sessions/workspace-18"
+        },
+        {
+          "method": "POST",
+          "path": "/api/sessions/workspace-18/turn"
+        },
+        {
+          "method": "POST",
+          "path": "/api/sessions"
+        },
+        {
+          "method": "POST",
+          "path": "/api/sessions"
+        },
+        {
+          "method": "PATCH",
+          "path": "/api/sessions/workspace-19"
+        },
+        {
+          "method": "POST",
+          "path": "/api/sessions/workspace-19/turn"
+        }
+      ],
+      "result": "passed"
+    },
+    {
+      "viewport": {
+        "width": 900,
+        "height": 800,
+        "name": "compact"
+      },
+      "checks": [
+        "default structured shell; raw terminal collapsed",
+        "objective-grouped agents",
+        "select preserves workspace/native identity and unknown model confirmation",
+        "exception filter",
+        "search filter",
+        "evidence expansion without proof promotion",
+        "lazy raw terminal attaches existing terminal and replays output",
+        "closing raw terminal disposes renderer",
+        "reconnect keeps draft/identity, updates execution, never upgrades proof",
+        "reload restores selected session and draft",
+        "typed session brief uses existing session turn API exactly once",
+        "create validates lane; create/rename/brief reuse supervisor endpoints and preserve distinct IDs",
+        "CLI resume waits for idle and targets the existing conversation",
+        "typed global control creates and presents another distinct session",
+        "simulated voice and typed controller share workspace behavior; voice stop leaves agent running",
+        "compact/desktop fit and reduced-motion behavior",
+        "no console or uncaught page errors",
+        "injected brief rejection stays visible, keeps draft and exact created identity, and does not retry creation",
+        "lost creation response and reload reuse the saved request identity without a duplicate session"
+      ],
+      "consoleErrors": [],
+      "expectedFailureConsole": [
+        "Failed to load resource: the server responded with a status of 409 (Conflict)",
+        "Failed to load resource: the server responded with a status of 503 (Service Unavailable)"
+      ],
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/api/sessions/workspace-12/turn"
+        },
+        {
+          "method": "POST",
+          "path": "/api/sessions"
+        },
+        {
+          "method": "PATCH",
+          "path": "/api/sessions/workspace-15"
+        },
+        {
+          "method": "POST",
+          "path": "/api/sessions/workspace-15/turn"
+        },
+        {
+          "method": "POST",
+          "path": "/api/terminal/launch"
+        },
+        {
+          "method": "POST",
+          "path": "/api/sessions/controller/turn"
+        },
+        {
+          "method": "POST",
+          "path": "/api/workspace/ack"
+        },
+        {
+          "method": "POST",
+          "path": "/api/workspace/ack"
+        },
+        {
+          "method": "POST",
+          "path": "/api/sessions"
+        },
+        {
+          "method": "PATCH",
+          "path": "/api/sessions/workspace-18"
+        },
+        {
+          "method": "POST",
+          "path": "/api/sessions/workspace-18/turn"
+        },
+        {
+          "method": "POST",
+          "path": "/api/sessions"
+        },
+        {
+          "method": "POST",
+          "path": "/api/sessions"
+        },
+        {
+          "method": "PATCH",
+          "path": "/api/sessions/workspace-19"
+        },
+        {
+          "method": "POST",
+          "path": "/api/sessions/workspace-19/turn"
+        }
+      ],
+      "result": "passed"
+    }
+  ],
+  "finishedAt": "2026-09-20T15:54:41.086Z"
+}
