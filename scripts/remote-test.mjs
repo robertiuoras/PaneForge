@@ -206,6 +206,28 @@ async function main() {
     )
   }
 
+  // ------------------------------------------------------- old-owner prompt fallback
+  // Devices update independently. An older owner still needs the split write/Return
+  // protocol, but a reconnect between those frames must not submit into the replacement
+  // connection, where nobody can know whether its owner saw the text.
+  {
+    const legacy = new RemoteClient(
+      { id: 'OLD', name: 'Old desk', address: '127.0.0.1', port: 1, code: 'ABCD-EFGH', auto: false },
+      () => ({ id: 'NEW', name: 'New desk', platform: 'darwin', version: 'test' })
+    )
+    const sent = []
+    const first = { ready: true, peer: { id: 'OLD', name: 'Old desk', platform: 'win32', version: 'old' }, send: (m) => sent.push(m) }
+    legacy.conn = first
+    ok('an older owner receives the prompt text', legacy.sendPrompt('s1', 'legacy job') && sent[0]?.data === 'legacy job')
+    legacy.conn = { ...first, send: (m) => sent.push({ ...m, replacement: true }) }
+    await wait(650)
+    ok(
+      'a replacement connection never receives the old prompt Return',
+      sent.length === 1 && !sent.some((m) => m.replacement || m.data === '\r'),
+      JSON.stringify(sent)
+    )
+  }
+
   // ------------------------------------------------------------------- invites
   // The one line that replaced three typed fields. Everything here is about the round
   // trip surviving the way a person actually moves it: selected with a stray quote, sent

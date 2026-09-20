@@ -114,7 +114,10 @@ ok(/asleep\?: number/.test(reclaim), 'reclaim reads the sleeping flag')
 // after a restart closes like any other, or it sits on the desk for ever.
 const body = (name) => reclaim.slice(reclaim.indexOf(`function ${name}(`)).split('\n}')[0]
 ok(/!p\.asleep &&/.test(body('reclaimPlan')), 'the pressure sweep refuses a sleeping pane')
-ok(/if \(p\.asleep\) return false/.test(body('sleepable')), 'and so does the sleep clock')
+ok(
+  /if \(p\.asleep \|\| p\.state === 'exited'\) return false/.test(body('sleepable')),
+  'the sleep clock refuses both sleeping and already-exited panes'
+)
 // One per-pane control, not two (Robert 2026-09-08). `pinned` is "leave this pane alone":
 // off the sleep CLOCK as well as the close one, and handed back only under measured pressure.
 ok(/pressure !== 'ok'/.test(body('sleepable')), 'a kept pane sleeps only when the machine is short')
