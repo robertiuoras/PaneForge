@@ -2939,6 +2939,28 @@ input[type='range']::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px var(--ac
 .quick { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 6px; }
 .quick .ghost { flex: 1; justify-content: center; }
 
+/* Daily review: dense enough to scan a busy day, with exact prompts still readable. */
+.review-dialog { gap: 12px; }
+.review-tabs { display: flex; gap: 5px; }
+.review-tabs button { background: transparent; color: var(--muted); border: 1px solid var(--line); border-radius: 7px; padding: 5px 10px; }
+.review-tabs button.on { color: var(--text); border-color: var(--accent); background: color-mix(in oklab, var(--accent) 12%, transparent); }
+.review-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.review-metrics > div { border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; background: var(--surface-2); display: flex; flex-direction: column; gap: 2px; }
+.review-metrics strong { font-size: 20px; font-variant-numeric: tabular-nums; }
+.review-metrics span, .review-section-head span { color: var(--muted); font-size: 11px; }
+.review-note { color: var(--muted); font-size: 11px; line-height: 1.45; }
+.review-scroll { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 3px; }
+.review-section-head { display: flex; align-items: baseline; justify-content: space-between; margin-top: 4px; }
+.review-list, .review-actions { display: flex; flex-direction: column; gap: 7px; }
+.review-prompt, .review-actions > div { border: 1px solid var(--line); border-radius: 9px; padding: 9px 11px; background: var(--surface-2); }
+.review-row-head { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.review-row-head > span { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.review-row-head time { margin-left: auto; color: var(--muted); font-size: 11px; white-space: nowrap; }
+.review-prompt pre { margin: 8px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.45; color: var(--text); }
+.review-actions > div { font-size: 12px; }
+.review-actions span { color: var(--muted); }
+@media (max-width: 620px) { .review-metrics { grid-template-columns: repeat(2, 1fr); } .review-row-head { flex-wrap: wrap; } .review-row-head time { width: 100%; margin-left: 20px; } }
+
 /* All that is left of the pane mic.
    The resting button is gone from every pane (Robert 2026-09-05: "remove the mic icon in
    the terminal") - it was drawn at bottom-left, directly over the `>` marker Codex puts

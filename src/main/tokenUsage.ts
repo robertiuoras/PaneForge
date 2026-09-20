@@ -77,9 +77,9 @@ async function tail(file: string): Promise<string> {
 
 let spend: TokenSpend = { ...NO_TOKEN_SPEND }
 let countedAt = 0
-let running = false
+let running: Promise<TokenSpend> | null = null
 
-async function recount(now: number): Promise<void> {
+async function recount(now: number): Promise<TokenSpend> {
   const cutoff = weekStart(now) - MTIME_SLACK_MS
   const files: string[] = []
   for (const r of roots()) await transcripts(r, files)
@@ -98,6 +98,7 @@ async function recount(now: number): Promise<void> {
     }
   }
   spend = tallyTokens(rows, Date.now())
+  return spend
 }
 
 /**
@@ -108,11 +109,17 @@ async function recount(now: number): Promise<void> {
  */
 export function tokenSpend(now = Date.now()): TokenSpend {
   if (!running && now - countedAt >= REFRESH_MS) {
-    running = true
     countedAt = now
-    void recount(now).catch(() => {}).finally(() => {
-      running = false
-    })
+    running = recount(now).catch(() => spend).finally(() => { running = null })
   }
   return spend
+}
+
+/** A Review screen is opened deliberately, so its figures wait for a current disk count. */
+export async function tokenSpendFresh(now = Date.now()): Promise<TokenSpend> {
+  if (!running) {
+    countedAt = now
+    running = recount(now).catch(() => spend).finally(() => { running = null })
+  }
+  return await running
 }

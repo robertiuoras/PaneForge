@@ -670,7 +670,7 @@ ok(!server.running, 'the gate test server stopped cleanly')
   const REVIEWED_SAFE = new Set([
     // Review reads retained history; acknowledgement only changes informational read state.
     // Neither can execute, approve, or close a session. Record/open stay gated.
-    'reviews:list', 'reviews:ack',
+    'reviews:list', 'reviews:ack', 'review:daily',
     // Answers the "starting X on the other machine in 8s" card. Types nothing: the pane
     // starts either way, this only says on which machine, and the deadline answers alone.
     'offload:answer',

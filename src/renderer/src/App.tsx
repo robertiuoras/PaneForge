@@ -54,12 +54,14 @@ import { Segmented } from './components/Controls'
 import Elapsed, { formatElapsed, kb, useNow } from './components/Elapsed'
 import GitBadge from './components/GitBadge'
 import HistoryDialog from './components/HistoryDialog'
+import ReviewDialog from './components/ReviewDialog'
 import { fleetRow, fleetWaiting } from '@shared/fleet'
 import { deskGroups, deskRows as buildDeskRows, type DeskRow } from '@shared/desk'
 import {
   ToolsIcon,
   UsersIcon,
   HistoryIcon,
+  ReviewIcon,
   LinkIcon,
   CopyIcon,
   SearchIcon,
@@ -198,7 +200,7 @@ import { folderLabel } from '../../shared/revealPane'
  */
 const OPENED_AT = Date.now()
 import VersionBadge from './components/VersionBadge'
-import { playAction, playEvent, playTick } from './useChime'
+import { playEvent } from './useChime'
 import { BlurbContext, type BlurbState } from './components/Blurb'
 import { useVoice } from './useVoice'
 import { useHandheld } from './handheld'
@@ -579,42 +581,6 @@ function LinkBanner(): JSX.Element | null {
   )
 }
 
-/**
- * The tick under the soonest auto-answer countdown.
- *
- * Its own component for the reason `AskClock` is, and this one was the expensive miss: the
- * clock it needs was read at the TOP of App, so the whole desk - sidebar, every card, the
- * grid - re-rendered once a second for ever, whether or not any pane was counting down.
- * Measured in a real window on an empty desk: 6 whole-window renders in 6 seconds before
- * this, 0 after. On a full, already-lagging desk that is the difference between a
- * countdown that draws and one that stalls.
- *
- * It is also phased on the DEADLINE, not the wall clock, which is what the number in the
- * pane is phased on (`AskCountdown`). Two clocks a second apart is why the sound landed
- * off the digit it was meant to be counting.
- */
-function AutoTick({ at, tick }: { at: number; tick: () => void }): null {
-  const now = useNow(at ? 1000 : Infinity, at)
-  // The second last ticked FOR THIS countdown. Keyed by the deadline as well as by the
-  // number, so a new question that happens to start at the same reading is still heard.
-  const last = useRef('')
-  useEffect(() => {
-    if (!at) {
-      last.current = ''
-      return
-    }
-    const left = Math.ceil((at - now) / 1000)
-    // Nothing before the last minute: a wait somebody lengthened to five minutes in
-    // Settings is a clock, not an alarm, and ticking through all of it is a metronome.
-    if (left <= 0 || left > 60) return
-    const key = `${at}:${left}`
-    if (last.current === key) return
-    last.current = key
-    tick()
-  }, [at, now, tick])
-  return null
-}
-
 /** Whole-window render counter, exposed for probes. See the component body. */
 const deskRenders = { n: 0, ms: 0 }
 ;(window as unknown as { __pfDeskRenders?: { n: number; ms: number } }).__pfDeskRenders = deskRenders
@@ -634,7 +600,6 @@ const GRID_RANK: Record<FleetState, number> = {
  * over a pane that is not really idle, short enough that the alert still arrives while
  * fifteen seconds are on the clock.
  */
-const SOON_SOUND_DELAY_MS = 700
 
 export default function App(): JSX.Element {
   // How many times the WHOLE window has re-rendered, for probes. The sidebar, every card
@@ -814,6 +779,7 @@ export default function App(): JSX.Element {
   const [splitting, setSplitting] = useState(false)
   const [board, setBoard] = useState<string | null>(null)
   const [history, setHistory] = useState(false)
+  const [review, setReview] = useState(false)
   // What the app has done on its own, and when the list was last looked at. Both live in
   // main (see main/activity.ts): a reload, a renderer rebuilt after a wedge and a restart
   // all lose renderer memory, and "what happened to my pane" is asked after exactly those.
@@ -1331,28 +1297,6 @@ export default function App(): JSX.Element {
   // resubscribing to every session event.
   const soundSet = useRef<Config['sounds'] | undefined>(undefined)
   soundSet.current = config?.sounds
-  // ...and the countdown is also a SOUND.
-  //
-  // A question answered for you is the one thing this app does on its own that somebody
-  // may want to stop, and the window in which they can is the countdown - which is drawn
-  // inside a pane. A pane that is not on screen (the grid off, another desktop, the window
-  // minimised) had no way of saying so at all, which is why "I cannot even see the timer
-  // counting down" is a real report about a feature that works. One tick a second says it
-  // without needing a screen.
-  //
-  // The SOONEST countdown on the desk, not one per pane: two panes counting down together
-  // would beat against each other twice a second, which reads as a fault rather than as a
-  // clock.
-  const soonestAuto = sessions.reduce(
-    (min, s) => (s.autoAnswerAt && (!min || s.autoAnswerAt < min) ? s.autoAnswerAt : min),
-    0
-  )
-  // Reads refs, so its identity never changes and the tick's effect is not re-run by this
-  // component rendering for some other reason. The volume slider, and a picker pointed at
-  // a file of your own, are honoured by `playTick` itself.
-  const autoTick = useCallback(() => {
-    if (soundOn.current) playTick(soundSet.current)
-  }, [])
 
   // The pane already on screen is acknowledged the moment it raises its hand
   // (the effect above clears it), so chiming for it is noise about something you
@@ -4493,108 +4437,6 @@ export default function App(): JSX.Element {
     ])
   }
 
-  /**
-   * A countdown that nobody can see is a countdown nobody can stop.
-   *
-   * The bubble is drawn beside the mascot in a corner, takes itself away after a minute,
-   * and is behind whatever window is on top - so on 2026-08-23 two panes went to the PC
-   * with nothing on screen at the moment it mattered, and the report was "randomly 2
-   * sessions moved". The alert plays once when the countdown arms, and the last five
-   * seconds tick, which is exactly the shape `AskCountdown` already uses for the other
-   * thing this app decides on somebody's behalf.
-   *
-   * `playTick` deliberately bypasses the 900ms alert throttle - see `useChime` - or the
-   * ticks would swallow each other and the alert above them.
-   */
-  // One alert for a STRETCH of countdowns, not one per card. Robert, 2026-09-01: "just 1
-  // sound is fine for coutndown because when i check i should see both will close and i
-  // can choose which to keep". So this fires when the stack goes from empty to occupied
-  // and stays quiet while a second card joins it.
-  const anySoon = closeSoons.length > 0
-  useEffect(() => {
-    if (!anySoon) return
-    if (!soundOn.current) return
-    // ...and only for a card that is STILL THERE a beat later. A sweep arms every five
-    // seconds and the card is dropped again the moment the pane reads as back at work
-    // (`stillCloseable`), so an arm that never became a visible countdown was a bowl with
-    // nothing on screen to explain it - one pane on this machine armed 76 times and closed
-    // never (2026-09-07). Robert, 2026-09-10: "random noises in paneforge". The sound
-    // announces a decision a person can act on, so it waits until there is one to look at.
-    //
-    // A SLEEP countdown used to be silent here, on the reading that sleeping takes nothing
-    // away. It takes the AGENT away: the CLI is killed and the turn you were waiting on is
-    // over, and the card saying so sits in a corner of a window that is usually behind
-    // something else. Every countdown that ran on this machine on 2026-09-17 was a sleep -
-    // 38 of 38 `due` lines - so "it closed without making a sound" was the whole feature
-    // being silent, not a sound that failed (Robert, 2026-09-18). One bowl for the stretch,
-    // same as a close.
-    const t = window.setTimeout(() => {
-      if (!soundOn.current) return
-      if (!closeSoonsRef.current.length) return
-      // `playAction`, never `playEvent`: the pane a sweep picks is usually the one that
-      // just finished, so the `done` chime lands a moment before this and the 900ms guard
-      // ate it.
-      playAction('move', soundSet.current)
-    }, SOON_SOUND_DELAY_MS)
-    return () => window.clearTimeout(t)
-  }, [anySoon])
-  // The ticks belong to the SOONEST deadline: the last ten seconds of the stack, once,
-  // whichever card they are counting - a sleep's included, see the alert above.
-  useEffect(() => {
-    if (!closeSoon) return
-    if (!soundOn.current) return
-    const ticks: number[] = []
-    // Ten, not five. The countdown is fifteen seconds and five put the first sound two
-    // thirds of the way through the thing it was announcing - reported as "doesn't make
-    // any sound when under 10 secs". Same number as the auto-clear countdown below, for
-    // the same reason, so the two clocks in this app sound alike.
-    for (let left = 10; left >= 1; left--) {
-      const at = closeSoon.deadline - left * 1000 - Date.now()
-      if (at > 0) ticks.push(window.setTimeout(() => playTick(soundSet.current), at))
-    }
-    return () => ticks.forEach((t) => window.clearTimeout(t))
-  }, [closeSoon])
-
-  /**
-   * The same thing for the countdown in front of an automatic /clear.
-   *
-   * That card is drawn in a corner of a window that is regularly behind something else,
-   * and the whole point of it is the button underneath - so a countdown nobody hears is a
-   * countdown nobody stops. Robert, 2026-08-27: "make sure sound effects come and
-   * countdown you can actually hear it".
-   *
-   * Same shape as the sweep's countdown above: `playAction` once when it arms, then a tick
-   * a second through the last ten. Ten rather than five because this clock is fifteen
-   * seconds by default, and five would put the first sound past the two-thirds mark of the
-   * thing it is announcing. Nothing at all before the last ten, or a wait somebody set to
-   * five minutes in Settings becomes a metronome.
-   */
-  const clearSoonAt = sessions.reduce(
-    (min, s) => (s.autoClearAt && (!min || s.autoClearAt < min) ? s.autoClearAt : min),
-    0
-  )
-  // A countdown held off by an unsent line re-arms every few seconds (`DRAFT_RETRY_MS`),
-  // which moves the deadline and re-runs this effect. The TICKS should follow it - the
-  // clear really is still coming - but the arrival alert must not sound again every five
-  // seconds, so it plays only when there was no countdown a moment ago.
-  const hadClearSoon = useRef(false)
-  useEffect(() => {
-    if (!clearSoonAt) {
-      hadClearSoon.current = false
-      return
-    }
-    if (!soundOn.current) return
-    const first = !hadClearSoon.current
-    hadClearSoon.current = true
-    if (first) playAction('move', soundSet.current)
-    const ticks: number[] = []
-    for (let left = 10; left >= 1; left--) {
-      const at = clearSoonAt - left * 1000 - Date.now()
-      if (at > 0) ticks.push(window.setTimeout(() => playTick(soundSet.current), at))
-    }
-    return () => ticks.forEach((t) => window.clearTimeout(t))
-  }, [clearSoonAt])
-
   // One timer per card, so a second decision is not waiting on the first one's clock.
   //
   // The actions are read through a ref and the effect keys on the LIST alone. It used to
@@ -5710,7 +5552,6 @@ export default function App(): JSX.Element {
 
   return (
     <BlurbContext.Provider value={blurbs}>
-    <AutoTick at={soonestAuto} tick={autoTick} />
     <div className={'app' + (sideHidden ? ' side-hidden' : '')}>
       <aside className={'sidebar' + (sideW < SIDE_NARROW ? ' narrow' : '')}>
         <LinkBanner />
@@ -5758,6 +5599,15 @@ export default function App(): JSX.Element {
 
         {/* Everyday views stay one click away; occasional coordination lives in Tools. */}
         <div className="quick">
+          <button
+            className="ghost quick-btn"
+            aria-label="Review today"
+            aria-haspopup="dialog"
+            title="Review: prompts, sessions, agents, tokens and automatic actions"
+            onClick={() => setReview(true)}
+          >
+            <ReviewIcon />
+          </button>
           <button
             className="ghost quick-btn"
             aria-label="Tools"
@@ -6856,6 +6706,14 @@ export default function App(): JSX.Element {
             ])
           }}
           onClose={() => setHistory(false)}
+        />
+      )}
+      {review && (
+        <ReviewDialog
+          agents={agents}
+          activity={activity}
+          onHistory={() => { setReview(false); setHistory(true) }}
+          onClose={() => setReview(false)}
         />
       )}
       {laneCwd && (

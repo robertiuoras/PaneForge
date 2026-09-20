@@ -173,15 +173,6 @@ const card = await evalIn(`(() => {
 check(card.w > 8 && card.h >= 10, "the card says how long is left", `${card.text} ${card.w}x${card.h}`)
 check(/^\d+s$|^now$/.test(card.text ?? ''), 'and says it in seconds', card.text ?? 'nothing drawn')
 
-// ...and it is also audible, which is the half no screen is needed for. `playTick` counts
-// itself on the window because a probe cannot hear anything; three seconds of a live
-// countdown must produce two or three ticks, never one per frame of the chooser.
-const ticks = () => evalIn('window.__pfTicks || 0')
-const t0 = await ticks()
-await wait(3200)
-const t1 = await ticks()
-check(t1 - t0 >= 2 && t1 - t0 <= 4, 'it ticks once a second while the countdown runs', `${t1 - t0} ticks in 3.2s`)
-
 // Now the cost. Five arrow moves, counted per pane.
 const renders = () => evalIn(`(() => Object.fromEntries([...(window.__pfRenders || new Map())]))()`)
 const before = await renders()

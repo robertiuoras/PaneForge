@@ -26,7 +26,8 @@ import { acknowledgeReview, listReviews, noteReviewClose, recordReview, reviewCl
 import { DataPump } from './dataPump'
 import { DiscordPresence } from './discordPresence'
 import { countPresence, needsTokens, type PresenceCounts } from '../shared/discordRpc'
-import { tokenSpend } from './tokenUsage'
+import { tokenSpend, tokenSpendFresh } from './tokenUsage'
+import { promptReview, recordPromptReview, removePromptReview } from './promptReview'
 import { readPulls } from './pulls'
 import { quitWhere } from '../shared/quitWords'
 import { mayReturnLane } from '../shared/laneReturn'
@@ -3858,9 +3859,13 @@ ipcMain.handle('vault:graph', (_e, vault: string) => vaultGraph(vault))
 ipcMain.handle('vault:open', (_e, vault: string, note?: string) => vaultOpen(vault, note))
 
 ipcMain.handle('history:list', () => history.list())
+ipcMain.handle('review:daily', async () => promptReview(await tokenSpendFresh(), Date.now(), history.list()))
 ipcMain.handle('history:search', (_e, q: string) => history.search(q))
 ipcMain.handle('history:read', (_e, id: string) => history.read(id))
-ipcMain.handle('history:delete', (_e, id: string) => history.remove(id))
+ipcMain.handle('history:delete', (_e, id: string) => {
+  history.remove(id)
+  removePromptReview(id)
+})
 
 /**
  * "Has this been asked before?" — see main/promptArchive.ts.
@@ -3906,6 +3911,8 @@ ipcMain.on('prompt:used', (_e, draft: string, meta: { cwd?: string; agent?: stri
   // reason for a closed session to go back to being a folder name and a clock.
   if (meta.id) {
     try {
+      const session = manager.list().find((x) => x.id === meta.id)
+      if (session) recordPromptReview(session, draft)
       // ...and to the transcript claimer, which uses a line the pane is KNOWN to have
       // typed as its proof that a conversation is its own. See noteSubmittedPrompt.
       noteSubmittedPrompt(meta.id, draft)

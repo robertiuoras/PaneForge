@@ -38,6 +38,7 @@ import type { CustomSound, SoundConfig } from './sounds'
 import type { ThemeConfig } from './theme'
 import type { OwnerStats } from './ownerStats'
 import type { ReviewInput, ReviewRecord } from './reviews'
+import type { TokenSpend } from './tokenTally'
 
 export type { PullsAnswer }
 export type { CustomSound, DiscordStyle, RevealTarget, RouteMatch, RouteResult, SoundConfig, ThemeConfig }
@@ -1265,6 +1266,32 @@ export interface HistoryEntry {
    * than a row that says why.
    */
   gone?: boolean
+}
+
+/** One exact prompt PaneForge submitted to an agent, as typed. */
+export interface PromptReviewEntry {
+  id: string
+  at: number
+  sessionId: string
+  title: string
+  cwd: string
+  agent: Agent
+  text: string
+}
+
+/** The bounded daily/weekly view behind Review. */
+export interface PromptReviewReport {
+  generatedAt: number
+  /** First exact ledger row on this profile. Older History is intentionally not guessed. */
+  recordingSince: number | null
+  prompts: PromptReviewEntry[]
+  todayCount: number
+  weekCount: number
+  todaySessions: number
+  weekSessions: number
+  todayAgents: Agent[]
+  weekAgents: Agent[]
+  tokens: TokenSpend
 }
 
 export interface HistoryHit {
@@ -2705,6 +2732,7 @@ export interface Api {
 
 
   listHistory(): Promise<HistoryEntry[]>
+  dailyReview(): Promise<PromptReviewReport>
   searchHistory(query: string): Promise<HistoryHit[]>
   readHistory(id: string): Promise<string>
   deleteHistory(id: string): Promise<void>
