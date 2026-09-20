@@ -46,3 +46,7 @@ PC job `pc-next-ui-search-20260921` passed on DESKTOP-CMSUCM1 at 2026-09-20T16:1
 ## Normal transport verification and recurrence
 
 After a peer reported spontaneous SSH recovery, root independently verified Mac-to-PC echo and SFTP `pwd`. The normal `scripts/remote-render.mjs workspace` path then completed through `rbuild.mjs`: 20 desktop and 20 compact checks, no console errors, exit 0. The render launcher now stages only current browser inputs, excluding the measured 3.2 GB Rust target, 330 MB packaged runtime, and 243 MB download artifacts. A subsequent preflight failed closed with exit 3 when inbound SSH began resetting again; no local browser was started. Recovery was temporary, with no repair or root cause established.
+
+## Patched dependency verification
+
+Updated Vite to 7.3.6 and ws to 8.21.3 within their existing majors; npm audit reports zero vulnerabilities. The updated source archive SHA256 `e6652bd884c0b8999bb7f3ad13ad50e396937ad8f812ccc10e98eb4aa28ebf73` passed PC TypeScript/Vite builds, 40 workspace checks with zero console errors, and 12 Review checks at 2026-09-20T16:26:34Z. Returned receipt and artifacts: `/tmp/pc-next-deps-20260921-result.tar.gz`. The local Next unit suite passed 99 tests. This remains fixture browser evidence; native provider and installed-app acceptance are separate.
