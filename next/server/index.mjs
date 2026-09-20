@@ -1,6 +1,6 @@
 import http from 'node:http';
 import {spawn} from 'node:child_process';
-import {IdleUpdates,localActivity,installedUpdate} from './updates.mjs';
+import {IdleUpdates,localActivity,installedUpdate,nativeUpdateControl,nativeUpdateStatus} from './updates.mjs';
 import {homedir} from 'node:os';
 import {createHash} from 'node:crypto';
 import {WebSocketServer} from 'ws';
@@ -103,11 +103,12 @@ const voice=new VoiceService({dataDir:dir,keyFile:join(homedir(),'.config/panefo
 });
 let starting=true,reconciling=false,activeRequests=0;
 const revision=process.env.PANEFORGE_REVISION||(()=>{try{return execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim();}catch{return 'unversioned';}})();
-const updates=new IdleUpdates({revision,readUpdate:port===4317?installedUpdate:()=>null,activity:()=>localActivity({sessions,terminal,pc,voice,codex,requests:activeRequests,starting,reconciling}),restart:async next=>{
+const updates=new IdleUpdates({revision,nativeStatus:()=>nativeUpdateStatus(dir),readUpdate:port===4317?installedUpdate:()=>null,activity:()=>localActivity({sessions,terminal,pc,voice,codex,requests:activeRequests,starting,reconciling}),restart:async next=>{
  const log=await import('node:fs');const output=log.openSync(join(dir,'update-restart.log'),'a',0o600);
  const child=spawn(process.execPath,[join(next.root,'scripts/restart-idle.mjs'),String(process.pid)],{cwd:next.root,env:{...process.env,PANEFORGE_DATA_DIR:dir,PANEFORGE_PORT:String(port),PANEFORGE_REVISION:next.revision},detached:true,stdio:['ignore',output,output]});
  await new Promise((resolve,reject)=>{child.once('spawn',resolve);child.once('error',reject);});child.unref();publish();shutdown();
 }});
+const nativeControl=process.env.PANEFORGE_NATIVE_CONTROL==='1'?nativeUpdateControl({dir,updates,persist:async()=>{await terminal.journal;sessions.changed();},shutdown:()=>shutdown(true)}):null;
 const state=()=>{const terminals=terminal.state();return {updates:updates.status(),provider:sessions.provider,claudeProvider:sessions.claudeProvider,sessions:sessions.visible(),approvals:sessions.approvals.map(({rpcId,...a})=>a),jobs:pc.list(),terminals,terminal:terminals.at(-1)||{}};};
 const send=(res,status,data)=>{res.writeHead(status,{'content-type':'application/json','cache-control':'no-store'});res.end(JSON.stringify(data));};
 const allowedOrigins=new Set([origin]);
@@ -119,6 +120,7 @@ const server=http.createServer(async(req,res)=>{
   if(req.headers.host===`localhost:${port}`&&req.method==='GET'){res.writeHead(308,{location:origin+req.url});res.end();return;}
   if(req.headers.host!==host){send(res,403,{error:'Loopback workspace only'});return;}
   if(req.headers.origin&&!allowedOrigins.has(req.headers.origin)){send(res,403,{error:'Foreign origin denied'});return;}
+  if(nativeControl&&await nativeControl(req,res))return;
   if(req.method!=='GET'&&(!allowedOrigins.has(req.headers.origin)||!req.headers['content-type']?.startsWith('application/json'))){send(res,403,{error:'Same-origin JSON request required'});return;}
   const url=new URL(req.url,origin);const path=url.pathname;
   if(req.method==='GET'&&path==='/api/health')return send(res,200,{product:'paneforge-next',revision,dataDir:dir});
@@ -206,5 +208,14 @@ server.listen(port,'127.0.0.1',()=>{starting=false;console.log(`PaneForge superv
 const backgroundRecovery=process.env.PANEFORGE_ENABLE_BACKGROUND_RECOVERY==='1';
 const interval=backgroundRecovery?setInterval(async()=>{if(reconciling||updates.restarting)return;reconciling=true;try{await pc.reconcile();}catch(e){console.error('PC reconciliation:',e.message);}finally{reconciling=false;}},5000):null;
 const updateInterval=backgroundRecovery?setInterval(()=>{void updates.check().then(publish);},2000):null;
-function shutdown(){if(updateInterval)clearInterval(updateInterval);if(interval)clearInterval(interval);void voice.close();codex.close();sessions.claude?.close();terminal.close();server.close();setTimeout(()=>process.exit(),5500).unref();}
+function shutdown(nativeUpdate=false){
+ if(updateInterval)clearInterval(updateInterval);if(interval)clearInterval(interval);
+ codex.close();sessions.claude?.close();
+ const persisted=Promise.all([voice.close(),terminal.close()]);
+ server.close();
+ if(nativeUpdate===true){
+  // Never force exit through a pending terminal journal during replacement.
+  void persisted.then(()=>{server.closeAllConnections();process.exit();}).catch(error=>console.error('Native update shutdown could not persist:',error.message));
+ }else{void persisted.catch(error=>console.error('Shutdown:',error.message));setTimeout(()=>process.exit(),5500).unref();}
+}
 process.on('SIGTERM',shutdown);

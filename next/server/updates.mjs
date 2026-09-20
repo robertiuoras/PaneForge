@@ -1,4 +1,5 @@
-import {readFileSync,existsSync} from 'node:fs';
+import {readFileSync,existsSync,writeFileSync,chmodSync} from 'node:fs';
+import {randomBytes,timingSafeEqual} from 'node:crypto';
 import {resolve,join} from 'node:path';
 
 // Read the supervisor's own live registries, not browser tabs or process titles.
@@ -30,8 +31,8 @@ export function installedUpdate(file='/Applications/PaneForge Next.app/Contents/
 }
 
 export class IdleUpdates{
- constructor({revision,activity,readUpdate=installedUpdate,restart,now=Date.now}){Object.assign(this,{revision,activity,readUpdate,restart,now});this.idleSince=null;this.restarting=false;this.pending=null;this.error=null;}
- status(){let activity;try{activity=this.activity();}catch(error){activity={idle:false,checkedAt:new Date().toISOString(),blockers:[{kind:'unknown',id:'unknown',label:`Activity unavailable: ${error.message}`}]};}return {supervisorPid:process.pid,revision:this.revision,pendingRevision:this.pending?.revision||null,restarting:this.restarting,error:this.error,automatic:false,unavailableReason:'Native update delivery is not configured',activity};}
+ constructor({revision,activity,readUpdate=installedUpdate,restart,now=Date.now,nativeStatus=()=>null}){Object.assign(this,{revision,activity,readUpdate,restart,now,nativeStatus});this.idleSince=null;this.restarting=false;this.pending=null;this.error=null;}
+ status(){let activity;try{activity=this.activity();}catch(error){activity={idle:false,checkedAt:new Date().toISOString(),blockers:[{kind:'unknown',id:'unknown',label:`Activity unavailable: ${error.message}`}]};}const native=this.nativeStatus();return {supervisorPid:process.pid,revision:this.revision,pendingRevision:this.pending?.revision||null,restarting:this.restarting,error:native?.error||this.error,automatic:native?.automatic===true,unavailableReason:native?.automatic?null:'Native update delivery is not configured',native,activity};}
  async check(){
   if(this.restarting||this.error)return;
   try{
@@ -46,4 +47,46 @@ export class IdleUpdates{
    await this.restart(next);
   }catch(error){this.error=error.message;this.restarting=false;}
  }
+}
+
+// A private capability authenticates the native updater within the trusted OS user.
+// Other processes with full access to that user profile are in the same trust boundary. This
+// capability stays in the private app-data directory and never enters state/SSE.
+export function nativeUpdateControl({dir,updates,persist,shutdown}){
+ const token=randomBytes(32).toString('hex');
+ writeFileSync(join(dir,'.native-control-token'),token,{mode:0o600});
+ chmodSync(join(dir,'.native-control-token'),0o600);
+ return async (req,res)=>{
+  if(req.url!=='/api/native-update/stop')return false;
+  const supplied=Buffer.from(req.headers.authorization||'');const expected=Buffer.from(`Bearer ${token}`);
+  const reply=(status,body)=>{const json=JSON.stringify(body);res.writeHead(status,{'content-type':'application/json','content-length':Buffer.byteLength(json),'cache-control':'no-store'});res.end(json);};
+  if(req.method!=='POST'||req.headers.origin!==undefined||supplied.length!==expected.length||!timingSafeEqual(supplied,expected)){reply(403,{error:'Native update owner required'});return true;}
+  if(req.headers['x-paneforge-revision']!==updates.revision){reply(409,{error:'Supervisor revision changed'});return true;}
+  try{
+   if(updates.restarting){reply(409,{error:'Supervisor is already stopping'});return true;}
+   let activity=updates.activity();
+   if(!activity.idle){reply(409,{error:'Work is still active',activity});return true;}
+   updates.restarting=true;
+   // No await between closing admission, rechecking registries and persistence.
+   activity=updates.activity();
+   if(!activity.idle){updates.restarting=false;reply(409,{error:'Work became active',activity});return true;}
+   await persist();
+   activity=updates.activity();
+   if(!activity.idle){updates.restarting=false;reply(409,{error:'Work became active during persistence',activity});return true;}
+   let stopped=false;const stop=()=>{if(!stopped){stopped=true;shutdown();}};
+   res.once('finish',stop);res.once('close',stop);
+   reply(200,{stopping:true,revision:updates.revision,supervisorPid:process.pid});
+  }catch(error){updates.restarting=false;reply(503,{error:`Supervisor could not stop safely: ${error.message}`});}
+  return true;
+ };
+}
+
+export function nativeUpdateStatus(dir){
+ try{
+  const state=JSON.parse(readFileSync(join(dir,'native-update-state.json'),'utf8'));
+  if(!Number.isSafeInteger(state.ownerPid)||state.ownerPid<=1)return {...state,automatic:false};
+  try{process.kill(state.ownerPid,0);}catch{return {...state,automatic:false,phase:'owner-offline'};}
+  return state;
+ }
+ catch{return null;}
 }
