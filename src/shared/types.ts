@@ -37,6 +37,7 @@ import type { RouteMatch, RouteResult } from './projectRoute'
 import type { CustomSound, SoundConfig } from './sounds'
 import type { ThemeConfig } from './theme'
 import type { OwnerStats } from './ownerStats'
+import type { ReviewInput, ReviewRecord } from './reviews'
 
 export type { PullsAnswer }
 export type { CustomSound, DiscordStyle, RevealTarget, RouteMatch, RouteResult, SoundConfig, ThemeConfig }
@@ -2219,6 +2220,10 @@ export type RenderCostReading = {
 }
 
 export interface Api {
+  listReviews(): Promise<{ reviews: ReviewRecord[]; persistent: true }>
+  recordReview(input: ReviewInput): Promise<{ review: ReviewRecord; close: { closed: boolean; reason?: string } }>
+  acknowledgeReview(id: string, reviewed: boolean): Promise<{ ok: boolean; clearedAttention: boolean }>
+  openReview(id: string, index: number): Promise<{ opened: boolean }>
   /** Available only to the authenticated PaneForge repository owner. */
   ownerAccess(): Promise<boolean>
   /** Aggregate GitHub installer-asset downloads, not unique people or IP telemetry. */

@@ -3183,6 +3183,18 @@ export class SessionManager extends EventEmitter {
     this.emitSessions()
   }
 
+  /** Close only at a review-safe boundary; records are written before this is called. */
+  closeAfterResult(id: string, reportedAt: number): { closed: boolean; reason?: string } {
+    const live = this.sessions.get(id)
+    if (!live) return { closed: false, reason: 'session is no longer open' }
+    const m = live.meta
+    if (m.status !== 'idle' || m.runSince || live.busyUntil > Date.now() || m.job || m.backJob) return { closed: false, reason: 'session is busy or has a background job' }
+    if (m.drafting || m.ask || m.owedPrompt || m.handingOff || m.handoffQueuedAt || m.handoffOpen || (m.handoverUntil ?? 0) > Date.now()) return { closed: false, reason: 'session has a draft, question, queued prompt, or handoff' }
+    if (m.lastKeyboard > reportedAt) return { closed: false, reason: 'newer user input exists' }
+    this.kill(id)
+    return { closed: true }
+  }
+
   killAll(): void {
     for (const id of [...this.sessions.keys()]) this.kill(id)
   }

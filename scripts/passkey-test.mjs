@@ -668,6 +668,9 @@ ok(!server.running, 'the gate test server stopped cleanly')
   // `activity:list` is a READING of things that have already happened - the same words
   // the corner cards said out loud at the time. It types nothing and reaches no pty.
   const REVIEWED_SAFE = new Set([
+    // Review reads retained history; acknowledgement only changes informational read state.
+    // Neither can execute, approve, or close a session. Record/open stay gated.
+    'reviews:list', 'reviews:ack',
     // Answers the "starting X on the other machine in 8s" card. Types nothing: the pane
     // starts either way, this only says on which machine, and the deadline answers alone.
     'offload:answer',

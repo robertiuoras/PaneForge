@@ -30,16 +30,16 @@ function say(message: string): void {
  * The clipboard is the recovery: the OS would not hand the link over, and there is
  * nothing this app can do about that, but it can make the link one paste away.
  */
-export function openLink(url: string, from: string): void {
+export function openLink(url: string, from: string): Promise<boolean> {
   // `about:blank` can only ever fail, and it did, six times over two days. It is still
   // written down - the caller passing a blank target is the thing worth knowing - but it
   // is not attempted, and nobody is told their browser would not open a page they never
   // asked for.
   if (nothingToOpen(url)) {
     logProblem('open url', `${from}: ${url || '(empty)'} - nothing to open, not passed to the OS`)
-    return
+    return Promise.resolve(false)
   }
-  void shell.openExternal(url).catch((err: unknown) => {
+  return shell.openExternal(url).catch((err: unknown) => {
     const why = err instanceof Error ? err.message : String(err)
     // The URL is the whole point of this line. Without it the four in the log are four
     // occurrences of nothing.
@@ -51,7 +51,8 @@ export function openLink(url: string, from: string): void {
          about the link, and the log line carries it either way */
     }
     say(linkFailedWords(url))
-  })
+    return false
+  }).then(value => value !== false)
 }
 
 /**
@@ -61,17 +62,19 @@ export function openLink(url: string, from: string): void {
  * worked. So every one of these was silent by construction - the failure and the success
  * were the same value shape, which is exactly the thing that renders as success.
  */
-export function openLocal(path: string, from: string): void {
-  void shell
+export function openLocal(path: string, from: string): Promise<boolean> {
+  return shell
     .openPath(path)
     .then((why) => {
-      if (!why) return
+      if (!why) return true
       logProblem('open path', `${from}: ${path} - ${why}`)
       say(pathFailedWords(path, why))
+      return false
     })
     .catch((err: unknown) => {
       const why = err instanceof Error ? err.message : String(err)
       logProblem('open path', `${from}: ${path} - ${why}`)
       say(pathFailedWords(path, why))
+      return false
     })
 }

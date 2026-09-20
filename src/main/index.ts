@@ -22,6 +22,7 @@ import {
   shell } from 'electron'
 import { startMainWatch, stopMainWatch } from './mainWatch'
 import { SessionManager, setSilenceAlert, type WriteOrigin } from './sessions'
+import { acknowledgeReview, listReviews, noteReviewClose, recordReview, reviewCloseArmAction, reviewOpenTarget, type ReviewCloseArm } from './reviews'
 import { DataPump } from './dataPump'
 import { DiscordPresence } from './discordPresence'
 import { countPresence, needsTokens, type PresenceCounts } from '../shared/discordRpc'
@@ -1511,6 +1512,36 @@ ipcMain.handle('projects:create', (_e, name: string) => createProject(name))
 ipcMain.handle('projects:route', (_e, text: string) => routeText(text))
 ipcMain.handle('agents:list', (_e, force?: boolean) => listAgents(force))
 ipcMain.handle('sessions:list', () => allSessions())
+ipcMain.handle('reviews:list', () => ({ reviews: listReviews(history.list()), persistent: true as const }))
+ipcMain.handle('reviews:ack', (_e, id: string, reviewed: boolean) => acknowledgeReview(String(id), reviewed === true))
+ipcMain.handle('reviews:open', async (_e, id: string, index: number) => {
+  const target = reviewOpenTarget(String(id), Number(index), history.list())
+  return { opened: target ? /^https?:/.test(target) ? await openLink(target, 'review') : await openLocal(target, 'review') : false }
+})
+ipcMain.handle('reviews:record', (_e, input: import('../shared/reviews').ReviewInput) => {
+  const session = manager.list().find((s) => s.id === input?.sessionId)
+  const old = !session && input?.nativeSessionId ? history.list().find((h) => h.id === input.sessionId && h.resumeId === input.nativeSessionId) : undefined
+  if (!session && !old) throw new Error('Review session does not exist')
+  const native = session ? { title: session.title, provider: session.agent, cwd: session.cwd, nativeSessionId: resumeIdFor(session.id) ?? session.id } : { title: old!.title, provider: old!.agent, cwd: old!.cwd, nativeSessionId: old!.resumeId ?? old!.id }
+  const review = recordReview(input, native)
+  if (old?.endedAt) noteReviewClose(review.id, undefined, new Date(old.endedAt).toISOString())
+  let close: { closed: boolean; reason?: string } = { closed: false }
+  if (input.closeSession === true) {
+    if (review.closedAt || review.closeBlocked) close.reason = review.closedAt ? 'close was already completed' : review.closeBlocked
+    else if (!session) close.reason = 'session is already closed'
+    else if (!resumeIdFor(session.id)) close.reason = 'close requires a stable native provider session ID'
+    else if (input.kind !== 'result' || input.proof !== 'measured' || !input.evidence?.length || input.workPreserved !== true || input.noRemainingWork !== true || !input.capturedAt) close.reason = 'close requires measured result evidence, work preservation, no remaining work, and a captured timestamp'
+    else if (Date.parse(input.capturedAt) > Date.now()) close.reason = 'captured timestamp is in the future'
+    else if (continuationOwnsSource(session.id) || preparingContinuations.has(session.id) || handoffQueue.pending().some((q) => q.id === session.id) || backJobOf(session.id)) close.reason = 'session has a pending continuation, handoff, or background job'
+    else {
+      close = manager.closeAfterResult(session.id, Date.parse(input.capturedAt))
+      if (!close.closed && close.reason === 'session is busy or has a background job' && !review.closedAt && !review.closeBlocked) reviewCloseArms.set(review.id, { sessionId: session.id, nativeSessionId: resumeIdFor(session.id)!, capturedAt: Date.parse(input.capturedAt) })
+    }
+  }
+  if (close.closed) noteReviewClose(review.id, undefined, new Date().toISOString())
+  else if (close.reason) noteReviewClose(review.id, close.reason)
+  return { review: { ...review, closeBlocked: close.reason }, close }
+})
 ipcMain.handle('sessions:contextUsage', (_e, id: string) => {
   const session = manager.list().find((s) => s.id === id)
   if (!session || session.agent !== 'codex') return null
@@ -3047,6 +3078,37 @@ const handoffQueue = new HandoffQueue({
   // instant its turn ends with nothing on screen to stop it. `at: null` clears it.
   soon: (id, device, at) => send('remote:handoffSoon', { id, device, deviceName: remote.peerName(device), at })
 })
+
+// A report may be written while its agent is still settling. This is deliberately an
+// event-bound arm, never a timer: a later state change either reaches the safe boundary
+// or permanently cancels the requested close with the retained report still available.
+const reviewCloseArms = new Map<string, ReviewCloseArm>()
+manager.on('sessions', () => queueMicrotask(() => {
+  for (const [reviewId, arm] of reviewCloseArms) {
+    const session = manager.list().find((s) => s.id === arm.sessionId)
+    const action = reviewCloseArmAction(arm, session && {
+      nativeSessionId: resumeIdFor(session.id),
+      lastKeyboard: session.lastKeyboard,
+      drafting: session.drafting,
+      ask: Boolean(session.ask),
+      owedPrompt: session.owedPrompt,
+      handingOff: session.handingOff,
+      pendingWork: continuationOwnsSource(session.id) || preparingContinuations.has(session.id) || handoffQueue.pending().some((q) => q.id === session.id) || Boolean(backJobOf(session.id)),
+      idle: session.status === 'idle' && !session.runSince
+    })
+    if (action === 'cancel') {
+      reviewCloseArms.delete(reviewId)
+      if (session) noteReviewClose(reviewId, 'newer input or pending work cancelled the requested close')
+      continue
+    }
+    if (action === 'wait') continue
+    if (!session) continue
+    reviewCloseArms.delete(reviewId)
+    const close = manager.closeAfterResult(session.id, arm.capturedAt)
+    if (close.closed) noteReviewClose(reviewId, undefined, new Date().toISOString())
+    else noteReviewClose(reviewId, close.reason)
+  }
+}))
 
 ipcMain.handle(
   'remote:handoff',

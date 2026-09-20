@@ -18,6 +18,7 @@ import {
   FileText,
   Folder,
   Layers,
+  ListChecks,
   Mic,
   Plus,
   Search,
@@ -44,6 +45,7 @@ import {
   type Workspace,
   type WorkspaceSession,
 } from "./workspace-model";
+import { Review } from "./review";
 const RawTerminal = lazy(() => import("./workspace-terminal"));
 const pretty = (value: unknown) =>
   typeof value === "string" ? value : JSON.stringify(value, null, 2);
@@ -80,6 +82,9 @@ export function WorkspaceApp() {
   const [creating, setCreating] = useState(false);
   const [typed, setTyped] = useState(false);
   const [raw, setRaw] = useState(false);
+  const [view, setView] = useState(() =>
+    window.location.hash === "#review" ? "review" : "workspace",
+  );
   const [globalDraft, setGlobalDraft] = useState(() =>
     saved("paneforge-assistant-draft"),
   );
@@ -99,8 +104,9 @@ export function WorkspaceApp() {
   const assistant =
     workspace.sessions.find((s) => s.kind === "assistant") ||
     state.sessions?.find((s) => s.kind === "assistant");
+  const reviewOnly = (state as SupervisorState & { reviewOnly?: boolean }).reviewOnly === true;
+  const online = connection === "connected" && !reviewOnly;
   const voice = useVoice(assistant?.id, clientId);
-  const online = connection === "connected";
   const attention = sessions.filter(needsAttention);
   const liveCount = sessions.filter(working).length;
   const projectName = (id?: string) => {
@@ -120,6 +126,14 @@ export function WorkspaceApp() {
     if (revision === eventRevision.current) updateState(next);
     setWorkspace((current) => ({ ...current, projects: projects.projects }));
   }, [updateState]);
+  useEffect(() => {
+    const syncView = () => setView(window.location.hash === "#review" ? "review" : "workspace");
+    window.addEventListener("hashchange", syncView);
+    return () => window.removeEventListener("hashchange", syncView);
+  }, []);
+  useEffect(() => {
+    if (reviewOnly) setView("review");
+  }, [reviewOnly]);
   useEffect(() => {
     let disposed = false;
     const events = new EventSource(
@@ -429,6 +443,10 @@ export function WorkspaceApp() {
       .reverse()
       .find((item) => item.role === "assistant" && item.text)?.text ||
     [...(assistant?.items || [])].reverse().map(itemText).find(Boolean);
+  function showWorkspace() {
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+    setView("workspace");
+  }
   return (
     <div className="workspace-app">
       <a className="skip-link" href="#agent-field">
@@ -441,7 +459,7 @@ export function WorkspaceApp() {
             PaneForge <b>Next</b>
           </span>
         </div>
-        <button
+        {!reviewOnly && <button
           className={`live-button ${voice.active ? "is-live" : ""}`}
           onClick={() => void voice.toggle()}
           disabled={!assistant || !online}
@@ -460,7 +478,7 @@ export function WorkspaceApp() {
             </small>
           </span>
           {voice.active ? <Square size={14} /> : <kbd>⌥ V</kbd>}
-        </button>
+        </button>}
         <div className="live-context">
           <span className={`connection-dot ${online ? "connected" : ""}`} />
           <span>
@@ -474,15 +492,15 @@ export function WorkspaceApp() {
             </small>
           </span>
         </div>
-        <button
+        {!reviewOnly && <button
           className="quiet typed-toggle"
           aria-expanded={typed}
           onClick={() => setTyped(!typed)}
         >
           <Command size={16} /> Type a command
-        </button>
+        </button>}
       </header>
-      {(voice.detail || (!voice.status.configured && voice.status.reason)) && (
+      {!reviewOnly && (voice.detail || (!voice.status.configured && voice.status.reason)) && (
         <div className="voice-note">
           <AudioLines size={14} />
           {voice.detail || voice.status.reason}
@@ -530,34 +548,50 @@ export function WorkspaceApp() {
             <span className="small-tag">{sessions.length}</span>
           </div>
           <button
-            className={`index-link ${filter === "all" && !projectFilter ? "selected" : ""}`}
+            className={`index-link ${view === "workspace" && filter === "all" && !projectFilter ? "selected" : ""}`}
             onClick={() => {
+              showWorkspace();
               setFilter("all");
               setProjectFilter("");
             }}
+            disabled={reviewOnly}
           >
             <Layers size={16} />
             All agents<span>{sessions.length}</span>
           </button>
           <button
-            className={`index-link ${filter === "working" ? "selected" : ""}`}
+            className={`index-link ${view === "workspace" && filter === "working" ? "selected" : ""}`}
             onClick={() => {
+              showWorkspace();
               setFilter("working");
               setProjectFilter("");
             }}
+            disabled={reviewOnly}
           >
             <Circle size={15} />
             Working<span>{liveCount}</span>
           </button>
           <button
-            className={`index-link ${filter === "attention" ? "selected" : ""}`}
+            className={`index-link ${view === "workspace" && filter === "attention" ? "selected" : ""}`}
             onClick={() => {
+              showWorkspace();
               setFilter("attention");
               setProjectFilter("");
             }}
+            disabled={reviewOnly}
           >
             <CircleAlert size={16} />
             Needs attention<span>{attention.length}</span>
+          </button>
+          <button
+            className={`index-link ${view === "review" ? "selected" : ""}`}
+            onClick={() => {
+              window.location.hash = "review";
+              setView("review");
+            }}
+          >
+            <ListChecks size={16} />
+            Review
           </button>
           <div className="index-heading projects-heading">
             <span className="eyebrow">PROJECTS</span>
@@ -567,9 +601,11 @@ export function WorkspaceApp() {
               className={`index-link project-link ${projectFilter === project.id ? "selected" : ""}`}
               key={project.id}
               onClick={() => {
+                showWorkspace();
                 setProjectFilter(project.id);
                 setFilter("all");
               }}
+              disabled={reviewOnly}
               title={project.path}
             >
               <Folder size={15} />
@@ -587,6 +623,7 @@ export function WorkspaceApp() {
             </p>
           </div>
         </nav>
+        {view === "review" ? <Review setNotice={setNotice} reviewOnly={reviewOnly} /> : <>
         <main className="agent-field" id="agent-field" tabIndex={-1}>
           <div className="field-heading">
             <div>
@@ -990,11 +1027,14 @@ export function WorkspaceApp() {
             </p>
           )}
         </aside>
+        </>}
       </div>
       <footer className="workspace-status">
         <span>
           <span className={`connection-dot ${online ? "connected" : ""}`} />
-          {online
+            {reviewOnly
+              ? "Review connected to PaneForge"
+              : online
             ? state.fixture
               ? "Fixture supervisor connected"
               : "Supervisor connected"
@@ -1010,12 +1050,12 @@ export function WorkspaceApp() {
         <div className="notice" role="status">
           <CircleAlert size={17} />
           <span>{notice}</span>
-          <button
+            {!reviewOnly && <button
             aria-label="Dismiss notification"
             onClick={() => setNotice("")}
           >
             <X size={16} />
-          </button>
+            </button>}
         </div>
       )}
       {creating && (
@@ -1054,7 +1094,9 @@ export function WorkspaceApp() {
         </div>
       )}
       <div className="sr-only" aria-live="polite" aria-atomic="true">
-        {online
+          {reviewOnly
+            ? "Review connected to PaneForge"
+            : online
           ? `${liveCount} agents working. ${attention.length} need attention.`
           : "Workspace reconnecting. Controls paused."}
       </div>

@@ -35,6 +35,10 @@ export type SurfaceEntry =
 export type Surface = { readonly [K in keyof Api]: SurfaceEntry }
 
 export const SURFACE: Surface = {
+  listReviews: ['invoke', 'reviews:list'],
+  recordReview: ['invoke', 'reviews:record'],
+  acknowledgeReview: ['invoke', 'reviews:ack'],
+  openReview: ['invoke', 'reviews:open'],
   ownerAccess: ['invoke', 'owner:access'],
   ownerStats: ['invoke', 'owner:stats'],
   listProjects: ['invoke', 'projects:list'],

@@ -109,6 +109,7 @@ export type TerminalRecord = {
   };
 };
 export type SupervisorState = {
+  reviewOnly?: boolean;
   workspace?: Workspace;
   fixture?: boolean;
   provider?: { status: string; error?: string };

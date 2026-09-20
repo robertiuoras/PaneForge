@@ -204,6 +204,11 @@ opened; unpaired = pairing page; wrong codes lock; cookie `hmac(deviceId, code)`
 - Automation `scripts/pf-ctl.mjs`, never `open --args`: `pf open <cwd> --prompt "..." [--agent
   A] [--model M]`, `pf list` verifies; `--close-when-done` (`--report-to` default `PF_PANE`;
   `shared/closeWhenDone.ts`, `CLOSE_DONE_QUIET_MS` 8s, `test:closedone`).
+- Quiet result delivery: use `pf-ctl review <review.json>` for an explicit completed result,
+  requested update, decision or blocker. Follow `docs/reviews-runtime-contract.md`; save
+  original request, evidence and native identity before an evidence-gated close. Do not
+  use elapsed quiet time, sleeping or process exit as completion. Review retains reports
+  after closing; reading an informational result never approves a decision.
 - `test:phone`, `test:phoneview`; `window.__pf[id].term.buffer`. Not built: B1, H2.
 
 ## One long ask is several panes

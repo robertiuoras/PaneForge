@@ -124,12 +124,12 @@ const logged=()=>{try{return fs.readFileSync(logFile,'utf8')}catch{return ''}}
 const URL='https://github.com/robertiuoras/PaneForge/releases/tag/v0.8.188'
 ;(async()=>{
   // Nothing to say when it works.
-  m.openLink(URL,'a link in a pane')
+  ok(await m.openLink(URL,'a link in a pane') === true,'successful link reports success')
   await sleep(50)
   ok(told.length===0,'a link that opens says nothing')
 
   el.__extFail('Failed to open URL')
-  m.openLink(URL,'a link in a pane')
+  ok(await m.openLink(URL,'a link in a pane') === false,'failed link cannot acknowledge a review')
   await sleep(50)
   ok(told.length===1,'a link that will not open reaches the screen')
   ok(told[0].includes(URL),'and the person is told which link')
@@ -149,11 +149,11 @@ const URL='https://github.com/robertiuoras/PaneForge/releases/tag/v0.8.188'
 
   // The silent half: openPath answers with a string, and '' is the success.
   el.__pathAnswer('')
-  m.openLocal('/Users/x/Projects','reveal')
+  ok(await m.openLocal('/Users/x/Projects','reveal') === true,'successful file reports success')
   await sleep(50)
   ok(told.length===1,'a folder that opens says nothing')
   el.__pathAnswer('Failed to open path')
-  m.openLocal('/Users/x/Projects','reveal')
+  ok(await m.openLocal('/Users/x/Projects','reveal') === false,'failed file cannot acknowledge a review')
   await sleep(100)
   ok(told.length===2,'a folder that does not open is not silent any more')
   ok(logged().includes('/Users/x/Projects'),'and the log names the folder')
