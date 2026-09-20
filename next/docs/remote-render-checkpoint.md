@@ -34,3 +34,7 @@ Lane c's earlier remote Chrome `proof.png` proves that bounded browser operation
 ## Related migration readiness
 
 A fresh read-only dry run after `1048a09e` discovered 184 retained records: 65 metadata records and 119 explicitly read-only orphan-log records. All 38 logs that previously exceeded the 8 MiB bound are now streamed and hashed without truncation. The report contains zero unreadable records. Orphans retain null native identity, so they cannot silently become resumable sessions. Four synthetic tests passed, including large-log, orphan-byte and idempotence checks. Zero records were imported and no activation occurred. The private report is `/tmp/paneforge-next-migration-dryrun-20260921.json`. Actual import, activation and rollback acceptance remain separate gates before cutover.
+
+## Preserved-history follow-up proof
+
+The updated UI archive `paneforge-next-ui-history-20260921.tar.gz` (SHA-256 `000dd9268704efc8b56d3d1981aaba19972e63b7468291d57e91bf33a70921f2`) passed on `DESKTOP-CMSUCM1`: 20 workspace checks at each desktop and compact size, zero unexpected console errors, and the Review suite. The additional check covers escaped, explicitly partial, non-resumable saved-history output and reload/search. PC TypeScript and production builds passed. Receipt timestamps: `2026-09-20T16:07:41.7420846Z` to `2026-09-20T16:08:38.5593211Z`. Returned artifacts: `/tmp/pc-next-ui-history-20260921-result.tar.gz`. These are deterministic fixture checks, not an installed-user-profile acceptance claim.

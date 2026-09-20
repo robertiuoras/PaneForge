@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "startedAt": "2026-09-20T15:54:14.525Z",
+  "startedAt": "2026-09-20T16:08:05.614Z",
   "mode": "headless deterministic fixtures; no provider calls",
   "runs": [
     {
@@ -28,7 +28,8 @@
         "compact/desktop fit and reduced-motion behavior",
         "no console or uncaught page errors",
         "injected brief rejection stays visible, keeps draft and exact created identity, and does not retry creation",
-        "lost creation response and reload reuse the saved request identity without a duplicate session"
+        "lost creation response and reload reuse the saved request identity without a duplicate session",
+        "preserved history is readable, escaped, explicitly partial, reloadable and non-resumable"
       ],
       "consoleErrors": [],
       "expectedFailureConsole": [
@@ -124,7 +125,8 @@
         "compact/desktop fit and reduced-motion behavior",
         "no console or uncaught page errors",
         "injected brief rejection stays visible, keeps draft and exact created identity, and does not retry creation",
-        "lost creation response and reload reuse the saved request identity without a duplicate session"
+        "lost creation response and reload reuse the saved request identity without a duplicate session",
+        "preserved history is readable, escaped, explicitly partial, reloadable and non-resumable"
       ],
       "consoleErrors": [],
       "expectedFailureConsole": [
@@ -196,5 +198,5 @@
       "result": "passed"
     }
   ],
-  "finishedAt": "2026-09-20T15:54:41.086Z"
+  "finishedAt": "2026-09-20T16:08:32.589Z"
 }
