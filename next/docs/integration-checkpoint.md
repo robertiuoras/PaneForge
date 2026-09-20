@@ -14,6 +14,7 @@
 - A retained final outcome is an informational claimed result. Missing output remains unverified. Blocked and decision reviews remain attention items. Review acknowledgement or receipt only parks an informational session with no other unread result, blocked, or decision record.
 - Review reply requires an exact native identity, refreshes live Codex routing, and uses the normal forge policy. Report/link open validates its target and only reports `opened:true` after the OS opener starts successfully.
 - Explicit build verbs dispatch through the guarded PC Code route using the saved live-selected model and effort. Chat remains restricted. Active Chat, Mac CLI, PC Code work, renewal, and provisional Code startup are mutually fenced, including restart-conservative PC jobs.
+- Direct requests also recognize polite prefixes such as "can you build", "could you please fix", and "I want you to create". Questions asking for explanations, leading negations, quoted commands, and bare verbs stay in Chat. This is bounded phrase recognition, not evidence of general semantic intent classification or a completed real build.
 - Mac CLI first releases the App Server lease for the exact native Codex identity, then resumes it with the saved model and effort. On terminal exit, the supervisor reconnects and refreshes that exact thread before Chat input is accepted. A launch failure reacquires the thread rather than leaving the conversation fenced.
 
 ## Verification
@@ -24,5 +25,7 @@
 - Remote PC browser verification was performed by the root worker only: 20 desktop and 20 compact fixture checks passed, plus Review checks. No local browser was used.
 
 ## PC execution proof and remaining gap
+
+The polite-request dispatch correction passed all 124 Next unit tests, TypeScript/Vite build, and the required minimized parent dev-b build/launch after independent review. Review cases cover help/ability phrasing, negated tasks and punctuation-only tails. Logs: `/tmp/next-polite-routing-reviewed-unit.log`, `/tmp/next-polite-routing-reviewed-build.log`, `/tmp/next-polite-routing-reviewed-try.log`. The terminal reconciliation fixture now drains its journal before deleting its temporary directory; the full suite had exposed an asynchronous ENOENT during cleanup. No browser was launched locally. These checks do not prove that a substantive user build completes through the installed app.
 
 A real guarded PC Code request completed on DESKTOP-CMSUCM1 using included-plan Codex `gpt-5.6-luna` / `medium`. Exact native thread `01a0bfba-bec3-7170-be87-d89f0175b6ad` recorded `task_complete` and the requested final response `PC_CODE_OK` after reading an isolated non-client fixture. The runner removed API credentials and forced ChatGPT login. Root read retained redacted receipt `/tmp/paneforge-next-pc-code-proof-receipt-20260921.json`; no duplicate job was launched. This proves bounded remote dispatch, routing and native completion, not a substantive build, sustained transport reliability, or installed native-app acceptance. Remote rendering has separate PC fixture evidence.

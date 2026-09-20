@@ -22,5 +22,5 @@ test('Mac terminal exit hands its exact native identity to transcript reconcilia
   const created=await terminal.create({sessionId:'session-a',projectId:'project-a',machine:'mac',provider:'codex',nativeSessionId:'123e4567-e89b-12d3-a456-426614174000',model:'gpt-5.6-terra',effort:'medium',cwd:'/safe/lane'});
   const observed=new Promise(resolve=>{reconciled=resolve});exitHandler({exitCode:0});await observed;
   assert.deepEqual(exited,{sessionId:'session-a',nativeSessionId:'123e4567-e89b-12d3-a456-426614174000',terminalId:created.id,exitCode:0});
- }finally{rmSync(dir,{recursive:true,force:true});}
+ }finally{try{await terminal.journal;}finally{rmSync(dir,{recursive:true,force:true});}}
 });

@@ -6,6 +6,16 @@ const SIMPLE = /\b(rename|copy|format|typo|spelling|one[- ]line|small|simple|exp
 const modelRows = (value) => Array.isArray(value?.data) ? value.data : [];
 const effortSet = (model) => new Set((model?.supportedReasoningEfforts ?? []).map((row) => typeof row === 'string' ? row : row?.reasoningEffort).filter(Boolean));
 
+// Recognize direct requests, including polite phrasing, without treating
+// explanations, quoted instructions, or capability questions as execution.
+export function explicitBuildIntent(text) {
+  if (typeof text !== 'string') return false;
+  const request = /^\s*(?:please\s+)?(?:(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?(?:be\s+able\s+to\s+|help\s+me\s+(?:to\s+)?)?|(?:i\s+(?:want|need)|i['’]d\s+like)\s+you\s+to\s+)(?:please\s+)?)?(?:build|implement|fix|add|create)\s+([\s\S]+)$/i.exec(text);
+  if (!request) return false;
+  const task = request[1].trim().replace(/^please\b[\s,]*/i, '');
+  return /[\p{L}\p{N}]/u.test(task) && !/^(?:nothing|none|no|not|neither)\b/i.test(task);
+}
+
 export function quotaVerdict(reply) {
   const result = reply?.result ?? reply;
   const rate = result?.rateLimits;
