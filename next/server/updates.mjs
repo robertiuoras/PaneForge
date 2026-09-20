@@ -10,6 +10,10 @@ export function localActivity({sessions,terminal,pc,voice,codex,requests=0,start
  if(reconciling||pc.pending?.size)add('job','dispatch','Checking or dispatching PC work');
  for(const s of sessions.sessions)if(s.activeTurn||['running','uncertain'].includes(s.status))add('conversation',s.id,`Conversation ${s.number?`#${s.number}`:s.title||s.id}: ${s.status||'running'}`);
  for(const s of sessions.sessions)if(s.inputLock)add('renewal',s.id,`Conversation ${s.number?`#${s.number}`:s.title||s.id}: ${s.inputLock.reason||'context renewal in progress'}`);
+ for(const s of sessions.sessions){
+  if(s.cliReconciliation)add('reconciliation',s.id,'Reconciling native CLI work with Chat');
+  for(const [id,request] of Object.entries(s.requests||{}))if(['submitting','uncertain','cancelling'].includes(request?.state))add('request',`${s.id}:${id}`,`Conversation request is ${request.state}`);
+ }
  if(sessions.busy.size||sessions.claude?.running?.size||codex.pending.size)add('provider','provider','Provider request or CLI turn in progress');
  if(sessions.approvals.length)add('approval','approvals','Waiting for approval');
  if(voice.active||voice.connecting)add('voice','voice','GPT Live is connected or connecting');
@@ -27,7 +31,7 @@ export function installedUpdate(file='/Applications/PaneForge Next.app/Contents/
 
 export class IdleUpdates{
  constructor({revision,activity,readUpdate=installedUpdate,restart,now=Date.now}){Object.assign(this,{revision,activity,readUpdate,restart,now});this.idleSince=null;this.restarting=false;this.pending=null;this.error=null;}
- status(){let activity;try{activity=this.activity();}catch(error){activity={idle:false,checkedAt:new Date().toISOString(),blockers:[{kind:'unknown',id:'unknown',label:`Activity unavailable: ${error.message}`}]};}return {supervisorPid:process.pid,revision:this.revision,pendingRevision:this.pending?.revision||null,restarting:this.restarting,error:this.error,automatic:true,activity};}
+ status(){let activity;try{activity=this.activity();}catch(error){activity={idle:false,checkedAt:new Date().toISOString(),blockers:[{kind:'unknown',id:'unknown',label:`Activity unavailable: ${error.message}`}]};}return {supervisorPid:process.pid,revision:this.revision,pendingRevision:this.pending?.revision||null,restarting:this.restarting,error:this.error,automatic:false,unavailableReason:'Native update delivery is not configured',activity};}
  async check(){
   if(this.restarting||this.error)return;
   try{
