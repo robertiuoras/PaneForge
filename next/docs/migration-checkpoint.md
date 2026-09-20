@@ -18,4 +18,6 @@ Verification used synthetic fixtures only:
 node --test tests/migrate-history.test.mjs
 ```
 
-No real profile has been imported. Activation, rollback-pointer switching, and any bounded non-client provider-resume test require the later reviewed migration phase and explicit cutover authority.
+Acceptance evidence on 2026-09-21 also used one temporary copy of a PaneForge-profile metadata/log pair. The importer staged and backed up both files with matching SHA-256 values, the second apply reported it already present, and the source hash remained unchanged. The temporary source, staging, backup, and reports were then removed. No live profile was written, activated, or copied into this repository.
+
+The runtime does not currently read `migration-staging/`: `GET /api/history` calls `Sessions.historyMetadata()`, which only lists active `sessions` state. A later reviewed activation phase therefore needs a read-only staged-history index (records and import report), an explicit user-approved destination switch, and UI/API display that keeps imported entries non-resumable. The current importer intentionally has no activation or rollback-pointer switch; deletion of an unactivated temporary staging directory was the bounded rollback exercise.
