@@ -17,7 +17,7 @@
 //
 //   node scripts/release-upload-retry-test.mjs
 
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -39,6 +39,22 @@ const ok = (name, cond, detail = '') => {
 // step that actually needs it.
 const steps = yml.split(/^\s*- name: /m).slice(1)
 const findStep = (title) => steps.find((s) => s.startsWith(title))
+
+// Windows exposes a WSL `bash.exe` shim even when no distro exists. Invoking that shim
+// fails with `execvpe(/bin/bash)` and says nothing about the workflow fragment. Prefer
+// Git Bash when present, then accept PATH bash only after a real bounded probe.
+const bashCandidates = []
+if (process.platform === 'win32') {
+  const whereGit = spawnSync('where.exe', ['git'], { encoding: 'utf8' })
+  const git = whereGit.status === 0 ? whereGit.stdout.split(/\r?\n/).find(Boolean) : ''
+  if (git) bashCandidates.push(join(dirname(dirname(git)), 'bin', 'bash.exe'))
+}
+bashCandidates.push('bash')
+const bash = bashCandidates.find((candidate) => {
+  if (candidate !== 'bash' && !existsSync(candidate)) return false
+  const probe = spawnSync(candidate, ['-c', 'exit 0'], { encoding: 'utf8', timeout: 5000 })
+  return !probe.error && probe.status === 0
+})
 
 for (const title of ['Upload update feed and versioned artifacts', 'Upload fixed-name copies']) {
   const step = findStep(title)
@@ -72,6 +88,10 @@ for (const title of ['Upload update feed and versioned artifacts', 'Upload fixed
   const start = run?.indexOf(title.includes('versioned') ? 'upload() {' : 'for try in 1 2 3; do') ?? -1
   ok(`"${title}" has an executable upload fragment`, start >= 0)
   if (start < 0) continue
+  if (!bash) {
+    console.log(`  skip "${title}" execution: no working bash on this machine`)
+    continue
+  }
   // Stop at the next workflow comment outside the run block.
   const fragment = run.slice(start).split(/\n\s{0,6}# One job|\n      # electron-builder/)[0]
   for (const [failures, attempts, succeeds] of [[0, 1, true], [1, 2, true], [3, 3, false]]) {
@@ -87,7 +107,7 @@ gh() {
 sleep() { printf 'WAIT %s\\n' "$1"; }
 ${fragment}
 `
-    const result = spawnSync('bash', ['-c', script], { encoding: 'utf8', timeout: 5000 })
+    const result = spawnSync(bash, ['-c', script], { encoding: 'utf8', timeout: 5000 })
     const calls = result.stdout?.split('\n').filter((line) => line.startsWith('CALL ')) || []
     ok(`"${title}" ${failures} failures: ${attempts} attempts and ${succeeds ? 'success' : 'failure'}`,
       !result.error && (result.status === 0) === succeeds && calls.length === attempts,

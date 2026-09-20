@@ -63,8 +63,16 @@ if (!app.requestSingleInstanceLock(launchRequest)) {
 assert.deepEqual(runStartup(legacy, false), ['handoff', 'quitting', 'quit'],
   'the old ordering handed off while it was the lock loser')
 
-// Bundle the real disk-side function against fakes. This tests the normal stray path
-// without reading or spawning the actual installed app.
+// Bundle the real disk-side function against fakes. This tests the normal Mac stray path
+// without reading or spawning the actual installed app. Windows intentionally has no
+// `installedCopy()` implementation, so running this assertion there can only prove the
+// platform guard returned `no installed copy`.
+if (process.platform !== 'darwin') {
+  console.log('skip  packaged build-folder handoff is Mac-only')
+  console.log('update relaunch lock: lock loser exits')
+  process.exit(0)
+}
+
 const out = join(root, 'node_modules', '.pf-test')
 mkdirSync(out, { recursive: true })
 const outfile = join(out, 'stray-launch-order.mjs')
