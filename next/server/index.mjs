@@ -19,7 +19,7 @@ import {WorkspaceActions} from './workspace-actions.mjs';
 import {openWorkspaceApp,openWorkspaceSearch,appendWorkspaceText,listInstalledApps} from './local-apps.mjs';
 import {DeviceFiles} from './device-files.mjs';
 import {ReviewStore} from './review-store.mjs';
-import {chooseCodexRoute} from './routing.mjs';
+import {chooseCodexRoute,explicitBuildIntent} from './routing.mjs';
 import {forgeBuildPrompt} from './prompt-forge.mjs';
 import {deliverReviewNotice,reviewNoticeReceipt,acknowledgeReviewNotice,noticePaths} from './review-notifications.mjs';
 import {listImportedHistory,readImportedHistoryDetail} from './imported-history.mjs';
@@ -112,7 +112,6 @@ const nativeControl=process.env.PANEFORGE_NATIVE_CONTROL==='1'?nativeUpdateContr
 const state=()=>{const terminals=terminal.state();return {updates:updates.status(),provider:sessions.provider,claudeProvider:sessions.claudeProvider,sessions:sessions.visible(),approvals:sessions.approvals.map(({rpcId,...a})=>a),jobs:pc.list(),terminals,terminal:terminals.at(-1)||{}};};
 const send=(res,status,data)=>{res.writeHead(status,{'content-type':'application/json','cache-control':'no-store'});res.end(JSON.stringify(data));};
 const allowedOrigins=new Set([origin]);
-const explicitBuildIntent=text=>typeof text==='string'&&/^\s*(?:please\s+)?(?:build|implement|fix|add|create)\b/i.test(text);
 function safeFile(path){if(typeof path!=='string'||!path||path.startsWith('.')||path.split('/').some(p=>p.startsWith('.')||p==='node_modules')||path.length>250)throw Error('File is outside this workspace preview');const full=realpathSync(resolve(path));if(!full.startsWith(realpathSync(process.cwd())+'/')||!['.md','.txt','.mjs','.tsx','.ts','.css','.json','.rs','.toml','.html'].includes(extname(full)))throw Error('File is outside this workspace preview');if(statSync(full).size>250000)throw Error('File exceeds preview size');return full;}
 async function body(req){let raw='';for await(const part of req){raw+=part;if(Buffer.byteLength(raw)>7_200_000)throw Error('Request exceeds 7.2 MB');}return JSON.parse(raw||'{}');}
 const server=http.createServer(async(req,res)=>{
