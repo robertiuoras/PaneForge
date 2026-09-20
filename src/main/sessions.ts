@@ -77,7 +77,7 @@ export interface AutoClearArm {
   tokens?: number
 }
 import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from './pipe'
-import { forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeEvidence, resumeIdFor, transcriptPath } from './transcripts'
+import { codexAcceptedPrompt, forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeEvidence, resumeIdFor, transcriptPath } from './transcripts'
 import { liveModelFor } from './paneModel'
 // How hard a Codex pane thinks. The rule is `shared/effort.ts`, the disk is
 // `main/effort.ts`, the levels each model offers come from Codex itself.
@@ -3729,6 +3729,15 @@ export class SessionManager extends EventEmitter {
               // second reading is the composer itself, which is the thing this whole path
               // exists to protect: empty, and the prompt went in.
               const box = promptStillInBox(painted, prompt)
+              // Codex can accept a follow-up while the current turn is still running. Its
+              // composer then disappears without starting a second `runSince`, so terminal
+              // paint alone is inconclusive. The exact native user row is stronger proof
+              // than either clock or paint and prevents a delivered prompt being recorded
+              // as LOST (s16-mu9f6fdf, 2026-09-20).
+              if (proof !== 'idle' && codexAcceptedPrompt(id, prompt, typedAt - 1000)) {
+                acLog(`${id} prompt submitted - native Codex receipt`)
+                return settle('sent')
+              }
               if (box === false) {
                 acLog(`${id} prompt submitted - it is no longer in the composer`)
                 return settle('sent')

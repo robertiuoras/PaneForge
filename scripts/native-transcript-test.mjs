@@ -21,7 +21,7 @@ const fixtureCodexHome = join(work, 'codex')
 
 const out = join(work, 'transcripts.cjs')
 buildSync({ absWorkingDir: root, entryPoints: ['src/main/transcripts.ts'], bundle: true, format: 'cjs', platform: 'node', outfile: out, define: { 'process.env.CODEX_HOME': JSON.stringify(fixtureCodexHome) } })
-const { noteSession, forgetSession, projectDir, nativeTranscriptPage } = createRequire(import.meta.url)(out)
+const { codexAcceptedPrompt, noteSession, forgetSession, projectDir, nativeTranscriptPage } = createRequire(import.meta.url)(out)
 const cwd = '/Users/native/Projects/reader'
 const line = (value) => JSON.stringify(value)
 const claudeRow = (type, content, extra = {}) => line({ type, timestamp: '2026-09-09T01:02:03.000Z', message: { role: type, content }, ...extra })
@@ -101,6 +101,7 @@ try {
   mkdirSync(dirname(codexFile), { recursive: true })
   const codexRows = [
     line({ type: 'session_meta', payload: { id: codexId, session_id: codexId, cwd, timestamp: '2026-09-09T01:02:03.000Z' } }),
+    line({ timestamp: '2026-09-09T01:02:03.500Z', type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'queued follow-up receipt' }] } }),
     line({ timestamp: '2026-09-09T01:02:04.000Z', type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: '```json\n{ "ok": true }\n```' }] } }),
     line({ timestamp: '2026-09-09T01:02:05.000Z', type: 'response_item', payload: { type: 'custom_tool_call', call_id: 'call-codex', name: 'exec', input: 'pwd', status: 'completed' } }),
     line({ timestamp: '2026-09-09T01:02:06.000Z', type: 'response_item', payload: { type: 'custom_tool_call_output', call_id: 'call-codex', output: [{ type: 'input_text', text: '/tmp' }] } }),
@@ -109,14 +110,17 @@ try {
   ]
   writeFileSync(codexFile, codexRows.join('\n') + '\n')
   noteSession('codex-pane', cwd, 'codex', codexId)
+  assert.equal(codexAcceptedPrompt('codex-pane', 'queued follow-up receipt', Date.parse('2026-09-09T01:02:03.000Z')), true, 'an exact fresh native user row proves Codex accepted the prompt')
+  assert.equal(codexAcceptedPrompt('codex-pane', 'queued follow-up receipt', Date.parse('2026-09-09T01:02:04.000Z')), false, 'an older identical prompt cannot prove a new submit')
+  assert.equal(codexAcceptedPrompt('codex-pane', 'different prompt', 0), false, 'a different native user row is not a receipt')
   const codex = dto(nativeTranscriptPage('codex-pane', 'codex'), codexId)
-  assert.equal(codex.messages.length, 5, 'Codex message and tool records are semantic rows')
-  assert.equal(codex.messages[0].blocks[0].type, 'code', 'Codex fenced code is rendered as code')
-  assert.equal(codex.messages[1].blocks[0].type, 'tool'); assert.equal(codex.messages[2].blocks[0].type, 'tool')
-  assert.equal(codex.messages[1].blocks[0].state, 'requested', 'completed call emission is not proof of completed execution')
-  assert.equal(codex.messages[1].blocks[0].callId, 'call-codex'); assert.equal(codex.messages[2].blocks[0].callId, 'call-codex')
-  assert.equal(codex.messages[3].blocks[0].phase, 'call'); assert.equal(codex.messages[4].blocks[0].phase, 'result')
-  assert.equal(codex.messages[4].blocks[0].state, 'error'); assert.equal(codex.messages[4].blocks[0].output, 'failed exactly\n')
+  assert.equal(codex.messages.length, 6, 'Codex message and tool records are semantic rows')
+  assert.equal(codex.messages[1].blocks[0].type, 'code', 'Codex fenced code is rendered as code')
+  assert.equal(codex.messages[2].blocks[0].type, 'tool'); assert.equal(codex.messages[3].blocks[0].type, 'tool')
+  assert.equal(codex.messages[2].blocks[0].state, 'requested', 'completed call emission is not proof of completed execution')
+  assert.equal(codex.messages[2].blocks[0].callId, 'call-codex'); assert.equal(codex.messages[3].blocks[0].callId, 'call-codex')
+  assert.equal(codex.messages[4].blocks[0].phase, 'call'); assert.equal(codex.messages[5].blocks[0].phase, 'result')
+  assert.equal(codex.messages[5].blocks[0].state, 'error'); assert.equal(codex.messages[5].blocks[0].output, 'failed exactly\n')
   assert.equal(codex.rawOutput, codexRows.slice(1).join('\n'), 'correlation metadata never changes raw JSONL')
   forgetSession('codex-pane')
 

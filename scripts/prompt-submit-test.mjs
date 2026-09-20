@@ -532,6 +532,7 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
   // ...and the give-up is not the last word: the composer is read before a prompt the
   // agent is answering is written off as unsent.
   ok(/promptStillInBox\(painted, prompt\)/.test(fn), 'the give-up reads the composer before it calls a prompt unsent')
+  ok(/codexAcceptedPrompt\(id, prompt, typedAt - 1000\)/.test(fn), 'an exact native Codex user row proves a queued follow-up was accepted')
   ok(/box === false/.test(fn) && /settle\('sent'\)/.test(fn), 'an empty composer settles it as sent')
 
   ok(!/Date\.now\(\) >= deadline\)/.test(fn), 'the confirm may not expire on the WAIT deadline')
