@@ -108,6 +108,8 @@ const DESK_ONLY = new Set([
   'phone:forgetKey',
   'phone:clearMark',
   'sessions:closing',
+  // Exact prompt ledgers are profile files used to restore the native desk's rail.
+  'sessions:prompts',
   // A vault is opened from a folder dialog and the Obsidian app on THIS machine - a
   // phone has neither.
   'config:pickVault',

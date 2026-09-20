@@ -229,6 +229,7 @@ export const SURFACE: Surface = {
   takeOverPane: ['invoke', 'autoclear:takeover'],
   priorPrompt: ['invoke', 'prompt:prior'],
   splitPrompt: ['invoke', 'prompt:split'],
+  panePrompts: ['invoke', 'sessions:prompts'],
   promptUsed: ['send', 'prompt:used'],
   voiceStatus: ['invoke', 'voice:status'],
   transcribe: ['invoke', 'voice:transcribe'],
