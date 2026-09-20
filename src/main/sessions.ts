@@ -740,9 +740,11 @@ export class SessionManager extends EventEmitter {
         openedAt: s.meta.openedAt ?? s.meta.createdAt,
         lastRunMs: s.meta.lastRunMs,
         engaged: s.meta.engaged,
-        // `runSince` is the turn clock: it is set exactly while the agent is producing an
-        // answer, so it is the one honest reading of "mid-turn" at the moment we die.
-        wasWorking: Boolean(s.meta.runSince),
+        // A footer can report idle while Codex is still calling tools. Use native
+        // turn evidence when available, retaining the clock for other agents.
+        wasWorking: (s.meta.agent === 'codex' && !s.meta.asleep
+          ? rolloutTurn(codexTranscriptPath(s.meta.cwd, resumeIdFor(s.meta.id) ?? '')).inProgress
+          : undefined) ?? Boolean(s.meta.runSince),
         // ...and whether this pane was picking its own reasoning effort. Only the choice
         // survives, never the level: the pane comes back as a new conversation's worth of
         // launch flag, and what it is really running is confirmed from the rollout again.

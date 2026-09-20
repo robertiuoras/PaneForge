@@ -11,10 +11,12 @@
 
 import { closeSync, openSync, readSync, statSync } from 'node:fs'
 import { lastTurnContext, ROLLOUT_TAIL_BYTES } from '../shared/effort'
+import { codexTurnInProgress } from '../shared/restoreTurn'
 
 export interface TurnReading {
   effort?: string
   model?: string
+  inProgress?: boolean
 }
 
 interface Reading {
@@ -40,10 +42,10 @@ function tailOf(path: string, size: number): string {
 }
 
 /**
- * The effort on the newest turn a rollout recorded, or undefined when it has not said.
+ * Native effort, model and turn activity, when the bounded rollout tail records them.
  *
  * Cached on the file's own SIZE and mtime rather than on a clock: this runs on the 1s
- * sweep, and a rollout only changes when a turn starts. A cache keyed on the wall clock
+ * sweep, and a rollout changes throughout a turn. A cache keyed on the wall clock
  * would serve yesterday's answer for its whole window even though the file has already
  * moved (the autoclear handoff-cache lesson, 2026-09-04).
  */
@@ -63,7 +65,8 @@ export function rolloutTurn(path: string | null): TurnReading {
   if (hit && hit.size === size && hit.mtimeMs === mtimeMs) return hit.turn
   let turn: TurnReading = {}
   try {
-    turn = lastTurnContext(tailOf(path, size)) ?? {}
+    const tail = tailOf(path, size)
+    turn = { ...lastTurnContext(tail), inProgress: codexTurnInProgress(tail) }
   } catch {
     /* unreadable, or gone mid-read - not evidence either way */
   }
