@@ -46,7 +46,7 @@ try {
     page.on("pageerror", (error) => errors.push(error.message));
     page.on("console", (message) => {
       if (message.type() === "error") {
-        if (injectingFailure && message.text().includes("409 (Conflict)"))
+        if (injectingFailure && /409 \(Conflict\)|503 \(Service Unavailable\)/.test(message.text()))
           expectedFailureConsole.push(message.text());
         else errors.push(message.text());
       }
@@ -356,6 +356,31 @@ try {
       check(
         "injected brief rejection stays visible, keeps draft and exact created identity, and does not retry creation",
       );
+      // Simulate a committed create whose response is lost, then restart the UI.
+      await page.route("**/api/sessions", async route => {
+        if (route.request().method() !== "POST") return route.continue();
+        await route.fetch();
+        await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Creation response lost" }) });
+      });
+      await page.getByRole("button", { name: "New agent", exact: true }).click();
+      await page.getByRole("textbox", { name: "Agent title" }).fill("Recover lost creation");
+      await page.getByRole("textbox", { name: "Objective", exact: true }).fill("Reuse this request after reload.");
+      await page.getByRole("button", { name: "Create & brief agent" }).click();
+      await page.getByText("Creation response lost", { exact: true }).waitFor();
+      const lostId = server.requests.filter(r => r.path === "/api/sessions").at(-1).body.requestId;
+      assert.ok(lostId);
+      await page.unroute("**/api/sessions");
+      await page.reload();
+      await page.getByText("Fixture supervisor connected", { exact: true }).waitFor();
+      await page.getByRole("button", { name: "New agent", exact: true }).click();
+      assert.equal(await page.getByRole("textbox", { name: "Objective", exact: true }).inputValue(), "Reuse this request after reload.");
+      await page.getByRole("button", { name: "Create & brief agent" }).click();
+      await page.getByRole("complementary").getByText("codex-native-19", { exact: true }).waitFor();
+      assert.equal(server.requests.filter(r => r.path === "/api/sessions").at(-1).body.requestId, lostId);
+      assert.equal(server.state().sessions.filter(s => s.id === "workspace-19").length, 1);
+      assert.equal(await page.evaluate(() => localStorage.getItem("paneforge-next.pending-action")), null);
+      assert.deepEqual(errors, []);
+      check("lost creation response and reload reuse the saved request identity without a duplicate session");
       run.requests = server.requests.map((r) => ({
         method: r.method,
         path: r.path,

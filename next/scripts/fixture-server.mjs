@@ -23,6 +23,7 @@ export async function startFixtureServer({ port = 0 } = {}) {
     sockets = new Set(),
     requests = [],
     controls = [];
+  const creations = new Map();
   const state = () => {
     const { projects, ...rest } = data;
     return rest;
@@ -40,7 +41,9 @@ export async function startFixtureServer({ port = 0 } = {}) {
     projectId = "demo",
     laneId = "lane-b",
     provider = "codex",
+    requestId,
   }) => {
+    if (requestId && creations.has(requestId)) return creations.get(requestId);
     const number = next++;
     const created = {
       schemaVersion: 1,
@@ -64,6 +67,7 @@ export async function startFixtureServer({ port = 0 } = {}) {
       status: "idle",
     };
     data.sessions.push(created);
+    if (requestId) creations.set(requestId, created);
     return created;
   };
   const controller = (text, clientId, via) => {
