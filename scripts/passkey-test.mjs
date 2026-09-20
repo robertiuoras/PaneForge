@@ -729,7 +729,9 @@ ok(!server.running, 'the gate test server stopped cleanly')
     'app:visibleNow', 'game:manual', 'restore:pending', 'board:get', 'board:tasks',
     'board:memory', 'history:list', 'history:search', 'history:read', 'recents:list',
     'phone:state',
-    'remote:state', 'remote:rename', 'remote:ask', 'remote:cancelAsk', 'remote:scan',
+    // Keep open is reversible pane metadata, like rename. It cannot type, start, stop,
+    // delete, pair a device, or expose anything beyond the already visible pane.
+    'remote:state', 'remote:rename', 'remote:keepOpen', 'remote:ask', 'remote:cancelAsk', 'remote:scan',
     'remote:watch', 'remote:projects', 'remote:agents', 'remote:handoffPending',
     'prompt:prior', 'improve:status',
     'improve:answer', 'voice:status', 'voice:transcribe', 'usage:get',

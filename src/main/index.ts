@@ -1169,6 +1169,13 @@ const remote = new Remote({
   redraw: (id) => manager.redraw(id),
   setBusy: (id, busy, tail, clock, reason) => manager.setBusyOnScreen(id, busy, tail, clock, reason),
   clearAttention: (id) => manager.clearAttention(id),
+  setKeepOpen: (id, keepOpen) => {
+    const current = getConfig().pinnedPanes ?? []
+    const next = keepOpen ? [...new Set([...current, id])] : current.filter((pinned) => pinned !== id)
+    if (next.join(',') !== current.join(',')) setConfig({ pinnedPanes: next })
+    return true
+  },
+  isKeepOpen: (id) => (getConfig().pinnedPanes ?? []).includes(id),
   kill: (id) => manager.kill(id),
   restart: (id) => continuationOwnsSource(id) ? null : manager.restart(id),
   rename: (id, title) => manager.rename(id, title),
@@ -2929,6 +2936,9 @@ ipcMain.handle('remote:watch', (_e, device: string, ids: string[], all: boolean)
   remote.setWatch(String(device), Array.isArray(ids) ? ids.map(String) : [], !!all)
   return remote.state()
 })
+ipcMain.handle('remote:keepOpen', (_e, id: string, keep: boolean) =>
+  remote.setKeepOpen(String(id), !!keep)
+)
 // Opening a pane on the other machine. The folder list has to come from there too -
 // this machine's projects root says nothing about what is checked out over there.
 ipcMain.handle('remote:projects', (_e, device: string) => remote.projectsOn(String(device)))

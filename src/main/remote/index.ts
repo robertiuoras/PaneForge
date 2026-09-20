@@ -253,6 +253,14 @@ export class Remote extends EventEmitter {
     return client.replayHistory(cut.local)
   }
 
+  /** Change Keep open at the owner; a mirror's local config must never pretend to own it. */
+  setKeepOpen(id: string, keep: boolean): Promise<boolean> {
+    const cut = splitId(id)
+    const client = cut && this.clients.get(cut.peer)
+    if (!client) return Promise.reject(new Error('That device is not connected'))
+    return client.setKeepOpen(cut.local, keep)
+  }
+
   /** Forward a pane message to the device that owns it. Silent if it went away. */
   send(id: string, msg: Msg): void {
     const cut = splitId(id)
@@ -428,7 +436,8 @@ export class Remote extends EventEmitter {
             backJob: s.backJob,
             backJobSince: s.backJobSince,
             closingAt: s.closingAt,
-            closeKept: s.closeKept
+            closeKept: s.closeKept,
+            keepOpen: s.keepOpen
           })),
           sessions: client?.list().length ?? 0,
           since: client?.since || undefined,

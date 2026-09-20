@@ -57,5 +57,11 @@ check(
   'and the width reading is taken before it is used'
 )
 
-console.log(failed ? `mirror repair: ${failed} FAILED` : 'mirror repair: 7 checks passed')
+// 3. A remote snapshot stays covered until xterm has parsed the complete replacement.
+const reset = src.slice(src.indexOf('const offReset'), src.indexOf('const writeData'))
+check(/if \(mirrorRef\.current\) setBlank\(true\)/.test(reset), 'a mirror reset covers the old frame before replacement')
+check(!/if \(snapshot\) setBlank\(false\)/.test(reset), 'the cover is never dropped before xterm parses the snapshot')
+check(/if \(snapshot && !awaitingInitialReplay\) setBlank\(false\)/.test(reset), 'the complete snapshot is revealed only from the write callback')
+
+console.log(failed ? `mirror repair: ${failed} FAILED` : 'mirror repair: 10 checks passed')
 process.exit(failed ? 1 : 0)

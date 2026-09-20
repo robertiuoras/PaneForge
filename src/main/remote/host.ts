@@ -49,6 +49,8 @@ export interface HostBackend {
   redraw(id: string): void
   setBusy(id: string, busy: boolean, tail?: string, clock?: TurnClock, reason?: BusyReason): void
   clearAttention(id: string): void
+  setKeepOpen?(id: string, keep: boolean): boolean
+  isKeepOpen?(id: string): boolean
   kill(id: string): void
   restart(id: string): Session | null
   rename(id: string, title: string): void
@@ -279,7 +281,7 @@ export class RemoteHost extends EventEmitter {
         // A pane's last words have to be on the wire before the list says it ended, or
         // they arrive after the other device has already drawn the pane as finished.
         this.flush(this.batch.drain())
-        for (const g of this.guests) g.conn.send({ t: 'sessions', list: sessions })
+        for (const g of this.guests) g.conn.send({ t: 'sessions', list: this.withKeepOpen(sessions) })
       })
     )
     this.unhook.push(
@@ -287,6 +289,16 @@ export class RemoteHost extends EventEmitter {
         for (const g of this.guests) g.conn.send({ t: 'attention', session: s })
       })
     )
+  }
+
+  /** Keep-open belongs to this device's config, so publish its reading with each pane. */
+  private withKeepOpen(sessions = this.backend.list()): Session[] {
+    return sessions.map((s) => ({ ...s, keepOpen: this.backend.isKeepOpen?.(s.id) ?? s.keepOpen ?? false }))
+  }
+
+  private publishSessions(): void {
+    const list = this.withKeepOpen()
+    for (const g of this.guests) g.conn.send({ t: 'sessions', list })
   }
 
   /**
@@ -378,7 +390,7 @@ export class RemoteHost extends EventEmitter {
     this.pending.delete(conn)
     this.guests.add(guest)
     conn.on('msg', (m: Msg) => this.handle(guest, m))
-    conn.send({ t: 'sessions', list: this.backend.list() })
+    conn.send({ t: 'sessions', list: this.withKeepOpen() })
     this.emit('changed')
   }
 
@@ -415,6 +427,16 @@ export class RemoteHost extends EventEmitter {
           // pane looks exactly as it does here, mid-turn included.
           conn.send({ t: 'buffer', id, data: this.backend.buffer(id) })
           this.emit('changed')
+          return
+        }
+        case 'keep': {
+          if (!id || !this.backend.list().some((s) => s.id === id))
+            return conn.send({ t: 'failed', rid: m.rid, error: 'That pane is no longer open' })
+          const keep = m.keep === true
+          if (!this.backend.setKeepOpen?.(id, keep))
+            return conn.send({ t: 'failed', rid: m.rid, error: 'That device could not save Keep open' })
+          this.publishSessions()
+          conn.send({ t: 'kept', rid: m.rid, keep })
           return
         }
         case 'presence':

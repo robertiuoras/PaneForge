@@ -68,6 +68,7 @@ for (const mode of ['plain', 'staged', 'cancel']) {
   }
   const context = {
     api, sessionId: 'pane', queueReplay: j => { job = j }, activeRef: { current: true }, visibleRef: { current: false },
+    mirrorRef: { current: true },
     t: term, f: {}, keep: x => x, withoutReplayQueries: x => x,
     needRestoreFix: { current: false }, armRestoreFix: noop, pinned: { current: true }, setBlank: noop,
     seedMarks: () => marks++, reshape: noop, replayColsRef: { current: 120 }, replaying: { current: false },

@@ -195,6 +195,7 @@ export const SURFACE: Surface = {
   connectRemote: ['invoke', 'remote:connect'],
   scanRemote: ['invoke', 'remote:scan'],
   watchRemote: ['invoke', 'remote:watch'],
+  setRemoteKeepOpen: ['invoke', 'remote:keepOpen'],
   remoteProjects: ['invoke', 'remote:projects'],
   remoteAgents: ['invoke', 'remote:agents'],
   startRemote: ['invoke', 'remote:start'],
