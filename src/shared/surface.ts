@@ -162,6 +162,7 @@ export const SURFACE: Surface = {
   saveTasks: ['invoke', 'board:tasks'],
   saveMemory: ['invoke', 'board:memory'],
   listHistory: ['invoke', 'history:list'],
+  dailyReview: ['invoke', 'review:daily'],
   searchHistory: ['invoke', 'history:search'],
   readHistory: ['invoke', 'history:read'],
   deleteHistory: ['invoke', 'history:delete'],

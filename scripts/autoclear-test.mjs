@@ -200,15 +200,10 @@ console.log('nothing but the button stands a countdown down')
   ok('the card still carries that button', /Keep this session/.test(toast))
 }
 
-console.log('a countdown can be heard')
+console.log('a countdown stays silent')
 {
-  // A card drawn in the corner of a window that is behind something else is a card nobody
-  // reads in time. Source assertion for the same reason as above - the sound is a side
-  // effect in an effect, and there is nothing to return.
   const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
-  ok('the soonest clear countdown is tracked', /const clearSoonAt = sessions\.reduce/.test(app))
-  ok('it ticks', /clearSoonAt - left \* 1000/.test(app))
-  ok('and it announces itself once', /if \(first\) playAction\('move', soundSet\.current\)/.test(app))
+  ok('there is no auto-clear sound effect', !/clearSoonAt|playAction|playTick/.test(app))
 }
 
 console.log('keystrokes')

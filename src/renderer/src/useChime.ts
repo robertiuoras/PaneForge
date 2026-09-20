@@ -12,8 +12,6 @@
 // deciding whether to interrupt somebody.
 
 import {
-  COUNTDOWN_GAIN,
-  COUNTDOWN_TICK_GAIN,
   MAX_SOUND_BYTES,
   soundFor,
   clampVolume,
@@ -149,15 +147,9 @@ function voice(ac: AudioContext, v: SoundVoice, at: number, level: number): void
   }
 }
 
-/**
- * Render a whole recipe, honouring each voice's own repeat.
- *
- * `floor` lifts a recipe that is quieter than the caller needs it to be - see
- * `COUNTDOWN_GAIN`. It never lowers one: a sound already above the floor keeps the level
- * it was tuned at, so the picker's twenty-six entries still sound like themselves.
- */
-function render(ac: AudioContext, def: SoundDef, volume: number, floor = 0): void {
-  const master = clampVolume(volume) * Math.max(def.gain, floor)
+/** Render a whole recipe, honouring each voice's own repeat. */
+function render(ac: AudioContext, def: SoundDef, volume: number): void {
+  const master = clampVolume(volume) * def.gain
   if (!master) return
   const now = ac.currentTime + 0.02
   for (const v of def.voices) {
@@ -242,9 +234,9 @@ function tooSoon(): boolean {
   return false
 }
 
-function playBuiltin(def: SoundDef, volume: number, floor = 0): void {
+function playBuiltin(def: SoundDef, volume: number): void {
   const ac = audio()
-  if (ac) render(ac, def, volume, floor)
+  if (ac) render(ac, def, volume)
 }
 
 /**
@@ -259,25 +251,20 @@ function playResolved(
   id: string,
   sounds: Partial<SoundConfig> | undefined,
   volume: number,
-  instead: SoundDef | null,
-  floor = 0
+  instead: SoundDef | null
 ): void {
   const r = resolveSound(id, sounds?.custom ?? [])
-  // An upload is played back at half scale so a recording at full scale does not jump
-  // out beside a synthesised bell. A countdown is the one place that halving is wrong,
-  // so a floored call lifts the file too, by the same ratio it lifts a recipe.
-  const scale = floor ? Math.min(1, 0.5 * (floor / 0.11)) : 0.5
   if (!r) {
-    if (instead) playBuiltin(instead, volume, floor)
+    if (instead) playBuiltin(instead, volume)
     return
   }
   if (r.kind === 'builtin') {
-    playBuiltin(r.def, volume, floor)
+    playBuiltin(r.def, volume)
     return
   }
   void customBuffer(r.sound.id).then((buf) => {
-    if (buf) playBuffer(buf, volume, scale)
-    else if (instead) playBuiltin(instead, volume, floor)
+    if (buf) playBuffer(buf, volume)
+    else if (instead) playBuiltin(instead, volume)
   })
 }
 
@@ -291,61 +278,6 @@ export function playEvent(event: SoundEvent, sounds: Partial<SoundConfig> | unde
   const fallback = soundFor(undefined, event)
   const backup = fallback.kind === 'builtin' ? fallback.def : null
   playResolved(sounds?.[event] ?? '', sounds, volume, backup)
-}
-
-/**
- * The app announcing something it is about to do to somebody's pane.
- *
- * Same sound as an alert and deliberately NOT subject to the 900ms guard, which exists so
- * that several alerts meaning "a turn ended" do not stack. This one does not mean that: it
- * means a pane is about to be closed or moved, and the pane picked for that is very often
- * the one that just FINISHED - so `done` rings, the sweep arms in the same instant, and the
- * one alert nobody may miss is the one the guard drops. Reported 2026-08-23: "theres no
- * sound on the countdown".
- *
- * It still MOVES the guard, so it can suppress a chime landing on top of it - the asymmetry
- * is the whole point. `__pfAlerts` is what makes this checkable: a probe cannot hear.
- */
-export function playAction(event: SoundEvent, sounds: Partial<SoundConfig> | undefined): void {
-  const w = window as unknown as { __pfAlerts?: number }
-  w.__pfAlerts = (w.__pfAlerts ?? 0) + 1
-  lastPlayed = Date.now()
-  const volume = clampVolume(sounds?.volume ?? 1)
-  if (!volume) return
-  const fallback = soundFor(undefined, event)
-  const backup = fallback.kind === 'builtin' ? fallback.def : null
-  // Floored: this is the countdown, and the default it lands on (`bowl`, 0.11) is one of
-  // the quietest recipes in the catalogue. See `COUNTDOWN_GAIN`.
-  playResolved(sounds?.[event] ?? '', sounds, volume, backup, COUNTDOWN_GAIN)
-}
-
-/**
- * One second of an auto-answer countdown.
- *
- * Deliberately NOT throttled and deliberately not `playEvent`: the 900ms guard exists so
- * two alerts landing together do not stack, and a metronome is exactly the case it would
- * suppress at one a second - and worse, a tick that touched `lastPlayed` would swallow the
- * finished-turn chime that follows the answer. It is quieter than an alert for the same
- * reason: this is a clock, not an interruption.
- */
-export function playTick(sounds: Partial<SoundConfig> | undefined): void {
-  // A probe cannot hear a sound, and the countdown's whole promise is that it is audible
-  // once a second. This is the only thing a test can read back, the same way `__pfRenders`
-  // is what makes "which panes re-rendered" answerable at all.
-  const w = window as unknown as { __pfTicks?: number }
-  w.__pfTicks = (w.__pfTicks ?? 0) + 1
-  const volume = clampVolume(sounds?.volume ?? 1)
-  if (!volume) return
-  const fallback = soundFor(undefined, 'tick')
-  // Floored the same way, one rung below the arrival - `tick` is 0.05, which at any
-  // ordinary volume is under the room.
-  playResolved(
-    sounds?.tick ?? '',
-    sounds,
-    volume,
-    fallback.kind === 'builtin' ? fallback.def : null,
-    COUNTDOWN_TICK_GAIN
-  )
 }
 
 /**

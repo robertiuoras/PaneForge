@@ -35,7 +35,6 @@ const surfaceFile = path.join(root, 'src', 'shared', 'surface.ts')
  * it real. Anything not on this list and not called from the window is a finding.
  */
 const DESK_SIDE = {
-  listReviews: 'Next Review host GET /api/reviews through authenticated phone transport',
   recordReview: 'pf-ctl review - explicit agent result publishing, guarded phone invoke',
   acknowledgeReview: 'Next Review host POST /api/reviews/:id/ack - retained result read state only',
   openReview: 'Next Review host POST /api/reviews/:id/open - guarded saved report opening',

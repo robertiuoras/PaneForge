@@ -482,13 +482,10 @@ ok('the plan is refreshed from the TIMER as well as from a frame', () => {
 })
 
 ok('a held question has NO deadline anywhere, not just no seconds in the pane', () => {
-  // The pane was the only consumer that looked at `autoAnswerHeld` beside the number. The
-  // card's `AskClock` and the desk's tick both read `autoAnswerAt` alone, so a hold that
-  // moved the deadline instead of clearing it left the card counting down and the tick
-  // sounding once a second at somebody who had just clicked onto the pane to answer it.
+  // The card's `AskClock` reads `autoAnswerAt` directly, so a hold must clear the deadline
+  // at the source rather than leave a countdown visible after somebody starts answering.
   assert.match(sessions, /const at = heldNow \? 0 : due/, 'the hold clears the deadline at the source')
   const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
-  assert.match(app, /s\.autoAnswerAt && \(!min \|\| s\.autoAnswerAt < min\)/, 'the tick reads the number alone')
   // Whitespace-tolerant: the card's title line grew a `hold` branch and prettier broke the
   // ternary over several lines, which turned a wiring assertion into a formatting one.
   assert.match(
@@ -537,17 +534,7 @@ ok('two decisions are two cards, and answering one leaves the other counting', (
   assert.match(card, /soons\.map\(\(soon\) =>/, 'and the corner draws one card per decision')
   assert.match(card, /key=\{soonKey\(soon\)\}/, 'each keyed by the panes it names')
 
-  // One sound for a stretch of countdowns, not one per card: "just 1 sound is fine for
-  // coutndown because when i check i should see both will close".
-  assert.match(
-    app,
-    /const anySoon = closeSoons\.length > 0/,
-    'the alert is keyed on the stack being occupied, not on each card'
-  )
-  // Two matches rather than one spanning a line break: a regex with a bare \n in it does
-  // not match the same file checked out with CRLF endings (`npm run test:crlf`).
-  assert.match(app, /playAction\('move', soundSet\.current\)/, 'the alert is still the move chime')
-  assert.match(app, /\}, \[anySoon\]\)/, 'and its effect depends on nothing but that')
+  assert.doesNotMatch(app, /playAction|playTick/, 'countdowns and closing actions stay silent')
 })
 
 rmSync(out, { recursive: true, force: true })
