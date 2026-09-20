@@ -35,6 +35,25 @@ update-free workflow management.
 
 ## Current evidence
 
-Review feature commit `ae684d17` and daily-review work are merged. Release publication,
-the complete live Next integration and installed platform gates remain pending. The
-Stage 1 evidence documents its fixture scope; it is not replacement acceptance.
+Review feature commit `ae684d17` and daily-review work are merged. GuardDeck result
+cards have installed-binary evidence in `guarddeck-result-release-2026-09-21.md`.
+The Next workspace includes persisted Review replies, direct CLI controls, included-plan
+route selection, and read-only preserved history. Import staging and rollback were
+verified against a temporary copied record without altering the live profile.
+
+PC browser verification passed 20 workspace checks per desktop/compact size plus the
+Review suite. A separate PC synthetic video encode/decode and outbound artifact return
+also passed. These fixtures and tool proofs do not establish installed application
+acceptance. See `../next/docs/remote-render-checkpoint.md` and
+`../next/docs/video-proof-checkpoint.md` for exact receipts and scope.
+
+Inbound Windows SSH remains blocked after key authentication by OpenSSH user-token
+creation failure. Administrator service access was unavailable; no service restart or
+security-policy change was attempted. The alternate native PC shell and outbound
+transfer path proved rendering, but the ordinary SSH-based Code executor remains
+unverified in the installed workflow.
+
+Release publication, final live Chat/CLI continuity, native bundle verification,
+migration activation, and the installed platform/voice/performance gates remain
+pending. Existing PaneForge remains the recovery path. Do not call Next a complete
+replacement until the exit gates above are observed.
