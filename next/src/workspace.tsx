@@ -905,6 +905,7 @@ export function WorkspaceApp() {
                   fallback={<p className="muted">Opening saved output…</p>}
                 >
                   <RawTerminal
+                    key={selected.id}
                     session={selected}
                     terminals={state.terminals || []}
                     setNotice={setNotice}

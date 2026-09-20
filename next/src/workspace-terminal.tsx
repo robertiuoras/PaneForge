@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import {
+  api,
   itemText,
+  working,
   type TerminalRecord,
   type WorkspaceSession,
 } from "./workspace-model";
@@ -16,11 +18,36 @@ export default function WorkspaceTerminal({
   terminals: TerminalRecord[];
   setNotice: (text: string) => void;
 }) {
+  const [launching, setLaunching] = useState(false);
+  const [opened, setOpened] = useState<TerminalRecord | null>(null);
+  useEffect(() => { setOpened(null); }, [session.id]);
   const attached = terminals.filter(
     (terminal) => terminal.sessionId === session.id,
   );
+  if (opened?.sessionId === session.id && !attached.some((item) => item.id === opened.id)) attached.push(opened);
+  const live = attached.some((terminal) => !terminal.exited);
+  const canResume = session.provider === "codex" && Boolean(session.nativeSessionId || session.providerThreadId) && !working(session) && !session.activeTurn;
+  const launch = async () => {
+    setLaunching(true);
+    try {
+      const result = await api<{ id: string }>("/api/terminal/launch", {
+        sessionId: session.id, projectId: session.projectId, machine: "mac",
+      });
+      setOpened({ id: result.id, sessionId: session.id });
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Could not resume this CLI.");
+    } finally { setLaunching(false); }
+  };
   return (
     <div className="raw-output" aria-label="Raw session output">
+      {!live && (
+        <div className="terminal-launch">
+          <button className="quiet" disabled={!canResume || launching} onClick={launch}>
+            {launching ? "Opening CLI…" : "Resume in CLI"}
+          </button>
+          <p className="muted">{canResume ? "Continue this conversation in the Mac CLI. Exit the CLI to return control to chat." : "CLI resume is available when this Codex conversation is idle and its native identity is confirmed."}</p>
+        </div>
+      )}
       {attached.map((terminal) => (
         <SavedTerminal
           key={terminal.id}

@@ -249,6 +249,17 @@ try {
       check(
         "create validates lane; create/rename/brief reuse supervisor endpoints and preserve distinct IDs",
       );
+      await page.getByRole("button", { name: "Open raw terminal", exact: false }).click();
+      assert.equal(await page.getByRole("button", { name: "Resume in CLI", exact: true }).isDisabled(), true);
+      server.update("workspace-15", { executionState: "idle", activeTurn: null });
+      await page.getByRole("button", { name: "Resume in CLI", exact: true }).click();
+      await page.locator(".xterm").waitFor();
+      const launched = server.requests.filter((request) => request.path === "/api/terminal/launch");
+      assert.equal(launched.length, 1);
+      assert.equal(launched[0].body.sessionId, "workspace-15");
+      assert.equal(server.state().terminals.find((item) => item.sessionId === "workspace-15").code.nativeSessionId, "codex-native-15");
+      await page.getByRole("button", { name: "Close raw terminal", exact: false }).click();
+      check("CLI resume waits for idle and targets the existing conversation");
       await page.getByRole("button", { name: "Type a command" }).click();
       await page
         .getByRole("textbox", { name: "Workspace command" })

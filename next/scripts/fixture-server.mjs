@@ -173,6 +173,18 @@ export async function startFixtureServer({ port = 0 } = {}) {
         let result = { ok: true };
         let match;
         if (path === "/api/sessions") result = create(body);
+        else if (path === "/api/terminal/launch") {
+          const target = session(body.sessionId);
+          if (target.activeTurn || target.executionState === "running") return send(res, 409, { error: "Conversation is running." });
+          data.terminals ||= [];
+          let terminal = data.terminals.find((item) => item.sessionId === target.id && !item.exited);
+          if (!terminal) {
+            terminal = { id: `terminal-${target.id}`, sessionId: target.id, exited: false,
+              code: { machine: "mac", provider: "codex", nativeSessionId: target.nativeSessionId, host: "mac" } };
+            data.terminals.push(terminal);
+          }
+          result = { id: terminal.id };
+        }
         else if (
           (match = path.match(/^\/api\/sessions\/([^/]+)$/)) &&
           req.method === "PATCH"
