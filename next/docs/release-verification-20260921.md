@@ -12,6 +12,8 @@ The later parent coordinator run was stopped after observing `confirm-fit-test.m
 
 ## Next verification
 
+Parent release `v0.8.220` was published as a prerelease from `e345a44390ca20299138385e061f262d036a216c`. GitHub workflow `35526684973` passed both platform builds. The eight versioned installer/feed/blockmap assets were downloaded, checked against GitHub sizes/digests, and both update feeds matched the downloaded SHA512 values. The Mac ZIP and DMG integrity checks passed. Receipt: `/tmp/paneforge-v0.8.220-served-assets/verified-receipt.json`. This is publication proof, not an installed update.
+
 Updated dependencies pass 102 unit tests after CLI continuity and migration-integrity checks, zero npm audit findings, PC TypeScript/Vite builds, 40 workspace and 12 Review fixture checks. A bounded included-plan Chat to exact-native CLI resume to reconciled Chat journey completed on one native identity; see the integration checkpoint for its limits. See the remote-render checkpoint for source hashes and returned artifacts. Browser and video jobs ran only on the PC. Mac-to-PC SSH recovered long enough to pass the normal render path, then resumed resetting; outbound artifact return through the existing native PC connection still works. The root cause remains unknown. A subsequent guarded PC Code request completed with the exact requested response; the integration checkpoint records its retained receipt and limits.
 
 The subsequent icon and idle-restart regression batch passed 111 of 111 unit tests from the `next` package directory. Receipt log: `/tmp/next-unit-idle-correct-cwd-20260921.log`. Running this suite from the parent checkout instead fails the legacy-history fixture because it intentionally uses the current package directory.
@@ -21,6 +23,8 @@ The subsequent icon and idle-restart regression batch passed 111 of 111 unit tes
 The native macOS app built successfully from clean Next source `492f6d919aff13d13e2164472d38e5e4a66f90cc`. Its ad-hoc signature passed strict deep verification. Archive `next/artifacts/PaneForge-Next-0.1.0-mac-arm64-preview.zip` has SHA256 `fcc0c8a75f4a28967460c4ae5e5233c29d78663ca9a10c223faf2306e1c41313`.
 
 The signed app's actual bundled Node and server resources returned the expected product, source revision and isolated data directory from the health endpoint. No browser or native window was opened. Receipt: `/tmp/next-signed-app-proof-20260921.json`; build log: `/tmp/paneforge-next-native-build-final-20260921.log`. This is an ad-hoc preview, not a notarized distribution or installed WebView acceptance.
+
+A subsequent native launch check exposed a framing defect in both older previews: the Rust probe requested HTTP/1.1 and parsed the raw body as JSON, while the real Node `writeHead`/`end` response used chunked transfer encoding. The probe now requests HTTP/1.0 with connection-close framing. All six Rust tests pass, including a live Node server regression rather than only a manually written socket response. Log: `/tmp/next-native-health-regression-20260921.log`. This source fix is later than the published parent release and both Next preview artifacts; rebuilding and observing native launch remain required.
 
 ## Windows preview artifact
 

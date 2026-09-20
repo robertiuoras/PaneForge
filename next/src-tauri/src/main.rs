@@ -122,8 +122,10 @@ fn probe_supervisor_at(address: SocketAddr) -> Result<Option<SupervisorIdentity>
     stream
         .set_read_timeout(Some(Duration::from_millis(300)))
         .map_err(|error| format!("Could not read PaneForge health: {error}"))?;
+    // This bounded probe reads until close, without an HTTP chunk decoder.
+    // HTTP/1.0 makes Node use that framing even when Content-Length is absent.
     stream
-        .write_all(b"GET /api/health HTTP/1.1\r\nHost: 127.0.0.1:4321\r\nConnection: close\r\n\r\n")
+        .write_all(b"GET /api/health HTTP/1.0\r\nHost: 127.0.0.1:4321\r\nConnection: close\r\n\r\n")
         .map_err(|_| "Port 4321 closed before its supervisor identity could be read".to_string())?;
     let mut response = String::new();
     stream.read_to_string(&mut response).map_err(|_| {
@@ -271,6 +273,45 @@ mod tests {
         let identity = probe_supervisor_at(address).unwrap().unwrap();
         responder.join().unwrap();
         assert_eq!(identity.revision, "abc");
+    }
+
+    #[test]
+    fn probes_real_node_health_without_chunk_framing() {
+        use std::io::BufRead;
+        // Match the supervisor's writeHead/end response, leaving the real Node
+        // HTTP server to choose its wire framing. A hand-written response hid
+        // the HTTP/1.1 chunking failure in the original socket-only test.
+        let script = r#"
+            const http = require('node:http');
+            const server = http.createServer((req, res) => {
+                res.writeHead(200, {'content-type': 'application/json', 'cache-control': 'no-store'});
+                res.end(JSON.stringify({product:'paneforge-next', revision:'node-proof', dataDir:'/tmp/pane'}));
+            });
+            server.listen(0, '127.0.0.1', () => console.log(server.address().port));
+            setTimeout(() => { server.closeAllConnections(); server.close(); }, 5000);
+        "#;
+        struct Fixture(std::process::Child);
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let mut fixture = Fixture(
+            Command::new("node")
+                .args(["-e", script])
+                .stdout(Stdio::piped())
+                .spawn()
+                .expect("Node is required to verify the bundled supervisor protocol"),
+        );
+        let mut port = String::new();
+        std::io::BufReader::new(fixture.0.stdout.take().unwrap())
+            .read_line(&mut port)
+            .unwrap();
+        let address = format!("127.0.0.1:{}", port.trim()).parse().unwrap();
+        let identity = probe_supervisor_at(address).unwrap().unwrap();
+        assert_eq!(identity.revision, "node-proof");
+        assert_eq!(identity.data_dir, "/tmp/pane");
     }
 }
 
