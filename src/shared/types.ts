@@ -276,6 +276,8 @@ export interface Session {
    * `kept 55m` for this and explains the hold instead.
    */
   closeKept?: boolean
+  /** The owning device's persistent Keep open preference for this pane. */
+  keepOpen?: boolean
   /**
    * Set when the person chose "this machine" for this pane in the New session dialog
    * (`StartSessionRequest.stayHere` - the picker was touched; a saved default is not a pin).
@@ -1462,6 +1464,8 @@ export interface RemotePaneInfo {
   closingAt?: number
   /** ...and whether that number is a "keep it open" hold rather than the idle clock */
   closeKept?: boolean
+  /** Persistent Keep open preference, read and changed on the device that owns the pane. */
+  keepOpen?: boolean
 }
 
 /** Live state of one paired device. */
@@ -2819,6 +2823,8 @@ export interface Api {
    * Connecting mirrors nothing until this is called.
    */
   watchRemote(device: string, ids: string[], all?: boolean): Promise<RemoteState>
+  /** Change Keep open on the device that owns a mirrored pane. */
+  setRemoteKeepOpen(id: string, keep: boolean): Promise<boolean>
   /** that device's own project folders, so a pane can be opened over there */
   remoteProjects(device: string): Promise<Project[]>
   /** the CLIs installed on that device - its list, not this one's */

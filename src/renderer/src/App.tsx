@@ -5019,8 +5019,21 @@ export default function App(): JSX.Element {
     }
   }, [sessions, flash])
   const togglePin = useCallback((id: string) => {
-    void savePins([id], !pinnedRef.current[id])
-  }, [savePins])
+    const session = sessions.find((s) => s.id === id)
+    if (!session?.remote) {
+      void savePins([id], !pinnedRef.current[id])
+      return
+    }
+    if (savingPinsRef.current) return
+    savingPinsRef.current = true
+    setSavingPins(true)
+    void api.setRemoteKeepOpen(id, !session.keepOpen)
+      .catch((error) => flash(`Could not change Keep open on ${session.remote!.name}: ${error instanceof Error ? error.message : String(error)}`))
+      .finally(() => {
+        savingPinsRef.current = false
+        setSavingPins(false)
+      })
+  }, [sessions, savePins, flash])
 
   // What is serving on this machine, for the mascot's "what dev servers are running" and
   // for stopping one by name. Held rather than polled: the reading costs a whole process
@@ -5285,8 +5298,8 @@ export default function App(): JSX.Element {
                 type="checkbox"
                 aria-label={`Keep ${s.title} open`}
                 title={s.remote ? `Set keep-open on ${s.remote.name}, where this session runs` : 'Keep this session open and its agent running until unchecked. Only a machine short of memory sleeps it.'}
-                disabled={savingPins || Boolean(s.remote)}
-                checked={!s.remote && Boolean(pinned[s.id])}
+                disabled={savingPins}
+                checked={s.remote ? Boolean(s.keepOpen) : Boolean(pinned[s.id])}
                 onChange={() => togglePin(s.id)}
                 onClick={e => e.stopPropagation()}
                 onPointerDown={e => e.stopPropagation()}
@@ -5475,7 +5488,7 @@ export default function App(): JSX.Element {
                           sleep={alarmSleeps(s.id)}
                           onKeep={() => keepOpen([s.id])}
                         />
-                      ) : pinned[s.id] ? (
+                      ) : (s.remote ? s.keepOpen : pinned[s.id]) ? (
                         // A switch with no reading is a switch nobody can tell they pressed:
                         // pinning a pane removes the only thing on the card that was about
                         // the idle clock, so it takes that place rather than leaving a gap.
@@ -7179,9 +7192,9 @@ export default function App(): JSX.Element {
             items={[
               {
                 key: 'pin',
-                disabled: !local || savingPins,
-                label: pinned[s.id] ? 'Let it close when idle' : 'Keep this pane open',
-                hint: pinned[s.id]
+                disabled: savingPins,
+                label: (s.remote ? s.keepOpen : pinned[s.id]) ? 'Let it close when idle' : 'Keep this pane open',
+                hint: (s.remote ? s.keepOpen : pinned[s.id])
                   ? 'the idle clocks may sleep or close it again'
                   : 'no idle clock sleeps or closes it - only a machine short of memory does'
                 ,

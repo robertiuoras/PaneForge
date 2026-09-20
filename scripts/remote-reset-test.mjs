@@ -31,7 +31,8 @@ const install = new Function('api', 't', 'keepScrollback', 'withoutReplayQueries
   const sessionId = 'remote', list = [], dead = false;
   const submitted = [];
   const noteSubmitted = (line) => submitted.push({text:line, row:t.buffer.active.baseY + t.buffer.active.cursorY});
-  let initialReplay, sawOutput = false;
+  let initialReplay, sawOutput = false, awaitingInitialReplay = false;
+  const mirrorRef = { current: true };
   let wipeSnap = null, wipeTimer;
   const window = { clearTimeout }, publish = () => {}, setBlank = () => {}, setScrolledUp = () => {}, pinned = { current: true }, scrollIntent = { current: 0 }, seedMarks = () => {};
   const keptRows = () => { throw new Error('read stale screen during snapshot'); };

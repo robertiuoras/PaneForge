@@ -3686,6 +3686,10 @@ function TerminalPane({
     let initialReplay: (() => void) | undefined
     let finishInitialReplay: (() => void) | undefined
     let replayDeltas: string[] | null = null
+    // A mirror can receive its fast network buffer before the deeper transcript replay
+    // reaches the front of the queue. Keep its cover through both so opening a pane shows
+    // one complete frame, not a terminal visibly racing down through its history.
+    let awaitingInitialReplay = Boolean(mirrorRef.current)
     queueReplay({
       id: sessionId,
       priority: () => (activeRef.current ? 0 : visibleRef.current ? 1 : 2),
@@ -3699,10 +3703,14 @@ function TerminalPane({
           void api.replayHistory(sessionId).then((ok) => {
             if (!ok || gone) {
               initialReplay = undefined
+              awaitingInitialReplay = false
+              if (sawOutput && !gone) setBlank(false)
               finishInitialReplay?.()
             }
           }).catch(() => {
             initialReplay = undefined
+            awaitingInitialReplay = false
+            if (sawOutput && !gone) setBlank(false)
             finishInitialReplay?.()
           })
         })
@@ -3749,6 +3757,7 @@ function TerminalPane({
       needRestoreFix.current = true
       armRestoreFix()
       const done = (): void => {
+        awaitingInitialReplay = false
         settle()
         // Land on the newest line, not wherever 20k replayed lines happen to leave the view.
         if (pinned.current) t.scrollToBottom()
@@ -4029,7 +4038,9 @@ function TerminalPane({
       publish()
       if (dead) return
       sawOutput = Boolean(snapshot)
-      if (snapshot) setBlank(false)
+      // Reconnects and fast attach buffers replace the entire terminal. Cover the parse,
+      // including xterm's temporary tail jumps, and reveal only its finished frame.
+      if (mirrorRef.current) setBlank(true)
       // Queue the reset with its exact snapshot. An imperative reset can run
       // before old queued writes, and an async buffer read can include new deltas
       // that onData already wrote. RIS goes through xterm's ordered write queue.
@@ -4070,11 +4081,12 @@ function TerminalPane({
         }
         seedMarks()
         drainTyped()
+        if (snapshot && !awaitingInitialReplay) setBlank(false)
       })
     })
 
     const writeData = (data: string): void => {
-      if (!sawOutput) setBlank(false)
+      if (!sawOutput && !awaitingInitialReplay) setBlank(false)
       sawOutput = true
       lastByteAt.current = Date.now()
       // The resume prints for a second or two after the replay. Repair once it stops.

@@ -368,6 +368,13 @@ export class RemoteClient extends EventEmitter {
     })
   }
 
+  /** Save Keep open on the machine that actually owns the pane. */
+  setKeepOpen(localId: string, keep: boolean): Promise<boolean> {
+    return this.ask<boolean>({ t: 'keep', id: localId, keep }, 10_000).catch((err: Error) => {
+      throw new Error(`${this.peer.name} could not change Keep open: ${err.message}`)
+    })
+  }
+
   /**
    * Save files beside a mirrored pane, on the device that owns it.
    *
@@ -612,6 +619,9 @@ export class RemoteClient extends EventEmitter {
         this.settle(m, true)
         return
       }
+      case 'kept':
+        this.settle(m, m.keep === true)
+        return
       case 'filesdone':
         this.settle(m, m.result)
         return

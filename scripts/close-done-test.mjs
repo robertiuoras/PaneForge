@@ -61,6 +61,7 @@ is(doneEnough({ ...done, printed: undefined }, QUIET, NOW), false, 'a pane that 
 is(doneEnough({ ...done, runSince: NOW - 1000 }, QUIET, NOW), false, 'never mid-turn')
 is(doneEnough({ ...done, busyUntil: NOW + 1000 }, QUIET, NOW), false, "...nor while the CLI's own footer still says so")
 is(doneEnough({ ...done, ask: { title: 'Which?' } }, QUIET, NOW), false, 'never a pane holding a question - the answer would be thrown away')
+is(doneEnough({ ...done, drafting: true }, QUIET, NOW), false, 'never a pane whose prompt failed before submission')
 is(doneEnough({ ...done, job: 'npm' }, QUIET, NOW), false, 'never while a command is running in front of the tty')
 is(doneEnough({ ...done, backJob: 'npm' }, QUIET, NOW), false, 'never while the agent left something running in the background')
 is(doneEnough({ ...done, status: 'exited' }, QUIET, NOW), false, 'an ended pane has nothing to close')

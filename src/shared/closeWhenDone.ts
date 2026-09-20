@@ -22,6 +22,8 @@ export interface DonePane {
   busyUntil?: number
   /** It is sitting on a question - closing would throw the question away unanswered. */
   ask?: unknown
+  /** An unsent prompt is work, even when no turn ever started. */
+  drafting?: boolean
   /** A shell pane's foreground command (`shared/paneJob.ts`). */
   job?: string
   /**
@@ -53,6 +55,6 @@ export function doneEnough(p: DonePane, quietMs: number, now = Date.now()): bool
   if (!p.printed) return false
   if (p.status === 'exited' || p.asleep) return false
   if (p.runSince || (p.busyUntil ?? 0) > now) return false
-  if (p.ask || p.job || p.backJob) return false
+  if (p.ask || p.drafting || p.job || p.backJob) return false
   return quietMs >= CLOSE_DONE_QUIET_MS
 }
