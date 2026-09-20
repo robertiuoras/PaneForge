@@ -35,6 +35,10 @@ const surfaceFile = path.join(root, 'src', 'shared', 'surface.ts')
  * it real. Anything not on this list and not called from the window is a finding.
  */
 const DESK_SIDE = {
+  listReviews: 'Next Review host GET /api/reviews through authenticated phone transport',
+  recordReview: 'pf-ctl review - explicit agent result publishing, guarded phone invoke',
+  acknowledgeReview: 'Next Review host POST /api/reviews/:id/ack - retained result read state only',
+  openReview: 'Next Review host POST /api/reviews/:id/open - guarded saved report opening',
   tellPane: 'pf tell <pane> "..." - how the far desk says "signed in" to the pane that asked',
   // A pane says of ITSELF that it should go once it is done. The person who would press a
   // button for this is the person who would simply close the pane; the caller that cannot

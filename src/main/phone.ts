@@ -160,6 +160,9 @@ const GATED_SEND = new Set([
   'stash:reveal'
 ])
 const GATED_INVOKE = new Set([
+  // A report can close a pane or ask the desktop to open local evidence.
+  'reviews:record',
+  'reviews:open',
   // `login:need` puts a card on the desk that offers to open a browser; `login:open`
   // opens an ssh forward and drives a browser through it. Both start something.
   'login:need',

@@ -21,6 +21,7 @@
  *   node scripts/pf-ctl.mjs tell <title-or-id> <text...>
  *   node scripts/pf-ctl.mjs login [url] [--site NAME] [--host user@ip] [--port N] [--machine WORDS]
  *   node scripts/pf-ctl.mjs close <title-or-id>
+ *   node scripts/pf-ctl.mjs review <review.json>   record an agent completion/decision/blocked result
  *   node scripts/pf-ctl.mjs rename <title-or-id> <name...>
  *   node scripts/pf-ctl.mjs composer <number-title-or-id>   what is typed but not sent
  *   node scripts/pf-ctl.mjs type <title-or-id> <text...>
@@ -628,6 +629,14 @@ if (cmd === 'list') {
   const still = (await sessions()).some((x) => x.id === s.id)
   if (still) fail(1, `sessions:kill answered but ${s.id} is still listed`)
   console.log(`closed ${s.id} (${s.title})`)
+} else if (cmd === 'review') {
+  const path = rest[0]
+  if (!path) fail(1, 'review needs a JSON file with id, sessionId, kind, report, and proof')
+  let input
+  try { input = JSON.parse(readFileSync(path, 'utf8')) } catch (e) { fail(1, `could not read review JSON - ${e instanceof Error ? e.message : e}`) }
+  const out = await call('reviews:record', [input])
+  if (!out?.review?.id) fail(1, 'review was not recorded')
+  console.log(JSON.stringify(out))
 } else if (cmd === 'close-when-done') {
   // `pf open --close-when-done` only covers a pane automation opened. This arms the same
   // rule on a pane already on the desk - with no argument, the pane it is typed in, so a
