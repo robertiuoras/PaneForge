@@ -148,7 +148,7 @@ export async function startFixtureServer({ port = 0 } = {}) {
         return send(res, 200, { projects: data.projects });
       if (req.method === "GET" && path.startsWith("/api/history/imported")) {
         const record = { id: "imported_fixture", title: "Earlier build report", provider: "codex", nativeSessionId: "fixture-retained-native", startedAt: null, endedAt: null, sourceKind: "metadata", readOnly: true, resumable: false, transcript: { available: true, bytes: 700000, text: "Retained fixture output. <script>never execute</script>", truncated: true } };
-        return send(res, 200, path === "/api/history/imported" ? { items: [record], malformed: 0 } : record);
+        return send(res, 200, path === "/api/history/imported" ? { items: [record], malformed: [], total: 1, truncated: false } : record);
       }
       if (req.method === "GET" && /^\/api\/projects\/[^/]+\/lanes$/.test(path))
         return send(res, 200, {

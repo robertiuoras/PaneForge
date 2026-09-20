@@ -16,6 +16,8 @@ type Entry = {
 export function ImportedHistory() {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [query, setQuery] = useState("");
+  const [search, setSearch] = useState("");
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [malformed, setMalformed] = useState(0);
@@ -23,12 +25,13 @@ export function ImportedHistory() {
   const [opening, setOpening] = useState<string | null>(null);
   useEffect(() => {
     let disposed = false;
-    api<{ items: Entry[]; malformed: number }>("/api/history/imported", undefined, "GET")
-      .then(result => { if (!disposed) { setEntries(result.items); setMalformed(result.malformed); } })
+    setLoading(true); setError("");
+    api<{ items: Entry[]; malformed: unknown[]; total: number }>(`/api/history/imported?q=${encodeURIComponent(search)}`, undefined, "GET")
+      .then(result => { if (!disposed) { setEntries(result.items); setMalformed(result.malformed.length); setTotal(result.total); } })
       .catch(reason => { if (!disposed) setError(`Saved history could not be loaded: ${reason.message}`); })
       .finally(() => { if (!disposed) setLoading(false); });
     return () => { disposed = true; };
-  }, []);
+  }, [search]);
   async function open(entry: Entry) {
     if (opening) return;
     setOpening(entry.id); setError("");
@@ -40,7 +43,8 @@ export function ImportedHistory() {
   const visible = entries.filter(entry => !needle || `${entry.title || ""} ${entry.provider || ""} ${entry.nativeSessionId || ""}`.toLowerCase().includes(needle));
   return <main className="agent-field review-field" id="agent-field" tabIndex={-1}>
     <div className="field-heading"><div><span className="eyebrow">SAVED HISTORY</span><h1>Return to earlier work.</h1><p>Preserved PaneForge records. Original files stay intact.</p></div><span className="review-storage">Read only</span></div>
-    <label className="review-search"><Search size={16}/><span className="sr-only">Search saved history</span><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search title, provider, or conversation"/></label>
+    <form className="review-controls" onSubmit={event => { event.preventDefault(); setSearch(query.trim()); }}><label className="review-search"><Search size={16}/><span className="sr-only">Search saved history</span><input value={query} maxLength={300} onChange={event => setQuery(event.target.value)} placeholder="Search title, provider, or conversation"/></label><button className="quiet" type="submit" disabled={loading}>Search all history</button></form>
+    {total > entries.length && <p className="review-proof">Showing {entries.length} of {total} records. Search all history to find older work.</p>}
     {loading && <p className="review-loading">Loading saved history…</p>}
     {error && <p role="alert" className="review-pending">{error}</p>}
     {malformed > 0 && <p className="review-pending">{malformed} saved records could not be read. Their files were preserved.</p>}
