@@ -2126,6 +2126,7 @@ version = "0.1.0"
 dependencies = [
  "block2",
  "objc2-av-foundation",
+ "serde_json",
  "tauri",
  "tauri-build",
 ]
