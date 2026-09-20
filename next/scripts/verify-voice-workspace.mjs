@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { startFixtureServer } from "./fixture-server.mjs";
 import { requireRenderPc } from "./render-location.mjs";
@@ -82,7 +83,7 @@ try {
       );
       check("objective-grouped agents");
       await page.screenshot({
-        path: new URL(`${viewport.name}-workspace.png`, artifactDir).pathname,
+        path: fileURLToPath(new URL(`${viewport.name}-workspace.png`, artifactDir)),
         fullPage: true,
       });
       await page
@@ -139,8 +140,7 @@ try {
         .waitFor();
       check("lazy raw terminal attaches existing terminal and replays output");
       await page.screenshot({
-        path: new URL(`${viewport.name}-raw-terminal.png`, artifactDir)
-          .pathname,
+        path: fileURLToPath(new URL(`${viewport.name}-raw-terminal.png`, artifactDir)),
         fullPage: true,
       });
       await page
@@ -401,7 +401,7 @@ try {
       run.result = "failed";
       run.error = error.stack;
       await page.screenshot({
-        path: new URL(`${viewport.name}-failure.png`, artifactDir).pathname,
+        path: fileURLToPath(new URL(`${viewport.name}-failure.png`, artifactDir)),
         fullPage: true,
       });
       throw error;
@@ -427,7 +427,7 @@ console.log(
         checks: run.checks.length,
         consoleErrors: run.consoleErrors.length,
       })),
-      artifacts: artifactDir.pathname,
+      artifacts: fileURLToPath(artifactDir),
     },
     null,
     2,
