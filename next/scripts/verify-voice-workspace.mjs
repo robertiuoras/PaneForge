@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { chromium } from "playwright";
 import { startFixtureServer } from "./fixture-server.mjs";
+import { requireRenderPc } from "./render-location.mjs";
+requireRenderPc();
 const artifactDir = new URL("../.local/stage1-evidence/", import.meta.url);
 await mkdir(artifactDir, { recursive: true });
 const report = {

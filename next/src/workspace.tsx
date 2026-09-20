@@ -623,7 +623,7 @@ export function WorkspaceApp() {
             </p>
           </div>
         </nav>
-        {view === "review" ? <Review setNotice={setNotice} reviewOnly={reviewOnly} /> : <>
+        {view === "review" ? <Review setNotice={setNotice} reviewOnly={reviewOnly} onContinue={(id) => { setSelectedId(id); setView("workspace"); window.location.hash = ""; }} /> : <>
         <main className="agent-field" id="agent-field" tabIndex={-1}>
           <div className="field-heading">
             <div>
