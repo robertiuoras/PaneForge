@@ -16,7 +16,7 @@ import {TerminalService} from './terminal.mjs';
 import {Brain,brainScopes} from './brain.mjs';
 import {Projects} from './projects.mjs';
 import {WorkspaceActions} from './workspace-actions.mjs';
-import {openWorkspaceApp,openWorkspaceSearch,appendWorkspaceText,listInstalledApps} from './local-apps.mjs';
+import {openWorkspaceApp,openWorkspaceSearch,appendWorkspaceText,listInstalledApps,externalOpenCommand} from './local-apps.mjs';
 import {DeviceFiles} from './device-files.mjs';
 import {ReviewStore} from './review-store.mjs';
 import {chooseCodexRoute,explicitBuildIntent} from './routing.mjs';
@@ -132,7 +132,7 @@ const server=http.createServer(async(req,res)=>{
   if(req.method==='GET'&&(projectMatch=path.match(/^\/api\/projects\/([^/]+)\/files$/)))return send(res,200,await projects.children(projectMatch[1],url.searchParams.get('directory')||'',url.searchParams.get('laneId')?projects.requireLane(projectMatch[1],url.searchParams.get('laneId')).path:null));
   if(req.method==='GET'&&path==='/api/brain/graph')return send(res,200,await brain.graph(url.searchParams.get('scope')));
   if(req.method==='GET'&&path==='/api/brain/file')return send(res,200,await brain.file(url.searchParams.get('scope'),url.searchParams.get('path')));
-  if(req.method==='POST'&&path==='/api/brain/obsidian'){const input=await body(req);await brain.file(input.scope,input.path);const split=input.path.indexOf(':');const vault={'knowledge':'Obsidian Vault','agent-memory':'claude-memory'}[input.path.slice(0,split)];if(!vault)throw Error('Unknown indexed vault');const uri=`obsidian://open?vault=${encodeURIComponent(vault)}&file=${encodeURIComponent(input.path.slice(split+1))}`;execFileSync('/usr/bin/open',[uri],{timeout:4000,stdio:'ignore'});return send(res,200,{ok:true});}
+  if(req.method==='POST'&&path==='/api/brain/obsidian'){const input=await body(req);await brain.file(input.scope,input.path);const split=input.path.indexOf(':');const vault={'knowledge':'Obsidian Vault','agent-memory':'claude-memory'}[input.path.slice(0,split)];if(!vault)throw Error('Unknown indexed vault');const uri=`obsidian://open?vault=${encodeURIComponent(vault)}&file=${encodeURIComponent(input.path.slice(split+1))}`;execFileSync(...externalOpenCommand(uri),{timeout:4000,stdio:'ignore'});return send(res,200,{ok:true});}
   if(req.method==='GET'&&path==='/api/brain/scopes')return send(res,200,{scopes:brainScopes});
   if(req.method==='GET'&&path==='/api/brain')return send(res,200,await brain.search(url.searchParams.get('q'),url.searchParams.get('scope')));
   if(req.method==='GET'&&path==='/api/brain/source'){const scope=url.searchParams.get('scope'),sourcePath=url.searchParams.get('path');try{return send(res,200,brain.source(scope,sourcePath));}catch{const file=await brain.file(scope,sourcePath);return send(res,200,{...file,text:file.text.slice(0,1400),truncated:file.text.length>1400});}}
@@ -150,7 +150,7 @@ const server=http.createServer(async(req,res)=>{
    let data=await body(req);let match;
    if((match=path.match(/^\/api\/reviews\/([A-Za-z0-9_-]{1,120})\/(ack|open|reply)$/))&&req.method==='POST'){const [,reviewId,action]=match;
     if(action==='ack'){if(typeof data.reviewed!=='boolean')throw Error('reviewed must be boolean');const result=reviews.ack(reviewId,data.reviewed);const review=reviews.read(reviewId);if(data.reviewed&&result.clearedAttention&&review){acknowledgeReviewNotice(review);parkReviewedIfQuiet(review);}publish();return send(res,200,result);}
-    if(action==='open'){if(!Number.isInteger(data.index)||data.index<-1)throw Error('Invalid report link');const target=reviews.open(reviewId,data.index);if(!target){const error=Error('Review evidence is unavailable');error.statusCode=404;throw error;}execFileSync('/usr/bin/open',[target],{timeout:4000,stdio:'ignore'});return send(res,200,{opened:true,target});}
+    if(action==='open'){if(!Number.isInteger(data.index)||data.index<-1)throw Error('Invalid report link');const target=reviews.open(reviewId,data.index);if(!target){const error=Error('Review evidence is unavailable');error.statusCode=404;throw error;}execFileSync(...externalOpenCommand(target),{timeout:4000,stdio:'ignore'});return send(res,200,{opened:true,target});}
     if(typeof data.text!=='string'||!data.text.trim()||data.text.length>32000||typeof data.requestId!=='string'||!data.requestId.trim())throw Error('Reply text and request identity are required');const review=reviews.read(reviewId);if(!review){const error=Error('Review not found');error.statusCode=404;throw error;}const session=sessions.get(review.sessionId);if(!session.nativeSessionId||session.nativeSessionId!==review.nativeSessionId){const error=Error('Review is not bound to an active native conversation');error.statusCode=409;throw error;}const live=await ensureCodexReady({refresh:true});const choice=chooseCodexRoute({task:data.text,models:live.models,rateLimits:live.rateLimits,requestedModel:session.model,requestedEffort:session.effort});if(!choice.ok)throw Error(choice.reason);session.model=choice.model;session.effort=choice.effort;const result=await sessions.turn(session.id,{text:forgeBuildPrompt(data.text),originalText:data.text,requestId:data.requestId},false);return send(res,202,{...result,sessionId:session.id,nativeSessionId:session.nativeSessionId});
    }
    if((match=path.match(/^\/api\/sessions\/([^/]+)$/))){const [,id]=match;

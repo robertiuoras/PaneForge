@@ -10,6 +10,19 @@ const guard=join(homedir(),'Projects/claude-memory/claude-config/computer-use-gu
 const MAX_APPS=60;
 const MAX_SCAN_ENTRIES=600;
 
+// Targets have already been authorized by the review or vault route. Keep them
+// as data: Windows URLs and paths may contain quotes or shell metacharacters.
+export function externalOpenCommand(target,platform=process.platform){
+ if(typeof target!=='string'||!target||/[\u0000-\u001F\u007F]/.test(target))throw Error('Invalid open target');
+ if(platform==='darwin')return ['/usr/bin/open',[target]];
+ if(platform==='win32'){
+  const script=`$ErrorActionPreference='Stop'; Start-Process -FilePath '${target.replaceAll("'","''")}'`;
+  return ['powershell.exe',['-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')]];
+ }
+ if(platform==='linux')return ['xdg-open',[target]];
+ throw Error('Opening reports is not supported on this operating system');
+}
+
 function desktopGuardFailure(error, unchanged) {
  let busy=false;
  try {const result=JSON.parse(error.stdout);busy=result.ok===false&&typeof result.owner?.session==='string';} catch {}
