@@ -3,6 +3,40 @@ import test from 'node:test';
 import {forgeBuildPrompt} from '../server/prompt-forge.mjs';
 import {macInteractiveArgs,pcInteractiveCommand} from '../server/terminal.mjs';
 
+test('restart retains an uncertain request for Review and prevents a new PC turn',async()=>{
+ const {TerminalService}=await import('../server/terminal.mjs');const {ReviewStore}=await import('../server/review-store.mjs');
+ const {mkdtempSync,writeFileSync,rmSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
+ const dir=mkdtempSync(join(tmpdir(),'pc-interrupted-review-'));let terminal;
+ try{
+  writeFileSync(join(dir,'terminal.jsonl'),JSON.stringify({type:'create',id:'terminal',sessionId:'session',projectId:'project',cols:120,rows:30,code:{kind:'job',status:'running',projectId:'project',laneId:'lane',provider:'codex',checkout:'C:\\work',requests:{original:{status:'running',text:'Build the work'}}}})+'\n');
+  terminal=new TerminalService({dataDir:dir});await terminal.ready();
+  const state=terminal.state()[0];assert.equal(state.code.status,'uncertain');assert.equal(state.code.requests.original.status,'uncertain');
+  const review=new ReviewStore(dir).capturePcTurn(state,'original',{id:'session',projectId:'project',nativeSessionId:'local-native',provider:'codex',cwd:'/work',title:'Work'});
+  assert.equal(review.nativeSessionId,null);assert.match(review.report,/Supervisor restarted/);
+  await assert.rejects(terminal.runCodeTurn({sessionId:'session',projectId:'project',laneId:'lane',provider:'codex',requestId:'retry',text:'Build again'}),/Do not retry/);
+ }finally{if(terminal)await terminal.close();rmSync(dir,{recursive:true,force:true});}
+});
+
+test('stop and shutdown preserve uncertain requests before a late receipt',async()=>{
+ const {TerminalService}=await import('../server/terminal.mjs');const {ReviewStore}=await import('../server/review-store.mjs');
+ const {mkdtempSync,rmSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
+ for(const action of ['stop','close']){
+  const dir=mkdtempSync(join(tmpdir(),'pc-stop-review-'));let complete;let changed;let reloaded;
+  const service=new TerminalService({dataDir:dir,prepareTerminal:async args=>({...args,host:'pc',checkout:'C:\\work',machine:'pc'}),startCodeTurn:()=>({done:new Promise(resolve=>{complete=resolve}),stop:()=>true}),onChange:()=>changed?.()});
+  const session={id:'session',projectId:'project',provider:'codex',cwd:'/work',title:'Work'};
+  try{
+   await service.runCodeTurn({sessionId:'session',projectId:'project',laneId:'lane',provider:'codex',requestId:'first',text:'Build the fixture'});
+   if(action==='stop')await service.stopCodeTurn('session');else await service.close();
+   assert.equal(service.state()[0].code.requests.first.status,'uncertain');
+   const store=new ReviewStore(dir);const issue=store.capturePcTurn(service.state()[0],'first',session);assert.equal(issue.kind,'blocked');
+   reloaded=new TerminalService({dataDir:dir});await reloaded.ready();assert.equal(reloaded.state()[0].code.requests.first.status,'uncertain');
+   const done=new Promise(resolve=>{changed=()=>{if(!service.codeTurns.size)resolve();};});
+   complete({output:[{type:'thread.started',thread_id:'remote-native'},{type:'item.completed',item:{type:'agent_message',text:'Fixture completed'}},{type:'turn.completed'}].map(x=>JSON.stringify(x)).join('\n')});await done;
+   const result=store.capturePcTurn(service.state()[0],'first',session);assert.equal(result.kind,'result');assert.ok(store.list().find(x=>x.id===issue.id).resolvedAt);
+  }finally{if(action==='stop')await service.close();if(reloaded)await reloaded.close();rmSync(dir,{recursive:true,force:true});}
+ }
+});
+
 test('Mac CLI resumes the exact native Codex identity with selected route',()=>{
  const args=macInteractiveArgs({provider:'codex',nativeSessionId:'123e4567-e89b-12d3-a456-426614174000',model:'gpt-5.6-terra',effort:'medium',checkout:'/safe/lane'});
  assert.deepEqual(args,['resume','123e4567-e89b-12d3-a456-426614174000','-m','gpt-5.6-terra','-c','model_reasoning_effort=\"medium\"','-c','model_provider=\"openai\"','-c','forced_login_method=\"chatgpt\"','-a','on-request','-s','workspace-write','-C','/safe/lane']);
@@ -29,7 +63,7 @@ test('Mac terminal exit hands its exact native identity to transcript reconcilia
 test('failed PC preparation leaves no phantom terminal across restart and permits a new attempt',async()=>{
  const {TerminalService}=await import('../server/terminal.mjs');
  const {mkdtempSync,rmSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
- const dir=mkdtempSync(join(tmpdir(),'pc-prepare-'));let attempts=0;let launches=0;let resumed;
+ const dir=mkdtempSync(join(tmpdir(),'pc-prepare-'));let attempts=0;let launches=0;let resumed;let settled;
  const args={sessionId:'session',projectId:'project',laneId:'lane',provider:'codex',requestId:'first',text:'Build the fixture'};
  const prepareTerminal=async value=>{attempts++;if(attempts===1)throw Error('SSH connection reset');return {...value,host:'pc',checkout:'C:\\work',machine:'pc'};};
  const terminal=new TerminalService({dataDir:dir,prepareTerminal});
@@ -37,9 +71,9 @@ test('failed PC preparation leaves no phantom terminal across restart and permit
   await assert.rejects(terminal.runCodeTurn(args),/SSH connection reset/);
   assert.equal(terminal.state().length,0);
   await terminal.close();
-  resumed=new TerminalService({dataDir:dir,prepareTerminal,startCodeTurn:()=>{launches++;return {done:Promise.resolve({output:JSON.stringify({type:'thread.started',thread_id:'remote-native'})+'\n'+JSON.stringify({type:'turn.completed'})}),stop:()=>false};}});
+  resumed=new TerminalService({dataDir:dir,prepareTerminal,onChange:()=>{if(!resumed.codeTurns.size)settled?.();},startCodeTurn:()=>{launches++;return {done:Promise.resolve({output:JSON.stringify({type:'thread.started',thread_id:'remote-native'})+'\n'+JSON.stringify({type:'turn.completed'})}),stop:()=>false};}});
   await resumed.ready();assert.equal(resumed.state().length,0);
-  const result=await resumed.runCodeTurn(args);assert.equal(result.state,'running');assert.equal(attempts,2);assert.equal(launches,1);
+  const completed=new Promise(resolve=>{settled=resolve});const result=await resumed.runCodeTurn(args);await completed;assert.equal(result.state,'running');assert.equal(attempts,2);assert.equal(launches,1);
  }finally{if(resumed)await resumed.close();await terminal.journal;rmSync(dir,{recursive:true,force:true});}
 });
 

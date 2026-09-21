@@ -6,6 +6,26 @@ import test from 'node:test';
 import { ReviewStore } from '../server/review-store.mjs';
 
 const session={id:'session_1',nativeSessionId:'native_1',title:'A <title>',provider:'codex',cwd:process.cwd(),items:[]};
+test('PC failures retain attention without inventing a native identity, and completion supersedes interruption',()=>{
+ const dir=mkdtempSync(join(tmpdir(),'pf-pc-attention-'));try{
+  const notices=[], store=new ReviewStore(dir,{onRecord:r=>notices.push(r)});
+  const owner={...session,projectId:'project'};
+  const terminal={id:'terminal',sessionId:owner.id,projectId:'project',code:{kind:'job',provider:'codex',checkout:'C:\\work',nativeSessionId:'unrelated-later-native',requests:{request:{status:'uncertain',text:'Build it',error:'Connection lost'}}}};
+  const issue=store.capturePcTurn(terminal,'request',owner);
+  assert.equal(issue.kind,'blocked');assert.equal(issue.proof,'unverified');assert.equal(issue.nativeSessionId,null);assert.equal(issue.informational,false);assert.equal(issue.prompt,'Build it');assert.match(issue.report,/Do not retry automatically/);
+  assert.equal(store.ack(issue.id,true).clearedAttention,false);
+  const recovered=new ReviewStore(dir);assert.equal(recovered.list()[0].attention,true);
+  store.capturePcTurn(terminal,'request',owner);assert.equal(notices.length,1);
+  terminal.code.requests.request={...terminal.code.requests.request,status:'completed',nativeSessionId:'actual-native',finalText:'Work finished',outcome:'unverified'};
+  const completed=store.capturePcTurn(terminal,'request',owner);
+  assert.notEqual(completed.id,issue.id);assert.equal(completed.nativeSessionId,'actual-native');assert.equal(completed.kind,'result');
+  assert.equal(store.read(issue.id).resolvedBy,completed.id);assert.equal(store.list().find(r=>r.id===issue.id).attention,false);assert.equal(store.list().find(r=>r.id===completed.id).attention,true);
+  assert.equal(store.read(issue.id).report,issue.report);assert.equal(notices.length,2);
+  terminal.code.requests.failure={status:'failed',text:'Follow up',error:'Runner failed',nativeSessionId:'actual-native'};
+  const failure=store.capturePcTurn(terminal,'failure',owner);assert.equal(failure.nativeSessionId,'actual-native');assert.match(failure.report,/Runner failed/);assert.equal(failure.attention,true);
+  assert.throws(()=>store.capturePcTurn(terminal,'failure',{...owner,projectId:'other'}),/different conversation/);
+ }finally{rmSync(dir,{recursive:true,force:true});}
+});
 test('reviews survive restart and decision or blocked acknowledgement never clears attention',()=>{const dir=mkdtempSync(join(tmpdir(),'pf-reviews-'));try{const store=new ReviewStore(dir);store.record({id:'decision_1',sessionId:session.id,kind:'decision',proof:'claimed',report:'Need approval',prompt:'Original'},session);store.record({id:'blocked_1',sessionId:session.id,kind:'blocked',proof:'measured',report:'Blocked',prompt:'Original'},session);assert.deepEqual(store.ack('decision_1',true),{ok:true,clearedAttention:false});assert.deepEqual(store.ack('blocked_1',false),{ok:true,clearedAttention:false});const reloaded=new ReviewStore(dir);assert.equal(reloaded.list().length,2);assert.equal(reloaded.list().every(r=>r.attention),true);}finally{rmSync(dir,{recursive:true,force:true});}});
 test('completed turn stores exact request and its matching final outcome once',()=>{const dir=mkdtempSync(join(tmpdir(),'pf-reviews-'));try{const store=new ReviewStore(dir);const active={...session,items:[{id:'old',turnId:'oldturn',type:'agentMessage',text:'old output'},{id:'new',turnId:'turn_1',type:'agentMessage',text:'final output'}],activeReviewRequest:{requestId:'request_1',text:'original request'}};const record=store.captureCompletedTurn(active,{id:'turn_1',status:'completed'});assert.match(record.report,/final output/);assert.doesNotMatch(record.report,/old output/);assert.equal(record.prompt,'original request');assert.equal(store.captureCompletedTurn(active,{id:'turn_1',status:'completed'}),null);const html=readFileSync(record.reportPath,'utf8');assert.match(html,/A &lt;title&gt;/);}finally{rmSync(dir,{recursive:true,force:true});}});
 test('only a retained completed outcome is informational',()=>{const dir=mkdtempSync(join(tmpdir(),'pf-reviews-'));try{const store=new ReviewStore(dir);const completed={...session,items:[{id:'new',turnId:'turn_2',type:'agentMessage',text:'done'}],activeReviewRequest:{requestId:'request_2',text:'original request'}};assert.equal(store.captureCompletedTurn(completed,{id:'turn_2',status:'completed'}).informational,true);const missing={...session,items:[],activeReviewRequest:{requestId:'request_3',text:'original request'}};assert.equal(store.captureCompletedTurn(missing,{id:'turn_3',status:'completed'}).informational,false);}finally{rmSync(dir,{recursive:true,force:true});}});
