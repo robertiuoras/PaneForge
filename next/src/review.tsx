@@ -16,6 +16,7 @@ export type ReviewResult = {
   completedAt?: string;
   closedAt?: string;
   reviewedAt?: string;
+  resolvedAt?: string;
   kind: "result" | "decision" | "blocked" | "closed";
   links: Array<{ label: string; url: string }>;
   proof?: string;
@@ -106,7 +107,7 @@ export function Review({ setNotice, reviewOnly = false, onContinue }: { setNotic
       const completed = Date.parse(review.completedAt || review.closedAt || review.createdAt || "");
       if (range === "hour" && (!Number.isFinite(completed) || completed < now - 3_600_000)) return false;
       if (range === "today" && (!Number.isFinite(completed) || completed < today.valueOf())) return false;
-      if (!showAll && review.reviewedAt) return false;
+      if (!showAll && (review.reviewedAt || review.resolvedAt)) return false;
       return !needle || `${review.title} ${review.prompt} ${review.report} ${review.lane || ""}`.toLowerCase().includes(needle);
     });
   }, [query, range, response, showAll]);
@@ -165,17 +166,17 @@ export function Review({ setNotice, reviewOnly = false, onContinue }: { setNotic
     {!loading && response && reviews.length === 0 && <section className="empty-state"><Clock3 size={20} /><h2>No matching review records</h2><p>{range === "hour" ? "Nothing completed in the last hour matches these filters." : "No saved review result matches these filters."}</p></section>}
     <section className="review-list" aria-label="Review history">
       {reviews.map((review) => <article className={`review-card review-${review.kind}`} key={review.id}>
-        <header><div><span className="eyebrow">{review.kind === "closed" ? "closed · recorded" : `${review.kind}${review.reviewedAt ? " · reviewed" : " · pending"}`}</span><h2>{review.title || "Untitled result"}</h2></div><time dateTime={review.completedAt || review.closedAt || review.createdAt}>{timestamp(review.completedAt || review.closedAt || review.createdAt)}</time></header>
+        <header><div><span className="eyebrow">{review.resolvedAt ? "Earlier interruption · completion received" : review.kind === "closed" ? "closed · recorded" : `${review.kind}${review.reviewedAt ? " · reviewed" : " · pending"}`}</span><h2>{review.title || "Untitled result"}</h2></div><time dateTime={review.completedAt || review.closedAt || review.createdAt}>{timestamp(review.completedAt || review.closedAt || review.createdAt)}</time></header>
         <dl className="review-meta"><div><dt>Lane</dt><dd>{review.lane || "Not recorded"}</dd></div><div><dt>Provider</dt><dd>{review.provider || "Not recorded"}</dd></div><div><dt>Session</dt><dd>{review.nativeSessionId || review.sessionId}</dd></div>{review.closedAt && <div><dt>Closed</dt><dd>{timestamp(review.closedAt)}</dd></div>}</dl>
         <section><h3>Original prompt</h3><p className="review-copy">{review.prompt || "No original prompt was recorded."}</p></section>
         <section><h3>Outcome</h3><p className="review-copy">{review.report || "No report was recorded."}</p>{review.proof && <p className="review-proof">Proof: {review.proof}</p>}{review.evidence?.length ? <ul className="review-evidence" aria-label="Evidence">{review.evidence.map((entry, index) => <li key={`${entry}-${index}`}>{entry}</li>)}</ul> : null}</section>
         <div className="review-links"><button className="quiet" onClick={() => void openLink(review, { label: "Open report", url: "https://report.local" }, -1)}><ExternalLink size={14} />Open report</button>{review.links.map((link, index) => <button key={`${link.url}-${index}`} className="quiet" onClick={() => void openLink(review, link, index)} disabled={!allowedLink(link.url)} title={allowedLink(link.url) ? link.url : "Unsupported link address"}><ExternalLink size={14} />{link.label || "Open link"}</button>)}</div>
-        {!reviewOnly && review.nativeSessionId && <form className="review-reply" onSubmit={(event) => { event.preventDefault(); void reply(review); }}>
+        {!reviewOnly && review.nativeSessionId && !review.resolvedAt && <form className="review-reply" onSubmit={(event) => { event.preventDefault(); void reply(review); }}>
           <label htmlFor={`reply-${review.id}`}>Continue this conversation</label>
           <textarea id={`reply-${review.id}`} value={drafts[review.id]?.text || ""} disabled={sending !== null} placeholder="Ask for a change or tell the agent what to do next…" maxLength={24000} onChange={(event) => saveDrafts({ ...drafts, [review.id]: { text: event.target.value, requestId: crypto.randomUUID() } })} />
           <button className="primary" type="submit" disabled={sending !== null || !drafts[review.id]?.text.trim()}>{sending === review.id ? "Sending…" : "Send reply"}</button>
         </form>}
-        <footer>{review.kind === "result" ? <button className="primary" disabled={updating === review.id} onClick={() => void acknowledge(review, !review.reviewedAt)}><Check size={15} />{updating === review.id ? "Saving…" : review.reviewedAt ? "Mark unreviewed" : "Mark reviewed"}</button> : <p className="review-pending">{review.kind === "decision" ? "Decision remains pending." : review.kind === "blocked" ? "Block remains pending." : "This closed session has no completion result."}</p>}{review.cwd && <code>{review.cwd}</code>}</footer>
+        <footer>{review.kind === "result" ? <button className="primary" disabled={updating === review.id} onClick={() => void acknowledge(review, !review.reviewedAt)}><Check size={15} />{updating === review.id ? "Saving…" : review.reviewedAt ? "Mark unreviewed" : "Mark reviewed"}</button> : <p className="review-pending">{review.resolvedAt ? "A later completion receipt is retained in Review." : review.kind === "decision" ? "Decision remains pending." : review.kind === "blocked" ? "Block remains pending." : "This closed session has no completion result."}</p>}{review.cwd && <code>{review.cwd}</code>}</footer>
       </article>)}
     </section>
   </main>;

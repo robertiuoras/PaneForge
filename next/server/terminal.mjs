@@ -81,7 +81,12 @@ export class TerminalService {
         const { executionError: _obsolete, ...code } = terminal.code
         terminal.code = code
       }
-      if (terminal.code?.kind === 'job' && terminal.code.status === 'running') terminal.code.status = 'uncertain'
+      if (terminal.code?.kind === 'job' && ['running', 'uncertain'].includes(terminal.code.status)) {
+        terminal.code.status = 'uncertain'
+        for (const request of Object.values(terminal.code.requests || {})) {
+          if (request.status === 'running') { request.status = 'uncertain'; request.error = 'Supervisor restarted before a native completion receipt was retained. The PC task may still be running; do not retry automatically.' }
+        }
+      }
     }
   }
 
@@ -213,7 +218,7 @@ export class TerminalService {
     this.codeTurns.set(terminal.id, job)
     void job.done.then(({ output }) => {
       const nativeSessionId = nativeSession(output, provider)
-      if (nativeSessionId) terminal.code.nativeSessionId = nativeSessionId
+      if (nativeSessionId) { terminal.code.nativeSessionId = nativeSessionId; terminal.code.requests[requestId].nativeSessionId = nativeSessionId }
       if (!completedTurn(output, provider) || !nativeSessionId) {
         terminal.code.status = 'failed'; terminal.code.requests[requestId].status = 'failed'; terminal.code.requests[requestId].error = 'PC Code did not return a completed native turn receipt.'; terminal.exited = true; terminal.exitCode = null; terminal.spawnError = terminal.code.requests[requestId].error
         return this.record(terminal, { type: 'code', id: terminal.id, code: terminal.code }).then(() => this.record(terminal, { type: 'spawn-error', id: terminal.id, message: terminal.spawnError }))
@@ -222,7 +227,7 @@ export class TerminalService {
       return this.record(terminal, { type: 'code', id: terminal.id, code: terminal.code }).then(() => this.record(terminal, { type: 'exit', id: terminal.id, exitCode: 0 }))
     }, error => {
       const nativeSessionId = nativeSession(error.output, provider)
-      if (nativeSessionId) terminal.code.nativeSessionId = nativeSessionId
+      if (nativeSessionId) { terminal.code.nativeSessionId = nativeSessionId; terminal.code.requests[requestId].nativeSessionId = nativeSessionId }
       const uncertain = terminal.code.status === 'uncertain' || error.uncertain === true
       terminal.code.status = uncertain ? 'uncertain' : 'failed'; terminal.code.requests[requestId].status = uncertain ? 'uncertain' : 'failed'; terminal.code.requests[requestId].error = String(error.message || error).slice(0, 360); terminal.exited = true; terminal.exitCode = null; terminal.spawnError = terminal.code.requests[requestId].error
       return this.record(terminal, { type: 'code', id: terminal.id, code: terminal.code }).then(() => this.record(terminal, { type: 'spawn-error', id: terminal.id, message: terminal.spawnError }))
@@ -236,6 +241,9 @@ export class TerminalService {
     const job = terminal && this.codeTurns.get(terminal.id)
     if (!terminal || !job || !job.stop()) throw Error('No active PC Code turn can be stopped.')
     terminal.code.status = 'uncertain'
+    for (const request of Object.values(terminal.code.requests || {})) {
+      if (request.status === 'running') { request.status = 'uncertain'; request.error = 'The PC turn was interrupted before a native completion receipt was retained. Do not retry automatically.' }
+    }
     await this.record(terminal, { type: 'code', id: terminal.id, code: terminal.code })
     this.changed()
     return { id: terminal.id, state: 'uncertain' }
@@ -245,7 +253,13 @@ export class TerminalService {
     for (const [id, job] of this.codeTurns) {
       job.stop()
       const terminal = this.terminals.get(id)
-      if (terminal?.code?.kind === 'job' && terminal.code.status === 'running') { terminal.code.status = 'uncertain'; await this.record(terminal, { type: 'code', id, code: terminal.code }) }
+      if (terminal?.code?.kind === 'job' && terminal.code.status === 'running') {
+        terminal.code.status = 'uncertain'
+        for (const request of Object.values(terminal.code.requests || {})) {
+          if (request.status === 'running') { request.status = 'uncertain'; request.error = 'Supervisor closed before a native completion receipt was retained. The PC task may still be running; do not retry automatically.' }
+        }
+        await this.record(terminal, { type: 'code', id, code: terminal.code })
+      }
     }
     for (const terminal of this.terminals.values()) {
       try { terminal.proc?.kill() } catch {}
