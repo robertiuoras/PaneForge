@@ -14,6 +14,8 @@ An earlier final-source rerun was interrupted by SSH before worker output return
 
 Clean source `c2b0968e535ddc812442a8a3071263efb49fc3af` also passed Mac native packaging, ad-hoc deep signature verification, bundled-runtime health, authenticated idle stop and ZIP integrity. Archive `/tmp/PaneForge-Next-c2b0968e-mac-preview.zip`, 97,954,773 bytes, SHA256 `0fdac0c01f175f45276d8d3e89321a3a31b7d222d97d6f0cfdb5a57d708dada1`; receipt `/tmp/next-c2b0968e-preview-receipt.json`. This preview predates the zero-failed correction and is not installed, notarized, or replacement acceptance.
 
+Final corrected service journey passed: PC native `01a0c327-15b2-7741-b2f2-42ccf4667e58`, explicit PC dispatch, two generated files, three independently rerun tests, actual sandbox receipt-path output, original prompt and full work report retained, and Review reply on the same native conversation with two cards. Receipt `/private/var/folders/kq/s5llmv_96vz1m08j323_jzzw0000gn/T/next-real-build-5E3pq7/receipt.json`. It ran on `c2b0968e` plus the exact terminal/test correction committed as `10f948b9`. All 142 unit tests, TypeScript/Vite, minimized dev-b launch and diff checks passed. Notifications were disabled; installed UI acceptance remains outstanding.
+
 Owner: lane b, native `01a0bdba-42cf-7293-a856-a908482746ea`.
 
 ## Parent PaneForge regression checks
