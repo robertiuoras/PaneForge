@@ -44,3 +44,21 @@ Startup and terminal launch no longer require the prototype `paneforge-next` pro
 PowerShell treats curly apostrophes as string delimiters, so escaping ASCII apostrophes alone was insufficient. A parser check on DESKTOP-CMSUCM1 reproduced the failure; the corrected opener encodes the target independently as UTF-8 data. Actual PC PowerShell with `Start-Process` stubbed preserved a path containing curly apostrophes, ampersand and Japanese characters exactly (`/tmp/next-windows-opener-literal-proof.log`). No browser or native window was opened for this check.
 
 Verification: 136 Next tests passed, PC workspace browser checks passed at desktop and compact sizes (20 each, zero console errors), TypeScript/Vite build passed, and minimized parent dev-b build/launch completed. Logs: `/tmp/next-profile-unit.log`, `/tmp/next-profile-build.log`, `/tmp/next-profile-try.log`. Installed notification and native-app acceptance remain outstanding.
+
+## Real supervisor event stream regression
+
+A real HTTP build-to-review probe exposed an undeclared `match` variable in the imported-history GET matcher. Because the matcher runs before `/api/events`, that endpoint returned HTTP 400 (`match is not defined`) instead of the state stream. The request-scoped declaration is now shared by the GET and mutation routes. The isolated supervisor regression checks imported-history 404 and an actual HTTP 200 `text/event-stream` initial state event; it failed before the repair and passes after. All 136 Next tests, TypeScript/Vite build and minimized dev-b launch passed (`/tmp/next-stream-unit.log`, `/tmp/next-stream-build.log`, `/tmp/next-stream-try.log`).
+
+The first live build probe stopped its own job after the stream failure and retained a remote exit-130 cancellation receipt. A second probe verified the repaired stream but could not prepare the PC checkout: SSH reset the authenticated connection, and a separate hostname probe failed likewise. No build-completion or review-reply acceptance is claimed. Retained receipt: `/tmp/next-real-build-journey-receipt.json`. This is a transport blocker, not permission to run on the Mac.
+
+## Structured PC execution prompts
+
+PC Code turns now apply the shared structured prompt composer before preparing a remote checkout. Original requests remain unchanged in the durable journal and review cards; execution prompts include the completion criteria and PC-only rendering boundary. Oversized composed prompts fail before remote preparation instead of losing requirements. Duplicate request IDs retain their existing receipt, and review replies preserve the exact remote native identity.
+
+Verification: all 136 Next tests, TypeScript/Vite build and minimized dev-b build/launch passed (`/tmp/next-pc-prompt-unit.log`, `/tmp/next-pc-prompt-build.log`, `/tmp/next-pc-prompt-try.log`). Regression assertions cover composition, original-text retention, oversized input without remote side effects, deduplication and exact-native continuation. Live PC acceptance remains blocked by authenticated SSH connection resets. No local rendering fallback was used.
+
+## PC preparation failure recovery
+
+A failed checkout preparation previously left a journaled terminal without job metadata. A later attempt misclassified it as a legacy interactive PC conversation and refused to continue. Preparation now finishes before publishing the terminal, and the first journal record includes its job metadata. No provider turn starts during preparation. The regression reproduces the prior phantom terminal, then verifies failure leaves no terminal, restart preserves that state, and a new attempt starts exactly one provider job. Existing legacy interactive and uncertain-job fences remain intact. This prevents new phantom entries; it does not rewrite earlier terminal journals.
+
+All 137 Next tests, TypeScript/Vite build and minimized dev-b build/launch passed (`/tmp/next-prepare-recovery-unit.log`, `/tmp/next-prepare-recovery-build.log`, `/tmp/next-prepare-recovery-try.log`). This is isolated lifecycle proof, not a live PC transport repair or installed acceptance.

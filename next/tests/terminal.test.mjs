@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import {forgeBuildPrompt} from '../server/prompt-forge.mjs';
 import {macInteractiveArgs,pcInteractiveCommand} from '../server/terminal.mjs';
 
 test('Mac CLI resumes the exact native Codex identity with selected route',()=>{
@@ -25,16 +26,38 @@ test('Mac terminal exit hands its exact native identity to transcript reconcilia
  }finally{try{await terminal.journal;}finally{rmSync(dir,{recursive:true,force:true});}}
 });
 
+test('failed PC preparation leaves no phantom terminal across restart and permits a new attempt',async()=>{
+ const {TerminalService}=await import('../server/terminal.mjs');
+ const {mkdtempSync,rmSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
+ const dir=mkdtempSync(join(tmpdir(),'pc-prepare-'));let attempts=0;let launches=0;let resumed;
+ const args={sessionId:'session',projectId:'project',laneId:'lane',provider:'codex',requestId:'first',text:'Build the fixture'};
+ const prepareTerminal=async value=>{attempts++;if(attempts===1)throw Error('SSH connection reset');return {...value,host:'pc',checkout:'C:\\work',machine:'pc'};};
+ const terminal=new TerminalService({dataDir:dir,prepareTerminal});
+ try{
+  await assert.rejects(terminal.runCodeTurn(args),/SSH connection reset/);
+  assert.equal(terminal.state().length,0);
+  await terminal.close();
+  resumed=new TerminalService({dataDir:dir,prepareTerminal,startCodeTurn:()=>{launches++;return {done:Promise.resolve({output:JSON.stringify({type:'thread.started',thread_id:'remote-native'})+'\n'+JSON.stringify({type:'turn.completed'})}),stop:()=>false};}});
+  await resumed.ready();assert.equal(resumed.state().length,0);
+  const result=await resumed.runCodeTurn(args);assert.equal(result.state,'running');assert.equal(attempts,2);assert.equal(launches,1);
+ }finally{if(resumed)await resumed.close();await terminal.journal;rmSync(dir,{recursive:true,force:true});}
+});
+
 test('PC completed receipt retains the exact request and final output for durable review and reply',async()=>{
  const {TerminalService}=await import('../server/terminal.mjs');const {ReviewStore}=await import('../server/review-store.mjs');
  const {mkdtempSync,rmSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
- const dir=mkdtempSync(join(tmpdir(),'pc-review-'));let complete;let changed;const launches=[];
- const terminal=new TerminalService({dataDir:dir,prepareTerminal:async args=>({...args,host:'pc',checkout:'C:\\work',machine:'pc'}),startCodeTurn:args=>{launches.push(args);return {done:new Promise(resolve=>{complete=resolve}),stop:()=>false};},onChange:()=>changed?.()});
+ const dir=mkdtempSync(join(tmpdir(),'pc-review-'));let prepared=0;let complete;let changed;const launches=[];
+ const terminal=new TerminalService({dataDir:dir,prepareTerminal:async args=>{prepared++;return {...args,host:'pc',checkout:'C:\\work',machine:'pc'};},startCodeTurn:args=>{launches.push(args);return {done:new Promise(resolve=>{complete=resolve}),stop:()=>false};},onChange:()=>changed?.()});
  const session={id:'session',projectId:'project',nativeSessionId:'local-native',provider:'codex',cwd:'/work',title:'Work'};
  const args={sessionId:'session',projectId:'project',laneId:'lane',provider:'codex',requestId:'first',text:'Build the fixture'};
  let reloaded;
  try{
+  await assert.rejects(terminal.runCodeTurn({...args,text:'Build '+ 'x'.repeat(6000)}),/Build prompt exceeds/);
+  assert.equal(prepared,0);assert.equal(launches.length,0);assert.equal(terminal.state().length,0);
   const run=await terminal.runCodeTurn(args);
+  assert.equal(launches[0].text,forgeBuildPrompt(args.text));
+  assert.equal(terminal.state()[0].code.requests.first.text,args.text);
+  const duplicate=await terminal.runCodeTurn(args);assert.equal(duplicate.id,run.id);assert.equal(launches.length,1);
   const done=new Promise(resolve=>{changed=()=>{if(!terminal.codeTurns.size)resolve();};});
   complete({output:[{type:'thread.started',thread_id:'remote-native'},{type:'item.completed',item:{type:'agent_message',text:'Earlier progress'}},{type:'item.completed',item:{type:'agent_message',text:'Fixture ready'}},{type:'turn.completed'}].map(x=>JSON.stringify(x)).join('\n')});
   await done;
@@ -45,7 +68,7 @@ test('PC completed receipt retains the exact request and final output for durabl
   store.capturePcTurn(reloaded.state()[0],'first',{...session,title:'Renamed'});assert.equal(notices.length,1);assert.equal(store.list().length,1);
   await assert.rejects(terminal.runCodeTurn({...args,requestId:'wrong',expectedTerminalId:run.id,expectedNativeSessionId:'wrong-native'}),/no longer matches/);
   await terminal.runCodeTurn({...args,requestId:'second',text:'Explain it',expectedTerminalId:run.id,expectedNativeSessionId:'remote-native'});
-  assert.equal(launches[1].nativeSessionId,'remote-native');
+  assert.equal(launches[1].nativeSessionId,'remote-native');assert.equal(launches[1].text,forgeBuildPrompt('Explain it'));
   const again=new Promise(resolve=>{changed=()=>{if(!terminal.codeTurns.size)resolve();};});complete({output:JSON.stringify({type:'thread.started',thread_id:'remote-native'})+'\n'+JSON.stringify({type:'turn.completed'})});await again;
   const missing=store.capturePcTurn(terminal.state()[0],'second',session);assert.equal(missing.proof,'unverified');assert.equal(missing.informational,false);
  }finally{await terminal.journal;if(reloaded)await reloaded.close();rmSync(dir,{recursive:true,force:true});}

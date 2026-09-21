@@ -7,6 +7,7 @@ import { promisify } from 'node:util'
 import * as pty from 'node-pty'
 import { WebSocketServer, WebSocket } from 'ws'
 import { PcLanePreparer, startPcCodeTurn } from './pc-lanes.mjs'
+import { forgeBuildPrompt } from './prompt-forge.mjs'
 
 const START_COLS = 120
 const START_ROWS = 30
@@ -187,15 +188,17 @@ export class TerminalService {
     if (terminal?.code?.status === 'running') throw Error('A PC Code turn is already running for this conversation. Wait for its result before continuing.')
     if (terminal && this.codeTurns.has(terminal.id)) throw Error('The previous PC Code turn is still finalizing its receipt. Wait before continuing.')
     if (terminal?.code?.status === 'uncertain') throw Error('The previous PC Code turn may still be running after a supervisor restart. Do not retry it automatically.')
+    const executionPrompt = forgeBuildPrompt(text)
     if (!terminal) {
       if ([...this.terminals.values()].filter(item => !item.exited || item.code?.status === 'running').length >= MAX_ACTIVE_TERMINALS) throw Error('All six PC terminal slots are in use. Close or wait for a terminal before continuing Code.')
       const id = randomUUID()
       terminal = storedTerminal(id, START_COLS, START_ROWS, { sessionId, projectId })
       terminal.exited = true
-      this.terminals.set(id, terminal)
-      await this.record(terminal, { type: 'create', id, sessionId, projectId, cols: terminal.cols, rows: terminal.rows })
+      // Preparation can fail before any provider turn starts. Publish one
+      // complete job record so failure cannot leave a legacy-looking terminal.
       terminal.code = { ...(await this.prepareTerminal({ id, sessionId, projectId, laneId, laneName, cwd, provider, dataDir: this.dataDir })), model, effort, kind: 'job', status: 'ready', requests: {} }
-      await this.record(terminal, { type: 'code', id, code: terminal.code })
+      this.terminals.set(id, terminal)
+      await this.record(terminal, { type: 'create', id, sessionId, projectId, cols: terminal.cols, rows: terminal.rows, code: terminal.code })
     }
     if (terminal.code.projectId !== projectId || terminal.code.laneId !== laneId || terminal.code.provider !== provider) throw Error('This PC Code checkout belongs to a different lane or provider.')
     terminal.code.requests[requestId] = { status: 'running', fingerprint, text, at: new Date().toISOString() }
@@ -203,7 +206,7 @@ export class TerminalService {
     terminal.exited = false
     await this.record(terminal, { type: 'code', id: terminal.id, code: terminal.code })
     let job
-    try { job = this.startCodeTurn({ host: terminal.code.host, checkout: terminal.code.checkout, provider, model: terminal.code.model, effort: terminal.code.effort, nativeSessionId: terminal.code.nativeSessionId, text, onData: data => this.data(terminal, data) }) } catch (error) {
+    try { job = this.startCodeTurn({ host: terminal.code.host, checkout: terminal.code.checkout, provider, model: terminal.code.model, effort: terminal.code.effort, nativeSessionId: terminal.code.nativeSessionId, text: executionPrompt, onData: data => this.data(terminal, data) }) } catch (error) {
       terminal.code.status = 'failed'; terminal.code.requests[requestId].status = 'failed'; terminal.code.requests[requestId].error = String(error.message || error).slice(0, 360); terminal.exited = true
       await this.record(terminal, { type: 'code', id: terminal.id, code: terminal.code }); this.changed(); throw error
     }

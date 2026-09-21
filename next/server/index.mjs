@@ -132,7 +132,7 @@ const server=http.createServer(async(req,res)=>{
   if(req.method!=='GET'){if(updates.restarting)return send(res,503,{error:'Applying update while idle. Reconnect in a moment.'});activeRequests++;res.once('close',()=>{activeRequests--;});}
   if(req.method==='GET'&&path==='/api/voice/status')return send(res,200,await voice.status());
   if(req.method==='GET'&&path==='/api/projects')return send(res,200,{projects:projects.list()});
-  let projectMatch;
+  let projectMatch,match;
   if(req.method==='GET'&&(projectMatch=path.match(/^\/api\/projects\/([^/]+)\/lanes$/)))return send(res,200,{lanes:projects.lanes(projectMatch[1])});
   if(req.method==='GET'&&(projectMatch=path.match(/^\/api\/projects\/([^/]+)\/files$/)))return send(res,200,await projects.children(projectMatch[1],url.searchParams.get('directory')||'',url.searchParams.get('laneId')?projects.requireLane(projectMatch[1],url.searchParams.get('laneId')).path:null));
   if(req.method==='GET'&&path==='/api/brain/graph')return send(res,200,await brain.graph(url.searchParams.get('scope')));
@@ -152,7 +152,7 @@ const server=http.createServer(async(req,res)=>{
   if(req.method==='GET'&&path==='/api/evidence'){const files=[];for(const directory of ['src','server','tests','docs']){if(existsSync(directory))for(const path of readdirSync(directory,{recursive:true})) {const full=join(directory,path);if(statSync(full).isFile()){try{safeFile(full);files.push({path:full});}catch{ /* Exclude unsupported or oversized previews. */ }}}}let diff='';try{diff=execFileSync('git',['diff','--no-ext-diff','--unified=2','--','src','server','scripts','tests','src-tauri'],{encoding:'utf8',maxBuffer:100000});}catch{diff='Git diff unavailable';}return send(res,200,{files,diff,tests:existsSync('docs/evidence/verification.md')?readFileSync('docs/evidence/verification.md','utf8'):'Verification is in progress. No test pass is implied.'});}
   if(req.method==='GET'&&path==='/api/file'){const projectId=url.searchParams.get('projectId')||'paneforge-next';let cwd=null;if(url.searchParams.get('sessionId')){const session=sessions.get(url.searchParams.get('sessionId'));if(session.projectId!==projectId)throw Error('Source project does not match this conversation');cwd=session.cwd;}else if(url.searchParams.get('laneId'))cwd=projects.requireLane(projectId,url.searchParams.get('laneId')).path;return send(res,200,await projects.read(projectId,url.searchParams.get('path'),cwd));}
   if(['POST','PATCH','DELETE'].includes(req.method)){
-   let data=await body(req);let match;
+   let data=await body(req);
    if((match=path.match(/^\/api\/reviews\/([A-Za-z0-9_-]{1,120})\/(ack|open|reply)$/))&&req.method==='POST'){const [,reviewId,action]=match;
     if(action==='ack'){if(typeof data.reviewed!=='boolean')throw Error('reviewed must be boolean');const result=reviews.ack(reviewId,data.reviewed);const review=reviews.read(reviewId);if(data.reviewed&&result.clearedAttention&&review){acknowledgeReviewNotice(review);parkReviewedIfQuiet(review);}publish();return send(res,200,result);}
     if(action==='open'){if(!Number.isInteger(data.index)||data.index<-1)throw Error('Invalid report link');const target=reviews.open(reviewId,data.index);if(!target){const error=Error('Review evidence is unavailable');error.statusCode=404;throw error;}execFileSync(...externalOpenCommand(target),{timeout:4000,stdio:'ignore'});return send(res,200,{opened:true,target});}
