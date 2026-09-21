@@ -21,6 +21,9 @@ test('saved profiles reopen without the prototype project and retain terminal pr
   await new Promise((done,fail)=>{child.stdout.on('data',()=>{if(output.includes('PaneForge supervisor'))done();});child.once('exit',()=>fail(Error(output)));});
   const origin=`http://127.0.0.1:${port}`;
   const response=await fetch(`${origin}/api/state`);assert.equal(response.status,200);const state=await response.json();assert.equal(state.sessions.find(s=>s.id==='saved').nativeSessionId,'native-saved');assert.equal(state.sessions.find(s=>s.id==='legacy').projectId,undefined);
+  const missing=await fetch(`${origin}/api/history/imported/missing`);assert.equal(missing.status,404);
+  const controller=new AbortController();
+  try{const events=await fetch(`${origin}/api/events`,{signal:controller.signal});assert.equal(events.status,200);assert.match(events.headers.get('content-type'),/text\/event-stream/);const reader=events.body.getReader();const first=await reader.read();assert.match(new TextDecoder().decode(first.value),/event: state/);}finally{controller.abort();}
   const denied=await fetch(`${origin}/api/terminal/launch`,{method:'POST',headers:{origin,'content-type':'application/json'},body:JSON.stringify({sessionId:'saved',projectId:'wrong',machine:'pc'})});assert.equal(denied.status,409);assert.match((await denied.json()).error,/Terminal project does not match/);
  }finally{child.kill('SIGTERM');await exited;clearTimeout(deadline);rmSync(root,{recursive:true,force:true});}
 });
