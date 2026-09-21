@@ -16,6 +16,46 @@ export function explicitBuildIntent(text) {
   return /[\p{L}\p{N}]/u.test(task) && !/^(?:nothing|none|no|not|neither)\b/i.test(task);
 }
 
+// Both Chat and Review replies enter through the same execution fences.
+export async function dispatchConversationTurn(supervisor,session,data,steer=false){
+ const {sessions,terminal,projects,executionStarting,hasActiveCode,ensureCodexReady}=supervisor;
+ sessions.assertInputAllowed(session.id);
+ const startingCode=!steer&&explicitBuildIntent(data.text)&&sessions.providerFor(session)==='codex';
+ if(executionStarting.has(session.id))throw Error('This conversation is starting PC Code work. Wait for its durable result before returning to Chat.');
+ if(startingCode){
+  if(session.activeTurn||sessions.busy.has(session.id)||hasActiveCode(session.id))throw Error('This conversation is already starting or running work.');
+  executionStarting.add(session.id);
+ }
+ try{
+  if(session.cliReconciliation)throw Error('The Mac CLI transcript is reconciling. Wait before returning to Chat.');
+  if(terminal.state().some(item=>item.sessionId===session.id&&!item.exited&&item.code?.machine==='mac'&&item.code?.kind!=='job'))throw Error('The same conversation is open in a Mac Codex CLI. Exit it before returning to Chat.');
+  if(hasActiveCode(session.id))throw Error('This conversation has active PC Code work. Wait for its durable result before returning to Chat.');
+  if(sessions.providerFor(session)==='codex'){
+   if(typeof data.requestId!=='string'||!data.requestId.trim())throw Error('A request identity is required');
+   if((Object.hasOwn(data,'model')&&data.model!==session.model)||(Object.hasOwn(data,'effort')&&data.effort!==session.effort))throw Error('This session already has a confirmed model and effort. Start a new session to change it.');
+   const live=await ensureCodexReady({refresh:true});
+   // Provider startup can yield while another request acquires the executor.
+   sessions.assertInputAllowed(session.id);
+   if(!startingCode&&executionStarting.has(session.id))throw Error('This conversation is starting PC Code work. Wait for its durable result before returning to Chat.');
+   if(session.cliReconciliation)throw Error('The Mac CLI transcript is reconciling. Wait before returning to Chat.');
+   if(terminal.state().some(item=>item.sessionId===session.id&&!item.exited&&item.code?.machine==='mac'&&item.code?.kind!=='job'))throw Error('The same conversation is open in a Mac Codex CLI. Exit it before returning to Chat.');
+   if(hasActiveCode(session.id))throw Error('This conversation has active PC Code work. Wait for its durable result before returning to Chat.');
+   const choice=chooseCodexRoute({task:data.text||'',models:live.models,rateLimits:live.rateLimits,requestedModel:session.model,requestedEffort:session.effort});
+   if(!choice.ok)throw Error(choice.reason);
+   session.model=choice.model;session.effort=choice.effort;
+   if(startingCode){
+    if(session.activeTurn||sessions.busy.has(session.id))throw Error('This conversation is running. Wait before starting Code.');
+    const lane=session.laneId?projects.requireLane(session.projectId,session.laneId):projects.laneForCwd(session.projectId,session.cwd);
+    if(!lane||lane.path!==session.cwd)throw Error('This saved lane is no longer available. Reopen the project and choose its current lane.');
+    const run=await terminal.runCodeTurn({sessionId:session.id,projectId:session.projectId,laneId:lane.id,laneName:lane.name,cwd:lane.path,provider:session.provider,model:session.model,effort:session.effort,requestId:data.requestId,text:data.text});
+    return {status:202,result:{...run,sessionId:session.id,execution:'pc'}};
+   }
+   data={...data,originalText:data.text,text:forgeBuildPrompt(data.text)};
+  }
+  return {status:200,result:await sessions.turn(session.id,data,steer)};
+ }finally{if(startingCode)executionStarting.delete(session.id);}
+}
+
 export function quotaVerdict(reply) {
   const result = reply?.result ?? reply;
   const rate = result?.rateLimits;

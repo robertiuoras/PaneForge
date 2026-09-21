@@ -13,6 +13,7 @@
 - Reviews persist as `{reviews,persistent:true}`, retain original user text separately from forged prompt text, durable request identity, native identity, and observed lane. They select final output only from the completed matching turn.
 - A retained final outcome is an informational claimed result. Missing output remains unverified. Blocked and decision reviews remain attention items. Review acknowledgement or receipt only parks an informational session with no other unread result, blocked, or decision record.
 - Review reply requires an exact native identity, refreshes live Codex routing, and uses the normal forge policy. Report/link open validates its target and only reports `opened:true` after the OS opener starts successfully.
+- Chat turns and Review replies share the same dispatcher: explicit build replies enter PC Code, while explanations remain Chat. Both paths reject active PC work, pending Code startup, Mac CLI ownership and reconciliation, and input locks. They recheck ownership after asynchronous provider preflight. This does not reconcile the separate remote PC native identity into the Mac Chat thread.
 - Explicit build verbs dispatch through the guarded PC Code route using the saved live-selected model and effort. Chat remains restricted. Active Chat, Mac CLI, PC Code work, renewal, and provisional Code startup are mutually fenced, including restart-conservative PC jobs.
 - Direct requests also recognize polite prefixes such as "can you build", "could you please fix", and "I want you to create". Questions asking for explanations, leading negations, quoted commands, and bare verbs stay in Chat. This is bounded phrase recognition, not evidence of general semantic intent classification or a completed real build.
 - Mac CLI first releases the App Server lease for the exact native Codex identity, then resumes it with the saved model and effort. On terminal exit, the supervisor reconnects and refreshes that exact thread before Chat input is accepted. A launch failure reacquires the thread rather than leaving the conversation fenced.
@@ -25,6 +26,8 @@
 - Remote PC browser verification was performed by the root worker only: 20 desktop and 20 compact fixture checks passed, plus Review checks. No local browser was used.
 
 ## PC execution proof and remaining gap
+
+The acceptance audit found a remaining implementation gap: PC terminal completion records its native identity and final outcome in the terminal journal but does not create a durable Review card. Provider Chat completion does. Remote result capture and reply must bind the PC terminal's exact native identity and resume that executor; substituting the local Chat native ID would be incorrect. Until that path is implemented and verified, the requested PC build-to-notification-to-reply journey is incomplete.
 
 Review report/link and indexed vault opening now select the host opener instead of unconditionally invoking macOS `/usr/bin/open`. Windows uses an encoded PowerShell command with the target in an escaped literal, without `cmd` expansion. Three command-boundary regressions passed; actual PC PowerShell preserved both a quote-containing file path and a metacharacter-containing URL with `Start-Process` stubbed. Receipt: `/tmp/next-open-target-pc-proof.json`. No window was opened: installed Windows report opening remains unverified.
 
