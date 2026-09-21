@@ -26,6 +26,23 @@ test('Mac terminal exit hands its exact native identity to transcript reconcilia
  }finally{try{await terminal.journal;}finally{rmSync(dir,{recursive:true,force:true});}}
 });
 
+test('failed PC preparation leaves no phantom terminal across restart and permits a new attempt',async()=>{
+ const {TerminalService}=await import('../server/terminal.mjs');
+ const {mkdtempSync,rmSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
+ const dir=mkdtempSync(join(tmpdir(),'pc-prepare-'));let attempts=0;let launches=0;let resumed;
+ const args={sessionId:'session',projectId:'project',laneId:'lane',provider:'codex',requestId:'first',text:'Build the fixture'};
+ const prepareTerminal=async value=>{attempts++;if(attempts===1)throw Error('SSH connection reset');return {...value,host:'pc',checkout:'C:\\work',machine:'pc'};};
+ const terminal=new TerminalService({dataDir:dir,prepareTerminal});
+ try{
+  await assert.rejects(terminal.runCodeTurn(args),/SSH connection reset/);
+  assert.equal(terminal.state().length,0);
+  await terminal.close();
+  resumed=new TerminalService({dataDir:dir,prepareTerminal,startCodeTurn:()=>{launches++;return {done:Promise.resolve({output:JSON.stringify({type:'thread.started',thread_id:'remote-native'})+'\n'+JSON.stringify({type:'turn.completed'})}),stop:()=>false};}});
+  await resumed.ready();assert.equal(resumed.state().length,0);
+  const result=await resumed.runCodeTurn(args);assert.equal(result.state,'running');assert.equal(attempts,2);assert.equal(launches,1);
+ }finally{if(resumed)await resumed.close();await terminal.journal;rmSync(dir,{recursive:true,force:true});}
+});
+
 test('PC completed receipt retains the exact request and final output for durable review and reply',async()=>{
  const {TerminalService}=await import('../server/terminal.mjs');const {ReviewStore}=await import('../server/review-store.mjs');
  const {mkdtempSync,rmSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');

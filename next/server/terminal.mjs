@@ -194,10 +194,11 @@ export class TerminalService {
       const id = randomUUID()
       terminal = storedTerminal(id, START_COLS, START_ROWS, { sessionId, projectId })
       terminal.exited = true
-      this.terminals.set(id, terminal)
-      await this.record(terminal, { type: 'create', id, sessionId, projectId, cols: terminal.cols, rows: terminal.rows })
+      // Preparation can fail before any provider turn starts. Publish one
+      // complete job record so failure cannot leave a legacy-looking terminal.
       terminal.code = { ...(await this.prepareTerminal({ id, sessionId, projectId, laneId, laneName, cwd, provider, dataDir: this.dataDir })), model, effort, kind: 'job', status: 'ready', requests: {} }
-      await this.record(terminal, { type: 'code', id, code: terminal.code })
+      this.terminals.set(id, terminal)
+      await this.record(terminal, { type: 'create', id, sessionId, projectId, cols: terminal.cols, rows: terminal.rows, code: terminal.code })
     }
     if (terminal.code.projectId !== projectId || terminal.code.laneId !== laneId || terminal.code.provider !== provider) throw Error('This PC Code checkout belongs to a different lane or provider.')
     terminal.code.requests[requestId] = { status: 'running', fingerprint, text, at: new Date().toISOString() }
