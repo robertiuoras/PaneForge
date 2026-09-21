@@ -492,7 +492,10 @@ function turnOutcome (output) {
   for (const line of String(output).split(/\r?\n/)) {
     try { const event = JSON.parse(line.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')); if (event?.item?.type === 'agent_message' && typeof event.item.text === 'string') messages.push(event.item.text) } catch {}
   }
-  return /\b(couldn['’]t|unable|cannot|timed out|unverified|failed)\b/i.test(messages.join('\n')) ? 'needs_attention' : 'unverified'
+  // A zero failure count is a test summary, not a reported failure. Keep all
+  // other failure wording conservative; this still does not prove completion.
+  const report = messages.join('\n').replace(/(?<![\d.])\b0\s+failed\b/gi, '')
+  return /\b(couldn['’]t|unable|cannot|timed out|unverified|failed)\b/i.test(report) ? 'needs_attention' : 'unverified'
 }
 
 function validIdentity (value) {
