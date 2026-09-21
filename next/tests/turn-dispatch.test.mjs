@@ -55,3 +55,21 @@ test('Chat rechecks execution ownership after asynchronous provider startup',asy
  supervisor.executionStarting.add(session.id);release(live);
  await assert.rejects(pending,/starting PC Code/);assert.equal(calls.length,0);
 });
+test('PC Review follow-up resumes the remote executor even for an explanation',async()=>{
+ const {supervisor,session,calls}=fixture();
+ const review={execution:'pc',terminalId:'pc-job',sessionId:session.id,nativeSessionId:'native-pc'};
+ supervisor.terminal.state=()=>[{id:'pc-job',sessionId:session.id,projectId:session.projectId,exited:true,code:{kind:'job',nativeSessionId:'native-pc'}}];
+ await dispatchConversationTurn(supervisor,session,{text:'Explain the result',requestId:'remote-reply'},false,review);
+ assert.equal(calls[0].kind,'pc');assert.equal(calls[0].data.expectedNativeSessionId,'native-pc');assert.equal(calls[0].data.expectedTerminalId,'pc-job');
+ assert.equal(session.nativeSessionId,'native-chat');
+ supervisor.terminal.state=()=>[];
+ await assert.rejects(dispatchConversationTurn(supervisor,session,{text:'Explain the result',requestId:'missing'},false,review),/retained native/);
+ assert.equal(calls.length,1);
+});
+test('review binding is rechecked after provider preflight',async()=>{
+ const {supervisor,session,calls}=fixture();
+ const review={sessionId:session.id,nativeSessionId:session.nativeSessionId};
+ const live=await supervisor.ensureCodexReady();supervisor.ensureCodexReady=async()=>{session.nativeSessionId='replaced';return live;};
+ await assert.rejects(dispatchConversationTurn(supervisor,session,{text:'Explain it',requestId:'stale'},false,review),/bound to an active/);
+ assert.equal(calls.length,0);
+});

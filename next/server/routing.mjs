@@ -17,10 +17,14 @@ export function explicitBuildIntent(text) {
 }
 
 // Both Chat and Review replies enter through the same execution fences.
-export async function dispatchConversationTurn(supervisor,session,data,steer=false){
+export async function dispatchConversationTurn(supervisor,session,data,steer=false,review=null){
  const {sessions,terminal,projects,executionStarting,hasActiveCode,ensureCodexReady}=supervisor;
  sessions.assertInputAllowed(session.id);
- const startingCode=!steer&&explicitBuildIntent(data.text)&&sessions.providerFor(session)==='codex';
+ const remoteReview=review?.execution==='pc';
+ const verifyReview=()=>{if(!review)return;if(review.sessionId!==session.id)throw Error('Review belongs to a different conversation');if(remoteReview){const retained=terminal.state().find(item=>item.id===review.terminalId&&item.sessionId===session.id&&item.projectId===session.projectId&&item.code?.kind==='job');if(!review.nativeSessionId||retained?.code?.nativeSessionId!==review.nativeSessionId)throw Error('PC review is not bound to the retained native conversation');}else if(!session.nativeSessionId||session.nativeSessionId!==review.nativeSessionId)throw Error('Review is not bound to an active native conversation');};
+ verifyReview();
+ const startingCode=!steer&&(remoteReview||explicitBuildIntent(data.text))&&sessions.providerFor(session)==='codex';
+ if(remoteReview&&!startingCode)throw Error('PC review continuation requires Codex Code execution');
  if(executionStarting.has(session.id))throw Error('This conversation is starting PC Code work. Wait for its durable result before returning to Chat.');
  if(startingCode){
   if(session.activeTurn||sessions.busy.has(session.id)||hasActiveCode(session.id))throw Error('This conversation is already starting or running work.');
@@ -36,6 +40,7 @@ export async function dispatchConversationTurn(supervisor,session,data,steer=fal
    const live=await ensureCodexReady({refresh:true});
    // Provider startup can yield while another request acquires the executor.
    sessions.assertInputAllowed(session.id);
+   verifyReview();
    if(!startingCode&&executionStarting.has(session.id))throw Error('This conversation is starting PC Code work. Wait for its durable result before returning to Chat.');
    if(session.cliReconciliation)throw Error('The Mac CLI transcript is reconciling. Wait before returning to Chat.');
    if(terminal.state().some(item=>item.sessionId===session.id&&!item.exited&&item.code?.machine==='mac'&&item.code?.kind!=='job'))throw Error('The same conversation is open in a Mac Codex CLI. Exit it before returning to Chat.');
@@ -47,7 +52,7 @@ export async function dispatchConversationTurn(supervisor,session,data,steer=fal
     if(session.activeTurn||sessions.busy.has(session.id))throw Error('This conversation is running. Wait before starting Code.');
     const lane=session.laneId?projects.requireLane(session.projectId,session.laneId):projects.laneForCwd(session.projectId,session.cwd);
     if(!lane||lane.path!==session.cwd)throw Error('This saved lane is no longer available. Reopen the project and choose its current lane.');
-    const run=await terminal.runCodeTurn({sessionId:session.id,projectId:session.projectId,laneId:lane.id,laneName:lane.name,cwd:lane.path,provider:session.provider,model:session.model,effort:session.effort,requestId:data.requestId,text:data.text});
+    const run=await terminal.runCodeTurn({sessionId:session.id,projectId:session.projectId,laneId:lane.id,laneName:lane.name,cwd:lane.path,provider:session.provider,model:session.model,effort:session.effort,requestId:data.requestId,text:data.text,...(remoteReview?{expectedTerminalId:review.terminalId,expectedNativeSessionId:review.nativeSessionId}:{})});
     return {status:202,result:{...run,sessionId:session.id,execution:'pc'}};
    }
    data={...data,originalText:data.text,text:forgeBuildPrompt(data.text)};

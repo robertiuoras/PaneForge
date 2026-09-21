@@ -169,7 +169,7 @@ export class TerminalService {
     try { return await pending } finally { this.codeCreating.delete(key) }
   }
 
-  async _runCodeTurn ({ sessionId, projectId, laneId, laneName, cwd, provider = 'codex', model = null, effort = null, requestId, text }) {
+  async _runCodeTurn ({ sessionId, projectId, laneId, laneName, cwd, provider = 'codex', model = null, effort = null, requestId, text, expectedTerminalId, expectedNativeSessionId }) {
     await this.ready()
     if (!validIdentity(sessionId) || !validIdentity(projectId) || !validIdentity(requestId) || typeof text !== 'string' || !text.trim() || Buffer.byteLength(text) > 16 * 1024) throw Error('PC Code turn is invalid')
     // Raw terminal sessions do not expose a trustworthy native provider ID. A
@@ -178,6 +178,7 @@ export class TerminalService {
     const interactive = [...this.terminals.values()].find(item => item.sessionId === sessionId && item.projectId === projectId && item.code?.kind !== 'job' && item.code?.machine !== 'mac')
     if (interactive) throw Error('This conversation has a legacy interactive PC terminal without a resumable native session. Open a new conversation to run Code.')
     let terminal = [...this.terminals.values()].find(item => item.sessionId === sessionId && item.projectId === projectId && item.code?.kind === 'job')
+    if (expectedTerminalId && (terminal?.id !== expectedTerminalId || !expectedNativeSessionId || terminal.code.nativeSessionId !== expectedNativeSessionId)) throw Error('The PC review no longer matches this native conversation.')
     const fingerprint = requestFingerprint({ laneId, provider, text })
     if (terminal?.code?.requests?.[requestId]) {
       if (terminal.code.requests[requestId].fingerprint !== fingerprint) throw Error('This PC Code request ID is already bound to different lane, provider, or text.')
@@ -197,7 +198,7 @@ export class TerminalService {
       await this.record(terminal, { type: 'code', id, code: terminal.code })
     }
     if (terminal.code.projectId !== projectId || terminal.code.laneId !== laneId || terminal.code.provider !== provider) throw Error('This PC Code checkout belongs to a different lane or provider.')
-    terminal.code.requests[requestId] = { status: 'running', fingerprint, at: new Date().toISOString() }
+    terminal.code.requests[requestId] = { status: 'running', fingerprint, text, at: new Date().toISOString() }
     terminal.code.status = 'running'
     terminal.exited = false
     await this.record(terminal, { type: 'code', id: terminal.id, code: terminal.code })
@@ -214,7 +215,7 @@ export class TerminalService {
         terminal.code.status = 'failed'; terminal.code.requests[requestId].status = 'failed'; terminal.code.requests[requestId].error = 'PC Code did not return a completed native turn receipt.'; terminal.exited = true; terminal.exitCode = null; terminal.spawnError = terminal.code.requests[requestId].error
         return this.record(terminal, { type: 'code', id: terminal.id, code: terminal.code }).then(() => this.record(terminal, { type: 'spawn-error', id: terminal.id, message: terminal.spawnError }))
       }
-      terminal.code.status = 'completed'; terminal.code.outcome = turnOutcome(output); terminal.code.requests[requestId].status = 'completed'; terminal.code.requests[requestId].outcome = terminal.code.outcome; terminal.exited = true; terminal.exitCode = 0
+      terminal.code.status = 'completed'; terminal.code.outcome = turnOutcome(output); terminal.code.requests[requestId].status = 'completed'; terminal.code.requests[requestId].outcome = terminal.code.outcome; terminal.code.requests[requestId].nativeSessionId = nativeSessionId; terminal.code.requests[requestId].finalText = finalTurnText(output);  terminal.exited = true; terminal.exitCode = 0
       return this.record(terminal, { type: 'code', id: terminal.id, code: terminal.code }).then(() => this.record(terminal, { type: 'exit', id: terminal.id, exitCode: 0 }))
     }, error => {
       const nativeSessionId = nativeSession(error.output, provider)
@@ -455,6 +456,14 @@ function requestFingerprint ({ laneId, provider, text }) {
 
 // A provider's `turn.completed` only proves that it stopped responding. It does
 // not prove that a requested edit, read, build, or client workflow happened.
+function finalTurnText (output) {
+  let final = '';
+  for (const line of String(output).split(/\r?\n/)) {
+    try { const event=JSON.parse(line.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g,'')); if(event.type==='item.completed' && event.item?.type==='agent_message' && typeof event.item.text==='string') final=event.item.text; } catch {}
+  }
+  return final.slice(0, 98000);
+}
+
 function turnOutcome (output) {
   const messages = []
   for (const line of String(output).split(/\r?\n/)) {
