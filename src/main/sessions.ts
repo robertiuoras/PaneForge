@@ -4406,6 +4406,17 @@ export class SessionManager extends EventEmitter {
   bell(id: string): void {
     const live = this.sessions.get(id)
     if (!live || live.meta.bell) return
+    const now = Date.now()
+    audit('bell', {
+      id,
+      title: live.meta.title,
+      agent: live.meta.agent,
+      status: live.meta.status,
+      engaged: Boolean(live.meta.engaged),
+      runSince: live.meta.runSince ? now - live.meta.runSince : null,
+      quietMs: now - live.meta.lastOutput,
+      tail: plainTail(live.lastTail, 4)
+    })
     live.meta.bell = true
     this.emit('bell', live.meta)
     this.emitSessions()
