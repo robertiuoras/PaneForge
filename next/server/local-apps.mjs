@@ -16,7 +16,7 @@ export function externalOpenCommand(target,platform=process.platform){
  if(typeof target!=='string'||!target||/[\u0000-\u001F\u007F]/.test(target))throw Error('Invalid open target');
  if(platform==='darwin')return ['/usr/bin/open',[target]];
  if(platform==='win32'){
-  const script=`$ErrorActionPreference='Stop'; Start-Process -FilePath '${target.replaceAll("'","''")}'`;
+  const script=`$ErrorActionPreference='Stop'; Start-Process -FilePath ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${Buffer.from(target,'utf8').toString('base64')}')))`;
   return ['powershell.exe',['-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')]];
  }
  if(platform==='linux')return ['xdg-open',[target]];

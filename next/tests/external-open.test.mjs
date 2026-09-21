@@ -9,11 +9,15 @@ test('report targets stay single arguments on macOS and Linux',()=>{
 });
 
 test('Windows opener encodes a literal target without invoking cmd or interpolating PowerShell',()=>{
- for(const target of [String.raw`C:\Users\Gamer\a report's & notes.html`, 'https://example.com/?q=$(whoami)&x="hello"', 'obsidian://open?vault=My%20Vault&file=note']){
+ for(const target of [String.raw`C:\Users\Gamer\a report's & notes.html`, String.raw`C:\Users\Gamer\a’ report‘ & 日本語.html`, 'https://example.com/?q=$(whoami)&x="hello"', 'obsidian://open?vault=My%20Vault&file=note']){
   const [command,args]=externalOpenCommand(target,'win32');
   assert.equal(command,'powershell.exe');
   assert.deepEqual(args.slice(0,-1),['-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand']);
-  assert.equal(Buffer.from(args.at(-1),'base64').toString('utf16le'),`$ErrorActionPreference='Stop'; Start-Process -FilePath '${target.replaceAll("'","''")}'`);
+  const script=Buffer.from(args.at(-1),'base64').toString('utf16le');
+  const payload=script.match(/FromBase64String\('([A-Za-z0-9+/=]+)'\)/)?.[1];
+  assert.ok(payload);
+  assert.equal(Buffer.from(payload,'base64').toString('utf8'),target);
+  assert.equal(script,`$ErrorActionPreference='Stop'; Start-Process -FilePath ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${payload}')))`);
  }
 });
 

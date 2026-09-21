@@ -66,7 +66,8 @@ const executionStarting=new Set();
 const turnDispatcher={sessions,terminal,projects,executionStarting,hasActiveCode,ensureCodexReady};
 // Older prototype conversations lacked projectId. Only adopt the canonical
 // Next checkout after realpath validation; never broaden another project.
-if(sessions.sessions.map(session=>assignLegacyPaneForgeNextProject(session,projects.require('paneforge-next'))).some(Boolean))sessions.changed();
+const legacyNextProject=projects.list().find(project=>project.id==='paneforge-next');
+if(sessions.sessions.map(session=>assignLegacyPaneForgeNextProject(session,legacyNextProject)).some(Boolean))sessions.changed();
 // Older sessions retain their saved project IDs. Fill lane metadata only when the
 // saved cwd exactly matches a currently verified worktree for that project.
 if(sessions.sessions.map(session=>{if(session.laneId||!session.projectId)return false;try{const lane=projects.laneForCwd(session.projectId,session.cwd);if(!lane)return false;session.laneId=lane.id;session.laneName=lane.name;return true;}catch{return false;}}).some(Boolean))sessions.changed();
@@ -179,7 +180,7 @@ const server=http.createServer(async(req,res)=>{
    if(path==='/api/terminal/turn'||path==='/api/terminal/stop'||path==='/api/terminal/launch'){
     const session=sessions.get(data.sessionId);
     if(path==='/api/terminal/stop')return send(res,200,await terminal.stopCodeTurn(session.id));
-    sessions.assertInputAllowed(session.id);if(session.cliReconciliation)throw Error('The Mac CLI transcript is reconciling. Wait before launching Code.');if(executionStarting.has(session.id)||session.activeTurn||sessions.busy.has(session.id))throw Error('This conversation is running in Chat. Wait before starting or launching Code.');const nextProject=projects.require('paneforge-next');
+    sessions.assertInputAllowed(session.id);if(session.cliReconciliation)throw Error('The Mac CLI transcript is reconciling. Wait before launching Code.');if(executionStarting.has(session.id)||session.activeTurn||sessions.busy.has(session.id))throw Error('This conversation is running in Chat. Wait before starting or launching Code.');const nextProject=session.projectId===undefined?projects.list().find(project=>project.id==='paneforge-next'):undefined;
     if(assignLegacyPaneForgeNextProject(session,nextProject))sessions.changed();
     if(data.projectId!=null&&data.projectId!==session.projectId){const error=Error('Terminal project does not match this conversation.');error.statusCode=409;throw error;}
     let lane;try{lane=session.laneId?projects.requireLane(session.projectId,session.laneId):projects.laneForCwd(session.projectId,session.cwd);}catch{lane=null;}
