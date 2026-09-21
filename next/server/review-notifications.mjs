@@ -37,6 +37,12 @@ export function deliverReviewNotice(record) {
   // The supervisor owns reportPath; this operation only copies retained HTML.
   const report = readFileSync(record.reportPath);
   atomic(paths.report, report);
+  if (record.kind === 'blocked' && record.resolvedAt && validId(record.resolvedBy)) {
+    if (!existsSync(paths.receipt)) atomic(paths.receipt, JSON.stringify({
+      id: paths.id, dismissedAt: record.resolvedAt, opened: false,
+    }));
+    return true;
+  }
   if (!existsSync(paths.notice)) atomic(paths.notice, JSON.stringify({
     id: `paneforge-review-${paths.id}`, actor: 'paneforge',
     title: record.title, detail: record.report.slice(0, 1000),

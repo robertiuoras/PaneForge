@@ -8,7 +8,7 @@ import { ReviewStore } from '../server/review-store.mjs';
 const session={id:'session_1',nativeSessionId:'native_1',title:'A <title>',provider:'codex',cwd:process.cwd(),items:[]};
 test('PC failures retain attention without inventing a native identity, and completion supersedes interruption',()=>{
  const dir=mkdtempSync(join(tmpdir(),'pf-pc-attention-'));try{
-  const notices=[], store=new ReviewStore(dir,{onRecord:r=>notices.push(r)});
+  const notices=[], store=new ReviewStore(dir,{onRecord:r=>notices.push({...r})});
   const owner={...session,projectId:'project'};
   const terminal={id:'terminal',sessionId:owner.id,projectId:'project',code:{kind:'job',provider:'codex',checkout:'C:\\work',nativeSessionId:'unrelated-later-native',requests:{request:{status:'uncertain',text:'Build it',error:'Connection lost'}}}};
   const issue=store.capturePcTurn(terminal,'request',owner);
@@ -20,7 +20,13 @@ test('PC failures retain attention without inventing a native identity, and comp
   const completed=store.capturePcTurn(terminal,'request',owner);
   assert.notEqual(completed.id,issue.id);assert.equal(completed.nativeSessionId,'actual-native');assert.equal(completed.kind,'result');
   assert.equal(store.read(issue.id).resolvedBy,completed.id);assert.equal(store.list().find(r=>r.id===issue.id).attention,false);assert.equal(store.list().find(r=>r.id===completed.id).attention,true);
-  assert.equal(store.read(issue.id).report,issue.report);assert.equal(notices.length,2);
+  assert.equal(store.read(issue.id).report,issue.report);assert.equal(notices.length,3);
+  assert.equal(notices[2].id,issue.id);assert.equal(notices[2].resolvedBy,completed.id);
+  const redelivered=[], restarted=new ReviewStore(dir,{onRecord:r=>redelivered.push({...r})});
+  assert.equal(restarted.capturePcTurn(terminal,'request',owner).id,completed.id);
+  assert.equal(redelivered.length,1);assert.equal(redelivered[0].id,issue.id);assert.equal(redelivered[0].resolvedAt,notices[2].resolvedAt);
+  assert.equal(restarted.list().length,2);assert.equal(restarted.read(completed.id).reviewedAt,undefined);
+  assert.equal(restarted.list().find(r=>r.id===completed.id).attention,true);
   terminal.code.requests.failure={status:'failed',text:'Follow up',error:'Runner failed',nativeSessionId:'actual-native'};
   const failure=store.capturePcTurn(terminal,'failure',owner);assert.equal(failure.nativeSessionId,'actual-native');assert.match(failure.report,/Runner failed/);assert.equal(failure.attention,true);
   assert.throws(()=>store.capturePcTurn(terminal,'failure',{...owner,projectId:'other'}),/different conversation/);
