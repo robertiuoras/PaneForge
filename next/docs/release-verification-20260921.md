@@ -1,5 +1,17 @@
 # Release verification checkpoint, 2026-09-21
 
+## Current compatibility and preview checkpoint
+
+Clean merged source `62510eda7c0def91497a09098d6171f226bf67ae` built an ad-hoc signed Mac preview. Strict deep signature verification, actual bundled-runtime health with matching revision, authenticated idle stop, and ZIP integrity passed. Retained archive `/tmp/PaneForge-Next-62510eda-mac-preview.zip`: 97,954,248 bytes, SHA256 `6c2481bbd057bea1dcd1061eb956b1d79ad42d587c4ef4b975c13bfe5db46430`. Receipt `/tmp/next-current-preview-receipt.json`. This is not an installed or notarized release and does not contain later worker/title edits.
+
+Windows Codex 0.155.1 still failed sandbox runtime-cache validation after normal Gamer reads passed. An isolated 0.154.0 CLI executed a real PowerShell command with the existing elevated sandbox under a Limited InteractiveToken task, with command, CLI, and task exit 0. Exact native identity `01a0c30d-2f98-75b3-b406-ae1bbb460d99`; returned receipt `/tmp/next-codex-compat-verified-receipt.json`. Global CLI, credentials, sandbox configuration, and OS security policy were unchanged. Next PC Code now requires that isolated worker under `%LOCALAPPDATA%\PaneForgeNext\codex-compat-0.154.0`, verifies its exact version, and fails closed if unavailable. This bounded command proof alone does not establish successful implementation or full replacement acceptance. The independent SSH token failure still recurs intermittently and has no confirmed cause.
+
+A subsequent real Next supervisor journey created `review-summary.mjs` and its Node test file on the PC, independently reran all three tests successfully, retained the original prompt and PC native identity in Review, and replied on that same native conversation `01a0c314-ee40-7c02-b90b-bf0545183e41`. Receipt retained under `/private/var/folders/kq/s5llmv_96vz1m08j323_jzzw0000gn/T/next-real-build-4eXCyT/receipt.json`. This proves the implementation/review/reply service path with an isolated fixture, not installed UI acceptance. Notifications were disabled. The provider outcome remains conservatively unverified; the independent test receipt supplies the measured implementation evidence.
+
+The journey exposed a completion-hook acknowledgment overwriting the useful work report. Review now retains earlier response details alongside the latest acknowledgment, with regression coverage. PC dispatch also assigns the user's task as the initial session title before a result or failure creates its card. Hook receipts are scoped to the worker checkout; the command environment explicitly carries that path because inheriting the parent environment alone did not propagate it through the sandbox. No safety hook was disabled.
+
+Final-source rerun was interrupted by SSH before worker output returned. Its exact terminal `38fb38d4-2149-4287-8f96-ea4c36a0e2a5` and request remain `uncertain`; no duplicate job was launched. The existing verified PC diagnostic pane received a read-only inspection through its local prompt queue. Explicit shell-environment propagation is therefore changed but not yet verified by this rerun. Local 141-test suite, Next frontend build, minimized dev-b launch, and diff checks passed; these do not substitute for that remote proof.
+
 Owner: lane b, native `01a0bdba-42cf-7293-a856-a908482746ea`.
 
 ## Parent PaneForge regression checks

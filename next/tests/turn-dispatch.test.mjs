@@ -28,6 +28,15 @@ test('ordinary replies remain Chat and retain original text',async()=>{
  await dispatchConversationTurn(supervisor,session,{text:'Explain the result',requestId:'reply-2'});
  assert.equal(calls[0].kind,'chat');assert.equal(calls[0].data.originalText,'Explain the result');
 });
+test('PC work has a useful saved title before a result or failure can create its Review',async()=>{
+ const {supervisor,session}=fixture();session.title='New conversation';
+ supervisor.sessions.rename=(id,title)=>{assert.equal(id,session.id);session.title=title;};
+ supervisor.terminal.runCodeTurn=async()=>{assert.equal(session.title,'Build the review card');throw Error('PC unavailable');};
+ await assert.rejects(dispatchConversationTurn(supervisor,session,{text:'Build  the\nreview card',requestId:'title'}),/PC unavailable/);
+ session.title='My chosen title';supervisor.terminal.runCodeTurn=async()=>({id:'job'});
+ await dispatchConversationTurn(supervisor,session,{text:'Fix the card',requestId:'followup'});
+ assert.equal(session.title,'My chosen title');
+});
 test('both reply modes refuse active PC, Mac CLI, reconciliation and input locks',async()=>{
  for(const text of ['Explain the result','Fix the result'])for(const fence of ['pc','mac','reconcile','lock','starting']){
   const {supervisor,session,calls}=fixture();

@@ -147,7 +147,7 @@ function startDirectPcTurn ({ host, script, onData, spawnFn }) {
 
 function codexCommand ({ nativeSessionId, prompt, model, effort }) {
   if(typeof model!=='string'||!/^[A-Za-z0-9._-]{1,100}$/.test(model)||typeof effort!=='string'||!/^[a-z]{1,32}$/.test(effort)) fail('PC Codex requires the session’s confirmed model and effort.')
-  const base = `codex exec --json --disable unified_exec_tty -m ${model} -c 'model_reasoning_effort="${effort}"' -c 'model_provider="openai"' -c 'forced_login_method="chatgpt"' -c 'approval_policy="on-request"' -s workspace-write`
+  const base = `$codexWorker exec --json --disable unified_exec_tty -c $receiptConfig -m ${model} -c 'model_reasoning_effort="${effort}"' -c 'model_provider="openai"' -c 'forced_login_method="chatgpt"' -c 'approval_policy="on-request"' -s workspace-write`
   return nativeSessionId ? `${base} resume ${quotePs(nativeSessionId)} ${prompt}` : `${base} ${prompt}`
 }
 
@@ -161,6 +161,11 @@ function codexTaskScripts ({ checkout, nativeSessionId, text, jobId, model, effo
     '$code=1; try {',
     `$checkout=${quotePs(checkout)}`, "if(!(Test-Path -LiteralPath $checkout)){throw 'PC lane checkout is unavailable.'}",
     'Set-Location -LiteralPath $checkout',
+    "$env:KNOWLEDGE_RECEIPTS=Join-Path $checkout '.paneforge-knowledge-receipts'; $receiptConfig='shell_environment_policy.set.KNOWLEDGE_RECEIPTS='+(ConvertTo-Json -InputObject $env:KNOWLEDGE_RECEIPTS -Compress)",
+    // 0.155.1 fails Windows runtime sandbox validation on the paired PC. The
+    // isolated 0.154.0 worker passed the same Limited-task sandbox checkpoint.
+    // Preserve the global CLI and fail closed if this verified worker is absent.
+    "$codexWorker=Join-Path $env:LOCALAPPDATA 'PaneForgeNext\\codex-compat-0.154.0\\node_modules\\.bin\\codex.cmd'; if(!(Test-Path -LiteralPath $codexWorker)){throw 'Next PC worker Codex 0.154.0 is not installed in its isolated directory.'}; $workerVersion=& $codexWorker --version; if($LASTEXITCODE -ne 0 -or $workerVersion.Trim() -ne 'codex-cli 0.154.0'){throw 'Next PC worker version verification failed.'}",
     "Get-ChildItem Env: | Where-Object {$_.Name -match 'API_KEY|ACCESS_TOKEN|AUTH_TOKEN|SECRET|OPENAI_BASE_URL|ANTHROPIC|AWS_|VERTEX|BEDROCK'} | ForEach-Object {Remove-Item ('Env:'+$_.Name)}",
     `$previousErrorAction=$ErrorActionPreference; $ErrorActionPreference='Continue'; if(Test-Path -LiteralPath (Join-Path $job 'cancel.marker')){$code=130}else{& ${command} 1> (Join-Path $job 'stdout.log') 2> (Join-Path $job 'stderr.log'); if($null -ne $LASTEXITCODE){$code=$LASTEXITCODE}}; $ErrorActionPreference=$previousErrorAction`,
     "} catch { $_ | Out-String | Add-Content -LiteralPath (Join-Path $job 'stderr.log'); $code=1 } finally { $tmp=Join-Path $job 'exit.tmp'; Set-Content -LiteralPath $tmp -Value $code -NoNewline; Move-Item -LiteralPath $tmp -Destination (Join-Path $job 'exit.txt') -Force }; exit $code"

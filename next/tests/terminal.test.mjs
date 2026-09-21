@@ -93,11 +93,11 @@ test('PC completed receipt retains the exact request and final output for durabl
   assert.equal(terminal.state()[0].code.requests.first.text,args.text);
   const duplicate=await terminal.runCodeTurn(args);assert.equal(duplicate.id,run.id);assert.equal(launches.length,1);
   const done=new Promise(resolve=>{changed=()=>{if(!terminal.codeTurns.size)resolve();};});
-  complete({output:[{type:'thread.started',thread_id:'remote-native'},{type:'item.completed',item:{type:'agent_message',text:'Earlier progress'}},{type:'item.completed',item:{type:'agent_message',text:'Fixture ready'}},{type:'turn.completed'}].map(x=>JSON.stringify(x)).join('\n')});
+  complete({output:[{type:'thread.started',thread_id:'remote-native'},{type:'item.completed',item:{type:'agent_message',text:'Implemented module; tests 3, pass 3'}},{type:'item.completed',item:{type:'agent_message',text:'Knowledge checkpoint settled'}},{type:'turn.completed'}].map(x=>JSON.stringify(x)).join('\n')});
   await done;
   const notices=[];const store=new ReviewStore(dir,{onRecord:r=>notices.push(r)});
   const record=store.capturePcTurn(terminal.state()[0],'first',session);
-  assert.equal(record.nativeSessionId,'remote-native');assert.equal(record.execution,'pc');assert.equal(record.terminalId,run.id);assert.equal(record.prompt,args.text);assert.match(record.report,/Fixture ready/);assert.doesNotMatch(record.report,/Earlier progress/);assert.equal(record.proof,'claimed');assert.equal(session.nativeSessionId,'local-native');
+  assert.equal(record.nativeSessionId,'remote-native');assert.equal(record.execution,'pc');assert.equal(record.terminalId,run.id);assert.equal(record.prompt,args.text);assert.match(record.report,/Knowledge checkpoint settled/);assert.match(record.report,/Implemented module; tests 3, pass 3/);assert.equal(record.proof,'claimed');assert.equal(session.nativeSessionId,'local-native');
   await terminal.close();reloaded=new TerminalService({dataDir:dir});await reloaded.ready();
   store.capturePcTurn(reloaded.state()[0],'first',{...session,title:'Renamed'});assert.equal(notices.length,1);assert.equal(store.list().length,1);
   await assert.rejects(terminal.runCodeTurn({...args,requestId:'wrong',expectedTerminalId:run.id,expectedNativeSessionId:'wrong-native'}),/no longer matches/);
