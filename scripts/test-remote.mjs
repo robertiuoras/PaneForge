@@ -14,6 +14,10 @@ if (args.some(arg => !/^[a-zA-Z0-9_=-]+$/.test(arg))) {
 const probe = spawnSync('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', 'Gamer@100.78.1.77', 'hostname'], { encoding: 'utf8', timeout: 12_000 })
 if (probe.status !== 0 || probe.stdout.trim().toUpperCase() !== 'DESKTOP-CMSUCM1') {
   console.error('Tests deferred: designated PC unavailable or identity mismatch. No local browser fallback.')
+  const detail = probe.error?.message || (probe.status !== 0
+    ? (probe.stderr?.trim() || `SSH exited ${probe.status ?? probe.signal ?? 'without a status'}`)
+    : `Expected DESKTOP-CMSUCM1; received ${JSON.stringify(probe.stdout.trim())}`)
+  console.error(`PC transport: ${detail.slice(-1200)}`)
   process.exit(3)
 }
 const transport = join(homedir(), 'Projects', 'claude-memory', 'claude-config', 'rbuild.mjs')

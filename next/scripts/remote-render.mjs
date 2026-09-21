@@ -23,6 +23,10 @@ if (process.platform === "win32") {
 const probe = spawnSync("ssh", ["-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "Gamer@100.78.1.77", "hostname"], { encoding: "utf8", timeout: 12_000 });
 if (probe.status !== 0 || probe.stdout.trim().toUpperCase() !== "DESKTOP-CMSUCM1") {
   console.error("Rendering deferred: the designated PC is unavailable or its identity differs. Nothing was rendered locally.");
+  const detail = probe.error?.message || (probe.status !== 0
+    ? (probe.stderr?.trim() || `SSH exited ${probe.status ?? probe.signal ?? "without a status"}`)
+    : `Expected DESKTOP-CMSUCM1; received ${JSON.stringify(probe.stdout.trim())}`);
+  console.error(`PC transport: ${detail.slice(-1200)}`);
   process.exit(3);
 }
 const rbuild = join(homedir(), "Projects", "claude-memory", "claude-config", "rbuild.mjs");
