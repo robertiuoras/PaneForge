@@ -1,5 +1,13 @@
 # Release verification checkpoint, 2026-09-21
 
+## Intermittent SSH and retained worker evidence
+
+The Mac post-authentication reset at 2026-09-21 19:04:23 +10 matches Windows OpenSSH/Admin token-creation failures at 21:04:23 +12. This identifies the failing stage, not the underlying Windows API cause. The PC peer's receipt is `C:\Users\Gamer\next-ssh-root-diagnosis.json`, native conversation `01a0bf60-35c6-71c0-be34-f908635bf784`. Its follow-up found no current lockout and no readable Security 4625/4740 events in the correlated interval. No service restart or security configuration change was performed; the peer lacks service-control rights.
+
+Fresh SSH echo and SFTP briefly passed, but subsequent coordinator and Windows regression attempts reset again. Recovery is not repair. Coordinator receipt `/tmp/next-ssh-diagnostic-ready.log` reports four commits queued, not merged. PC-only rendering remains fail closed. Commit `c8c4ac18` exposes the bounded SSH diagnostic instead of only an unavailable-machine message.
+
+Inspection also found unconditional deletion of the PC worker directory in the SSH wrapper's `finally` block. The wrapper now retains transcripts, script and exit evidence, and unregisters only when an exit receipt exists. This is a source-level data-loss fix, not proof of what happened to the earlier missing job. Local checks passed 143 tests with two Windows-only execution tests skipped; minimized dev-b build/launch passed. Actual Windows wrapper tests remain **changed but unverified** because their SSH invocation reset before execution (`/tmp/next-worker-retention-pc.log`). Do not claim this fixes Windows token creation or completes replacement acceptance.
+
 ## Current compatibility and preview checkpoint
 
 Clean merged source `62510eda7c0def91497a09098d6171f226bf67ae` built an ad-hoc signed Mac preview. Strict deep signature verification, actual bundled-runtime health with matching revision, authenticated idle stop, and ZIP integrity passed. Retained archive `/tmp/PaneForge-Next-62510eda-mac-preview.zip`: 97,954,248 bytes, SHA256 `6c2481bbd057bea1dcd1061eb956b1d79ad42d587c4ef4b975c13bfe5db46430`. Receipt `/tmp/next-current-preview-receipt.json`. This is not an installed or notarized release and does not contain later worker/title edits.
