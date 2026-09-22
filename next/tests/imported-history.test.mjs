@@ -41,37 +41,62 @@ test('lists stable read-only staged records and returns bounded transcript detai
   } finally { rmSync(f.dataDir, { recursive: true, force: true }) }
 })
 
-test('rejects malformed manifests, missing files, symlinks, and duplicate stable IDs safely', () => {
+test('rejects malformed manifests, missing files, directory links, and duplicate stable IDs safely', () => {
   const f = fixture()
   try {
     const duplicate = join(f.dataDir, 'migration-staging', 'run_b', 'records', key)
     mkdirSync(duplicate, { recursive: true })
     writeFileSync(join(duplicate, 'manifest.json'), '{not json')
-    const badKey = 'd'.repeat(64)
-    const bad = join(f.dataDir, 'migration-staging', 'run_a', 'records', badKey)
-    mkdirSync(bad, { recursive: true })
-    symlinkSync('/etc/hosts', join(bad, 'manifest.json'))
     const recordsLink = join(f.dataDir, 'migration-staging', 'run_c', 'records')
     mkdirSync(join(f.dataDir, 'migration-staging', 'run_c'), { recursive: true })
-    symlinkSync(join(f.dataDir, 'migration-staging', 'run_a', 'records'), recordsLink)
+    symlinkSync(join(f.dataDir, 'migration-staging', 'run_a', 'records'), recordsLink, 'junction')
     const listed = listImportedHistory({ dataDir: f.dataDir })
     assert.equal(listed.items.length, 1)
     assert.equal(listed.items[0].id, `imported_${key}`)
-    assert.equal(listed.malformed.length, 3)
+    assert.equal(listed.malformed.length, 2)
     assert.equal(readImportedHistoryDetail({ dataDir: f.dataDir, id: 'imported_bad' }), null)
   } finally { rmSync(f.dataDir, { recursive: true, force: true }) }
 })
 
-test('refuses a linked staging root and does not follow a transcript swapped after scanning', () => {
+test('rejects a file-symlinked manifest when file symlinks are supported', t => {
+  const f = fixture()
+  try {
+    const badKey = 'd'.repeat(64)
+    const bad = join(f.dataDir, 'migration-staging', 'run_a', 'records', badKey)
+    const target = join(f.dataDir, 'linked-manifest-target')
+    mkdirSync(bad, { recursive: true })
+    writeFileSync(target, '{}')
+    try { symlinkSync(target, join(bad, 'manifest.json'), 'file') } catch (error) {
+      if (error.code === 'EPERM' || error.code === 'EACCES') return t.skip('file symlinks are unavailable for this user')
+      throw error
+    }
+    const listed = listImportedHistory({ dataDir: f.dataDir })
+    assert.equal(listed.items.length, 1)
+    assert.equal(listed.malformed.length, 1)
+  } finally { rmSync(f.dataDir, { recursive: true, force: true }) }
+})
+
+test('refuses a linked staging root', () => {
   const f = fixture()
   const linkedData = mkdtempSync(join(tmpdir(), 'paneforge-imported-history-link-'))
   try {
-    symlinkSync(join(f.dataDir, 'migration-staging'), join(linkedData, 'migration-staging'))
+    symlinkSync(join(f.dataDir, 'migration-staging'), join(linkedData, 'migration-staging'), 'junction')
     const linked = listImportedHistory({ dataDir: linkedData })
     assert.equal(linked.items.length, 0)
     assert.equal(linked.malformed[0], 'migration staging is not a real directory')
-    rmSync(join(f.record, 'transcript.log'))
-    symlinkSync('/etc/hosts', join(f.record, 'transcript.log'))
-    assert.equal(readImportedHistoryDetail({ dataDir: f.dataDir, id: `imported_${key}` }), null)
   } finally { rmSync(f.dataDir, { recursive: true, force: true }); rmSync(linkedData, { recursive: true, force: true }) }
+})
+
+test('does not follow a transcript swapped for a file symlink when supported', t => {
+  const f = fixture()
+  try {
+    const target = join(f.dataDir, 'linked-transcript-target')
+    writeFileSync(target, 'untrusted transcript')
+    rmSync(join(f.record, 'transcript.log'))
+    try { symlinkSync(target, join(f.record, 'transcript.log'), 'file') } catch (error) {
+      if (error.code === 'EPERM' || error.code === 'EACCES') return t.skip('file symlinks are unavailable for this user')
+      throw error
+    }
+    assert.equal(readImportedHistoryDetail({ dataDir: f.dataDir, id: `imported_${key}` }), null)
+  } finally { rmSync(f.dataDir, { recursive: true, force: true }) }
 })

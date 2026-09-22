@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdtempSync,mkdirSync,writeFileSync,rmSync,realpathSync,existsSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {pathToFileURL} from 'node:url';
 import {createHash} from 'node:crypto';
 import {spawn,execFileSync} from 'node:child_process';
 import {once} from 'node:events';
@@ -36,7 +37,7 @@ test('fresh startup does not query Git metadata for unrelated discovered project
  for(let i=0;i<3;i++){const project=join(root,`project-${i}`);mkdirSync(project);execFileSync('git',['init','--quiet',project]);}
  writeFileSync(preload,`import cp from 'node:child_process';import {syncBuiltinESMExports} from 'node:module';import {writeFileSync} from 'node:fs';const original=cp.execFileSync;cp.execFileSync=(file,...args)=>{if(file==='git'){writeFileSync(${JSON.stringify(marker)},'unexpected Git query');throw Error('Git unavailable in startup fixture');}return original(file,...args)};syncBuiltinESMExports();`);
  const reservation=createServer();reservation.listen(0,'127.0.0.1');await once(reservation,'listening');const port=reservation.address().port;await new Promise(resolve=>reservation.close(resolve));
- const child=spawn(process.execPath,['--import',preload,'server/index.mjs'],{cwd:process.cwd(),env:{...process.env,PANEFORGE_PORT:String(port),PANEFORGE_PROJECTS_ROOT:root,PANEFORGE_WORKSPACE_DIR:'',PANEFORGE_DATA_DIR:dataDir,PANEFORGE_REVISION:'startup-fixture',PANEFORGE_NOTIFICATIONS:'0',PANEFORGE_ENABLE_BACKGROUND_RECOVERY:'0'},stdio:['ignore','pipe','pipe']});
+ const child=spawn(process.execPath,['--import',pathToFileURL(preload).href,'server/index.mjs'],{cwd:process.cwd(),env:{...process.env,PANEFORGE_PORT:String(port),PANEFORGE_PROJECTS_ROOT:root,PANEFORGE_WORKSPACE_DIR:'',PANEFORGE_DATA_DIR:dataDir,PANEFORGE_REVISION:'startup-fixture',PANEFORGE_NOTIFICATIONS:'0',PANEFORGE_ENABLE_BACKGROUND_RECOVERY:'0'},stdio:['ignore','pipe','pipe']});
  const exited=once(child,'exit');let output='';child.stdout.on('data',chunk=>{output+=chunk});child.stderr.on('data',chunk=>{output+=chunk});const deadline=setTimeout(()=>child.kill('SIGTERM'),15000);
  try{
   await new Promise((done,fail)=>{child.stdout.on('data',()=>{if(output.includes('PaneForge supervisor'))done();});child.once('exit',()=>fail(Error(output)));});

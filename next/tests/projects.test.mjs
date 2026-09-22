@@ -51,7 +51,7 @@ test('discovery is immediate-folder-only and excludes unsafe container roots', (
     const clientLane = join(t.root, 'clients-a'); mkdirSync(join(clientLane, '.git'), { recursive: true });
     const clientProject = join(t.root, 'acme-client'); mkdirSync(join(clientProject, '.git'), { recursive: true });
     const hidden = join(t.root, '.hidden-project'); mkdirSync(join(hidden, '.git'), { recursive: true });
-    const linked = join(t.root, 'linked-project'); symlinkSync(t.other, linked);
+    const linked = join(t.root, 'linked-project'); symlinkSync(t.other, linked, 'junction');
     const listed = t.projects.list();
     assert.ok(!listed.some(project => ['_client-data', 'clients', 'clients-a', '.hidden-project', 'linked-project'].includes(project.name)));
     assert.ok(listed.some(project => project.name === 'acme-client'));
@@ -63,7 +63,7 @@ test('project registry refuses linked and client-container roots', () => {
   const t = fixture();
   try {
     const link = join(t.root, 'linked');
-    symlinkSync(t.other, link);
+    symlinkSync(t.other, link, 'junction');
     assert.throws(() => t.projects.register(link), /non-linked/);
     const clients = join(t.root, 'clients'); mkdirSync(join(clients, '.git'), { recursive: true });
     assert.throws(() => t.projects.register(clients), /clients container/);
