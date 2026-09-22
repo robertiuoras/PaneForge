@@ -28,6 +28,14 @@ there, PreToolUse refuses elsewhere. `node scripts/lane.mjs status --repo <dir>`
 - Shipped once `landedOnOrigin` proves it; failed lane out of `lastShip.lanes`.
   `state.passed[id]`; empty kept `SWEEP_GRACE_MS` 24h.
 - ONE PANE, ONE LANE: a claim drops other holds with the same `PF_PANE`; no pane id = kept.
+- Trunk = `.lanes.json` `branch`, else origin/HEAD, else main/master, NEVER the root's checkout
+  (`trunkName`). Root off trunk: `trunkHome` moves it back (clean, ff, `merge lane` merges on
+  it, no file changes) or ship refuses, lanes stay ready, doctor `MAIN FOLDER` (`test:lanetrunk`).
+- `sweep [--dry-run]`: `retry` starts it detached every 6h (stamp `.git/paneforge-sweep-at`, first
+  sight only starts it). Lane folder 6h idle, other checkout 3d; kept for ledger/any `pf list`
+  row incl. exited/process cwd/locked/nested. Push, `wip/<folder>-<date>` snapshot, archive
+  `~/.local/share/worktree-archive`, origin proof, last-moment recheck; `state.swept` ->
+  doctor `CLEANED UP` (`test:lanesweepfolders`).
 - Roster asks `status --held` (`test:lanes`). First edit of a file another lane changed is
   told with line ranges (`guard` exits 0 with text); same region: message that chat first
   (`test:laneoverlap`).
@@ -446,7 +454,8 @@ FLAGGED (`test:restorefix`). Rail = KEYSTROKES; `seedMarks` scans `❯ <text>` o
 (`test:promptecho`). Reply mark per CLI (Claude `"type":"assistant"`, antigravity
 `"type":"PLANNER_RESPONSE"`, `hasReply`); wrong = `conversation-unverified`, never sleeps;
 refusal hold doubles `sleepHoldMs` 10 min -> 2 h (`test:sleep`). Asleep pane claims its
-conversation in `start()` BEFORE the early return (`noteSession`, `resumeIdFor`).
+conversation in `start()` BEFORE the early return (`noteSession`, `resumeIdFor`). Nothing
+inferred = `claimFromCli` reads the CLI's `~/.claude/sessions/<pid>.json` (`test:cliclaim`).
 
 `/clear` keeps the previous turn (`test:scrollclear`): `keep.arm()` (`shared/keepScrollback.ts`)
 on `mayClearScreen` or a slash PREFIX of `/clear` RETURNS scroll before any byte; `keptRows`

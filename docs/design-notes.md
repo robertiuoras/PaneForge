@@ -73,6 +73,10 @@ folder name, so each checkout opens its own window.
 
 ## Lanes: more than one chat works on this repo
 
+**The trunk is declared, never read off the main folder (2026-09-23).** taskdriver.ai's main folder was left on `feat/github-actions-usage-card`; lane.mjs took the root's checkout as the trunk, so every `ready` for 35 hours merged there (171 commits ahead of origin/main). Now `.lanes.json` `branch`, else origin/HEAD, else main/master. A root found off it is moved back by two ref writes when that changes no file AND the side branch already carries `merge lane` merges (the proof it was parked, not worked on - a pre-ship review showed a plain feature branch would otherwise be taken over and its next commit pushed). Anything else refuses the release and keeps the lanes ready. `lane-trunk-test.mjs`.
+
+**Unused checkout folders are swept, work first (2026-09-23).** 18 taskdriver folders, ~36 GB, disk 94% full; nothing deleted a folder and non-`<repo>-<letter>` worktrees were invisible. `lane.mjs sweep`, started detached by `retry` every 6h (the app timer on the Mac, lane-cron on the PC; nothing scheduled runs on the Mac). Kept: ledger hold or cwd, ready/conflicted, locked, nested checkout, ANY `pf list` row (an asleep pane lists as `exited`), a process cwd (lsof; Windows uses a rename probe at the end), recent change (6h lane / 3d other). Zero-loss order from the reference script that ran for real: push named branch (never the trunk), temp-index snapshot to `wip/<folder>-<date>`, NUL-separated tar of untracked+ignored minus regenerable dirs, `fetch --prune` + origin-only containment proof, then a last look (fresh processes, no file written since start, same HEAD and work tree) before `worktree remove --force`. No pane answer = nothing removed. `lane-sweep-folders-test.mjs`.
+
 Chats get started from other projects ("add X to PaneForge" from one, "fix Y" from
 another) and would otherwise share this checkout: two builds writing one `out/`, two
 version bumps, two releases minutes apart.
