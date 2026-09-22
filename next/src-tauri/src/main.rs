@@ -219,15 +219,19 @@ fn select_supervisor_port(
             None => Ok((port, false)),
         };
     }
-    if let Ok(Some(actual)) = probe_supervisor(preferred) {
-        if actual.data_dir == data.to_string_lossy() {
+    let candidate = match probe_supervisor(preferred) {
+        Ok(Some(actual)) if actual.data_dir == data.to_string_lossy() => {
             require_matching_supervisor(actual, revision, data)?;
             return Ok((preferred, true));
         }
-    }
+        Ok(None) => preferred,
+        // A foreign response is authoritative even if an IPv4 bind succeeds
+        // alongside an existing wildcard IPv6 listener on this platform.
+        Ok(Some(_)) | Err(_) => 0,
+    };
     // Reserve an available endpoint while choosing it. The supervisor binds next;
     // a bind race fails startup and can never attach the window to another app.
-    let listener = TcpListener::bind(("127.0.0.1", preferred))
+    let listener = TcpListener::bind(("127.0.0.1", candidate))
         .or_else(|_| TcpListener::bind(("127.0.0.1", 0)))
         .map_err(|error| format!("Could not allocate a loopback port: {error}"))?;
     let port = listener
@@ -332,6 +336,26 @@ mod tests {
         let port = foreign.local_addr().unwrap().port();
         fs::write(profile.0.join("native-supervisor-port"), port.to_string()).unwrap();
         assert!(select_supervisor_port(&profile.0, "test", 0).is_err());
+    }
+
+    #[test]
+    fn foreign_http_response_selects_another_port() {
+        let profile = PortProfile::new();
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let responder = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0; 1024];
+            stream.read(&mut request).unwrap();
+            // The foreign listener may disappear after its response. Its identity
+            // must still prevent intentional reuse of the preferred endpoint.
+            drop(listener);
+            stream.write_all(b"HTTP/1.0 404 Not Found\r\n\r\n").unwrap();
+        });
+        let result = select_supervisor_port(&profile.0, "test", port).unwrap();
+        responder.join().unwrap();
+        assert_ne!(result.0, port);
+        assert!(!result.1);
     }
 
     #[test]
