@@ -3195,6 +3195,7 @@ export default function App(): JSX.Element {
         setToolsOpen(false)
         setBoard(null)
         setHistory(false)
+        setReview(false)
         setDevices(false)
         setRenaming(null)
         return
