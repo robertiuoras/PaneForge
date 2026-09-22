@@ -67,6 +67,7 @@ import { isOutdated, versionOf } from '../shared/codexCatalogue'
 import { gitInfo } from './git'
 import { projectRoot } from './projectRoot'
 import { diffFiles, diffPatch } from './diff'
+import { withDefaultModel } from '../shared/startModel'
 import type { ClientNamed, DiffScope, EffortChoice, PhoneState , LaneBoard} from '../shared/types'
 import { detectLane, laneExtras, resolveLane } from './lanes'
 import { inspectLaneFolders, laneWork, mergeLaneBack, repoOf, returnToBase, sweepLanes, trackTyped } from './laneWork'
@@ -1183,7 +1184,7 @@ const remote = new Remote({
   // in one repo must not share a checkout just because one of them is remote.
   sendPrompt: (id, text) => manager.sendPrompt(id, text),
   startSession: async (req) => {
-    return manager.start(await laneFor(req))
+    return manager.start(withDefaultModel(await laneFor(req), getConfig().defaultModels))
   },
   // A pane handed here from another device: pull its branch, drop its transcript
   // where the CLI will look, start it as an ordinary local pane. The lane split
@@ -1772,7 +1773,10 @@ async function startOrSend(
     const began = Date.now()
     const lane = await laneFor(req, claimed)
     const decided = Date.now() - began
-    const session = await manager.start(lane)
+    // A request that named no model starts on the configured default, as the New Session
+    // dialog always did (`shared/startModel.ts`). Here, not at the top of `startOrSend`:
+    // a pane handed to the other desk takes THAT desk's defaults.
+    const session = await manager.start(withDefaultModel(lane, getConfig().defaultModels))
     logOffload({ event: 'started', id: session.id, cwd: lane.cwd, decidedMs: decided, openMs: Date.now() - began })
     return session
   }
@@ -4039,12 +4043,12 @@ async function openRequest(req: OpenRequest): Promise<void> {
   const target = req.open ?? (req.route ? confidentRoute(req.route) : undefined)
   if (!target) return
   try {
-    manager.start({
-      cwd: target,
-      prompt: req.prompt ?? req.route ?? undefined,
-      model: req.model,
-      title: req.title
-    })
+    manager.start(
+      withDefaultModel(
+        { cwd: target, prompt: req.prompt ?? req.route ?? undefined, model: req.model, title: req.title },
+        getConfig().defaultModels
+      )
+    )
   } catch {
     /* bad path on the command line - ignore rather than crash the launch */
   }
