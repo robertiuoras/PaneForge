@@ -3861,7 +3861,11 @@ ipcMain.handle('vault:graph', (_e, vault: string) => vaultGraph(vault))
 ipcMain.handle('vault:open', (_e, vault: string, note?: string) => vaultOpen(vault, note))
 
 ipcMain.handle('history:list', () => history.list())
-ipcMain.handle('review:daily', async () => promptReview(await tokenSpendFresh(), Date.now(), history.list()))
+// Prompt records are local and cheap to read. Token recounting may need to scan thousands of
+// transcript tails, so start that existing background refresh without holding the whole Review
+// dialog at “Reading local prompt and token records…”. The next normal refresh supplies a newer
+// total; the prompts and history are always current.
+ipcMain.handle('review:daily', () => promptReview(tokenSpend(), Date.now(), history.list()))
 ipcMain.handle('sessions:prompts', (_e, id: string) => promptsForSession(id))
 ipcMain.handle('history:search', (_e, q: string) => history.search(q))
 ipcMain.handle('history:read', (_e, id: string) => history.read(id))

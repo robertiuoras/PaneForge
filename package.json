@@ -172,6 +172,7 @@
     "test:replytext": "node scripts/replytext-test.mjs",
     "test:reviewfixes": "node scripts/review-fixes-test.mjs",
     "test:review": "node scripts/review-test.mjs",
+    "test:reviewload": "node scripts/review-load-test.mjs",
     "test:promptreview": "node scripts/prompt-review-test.mjs",
     "test:overlayfilter": "node scripts/overlay-filter-test.mjs",
     "test:glass": "node scripts/glass-test.mjs",
