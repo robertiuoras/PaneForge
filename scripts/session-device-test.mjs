@@ -46,9 +46,15 @@ try {
   const picks=()=>c.evaluate('[...document.querySelectorAll("#pf-device-fixture .where-picks button")].map(b=>({text:b.textContent.trim(),selected:b.getAttribute("aria-pressed")}))')
   eq((await picks()).map(p=>p.text),['This device','Test PC','Automatic'],'device order')
   eq((await picks())[0].selected,'true','local default selected')
+  const go=(name='Device preference test')=>c.evaluate(`[...document.querySelectorAll('#pf-device-fixture .proj')].find(p=>p.querySelector('.proj-name')?.textContent===${JSON.stringify(name)}).click()`)
+  // An untouched local default is placement the app may override, never a hand pick:
+  // offloadFirst reads `where: 'local'` as final and the pane could never leave the Mac.
+  await go()
+  eq(await c.evaluate('window.__pfDeviceFixture.launch().map(r=>[r.where ?? null, r.stayHere ?? null])'),[[null,null]],'untouched local default leaves the machine to the app')
+  eq(await c.evaluate('window.api.getConfig().then(c=>c.defaultSessionWhere)'),'local','untouched launch saves nothing')
+  await c.evaluate('window.__pfDeviceFixture.open()')
   await c.evaluate('document.querySelectorAll("#pf-device-fixture .where-picks button")[1].click()')
   eq(await c.evaluate('window.api.getConfig().then(c=>c.defaultSessionWhere)'),'local','selection alone does not change preference')
-  const go=(name='Device preference test')=>c.evaluate(`[...document.querySelectorAll('#pf-device-fixture .proj')].find(p=>p.querySelector('.proj-name')?.textContent===${JSON.stringify(name)}).click()`)
   const saved=async(value)=>{for(let i=0;i<30;i++){if(await c.evaluate('window.api.getConfig().then(c=>c.defaultSessionWhere)')===value)return;await new Promise(r=>setTimeout(r,40))}throw Error('preference did not save')}
   await go()
   await saved('remote')
