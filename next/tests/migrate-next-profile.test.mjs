@@ -32,3 +32,10 @@ test('dangling destination links are preserved and rejected',{skip:process.platf
  const {root,source,target}=fixture(t);symlinkSync(join(root,'missing'),target);
  assert.throws(()=>migrateNextProfile({source,target,apply:true}),/already exists/);
 });
+test('ambiguous native session keys are refused before any destination is created',t=>{
+ const {source,target}=fixture(t);
+ for(const sessions of [[{id:''}],[{id:' '}],[{id:'same'},{id:'same'}]]){
+  writeFileSync(join(source,'sessions.json'),JSON.stringify(sessions));
+  assert.throws(()=>migrateNextProfile({source,target,apply:true}),/unique nonempty IDs/);assert.equal(existsSync(target),false);
+ }
+});

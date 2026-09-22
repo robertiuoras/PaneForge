@@ -34,7 +34,7 @@ export function migrateNextProfile({source,target,apply=false}={}){
  if(targetExists(target))throw Error('Target already exists; refusing to overwrite a profile');
  const entries=inventory(source);
  const sessions=JSON.parse(readFileSync(join(source,'sessions.json'),'utf8'));
- if(!Array.isArray(sessions)||sessions.some(s=>!s||typeof s.id!=='string'))throw Error('Source sessions.json is not a Next session list');
+ if(!Array.isArray(sessions)||sessions.some(s=>!s||typeof s.id!=='string'||!s.id.trim())||new Set(sessions.map(s=>s.id)).size!==sessions.length)throw Error('Source sessions.json must be a Next session list with unique nonempty IDs');
  const report={applied:false,files:entries.filter(e=>!e.directory).length,sessions:sessions.length,bytes:entries.reduce((n,e)=>n+(e.bytes||0),0)};
  if(!apply)return report;
  const stage=mkdtempSync(join(parent,'.next-profile-'));chmodSync(stage,0o700);
@@ -46,8 +46,11 @@ export function migrateNextProfile({source,target,apply=false}={}){
   }
   if(JSON.stringify(inventory(stage))!==JSON.stringify(entries))throw Error('Copied profile verification failed');
   if(JSON.stringify(inventory(source))!==JSON.stringify(entries))throw Error('Source changed during migration; stop its supervisor before retrying');
-  if(targetExists(target))throw Error('Target appeared during migration; refusing to overwrite it');
-  renameSync(stage,target);
+  // mkdir is the atomic no-replace reservation; directory rename can overwrite
+  // an empty destination created after a preflight existence check.
+  mkdirSync(target,{mode:0o700});
+  try{for(const name of readdirSync(stage))renameSync(join(stage,name),join(target,name));}
+  catch(error){throw Error(`Profile transfer incomplete; preserve the target for inspection and do not activate it: ${error.message}`);}
   return {...report,applied:true};
  }finally{if(existsSync(stage))rmSync(stage,{recursive:true,force:true});}
 }
