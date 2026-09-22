@@ -118,6 +118,23 @@ console.log('...and typing into the pane is not the same as taking it over')
     queuedPromptDecision({ ...person, drafting: true, expired: true }) === 'wait'
   )
 
+  // 2026-09-22 19:15:59, pane s21-muczy2r3: Robert's own turn was running (the app's tracker
+  // read busy 19:14:06..19:18:49), the CLI stalled past 900ms on a lagging desk, the paint
+  // tail read idle, and the handoff prompt was typed into his running turn's composer.
+  ok(
+    'a quiet gap inside their running turn is not the turn ending',
+    queuedPromptDecision({ ...person, turnLive: true }) === 'wait'
+  )
+  ok(
+    'and no deadline pushes it through while the tracker says running',
+    queuedPromptDecision({ ...person, turnLive: true, expired: true }) === 'wait'
+  )
+  ok('their turn over and the pane settled: it goes in', queuedPromptDecision({ ...person, turnLive: false }) === 'type')
+  ok(
+    'the tracker never holds an ordinary (no person) wait',
+    queuedPromptDecision({ ...base, lastKeyboard: 1000, turnLive: true }) === 'type'
+  )
+
   // `Take over` is the deliberate cancel, and the only one.
   ok('taking the pane over drops it', queuedPromptDecision({ ...person, tookOver: true }) === 'abandon')
   ok(

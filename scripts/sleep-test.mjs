@@ -448,4 +448,74 @@ is(
   delete process.env.CODEX_HOME
 }
 
+// ---------------------------------------------------------------------------
+// A Claude pane whose transcript the CLI wrote LATE is still its own, and sleepable
+//
+// 2026-09-22, installed 0.8.221: panes s38-mud2ugs8, s47-mud4ooh4 and s30-mud1wtus were
+// refused sleep `conversation-unverified` (and s30 a PC move, "no resumable ID") while
+// their conversations sat on disk. Claude Code 2.1.280 only creates the file around the
+// first exchange: s38 opened 19:38:41, its `SessionStart:startup` record is stamped
+// 19:39:11, and the file was born 19:40:53 - 132s later, past the 60s launch window, so
+// the pane's own chat read as somebody else's launch. The record head below is copied
+// from that real file (b5b25160), content scrubbed.
+{
+  const bundle = join(work, 'transcripts.bundle.cjs')
+  const { noteSession, resumeIdFor, resumableTranscript } = require(bundle)
+  const home = join(work, 'claude-home')
+  process.env.PF_CLAUDE_HOME = home
+  const slug = (cwd) => cwd.replace(/[^A-Za-z0-9]/g, '-')
+  const realNow = Date.now
+
+  function lateTranscript(cwd, id, stampedAt) {
+    const dir = join(home, 'projects', slug(cwd))
+    mkdirSync(dir, { recursive: true })
+    const at = new Date(stampedAt).toISOString()
+    const row = (o) => JSON.stringify({ ...o, sessionId: id })
+    writeFileSync(join(dir, `${id}.jsonl`), [
+      row({ type: 'last-prompt', leafUuid: '99c3d854-7668-4a82-9672-233db2d9d836' }),
+      row({ type: 'mode', mode: 'normal' }),
+      row({ type: 'permission-mode', permissionMode: 'bypassPermissions' }),
+      row({ type: 'atis-latch', atis: '' }),
+      row({ type: 'ai-title', aiTitle: 'Paneforge and penaforge improvements' }),
+      row({ parentUuid: null, isSidechain: false, attachment: { type: 'hook_success', hookName: 'SessionStart:startup', hookEvent: 'SessionStart', content: 'hook said "timestamp":"2020-01-01T00:00:00.000Z"' }, type: 'attachment', uuid: '16fc5714-5165-425a-b995-fe21b04fad48', timestamp: at, cwd, version: '2.1.280' }),
+      row({ parentUuid: '16fc5714-5165-425a-b995-fe21b04fad48', isSidechain: false, type: 'user', message: { role: 'user', content: 'improve the pane' }, uuid: 'u1', timestamp: at, cwd }),
+      row({ parentUuid: 'u1', isSidechain: false, type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'on it' }] }, uuid: 'a1', timestamp: at, cwd }),
+      ''
+    ].join('\n'))
+  }
+
+  // The pane opened 132s ago; the CLI stamped its start 30s after that; the file is born now.
+  const ownCwd = join(work, 'PaneForge-c')
+  const ownId = 'b5b25160-2519-4a13-b295-5b45798e8f37'
+  const opened = realNow() - 132_000
+  Date.now = () => opened
+  noteSession('late-pane', ownCwd, 'claude')
+  Date.now = realNow
+  lateTranscript(ownCwd, ownId, opened + 30_000)
+  is(resumeIdFor('late-pane'), ownId, 'a Claude pane whose file was created 132s after launch still names the conversation its CLI started 30s after launch')
+  ok(Boolean(resumableTranscript(ownCwd, ownId, 'claude')), '...and that answered conversation is resumable, so sleep is not refused')
+
+  // s47-mud4ooh4: SessionStart hooks on a loaded desk took the first record to 60.1s.
+  const slowCwd = join(work, 'claude-memory-a')
+  const slowId = '3c017c1c-40c9-47ef-ba36-680c9ec49dcc'
+  const slowOpened = realNow() - 142_000
+  Date.now = () => slowOpened
+  noteSession('slow-pane', slowCwd, 'claude')
+  Date.now = realNow
+  lateTranscript(slowCwd, slowId, slowOpened + 60_100)
+  is(resumeIdFor('slow-pane'), slowId, 'a CLI whose slow hooks stamped its start 60.1s after the pane opened is still that pane\'s')
+
+  // Controls: the window still refuses a chat somebody launched later, and nothing on disk is nothing.
+  const otherCwd = join(work, 'taskdriver.ai-c')
+  const later = realNow() - 180_000
+  Date.now = () => later
+  noteSession('rival-pane', otherCwd, 'claude')
+  noteSession('empty-pane', join(work, 'taskdriver.ai-h'), 'claude')
+  Date.now = realNow
+  lateTranscript(otherCwd, '2df0c87c-146a-4829-b1e2-5ede2ea5f3c6', later + 150_000)
+  is(resumeIdFor('rival-pane'), undefined, 'a startup chat whose CLI began 150s after this pane is still somebody else\'s launch')
+  is(resumeIdFor('empty-pane'), undefined, 'a pane with no transcript on disk still names no conversation, so its sleep stays refused')
+  delete process.env.PF_CLAUDE_HOME
+}
+
 console.log(`sleep: ${checks} checks passed`)

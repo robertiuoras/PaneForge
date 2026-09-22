@@ -7,6 +7,8 @@ import { runInNewContext } from 'node:vm'
 import xterm from '@xterm/headless'
 const src = readFileSync(new URL('../src/renderer/src/components/TerminalPane.tsx', import.meta.url), 'utf8')
 const js = code => transformSync(code, { loader: 'ts', target: 'node20' }).code
+const alertsSource = readFileSync(new URL('../src/shared/alerts.ts', import.meta.url), 'utf8')
+const { withoutBinaryBells } = await import('data:text/javascript;base64,' + Buffer.from(transformSync(alertsSource, { loader: 'ts', format: 'esm' }).code).toString('base64'))
 const between = (a, b) => src.slice(src.indexOf(a), src.indexOf(b, src.indexOf(a)))
 
 // Execute the actual debounce with a deterministic clock, no wall-clock sleeps.
@@ -69,7 +71,10 @@ for (const mode of ['plain', 'staged', 'cancel']) {
   const context = {
     api, sessionId: 'pane', queueReplay: j => { job = j }, activeRef: { current: true }, visibleRef: { current: false },
     mirrorRef: { current: true },
-    t: term, f: {}, keep: x => x, withoutReplayQueries: x => x,
+    t: term, f: {}, keep: x => x, withoutReplayQueries: x => x, withoutBinaryBells,
+    // keep is the identity stub above, so this is what the component's `cleanOutput`
+    // reduces to here: withoutBinaryBells(keep(d)).
+    cleanOutput: (d) => withoutBinaryBells(d),
     needRestoreFix: { current: false }, armRestoreFix: noop, pinned: { current: true }, setBlank: noop,
     seedMarks: () => marks++, reshape: noop, replayColsRef: { current: 120 }, replaying: { current: false },
     restorePromptMarks: async () => {},

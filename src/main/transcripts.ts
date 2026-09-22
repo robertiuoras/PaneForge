@@ -175,6 +175,16 @@ const HEAD_BYTES = 256 * 1024
  */
 const OPENING_GRACE_MS = 15_000
 
+/**
+ * How long after a pane opens its CLI may stamp the start of the conversation.
+ *
+ * Wider than START_SLACK_MS because the stamp is written after the SessionStart hooks
+ * finish, and they are slow on a loaded desk: measured 2026-09-22 under `over` pressure,
+ * 30s (s38-mud2ugs8) and 60.1s (s47-mud4ooh4) from pane open to the first record. Twice
+ * the worst measured. A later stamp is still somebody else's launch.
+ */
+const LAUNCH_STAMP_SLACK_MS = 120_000
+
 /** Enough of a prompt to recognise the work, short enough for one line of a dialog. */
 const PROMPT_CHARS = 220
 
@@ -642,10 +652,43 @@ function mtime(file: string): number {
 function launchedElsewhere(file: string, s: Started): boolean {
   const said = opening(file)
   if (said === 'clear') return false
-  const mine = birth(file) <= s.at + START_SLACK_MS
+  const opened = openedAt(file)
+  const mine = opened >= s.at - START_SLACK_MS && opened <= s.at + LAUNCH_STAMP_SLACK_MS
   if (said === 'startup') return !mine
   return !mine && Date.now() - birth(file) < OPENING_GRACE_MS
 }
+
+/**
+ * When the CLI began a conversation: the first record's own `timestamp`, or the file's
+ * birth when no record carries one.
+ *
+ * Not the birth alone. Claude Code 2.1.280 holds a new conversation in memory and only
+ * creates the file around the first exchange, so the disk stamp is when the person first
+ * asked, not when the pane launched. Measured 2026-09-22 on four panes of 0.8.221: the
+ * `SessionStart:startup` record stamped 30-60s after the pane opened, the file born
+ * 82-142s after it - past START_SLACK_MS, so every one of them read as a chat somebody
+ * ELSE launched, `resumeIdFor` answered nothing, and each pane was refused sleep
+ * `conversation-unverified` and a move with "no resumable ID" for its whole life
+ * (s38-mud2ugs8 on b5b25160, s30-mud1wtus on 2df0c87c). The records are the CLI's own
+ * clock on this machine, stamped when it started, which is the fact the window asks.
+ *
+ * `"timestamp":"` unescaped only matches a record's own field: the same text inside a
+ * record's string content is written `\"timestamp\":\"`.
+ */
+function openedAt(file: string): number {
+  const hit = openedStamps.get(file)
+  if (hit !== undefined) return hit
+  const text = readHead(file)
+  const m = text ? /"timestamp":"([^"]+)"/.exec(text) : null
+  const at = m ? Date.parse(m[1]) : NaN
+  // Only a real answer is remembered: a newborn head may not carry its first record yet.
+  if (!Number.isFinite(at)) return birth(file)
+  openedStamps.set(file, at)
+  return at
+}
+
+/** The first record's stamp per transcript. A conversation never changes when it began. */
+const openedStamps = new Map<string, number>()
 
 /**
  * True while another pane in the same project has a better claim on this file than we do.
@@ -656,7 +699,8 @@ function launchedElsewhere(file: string, s: Started): boolean {
  * is the guard that does not depend on a hook being configured.
  */
 function bornForAnotherPane(id: string, s: Started, file: string): boolean {
-  const born = birth(file)
+  // When the conversation began, not when the CLI got round to writing it (`openedAt`).
+  const born = openedAt(file)
   const dir = projectDir(s.cwd)
   for (const [other, o] of started) {
     if (other === id) continue

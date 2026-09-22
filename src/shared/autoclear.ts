@@ -557,6 +557,15 @@ export function queuedPromptDecision(p: {
   tookOver?: boolean
   /** The far ceiling: even a prompt waiting behind a person gives up here. */
   personExpired?: boolean
+  /**
+   * The app's own turn tracker (`runSince`/`busyUntil`, fed from the renderer's read of the
+   * bottom of the screen) says a turn is running, or the pane printed within the last few
+   * seconds. `composerIdle` alone is a 900ms quiet gap in main's paint tail, and a CLI on a
+   * lagging desk stalls that long mid-turn: 2026-09-22 19:15:59 pane s21-muczy2r3 had
+   * Robert's own turn running (tracker busy 19:14:06 to 19:18:49) and the handoff prompt was
+   * typed into its composer anyway, where it sat unsent.
+   */
+  turnLive?: boolean
 }): QueuedPromptVerdict {
   if (!p.exists) return 'abandon'
   // The one deliberate cancel. Everything else below is a wait.
@@ -567,7 +576,7 @@ export function queuedPromptDecision(p: {
     // Their box, their turn: only a composer that is idle AND empty is ours to type into,
     // and the ordinary deadline may never override that - typing over an unsent line, or
     // into the middle of the answer they just asked for, is the whole failure.
-    return p.drafting || !p.composerIdle ? 'wait' : 'type'
+    return p.drafting || !p.composerIdle || p.turnLive ? 'wait' : 'type'
   }
   if (p.composerIdle) return 'type'
   // Expiry still types into a merely-busy pane: that is the long-standing rescue for a

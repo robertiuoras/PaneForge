@@ -3662,7 +3662,7 @@ folder, branch, worktree suffix and lane id into words. `npm run test:place` is 
 
 Every pane in a client tree was called `clients`. The identity is already on disk or
 already typed, so the pane writes it down. `shared/clientName.ts` rules, `main/clients.ts`
-disk, `ClientToast.tsx` the card. `npm run test:clientname`.
+disk. `npm run test:clientname`.
 
 - **A roster is recognised by its SHAPE, never configured** - `clients/<who>/README.md`,
   found by walking UP from the pane's folder. The name is that README's first heading with
@@ -3675,9 +3675,10 @@ disk, `ClientToast.tsx` the card. `npm run test:clientname`.
 - **A pane in a client tree doing something else gets the SUBJECT of its first ask**
   (`topicTitle`). A client identified later may replace that guess; nothing replaces a
   client, and nothing at all replaces a title a person typed (`mayRename`).
-- **The rename happens and THEN reports** - a card in a corner is not a question anybody
-  answers. Three seconds, bottom-right, `Cancel` puts the folder name back AND sets
-  `clientOff`, because undoing it says the reading was wrong.
+- **The rename is SILENT** (2026-09-23). The three-second `ClientToast` card with a `Cancel`
+  was removed: Robert found a card on every rename to be noise. The rename is written to the
+  Activity list only; a wrong name is fixed by renaming the pane by hand. `clientOff` stays
+  readable on old saved panes. `test:activity` pins the absence.
 
 ## A pane says how long it has been open (full rules, moved out of CLAUDE.md 2026-08-31)
 
