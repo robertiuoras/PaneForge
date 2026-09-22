@@ -12,10 +12,11 @@ try {
   const out = join(temp, 'compute.cjs')
   await build({ entryPoints: [fileURLToPath(new URL('../src/main/computeReviews.ts', import.meta.url))], outfile: out, bundle: true, platform: 'node', format: 'cjs' })
   const { ComputeReviews, computeResult } = createRequire(import.meta.url)(out)
-  const binding = { pane: 'shell_1', job: 'job-test-123', owner: 'native-owner', title: 'Test', cwd: temp, capturedAt: new Date().toISOString() }
+  const binding = { pane: 'shell_1', job: 'job-test-123', owner: 'native-owner', title: 'Test', cwd: temp, capturedAt: new Date().toISOString(), attempt: { hash: 'a'.repeat(64), submittedAt: '2026-01-01T00:00:00.000Z' } }
   const dir = join(temp, binding.job), file = join(temp, 'bindings.json')
   mkdirSync(dir)
-  writeFileSync(join(dir, 'request.json'), JSON.stringify({ id: binding.job, session: binding.owner }))
+  writeFileSync(join(dir, 'request.json'), JSON.stringify({ id: binding.job, session: binding.owner, ...binding.attempt }))
+  writeFileSync(join(dir, 'state.json'), JSON.stringify({ status: 'queued' }))
   let closes = 0
   watcher = new ComputeReviews(temp, file, () => { closes++; return true })
   watcher.bind(binding)
@@ -32,8 +33,10 @@ try {
   }
   watcher.dispose()
   writeFileSync(join(dir, 'result.json'), JSON.stringify(result))
+  writeFileSync(join(dir, 'state.json'), JSON.stringify(result))
   let busy = true
-  watcher = new ComputeReviews(temp, file, () => { closes++; return !busy })
+  let retained
+  watcher = new ComputeReviews(temp, file, (b, r, receipt) => { retained = receipt; closes++; return !busy })
   watcher.check()
   assert.equal(closes, 1, 'restart recovers retained binding and existing receipt')
   assert.equal(JSON.parse(readFileSync(file)).length, 1, 'busy shell keeps completion association')
@@ -44,8 +47,20 @@ try {
   assert.equal(closes, 2, 'completed association removed once')
   for (const status of ['failed', 'timed_out', 'cancelled']) {
     writeFileSync(join(dir, 'result.json'), JSON.stringify({ ...result, status, exitCode: null }))
+    writeFileSync(join(dir, 'state.json'), JSON.stringify({ ...result, status }))
     assert.equal(computeResult(temp, binding).status, status, 'failure is a retained terminal result, not success')
   }
+  assert.equal(JSON.parse(readFileSync(retained)).result.status, 'succeeded', 'review keeps the actual receipt after current result changes')
+  writeFileSync(join(dir, 'state.json'), JSON.stringify({ status: 'queued' }))
+  assert.equal(computeResult(temp, binding), undefined, 'old receipt cannot complete queued retry')
+  writeFileSync(join(dir, 'state.json'), JSON.stringify(result))
+  const nextAttempt = { ...binding.attempt, submittedAt: '2026-01-02T00:00:00.000Z' }
+  writeFileSync(join(dir, 'request.json'), JSON.stringify({ id: binding.job, session: binding.owner, ...nextAttempt }))
+  assert.equal(computeResult(temp, binding), undefined, 'identical request hash with new timestamp is a different attempt')
+  mkdirSync(join(dir, '.retry-lock'))
+  assert.throws(() => watcher.bind(binding), 'cannot bind during retry amendment')
+  rmSync(join(dir, '.retry-lock'), { recursive: true })
+  writeFileSync(join(dir, 'request.json'), JSON.stringify({ id: binding.job, session: binding.owner, ...binding.attempt }))
   // Real filesystem notification, not a timer or manually invoked completion sweep.
   writeFileSync(join(dir, 'result.json'), '{}')
   watcher.dispose()

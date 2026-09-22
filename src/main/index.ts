@@ -1540,13 +1540,12 @@ function computeReviewWatcher(): ComputeReviews {
   return computeReviews ??= new ComputeReviews(
     join(homedir(), '.claude', 'guarddeck', 'compute'),
     join(app.getPath('userData'), 'compute-review-bindings.json'),
-    (binding, result) => {
+    (binding, result, evidence) => {
       const session = manager.list().find(s => s.id === binding.pane)
       if (!session) return false // restore may not have populated the desk yet
       if (session.agent !== 'shell') return true // never close a repurposed agent pane
-      const evidence = join(homedir(), '.claude', 'guarddeck', 'compute', binding.job, 'result.json')
       const review = recordReview({
-        id: `compute-${binding.pane}-${binding.job}`.slice(0, 120),
+        id: `compute-${Date.parse(binding.attempt!.submittedAt)}-${binding.pane}-${binding.job}`.slice(0, 120),
         sessionId: binding.pane, nativeSessionId: binding.pane, kind: 'result', proof: 'measured',
         report: `${binding.title}: ${result.status}. Exit code: ${result.exitCode ?? 'not available'}.`,
         prompt: `Run PC compute job ${binding.job}`,

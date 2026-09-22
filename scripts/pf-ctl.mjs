@@ -24,7 +24,7 @@
  *   node scripts/pf-ctl.mjs login [url] [--site NAME] [--host user@ip] [--port N] [--machine WORDS]
  *   node scripts/pf-ctl.mjs close <title-or-id>
  *   node scripts/pf-ctl.mjs review <review.json>   record an agent completion/decision/blocked result
- *   node scripts/pf-ctl.mjs watch-job <job-id> --owner <native-id> [--pane <exact-local-id>]
+ *   node scripts/pf-ctl.mjs watch-job <job-id> --owner <native-id> --pane <exact-local-id>
  *   node scripts/pf-ctl.mjs rename <title-or-id> <name...>
  *   node scripts/pf-ctl.mjs composer <number-title-or-id>   what is typed but not sent
  *   node scripts/pf-ctl.mjs type <title-or-id> <text...>
@@ -636,9 +636,9 @@ if (cmd === 'list') {
   if (still) fail(1, `sessions:kill answered but ${s.id} is still listed`)
   console.log(`closed ${s.id} (${s.title})`)
 } else if (cmd === 'watch-job') {
-  const pane = flag(rest, '--pane') ?? process.env.PF_PANE
+  const pane = flag(rest, '--pane')
   const job = rest[0], owner = flag(rest, '--owner')
-  if (!pane || !job || !owner) fail(1, 'watch-job requires job ID, --owner native session ID, and PF_PANE or --pane exact local shell ID; run on the job device')
+  if (!pane || !job || !owner) fail(1, 'watch-job requires job ID, --owner native session ID, and --pane exact local shell ID; run on the job device')
   console.log(JSON.stringify(await call('sessions:watchCompute', [pane, job, owner])))
 } else if (cmd === 'review') {
   const path = rest[0]
