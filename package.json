@@ -1,6 +1,6 @@
 {
   "name": "claude-orchestrator",
-  "version": "0.8.220",
+  "version": "0.8.221",
   "private": true,
   "description": "PaneForge",
   "author": "Robert",
@@ -79,7 +79,6 @@
     "test:historysearch": "node scripts/history-search-test.mjs",
     "test:projectroot": "node scripts/projectroot-test.mjs",
     "test:agentenv": "node scripts/agent-env-test.mjs",
-    "test:claudequota": "node scripts/claude-quota-test.mjs",
     "test:devicewatch": "node scripts/device-watch-test.mjs",
     "test:projects": "node scripts/projects-test.mjs",
     "test:cardfit": "node scripts/card-fit-test.mjs",
@@ -311,6 +310,7 @@
     "test:deviceopen": "node scripts/device-open-test.mjs",
     "test:uilab": "node scripts/ui-lab-test.mjs",
     "test:codexmodels": "node scripts/codex-models-test.mjs",
+    "test:claudemodels": "node scripts/claude-models-test.mjs",
     "test:panefit": "node scripts/pane-fit-test.mjs",
     "test:railtrack": "node scripts/rail-track-test.mjs",
     "test:issues": "node scripts/issues-dialog-test.mjs",
