@@ -30,6 +30,7 @@ import { fileURLToPath } from 'node:url'
 // required - the module reads them once, at load. The test then runs in about a second.
 process.env.PF_PROMPT_START_MS ??= '120'
 process.env.PF_PROMPT_QUIET_MS ??= '120'
+process.env.PF_PERSON_QUIET_MS ??= '120'
 process.env.PF_PROMPT_POLL_MS ??= '40'
 process.env.PF_PROMPT_ENTER_MS ??= '60'
 process.env.PF_PROMPT_CONFIRM_MS ??= '200'
@@ -232,7 +233,16 @@ ok(
 // the session was cleared and then never told to carry on - Robert: "we lost the hands off
 // autoclear flow now its getting messed up if i type while thats happening". It waits behind
 // them instead, and goes in at the composer they hand back. Late is right; never is not.
+// The renderer's footer read is what ends a turn in the app (`endRun`); a paint gap alone
+// is not (s21-muczy2r3, 2026-09-22: typed into a running turn on a 900ms stall).
 hijackProc.say(COMPOSER)
+await sleep(400)
+ok(
+  !hijackProc.writes.join('').includes('Continue the handoff'),
+  'a quiet composer is not their turn ending while the app still reads the turn as running',
+  JSON.stringify(hijackProc.writes)
+)
+manager.setBusyOnScreen(hijack.id, false, COMPOSER)
 await sleep(900)
 ok(
   hijackProc.writes.join('').includes('Continue the handoff'),

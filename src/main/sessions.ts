@@ -258,6 +258,10 @@ const CLEAR_RESUME_BUDGET_MS = ms('PF_CLEAR_RESUME_BUDGET_MS', 180_000)
  * the curtain is down, and the prompt goes in the moment the composer is idle and empty.
  */
 const PERSON_WAIT_MAX_MS = ms('PF_PERSON_WAIT_MAX_MS', 45 * 60_000)
+// A prompt waiting behind a PERSON's turn needs the pane silent this long, not the 900ms
+// `PROMPT_QUIET_MS`: a laggy desk stalls a CLI past a second mid-turn (s21-muczy2r3,
+// 2026-09-22), and typing into their running turn is the one thing this wait is for.
+const PERSON_QUIET_MS = ms('PF_PERSON_QUIET_MS', 5_000)
 /**
  * The hard ceiling on the handover curtain.
  *
@@ -3607,7 +3611,11 @@ export class SessionManager extends EventEmitter {
         composerIdle,
         expired: Date.now() >= deadline,
         tookOver: (live.meta.tookOverAt ?? 0) > takenMark,
-        personExpired: Date.now() >= personDeadline
+        personExpired: Date.now() >= personDeadline,
+        turnLive:
+          Boolean(live.meta.runSince) ||
+          live.busyUntil > Date.now() ||
+          Date.now() - live.meta.lastOutput < PERSON_QUIET_MS
       })
     // The busy read is of the LAST THING PAINTED, never of a window of scrollback:
     // `esc to interrupt` printed during the boot stays in the buffer for ever, so a
@@ -3645,6 +3653,11 @@ export class SessionManager extends EventEmitter {
     // as `budgetMs + PROMPT_CONFIRM_MS * PROMPT_ENTER_TRIES`, so the confirm was always
     // meant to outlive the wait; only this branch disagreed.
     let confirmUntil = 0
+    // A turn was already running when the prompt was typed. Then the composer emptying is
+    // not proof: the paint tail is that turn's output, and its last marker row can be an
+    // echo of a different message - 2026-09-22 19:16:25 s21-muczy2r3 logged "no longer in
+    // the composer" over a composer still holding the whole prompt.
+    let typedIntoTurn = false
     const submit = (tries: number): void => {
       const live = this.sessions.get(id)
       if (!live) return settle('gone')
@@ -3756,13 +3769,13 @@ export class SessionManager extends EventEmitter {
                 acLog(`${id} prompt submitted - native Codex receipt`)
                 return settle('sent')
               }
-              if (box === false) {
+              if (box === false && !typedIntoTurn) {
                 acLog(`${id} prompt submitted - it is no longer in the composer`)
                 return settle('sent')
               }
               acLog(
                 `${id} prompt left UNSENT: still painting ${PROMPT_CONFIRM_MS * PROMPT_ENTER_TRIES}ms after the return` +
-                  (box ? ', and the composer still holds it' : ', and no composer could be read')
+                  (box ? ', and the composer still holds it' : typedIntoTurn ? ', typed over a turn already running' : ', and no composer could be read')
               )
               return settle('unsent')
             }
@@ -3808,8 +3821,12 @@ export class SessionManager extends EventEmitter {
         )
         return settle('abandoned')
       }
+      // Only on the person path: after an ordinary /clear the app's own return stamped
+      // `runSince`, and that is not somebody else's turn.
+      typedIntoTurn =
+        (live.meta.lastKeyboard ?? 0) > mark && (Boolean(live.meta.runSince) || live.busyUntil > Date.now())
       ourWrite(prompt)
-      acLog(`${id} prompt typed (${prompt.length} chars), return in ${PROMPT_ENTER_MS}ms`)
+      acLog(`${id} prompt typed (${prompt.length} chars), return in ${PROMPT_ENTER_MS}ms${typedIntoTurn ? ' (a turn is running)' : ''}`)
       setTimeout(() => this.sessions.get(id) && submit(0), PROMPT_ENTER_MS)
     }
     setTimeout(tick, Math.max(0, startMs) + Math.max(0, extraDelay))

@@ -1781,11 +1781,19 @@ async function startOrSend(
   }
   const cfg = getConfig()
   const mode = preferRemoteOf(cfg.autoHandoff)
-  // Set to keep automatic placements here: no round trip over the link, no line in the
-  // log. An explicit "Another device" press still has to reach `placeNewPane`, whose
-  // person-picked rule outranks this saved preference. Returning here unconditionally
-  // made the Desktop chip look selected while opening the pane on this Mac.
-  if (mode === 'never' && req.where !== 'remote' && !req.device) return here()
+  // Set to keep automatic placements here: no round trip over the link. An explicit
+  // "Another device" press still has to reach `placeNewPane`, whose person-picked rule
+  // outranks this saved preference. Returning here unconditionally made the Desktop chip
+  // look selected while opening the pane on this Mac.
+  //
+  // It still writes its line. On 2026-09-23 a Mac lagging at 16 panes with the PC online
+  // and idle had offload.log full of `started` and not one sentence saying why nothing
+  // went over - the answer was this switch, set to Never on 2026-09-18, and it was only
+  // findable by reading config.json. Same sentence `placeNewPane` gives for `never`.
+  if (mode === 'never' && req.where !== 'remote' && !req.device) {
+    logOffload({ where: 'local', reason: 'set to always start work on this machine', project: projectNameOf(req.cwd) })
+    return here()
+  }
 
   const project = projectNameOf(req.cwd)
   let target: ReturnType<typeof projectOn> = null

@@ -14,15 +14,15 @@
 //   3. MOVE a finished pane there (this file)    - the work continues, on the other desk
 //   4. close a finished pane      (reclaim.ts)   - the last resort, and only with no peer
 //
-// Rung 3 is intentionally limited to plain shell panes. An agent's remote process can be
-// opened, but this app does not yet receive proof that its conversation was accepted, so
-// automatically copying one would duplicate work without safely freeing this machine.
+// Rung 3 moves what `travels` says can exist over there: a shell, or a Claude/Codex pane
+// with a conversation id to resume (since 2026-09-08; the sender keeps the pane until the
+// far end proves the resume, `main/handoff.ts`). This header said "shell panes only" until
+// 2026-09-23, and so did the Settings switch - a sentence that was false for two weeks,
+// on the switch that was then found turned off.
 //
 // Two refusals decide whether this is safe rather than merely clever:
 //
-//   - **Automatic plans never move an agent pane.** The manual queue remains separate:
-//     its sender preserves the original agent pane until a real resume acknowledgement
-//     exists, rather than treating a remote process start as continuity.
+//   - **Only work that can arrive moves** (`travels`): no resume id, no move.
 //   - **A pane holding a live question is never moved**, queued or otherwise. The chooser
 //     is drawn on a screen, not in the transcript; resuming over there comes back with the
 //     question gone and the agent waiting for something nobody was asked.
