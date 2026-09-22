@@ -36,9 +36,23 @@ if (process.platform !== 'win32') {
   process.exit(remote.status ?? 1)
 }
 
-// name -> the script file, in the order they run. Cheapest first is deliberate: a broken
-// build should say so in a second rather than after the slow ones.
+// name -> the script file, in the order they run. Below the nine longest-first, cheapest
+// first is deliberate: a broken build should say so in a second rather than after the
+// slow ones.
 const TESTS = [
+  // Longest-first: a busy pool hides these behind everything else instead of
+  // paying their seconds serially at the tail. Measured on the PC (2026-09-23): gate
+  // 75.7s, conflict 40.2s, lanework 33.1s, laneproof 24.9s, lanemergehold 19.3s,
+  // lanesweep 18.4s, handoff 17.5s, laneuntracked 16.0s, promptsubmit 15.1s.
+  ['gate', 'release-gate-test.mjs'],
+  ['conflict', 'conflict-test.mjs'],
+  ['lanework', 'lane-work-test.mjs'],
+  ['laneproof', 'lane-proof-test.mjs'],
+  ['lanemergehold', 'lane-mergehold-test.mjs'],
+  ['lanesweep', 'lane-sweep-test.mjs'],
+  ['handoff', 'handoff-test.mjs'],
+  ['laneuntracked', 'lane-untracked-test.mjs'],
+  ['promptsubmit', 'prompt-submit-test.mjs'],
   ['remotesuite', 'test-remote-test.mjs'],
   ['promptreview', 'prompt-review-test.mjs'],
   ['reviewload', 'review-load-test.mjs'],
@@ -113,7 +127,6 @@ const TESTS = [
   ['asknotify', 'ask-notify-test.mjs'],
   ['faultnotify', 'fault-notify-test.mjs'],
   ['spawnguard', 'spawn-guard-test.mjs'],
-  ['promptsubmit', 'prompt-submit-test.mjs'],
   ['anim', 'anim-cost-test.mjs'],
   ['scrollclear', 'scroll-clear-test.mjs'],
   ['replaywidth', 'replay-width-test.mjs'],
@@ -173,9 +186,6 @@ const TESTS = [
   ['place', 'place-test.mjs'],
   ['sessioncopies', 'session-copies-test.mjs'],
   ['lanevisitor', 'lane-visitor-test.mjs'],
-  ['lanesweep', 'lane-sweep-test.mjs'],
-  ['lanework', 'lane-work-test.mjs'],
-  ['lanemergehold', 'lane-mergehold-test.mjs'],
   // A lane whose hooks rewrite its ledger every turn is not dirty forever.
   ['laneledger', 'lane-ledger-test.mjs'],
   ['issues', 'issues-dialog-test.mjs'],
@@ -240,7 +250,6 @@ const TESTS = [
   ['surfacereach', 'surface-reach-test.mjs'],
   ['mirrorfit', 'mirrorfit-test.mjs'],
   ['wirebatch', 'wire-batch-test.mjs'],
-  ['handoff', 'handoff-test.mjs'],
   ['handoffrepo', 'handoff-repo-test.mjs'],
   ['resumecheck', 'resumecheck-test.mjs'],
   ['route', 'project-route-test.mjs'],
@@ -249,7 +258,6 @@ const TESTS = [
   // cross-device claim, and the git plumbing that carries it (2.4s, real repositories).
   ['lanepeers', 'lane-peers-test.mjs'],
   ['lanesleep', 'lane-sleep-test.mjs'],
-  ['laneuntracked', 'lane-untracked-test.mjs'],
   ['lanedevice', 'lane-device-test.mjs'],
   ['laneensure', 'lane-ensure-test.mjs'],
   // The lane a folder already IS, for a pane the app did not move itself - with the
@@ -263,7 +271,6 @@ const TESTS = [
   ['desksnap', 'desk-snap-test.mjs'],
   // A ship may only report a lane it can prove went out, and a lane passed over leaves a
   // note. Real repos, and a post-receive hook that takes the push and rewinds the branch.
-  ['laneproof', 'lane-proof-test.mjs'],
   ['trust', 'trust-test.mjs'],
   ['slash', 'slash-test.mjs'],
   ['reveal', 'reveal-test.mjs'],
@@ -309,9 +316,8 @@ const TESTS = [
   ['splitplan', 'split-plan-test.mjs'],
   ['qr', 'qr-test.mjs'],
   ['pairask', 'pair-ask-test.mjs'],
-  ['gate', 'release-gate-test.mjs'],
-  ['conflict', 'conflict-test.mjs'],
-  ['queuedprompt', 'queued-prompt-test.mjs']
+  ['queuedprompt', 'queued-prompt-test.mjs'],
+  ['releasedev', 'release-dev-test.mjs']
 ]
 
 const only = process.argv.slice(2).filter((a) => !a.startsWith('-'))
