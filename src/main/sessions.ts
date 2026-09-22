@@ -126,7 +126,15 @@ import { exitPlan, exitWords } from '../shared/exitClose'
 import { readsCloudWork, cloudHeld } from '../shared/cloudWork'
 import { outputIsWork } from '../shared/fleet'
 import { nextCwdGone, reapForMissingCwd } from '../shared/cwdGone'
-import { askKeyOf, autoAnswerAt, DEFAULT_AUTO_ANSWER, dueForAuto, pickAnswer } from '../shared/autoAnswer'
+import {
+  askKeyOf,
+  autoAnswerAt,
+  DEFAULT_AUTO_ANSWER,
+  dueForAuto,
+  heldByGuardDeck,
+  pickAnswer
+} from '../shared/autoAnswer'
+import { guardDeckQuestions } from './guardDeckQuestions'
 import { countIntervention } from './interventions'
 import { deskFocused } from './gameMode'
 import { askSignature, CHOOSE_GAP_MS, keysForChoice, readAsk, sameAsk , stampMatches} from '../shared/choices'
@@ -3910,8 +3918,15 @@ export class SessionManager extends EventEmitter {
     // second start line `autoAnswer` reads. Both the presser and the countdown come off
     // that one number, so they cannot promise different seconds. A mirrored pane is left
     // alone - the desk that owns the pty owns this decision, and our focus says nothing
-    // about whether anybody is at THAT one.
-    const held = !!ask && cfg.holdWhileWatching !== false && !live.meta.remote && deskFocused()
+    // about whether anybody is at THAT one. GuardDeck showing this pane's question is
+    // somebody at it too, on a screen this window cannot see (`heldByGuardDeck`) - and
+    // that hold is not behind `holdWhileWatching`, because a popup that is being answered
+    // is not "watching", it is answering, and racing it is the defect either way.
+    const held =
+      !!ask &&
+      !live.meta.remote &&
+      ((cfg.holdWhileWatching !== false && deskFocused()) ||
+        heldByGuardDeck(live.meta.id, guardDeckQuestions(), Date.now()))
     if (held) live.askHold = Date.now()
     const due = ask ? autoAnswerAt(live, cfg, ask) : 0
     const n = ask && (due || held) ? pickAnswer(ask, cfg)?.n : undefined

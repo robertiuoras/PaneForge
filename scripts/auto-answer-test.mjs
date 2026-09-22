@@ -13,7 +13,7 @@
 
 import { strict as assert } from 'node:assert'
 import { build } from 'esbuild'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -29,15 +29,29 @@ await build({
   format: 'esm',
   platform: 'neutral'
 })
-const { pickAnswer, dueForAuto, autoAnswerAt, askKeyOf, PRESS_COOLDOWN_MS, DEFAULT_AUTO_ANSWER } = await import(
+const {
+  pickAnswer,
+  dueForAuto,
+  autoAnswerAt,
+  askKeyOf,
+  heldByGuardDeck,
+  GUARDDECK_QUESTION_TTL_MS,
+  PRESS_COOLDOWN_MS,
+  DEFAULT_AUTO_ANSWER
+} = await import(
   pathToFileURL(join(out, 'autoAnswer.mjs')).href
 )
 
 let n = 0
 const ok = (what, fn) => {
-  fn()
-  n++
-  console.log(`  ok  ${what}`)
+  const done = () => {
+    n++
+    console.log(`  ok  ${what}`)
+  }
+  // One case builds a second module; it is awaited where it is called.
+  const r = fn()
+  if (r && typeof r.then === 'function') return r.then(done)
+  done()
 }
 
 const ask = (selected, ...labels) => ({
@@ -535,6 +549,65 @@ ok('two decisions are two cards, and answering one leaves the other counting', (
   assert.match(card, /key=\{soonKey\(soon\)\}/, 'each keyed by the panes it names')
 
   assert.doesNotMatch(app, /playAction|playTick/, 'countdowns and closing actions stay silent')
+})
+
+// GuardDeck showing the question is a person at it, on a screen this window cannot see.
+// Observed 2026-09-23: a scratch pane's AskUserQuestion reached the popup, and the app
+// pressed the default "Apple" before anybody could answer from there - the only hold was
+// `deskFocused()`, which nothing outside PaneForge can raise.
+ok('a question GuardDeck is showing holds the press; anything else does not', () => {
+  const now = Date.parse('2026-09-23T12:00:00Z')
+  const rec = (over = {}) => ({
+    id: 'q1',
+    pane: { card: 3, id: 's43-mud40vxa', app: 'paneforge' },
+    state: 'open',
+    created: new Date(now - 60_000).toISOString(),
+    ...over
+  })
+  assert.equal(heldByGuardDeck('s43-mud40vxa', [rec()], now), true, 'open file naming the pane holds')
+  assert.equal(heldByGuardDeck('s43-mud40vxa', [rec({ state: 'sending' })], now), true, 'sending holds')
+  assert.equal(heldByGuardDeck('s44-other', [rec()], now), false, 'another pane is not held')
+  assert.equal(heldByGuardDeck('s43-mud40vxa', [rec({ state: 'answered' })], now), false, 'answered')
+  assert.equal(heldByGuardDeck('s43-mud40vxa', [rec({ state: 'expired' })], now), false, 'expired')
+  const old = new Date(now - 25 * 60 * 60 * 1000).toISOString()
+  assert.equal(heldByGuardDeck('s43-mud40vxa', [rec({ created: old })], now), false, '25h-old file')
+  assert.equal(GUARDDECK_QUESTION_TTL_MS, 24 * 60 * 60 * 1000, 'the popup counts a day as expired')
+  assert.equal(heldByGuardDeck('s43-mud40vxa', [], now), false, 'no files')
+  assert.equal(heldByGuardDeck('s43-mud40vxa', [null, 'junk', {}, rec()], now), true, 'junk is skipped')
+  assert.equal(heldByGuardDeck('s43-mud40vxa', [rec({ created: undefined })], now), false, 'no time = no hold')
+})
+
+await ok('the folder is read once a second, and a missing folder or bad file is no question', async () => {
+  await build({
+    entryPoints: [join(root, 'src/main/guardDeckQuestions.ts')],
+    outfile: join(out, 'guardDeckQuestions.mjs'),
+    bundle: true,
+    format: 'esm',
+    platform: 'node'
+  })
+  const { guardDeckQuestions, READ_EVERY_MS } = await import(
+    pathToFileURL(join(out, 'guardDeckQuestions.mjs')).href
+  )
+  const dir = join(out, 'questions')
+  assert.deepEqual(guardDeckQuestions(dir, 0), [], 'missing folder = nothing')
+  mkdirSync(dir)
+  writeFileSync(join(dir, 'a.json'), JSON.stringify({ id: 'a', state: 'open' }))
+  writeFileSync(join(dir, 'b.json'), '{ half-writ')
+  writeFileSync(join(dir, 'c.txt'), '{}')
+  assert.deepEqual(guardDeckQuestions(dir, READ_EVERY_MS), [{ id: 'a', state: 'open' }], 'bad json and non-json skipped')
+  writeFileSync(join(dir, 'd.json'), JSON.stringify({ id: 'd' }))
+  assert.equal(guardDeckQuestions(dir, READ_EVERY_MS + 500).length, 1, 'within a second the cache answers')
+  assert.equal(guardDeckQuestions(dir, READ_EVERY_MS * 2).length, 2, 'past it the folder is read again')
+})
+
+ok('the planner holds on GuardDeck beside its own window, outside holdWhileWatching', () => {
+  const plan = sessions.slice(
+    sessions.indexOf('private refreshAutoPlan'),
+    sessions.indexOf('private sweepAutoAnswer')
+  )
+  assert.match(plan, /heldByGuardDeck\(live\.meta\.id, guardDeckQuestions\(\), Date\.now\(\)\)/)
+  assert.match(plan, /\(cfg\.holdWhileWatching !== false && deskFocused\(\)\) \|\|/, 'either hold, not both')
+  assert.match(plan, /!live\.meta\.remote &&/, 'a mirror still decides nothing')
 })
 
 rmSync(out, { recursive: true, force: true })

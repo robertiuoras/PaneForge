@@ -359,3 +359,43 @@ export function pickAnswer(ask: PaneAsk, cfg: AutoAnswerConfig): AutoPick | null
   if (!dflt) return null
   return { n: dflt.n, why: `the CLI's own default, "${dflt.label}"` }
 }
+
+/**
+ * A question GuardDeck is showing, as `claude-config/ask-popup.mjs` writes it to
+ * `~/.claude/guarddeck/questions/<id>.json`. Only the fields this reads; the rest of the
+ * record is GuardDeck's.
+ */
+export interface GuardDeckQuestion {
+  pane?: { id?: string }
+  /** `open` (showing), `sending` (GuardDeck is answering), `answered`, `expired`. */
+  state?: string
+  /** ISO time the question was written. Past a day it counts as expired. */
+  created?: string
+}
+
+/** How long an `open` question file is believed before it counts as expired. */
+export const GUARDDECK_QUESTION_TTL_MS = 24 * 60 * 60 * 1000
+
+/**
+ * Is somebody answering this pane's question from GuardDeck?
+ *
+ * The auto-answer wait only holds while somebody is at PaneForge's own window
+ * (`deskFocused()`), and nothing outside the app could hold it - so a question GuardDeck
+ * had just put on screen was pressed by the default the moment `waitMs` ran out, and a
+ * marked "(Recommended)" option is exactly the kind GuardDeck gets (observed 2026-09-23,
+ * "Apple" pressed under the popup). A file naming this pane in `open` or `sending` is
+ * that person; `answered`, `expired`, another pane, or a day-old file is nobody. Bad
+ * records are skipped, never a hold: a hold that could not be read cannot be released.
+ */
+export function heldByGuardDeck(paneId: string, files: unknown[], now: number): boolean {
+  for (const f of files) {
+    if (!f || typeof f !== 'object') continue
+    const q = f as GuardDeckQuestion
+    if (q.pane?.id !== paneId) continue
+    if (q.state !== 'open' && q.state !== 'sending') continue
+    const created = typeof q.created === 'string' ? Date.parse(q.created) : NaN
+    if (!Number.isFinite(created) || now - created > GUARDDECK_QUESTION_TTL_MS) continue
+    return true
+  }
+  return false
+}
