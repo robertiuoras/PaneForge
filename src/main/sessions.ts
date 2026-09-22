@@ -81,6 +81,7 @@ import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from '.
 import { codexAcceptedPrompt, forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeEvidence, resumeIdFor, transcriptPath } from './transcripts'
 import { recordPromptReview } from './promptReview'
 import { liveModelFor } from './paneModel'
+import { backgroundAgentsFor, forgetBackgroundAgents, noteBackgroundAgents } from './runningAgents'
 // How hard a Codex pane thinks. The rule is `shared/effort.ts`, the disk is
 // `main/effort.ts`, the levels each model offers come from Codex itself.
 import {
@@ -148,6 +149,9 @@ import type {
   TurnClock
 } from '../shared/types'
 import { SLOW_WAKE_MS, wokeSlowly } from '../shared/wakePlan'
+
+/** When each pty process was first seen by the sweep - see `backgroundAgentsFor`'s `since`. */
+const procBorn = new WeakMap<object, number>()
 
 /** How long output must stay quiet before the pane's dot stops saying "working". */
 const IDLE_AFTER_MS = 4000
@@ -259,6 +263,10 @@ const CLEAR_RESUME_BUDGET_MS = ms('PF_CLEAR_RESUME_BUDGET_MS', 180_000)
  * the curtain is down, and the prompt goes in the moment the composer is idle and empty.
  */
 const PERSON_WAIT_MAX_MS = ms('PF_PERSON_WAIT_MAX_MS', 45 * 60_000)
+// A prompt waiting behind a PERSON's turn needs the pane silent this long, not the 900ms
+// `PROMPT_QUIET_MS`: a laggy desk stalls a CLI past a second mid-turn (s21-muczy2r3,
+// 2026-09-22), and typing into their running turn is the one thing this wait is for.
+const PERSON_QUIET_MS = ms('PF_PERSON_QUIET_MS', 5_000)
 /**
  * The hard ceiling on the handover curtain.
  *
@@ -1090,16 +1098,6 @@ export class SessionManager extends EventEmitter {
     return asks
   }
 
-  /** Cancel on the card: put the name back, and stop reading this pane for a client. */
-  undoClientName(id: string): void {
-    const live = this.sessions.get(id)
-    if (!live) return
-    live.meta.clientOff = true
-    live.meta.clientSlug = undefined
-    live.meta.title = projectOf(live.meta.cwd, live.meta.lane)
-    this.emitSessions()
-  }
-
   /**
    * Fill in a pane's lane from the branch its folder is on, when nothing else knew.
    *
@@ -1275,7 +1273,9 @@ export class SessionManager extends EventEmitter {
       // starting (the model-switch-then-resume chain) that `owedPrompt` alone would miss.
       owedPrompt: Boolean(live.meta.owedPrompt) || (live.meta.handoverUntil ?? 0) > Date.now(),
       job: live.meta.job,
-      backJob: live.meta.backJob
+      // A background agent still running inside the CLI dies with a sleep exactly as a
+      // background shell does. See `Session.subagent`.
+      backJob: live.meta.backJob ?? live.meta.subagent
     }
     // These are measured before killing the process. Explicit fields keep caller-supplied
     // data out of the log: never spread an IPC payload which could contain prompt text.
@@ -3214,6 +3214,7 @@ export class SessionManager extends EventEmitter {
     // keep. The line in `queued-prompts.log` carries enough of the text to find it again.
     dropAllFor(id, 'gone')
     forgetSession(id)
+    forgetBackgroundAgents(id)
     this.sessions.delete(id)
     forgetHandoff(id)
     this.emitSessions()
@@ -3224,7 +3225,7 @@ export class SessionManager extends EventEmitter {
     const live = this.sessions.get(id)
     if (!live) return { closed: false, reason: 'session is no longer open' }
     const m = live.meta
-    if (m.status !== 'idle' || m.runSince || live.busyUntil > Date.now() || m.job || m.backJob) return { closed: false, reason: 'session is busy or has a background job' }
+    if (m.status !== 'idle' || m.runSince || live.busyUntil > Date.now() || m.job || m.backJob || m.subagent) return { closed: false, reason: 'session is busy or has a background job' }
     if (m.drafting || m.ask || m.owedPrompt || m.handingOff || m.handoffQueuedAt || m.handoffOpen || (m.handoverUntil ?? 0) > Date.now()) return { closed: false, reason: 'session has a draft, question, queued prompt, or handoff' }
     if (m.lastKeyboard > reportedAt) return { closed: false, reason: 'newer user input exists' }
     this.kill(id)
@@ -3640,7 +3641,11 @@ export class SessionManager extends EventEmitter {
         composerIdle,
         expired: Date.now() >= deadline,
         tookOver: (live.meta.tookOverAt ?? 0) > takenMark,
-        personExpired: Date.now() >= personDeadline
+        personExpired: Date.now() >= personDeadline,
+        turnLive:
+          Boolean(live.meta.runSince) ||
+          live.busyUntil > Date.now() ||
+          Date.now() - live.meta.lastOutput < PERSON_QUIET_MS
       })
     // The busy read is of the LAST THING PAINTED, never of a window of scrollback:
     // `esc to interrupt` printed during the boot stays in the buffer for ever, so a
@@ -3678,6 +3683,11 @@ export class SessionManager extends EventEmitter {
     // as `budgetMs + PROMPT_CONFIRM_MS * PROMPT_ENTER_TRIES`, so the confirm was always
     // meant to outlive the wait; only this branch disagreed.
     let confirmUntil = 0
+    // A turn was already running when the prompt was typed. Then the composer emptying is
+    // not proof: the paint tail is that turn's output, and its last marker row can be an
+    // echo of a different message - 2026-09-22 19:16:25 s21-muczy2r3 logged "no longer in
+    // the composer" over a composer still holding the whole prompt.
+    let typedIntoTurn = false
     const submit = (tries: number): void => {
       const live = this.sessions.get(id)
       if (!live) return settle('gone')
@@ -3789,13 +3799,13 @@ export class SessionManager extends EventEmitter {
                 acLog(`${id} prompt submitted - native Codex receipt`)
                 return settle('sent')
               }
-              if (box === false) {
+              if (box === false && !typedIntoTurn) {
                 acLog(`${id} prompt submitted - it is no longer in the composer`)
                 return settle('sent')
               }
               acLog(
                 `${id} prompt left UNSENT: still painting ${PROMPT_CONFIRM_MS * PROMPT_ENTER_TRIES}ms after the return` +
-                  (box ? ', and the composer still holds it' : ', and no composer could be read')
+                  (box ? ', and the composer still holds it' : typedIntoTurn ? ', typed over a turn already running' : ', and no composer could be read')
               )
               return settle('unsent')
             }
@@ -3841,8 +3851,12 @@ export class SessionManager extends EventEmitter {
         )
         return settle('abandoned')
       }
+      // Only on the person path: after an ordinary /clear the app's own return stamped
+      // `runSince`, and that is not somebody else's turn.
+      typedIntoTurn =
+        (live.meta.lastKeyboard ?? 0) > mark && (Boolean(live.meta.runSince) || live.busyUntil > Date.now())
       ourWrite(prompt)
-      acLog(`${id} prompt typed (${prompt.length} chars), return in ${PROMPT_ENTER_MS}ms`)
+      acLog(`${id} prompt typed (${prompt.length} chars), return in ${PROMPT_ENTER_MS}ms${typedIntoTurn ? ' (a turn is running)' : ''}`)
       setTimeout(() => this.sessions.get(id) && submit(0), PROMPT_ENTER_MS)
     }
     setTimeout(tick, Math.max(0, startMs) + Math.max(0, extraDelay))
@@ -4210,6 +4224,23 @@ export class SessionManager extends EventEmitter {
           meta.model = live2
           changed = true
         }
+        // ...and whether that conversation still has a BACKGROUND AGENT running inside
+        // this CLI. The turn is over, the footer is quiet, and ending the process now - a
+        // move, a sleep, a close - ends the agent with it (s24-mud0n7wb, 2026-09-22: moved
+        // to the PC mid "Visual review Design 4 pages"). Same path the model chip just
+        // resolved, read incrementally; see `main/runningAgents.ts`. Agents launched
+        // before THIS process started died with the one that launched them.
+        let bornAt: number | undefined
+        if (live.proc) {
+          bornAt = procBorn.get(live.proc)
+          if (bornAt === undefined) procBorn.set(live.proc, (bornAt = now))
+        }
+        const agents = meta.status === 'exited' || !live.proc ? undefined : backgroundAgentsFor(meta.id, path, bornAt, now)
+        noteBackgroundAgents(meta.id, agents)
+        if (agents !== meta.subagent) {
+          meta.subagent = agents
+          changed = true
+        }
       }
       // ...and how hard a Codex pane is REALLY thinking. The keys this app sends may have
       // been eaten by a menu or a composer that was not where it looked, so a level is
@@ -4439,6 +4470,17 @@ export class SessionManager extends EventEmitter {
   bell(id: string): void {
     const live = this.sessions.get(id)
     if (!live || live.meta.bell) return
+    const now = Date.now()
+    audit('bell', {
+      id,
+      title: live.meta.title,
+      agent: live.meta.agent,
+      status: live.meta.status,
+      engaged: Boolean(live.meta.engaged),
+      runSince: live.meta.runSince ? now - live.meta.runSince : null,
+      quietMs: now - live.meta.lastOutput,
+      tail: plainTail(live.lastTail, 4)
+    })
     live.meta.bell = true
     this.emit('bell', live.meta)
     this.emitSessions()

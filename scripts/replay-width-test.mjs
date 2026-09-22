@@ -138,7 +138,7 @@ const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
 const types = readFileSync(join(root, 'src/shared/types.ts'), 'utf8')
 
 check('the pane asks splitReplay before it replays', pane.includes('splitReplay(b, replayColsRef.current, t.cols, replayRowsRef.current, t.rows)'))
-check('the first replay writes through the stage', pane.includes('writeStaged(b, done, keep)'))
+check('the first replay writes through the stage', pane.includes('writeStaged(b, done, cleanOutput)'))
 // Fix re-renders the same bytes; written raw at the pane's width they tear exactly the way
 // the first replay used to, so the button meant to mend a pane broke a mended one.
 check('...and so does Fix', pane.includes("writeStaged('\\x1bc' + bytes, () => {"))

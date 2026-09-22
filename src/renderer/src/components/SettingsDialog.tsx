@@ -569,8 +569,8 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                       autoHandoff: { ...DEFAULT_AUTO_HANDOFF, ...config.autoHandoff, enabled: v }
                     })
                   }
-                  label="Move an idle shell pane to a paired device when this machine is full"
-                  hint="This automatic policy only moves plain shell panes. Agent conversations are never automatically copied or moved because a remote process starting does not prove it resumed the same work. It fires on the budget below, and when memory or load says this machine is under pressure, only to a device online with the same project. Claude and Codex panes stay here; use manual handoff when you want to review its explicit continuity result."
+                  label="Move a finished pane to a paired device when this machine is full"
+                  hint="When memory or load says this machine is under pressure, or it runs more panes than the number below, a pane that has finished its turn moves to a device that is online and has the same project: a plain terminal, or a Claude or Codex conversation that can be picked up again over there. It waits for the turn to end, shows a countdown you can stop, and never moves the pane you are looking at, one asking you a question, one kept on this machine, or one whose request is about this Mac - its files, its screen, its browser. Off: nothing moves, and idle panes are paused here instead."
                 />
                 {config.autoHandoff?.enabled !== false && (
                   <div className="setting">

@@ -3394,20 +3394,6 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
 /* Said on the card when a step names a control and nothing on screen matches it. */
 .tour-nospot { color: var(--muted); font-size: 12px; }
 
-/* A pane that has just named itself, and the three seconds in which that can be undone.
-   One step above the countdown cards: it is the shortest-lived thing in this corner and
-   is gone before either of them arms. `beside-pet` steps it up off a sprite. */
-.client-toast {
-  position: fixed; right: 18px; bottom: 18px; z-index: 46; width: 300px;
-  background: var(--surface-3); border: 1px solid var(--line-strong); border-radius: var(--r);
-  box-shadow: var(--shadow); padding: 12px 13px; display: flex; flex-direction: column; gap: 8px;
-}
-.client-toast.beside-pet { bottom: 108px; }
-.client-toast-say { color: var(--text); font-size: 13px; }
-.client-toast-say strong { color: var(--accent); font-weight: 590; }
-.client-toast-why { color: var(--muted); font-size: 12px; }
-.client-toast-acts { display: flex; justify-content: flex-end; gap: 6px; }
-
 /* --------------------------------------------------------------------------
    Quick actions, as icons.
 
@@ -4790,7 +4776,7 @@ html.handheld .link-down-retry { min-height: 44px; padding: 0 14px; }
 /* --------------------------------------------------------------------------
    ONE column for every card the app puts in the bottom-right corner.
 
-   `.move-soon`, `.client-toast`, `.update-toast` (and its `.whatsnew` and
+   `.move-soon`, `.update-toast` (and its `.whatsnew` and
    `.autoclear` variants) and `.tip-toast` were five separate `position: fixed`
    cards at the same `right: 18px; bottom: 18px`, told apart only by z-index -
    which is not a layout. Two of them up at once and the lower one is drawn
@@ -4818,7 +4804,6 @@ html.handheld .link-down-retry { min-height: 44px; padding: 0 14px; }
    keeps its own width, padding and border - only the placement is taken away. */
 .corner-stack > .autoclear-card,
 .corner-stack > .move-soon,
-.corner-stack > .client-toast,
 .corner-stack > .update-toast,
 .corner-stack > .tour-card,
 .corner-stack > .tip-toast {
@@ -4828,12 +4813,10 @@ html.handheld .link-down-retry { min-height: 44px; padding: 0 14px; }
 /* A sprite sits in this corner too, and a card drawn over an animal is the old bug with
    a nicer name. The whole stack steps up, once, rather than each card guessing. */
 .corner-stack.beside-pet { bottom: 108px; }
-/* Superseded: the stack now owns this, and a card doing it too would step up twice. */
-.corner-stack > .client-toast.beside-pet { bottom: auto; }
 
 /* Room for the dismiss button in the top-right of every corner card, so it never
    overlaps the card's first line. */
-.autoclear-card, .move-soon, .client-toast, .update-toast, .tour-card, .tip-toast {
+.autoclear-card, .move-soon, .update-toast, .tour-card, .tip-toast {
   padding-right: 32px;
 }
 /* The one dismiss button every corner card draws first, top-right. Follows

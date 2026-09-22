@@ -1183,4 +1183,35 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   eq('two hours is the cap, however many', sleepHoldMs(40), SLEEP_HOLD_MAX_MS)
 }
 
+{
+  // A Claude Code background agent runs INSIDE the CLI, so a sleep or a close ends it the
+  // way a move did on 2026-09-22 (s24-mud0n7wb). The renderer hands `Session.subagent` to
+  // every rung as a `backJob`; the reading is taken off the same real-shaped transcript
+  // lines scripts/autohandoff-test.mjs uses.
+  const agentsOut = join(work, 'runningagents.bundle.cjs')
+  buildSync({ absWorkingDir: root, entryPoints: ['src/shared/runningAgents.ts'], bundle: true, format: 'cjs', platform: 'node', outfile: agentsOut })
+  const { runningAgentsIn, agentWords } = createRequire(import.meta.url)(agentsOut)
+  const lines = readFileSync(join(root, 'scripts/fixtures/claude-background-agent.jsonl'), 'utf8').trimEnd().split('\n')
+  const at = Date.parse('2026-09-22T18:27:32.073Z')
+  const opts = { since: at - 60_000, now: at + 5 * 60_000 }
+  const runningWords = agentWords(runningAgentsIn(lines.slice(0, 2).join('\n'), opts))
+  const finishedWords = agentWords(runningAgentsIn(lines.join('\n'), opts))
+  eq('the fixture reads as a running agent', runningWords, 'a background agent (Visual review Design 4 pages)')
+  eq('...and as nothing once notified', finishedWords, undefined)
+  const withAgent = (w) => [pane({ id: 'x', backJob: w ?? null }), pane({ id: 'keep' })]
+  const sleepCfg = { ...DEFAULT_RECLAIM, idleSleepMinutes: 5 }
+  const closeCfg = { ...DEFAULT_RECLAIM, idleCloseMinutes: 5 }
+  check('never sleeps a pane whose background agent runs', !ids(idleSleepPlan(withAgent(runningWords), sleepCfg, NOW)).includes('x'))
+  check('...not even under memory pressure', !ids(idleSleepPlan(withAgent(runningWords), sleepCfg, NOW, true, 'over')).includes('x'))
+  check('never closes it on the idle clock', !ids(idleClosePlan(withAgent(runningWords), closeCfg, NOW)).includes('x'))
+  eq('under pressure it closes the other pane instead', ids(reclaimPlan(withAgent(runningWords), over, DEFAULT_RECLAIM, NOW)), 'keep')
+  check('sleeps it once the agent finished', ids(idleSleepPlan(withAgent(finishedWords), sleepCfg, NOW)).includes('x'))
+  // The wiring: every rung's pane gets the reading, and main's own sleep refuses it too.
+  const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
+  check('reclaimPaneOf feeds the agent in as a backJob', /backJob: backJob \?\? s\.subagent \?\? null/.test(app))
+  check('the pressure sweep does too', /backJob: s\.subagent \?\? null/.test(app))
+  const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
+  check('main refuses a sleep while an agent runs', /backJob: live\.meta\.backJob \?\? live\.meta\.subagent/.test(sessions))
+}
+
 console.log(`reclaim: ${checks} checks passed`)

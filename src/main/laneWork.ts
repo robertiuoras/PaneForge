@@ -21,6 +21,7 @@
 // (scripts/lane-work-test.mjs) and cheap enough to call on a timer.
 
 import { execFile } from 'node:child_process'
+import { gitRun } from './gitRun'
 import { existsSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 import { feedDraft, LANE_OPTIONS } from '../shared/draft'
@@ -72,25 +73,23 @@ interface GitRun {
  * execFile is the same command with a callback instead of a stall.
  */
 function run(cwd: string, args: string[], timeout: number, stdoutOnly: boolean): Promise<GitRun> {
-  return new Promise((done) => {
-    execFile(
-      'git',
-      args,
-      { cwd, encoding: 'utf8', windowsHide: true, timeout, maxBuffer: 64 * 1024 * 1024 },
-      (err, stdout, stderr) => {
-        const text = stdoutOnly ? (stdout ?? '') : (stdout ?? '') + (stderr ?? '')
-        // execFile reports a non-zero exit as an Error carrying the code; a git that
-        // could not be started at all has no numeric code, and -1 keeps that distinct
-        // from "git ran and said 1", which merge-tree gives real meaning to.
-        const code = (err as (Error & { code?: number | string }) | null)?.code
-        done({
-          status: err ? (typeof code === 'number' ? code : -1) : 0,
-          ok: !err,
-          out: text.trim()
-        })
-      }
-    )
-  })
+  // Through the one gate (`gitRun.ts`, `shared/gitGate.ts`): the sweep asks the same
+  // questions of the same folders as the lane dialog and the Issues check, and on
+  // 2026-09-22 they were 270 concurrent git processes with the load average at 400.
+  return gitRun(cwd, args, { timeout, read: isRead(args) }).then((r) => ({
+    // A non-zero exit keeps its code, which merge-tree gives real meaning to; a git that
+    // could not be started, or was killed at its timeout, is -1.
+    status: r.status,
+    ok: r.ok,
+    out: (stdoutOnly ? r.stdout : r.stdout + r.stderr).trim()
+  }))
+}
+
+/** Commands that only read, so two identical ones in flight can share one process. */
+function isRead(args: string[]): boolean {
+  const [verb, sub] = args
+  if (verb === 'worktree') return sub === 'list'
+  return ['rev-parse', 'status', 'log', 'rev-list', 'merge-tree', 'cherry', 'diff'].includes(verb)
 }
 
 const git = (cwd: string, args: string[], timeout = 20000): Promise<GitRun> =>
@@ -134,6 +133,21 @@ export function samePath(a: string, b: string): boolean {
 
 /** The main checkout of whatever repo this folder belongs to, worktree or not. */
 async function mainRepo(cwd: string): Promise<string | null> {
+  // Asked for every folder on the desk and every project in the projects folder on each
+  // sweep, and the answer only changes when a repository is made or deleted.
+  // Only a found repository is kept: a folder that becomes one is seen on the next ask.
+  const hit = repoCache.get(cwd)
+  if (hit && Date.now() - hit.at < REPO_TTL_MS && existsSync(cwd) && existsSync(hit.repo))
+    return hit.repo
+  const repo = await readMainRepo(cwd)
+  if (repo) repoCache.set(cwd, { at: Date.now(), repo })
+  else repoCache.delete(cwd)
+  return repo
+}
+const REPO_TTL_MS = 5 * 60_000
+const repoCache = new Map<string, { at: number; repo: string }>()
+
+async function readMainRepo(cwd: string): Promise<string | null> {
   const common = await gitOut(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir'])
   if (!common.ok || !common.out) return null
   const dir = common.out.split(/\r?\n/)[0]
@@ -147,9 +161,14 @@ async function head(cwd: string): Promise<string> {
   return r.ok ? r.out : ''
 }
 
-async function dirtyCount(cwd: string): Promise<number | null> {
-  const files = await dirtyFiles(cwd)
-  return files === null ? null : files.length
+/**
+ * Does the main checkout have ANY uncommitted file. Only the yes/no is used, so untracked
+ * folders are not walked file by file (`normal`, not `all`) - this is the project's own
+ * checkout, the largest tree the sweep reads, and it is read once per lane per sweep.
+ */
+async function baseDirty(cwd: string): Promise<boolean | null> {
+  const r = await gitOut(cwd, ['status', '--porcelain', '-z', '--untracked-files=normal'])
+  return r.ok ? r.out.length > 0 : null
 }
 
 /**
@@ -283,12 +302,12 @@ export async function laneWork(dir: string): Promise<LaneWork | null> {
   const counted = await gitOut(dir, ['rev-list', '--count', `${base}..HEAD`])
   if (!counted.ok || !/^\d+$/.test(counted.out)) return null
   const ahead = Number(counted.out)
-  const [touching, baseDirty, last] = await Promise.all([
+  const [touching, repoDirty, last] = await Promise.all([
     dirtyFiles(dir),
-    dirtyCount(repo),
+    baseDirty(repo),
     lastCommit(dir)
   ])
-  if (touching === null || baseDirty === null) return null
+  if (touching === null || repoDirty === null) return null
   const dirty = touching.length
   return {
     lane,
@@ -300,7 +319,7 @@ export async function laneWork(dir: string): Promise<LaneWork | null> {
     dirty,
     // Only worth computing when there is something to merge.
     conflicts: ahead > 0 ? await conflictFiles(repo, base, branch) : [],
-    baseDirty: baseDirty > 0,
+    baseDirty: repoDirty,
     empty: ahead === 0 && dirty === 0,
     subject: last.subject,
     at: last.at,
@@ -413,9 +432,7 @@ async function finished(repo: string, dir: string): Promise<boolean> {
 }
 
 const exec = (cwd: string, args: string[], timeout: number): Promise<boolean> =>
-  new Promise((done) => {
-    execFile('git', args, { cwd, windowsHide: true, timeout }, (err) => done(!err))
-  })
+  run(cwd, args, timeout, true).then((r) => r.ok)
 
 /**
  * Is a process still rooted in this folder even though PaneForge has no pane metadata
@@ -576,7 +593,8 @@ const sweepGrace = (): number => {
 export async function sweepLanes(repo: string, busy: string[] = []): Promise<string[]> {
   const removed: string[] = []
   const held = await heldLanes(repo)
-  for (const dir of await laneFolders(repo)) {
+  const folders = await laneFolders(repo)
+  for (const dir of folders) {
     // A pane that cd'd into a subfolder of the lane reports that subfolder, and it is
     // just as much "somebody is in there" as the lane root is.
     if (busy.some((b) => inside(b, dir))) continue
@@ -617,7 +635,8 @@ export async function sweepLanes(repo: string, busy: string[] = []): Promise<str
     removed.push(dir)
   }
   if (removed.length) await exec(repo, ['worktree', 'prune'], 20_000)
-  await dropEmptyShells(repo)
+  // The list read above is still the answer unless this sweep removed something.
+  await dropEmptyShells(repo, removed.length ? await laneFolders(repo) : folders)
   return removed
 }
 
@@ -634,8 +653,7 @@ export async function sweepLanes(repo: string, busy: string[] = []): Promise<str
  * is also what clears the last of the old `-w<N>` folders off a machine: they stop being
  * created, their work is merged by the normal path, and the shell goes here.
  */
-async function dropEmptyShells(repo: string): Promise<void> {
-  const registered = await laneFolders(repo)
+async function dropEmptyShells(repo: string, registered: string[]): Promise<void> {
   const parent = dirname(repo)
   let siblings: string[] = []
   try {

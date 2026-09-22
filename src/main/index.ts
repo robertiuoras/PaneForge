@@ -68,9 +68,11 @@ import { isOutdated, versionOf } from '../shared/codexCatalogue'
 import { gitInfo } from './git'
 import { projectRoot } from './projectRoot'
 import { diffFiles, diffPatch } from './diff'
+import { withDefaultModel } from '../shared/startModel'
 import type { ClientNamed, DiffScope, EffortChoice, PhoneState , LaneBoard} from '../shared/types'
 import { detectLane, laneExtras, resolveLane } from './lanes'
 import { inspectLaneFolders, laneWork, mergeLaneBack, repoOf, returnToBase, sweepLanes, trackTyped } from './laneWork'
+import { sweepDue } from '../shared/gitGate'
 import { attachLaneOwners, laneBoards, laneReclaim, laneRetry, markGone } from './laneBoard'
 import { listLaneTimeline, onLaneTimelineChange, watchLaneTimeline } from './laneTimeline'
 import type { LanePane } from './laneBoard'
@@ -972,17 +974,14 @@ manager.on('attention', (s: Session) => raiseAttention(s))
 manager.on('stalled', (s: Session) => raiseStalled(s))
 manager.on('bell', (s: Session) => raiseBell(s))
 manager.on('ask', (s: Session) => raiseAsk(s))
-// A pane naming itself is a thing the app decided, so it is reported and never asked -
-// the card in the corner carries the undo. Renderer only: nothing about it is worth a
-// phone notification.
 manager.on('sleepRefused', (id: string, why: string) => {
   send('sessions:sleepRefused', { id, why })
 })
+// A pane naming itself happens SILENTLY: no card, no sound, no phone message (Robert,
+// 2026-09-23: the corner card on every rename was noise). The Activity list is the one
+// place it can be read afterwards. `was` is in the sentence because "why is this pane
+// called that" is the question the rename produces.
 manager.on('clientNamed', (e: ClientNamed) => {
-  send('sessions:clientNamed', e)
-  // The card that says this is gone in three seconds; the list is where it can still be
-  // read afterwards. `was` is in the sentence because "why is this pane called that" is
-  // the question the rename produces.
   noteActivity(activityEntry('named', `${e.was} is now ${e.title}`, undefined))
 })
 
@@ -1188,7 +1187,7 @@ const remote = new Remote({
   // in one repo must not share a checkout just because one of them is remote.
   sendPrompt: (id, text) => manager.sendPrompt(id, text),
   startSession: async (req) => {
-    return manager.start(await laneFor(req))
+    return manager.start(withDefaultModel(await laneFor(req), getConfig().defaultModels))
   },
   // A pane handed here from another device: pull its branch, drop its transcript
   // where the CLI will look, start it as an ordinary local pane. The lane split
@@ -1814,17 +1813,28 @@ async function startOrSend(
     const began = Date.now()
     const lane = await laneFor(req, claimed)
     const decided = Date.now() - began
-    const session = await manager.start(lane)
+    // A request that named no model starts on the configured default, as the New Session
+    // dialog always did (`shared/startModel.ts`). Here, not at the top of `startOrSend`:
+    // a pane handed to the other desk takes THAT desk's defaults.
+    const session = await manager.start(withDefaultModel(lane, getConfig().defaultModels))
     logOffload({ event: 'started', id: session.id, cwd: lane.cwd, decidedMs: decided, openMs: Date.now() - began })
     return session
   }
   const cfg = getConfig()
   const mode = preferRemoteOf(cfg.autoHandoff)
-  // Set to keep automatic placements here: no round trip over the link, no line in the
-  // log. An explicit "Another device" press still has to reach `placeNewPane`, whose
-  // person-picked rule outranks this saved preference. Returning here unconditionally
-  // made the Desktop chip look selected while opening the pane on this Mac.
-  if (mode === 'never' && req.where !== 'remote' && !req.device) return here()
+  // Set to keep automatic placements here: no round trip over the link. An explicit
+  // "Another device" press still has to reach `placeNewPane`, whose person-picked rule
+  // outranks this saved preference. Returning here unconditionally made the Desktop chip
+  // look selected while opening the pane on this Mac.
+  //
+  // It still writes its line. On 2026-09-23 a Mac lagging at 16 panes with the PC online
+  // and idle had offload.log full of `started` and not one sentence saying why nothing
+  // went over - the answer was this switch, set to Never on 2026-09-18, and it was only
+  // findable by reading config.json. Same sentence `placeNewPane` gives for `never`.
+  if (mode === 'never' && req.where !== 'remote' && !req.device) {
+    logOffload({ where: 'local', reason: 'set to always start work on this machine', project: projectNameOf(req.cwd) })
+    return here()
+  }
 
   const project = projectNameOf(req.cwd)
   let target: ReturnType<typeof projectOn> = null
@@ -2009,7 +2019,6 @@ ipcMain.handle('sessions:switchAgent', (_e, id: string, agent: string, model?: s
 ipcMain.handle('sessions:rename', (_e, id: string, title: string) =>
   remote.owns(id) ? remote.send(id, { t: 'rename', title }) : manager.rename(id, title)
 )
-ipcMain.handle('sessions:clientUndo', (_e, id: string) => manager.undoClientName(id))
 // A pane that has finished what it was opened for, said while it is open rather than
 // asked for at the open. The rule that decides WHEN is `shared/closeWhenDone.ts`.
 ipcMain.handle('sessions:closeWhenDone', (_e, id: string, reportTo?: string) =>
@@ -2686,21 +2695,32 @@ ipcMain.handle('lanes:merge', async (_e, cwd: string) => {
  * used. Anything with a commit, an uncommitted file or a session in it is skipped, so
  * the worst case is a folder that lives one sweep longer than it needed to.
  */
-let sweptAt = 0
+// One sweep at a time, and never on a clock the machine cannot keep up with (`sweepDue`,
+// `shared/gitGate.ts`). This used to reset its throttle on every `sessions` event and had
+// no guard against overlapping itself: on 2026-09-22 that was 270 concurrent git children
+// of this process and a load average of 400.
+const sweep = { startedAt: 0, tookMs: 0, running: false, soon: false }
 async function sweepEmptyLanes(): Promise<void> {
   const now = Date.now()
-  if (now - sweptAt < 5 * 60_000) return
-  sweptAt = now
-  const busy = busyDirs()
-  for (const repo of await knownRepos()) {
-    try {
-      // A pane that ended in a lane keeps the folder on screen after the folder is
-      // gone, and restarting it would fail on a path the user never typed. So each
-      // removed lane hands its card back to the project it belongs to.
-      for (const dir of await sweepLanes(repo, busy)) manager.relocate(dir, repo)
-    } catch {
-      /* a repo that vanished under us is not worth a crash on a tidy-up */
+  if (!sweepDue({ now, ...sweep, loadPerCore: loadPerCore() })) return
+  sweep.running = true
+  sweep.soon = false
+  sweep.startedAt = now
+  try {
+    const busy = busyDirs()
+    for (const repo of await knownRepos()) {
+      try {
+        // A pane that ended in a lane keeps the folder on screen after the folder is
+        // gone, and restarting it would fail on a path the user never typed. So each
+        // removed lane hands its card back to the project it belongs to.
+        for (const dir of await sweepLanes(repo, busy)) manager.relocate(dir, repo)
+      } catch {
+        /* a repo that vanished under us is not worth a crash on a tidy-up */
+      }
     }
+  } finally {
+    sweep.running = false
+    sweep.tookMs = Date.now() - now
   }
 }
 // A stuck lane is retried on a clock rather than only when some chat happens to run a
@@ -2713,7 +2733,7 @@ setInterval(() => {
   // SessionEnd hook, so its lane sat held - and blocking the release - for twelve hours.
   laneReclaim(lanePanes())
   // Same clock, different lanes: the user's own worktree lanes, tidied when they are
-  // empty. Throttled to five minutes inside, and a no-op for a repo with no lanes.
+  // empty. Paced by `sweepDue` inside, and a no-op for a repo with no lanes.
   void sweepEmptyLanes()
 }, 60_000).unref()
 
@@ -2737,18 +2757,25 @@ async function knownRepos(): Promise<string[]> {
 }
 
 // A pane ending is when a lane most often stops being needed, and waiting up to five
-// minutes to notice leaves a folder on screen that has nothing in it. Deferred so the
-// sweep's git calls are never on the path of the pane list redrawing.
+// minutes to notice leaves a folder on screen that has nothing in it. Only a pane ENDING
+// asks - `sessions` fires on every status change of every pane - and it asks for the
+// shorter gap, not for a sweep now: a sweep it cannot have yet is picked up by the
+// minute clock above. Deferred so the sweep's git calls are never on the path of the pane
+// list redrawing.
 manager.on('sessions', () => {
-  if (laneSweepQueued) return
+  const live = manager.list().filter((s) => s.status !== 'exited').length
+  const ended = live < paneCountAtSweepAsk
+  paneCountAtSweepAsk = live
+  if (!ended || laneSweepQueued) return
+  sweep.soon = true
   laneSweepQueued = true
   setTimeout(() => {
     laneSweepQueued = false
-    sweptAt = 0
     void sweepEmptyLanes()
   }, 3000).unref()
 })
 let laneSweepQueued = false
+let paneCountAtSweepAsk = 0
 
 // Other devices. Every one of these answers with the whole state, so the dialog never
 // has to guess what a change did - it just redraws what it is handed.
@@ -4082,12 +4109,12 @@ async function openRequest(req: OpenRequest): Promise<void> {
   const target = req.open ?? (req.route ? confidentRoute(req.route) : undefined)
   if (!target) return
   try {
-    manager.start({
-      cwd: target,
-      prompt: req.prompt ?? req.route ?? undefined,
-      model: req.model,
-      title: req.title
-    })
+    manager.start(
+      withDefaultModel(
+        { cwd: target, prompt: req.prompt ?? req.route ?? undefined, model: req.model, title: req.title },
+        getConfig().defaultModels
+      )
+    )
   } catch {
     /* bad path on the command line - ignore rather than crash the launch */
   }
