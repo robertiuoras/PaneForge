@@ -59,6 +59,7 @@ export const SURFACE: Surface = {
   setEffort: ['invoke', 'sessions:setEffort'],
   undoClientName: ['invoke', 'sessions:clientUndo'],
   killSession: ['invoke', 'sessions:kill'],
+  clearFinished: ['invoke', 'sessions:clearFinished'],
   armCloseWhenDone: ['invoke', 'sessions:closeWhenDone'],
   sleepSession: ['invoke', 'sessions:sleep'],
   wakeSession: ['invoke', 'sessions:wake'],

@@ -158,6 +158,7 @@ import {
 } from './remoteLogin'
 import { shellQuote, type LoginInput } from '../shared/remoteLogin'
 import { DEFAULT_DEAD_DEV } from '../shared/deadDev'
+import { clearFinishedNow, exitedSweep, finishedCount, type ExitedFact } from '../shared/exitedSweep'
 import { listBackJobs, type BackJob } from './backJobs'
 import { DEFAULT_AUTO_HANDOFF } from '../shared/autoHandoff'
 import {
@@ -1998,6 +1999,45 @@ ipcMain.handle('sessions:kill', (_e, id: string) => {
   if (!known) send('sessions:changed', allSessions())
   return
 })
+
+/**
+ * A finished pane that closes itself once it has sat dead for a while - see
+ * `shared/exitedSweep.ts`. `sessions:clearFinished` is the button's half: every finished
+ * pane, not just the ones past ten minutes, removed the instant somebody presses it.
+ */
+function exitedFacts(): ExitedFact[] {
+  return manager.list().map((s) => ({
+    id: s.id,
+    remote: Boolean(s.remote),
+    status: s.status,
+    asleep: s.asleep,
+    exitedAt: s.exitedAt,
+    ask: s.ask,
+    handingOff: s.handingOff,
+    lastKeyboard: s.lastKeyboard
+  }))
+}
+function removeFinished(removals: { id: string; reason: string }[]): void {
+  if (removals.length === 0) return
+  for (const r of removals) {
+    const s = manager.list().find((x) => x.id === r.id)
+    logReclaim({ action: 'exited-sweep-close', pane: r.id, reason: r.reason })
+    manager.kill(r.id)
+    noteActivity(activityEntry('closed', s?.title || s?.cwd || 'A finished pane', r.reason))
+  }
+  send('sessions:changed', allSessions())
+}
+ipcMain.handle('sessions:clearFinished', () => {
+  const removals = clearFinishedNow(exitedFacts())
+  removeFinished(removals)
+  return removals.length
+})
+// The automatic half: the same facts the button reads, checked on its own clock so a
+// pane nobody presses the button on still leaves the sidebar ten minutes after it dies.
+setInterval(() => {
+  const removals = exitedSweep(exitedFacts(), Date.now())
+  removeFinished(removals)
+}, 30_000).unref()
 ipcMain.handle('sessions:buffer', (_e, id: string) =>
   remote.owns(id) ? remote.buffer(id) : manager.buffer(id)
 )

@@ -579,6 +579,15 @@ export interface Session {
    */
   asleepReason?: SleepReason
   /**
+   * Epoch ms this pane's process actually ENDED, stamped once when `status` first goes
+   * to `exited` for a real exit - never for `sleep()`, which sets `status: 'exited'` on
+   * purpose without this field. `shared/exitedSweep.ts` is the one reader: ten minutes
+   * past this moment with nobody having touched the pane, it leaves the sidebar the same
+   * way a manual close does. Cleared by `restart()`/`wake()`, so a pane brought back to
+   * life starts a fresh clock rather than inheriting one from before.
+   */
+  exitedAt?: number
+  /**
    * Epoch ms of the last time a PERSON woke this pane from sleep. Undefined = never woken.
    *
    * Feeds `WAKE_GRACE_MS` in shared/reclaim.ts: a pane a person just woke should not be
@@ -2324,6 +2333,8 @@ export interface Api {
   /** The list has been opened: everything in it stops counting as new. */
   markActivitySeen(): void
   killSession(id: string): Promise<void>
+  /** Removes every finished-and-untouched pane now, same class as `killSession` - see `shared/exitedSweep.ts`. Returns how many were removed. */
+  clearFinished(): Promise<number>
   /**
    * Tell a pane that is already open to close itself once it is done - the same rule
    * `pf open --close-when-done` arms at the open, asked for later. `false` = no such pane.

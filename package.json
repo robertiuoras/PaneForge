@@ -145,6 +145,7 @@
     "test:askstamp": "node scripts/ask-stamp-test.mjs",
     "test:hookdeny": "node scripts/hookdeny-test.mjs",
     "test:deaddev": "node scripts/deaddev-test.mjs",
+    "test:exitedsweep": "node scripts/exited-sweep-test.mjs",
     "test:mascot": "node scripts/mascot-test.mjs",
     "test:petmood": "node scripts/petmood-test.mjs",
     "test:devservers": "node scripts/devservers-test.mjs",

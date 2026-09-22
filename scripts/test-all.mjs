@@ -142,6 +142,7 @@ const TESTS = [
   ['askstamp', 'ask-stamp-test.mjs'],
   ['hookdeny', 'hookdeny-test.mjs'],
   ['deaddev', 'deaddev-test.mjs'],
+  ['exitedsweep', 'exited-sweep-test.mjs'],
   ['sleep', 'sleep-test.mjs'],
   ['wakeplan', 'wakeplan-test.mjs'],
   ['deviceopen', 'device-open-test.mjs'],

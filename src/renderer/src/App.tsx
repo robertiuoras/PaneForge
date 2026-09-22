@@ -2013,6 +2013,31 @@ export default function App(): JSX.Element {
   }, [sessions])
 
   /**
+   * How many local panes `sessions:clearFinished` would remove right now - drawn on the
+   * button in the "Ended" section header so it only shows up when there is something to
+   * clear. Never counts an asleep, remote, mid-handoff or asked pane - see
+   * `shared/exitedSweep.ts`, which this mirrors exactly so the number on the button
+   * matches what pressing it actually does.
+   */
+  const finishedNow = useMemo(
+    () =>
+      sessions.filter(
+        (s) =>
+          !s.remote &&
+          s.status === 'exited' &&
+          !s.asleep &&
+          !s.ask &&
+          !s.handingOff &&
+          s.exitedAt &&
+          !(s.lastKeyboard && s.lastKeyboard > s.exitedAt)
+      ).length,
+    [sessions]
+  )
+  const clearFinished = useCallback(() => {
+    void api.clearFinished()
+  }, [])
+
+  /**
    * Wipe the agent's context without ending the run - the /clear you would have typed,
    * typed for you. Written to the pty rather than pasted: a paste lands in the prompt box
    * as text and then waits for Enter, and not having to press it is the whole point.
@@ -5814,6 +5839,15 @@ export default function App(): JSX.Element {
                 <div className={`list-sec sec-${g.key}`}>
                   {g.title}
                   <span className="n">{g.rows.length}</span>
+                  {g.key === 'ended' && finishedNow > 0 && (
+                    <button
+                      className="clear-finished"
+                      title="Remove every finished pane now - the transcripts stay in history"
+                      onClick={clearFinished}
+                    >
+                      Clear finished ({finishedNow})
+                    </button>
+                  )}
                 </div>
               )}
               {g.rows.map((row) => (row.session ? sessionRow(row.session, row.number) : listedRow(row)))}

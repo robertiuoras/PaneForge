@@ -752,6 +752,16 @@ button.chip.kept:hover { filter: brightness(1.3); }
 .list-sec.sec-yourMove { color: var(--accent-text); }
 .list-sec.sec-yourMove::after { background: color-mix(in srgb, var(--accent) 30%, transparent); }
 
+/* Same hairline-header row as the rest of `.list-sec` (design-vault/linear.app.md), so
+   the one control that can appear in it reads as part of the label, not a stray button:
+   no border, no fill, normal case and weight against the uppercase count beside it. */
+.list-sec .clear-finished {
+  border: none; background: none; padding: 0 2px; margin: 0;
+  font-size: 10px; font-weight: 600; letter-spacing: normal; text-transform: none;
+  color: var(--muted); cursor: pointer;
+}
+.list-sec .clear-finished:hover { color: var(--fg); }
+
 /* A pane running on a paired machine that this one is NOT mirroring. Dimmer, because
    nothing of it is on this disk yet and it must not read as a pane you can type into;
    full strength the moment it is pointed at, or the moment it is owed an answer. */
