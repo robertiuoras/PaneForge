@@ -326,7 +326,9 @@ function reclaimPaneOf(
     // ...and what the AGENT left running in the background, which no other reading here
     // can see: the turn ended, so `busy` is false and `job` refuses to speak about an
     // agent pane at all. See `ReclaimPane.backJob`.
-    backJob: backJob ?? null,
+    // A Claude background agent still running inside the CLI dies with a close or a sleep
+    // exactly as a background shell does. See `Session.subagent`.
+    backJob: backJob ?? s.subagent ?? null,
     focused: s.id === activeId,
     // Only the pressure sweep refuses a pane for being on screen; the clock deliberately
     // does not, or a desk with the grid on could never close anything.
@@ -2658,6 +2660,9 @@ export default function App(): JSX.Element {
         // ...and what an agent left running, which is the opposite: never move it, because
         // the move kills the pty and the work with it. See `AutoPane.backJob`.
         backJob: usageRef.current?.panes[s.id]?.jobs?.[0]?.label,
+        // ...and a Claude background agent still running inside the CLI, which the move
+        // would end with it. See `AutoPane.subagent`.
+        subagent: s.subagent,
         // ...and what could not follow it AT ALL: a browser being driven on this desk.
         // See `AutoPane.machineBound`.
         machineBound: usageRef.current?.panes[s.id]?.bound,
@@ -2846,6 +2851,9 @@ export default function App(): JSX.Element {
         // printing for two hours "idle for two hours" - see ReclaimPane.lastOutput.
         lastOutput: s.lastOutput,
         busy: s.runSince !== undefined,
+        // A Claude background agent still running - closing the pane ends it. See
+        // `Session.subagent`.
+        backJob: s.subagent ?? null,
         focused: s.id === activeId,
         visible: visibleIds.has(s.id),
         remote: !!s.remote,
@@ -7030,7 +7038,7 @@ export default function App(): JSX.Element {
           // The app itself owes this pane a prompt - see `SleepPane.owedPrompt`.
           owedPrompt: !!s.owedPrompt,
           job: s.job,
-          backJob: s.backJob
+          backJob: s.backJob ?? s.subagent
         }
         return (
           <SessionMenu

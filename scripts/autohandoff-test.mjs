@@ -842,4 +842,132 @@ checks += 3
   checks += 4
 }
 
+{
+  // 2026-09-22, s24-mud0n7wb (liftgym): queued for the PC, its TURN ended, and it was moved
+  // with a Claude Code background agent ("Visual review Design 4 pages") still running
+  // inside the CLI. Closing the Mac process killed it; the PC resumed to "Background agent
+  // ... didn't finish before the previous session ended". The reading comes off the
+  // transcript - the fixture is four real lines (redacted) from a conversation that
+  // launched a background agent and was later told it finished.
+  const { readFileSync } = await import('node:fs')
+  const agentsOut = join(work, 'runningagents.bundle.cjs')
+  buildSync({ absWorkingDir: root, entryPoints: ['src/shared/runningAgents.ts'], bundle: true, format: 'cjs', platform: 'node', outfile: agentsOut })
+  const { runningAgentsIn, agentWords, newAgentScan, scanAgentLines, runningAgents, AGENT_MAX_AGE_MS } = createRequire(import.meta.url)(agentsOut)
+  const lines = readFileSync(join(root, 'scripts/fixtures/claude-background-agent.jsonl'), 'utf8').trimEnd().split('\n')
+  const launchedAt = Date.parse('2026-09-22T18:27:32.073Z')
+  const opts = { since: launchedAt - MIN, now: launchedAt + 5 * MIN }
+  const launched = lines.slice(0, 2).join('\n')
+
+  const running = runningAgentsIn(launched, opts)
+  eq('a launched background agent with no notification is running', running.map((a) => a.label), ['Visual review Design 4 pages'])
+  const words = agentWords(running)
+  eq('...said in plain words', words, 'a background agent (Visual review Design 4 pages)')
+  eq('its task-notification ends it', runningAgentsIn(lines.join('\n'), opts), [])
+  eq('...already on the queue-operation line, before the notification is delivered', runningAgentsIn(lines.slice(0, 3).join('\n'), opts), [])
+  const scan = newAgentScan()
+  scanAgentLines(scan, lines[0] + '\n')
+  scanAgentLines(scan, lines[1] + '\n')
+  eq('fed a line at a time, the same answer', runningAgents(scan, opts).length, 1)
+  scanAgentLines(scan, lines[2] + '\n')
+  eq('...and the notification fed later ends it', runningAgents(scan, opts).length, 0)
+  eq('an agent launched before this CLI process started died with the old one', runningAgentsIn(launched, { since: launchedAt + 1000, now: launchedAt + 5 * MIN }), [])
+  eq('...and one older than the cap is not believed', runningAgentsIn(launched, { now: launchedAt + AGENT_MAX_AGE_MS + 1 }), [])
+  const fg = JSON.parse(lines[1])
+  fg.message.content[0].content = [{ type: 'text', text: 'Reviewed all four pages. Two contrast failures on /pricing.' }]
+  eq('a foreground agent whose report came back is finished', runningAgentsIn([lines[0], JSON.stringify(fg)].join('\n'), opts), [])
+  const failed = JSON.parse(lines[1])
+  failed.message.content[0].is_error = true
+  eq('a launch that errored never ran', runningAgentsIn([lines[0], JSON.stringify(failed)].join('\n'), opts), [])
+  eq('nothing running says nothing', agentWords([]), undefined)
+
+  // Every automatic rung: running -> refused, finished -> allowed.
+  const claude = (o) => pane({ agent: 'claude', resumeId: 'conv', memMb: 300, ...o })
+  const reviewing = claude({ id: 'reviewing', lastKeyboard: NOW - 60 * MIN, subagent: words })
+  const done = claude({ id: 'reviewing', lastKeyboard: NOW - 60 * MIN })
+  const other = claude({ id: 'other', lastKeyboard: NOW - 40 * MIN })
+  eq('movable refuses a pane whose background agent is running', movable(reviewing), false)
+  eq('queueable refuses it too', queueable(reviewing), false)
+  eq('movable allows the same pane once the agent finished', movable(done), true)
+  eq('queueable allows it once finished', queueable(done), true)
+  const idleCfg = { ...DEFAULT_AUTO_HANDOFF, offloadIdleMinutes: 30 }
+  eq('the idle clock passes over it', ids(idleOffloadPlan([reviewing, other], peers, idleCfg, {}, NOW)), 'other')
+  eq('...and takes it once the agent finished', ids(idleOffloadPlan([done, other], peers, idleCfg, {}, NOW)), 'reviewing')
+  const budgetCfg = { ...DEFAULT_AUTO_HANDOFF, budgetMinMb: 1 }
+  check('the budget never picks it', !ids(budgetPlan([reviewing, other], peers, budgetCfg, {}, NOW, 1)).includes('reviewing'), ids(budgetPlan([reviewing, other], peers, budgetCfg, {}, NOW, 1)))
+  check('...and does once the agent finished', ids(budgetPlan([done, other], peers, budgetCfg, {}, NOW, 1)).includes('reviewing'), ids(budgetPlan([done, other], peers, budgetCfg, {}, NOW, 1)))
+  const dear = { memMb: 900 }
+  const suggested = suggestMove([{ ...reviewing, ...dear }, other], peers, DEFAULT_AUTO_HANDOFF, {}, NOW)
+  check('the pressure card never suggests moving it, dearest as it is', suggested?.id !== 'reviewing', suggested)
+  eq('...and suggests it once the agent finished', suggestMove([{ ...done, ...dear }, other], peers, DEFAULT_AUTO_HANDOFF, {}, NOW)?.id, 'reviewing')
+  const q = { id: 'reviewing', device: 'pc', since: NOW }
+  eq('a queued pane whose turn ended WAITS while its agent runs', queueVerdict(q, { state: 'ready', asking: false, subagent: words }, DEFAULT_AUTO_HANDOFF, NOW), 'wait')
+  eq('...and counts down once it finished', queueVerdict(q, { state: 'ready', asking: false }, DEFAULT_AUTO_HANDOFF, NOW), 'soon')
+  eq('...a countdown already running waits instead of going', queueVerdict({ ...q, goAt: NOW - 1 }, { state: 'ready', asking: false, subagent: words }, DEFAULT_AUTO_HANDOFF, NOW), 'wait')
+
+  // The queue itself: kept queued, said once in handoff.log, moved after the agent ends.
+  const queueOut = join(work, 'handoffqueue.bundle.cjs')
+  buildSync({ absWorkingDir: root, entryPoints: ['src/main/handoffQueue.ts'], bundle: true, format: 'cjs', platform: 'node', outfile: queueOut })
+  const { HandoffQueue } = createRequire(import.meta.url)(queueOut)
+  let clock = NOW
+  const log = []
+  const sent = []
+  const listed = [{ id: 'reviewing', title: 'liftgym', subagent: words }]
+  const hq = new HandoffQueue({
+    list: () => listed,
+    busy: () => false,
+    send: async (id) => {
+      sent.push(id)
+      return [{ id, ok: true }]
+    },
+    mark: () => {},
+    deviceName: () => 'PC',
+    config: () => DEFAULT_AUTO_HANDOFF,
+    log: (line) => log.push(line),
+    now: () => clock
+  })
+  hq.add('reviewing', 'pc')
+  hq.tick()
+  hq.tick()
+  clock += 30_000
+  hq.tick()
+  eq('the queue does not move a pane whose background agent runs', sent, [])
+  eq('...keeps it queued', hq.pending().map((p) => p.id), ['reviewing'])
+  eq('...and says why in handoff.log, once', log.filter((l) => l.includes('a background agent (Visual review Design 4 pages) is still running')).length, 1)
+  listed[0] = { id: 'reviewing', title: 'liftgym' }
+  hq.tick()
+  eq('the agent finished: a countdown, not a move', sent, [])
+  clock += 16_000
+  hq.tick()
+  eq('...then the move', sent, ['reviewing'])
+  hq.stop()
+
+  // Given up out loud, with the reason, if the agent outlasts the wait.
+  const log2 = []
+  let clock2 = NOW
+  const hq2 = new HandoffQueue({
+    list: () => [{ id: 'long', title: 'liftgym', subagent: words }],
+    busy: () => false,
+    send: async () => [],
+    mark: () => {},
+    deviceName: () => 'PC',
+    config: () => DEFAULT_AUTO_HANDOFF,
+    log: (line) => log2.push(line),
+    now: () => clock2
+  })
+  hq2.add('long', 'pc')
+  clock2 += (DEFAULT_AUTO_HANDOFF.waitMinutes + 1) * MIN
+  hq2.tick()
+  check('an agent that outlasts the wait: given up with the reason', log2.some((l) => /gave up waiting after \d+ min - a background agent \(Visual review Design 4 pages\) is still running, so it stays here/.test(l)), log2)
+  hq2.stop()
+
+  // Wiring the renderer and main must keep: the reading reaches every rung.
+  const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
+  assert.match(app, /subagent: s\.subagent,/, 'handoffPanes carries Session.subagent onto AutoPane')
+  const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
+  assert.match(sessions, /backgroundAgentsFor\(meta\.id, path, bornAt, now\)/, 'the session sweep reads it off the transcript it already resolved')
+  const handoff = readFileSync(join(root, 'src/main/handoff.ts'), 'utf8')
+  assert.match(handoff, /deps\.busy\?\.\(pane\) \|\| !!pane\.subagent/, 'a handoff asked for while an agent runs is queued, not sent')
+  checks += 3
+}
+
 console.log(`autohandoff: ${checks} checks passed`)

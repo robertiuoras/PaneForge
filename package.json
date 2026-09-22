@@ -250,6 +250,7 @@
     "test:look": "node scripts/look-check-test.mjs",
     "test:tour": "node scripts/tour-test.mjs",
     "test:cardidle": "node scripts/card-idle-test.mjs",
+    "test:gitgate": "node scripts/git-gate-test.mjs",
     "test:devkeep": "node scripts/devkeep-test.mjs",
     "test:exitclose": "node scripts/exitclose-test.mjs",
     "test:headerfit": "node scripts/header-fit-test.mjs",

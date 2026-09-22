@@ -36,7 +36,7 @@ buildSync({
   platform: 'node',
   outfile: out
 })
-const { stalledNow, silenceMs } = createRequire(import.meta.url)(out)
+const { stalledNow, silenceMs, withoutBinaryBells } = createRequire(import.meta.url)(out)
 
 let checks = 0
 const is = (actual, expected, what) => {
@@ -47,6 +47,18 @@ const is = (actual, expected, what) => {
 const MIN = 60_000
 /** A turn that has been running for a while: the case the alert exists for. */
 const running = { runSince: 1, engaged: true, raised: false, silenceMs: 5 * MIN }
+
+// A real BEL is still the CLI's explicit request for attention. Binary tool output can
+// contain the same byte by accident, and session 9 produced two of them inside a dense
+// run of control bytes while its turn was still running.
+is(withoutBinaryBells('\x07'), '\x07', 'a standalone terminal bell is preserved')
+is(withoutBinaryBells('done\x07\r\n'), 'done\x07\r\n', 'a bell after readable output is preserved')
+is(withoutBinaryBells('\x1b]0;title\x07'), '\x1b]0;title\x07', 'an OSC BEL terminator is preserved')
+is(
+  withoutBinaryBells('binary\x00\x19\ufffd\x07\x08\ufffddata'),
+  'binary\x00\x19\ufffd\x08\ufffddata',
+  'a BEL embedded in binary command output is silent'
+)
 
 // ---------------------------------------------------------------------------
 // The one thing it must say

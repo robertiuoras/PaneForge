@@ -72,6 +72,7 @@ const TESTS = [
   ['tour', 'tour-test.mjs'],
   ['look', 'look-check-test.mjs'],
   ['cardidle', 'card-idle-test.mjs'],
+  ['gitgate', 'git-gate-test.mjs'],
   ['devkeep', 'devkeep-test.mjs'],
   ['devlayout', 'dev-layout-test.mjs'],
   ['remotereset', 'remote-reset-test.mjs'],

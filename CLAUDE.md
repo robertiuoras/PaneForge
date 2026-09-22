@@ -575,6 +575,7 @@ count (`choose()` -> `write()`, auto-answer `'app'`); unsent typing is nothing.
 
 ## Checks
 
+On the PC in one command: `node scripts/pc-check.mjs typecheck <suite...>` (rbuild, retries, failures + totals only).
 `npm run typecheck`, `npm test` (`scripts/test-all.mjs`, no window/network/CLI); gate step 3
 (`agentGate.ts`) needs `test`. Pins: `docs/design-notes.md` **Checks — what each suite pins**.
 Window: `test:autoclearlag`, `test:view`, `test:stashdrag`, `test:activate`, `test:restorefix`,

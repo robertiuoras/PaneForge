@@ -19,6 +19,8 @@ const keeperSource = readFileSync(new URL('../src/shared/keepScrollback.ts', imp
 const { keepScrollback } = await import('data:text/javascript;base64,' + Buffer.from(transformSync(keeperSource, {loader:'ts',format:'esm'}).code).toString('base64'))
 const protocolSource = readFileSync(new URL('../src/shared/terminalProtocol.ts', import.meta.url), 'utf8')
 const { withoutReplayQueries } = await import('data:text/javascript;base64,' + Buffer.from(transformSync(protocolSource, {loader:'ts',format:'esm'}).code).toString('base64'))
+const alertsSource = readFileSync(new URL('../src/shared/alerts.ts', import.meta.url), 'utf8')
+const { withoutBinaryBells } = await import('data:text/javascript;base64,' + Buffer.from(transformSync(alertsSource, {loader:'ts',format:'esm'}).code).toString('base64'))
 const t = new Terminal({ cols: 80, rows: 10, allowProposedApi: true })
 let reset, typed, resolveRead, reads = 0
 const api = {
@@ -27,7 +29,7 @@ const api = {
   getBuffer() { reads++; return new Promise(resolve => { resolveRead = resolve }) }
 }
 const pending = transformSync(source.slice(source.indexOf('    let pendingDataWrites = '), source.indexOf('    const offHandover = ', source.indexOf('    let pendingDataWrites = '))), {loader:'ts'}).code
-const install = new Function('api', 't', 'keepScrollback', 'withoutReplayQueries', `
+const install = new Function('api', 't', 'keepScrollback', 'withoutReplayQueries', 'withoutBinaryBells', `
   const sessionId = 'remote', list = [], dead = false;
   const submitted = [];
   const noteSubmitted = (line) => submitted.push({text:line, row:t.buffer.active.baseY + t.buffer.active.cursorY});
@@ -45,7 +47,7 @@ const install = new Function('api', 't', 'keepScrollback', 'withoutReplayQueries
   ${callback}
   return { pinned, submitted };
 `)
-const { pinned, submitted } = install(api, t, keepScrollback, withoutReplayQueries)
+const { pinned, submitted } = install(api, t, keepScrollback, withoutReplayQueries, withoutBinaryBells)
 const replies = []
 t.onData(data => replies.push(data))
 // A live query already queued before a reset still receives its reply. Historical

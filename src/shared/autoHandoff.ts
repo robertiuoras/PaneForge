@@ -14,15 +14,15 @@
 //   3. MOVE a finished pane there (this file)    - the work continues, on the other desk
 //   4. close a finished pane      (reclaim.ts)   - the last resort, and only with no peer
 //
-// Rung 3 is intentionally limited to plain shell panes. An agent's remote process can be
-// opened, but this app does not yet receive proof that its conversation was accepted, so
-// automatically copying one would duplicate work without safely freeing this machine.
+// Rung 3 moves what `travels` says can exist over there: a shell, or a Claude/Codex pane
+// with a conversation id to resume (since 2026-09-08; the sender keeps the pane until the
+// far end proves the resume, `main/handoff.ts`). This header said "shell panes only" until
+// 2026-09-23, and so did the Settings switch - a sentence that was false for two weeks,
+// on the switch that was then found turned off.
 //
 // Two refusals decide whether this is safe rather than merely clever:
 //
-//   - **Automatic plans never move an agent pane.** The manual queue remains separate:
-//     its sender preserves the original agent pane until a real resume acknowledgement
-//     exists, rather than treating a remote process start as continuity.
+//   - **Only work that can arrive moves** (`travels`): no resume id, no move.
 //   - **A pane holding a live question is never moved**, queued or otherwise. The chooser
 //     is drawn on a screen, not in the transcript; resuming over there comes back with the
 //     question gone and the agent waiting for something nobody was asked.
@@ -320,6 +320,18 @@ export interface AutoPane {
    */
   backJob?: string
   /**
+   * A Claude Code background agent the conversation launched and that is still running
+   * (`Session.subagent`, read off the transcript). A REFUSAL, for the reason `backJob` is
+   * one and with the same consequence: the agent lives inside the CLI, and a move ends the
+   * CLI here. s24-mud0n7wb (2026-09-22) was queued, its turn ended, and it was moved to the
+   * PC with "Visual review Design 4 pages" half done; the PC resumed to "Background agent
+   * ... didn't finish before the previous session ended". Unlike a turn, nothing here waits
+   * for it - a pane refused now is simply looked at again on the next sweep, and a QUEUED
+   * pane stays queued (`queueVerdict` answers `wait`) until the agent finishes or the queue
+   * gives up out loud.
+   */
+  subagent?: string
+  /**
    * Why this pane's WORK cannot follow it to another machine (`shared/paneBound.ts`).
    *
    * A refusal, and a different one from `backJob`. A background job is work that would be
@@ -426,6 +438,7 @@ export function movable(
     | 'asking'
     | 'owedPrompt'
     | 'backJob'
+    | 'subagent'
     | 'machineBound'
     | 'shareable'
     | 'stayHere'
@@ -439,6 +452,8 @@ export function movable(
   // Killing the pty takes the background work with it, and there is no turn boundary to
   // wait for. See `AutoPane.backJob`.
   if (p.backJob) return false
+  // ...and the same for a background agent running inside the CLI. See `AutoPane.subagent`.
+  if (p.subagent) return false
   // The work itself does not exist on the other machine. See `AutoPane.machineBound`.
   if (p.machineBound) return false
   // ...and neither does the code. See `AutoPane.shareable`.
@@ -479,6 +494,7 @@ export function queueable(
     | 'asking'
     | 'owedPrompt'
     | 'backJob'
+    | 'subagent'
     | 'machineBound'
     | 'shareable'
     | 'stayHere'
@@ -490,6 +506,7 @@ export function queueable(
   // The app owes this pane a prompt - see `AutoPane.owedPrompt`.
   if (p.owedPrompt) return false
   if (p.backJob) return false
+  if (p.subagent) return false
   if (p.machineBound) return false
   if (p.shareable === false) return false
   if (p.stayHere) return false
@@ -869,7 +886,7 @@ export type QueueVerdict =
   | 'go'
   /** the turn just ended: start the countdown */
   | 'soon'
-  /** still working, holding a question, or counting down: leave it queued */
+  /** still working, holding a question, running a background agent, or counting down: leave it queued */
   | 'wait'
   /** it waited longer than the budget: give up and say so, never kill it */
   | 'expired'
@@ -878,7 +895,7 @@ export type QueueVerdict =
 
 export function queueVerdict(
   q: Queued,
-  pane: Pick<AutoPane, 'state' | 'asking'> | undefined,
+  pane: Pick<AutoPane, 'state' | 'asking' | 'subagent'> | undefined,
   cfg: AutoHandoffConfig = DEFAULT_AUTO_HANDOFF,
   now = 0
 ): QueueVerdict {

@@ -521,6 +521,17 @@ export interface Session {
   /** Epoch ms that job started, so the row's clock counts the job and not the silence. */
   backJobSince?: number
   /**
+   * A Claude Code BACKGROUND AGENT this pane's conversation launched and that has not
+   * finished (`a background agent (Visual review Design 4 pages)`), read off the transcript
+   * by `main/runningAgents.ts`. Absent when none is running or nothing could be read.
+   *
+   * Unlike `backJob` this is a REFUSAL everywhere a process would be ended: an automatic
+   * move (`AutoPane.subagent`, the handoff queue), a sleep and a close (fed to reclaim as a
+   * `backJob`). The agent runs inside the CLI, so ending the CLI ends it - s24-mud0n7wb was
+   * moved to the PC on 2026-09-22 with its review half done.
+   */
+  subagent?: string
+  /**
    * The last turn ended having changed no file in this pane's folder - `changed no files`,
    * or absent when there is nothing to say. See `shared/changedNothing.ts`.
    *
