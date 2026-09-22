@@ -60,12 +60,13 @@ const repo = join(root, 'demo')
 const laneA = join(root, 'demo-a')
 
 /** A fresh repo every block, so one failing assertion cannot cascade into the next. */
-function makeRepo({ typecheck = null, deps = null } = {}) {
+function makeRepo({ typecheck = null, deps = null, test = null } = {}) {
   rmSync(repo, { recursive: true, force: true })
   rmSync(laneA, { recursive: true, force: true })
   mkdirSync(join(repo, 'scripts'), { recursive: true })
   const pkg = { name: 'demo', version: '0.0.1' }
   if (typecheck) pkg.scripts = { typecheck }
+  if (test) pkg.scripts = { ...pkg.scripts, test }
   if (deps) pkg.devDependencies = deps
   writeFileSync(join(repo, 'package.json'), JSON.stringify(pkg, null, 2))
   // "none" keeps the whole release path offline: lanes merge, nothing is pushed or tagged.
@@ -123,8 +124,8 @@ writeFileSync(
     `}\n` +
     // Everything else is `npm run --silent typecheck`: run the script out of package.json
     // with the shell, which is all the real npm does that matters here.
-    `if (args[0] === 'run') {\n` +
-    `  const name = args.filter((a) => !a.startsWith('--'))[1]\n` +
+    `if (args[0] === 'run' || args[0] === 'test') {\n` +
+    `  const name = args[0] === 'test' ? 'test' : args.filter((a) => !a.startsWith('--'))[1]\n` +
     `  const pkg = JSON.parse((await import('node:fs')).readFileSync(join(process.cwd(), 'package.json'), 'utf8'))\n` +
     `  const cmd = pkg.scripts?.[name]\n` +
     `  if (!cmd) { console.error('npm ERR! missing script: ' + name); process.exit(1) }\n` +
@@ -266,6 +267,26 @@ ok('a real type error is still called a type error', /does not typecheck/i.test(
 ok('and it quotes the error', /TS1005/.test(broken), broken)
 
 // ----------------------------------------------------------------
+
+const deferred = 'Tests deferred: designated PC unavailable or identity mismatch. No local browser fallback.'
+makeRepo({ test: 'node suite.cjs' })
+const recovery = join(root, 'pc-recovered')
+writeFileSync(join(repo, 'suite.cjs'), `const fs = require('node:fs'); if (!fs.existsSync(${JSON.stringify(recovery)})) { console.error(${JSON.stringify(deferred)}); process.exit(3) }`)
+git(repo, 'add', 'suite.cjs')
+git(repo, 'commit', '-qm', 'remote suite')
+claimLaneA('remote')
+workInLaneA()
+const unavailable = lane('ready', '--session', 'remote')
+const ledgerPath = join(repo, '.git', 'paneforge-lanes.json')
+let ledger = JSON.parse(readFileSync(ledgerPath, 'utf8'))
+ok('PC unavailability blocks release without blaming code', /could not run/.test(unavailable) && !/fails its own test suite/.test(unavailable), unavailable)
+ok('PC unavailability is not cached as a failing commit', !ledger.suite || ledger.suite.ok !== false)
+// Simulate the verdict persisted by older coordinators, then recover without a commit.
+ledger.suite = { commit: git(repo, 'rev-parse', 'HEAD'), ok: false, reason: `master fails its own test suite - ${deferred}` }
+writeFileSync(ledgerPath, JSON.stringify(ledger))
+writeFileSync(recovery, 'ready')
+const recovered = lane('ready', '--session', 'remote')
+ok('a recovered PC retries the same commit despite an old cached transport failure', /merged into master/i.test(recovered), recovered)
 
 console.log(failed ? `\n${failed} failed` : '\nall passed')
 process.exit(failed ? 1 : 0)

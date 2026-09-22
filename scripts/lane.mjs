@@ -2369,7 +2369,7 @@ function firstLine(out) {
 
 /** A command that never started, as opposed to one that ran and disagreed with the code. */
 function cannotRun(out) {
-  return /is not recognized|command not found|ENOENT|Cannot find module|npm ERR! missing script|sh: .*: not found/i.test(out)
+  return /is not recognized|command not found|ENOENT|Cannot find module|npm ERR! missing script|sh: .*: not found|Tests deferred: (?:designated PC unavailable or identity mismatch|established PC transport unavailable)\. No local browser fallback\./i.test(out)
 }
 
 /** Does this checkout declare dependencies it has not got? */
@@ -2490,7 +2490,10 @@ function suiteFailure(state) {
 
   const head = gitSafe(MAIN, 'rev-parse', 'HEAD')
   const commit = head.ok ? head.out : null
-  if (commit && state.suite?.commit === commit) return state.suite.ok ? null : state.suite.reason
+  if (commit && state.suite?.commit === commit &&
+      (state.suite.ok || !cannotRun(state.suite.reason ?? ''))) {
+    return state.suite.ok ? null : state.suite.reason
+  }
 
   if (dependenciesMissing(pkg)) {
     const failed = installDeps()
@@ -2554,7 +2557,7 @@ function suiteFailure(state) {
   if (cannotRun(all)) {
     return (
       `${MB}'s test suite could not run, so nothing was released - ${firstLine(all)}. ` +
-      `That is this checkout's tooling, not the code.`
+      `Required tooling or remote transport is unavailable; this is not a code verdict.`
     )
   }
   // test-all.mjs prints one line per check; the FAIL lines are the whole answer and the
