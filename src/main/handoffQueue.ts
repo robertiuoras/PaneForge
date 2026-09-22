@@ -64,6 +64,8 @@ export class HandoffQueue {
   private entries = new Map<string, Queued>()
   private timer: NodeJS.Timeout | null = null
   private running = new Set<string>()
+  /** ids whose hold by a background agent has already been said, so the log hears it once */
+  private heldSaid = new Map<string, string>()
 
   constructor(private deps: QueueDeps) {}
 
@@ -103,6 +105,7 @@ export class HandoffQueue {
   drop(id: string): boolean {
     const had = this.entries.get(id)
     if (!had || !this.entries.delete(id)) return false
+    this.heldSaid.delete(id)
     this.deps.mark(id, false)
     this.deps.soon?.(id, had.device, null)
     this.deps.log(`handoff: ${id} taken off the queue - it stays here`)
@@ -144,14 +147,24 @@ export class HandoffQueue {
     for (const q of [...this.entries.values()]) {
       if (this.running.has(q.id)) continue
       const pane = panes.get(q.id)
+      // A background agent still running inside the CLI holds the move exactly as a turn
+      // does: the move ends the CLI here and the agent with it (s24-mud0n7wb, 2026-09-22).
+      const held = pane?.subagent
       const state = pane
         ? {
             // The queue's own reading of busy is the one that decides, not fleetState:
             // `busy` covers a live question as well as a turn, and both must hold the move.
             state: (this.deps.busy(pane) ? 'working' : 'ready') as 'working' | 'ready',
-            asking: false
+            asking: false,
+            subagent: held
           }
         : undefined
+      if (held && this.heldSaid.get(q.id) !== held) {
+        this.heldSaid.set(q.id, held)
+        this.deps.log(`handoff: ${q.id} still waiting - ${held} is still running, and moving now would stop it`)
+      } else if (!held) {
+        this.heldSaid.delete(q.id)
+      }
       const verdict = queueVerdict(q, pane ? state : undefined, cfg, now)
       if (verdict === 'soon') {
         // The turn just ended: start the countdown rather than moving outright, so a
@@ -167,13 +180,14 @@ export class HandoffQueue {
         // must leave `goAt` alone, or the countdown would never survive its own second
         // tick. Only a pane that went BUSY AGAIN clears it, same as if the turn had never
         // ended - read straight off `busy()` rather than inferred from the verdict.
-        if (q.goAt != null && pane && this.deps.busy(pane)) {
+        if (q.goAt != null && pane && (this.deps.busy(pane) || held)) {
           this.entries.set(q.id, { ...q, goAt: undefined })
           this.deps.soon?.(q.id, q.device, null)
         }
         continue
       }
       this.entries.delete(q.id)
+      this.heldSaid.delete(q.id)
       if (verdict === 'drop') {
         this.deps.mark(q.id, false)
         this.deps.soon?.(q.id, q.device, null)
@@ -183,9 +197,10 @@ export class HandoffQueue {
         this.deps.mark(q.id, false)
         this.deps.soon?.(q.id, q.device, null)
         const mins = Math.round((now - q.since) / 60000)
-        this.deps.log(`handoff: ${q.id} gave up waiting after ${mins} min - still working, so it stays here`)
+        const why = held ? `${held} is still running` : 'still working'
+        this.deps.log(`handoff: ${q.id} gave up waiting after ${mins} min - ${why}, so it stays here`)
         this.deps.notify?.(
-          `${this.paneName(q.id, panes)} did not move to ${this.deps.deviceName(q.device)} - still working after ${mins} min, so it stays here`
+          `${this.paneName(q.id, panes)} did not move to ${this.deps.deviceName(q.device)} - ${why} after ${mins} min, so it stays here`
         )
         continue
       }

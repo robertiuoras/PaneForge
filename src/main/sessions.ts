@@ -80,6 +80,7 @@ import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from '.
 import { codexAcceptedPrompt, forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeEvidence, resumeIdFor, transcriptPath } from './transcripts'
 import { recordPromptReview } from './promptReview'
 import { liveModelFor } from './paneModel'
+import { backgroundAgentsFor, forgetBackgroundAgents, noteBackgroundAgents } from './runningAgents'
 // How hard a Codex pane thinks. The rule is `shared/effort.ts`, the disk is
 // `main/effort.ts`, the levels each model offers come from Codex itself.
 import {
@@ -147,6 +148,9 @@ import type {
   TurnClock
 } from '../shared/types'
 import { SLOW_WAKE_MS, wokeSlowly } from '../shared/wakePlan'
+
+/** When each pty process was first seen by the sweep - see `backgroundAgentsFor`'s `since`. */
+const procBorn = new WeakMap<object, number>()
 
 /** How long output must stay quiet before the pane's dot stops saying "working". */
 const IDLE_AFTER_MS = 4000
@@ -1246,7 +1250,9 @@ export class SessionManager extends EventEmitter {
       // starting (the model-switch-then-resume chain) that `owedPrompt` alone would miss.
       owedPrompt: Boolean(live.meta.owedPrompt) || (live.meta.handoverUntil ?? 0) > Date.now(),
       job: live.meta.job,
-      backJob: live.meta.backJob
+      // A background agent still running inside the CLI dies with a sleep exactly as a
+      // background shell does. See `Session.subagent`.
+      backJob: live.meta.backJob ?? live.meta.subagent
     }
     // These are measured before killing the process. Explicit fields keep caller-supplied
     // data out of the log: never spread an IPC payload which could contain prompt text.
@@ -3185,6 +3191,7 @@ export class SessionManager extends EventEmitter {
     // keep. The line in `queued-prompts.log` carries enough of the text to find it again.
     dropAllFor(id, 'gone')
     forgetSession(id)
+    forgetBackgroundAgents(id)
     this.sessions.delete(id)
     forgetHandoff(id)
     this.emitSessions()
@@ -3195,7 +3202,7 @@ export class SessionManager extends EventEmitter {
     const live = this.sessions.get(id)
     if (!live) return { closed: false, reason: 'session is no longer open' }
     const m = live.meta
-    if (m.status !== 'idle' || m.runSince || live.busyUntil > Date.now() || m.job || m.backJob) return { closed: false, reason: 'session is busy or has a background job' }
+    if (m.status !== 'idle' || m.runSince || live.busyUntil > Date.now() || m.job || m.backJob || m.subagent) return { closed: false, reason: 'session is busy or has a background job' }
     if (m.drafting || m.ask || m.owedPrompt || m.handingOff || m.handoffQueuedAt || m.handoffOpen || (m.handoverUntil ?? 0) > Date.now()) return { closed: false, reason: 'session has a draft, question, queued prompt, or handoff' }
     if (m.lastKeyboard > reportedAt) return { closed: false, reason: 'newer user input exists' }
     this.kill(id)
@@ -4192,6 +4199,23 @@ export class SessionManager extends EventEmitter {
         const live2 = liveModelFor(path, meta.model, claudeModelValues(), now)
         if (live2 !== meta.model) {
           meta.model = live2
+          changed = true
+        }
+        // ...and whether that conversation still has a BACKGROUND AGENT running inside
+        // this CLI. The turn is over, the footer is quiet, and ending the process now - a
+        // move, a sleep, a close - ends the agent with it (s24-mud0n7wb, 2026-09-22: moved
+        // to the PC mid "Visual review Design 4 pages"). Same path the model chip just
+        // resolved, read incrementally; see `main/runningAgents.ts`. Agents launched
+        // before THIS process started died with the one that launched them.
+        let bornAt: number | undefined
+        if (live.proc) {
+          bornAt = procBorn.get(live.proc)
+          if (bornAt === undefined) procBorn.set(live.proc, (bornAt = now))
+        }
+        const agents = meta.status === 'exited' || !live.proc ? undefined : backgroundAgentsFor(meta.id, path, bornAt, now)
+        noteBackgroundAgents(meta.id, agents)
+        if (agents !== meta.subagent) {
+          meta.subagent = agents
           changed = true
         }
       }
