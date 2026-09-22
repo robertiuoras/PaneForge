@@ -41,6 +41,7 @@ if (process.platform !== 'win32') {
 const TESTS = [
   ['remotesuite', 'test-remote-test.mjs'],
   ['promptreview', 'prompt-review-test.mjs'],
+  ['reviewload', 'review-load-test.mjs'],
   ['review', 'review-test.mjs'],
   ['claudemd', 'claudemd-size-test.mjs'],
   ['copylogic', 'copy-logic-test.mjs'],
@@ -189,6 +190,7 @@ const TESTS = [
   // Both folder buttons on a pane open the project, never the copy the pane runs in.
   ['projectfolder', 'project-folder-test.mjs'],
   ['clientname', 'client-name-test.mjs'],
+  ['renametrigger', 'rename-trigger-test.mjs'],
   ['resolvedname', 'resolved-name-test.mjs'],
   ['peerchrome', 'peer-chrome-test.mjs'],
   ['remotelogin', 'remote-login-test.mjs'],

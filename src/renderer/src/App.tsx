@@ -5125,7 +5125,6 @@ export default function App(): JSX.Element {
                 // what you come back to. Watching activeId change cannot see this tap.
                 handheld.showPane()
               }}
-              onDoubleClick={() => setRenaming(s.id)}
               // A list row's actions belong on its right-click, which is where every
               // desktop hand looks for them first. The pane is made active on the way in,
               // so the menu is never acting on a card other than the one being pointed at.
@@ -6051,7 +6050,7 @@ export default function App(): JSX.Element {
             >
               <StatusDot status={s.status} engaged={s.engaged} />
               <AgentLogo id={s.agent} spec={agents.find((a) => a.id === s.agent)} size={14} />
-              <span className="pt-name" onDoubleClick={() => setRenaming(s.id)}>
+              <span className="pt-name">
                 {s.title}
               </span>
               {s.remote && (
@@ -7116,7 +7115,7 @@ export default function App(): JSX.Element {
                     }
                   ]
                 : []),
-              { key: 'rename', label: 'Rename…', hint: 'or double-click the card', run: () => setRenaming(s.id) },
+              { key: 'rename', label: 'Rename…', run: () => setRenaming(s.id) },
               {
                 key: 'notes',
                 label: 'Notes',
