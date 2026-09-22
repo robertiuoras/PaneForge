@@ -20,6 +20,7 @@ import { spawn } from 'node:child_process'
 import { mkdtempSync, existsSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { testChrome } from './test-chrome.mjs'
 
 const arg = (name, fallback) => {
   const i = process.argv.indexOf(`--${name}`)
@@ -37,11 +38,7 @@ const ok = (cond, what, detail = '') => {
   if (!cond) failures++
 }
 
-const CHROME = [
-  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-  '/Applications/Chromium.app/Contents/MacOS/Chromium',
-  'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
-].find((p) => existsSync(p))
+const CHROME = testChrome()
 if (!CHROME) {
   console.log('borrow cycle: SKIPPED - no system Chrome (nothing was downloaded)')
   process.exit(0)
