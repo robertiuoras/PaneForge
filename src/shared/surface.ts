@@ -60,6 +60,7 @@ export const SURFACE: Surface = {
   undoClientName: ['invoke', 'sessions:clientUndo'],
   killSession: ['invoke', 'sessions:kill'],
   clearFinished: ['invoke', 'sessions:clearFinished'],
+  touchedSession: ['send', 'sessions:touched'],
   armCloseWhenDone: ['invoke', 'sessions:closeWhenDone'],
   sleepSession: ['invoke', 'sessions:sleep'],
   wakeSession: ['invoke', 'sessions:wake'],

@@ -792,6 +792,9 @@ ok(!server.running, 'the gate test server stopped cleanly')
     // is a bigger log file.
     'reclaim:log',
     'pane:fixlog',
+    // Reviewed 2026-09-23: stamps when a person last pressed a pane, which only HOLDS the
+    // finished-pane sweep. It starts, stops and types nothing.
+    'sessions:touched',
     // Reviewed 2026-09-01: "leave that dev server alone". It writes one pid into a
     // never-offer-again set for this app run. It starts nothing and stops nothing - the
     // worst a phone reaches is that a leaked dev server keeps leaking.

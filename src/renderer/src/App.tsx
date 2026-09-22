@@ -4819,6 +4819,8 @@ export default function App(): JSX.Element {
    */
   const touchPane = useCallback((id: string, wake = true) => {
     focusLeftAt.current[id] = Date.now()
+    // Main's finished-pane sweep cannot see this ref; tell it a person came to the pane.
+    api.touchedSession(id)
     // Arriving at a SLEEPING pane is the press that wakes it. The chip has always been
     // the way back, but a sleeping pane is a pane somebody kept for easy access - and
     // "click it, then find the small chip and click that as well" is two presses for one

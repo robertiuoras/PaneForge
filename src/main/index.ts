@@ -2005,6 +2005,13 @@ ipcMain.handle('sessions:kill', (_e, id: string) => {
  * `shared/exitedSweep.ts`. `sessions:clearFinished` is the button's half: every finished
  * pane, not just the ones past ten minutes, removed the instant somebody presses it.
  */
+// When a person last pressed each pane's card or row. The renderer's own focus stamps
+// never reach main, and `lastKeyboard` only moves on typing - so without this a click on a
+// dead pane somebody was reading did not hold the ten-minute sweep (review of e4ce613e).
+const touchedAt = new Map<string, number>()
+ipcMain.on('sessions:touched', (_e, id: unknown) => {
+  if (typeof id === 'string' && id) touchedAt.set(id, Date.now())
+})
 function exitedFacts(): ExitedFact[] {
   return manager.list().map((s) => ({
     id: s.id,
@@ -2014,7 +2021,7 @@ function exitedFacts(): ExitedFact[] {
     exitedAt: s.exitedAt,
     ask: s.ask,
     handingOff: s.handingOff,
-    lastKeyboard: s.lastKeyboard
+    lastKeyboard: Math.max(s.lastKeyboard ?? 0, touchedAt.get(s.id) ?? 0) || undefined
   }))
 }
 function removeFinished(removals: { id: string; reason: string }[]): void {

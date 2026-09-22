@@ -2335,6 +2335,8 @@ export interface Api {
   killSession(id: string): Promise<void>
   /** Removes every finished-and-untouched pane now, same class as `killSession` - see `shared/exitedSweep.ts`. Returns how many were removed. */
   clearFinished(): Promise<number>
+  /** A person pressed this pane's card or row. Holds the finished-pane sweep's clock - see `shared/exitedSweep.ts`. */
+  touchedSession(id: string): void
   /**
    * Tell a pane that is already open to close itself once it is done - the same rule
    * `pf open --close-when-done` arms at the open, asked for later. `false` = no such pane.

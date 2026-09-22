@@ -760,7 +760,7 @@ button.chip.kept:hover { filter: brightness(1.3); }
   font-size: 10px; font-weight: 600; letter-spacing: normal; text-transform: none;
   color: var(--muted); cursor: pointer;
 }
-.list-sec .clear-finished:hover { color: var(--fg); }
+.list-sec .clear-finished:hover { color: var(--text); }
 
 /* A pane running on a paired machine that this one is NOT mirroring. Dimmer, because
    nothing of it is on this disk yet and it must not read as a pane you can type into;
