@@ -2369,7 +2369,9 @@ function firstLine(out) {
 
 /** A command that never started, as opposed to one that ran and disagreed with the code. */
 function cannotRun(out) {
-  return /is not recognized|command not found|ENOENT|Cannot find module|npm ERR! missing script|sh: .*: not found/i.test(out)
+  // `Tests deferred:` is scripts/test-remote.mjs finding the PC unreachable. Cached as red,
+  // it pinned master as failing on its commit after the PC came back (2026-09-23).
+  return /is not recognized|command not found|ENOENT|Cannot find module|npm ERR! missing script|sh: .*: not found|Tests deferred:/i.test(out)
 }
 
 /** Does this checkout declare dependencies it has not got? */

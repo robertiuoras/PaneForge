@@ -206,6 +206,12 @@ writeFileSync(
     `}\n` +
     // Two real failures with DIFFERENT text, so the cached reason says which run it came
     // from. It must be the second: that is the one the decision was made on.
+    // The PC the suite runs on did not answer. That is not the code, and it must not be
+    // cached on the commit as red: the next ask has to try again.
+    `if (mode === 'deferred') {\n` +
+    `  console.error('Tests deferred: designated PC unavailable or identity mismatch.')\n` +
+    `  process.exit(3)\n` +
+    `}\n` +
     `if (mode === 'twofail') {\n` +
     `  console.log('FAIL  attempt ' + readFileSync(${JSON.stringify(runs)}, 'utf8').length)\n` +
     `  process.exit(1)\n` +
@@ -297,6 +303,19 @@ ok(
   readFileSync(runs, 'utf8').length === before + 1,
   `ran ${readFileSync(runs, 'utf8').length - before} times`
 )
+
+// An unreachable PC is named as tooling and asked again next time, never written down as
+// a red master - the same commit stayed "failing" after the PC answered again.
+writeFileSync(exitFile, 'deferred')
+git(repo, 'commit', '-qm', 'the PC is asleep', '--allow-empty')
+lane('ready', '--session', 'sess-main')
+const deferOut = lane('autoship')
+ok('a deferred suite is named as tooling', /could not run/.test(deferOut), deferOut)
+ok('and is not cached as red', !(state().suite?.ok === false && /deferred/.test(state().suite?.reason ?? '')), JSON.stringify(state().suite))
+writeFileSync(exitFile, '0')
+const deferBefore = readFileSync(runs, 'utf8').length
+lane('autoship')
+ok('the same commit is asked again once the PC answers', readFileSync(runs, 'utf8').length > deferBefore, `ran ${readFileSync(runs, 'utf8').length - deferBefore} times`)
 
 // Both runs red, with different text: the cached reason must be the SECOND one, because
 // that is the answer the refusal was made on.
