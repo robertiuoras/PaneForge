@@ -9,6 +9,7 @@
  */
 
 import { formatTokens } from './tokenTally'
+import { fleetState, type FleetPane } from './fleet'
 
 export const OP_HANDSHAKE = 0
 export const OP_FRAME = 1
@@ -90,10 +91,9 @@ export interface PresenceCounts {
 }
 
 /** The few fields of a pane the presence reads, so a caller can pass anything shaped like one. */
-export interface PresenceSession {
+export interface PresenceSession extends Omit<FleetPane, 'status'> {
   status: string
   cwd: string
-  runSince?: number
   /** used only to drop a pane that arrived twice; a pane without one is always kept */
   id?: string
 }
@@ -136,13 +136,17 @@ export function countPresence(sessions: PresenceSession[], appStart: number): Pr
   // `exited` is a pane whose agent is stopped and whose card is still here - what the idle
   // clock does. It is not a pane that has gone: a closed pane is not in this list at all.
   const asleep = live.filter((s) => s.status === 'exited').length
-  const running = live.filter((s) => s.status === 'working')
+  // A running turn, or a turn that is over with a background job still going - the
+  // sidebar's Running heading holds both (`fleet.ts` `fleetState`). Reading
+  // `status === 'working'` alone, the profile said 6 running while that heading held 16
+  // (2026-09-23). A pane still booting stays out, as before.
+  const running = live.filter((s) => s.status === 'working' || fleetState(s as FleetPane) === 'working')
   const names: string[] = []
   for (const s of running) {
     const name = folderName(s.cwd)
     if (name && !names.includes(name)) names.push(name)
   }
-  const since = running.map((s) => s.runSince).filter((n): n is number => !!n)
+  const since = running.map((s) => s.runSince ?? s.backJobSince).filter((n): n is number => !!n)
   return {
     running: running.length,
     total: live.length,

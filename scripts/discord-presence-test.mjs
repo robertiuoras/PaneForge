@@ -578,6 +578,21 @@ const counts = (running, total, names = ['PaneForge']) => ({
     1
   )
   check('counts: a pane still booting its CLI is on the desk but not running', booting.running === 1 && booting.total === 2)
+
+  // 2026-09-23: "discord only 6 running but theres 16 running". The turn is over, a
+  // background shell or subagent is still going, and the sidebar lists it under Running.
+  const backJobs = countPresence(
+    [
+      { status: 'idle', cwd: '/p/foo', backJob: 'npm run dev', backJobSince: 700 },
+      { status: 'idle', cwd: '/p/bar', engaged: true },
+      { status: 'working', cwd: '/p/baz', runSince: 900 },
+      { status: 'exited', cwd: '/p/old', backJob: 'stale' }
+    ],
+    1
+  )
+  check('counts: a pane running a background job is running, like the sidebar says', backJobs.running === 2, JSON.stringify(backJobs))
+  check('counts: ...and its job start dates the clock', backJobs.oldestRunSince === 700, String(backJobs.oldestRunSince))
+  check('counts: ...and a finished pane with nothing running is not', !backJobs.names.includes('bar') && !backJobs.names.includes('old'))
 }
 
 console.log(failed ? `\n${failed} FAILED` : '\nall good')
