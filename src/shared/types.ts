@@ -767,6 +767,8 @@ export interface StartSessionRequest {
    * not known at the moment the turn ends. See `CLOSE_DONE_QUIET_MS`.
    */
   closeWhenDone?: boolean
+  /** A submitted GuardDeck job whose retained receipt owns this shell's completion. */
+  computeJob?: { id: string; owner: string }
   /**
    * The pane to tell when that happens - an id or a title, resolved when it is needed
    * rather than when the pane opens, because the opener may have gone by then.
@@ -2329,6 +2331,7 @@ export interface Api {
    * `pf open --close-when-done` arms at the open, asked for later. `false` = no such pane.
    */
   armCloseWhenDone(id: string, reportTo?: string): Promise<boolean>
+  watchCompute(id: string, job: string, owner: string): Promise<{ watching: boolean; pane: string; job: string }>
   /**
    * End this pane's agent and keep its card: the process and its whole tree go, the row
    * stays where it is wearing an `asleep` chip, and what is on screen is untouched.

@@ -11,6 +11,8 @@
  *   node scripts/pf-ctl.mjs list
  *   node scripts/pf-ctl.mjs open <cwd> [--title T] [--prompt P | --task BACKLOG_ID] [--model M] [--agent A]
  *                                       [--close-when-done] [--report-to <pane>]
+ *   Queue-backed observer: open <cwd> --agent shell --compute-job <submitted-id> --compute-owner <native-id>
+ *   Its terminal worker receipt is retained as a review before safe closure; no idle timeout.
  *   pf-ctl close-when-done [<title-or-id>] [--report-to <pane>]
  *                                       [--resume <chat-id> | --continue] [--here | --on <device>]
  *   node scripts/pf-ctl.mjs open-many <plan.json>
@@ -22,6 +24,7 @@
  *   node scripts/pf-ctl.mjs login [url] [--site NAME] [--host user@ip] [--port N] [--machine WORDS]
  *   node scripts/pf-ctl.mjs close <title-or-id>
  *   node scripts/pf-ctl.mjs review <review.json>   record an agent completion/decision/blocked result
+ *   node scripts/pf-ctl.mjs watch-job <job-id> --owner <native-id> [--pane <exact-local-id>]
  *   node scripts/pf-ctl.mjs rename <title-or-id> <name...>
  *   node scripts/pf-ctl.mjs composer <number-title-or-id>   what is typed but not sent
  *   node scripts/pf-ctl.mjs type <title-or-id> <text...>
@@ -543,6 +546,8 @@ if (cmd === 'list') {
   if (device && here) fail(1, 'open takes --here or --on <device>, not both')
   const cwd = rest[0]
   if (!cwd) fail(1, 'open needs a cwd: pf-ctl open <cwd> [--title T] [--prompt P]')
+  const computeId = flag(rest, '--compute-job'), computeOwner = flag(rest, '--compute-owner')
+  if ((computeId || computeOwner) && (!computeId || !computeOwner || agent !== 'shell' || closeWhenDone || prompt)) fail(1, 'compute observer requires --agent shell --compute-job ID --compute-owner native-ID, without --prompt or --close-when-done; submit the job first')
   const s = await call('sessions:start', [
     {
       cwd,
@@ -551,6 +556,7 @@ if (cmd === 'list') {
       model,
       agent,
       closeWhenDone,
+      computeJob: computeId ? { id: computeId, owner: computeOwner } : undefined,
       reportTo: closeWhenDone ? reportTo : undefined,
       where: here ? 'local' : undefined,
       device: device || undefined,
@@ -629,6 +635,11 @@ if (cmd === 'list') {
   const still = (await sessions()).some((x) => x.id === s.id)
   if (still) fail(1, `sessions:kill answered but ${s.id} is still listed`)
   console.log(`closed ${s.id} (${s.title})`)
+} else if (cmd === 'watch-job') {
+  const pane = flag(rest, '--pane') ?? process.env.PF_PANE
+  const job = rest[0], owner = flag(rest, '--owner')
+  if (!pane || !job || !owner) fail(1, 'watch-job requires job ID, --owner native session ID, and PF_PANE or --pane exact local shell ID; run on the job device')
+  console.log(JSON.stringify(await call('sessions:watchCompute', [pane, job, owner])))
 } else if (cmd === 'review') {
   const path = rest[0]
   if (!path) fail(1, 'review needs a JSON file with id, sessionId, kind, report, and proof')

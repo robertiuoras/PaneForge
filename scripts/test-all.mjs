@@ -43,6 +43,7 @@ const TESTS = [
   ['promptreview', 'prompt-review-test.mjs'],
   ['reviewload', 'review-load-test.mjs'],
   ['review', 'review-test.mjs'],
+  ['computereview', 'compute-review-test.mjs'],
   ['claudemd', 'claudemd-size-test.mjs'],
   ['copylogic', 'copy-logic-test.mjs'],
   ['tokentally', 'token-tally-test.mjs'],

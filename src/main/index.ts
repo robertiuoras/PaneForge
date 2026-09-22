@@ -23,6 +23,7 @@ import {
 import { startMainWatch, stopMainWatch } from './mainWatch'
 import { SessionManager, setSilenceAlert, type WriteOrigin } from './sessions'
 import { acknowledgeReview, listReviews, noteReviewClose, recordReview, reviewCloseArmAction, reviewOpenTarget, type ReviewCloseArm } from './reviews'
+import { ComputeReviews, computeResult } from './computeReviews'
 import { DataPump } from './dataPump'
 import { DiscordPresence } from './discordPresence'
 import { countPresence, needsTokens, type PresenceCounts } from '../shared/discordRpc'
@@ -1188,7 +1189,7 @@ const remote = new Remote({
   sendPrompt: (id, text) => manager.sendPrompt(id, text),
   startSession: async (req) => {
     await guardClaudeUsage(req.agent, req.model, req.asleep)
-    return manager.start(await laneFor(req))
+    return startComputeAware(await laneFor(req))
   },
   // A pane handed here from another device: pull its branch, drop its transcript
   // where the CLI will look, start it as an ordinary local pane. The lane split
@@ -1523,6 +1524,55 @@ ipcMain.handle('projects:route', (_e, text: string) => routeText(text))
 ipcMain.handle('agents:list', (_e, force?: boolean) => listAgents(force))
 ipcMain.handle('sessions:list', () => allSessions())
 ipcMain.handle('reviews:list', () => ({ reviews: listReviews(history.list()), persistent: true as const }))
+let computeReviews: ComputeReviews | undefined
+async function startComputeAware(req: StartSessionRequest): Promise<Session> {
+  const capturedAt = new Date().toISOString()
+  if (req.computeJob) {
+    if (req.agent !== 'shell' || req.closeWhenDone || req.prompt) throw new Error('Compute observers require a shell without a command or idle-based closure; submit the job first')
+    if (!/^[a-zA-Z0-9_-]{8,80}$/.test(req.computeJob.id)) throw new Error('Invalid compute job ID')
+    computeResult(join(homedir(), '.claude', 'guarddeck', 'compute'), { pane: '', job: req.computeJob.id, owner: req.computeJob.owner, capturedAt, title: '', cwd: req.cwd })
+  }
+  const session = await manager.start(req)
+  if (req.computeJob) computeReviewWatcher().bind({ pane: session.id, job: req.computeJob.id, owner: req.computeJob.owner, title: session.title, cwd: session.cwd, capturedAt })
+  return session
+}
+function computeReviewWatcher(): ComputeReviews {
+  return computeReviews ??= new ComputeReviews(
+    join(homedir(), '.claude', 'guarddeck', 'compute'),
+    join(app.getPath('userData'), 'compute-review-bindings.json'),
+    (binding, result) => {
+      const session = manager.list().find(s => s.id === binding.pane)
+      if (!session) return false // restore may not have populated the desk yet
+      if (session.agent !== 'shell') return true // never close a repurposed agent pane
+      const evidence = join(homedir(), '.claude', 'guarddeck', 'compute', binding.job, 'result.json')
+      const review = recordReview({
+        id: `compute-${binding.pane}-${binding.job}`.slice(0, 120),
+        sessionId: binding.pane, nativeSessionId: binding.pane, kind: 'result', proof: 'measured',
+        report: `${binding.title}: ${result.status}. Exit code: ${result.exitCode ?? 'not available'}.`,
+        prompt: `Run PC compute job ${binding.job}`,
+        evidence: [evidence, `Owner: ${binding.owner}; containment: ${result.containment}`],
+        links: [{ label: 'Worker completion receipt', url: pathToFileURL(evidence).href }],
+        capturedAt: binding.capturedAt, completedAt: result.finishedAt,
+        workPreserved: true, noRemainingWork: true, notify: true
+      }, { title: binding.title, cwd: binding.cwd, provider: 'shell', nativeSessionId: binding.pane })
+      if (review.closedAt) return true
+      if (continuationOwnsSource(session.id) || preparingContinuations.has(session.id) || handoffQueue.pending().some(q => q.id === session.id) || backJobOf(session.id)) {
+        noteReviewClose(review.id, 'pending work retained the shell')
+        return true
+      }
+      const close = manager.closeAfterResult(session.id, Date.parse(binding.capturedAt))
+      if (close.closed) noteReviewClose(review.id, undefined, new Date().toISOString())
+      else if (close.reason !== 'session is busy or has a background job') noteReviewClose(review.id, close.reason)
+      return close.closed || close.reason !== 'session is busy or has a background job'
+    }
+  )
+}
+ipcMain.handle('sessions:watchCompute', (_e, id: string, job: string, owner: string) => {
+  const session = manager.list().find(s => s.id === id)
+  if (!session || session.agent !== 'shell') throw new Error('Compute completion must be attached on the owning device to an exact shell pane')
+  computeReviewWatcher().bind({ pane: id, job, owner, title: session.title, cwd: session.cwd, capturedAt: new Date().toISOString() })
+  return { watching: true, pane: id, job }
+})
 ipcMain.handle('reviews:ack', (_e, id: string, reviewed: boolean) => acknowledgeReview(String(id), reviewed === true))
 ipcMain.handle('reviews:open', async (_e, id: string, index: number) => {
   const target = reviewOpenTarget(String(id), Number(index), history.list())
@@ -1781,7 +1831,7 @@ async function startOrSend(
     const began = Date.now()
     const lane = await laneFor(req, claimed)
     const decided = Date.now() - began
-    const session = await manager.start(lane)
+    const session = await startComputeAware(lane)
     logOffload({ event: 'started', id: session.id, cwd: lane.cwd, decidedMs: decided, openMs: Date.now() - began })
     return session
   }
@@ -3097,6 +3147,7 @@ const handoffQueue = new HandoffQueue({
 // or permanently cancels the requested close with the retained report still available.
 const reviewCloseArms = new Map<string, ReviewCloseArm>()
 manager.on('sessions', () => queueMicrotask(() => {
+  computeReviews?.check()
   for (const [reviewId, arm] of reviewCloseArms) {
     const session = manager.list().find((s) => s.id === arm.sessionId)
     const action = reviewCloseArmAction(arm, session && {
@@ -4414,6 +4465,7 @@ ipcMain.on('restore:answer', (_e, answer: RestoreAnswer) => {
 })
 
 app.whenReady().then(() => {
+  computeReviewWatcher().check()
   // The watchdog marks a stalled desk as an update, following the same restore settings.
   // Its child is outside the main thread and can still act during disk I/O.
   startMainWatch()
