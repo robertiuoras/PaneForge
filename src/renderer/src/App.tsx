@@ -5612,9 +5612,9 @@ export default function App(): JSX.Element {
         <div className="quick">
           <button
             className="ghost quick-btn"
-            aria-label="Review today"
+            aria-label="Review"
             aria-haspopup="dialog"
-            title="Review: prompts, sessions, agents, tokens and automatic actions"
+            title="Review: finished sessions, what was asked and what they did"
             onClick={() => setReview(true)}
           >
             <ReviewIcon />
