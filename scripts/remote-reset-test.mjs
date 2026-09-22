@@ -7,7 +7,7 @@ import { createRequire } from 'node:module'
 const require = createRequire(import.meta.url)
 const { Terminal } = require('@xterm/headless')
 const source = readFileSync(new URL('../src/renderer/src/components/TerminalPane.tsx', import.meta.url), 'utf8')
-const start = source.indexOf('const offReset = api.onPaneReset(')
+const start = source.indexOf('const receiveReset = (')
 const end = source.indexOf('\n    const writeData =', start)
 assert.ok(start > 0 && end > start)
 const callback = transformSync(source.slice(start, end), { loader: 'ts' }).code
@@ -31,6 +31,7 @@ const install = new Function('api', 't', 'keepScrollback', 'withoutReplayQueries
   const sessionId = 'remote', list = [], dead = false;
   const submitted = [];
   const noteSubmitted = (line) => submitted.push({text:line, row:t.buffer.active.baseY + t.buffer.active.cursorY});
+  let replayEvents=null; const drainReplayEvents=()=>{replayEvents=null};
   let initialReplay, sawOutput = false, awaitingInitialReplay = false;
   const mirrorRef = { current: true };
   let wipeSnap = null, wipeTimer;

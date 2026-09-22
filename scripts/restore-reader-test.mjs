@@ -25,7 +25,7 @@ try{
 
 // Exercise the actual reset handler: a full log omits a screen of trailing repaint
 // blanks that the live buffer had. Keeping tail distance used to move the reader.
-const resetFrom=src.indexOf('    const offReset = api.onPaneReset(')
+const resetFrom=src.indexOf('    const receiveReset = (')
 const resetTo=src.indexOf('\n    const writeData =',resetFrom)
 assert(resetFrom>0&&resetTo>resetFrom)
 const resetCode=transformSync(src.slice(resetFrom,resetTo),{loader:'ts'}).code
@@ -36,6 +36,7 @@ let reset
 const pin={current:false},intent={current:0}
 new Function('api','t','pinned','scrollIntent','setScrolledUp','mirrorRef',`
 const sessionId='test',list=[],publish=()=>{},dead=false,setBlank=()=>{},window={clearTimeout(){}},wipeTimer=0,makeKeeper=()=>x=>x,withoutReplayQueries=x=>x,seedMarks=()=>{},drainTyped=()=>{};
+let replayEvents=null; const drainReplayEvents=()=>{replayEvents=null};
 let initialReplay, sawOutput=false,wipeSnap=null,keep=x=>x,readingSnapshot=false,pendingDataWrites=0,awaitingInitialReplay=false;
 const writeStaged=(b,done)=>t.write(b,done); // the stage itself is proved by replay-width-test
 ${resetCode}
