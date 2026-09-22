@@ -50,3 +50,44 @@ export function silenceMs(minutes: number | undefined): number {
   // A minute is the floor on purpose: below it, a slow tool call is an alert.
   return Math.max(60_000, Math.round(m * 60_000))
 }
+
+/**
+ * Drop BEL bytes that are embedded in binary command output.
+ *
+ * xterm correctly distinguishes an OSC terminator from a terminal bell, but arbitrary
+ * binary printed by a tool has no such envelope. A 0x07 inside that garbage therefore
+ * reaches `onBell` and sounds like the CLI asked for a person. Keep ordinary standalone
+ * bells and OSC terminators. The narrow control-density check only removes a bell when
+ * its immediate neighbourhood already proves the terminal is displaying binary data.
+ */
+export function withoutBinaryBells(chunk: string): string {
+  if (!chunk.includes('\x07')) return chunk
+  let osc = false
+  let escaped = false
+  let out = ''
+  let from = 0
+  for (let i = 0; i < chunk.length; i++) {
+    const code = chunk.charCodeAt(i)
+    if (osc) {
+      if (code === 7 || (escaped && code === 92)) osc = false
+      escaped = code === 27
+      continue
+    }
+    if (escaped) {
+      if (code === 93) osc = true
+      escaped = false
+      continue
+    }
+    if (code === 27) {
+      escaped = true
+      continue
+    }
+    if (code !== 7) continue
+    const around = chunk.slice(Math.max(0, i - 64), Math.min(chunk.length, i + 65))
+    const damaged = around.match(/[\u0000-\u0006\u0008\u000b\u000c\u000e-\u001a\u001c-\u001f\u007f\ufffd]/g)?.length ?? 0
+    if (damaged < 2) continue
+    out += chunk.slice(from, i)
+    from = i + 1
+  }
+  return from ? out + chunk.slice(from) : chunk
+}

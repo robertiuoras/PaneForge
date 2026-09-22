@@ -64,6 +64,7 @@ import { START_COLS, START_ROWS } from '../../../shared/paneGrid'
 import { fixSignature } from '../../../shared/fixSign'
 import { splitReplay } from '../../../shared/replayWidth'
 import { isTerminalReply, withoutReplayQueries } from '../../../shared/terminalProtocol'
+import { withoutBinaryBells } from '../../../shared/alerts'
 import { placeRail } from '../../../shared/rail'
 import type { RevealTarget } from '../../../shared/pathToken'
 import { cleanReply, draftBlock, previewOf } from '../../../shared/replyText'
@@ -2143,6 +2144,10 @@ function TerminalPane({
       }
     )
     let keep = makeKeeper()
+    // A tool can accidentally print a binary file. Raw 0x07 bytes inside that garbage are
+    // data, not a CLI asking for attention, but xterm quite reasonably reports them as
+    // bells. Run this after the stateful keeper so a split OSC sequence is whole first.
+    const cleanOutput = (data: string): string => withoutBinaryBells(keep(data))
     const f = new FitAddon()
     t.loadAddon(f)
     t.open(host.current)
@@ -3813,7 +3818,7 @@ function TerminalPane({
       // The second half, and the one no repaint can undo: the restored part of this
       // buffer was painted in absolute column moves at the OLD pane's width, and a
       // terminal clamps a column it cannot reach. See `shared/replayWidth.ts`.
-      writeStaged(b, done, keep)
+      writeStaged(b, done, cleanOutput)
     }
 
     /**
@@ -4088,7 +4093,7 @@ function TerminalPane({
       readingSnapshot = true
       let bytes: string
       try {
-        bytes = keep(withoutReplayQueries(snapshot))
+        bytes = cleanOutput(withoutReplayQueries(snapshot))
       } finally {
         readingSnapshot = false
       }
@@ -4141,7 +4146,7 @@ function TerminalPane({
       // looks finished, and only a keypress brings it back (scrollOnUserInput doing what the
       // write should have). Intent cannot drift, so this recovers by itself.
       pendingDataWrites++
-      t.write(keep(data), () => {
+      t.write(cleanOutput(data), () => {
         // A wipe is judged once its redraw stops, not on a fixed delay: a banner drawn in
         // three bursts must not be compared with the screen half way through it.
         armWipeCheck()

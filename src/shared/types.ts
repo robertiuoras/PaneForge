@@ -521,6 +521,17 @@ export interface Session {
   /** Epoch ms that job started, so the row's clock counts the job and not the silence. */
   backJobSince?: number
   /**
+   * A Claude Code BACKGROUND AGENT this pane's conversation launched and that has not
+   * finished (`a background agent (Visual review Design 4 pages)`), read off the transcript
+   * by `main/runningAgents.ts`. Absent when none is running or nothing could be read.
+   *
+   * Unlike `backJob` this is a REFUSAL everywhere a process would be ended: an automatic
+   * move (`AutoPane.subagent`, the handoff queue), a sleep and a close (fed to reclaim as a
+   * `backJob`). The agent runs inside the CLI, so ending the CLI ends it - s24-mud0n7wb was
+   * moved to the PC on 2026-09-22 with its review half done.
+   */
+  subagent?: string
+  /**
    * The last turn ended having changed no file in this pane's folder - `changed no files`,
    * or absent when there is nothing to say. See `shared/changedNothing.ts`.
    *
@@ -2300,15 +2311,6 @@ export interface Api {
    * doing either. Per pane, off until asked for.
    */
   setEffort(id: string, choice: EffortChoice): Promise<void>
-  /**
-   * Put a client rename back and stop offering it for this pane. The card's Cancel.
-   *
-   * A rename that could only be undone by typing the old name again is not a cancel: the
-   * old name is `basename(cwd)`, which the person never typed and has no reason to know.
-   */
-  undoClientName(id: string): Promise<void>
-  /** A pane has just been named for a client. Carries what it was called before. */
-  onClientNamed(fn: (e: ClientNamed) => void): () => void
   /** A sleep somebody asked for that main would not do, and the sentence saying why. */
   onSleepRefused(fn: (e: { id: string; why: string }) => void): () => void
   onActivity(fn: (feed: ActivityFeed) => void): () => void

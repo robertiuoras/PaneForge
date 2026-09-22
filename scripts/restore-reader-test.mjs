@@ -4,6 +4,8 @@ import {readFileSync} from 'node:fs'
 import {createRequire} from 'node:module'
 import {transformSync} from 'esbuild'
 const require=createRequire(import.meta.url), {Terminal}=require('@xterm/headless')
+const alertsSource=readFileSync(new URL('../src/shared/alerts.ts',import.meta.url),'utf8')
+const {withoutBinaryBells}=await import('data:text/javascript;base64,'+Buffer.from(transformSync(alertsSource,{loader:'ts',format:'esm'}).code).toString('base64'))
 const src=readFileSync(new URL('../src/renderer/src/components/TerminalPane.tsx',import.meta.url),'utf8')
 const from=src.indexOf('    const repair = (): void => {'),to=src.indexOf('\n    /**',from)
 assert(from>0&&to>from)
@@ -34,12 +36,13 @@ const lines=Array.from({length:300},(_,i)=>`conversation row ${i}\r\n`).join('')
 const write=data=>new Promise(r=>term.write(data,r))
 let reset
 const pin={current:false},intent={current:0}
-new Function('api','t','pinned','scrollIntent','setScrolledUp','mirrorRef',`
+new Function('api','t','pinned','scrollIntent','setScrolledUp','mirrorRef','withoutBinaryBells',`
 const sessionId='test',list=[],publish=()=>{},dead=false,setBlank=()=>{},window={clearTimeout(){}},wipeTimer=0,makeKeeper=()=>x=>x,withoutReplayQueries=x=>x,seedMarks=()=>{},drainTyped=()=>{};
 let initialReplay, sawOutput=false,wipeSnap=null,keep=x=>x,readingSnapshot=false,pendingDataWrites=0,awaitingInitialReplay=false;
+const cleanOutput=(d)=>withoutBinaryBells(keep(d));
 const writeStaged=(b,done)=>t.write(b,done); // the stage itself is proved by replay-width-test
 ${resetCode}
-`)({onPaneReset:fn=>{reset=fn}},term,pin,intent,()=>{},{current:true})
+`)({onPaneReset:fn=>{reset=fn}},term,pin,intent,()=>{},{current:true},withoutBinaryBells)
 try{
  await write(lines+'\r\n'.repeat(59));term.scrollToLine(100);pin.current=false
  reset('test',lines);await write('')

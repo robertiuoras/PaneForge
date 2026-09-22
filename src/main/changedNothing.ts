@@ -25,21 +25,23 @@
 // boundaries, so a desk of eight panes costs two `git status` calls per turn rather than
 // one every six seconds.
 
-import { execFile } from 'node:child_process'
+import { gitRun } from './gitRun'
 import type { Shot } from '../shared/changedNothing'
 
 /** Long enough for a cold status on a large tree, short enough not to outlive the turn. */
 const TIMEOUT_MS = 4000
 
 function git(cwd: string, args: string[]): Promise<string | null> {
-  return new Promise((resolve) => {
-    execFile(
-      'git',
-      args,
-      { cwd, encoding: 'utf8', windowsHide: true, timeout: TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024 },
-      (err, stdout) => resolve(err ? null : stdout)
-    )
-  })
+  // Through the one gate (`gitRun.ts`): every pane reads its checkout at both ends of every
+  // turn, so it waits its turn under the cap. Never joined: see `join` in gitRun.ts.
+  return gitRun(cwd, args, {
+    timeout: TIMEOUT_MS,
+    maxBuffer: 8 * 1024 * 1024,
+    read: true,
+    join: false
+  }).then((r) =>
+    r.ok ? r.stdout : null
+  )
 }
 
 /**
