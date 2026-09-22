@@ -156,7 +156,7 @@ const css = readFileSync(join(root, 'src/renderer/src/styles.css'), 'utf8')
 
   // Every card that docks in that corner. If a sixth is ever added at `right: 18px;
   // bottom: 18px` and left outside this list, the CSS check below is what catches it.
-  for (const tag of ['<AutoClearToast', '<MoveSoon', '<ClientToast', '<UpdateToast', '<WhatsNewCard', '<Tips']) {
+  for (const tag of ['<AutoClearToast', '<MoveSoon', '<UpdateToast', '<WhatsNewCard', '<Tips']) {
     const at = app.indexOf(tag)
     check(`${tag} is drawn`, at > 0)
     check(`${tag} is inside the stack`, at > open && at < close, { at, open, close })
@@ -165,7 +165,7 @@ const css = readFileSync(join(root, 'src/renderer/src/styles.css'), 'utf8')
   // The order is the promise: the FIRST child is the one in the corner (the column is
   // reversed), and it must be a countdown - the card whose buttons take something away
   // if they are not pressed. A tip must be furthest from the hand.
-  const order = ['<AutoClearToast', '<MoveSoon', '<ClientToast', '<UpdateToast', '<WhatsNewCard', '<Tips'].map(
+  const order = ['<AutoClearToast', '<MoveSoon', '<UpdateToast', '<WhatsNewCard', '<Tips'].map(
     (t) => app.indexOf(t)
   )
   for (let i = 1; i < order.length; i++) {
@@ -182,13 +182,12 @@ const css = readFileSync(join(root, 'src/renderer/src/styles.css'), 'utf8')
   check('the stack un-fixes its children', Boolean(rule))
   // relative, not static: `.card-x` inside each card anchors to its own card.
   check('...by making them relative', /position:\s*relative/.test(rule[1]), rule && rule[1])
-  for (const sel of ['.autoclear-card', '.move-soon', '.client-toast', '.update-toast', '.tip-toast']) {
+  for (const sel of ['.autoclear-card', '.move-soon', '.update-toast', '.tip-toast']) {
     check(`${sel} is un-fixed inside the stack`, css.includes(`.corner-stack > ${sel}`), sel)
   }
   // One step up for the whole stack when a sprite is parked in the same corner - and the
   // per-card version of that must be gone, or the stack steps up twice.
   check('the stack steps up off the pet', /\.corner-stack\.beside-pet\s*\{\s*bottom:\s*108px/.test(css))
-  check('and the card no longer does it too', /\.corner-stack > \.client-toast\.beside-pet\s*\{\s*bottom:\s*auto/.test(css))
   // No animation: `test:anim` refuses a looping decoration, and this is a container.
   const stack = css.match(/\.corner-stack\s*\{([^}]*)\}/)
   check('the stack has no animation', !/animation|transition/.test(stack[1]), stack[1])
@@ -218,7 +217,6 @@ const css = readFileSync(join(root, 'src/renderer/src/styles.css'), 'utf8')
     'AutoClearToast.tsx',
     'MoveSoon.tsx',
     'StopServer.tsx',
-    'ClientToast.tsx',
     'UpdateToast.tsx',
     'WhatsNewCard.tsx',
     'Tips.tsx'
@@ -230,6 +228,30 @@ const css = readFileSync(join(root, 'src/renderer/src/styles.css'), 'utf8')
   const cardX = readFileSync(join(root, 'src/renderer/src/components/CardX.tsx'), 'utf8')
   check('CardX is a button, not a link or a div', /<button/.test(cardX))
   check('CardX names itself for a screen reader', /aria-label="Dismiss"/.test(cardX))
+}
+
+{
+  // A rename is SILENT (Robert, 2026-09-23). The corner card that said "Renamed this pane
+  // X" on every automatic client/topic name was noise, so nothing on screen may announce
+  // one any more - the Activity list is the only place it is written down.
+  const main = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
+  const surface = readFileSync(join(root, 'src/shared/surface.ts'), 'utf8')
+  const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
+  let cardFile = true
+  try {
+    readFileSync(join(root, 'src/renderer/src/components/ClientToast.tsx'), 'utf8')
+  } catch {
+    cardFile = false
+  }
+  check('the rename card is gone', !cardFile)
+  check('the window draws no rename card', !app.includes('<ClientToast') && !css.includes('.client-toast'))
+  check('the window does not listen for renames', !app.includes('onClientNamed'))
+  check('main sends no rename notice to the window', !main.includes("'sessions:clientNamed'"))
+  check('...and no channel exists for one', !surface.includes('sessions:clientNamed'))
+  // The rename itself still happens, and is still written down.
+  check('an automatic rename still emits', /this\.emit\('clientNamed'/.test(sessions))
+  check('...and still lands in the Activity list', /manager\.on\('clientNamed'[\s\S]{0,200}activityEntry\('named'/.test(main))
+  check('a hand rename still sets the title', /rename\(id: string, title: string\): void \{[\s\S]{0,200}s\.meta\.title = title\.trim\(\)/.test(sessions))
 }
 
 rmSync(work, { recursive: true, force: true })

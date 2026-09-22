@@ -327,8 +327,9 @@ export async function sendHandoff(deps: SendDeps, device: string, request: Hando
       continueWith = continuePrompt(deps.selfDevice ? deps.deviceName(deps.selfDevice()) : 'the other machine')
     }
     // Mid-turn: queued, never killed. `waitForTurn` defaults on - the caller has to say
-    // out loud that an unfinished answer is expendable.
-    if (request.now !== true && request.waitForTurn !== false && deps.busy?.(pane) && deps.queue) {
+    // out loud that an unfinished answer is expendable. A background agent still running
+    // inside the CLI (`Session.subagent`) is held the same way: the move would end it.
+    if (request.now !== true && request.waitForTurn !== false && (deps.busy?.(pane) || !!pane.subagent) && deps.queue) {
       deps.queue(pane.id, device, closeAfter)
       out.push({
         id: pane.id,

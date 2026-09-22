@@ -700,7 +700,7 @@ ok(!server.running, 'the gate test server stopped cleanly')
     'autoclear:cancel', 'autoclear:takeover',
     // Local starting-folder metadata only, like projects:list; no file or session writes.
     'projects:sessionFolders',
-    'projects:list', 'projects:route', 'agents:list', 'sessions:list', 'sessions:rename', 'sessions:clientUndo',
+    'projects:list', 'projects:route', 'agents:list', 'sessions:list', 'sessions:rename',
     // Read-only, and the answer is a public release page's own notes.
     'app:whatsNew',
     // Read-only, and only ever answers non-null in a dev copy (`tourAllowed`) - the

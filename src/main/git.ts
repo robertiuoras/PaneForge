@@ -5,7 +5,7 @@
 // One `git status` per folder answers all of it, and results are cached briefly so a
 // grid of panes polling at the same time costs one process, not one each.
 
-import { execFile } from 'node:child_process'
+import { gitRun } from './gitRun'
 import type { GitInfo } from '../shared/types'
 
 const TTL = 6000
@@ -83,21 +83,16 @@ function identical(a: GitInfo | null, b: GitInfo | null): boolean {
  * mouse" the app was reported for. Nothing here is on a critical path, so it waits.
  */
 async function read(cwd: string): Promise<GitInfo | null> {
-  let out: string
-  try {
-    out = await new Promise<string>((resolve, reject) => {
-      execFile(
-        'git',
-        ['status', '--porcelain=v1', '--branch', '--untracked-files=all'],
-        { cwd, encoding: 'utf8', windowsHide: true, timeout: 4000, maxBuffer: 4 * 1024 * 1024 },
-        (err, stdout) => (err ? reject(err) : resolve(stdout))
-      )
-    })
-    if (!out) return null
-  } catch {
-    // Not a repo, git missing, or a status slow enough to hit the timeout.
-    return null
-  }
+  // Through the one gate (`gitRun.ts`): the badge polls every pane, and a desk of sixteen
+  // panes across a dozen checkouts is the largest steady source of git in the app.
+  const r = await gitRun(cwd, ['status', '--porcelain=v1', '--branch', '--untracked-files=all'], {
+    timeout: 4000,
+    maxBuffer: 4 * 1024 * 1024,
+    read: true
+  })
+  // Not a repo, git missing, or a status slow enough to hit the timeout.
+  const out = r.ok ? r.stdout : ''
+  if (!out) return null
 
   const lines = out.split(/\r?\n/).filter(Boolean)
   // First line is always `## <branch>...<upstream> [ahead N, behind M]`, or

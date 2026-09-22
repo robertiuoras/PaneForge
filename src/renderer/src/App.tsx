@@ -5,7 +5,6 @@ import { effortChip, effortWords } from '@shared/effort'
 import { chordOf, resolveKeymap, sameChord } from '@shared/keymap'
 import { stripAnsi } from '@shared/ansi'
 import type {
-  ClientNamed,
   Config,
   DiffScope,
   HistoryEntry,
@@ -176,7 +175,6 @@ import StatusDot from './components/StatusDot'
 import SwarmDialog, { type SwarmStart } from './components/SwarmDialog'
 import SplitDialog from './components/SplitDialog'
 import AutoClearToast from './components/AutoClearToast'
-import ClientToast from './components/ClientToast'
 import UpdateToast from './components/UpdateToast'
 import WhatsNewCard from './components/WhatsNewCard'
 import TourCard from './components/TourCard'
@@ -328,7 +326,9 @@ function reclaimPaneOf(
     // ...and what the AGENT left running in the background, which no other reading here
     // can see: the turn ended, so `busy` is false and `job` refuses to speak about an
     // agent pane at all. See `ReclaimPane.backJob`.
-    backJob: backJob ?? null,
+    // A Claude background agent still running inside the CLI dies with a close or a sleep
+    // exactly as a background shell does. See `Session.subagent`.
+    backJob: backJob ?? s.subagent ?? null,
     focused: s.id === activeId,
     // Only the pressure sweep refuses a pane for being on screen; the clock deliberately
     // does not, or a desk with the grid on could never close anything.
@@ -1376,9 +1376,6 @@ export default function App(): JSX.Element {
       if (soundOn.current && !watching(s)) playEvent('bell', soundSet.current)
       if (!watching(s)) glow(s.id)
     })
-    // A pane naming itself for the client (or the subject) it is working on. No sound and
-    // no glow: nothing was asked of anybody, and the card says so for three seconds.
-    const offNamed = api.onClientNamed((e) => setClientNamed(e))
     // A sleep somebody pressed for and did not get. Silent until 2026-09-12: the card
     // took itself off screen, `sleepSession` answered `null`, and the reason was in a log
     // file - so the button read as broken (Robert: "i press sleep now and it doesn't
@@ -1391,7 +1388,6 @@ export default function App(): JSX.Element {
       offAsk()
       offBell()
       offSleepNo()
-      offNamed()
     }
   }, [])
   // Looking at the pane answers the question the glow was asking, however you got
@@ -2664,6 +2660,9 @@ export default function App(): JSX.Element {
         // ...and what an agent left running, which is the opposite: never move it, because
         // the move kills the pty and the work with it. See `AutoPane.backJob`.
         backJob: usageRef.current?.panes[s.id]?.jobs?.[0]?.label,
+        // ...and a Claude background agent still running inside the CLI, which the move
+        // would end with it. See `AutoPane.subagent`.
+        subagent: s.subagent,
         // ...and what could not follow it AT ALL: a browser being driven on this desk.
         // See `AutoPane.machineBound`.
         machineBound: usageRef.current?.panes[s.id]?.bound,
@@ -2852,6 +2851,9 @@ export default function App(): JSX.Element {
         // printing for two hours "idle for two hours" - see ReclaimPane.lastOutput.
         lastOutput: s.lastOutput,
         busy: s.runSince !== undefined,
+        // A Claude background agent still running - closing the pane ends it. See
+        // `Session.subagent`.
+        backJob: s.subagent ?? null,
         focused: s.id === activeId,
         visible: visibleIds.has(s.id),
         remote: !!s.remote,
@@ -4043,8 +4045,6 @@ export default function App(): JSX.Element {
    * screen and this app never does that on its own initiative; it is a sentence with a
    * clock in it, and doing nothing still closes the pane.
    */
-  // The newest pane to have named itself, for the three-second card in the corner.
-  const [clientNamed, setClientNamed] = useState<ClientNamed | undefined>(undefined)
   /**
    * Every countdown currently on screen - one per decision, not one full stop.
    *
@@ -7038,7 +7038,7 @@ export default function App(): JSX.Element {
           // The app itself owes this pane a prompt - see `SleepPane.owedPrompt`.
           owedPrompt: !!s.owedPrompt,
           job: s.job,
-          backJob: s.backJob
+          backJob: s.backJob ?? s.subagent
         }
         return (
           <SessionMenu
@@ -7423,16 +7423,6 @@ export default function App(): JSX.Element {
       {/* A new pane the app decided to start on the other machine, before it does. */}
       <OffloadSoon />
       <QuitGuard />
-      {/* A pane that has just worked out whose work it is doing. */}
-      <ClientToast
-        named={clientNamed}
-        besidePet={config?.mascot?.enabled ?? DEFAULT_MASCOT.enabled}
-        onCancel={(id) => {
-          void api.undoClientName(id)
-          setClientNamed(undefined)
-        }}
-        onDone={() => setClientNamed(undefined)}
-      />
       <UpdateToast />
       <WhatsNewCard />
       {/* Only ever drawn in a `npm run try` copy - walks through what this build has that
