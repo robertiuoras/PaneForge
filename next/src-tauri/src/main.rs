@@ -4,7 +4,7 @@ use std::{
     ffi::OsString,
     fs,
     io::{Read, Write},
-    net::{SocketAddr, TcpStream},
+    net::{SocketAddr, TcpListener, TcpStream},
     path::PathBuf,
     process::{Command, Stdio},
     thread,
@@ -13,7 +13,8 @@ use std::{
 use tauri::Manager;
 mod updates;
 
-const PORT: &str = "4321";
+const DEFAULT_PORT: u16 = 4321;
+struct WorkspacePort(u16);
 const HEALTH_ATTEMPTS: usize = 80;
 const HEALTH_RETRY: Duration = Duration::from_millis(100);
 
@@ -92,14 +93,17 @@ fn health_identity(response: &str) -> Result<SupervisorIdentity, String> {
         .ok_or_else(|| "PaneForge supervisor returned an incomplete health response".to_string())?;
     if !status.starts_with("HTTP/1.1 200") && !status.starts_with("HTTP/1.0 200") {
         return Err(
-            "Port 4321 is occupied by a process that is not a ready PaneForge supervisor"
+            "The selected loopback port is occupied by a process that is not a ready PaneForge supervisor"
                 .to_string(),
         );
     }
-    let health: serde_json::Value = serde_json::from_str(body)
-        .map_err(|_| "Port 4321 returned an invalid PaneForge health response".to_string())?;
+    let health: serde_json::Value = serde_json::from_str(body).map_err(|_| {
+        "The selected loopback port returned an invalid PaneForge health response".to_string()
+    })?;
     if health.get("product").and_then(serde_json::Value::as_str) != Some("paneforge-next") {
-        return Err("Port 4321 is occupied by a different application".to_string());
+        return Err(
+            "The selected loopback port is occupied by a different application".to_string(),
+        );
     }
     let revision = health
         .get("revision")
@@ -126,17 +130,24 @@ fn probe_supervisor_at(address: SocketAddr) -> Result<Option<SupervisorIdentity>
     // This bounded probe reads until close, without an HTTP chunk decoder.
     // HTTP/1.0 makes Node use that framing even when Content-Length is absent.
     stream
-        .write_all(b"GET /api/health HTTP/1.0\r\nHost: 127.0.0.1:4321\r\nConnection: close\r\n\r\n")
-        .map_err(|_| "Port 4321 closed before its supervisor identity could be read".to_string())?;
+        .write_all(
+            format!("GET /api/health HTTP/1.0\r\nHost: {address}\r\nConnection: close\r\n\r\n")
+                .as_bytes(),
+        )
+        .map_err(|_| {
+            "The selected loopback port closed before its supervisor identity could be read"
+                .to_string()
+        })?;
     let mut response = String::new();
     stream.read_to_string(&mut response).map_err(|_| {
-        "Port 4321 did not provide a complete supervisor health response".to_string()
+        "The selected loopback port did not provide a complete supervisor health response"
+            .to_string()
     })?;
     health_identity(&response).map(Some)
 }
 
-fn probe_supervisor() -> Result<Option<SupervisorIdentity>, String> {
-    let address: SocketAddr = format!("127.0.0.1:{PORT}")
+fn probe_supervisor(port: u16) -> Result<Option<SupervisorIdentity>, String> {
+    let address: SocketAddr = format!("127.0.0.1:{port}")
         .parse()
         .map_err(|_| "PaneForge has an invalid loopback address".to_string())?;
     probe_supervisor_at(address)
@@ -152,19 +163,19 @@ fn require_matching_supervisor(
         return Ok(());
     }
     Err(format!(
-        "Port 4321 is occupied by a different PaneForge supervisor (revision {}, data profile {}). It was left running.",
+        "The selected loopback port is occupied by a different PaneForge supervisor (revision {}, data profile {}). It was left running.",
         actual.revision, actual.data_dir
     ))
 }
 
-fn wait_for_supervisor(revision: &str, data: &std::path::Path) -> Result<(), String> {
+fn wait_for_supervisor(revision: &str, data: &std::path::Path, port: u16) -> Result<(), String> {
     for _ in 0..HEALTH_ATTEMPTS {
-        match probe_supervisor()? {
+        match probe_supervisor(port)? {
             Some(actual) => return require_matching_supervisor(actual, revision, data),
             None => thread::sleep(HEALTH_RETRY),
         }
     }
-    Err("PaneForge supervisor did not become healthy on port 4321 within 8 seconds; it was left running for a later retry.".to_string())
+    Err("PaneForge supervisor did not become healthy on its selected loopback port within 8 seconds; it was left running for a later retry.".to_string())
 }
 
 fn supervisor_data(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -175,7 +186,57 @@ fn supervisor_data(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         .join("supervisor"))
 }
 
-fn start_supervisor(app: &tauri::AppHandle) -> Result<(), String> {
+fn saved_supervisor_port(data: &std::path::Path) -> Result<Option<u16>, String> {
+    match fs::read_to_string(data.join("native-supervisor-port")) {
+        Ok(value) => value
+            .trim()
+            .parse::<u16>()
+            .ok()
+            .filter(|port| *port >= 1024)
+            .map(Some)
+            .ok_or_else(|| {
+                "Saved supervisor port is invalid; profile was left untouched".to_string()
+            }),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!("Could not read saved supervisor port: {error}")),
+    }
+}
+
+// A recorded endpoint is authoritative: if it is busy but cannot prove its identity,
+// fail closed instead of starting a second executor over the same profile.
+fn select_supervisor_port(
+    data: &std::path::Path,
+    revision: &str,
+    preferred: u16,
+) -> Result<(u16, bool), String> {
+    if let Some(port) = saved_supervisor_port(data)? {
+        return match probe_supervisor(port)? {
+            Some(actual) => {
+                require_matching_supervisor(actual, revision, data)?;
+                Ok((port, true))
+            }
+            None => Ok((port, false)),
+        };
+    }
+    if let Ok(Some(actual)) = probe_supervisor(preferred) {
+        if actual.data_dir == data.to_string_lossy() {
+            require_matching_supervisor(actual, revision, data)?;
+            return Ok((preferred, true));
+        }
+    }
+    // Reserve an available endpoint while choosing it. The supervisor binds next;
+    // a bind race fails startup and can never attach the window to another app.
+    let listener = TcpListener::bind(("127.0.0.1", preferred))
+        .or_else(|_| TcpListener::bind(("127.0.0.1", 0)))
+        .map_err(|error| format!("Could not allocate a loopback port: {error}"))?;
+    let port = listener
+        .local_addr()
+        .map_err(|error| error.to_string())?
+        .port();
+    Ok((port, false))
+}
+
+fn start_supervisor(app: &tauri::AppHandle) -> Result<u16, String> {
     let root = runtime_root(app)?;
     let node = node_path(&root);
     if !node.is_file() {
@@ -186,15 +247,28 @@ fn start_supervisor(app: &tauri::AppHandle) -> Result<(), String> {
     let data = supervisor_data(app)?;
     fs::create_dir_all(&data)
         .map_err(|error| format!("Could not create PaneForge data storage: {error}"))?;
+    let launch_lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(data.join("native-supervisor-launch.lock"))
+        .map_err(|error| error.to_string())?;
+    launch_lock.try_lock().map_err(|_| {
+        "Another Next launch is already checking this profile; retry when it finishes".to_string()
+    })?;
     let revision = runtime_revision(&root);
-    if let Some(actual) = probe_supervisor()? {
-        return require_matching_supervisor(actual, &revision, &data);
+    let (port, reuse) = select_supervisor_port(&data, &revision, DEFAULT_PORT)?;
+    fs::write(data.join("native-supervisor-port"), port.to_string())
+        .map_err(|error| error.to_string())?;
+    if reuse {
+        return Ok(port);
     }
     let path = supervisor_path(&node)?;
     let mut child = Command::new(&node)
         .arg(root.join("scripts/start.mjs"))
         .current_dir(&root)
-        .env("PANEFORGE_PORT", PORT)
+        .env("PANEFORGE_PORT", port.to_string())
         .env("PANEFORGE_DATA_DIR", &data)
         .env("PANEFORGE_DIST_DIR", root.join("dist"))
         .env("PANEFORGE_REVISION", &revision)
@@ -212,12 +286,93 @@ fn start_supervisor(app: &tauri::AppHandle) -> Result<(), String> {
     thread::spawn(move || {
         let _ = child.wait();
     });
-    wait_for_supervisor(&revision, &data)
+    wait_for_supervisor(&revision, &data, port)?;
+    Ok(port)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct PortProfile(PathBuf);
+    impl PortProfile {
+        fn new() -> Self {
+            let nonce = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let path =
+                std::env::temp_dir().join(format!("next-port-{}-{nonce}", std::process::id()));
+            fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+    }
+    impl Drop for PortProfile {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn foreign_listener_keeps_its_port_while_next_selects_another() {
+        let profile = PortProfile::new();
+        let foreign = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = foreign.local_addr().unwrap().port();
+        let (selected, reuse) = select_supervisor_port(&profile.0, "test", port).unwrap();
+        assert_ne!(selected, port);
+        assert!(!reuse);
+        assert!(TcpListener::bind(("127.0.0.1", port)).is_err());
+    }
+
+    #[test]
+    fn recorded_unresponsive_endpoint_fails_closed() {
+        let profile = PortProfile::new();
+        let foreign = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = foreign.local_addr().unwrap().port();
+        fs::write(profile.0.join("native-supervisor-port"), port.to_string()).unwrap();
+        assert!(select_supervisor_port(&profile.0, "test", 0).is_err());
+    }
+
+    #[test]
+    fn invalid_saved_endpoint_is_not_replaced() {
+        let profile = PortProfile::new();
+        for value in ["0", "22", "65536", "invalid"] {
+            fs::write(profile.0.join("native-supervisor-port"), value).unwrap();
+            assert!(select_supervisor_port(&profile.0, "test", 0).is_err());
+            assert_eq!(
+                fs::read_to_string(profile.0.join("native-supervisor-port")).unwrap(),
+                value
+            );
+        }
+    }
+
+    #[test]
+    fn saved_endpoint_reuses_only_exact_profile_and_revision() {
+        for saved in [false, true] {
+            for matching in [false, true] {
+                let profile = PortProfile::new();
+                let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+                let port = listener.local_addr().unwrap().port();
+                if saved {
+                    fs::write(profile.0.join("native-supervisor-port"), port.to_string()).unwrap();
+                }
+                let body = serde_json::json!({"product":"paneforge-next", "revision": if matching { "test" } else { "old" }, "dataDir": profile.0.to_string_lossy()}).to_string();
+                let responder = thread::spawn(move || {
+                    let (mut stream, _) = listener.accept().unwrap();
+                    let mut request = [0; 1024];
+                    stream.read(&mut request).unwrap();
+                    write!(stream, "HTTP/1.0 200 OK\r\n\r\n{body}").unwrap();
+                });
+                let result = select_supervisor_port(&profile.0, "test", port);
+                responder.join().unwrap();
+                if matching {
+                    assert_eq!(result.unwrap(), (port, true));
+                } else {
+                    assert!(result.unwrap_err().contains("left running"));
+                }
+            }
+        }
+    }
 
     #[test]
     fn accepts_matching_health_identity() {
@@ -331,7 +486,7 @@ fn is_workspace_origin(webview: &tauri::Webview) -> Result<(), String> {
         .map_err(|error| format!("Could not validate the voice window: {error}"))?;
     if url.scheme() == "http"
         && url.host_str() == Some("127.0.0.1")
-        && url.port_or_known_default() == Some(4321)
+        && url.port_or_known_default() == Some(webview.state::<WorkspacePort>().0)
     {
         Ok(())
     } else {
@@ -405,8 +560,12 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![request_microphone_permission])
         .setup(|app| {
-            start_supervisor(&app.handle())
+            let port = start_supervisor(&app.handle())
                 .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
+            app.manage(WorkspacePort(port));
+            let mut window = app.config().app.windows[0].clone();
+            window.url = tauri::WebviewUrl::External(format!("http://127.0.0.1:{port}").parse()?);
+            tauri::WebviewWindowBuilder::from_config(app, &window)?.build()?;
             updates::start(app.handle().clone());
             Ok(())
         })
