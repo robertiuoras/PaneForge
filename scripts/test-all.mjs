@@ -189,6 +189,7 @@ const TESTS = [
   // Both folder buttons on a pane open the project, never the copy the pane runs in.
   ['projectfolder', 'project-folder-test.mjs'],
   ['clientname', 'client-name-test.mjs'],
+  ['renametrigger', 'rename-trigger-test.mjs'],
   ['resolvedname', 'resolved-name-test.mjs'],
   ['peerchrome', 'peer-chrome-test.mjs'],
   ['remotelogin', 'remote-login-test.mjs'],
