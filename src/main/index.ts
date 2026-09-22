@@ -64,7 +64,6 @@ import { startDisplayAwake } from './awake'
 import { attachGlass, glassSupported } from './glass'
 import { invalidateAgents, listAgents, specFor } from './agents'
 import { codexInstalledVersion, codexLatest, forgetCodexVersion } from './codexModels'
-import { guardClaudeUsage } from './claudeQuota'
 import { isOutdated, versionOf } from '../shared/codexCatalogue'
 import { gitInfo } from './git'
 import { projectRoot } from './projectRoot'
@@ -1188,7 +1187,6 @@ const remote = new Remote({
   // in one repo must not share a checkout just because one of them is remote.
   sendPrompt: (id, text) => manager.sendPrompt(id, text),
   startSession: async (req) => {
-    await guardClaudeUsage(req.agent, req.model, req.asleep)
     return startComputeAware(await laneFor(req))
   },
   // A pane handed here from another device: pull its branch, drop its transcript
@@ -1200,10 +1198,7 @@ const remote = new Remote({
       {
         root: projectsRoot,
         place: (req) => laneFor(req),
-        start: async (req) => {
-          await guardClaudeUsage(req.agent, req.model, req.asleep)
-          return manager.start(req)
-        },
+        start: (req) => manager.start(req),
         historyDir: () => join(app.getPath('userData'), 'history'),
         noteTailCols: (id, cols) => history.noteCols(id, cols),
         claudeProjectDir: projectDir,
@@ -1795,7 +1790,6 @@ async function startOrSend(
   // GuardDeck reads the existing authenticated usage feed; this does not spend a model
   // request. Do it before both branches: reuse can send new work to an existing pane,
   // while the other branch opens a CLI that may immediately submit the seeded prompt.
-  await guardClaudeUsage(req.agent, req.model, req.asleep)
   // A row that says "this is where this work happens" - a client - goes back to the pane
   // that is already open there rather than opening a second one beside it. Live panes
   // only: a session that has exited is a row in History, and History is where somebody
@@ -4099,7 +4093,6 @@ async function openRequest(req: OpenRequest): Promise<void> {
   const target = req.open ?? (req.route ? confidentRoute(req.route) : undefined)
   if (!target) return
   try {
-    await guardClaudeUsage(undefined, req.model)
     manager.start({
       cwd: target,
       prompt: req.prompt ?? req.route ?? undefined,
