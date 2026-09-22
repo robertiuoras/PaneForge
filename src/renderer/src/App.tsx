@@ -5,7 +5,6 @@ import { effortChip, effortWords } from '@shared/effort'
 import { chordOf, resolveKeymap, sameChord } from '@shared/keymap'
 import { stripAnsi } from '@shared/ansi'
 import type {
-  ClientNamed,
   Config,
   DiffScope,
   HistoryEntry,
@@ -176,7 +175,6 @@ import StatusDot from './components/StatusDot'
 import SwarmDialog, { type SwarmStart } from './components/SwarmDialog'
 import SplitDialog from './components/SplitDialog'
 import AutoClearToast from './components/AutoClearToast'
-import ClientToast from './components/ClientToast'
 import UpdateToast from './components/UpdateToast'
 import WhatsNewCard from './components/WhatsNewCard'
 import TourCard from './components/TourCard'
@@ -1376,9 +1374,6 @@ export default function App(): JSX.Element {
       if (soundOn.current && !watching(s)) playEvent('bell', soundSet.current)
       if (!watching(s)) glow(s.id)
     })
-    // A pane naming itself for the client (or the subject) it is working on. No sound and
-    // no glow: nothing was asked of anybody, and the card says so for three seconds.
-    const offNamed = api.onClientNamed((e) => setClientNamed(e))
     // A sleep somebody pressed for and did not get. Silent until 2026-09-12: the card
     // took itself off screen, `sleepSession` answered `null`, and the reason was in a log
     // file - so the button read as broken (Robert: "i press sleep now and it doesn't
@@ -1391,7 +1386,6 @@ export default function App(): JSX.Element {
       offAsk()
       offBell()
       offSleepNo()
-      offNamed()
     }
   }, [])
   // Looking at the pane answers the question the glow was asking, however you got
@@ -4043,8 +4037,6 @@ export default function App(): JSX.Element {
    * screen and this app never does that on its own initiative; it is a sentence with a
    * clock in it, and doing nothing still closes the pane.
    */
-  // The newest pane to have named itself, for the three-second card in the corner.
-  const [clientNamed, setClientNamed] = useState<ClientNamed | undefined>(undefined)
   /**
    * Every countdown currently on screen - one per decision, not one full stop.
    *
@@ -7423,16 +7415,6 @@ export default function App(): JSX.Element {
       {/* A new pane the app decided to start on the other machine, before it does. */}
       <OffloadSoon />
       <QuitGuard />
-      {/* A pane that has just worked out whose work it is doing. */}
-      <ClientToast
-        named={clientNamed}
-        besidePet={config?.mascot?.enabled ?? DEFAULT_MASCOT.enabled}
-        onCancel={(id) => {
-          void api.undoClientName(id)
-          setClientNamed(undefined)
-        }}
-        onDone={() => setClientNamed(undefined)}
-      />
       <UpdateToast />
       <WhatsNewCard />
       {/* Only ever drawn in a `npm run try` copy - walks through what this build has that

@@ -970,17 +970,14 @@ manager.on('attention', (s: Session) => raiseAttention(s))
 manager.on('stalled', (s: Session) => raiseStalled(s))
 manager.on('bell', (s: Session) => raiseBell(s))
 manager.on('ask', (s: Session) => raiseAsk(s))
-// A pane naming itself is a thing the app decided, so it is reported and never asked -
-// the card in the corner carries the undo. Renderer only: nothing about it is worth a
-// phone notification.
 manager.on('sleepRefused', (id: string, why: string) => {
   send('sessions:sleepRefused', { id, why })
 })
+// A pane naming itself happens SILENTLY: no card, no sound, no phone message (Robert,
+// 2026-09-23: the corner card on every rename was noise). The Activity list is the one
+// place it can be read afterwards. `was` is in the sentence because "why is this pane
+// called that" is the question the rename produces.
 manager.on('clientNamed', (e: ClientNamed) => {
-  send('sessions:clientNamed', e)
-  // The card that says this is gone in three seconds; the list is where it can still be
-  // read afterwards. `was` is in the sentence because "why is this pane called that" is
-  // the question the rename produces.
   noteActivity(activityEntry('named', `${e.was} is now ${e.title}`, undefined))
 })
 
@@ -1970,7 +1967,6 @@ ipcMain.handle('sessions:switchAgent', (_e, id: string, agent: string, model?: s
 ipcMain.handle('sessions:rename', (_e, id: string, title: string) =>
   remote.owns(id) ? remote.send(id, { t: 'rename', title }) : manager.rename(id, title)
 )
-ipcMain.handle('sessions:clientUndo', (_e, id: string) => manager.undoClientName(id))
 // A pane that has finished what it was opened for, said while it is open rather than
 // asked for at the open. The rule that decides WHEN is `shared/closeWhenDone.ts`.
 ipcMain.handle('sessions:closeWhenDone', (_e, id: string, reportTo?: string) =>
