@@ -46,11 +46,11 @@ import { whatsNew } from './whatsNew'
 import { tour, tourCheck } from './tour'
 import { addSample, dropSample } from './tourSample'
 import { addSound, pruneCustomSounds, removeSound, renameSound, soundData } from './sounds'
-import { writeAttachments, readAttachIns, withShots } from './attach'
+import { writeAttachments, readAttachIns } from './attach'
 import { AskNotifier, askMessage, postAsk, telegramCreds } from './askNotify'
 import { errorMessage } from '../shared/paneError'
 import { askKeyOf } from '../shared/autoAnswer'
-import { ATTACH_MAX_BYTES, THUMB_KEEP, type AttachIn, type AttachResult } from '../shared/attach'
+import { type AttachIn, type AttachResult } from '../shared/attach'
 import { CHOOSE_GAP_MS, keysForChoice, sameAsk, stampMatches } from '../shared/choices'
 import { Remote } from './remote'
 import { readInvite } from './remote/invite'
@@ -3291,8 +3291,8 @@ ipcMain.handle('pty:choose', (_e, id: string, n: number, want?: string): boolean
 })
 
 ipcMain.handle('pty:attach', (_e, id: string, files: AttachIn[]): Promise<AttachResult> => {
-  if (remote.owns(id)) return withShots(files, remote.attachOn(id, files))
-  return withShots(files, writeAttachments(files))
+  if (remote.owns(id)) return remote.attachOn(id, files)
+  return Promise.resolve(writeAttachments(files))
 })
 
 /**
@@ -3305,22 +3305,11 @@ ipcMain.handle('pty:attach', (_e, id: string, files: AttachIn[]): Promise<Attach
 ipcMain.handle('pty:attachPaths', (_e, id: string, paths: string[]): Promise<AttachResult> => {
   if (!remote.owns(id)) {
     const local = Array.isArray(paths) ? paths.filter((p) => typeof p === 'string' && p) : []
-    // Local drops keep their original paths, including folders and large files.
-    // Read only a bounded set of small images for the decorative preview.
-    const pictures = local.filter((p) => /\.(png|jpe?g|webp|gif|bmp|ico|tiff?)$/i.test(p)).slice(0, THUMB_KEEP)
-    const files = pictures.flatMap((p) => {
-      try {
-        if (statSync(p).size > ATTACH_MAX_BYTES) return []
-        return readAttachIns([p]).files
-      } catch {
-        return []
-      }
-    })
-    return withShots(files, { paths: local })
+    return Promise.resolve({ paths: local })
   }
   const read = readAttachIns(paths)
   if (read.error) return Promise.resolve({ paths: [], error: read.error })
-  return withShots(read.files, remote.attachOn(id, read.files))
+  return remote.attachOn(id, read.files)
 })
 
 /**
@@ -3338,8 +3327,8 @@ ipcMain.handle('pty:attachClipboard', (_e, id: string): Promise<AttachResult> =>
   const png = img.toPNG()
   if (!png.length) return Promise.resolve({ paths: [], error: 'No image on the clipboard' })
   const files: AttachIn[] = [{ name: 'clipboard.png', data: png.toString('base64') }]
-  if (remote.owns(id)) return withShots(files, remote.attachOn(id, files))
-  return withShots(files, writeAttachments(files))
+  if (remote.owns(id)) return remote.attachOn(id, files)
+  return Promise.resolve(writeAttachments(files))
 })
 
 /**

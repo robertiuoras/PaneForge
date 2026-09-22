@@ -13,10 +13,7 @@ import { unwrapForClipboard } from '../unwrapCopy'
 import {
   pasteImageDrop,
   splitDropUris,
-  keepShots,
-  THUMB_SHOW_MS,
-  type AttachIn,
-  type Shot
+  type AttachIn
 } from '../../../shared/attach'
 import { FULL_SCROLLBACK } from '../../../shared/capacity'
 import { GRANT_GRACE_MS, nextResize } from '../../../shared/shrinkFirst'
@@ -1467,47 +1464,19 @@ function TerminalPane({
   toast.current = onToast
 
   /**
-   * The pictures of what was just attached, and the clock that takes them away.
-   *
-   * A dropped screenshot leaves nothing but a quoted PATH at the prompt, and on a mirrored
-   * pane that path names a file on the other machine - so the one thing the person who
-   * dropped it can see is a sentence of somebody else's disk. The strip is the receipt:
-   * this is the picture that went. It is decoration and dies on its own clock, so it holds
-   * no state anything else reads.
-   */
-  const [shots, setShots] = useState<Shot[]>([])
-  const shotsTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const showShots = (added: Shot[]): void => {
-    setShots((prev) => keepShots(prev, added))
-    if (shotsTimer.current) clearTimeout(shotsTimer.current)
-    shotsTimer.current = setTimeout(() => setShots([]), THUMB_SHOW_MS)
-  }
-  useEffect(
-    () => () => {
-      if (shotsTimer.current) clearTimeout(shotsTimer.current)
-    },
-    []
-  )
-
-  /**
    * Put saved attachments at the prompt, quoted, with a trailing space.
    *
    * Written to the pty rather than pasted, and nothing is sent for you: the paths land in
    * the input box so the thing being attached can be described first.
    */
-  const typePaths = (paths: string[], shots?: Shot[]): void => {
+  const typePaths = (paths: string[]): void => {
     if (!paths.length) return
     api.write(sessionId, paths.map(quote).join(' ') + ' ')
-    if (shots?.length) showShots(shots)
     term.current?.focus()
   }
 
   const typeLocalPaths = (paths: string[]): void => {
     typePaths(paths)
-    // Preview work must not delay typing a path that already exists on this desk.
-    void api.attachPaths(sessionId, paths).then((res) => {
-      if (res.shots?.length) showShots(res.shots)
-    }).catch(() => { /* a missing preview never prevents the drop */ })
   }
 
   /**
@@ -1528,7 +1497,7 @@ function TerminalPane({
     if (!payload.length) return
     const res = await api.attachFiles(sessionId, payload)
     if (res.error) toast.current?.(res.error)
-    typePaths(res.paths, res.shots)
+    typePaths(res.paths)
   }
 
   /** Is a paste the right answer for this drop? The rule itself is in shared/attach.ts. */
@@ -3032,7 +3001,7 @@ function TerminalPane({
         // It is saved as a file on the machine that owns this pty and the PATH is typed.
         void api.attachClipboardImage(sessionId).then((res) => {
           if (res.paths.length) {
-            typePaths(res.paths, res.shots)
+            typePaths(res.paths)
             return
           }
           // A refusal that is about the clipboard being empty is not a refusal: let the
@@ -4927,7 +4896,7 @@ function TerminalPane({
           .attachPaths(sessionId, dropped)
           .then((res) => {
             if (res.error) toast.current?.(res.error)
-            typePaths(res.paths, res.shots)
+            typePaths(res.paths)
           })
           .catch(() => toast.current?.('Could not send that file to the other device.'))
       if (!uris.length) return
@@ -4947,7 +4916,7 @@ function TerminalPane({
       }
       const res = await api.attachFiles(sessionId, payload)
       if (res.error) toast.current?.(res.error)
-      typePaths(res.paths, res.shots)
+      typePaths(res.paths)
     })()
   }
 
@@ -5121,27 +5090,6 @@ function TerminalPane({
       {/* ...and the same line, in the same spot, while the agent is stopped. A mirror is
           told nothing: the pane is asleep on the machine that owns it, not on this one. */}
       {asleep && !mirror && <PaneAsleep />}
-      {/* What was just attached, as a picture. Bottom-RIGHT: bottom-left is Codex's own
-          `>` marker (the mic was moved off it for the same reason) and the header row is
-          already the thing `headerFit` is fighting over. Goes on its own after
-          THUMB_SHOW_MS; the ✕ is for the drop you want out of the way sooner. */}
-      {shots.length > 0 && (
-        <div className="shot-strip" onMouseDown={(e) => e.preventDefault()}>
-          {shots.map((s) => (
-            <img key={s.url} className="shot-thumb" src={s.url} alt={s.name} title={s.name} />
-          ))}
-          <button
-            className="shot-close"
-            title="Hide these"
-            onClick={() => {
-              setShots([])
-              term.current?.focus()
-            }}
-          >
-            ✕
-          </button>
-        </div>
-      )}
       {handoverUntil > 0 && (
         <HandoverCurtain
           until={handoverUntil}

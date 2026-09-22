@@ -121,7 +121,6 @@ const TESTS = [
   ['panegrid', 'pane-grid-test.mjs'],
   ['markanchor', 'mark-anchor-test.mjs'],
   ['forceselect', 'force-select-test.mjs'],
-  ['shots', 'shots-test.mjs'],
   ['pinrestore', 'pin-restore-test.mjs'],
   ['pinsave', 'pin-save-test.mjs'],
   ['updatecompletion', 'update-completion-test.mjs'],
