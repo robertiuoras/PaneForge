@@ -1,5 +1,11 @@
 # PaneForge Next: Stage 1 checkpoint
 
+Historical checkpoint: the Stage 1 scope below was subsequently expanded by Robert to
+the full Next replacement. Do not use its stop instruction as the current task boundary.
+See [Next's current entry point](../next/README.md) and the
+[dated release verification](../next/docs/release-verification-20260921.md). Fixture
+completion remains narrower than installed replacement acceptance.
+
 Accepted contract: [voice-first contract](paneforge-next-voice-first-contract.md), all 479 lines read on 2026-09-20. Robert narrowed this task to **Stage 1 only**. The requested milestone is complete at fixture level; stop here.
 
 ## Ownership and scope
