@@ -360,6 +360,10 @@ const laneDir = (id) => (id === 'main' ? MAIN : join(dirname(MAIN), `${basename(
 const laneBranch = (id) => (id === 'main' ? MB : `lane-${id}`)
 /** Matches scripts/try.mjs, which derives the PaneForge profile from the folder name. */
 const laneProfile = (id) => (id === 'main' ? 'dev' : `dev-${id}`)
+// Taskdriver's full verification runs on the PC. The shared verifier reads the
+// PC evidence for this exact tree; a missing verifier or proof holds the release.
+const TASKDRIVER_PC = process.platform === 'darwin' && basename(MAIN) === 'taskdriver.ai'
+const TASKDRIVER_PROOF = join(dirname(own), 'claude-memory', 'claude-config', 'taskdriver-pc-proof.mjs')
 
 /**
  * Take a lane's folder out of Finder, on macOS.
@@ -2410,7 +2414,35 @@ function installDeps() {
 }
 
 /** Empty when master compiles (or has no typecheck script), a sentence when it does not. */
-function typecheckFailure() {
+function taskdriverProofFailure(dir, ref) {
+  const r = spawnSync(process.execPath, [TASKDRIVER_PROOF, '--repo', dir, '--ref', ref], {
+    cwd: dir,
+    encoding: 'utf8',
+    timeout: 30_000,
+    windowsHide: true
+  })
+  if (r.status === 0) return null
+  return `Taskdriver PC verification for ${ref.slice(0, 8)} is required before release - ${firstLine(`${r.stderr ?? ''}\n${r.stdout ?? ''}`)}.`
+}
+
+function taskdriverPreflightFailure(state) {
+  const head = gitSafe(MAIN, 'rev-parse', 'HEAD')
+  if (!head.ok) return 'Taskdriver PC verification could not identify main HEAD, so nothing was released.'
+  // A ready lane has already merged main. Its verified tree may repair a red main,
+  // but only the actual combined tree is accepted below before any push.
+  for (const [id, mark] of Object.entries(state.ready)) {
+    if (id === 'main') continue
+    const dir = laneDir(id)
+    const tip = gitSafe(dir, 'rev-parse', 'HEAD')
+    if (!tip.ok || tip.out !== mark.commit ||
+        !gitSafe(dir, 'merge-base', '--is-ancestor', head.out, tip.out).ok) continue
+    if (!taskdriverProofFailure(dir, tip.out)) return null
+  }
+  return taskdriverProofFailure(MAIN, head.out)
+}
+
+function typecheckFailure(state) {
+  if (TASKDRIVER_PC) return taskdriverPreflightFailure(state)
   let pkg
   try {
     pkg = JSON.parse(readFileSync(join(MAIN, 'package.json'), 'utf8'))
@@ -2477,6 +2509,8 @@ const SUITE_TIMEOUT_MS = 20 * 60 * 1000
  * hands now, and it is typed by a person who is watching.
  */
 function suiteFailure(state) {
+  // The Taskdriver PC proof above covers its full offline verify suite too.
+  if (TASKDRIVER_PC) return null
   let pkg
   try {
     pkg = JSON.parse(readFileSync(join(MAIN, 'package.json'), 'utf8'))
@@ -2739,7 +2773,7 @@ function autoshipRun(kind = 'auto', session = 'auto') {
   // Nobody is watching an automatic release, so it checks itself first. A tag that fails
   // to compile costs a broken GitHub build and a version number that never produced an
   // installer - and the next chat inherits both.
-  const broken = typecheckFailure()
+  const broken = typecheckFailure(state)
   if (broken) return { shipped: false, reason: broken }
   // ...and then whether it WORKS, which the typecheck never answered. Second because it
   // is ten times the cost and a tree that does not compile cannot pass it anyway.
@@ -3066,6 +3100,10 @@ function mainBlockers(state) {
 
 function ship(kind, session) {
   if (!['auto', 'patch', 'minor', 'major'].includes(kind)) throw new Error(`unknown bump "${kind}"`)
+  // Version mode creates another commit after the exact-tree proof. Taskdriver's
+  // merge workflow must not push that newly changed, unverified tree.
+  if (TASKDRIVER_PC && RELEASE === 'version')
+    throw new Error('Taskdriver PC verification requires merge mode; version mode changes the verified tree')
   // `ship` is also reachable without going through autoship (`npm run ship`, `ship major`),
   // and it reads the same local tags to pick the bump. Same fetch, same reason.
   syncTags()
@@ -3102,7 +3140,7 @@ function ship(kind, session) {
     // the channel was a tag with no installer behind it. Nothing on this machine said a
     // word. A typecheck is ~15s and answers exactly that question, so it runs before the
     // version is committed rather than eight minutes later in somebody else's CI.
-    const broken = typecheckFailure()
+    const broken = typecheckFailure(state)
     if (broken) throw new Error(broken)
 
     // An expired token used to surface only after the version was committed and
@@ -3180,6 +3218,16 @@ function ship(kind, session) {
         }
       }
       merged.push({ lane: id, commits: ahead, commit: mark.commit })
+    }
+
+    // A set of individually checked lanes can produce a different merge tree.
+    // Fail closed here, with the local merge retained for a PC recheck, before
+    // any push can expose unverified combined work.
+    if (TASKDRIVER_PC) {
+      const tip = gitSafe(MAIN, 'rev-parse', 'HEAD')
+      if (!tip.ok) throw new Error('Taskdriver PC verification could not identify merged HEAD')
+      const failed = taskdriverProofFailure(MAIN, tip.out)
+      if (failed) throw new Error(failed)
     }
 
     /**
