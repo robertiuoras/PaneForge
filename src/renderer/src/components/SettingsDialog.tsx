@@ -810,6 +810,12 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                   hint={`A dev server that has lost its port - a second copy started while the first still had it, or one whose window went away - keeps a compiler, a file watcher and a few hundred MB running while nothing can reach it. On, a server holding no connection at all for a minute and a half gets a ${config.deadDev?.countdownSeconds ?? DEFAULT_DEAD_DEV.countdownSeconds}-second card in the corner naming the project and the port, and is closed if nobody says otherwise. It never touches one that anything is connected to, and never one that launchd or a Windows service keeps alive, because that one comes straight back.`}
                 />
                 <Switch
+                  checked={config.autoCloseDone !== false}
+                  onChange={(v) => onChange({ autoCloseDone: v })}
+                  label="Close a pane once its work is finished"
+                  hint="A pane whose last reply is done - no question, nothing left running, no step an agent could take next - closes itself after three minutes of nobody looking at it. What it was asked and what it did go to Review, where Reopen brings the same conversation back. A pane you are looking at, one with a draft or a question, one running something in the background, and a shell are never touched. Steps only you can do become GuardDeck to-dos."
+                />
+                <Switch
                   checked={config.autoAnswer?.enabled === true}
                   onChange={(v) =>
                     onChange({
