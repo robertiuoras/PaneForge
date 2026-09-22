@@ -2,6 +2,7 @@
 // and where. The renderer uses the result to grey out CLIs that are not installed
 // instead of letting you launch a pane that dies in a second.
 
+import { claudeCliModels } from './claudeModels'
 import { codexCatalogue, codexInstalledVersion, codexLatest } from './codexModels'
 import { getConfig } from './config'
 import { orCatalogue, orStale, refreshOrModels } from './orModels'
@@ -15,6 +16,7 @@ import {
   type AgentInfo,
   type AgentSpec
 } from '../shared/agents'
+import { mergeClaudeModels } from '../shared/claudeCatalogue'
 import { codexChoices, isOutdated, mergeCodexModels } from '../shared/codexCatalogue'
 import { mergeOrModels, orChoices } from '../shared/orCatalogue'
 
@@ -62,6 +64,16 @@ function withCodexModels(spec: AgentSpec): AgentSpec {
   return { ...spec, models: mergeCodexModels(spec.models ?? [], live) }
 }
 
+/** Claude's hand-written list, plus any newer id the installed CLI already knows. */
+function withClaudeModels(spec: AgentSpec): AgentSpec {
+  if (spec.id !== 'claude') return spec
+  const path = which(spec.bin)
+  if (path === spec.bin) return spec
+  const live = claudeCliModels(path, invalidateAgents)
+  if (!live.length) return spec
+  return { ...spec, models: mergeClaudeModels(spec.models ?? [], live) }
+}
+
 export function listAgents(force = false): AgentInfo[] {
   // Never awaited. The catalogue below is read from memory, so a list that arrives
   // after this call simply reaches the next dialog open - nothing here waits on a
@@ -74,7 +86,7 @@ export function listAgents(force = false): AgentInfo[] {
   // Enriched FIRST, so a sibling's list carries the live OpenRouter catalogue too: a
   // key pasted today must reach the models published this week, not only the eight
   // hand-written shortcuts.
-  const specs = allAgents(cfg.customAgents).map(withLiveModels).map(withCodexModels)
+  const specs = allAgents(cfg.customAgents).map(withLiveModels).map(withCodexModels).map(withClaudeModels)
   const list = specs.map((spec) => {
     const path = which(spec.bin)
     // which() returns the input unchanged when it finds nothing.
