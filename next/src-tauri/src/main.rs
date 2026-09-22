@@ -92,10 +92,11 @@ fn health_identity(response: &str) -> Result<SupervisorIdentity, String> {
         .split_once("\r\n\r\n")
         .ok_or_else(|| "PaneForge supervisor returned an incomplete health response".to_string())?;
     if !status.starts_with("HTTP/1.1 200") && !status.starts_with("HTTP/1.0 200") {
-        return Err(
-            "The selected loopback port is occupied by a process that is not a ready PaneForge supervisor"
-                .to_string(),
-        );
+        let response_status: String = status.lines().next().unwrap_or_default()
+            .chars().filter(|c| !c.is_control()).take(120).collect();
+        return Err(format!(
+            "The selected loopback port is occupied by a process that is not a ready PaneForge supervisor ({response_status})"
+        ));
     }
     let health: serde_json::Value = serde_json::from_str(body).map_err(|_| {
         "The selected loopback port returned an invalid PaneForge health response".to_string()
@@ -390,6 +391,13 @@ mod tests {
     fn rejects_unrelated_health_identity() {
         let error = health_identity("HTTP/1.1 200 OK\r\n\r\n{\"product\":\"other\",\"revision\":\"abc\",\"dataDir\":\"/tmp/pane\"}").unwrap_err();
         assert!(error.contains("different application"));
+    }
+
+    #[test]
+    fn failed_health_reports_status_without_response_body() {
+        let error = health_identity("HTTP/1.1 403 Forbidden\r\nsecret: private\r\n\r\nprivate response").unwrap_err();
+        assert!(error.contains("HTTP/1.1 403 Forbidden"));
+        assert!(!error.contains("private"));
     }
 
     #[test]
