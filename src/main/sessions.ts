@@ -1057,16 +1057,6 @@ export class SessionManager extends EventEmitter {
     return asks
   }
 
-  /** Cancel on the card: put the name back, and stop reading this pane for a client. */
-  undoClientName(id: string): void {
-    const live = this.sessions.get(id)
-    if (!live) return
-    live.meta.clientOff = true
-    live.meta.clientSlug = undefined
-    live.meta.title = projectOf(live.meta.cwd, live.meta.lane)
-    this.emitSessions()
-  }
-
   /**
    * Fill in a pane's lane from the branch its folder is on, when nothing else knew.
    *

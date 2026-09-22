@@ -67,6 +67,7 @@ import { isOutdated, versionOf } from '../shared/codexCatalogue'
 import { gitInfo } from './git'
 import { projectRoot } from './projectRoot'
 import { diffFiles, diffPatch } from './diff'
+import { withDefaultModel } from '../shared/startModel'
 import type { ClientNamed, DiffScope, EffortChoice, PhoneState , LaneBoard} from '../shared/types'
 import { detectLane, laneExtras, resolveLane } from './lanes'
 import { inspectLaneFolders, laneWork, mergeLaneBack, repoOf, returnToBase, sweepLanes, trackTyped } from './laneWork'
@@ -970,17 +971,14 @@ manager.on('attention', (s: Session) => raiseAttention(s))
 manager.on('stalled', (s: Session) => raiseStalled(s))
 manager.on('bell', (s: Session) => raiseBell(s))
 manager.on('ask', (s: Session) => raiseAsk(s))
-// A pane naming itself is a thing the app decided, so it is reported and never asked -
-// the card in the corner carries the undo. Renderer only: nothing about it is worth a
-// phone notification.
 manager.on('sleepRefused', (id: string, why: string) => {
   send('sessions:sleepRefused', { id, why })
 })
+// A pane naming itself happens SILENTLY: no card, no sound, no phone message (Robert,
+// 2026-09-23: the corner card on every rename was noise). The Activity list is the one
+// place it can be read afterwards. `was` is in the sentence because "why is this pane
+// called that" is the question the rename produces.
 manager.on('clientNamed', (e: ClientNamed) => {
-  send('sessions:clientNamed', e)
-  // The card that says this is gone in three seconds; the list is where it can still be
-  // read afterwards. `was` is in the sentence because "why is this pane called that" is
-  // the question the rename produces.
   noteActivity(activityEntry('named', `${e.was} is now ${e.title}`, undefined))
 })
 
@@ -1186,7 +1184,7 @@ const remote = new Remote({
   // in one repo must not share a checkout just because one of them is remote.
   sendPrompt: (id, text) => manager.sendPrompt(id, text),
   startSession: async (req) => {
-    return manager.start(await laneFor(req))
+    return manager.start(withDefaultModel(await laneFor(req), getConfig().defaultModels))
   },
   // A pane handed here from another device: pull its branch, drop its transcript
   // where the CLI will look, start it as an ordinary local pane. The lane split
@@ -1775,7 +1773,10 @@ async function startOrSend(
     const began = Date.now()
     const lane = await laneFor(req, claimed)
     const decided = Date.now() - began
-    const session = await manager.start(lane)
+    // A request that named no model starts on the configured default, as the New Session
+    // dialog always did (`shared/startModel.ts`). Here, not at the top of `startOrSend`:
+    // a pane handed to the other desk takes THAT desk's defaults.
+    const session = await manager.start(withDefaultModel(lane, getConfig().defaultModels))
     logOffload({ event: 'started', id: session.id, cwd: lane.cwd, decidedMs: decided, openMs: Date.now() - began })
     return session
   }
@@ -1970,7 +1971,6 @@ ipcMain.handle('sessions:switchAgent', (_e, id: string, agent: string, model?: s
 ipcMain.handle('sessions:rename', (_e, id: string, title: string) =>
   remote.owns(id) ? remote.send(id, { t: 'rename', title }) : manager.rename(id, title)
 )
-ipcMain.handle('sessions:clientUndo', (_e, id: string) => manager.undoClientName(id))
 // A pane that has finished what it was opened for, said while it is open rather than
 // asked for at the open. The rule that decides WHEN is `shared/closeWhenDone.ts`.
 ipcMain.handle('sessions:closeWhenDone', (_e, id: string, reportTo?: string) =>
@@ -4043,12 +4043,12 @@ async function openRequest(req: OpenRequest): Promise<void> {
   const target = req.open ?? (req.route ? confidentRoute(req.route) : undefined)
   if (!target) return
   try {
-    manager.start({
-      cwd: target,
-      prompt: req.prompt ?? req.route ?? undefined,
-      model: req.model,
-      title: req.title
-    })
+    manager.start(
+      withDefaultModel(
+        { cwd: target, prompt: req.prompt ?? req.route ?? undefined, model: req.model, title: req.title },
+        getConfig().defaultModels
+      )
+    )
   } catch {
     /* bad path on the command line - ignore rather than crash the launch */
   }

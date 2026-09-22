@@ -2291,15 +2291,6 @@ export interface Api {
    * doing either. Per pane, off until asked for.
    */
   setEffort(id: string, choice: EffortChoice): Promise<void>
-  /**
-   * Put a client rename back and stop offering it for this pane. The card's Cancel.
-   *
-   * A rename that could only be undone by typing the old name again is not a cancel: the
-   * old name is `basename(cwd)`, which the person never typed and has no reason to know.
-   */
-  undoClientName(id: string): Promise<void>
-  /** A pane has just been named for a client. Carries what it was called before. */
-  onClientNamed(fn: (e: ClientNamed) => void): () => void
   /** A sleep somebody asked for that main would not do, and the sentence saying why. */
   onSleepRefused(fn: (e: { id: string; why: string }) => void): () => void
   onActivity(fn: (feed: ActivityFeed) => void): () => void

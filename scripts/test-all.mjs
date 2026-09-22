@@ -103,6 +103,7 @@ const TESTS = [
   ['handoffsteps', 'handoff-steps-test.mjs'],
   ['handoffstatthrottle', 'handoff-stat-throttle-test.mjs'],
   ['panemodel', 'panemodel-test.mjs'],
+  ['startmodel', 'start-model-test.mjs'],
   ['effort', 'effort-test.mjs'],
   ['staleframe', 'stale-frame-test.mjs'],
   ['wakescreen', 'wakescreen-test.mjs'],

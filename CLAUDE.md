@@ -264,14 +264,14 @@ drawn. `test:laneplain`.
 
 ## A pane says which client it is working for
 
-`shared/clientName.ts`, `main/clients.ts`, `ClientToast.tsx`; `test:clientname`. Roster =
+`shared/clientName.ts`, `main/clients.ts`; `test:clientname`. Roster =
 `clients/<who>/README.md` walking UP; first heading, contact stripped; parenthetical kept
 only for a person (`A4 Advocate (Adie Bradley)` -> `Adie Bradley`; `PIA Team (Property
 Investors Alliance)` stays); `Client` off. Prompt name matches ONE client, word boundary,
 `MIN_ALIAS`, not `GENERIC`. Replace only on STRONG reading (`topicReading`, `repeatedTopic`);
 `/clear` empties `topicAsks`. Others get `topicTitle` where `mayTopicName` (client tree,
-`Desktop`/`Downloads`/root); real repo waits three agreeing asks, EARLIEST names. Rename then
-report; `Cancel` -> `clientOff`. Pointing ask (`$50 task`) named off the REPLY
+`Desktop`/`Downloads`/root); real repo waits three agreeing asks, EARLIEST names. Rename is
+SILENT: no card, Activity row only (`test:activity`). Pointing ask (`$50 task`) named off the REPLY
 (`shared/resolvedName.ts` `handleOf`/`resolvedName`, `sweepResolved` once, app-given names
 only; `The agent found what you meant.`; `test:resolvedname`).
 
@@ -505,7 +505,7 @@ deadline. `test:cardidle`.
 ## Every card the app puts in the corner is in ONE column
 
 `.corner-stack` (`App.tsx`/`styles.css`, `test:activity`): `column-reverse`, FIRST = corner;
-AutoClear, MoveSoon, ClientToast, Update, WhatsNew, Tips; children `position: static`;
+AutoClear, MoveSoon, Update, WhatsNew, Tips; children `position: static`;
 `.beside-pet` lifts 108px once; `pointer-events: none`, `max-height`.
 
 ## A dev server nothing can reach is closed, after a countdown
