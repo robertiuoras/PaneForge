@@ -5265,6 +5265,14 @@ export default function App(): JSX.Element {
                     >
                       {s.title}
                     </span>
+                    {/* Which copy of the project, beside the name it belongs to. It sat at
+                        the end of the fourth line as `copy 4 done`, where Robert could not
+                        find it (2026-09-23: "i dont even see which lane this is in"). */}
+                    <SessionCopies session={s} boards={laneBoards} onOpen={cwd => {
+                      setActiveId(s.id)
+                      handheld.showPane()
+                      setLaneCwd(cwd)
+                    }} />
                     {/* The clock lives up HERE, at the far end of the name, because this
                         line has spare room and the line below it has none: a lane card's
                         sub-line wanted 214px of the 190px it has, and every arrangement
@@ -5296,13 +5304,6 @@ export default function App(): JSX.Element {
                           be the only reading. Keep the word beside the actual timers so a
                           green dot never has to be decoded from memory. A question already
                           has its stronger, more specific "asks you" state below. */}
-                      {!s.ask && s.status !== 'exited' && (
-                        <span className={'chip card-status ' + s.status}>
-                          {s.status === 'idle'
-                            ? (s.engaged !== false ? 'waiting for you' : 'ready')
-                            : s.status === 'working' ? 'running' : s.status}
-                        </span>
-                      )}
                       {s.ask && (
                         <span
                           className="chip asks"
@@ -5360,20 +5361,27 @@ export default function App(): JSX.Element {
                         // A switch with no reading is a switch nobody can tell they pressed:
                         // pinning a pane removes the only thing on the card that was about
                         // the idle clock, so it takes that place rather than leaving a gap.
+                        // A pin, not a `kept open` box: the word cost a whole chip on
+                        // every kept card for a fact that never changes while you look.
                         <button
                           type="button"
-                          className="chip kept"
+                          className="row-kept"
+                          aria-label={keptWords(Boolean(s.asleep))}
                           title={
-                            s.asleep
-                              ? 'This pane is never closed for being idle - its card stays even while it sleeps. Press to put it back on the clock.'
-                              : 'This pane is never closed for being idle. Press to put it back on the clock.'
+                            `${keptWords(Boolean(s.asleep))}: ` +
+                            (s.asleep
+                              ? 'this pane is never closed for being idle - its card stays even while it sleeps.'
+                              : 'this pane is never closed for being idle.') +
+                            ' Press to put it back on the clock.'
                           }
                           onClick={(e) => {
                             e.stopPropagation()
                             togglePin(s.id)
                           }}
                         >
-                          {keptWords(Boolean(s.asleep))}
+                          <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
+                            <path d="M6 2h4l-.6 4.2L12 8.6V10H8.7v4L8 15l-.7-1v-4H4V8.6l2.6-2.4z" fill="currentColor" />
+                          </svg>
                         </button>
                       ) : null}
                       {/* A pane on its way out says so, and says it here for the same reason
@@ -5433,18 +5441,7 @@ export default function App(): JSX.Element {
                         <AsleepChip at={s.asleep} id={s.id} reason={s.asleepReason} />
                       ) : s.status === 'exited' ? (
                         <span className="chip dead">exited {s.exitCode ?? ''}</span>
-                      ) : s.runSince ? (
-                        <span className="session-clock">turn <Elapsed since={s.runSince} title="This turn" /></span>
-                      ) : s.lastRunMs !== undefined ? (
-                        <span className="session-clock session-last" title="Last turn">
-                          last {formatElapsed(s.lastRunMs)}
-                        </span>
                       ) : null}
-                      {s.status !== 'exited' && (
-                        <span className="session-clock" title="Time since this session opened, including idle time">
-                          open <Elapsed since={s.openedAt ?? s.createdAt} className="elapsed done" />
-                        </span>
-                      )}
                       {/* What the pane is still RUNNING with its turn over. This is the one
                           card state Robert reported as a lie: an agent that started work in
                           the background goes quiet, the clock stops, and the card reads
@@ -5453,12 +5450,44 @@ export default function App(): JSX.Element {
                           deep at 190px (see the notes there) - and it is drawn only when
                           there IS something, which on an ordinary card is never.
                           Cosmetic: `shared/paneBackJobs.ts` feeds no busy reading. */}
+                    </span>
+                  </div>
+                )}
+                {/* One muted sentence: which model, how long open, what is left running.
+                    Plain text parted by dots rather than a row of boxes (Robert
+                    2026-09-23: "too cluttered ... not modern"). The agent's NAME is the
+                    logo's hover now - the logo already says it. */}
+                <div className="row-sub">
+                  {(() => {
+                    const spec = agents.find((a) => a.id === s.agent)
+                    const model = s.model ? agentModelLabel(spec, s.model) : ''
+                    return (
+                      <span className="meta row-agent" title={(spec?.label ?? s.agent) + (s.model ? ` · ${s.model}` : '')}>
+                        <AgentLogo id={s.agent} spec={spec} size={12} />
+                        {model || (spec?.label ?? s.agent)}
+                        {s.effort ? ` ${effortChip(s.effort)}${s.effort.pending ? '…' : ''}` : ''}
+                      </span>
+                    )
+                  })()}
+                  {s.status !== 'exited' && (
+                    <span className="meta" title="Time since this session opened, including idle time">
+                      <Elapsed since={s.openedAt ?? s.createdAt} className="elapsed done" />
+                    </span>
+                  )}
+                  {s.handoffOpen ? (
+                    <span
+                      className="meta"
+                      title={`This pane's handoff lists ${s.handoffOpen} step(s) a fresh session could start on. An automatic /clear fires only while that is true - a handoff saying None is left alone.`}
+                    >
+                      {stepsWord(s.handoffOpen)}
+                    </span>
+                  ) : null}
                       {(() => {
                         const jobs = usage?.panes[s.id]?.jobs
                         if (!jobs?.length) return null
                         return (
                           <span
-                            className="chip jobs"
+                            className="meta jobs"
                             title={
                               'Still running with the turn over:\n' +
                               jobs
@@ -5474,73 +5503,25 @@ export default function App(): JSX.Element {
                           </span>
                         )
                       })()}
-                    </span>
-                  </div>
-                )}
-                <div className="row-sub">
-                  <AgentLogo id={s.agent} spec={agents.find((a) => a.id === s.agent)} size={12} />
-                  {/* The one thing on this line that may be cut short. A bare text node is
-                      an anonymous flex item with no min-width of its own, so it held the
-                      line at its full width and pushed the clock out of the clipped box
-                      instead - measured: 51px pill, 15px of it on screen. */}
-                  <span className="row-agent">
-                    {agents.find((a) => a.id === s.agent)?.label ?? s.agent}
-                  </span>
-                  {/* No chip for a model id this build does not know - see
-                      agentModelLabel. The id itself is still on the row's own hover. */}
-                  {(() => {
-                    const label = s.model
-                      ? agentModelLabel(agents.find((a) => a.id === s.agent), s.model)
-                      : ''
-                    return label ? (
-                      <span className="chip" title={s.model}>
-                        {label}
+                    {/* Plain words, not a box, at the far end of the second line: one state
+                        per card, and a running turn's word IS its clock. What the last turn
+                        took and whether it wrote anything are on the hover (Robert
+                        2026-09-23: too much info). */}
+                    {!s.ask && s.status !== 'exited' && !s.handingOff && !(alarmAt(s.id) ?? s.closingAt) && (
+                      <span
+                        className={'row-state ' + s.status}
+                        title={[
+                          s.lastRunMs !== undefined && !s.runSince ? `Last turn took ${formatElapsed(s.lastRunMs)}.` : '',
+                          s.changedNothing ? `${s.changedNothing}${s.changedNothingWhy ? ` - ${s.changedNothingWhy}` : ''}` : ''
+                        ].filter(Boolean).join('\n') || undefined}
+                      >
+                        {s.status === 'working' && s.runSince ? (
+                          <Elapsed since={s.runSince} title="This turn" />
+                        ) : s.status === 'idle'
+                          ? (s.engaged !== false ? 'waiting' : 'ready')
+                          : s.status === 'working' ? 'running' : s.status}
                       </span>
-                    ) : null
-                  })()}
-                  {/* How hard this Codex pane is thinking, and why. Only ever the level the
-                      conversation's own log has CONFIRMED - a change that has been asked
-                      for and not yet proved wears a `…` and says so on hover. No new
-                      colour: it is the same chip the model wears. */}
-                  {s.effort ? (
-                    <span className="chip" title={effortWords(s.effort)}>
-                      {effortChip(s.effort)}
-                      {s.effort.pending ? '…' : ''}
-                    </span>
-                  ) : null}
-                  {/* What this pane's HANDOFF says is left, which nothing on the desk said.
-                      A pane past the context line writes one, and its `## Next steps` is
-                      the only place that answers "is there work left in there" - the
-                      screen cannot, and neither can the busy read. It is drawn ONLY for a
-                      pane with steps open: `handoffOpen === 0` is a finished session that
-                      wrote `None`, and `undefined` is a pane that never wrote a handoff at
-                      all, and a chip for either is a chip on almost every card. Static,
-                      unpressable, no clock - the number changes when a session rewrites
-                      the file, which is minutes apart. */}
-                  {s.handoffOpen ? (
-                    <span
-                      className="chip"
-                      title={`This pane's handoff lists ${s.handoffOpen} step(s) a fresh session could start on. An automatic /clear fires only while that is true - a handoff saying None is left alone.`}
-                    >
-                      {stepsWord(s.handoffOpen)}
-                    </span>
-                  ) : null}
-                  {/* ...and a turn that ended having written nothing at all. Decided in
-                      main off two readings of the folder taken on the turn's own
-                      boundaries (`shared/changedNothing.ts`); the words are already
-                      chosen there, so this only draws them. Static, unpressable, no
-                      clock: it says something about one finished turn, and the next turn
-                      starting clears it. */}
-                  {s.changedNothing ? (
-                    <span className="chip nowork" title={s.changedNothingWhy}>
-                      {s.changedNothing}
-                    </span>
-                  ) : null}
-                  <SessionCopies session={s} boards={laneBoards} onOpen={cwd => {
-                    setActiveId(s.id)
-                    handheld.showPane()
-                    setLaneCwd(cwd)
-                  }} />
+                    )}
                 </div>
               </div>
               {s.status === 'exited' && (

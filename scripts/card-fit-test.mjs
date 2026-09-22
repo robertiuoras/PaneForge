@@ -49,7 +49,7 @@ if (!CHROME) {
 }
 
 /** The sidebar, at the width it really has, holding one card. */
-function page(rowSub, remote = false, titleChips = '', name = 'PaneForge') {
+function page(rowSub, remote = false, titleChips = '', name = 'PaneForge', lane = '') {
   const mark = remote
     ? '<span class="row-remote"><svg viewBox="0 0 16 16" width="13" height="13"></svg></span>'
     : ''
@@ -69,7 +69,7 @@ function page(rowSub, remote = false, titleChips = '', name = 'PaneForge') {
   <div class="app"><div class="sidebar" style="width:260px"><div class="list">
     <div class="row">
       <div class="row-text">
-        <div class="row-title has-key"><span class="num-wrap"><span class="num">1</span></span>${mark}<span class="row-name">${name}</span><span class="row-tags">${titleChips}${titleChips.includes('session-clock') ? '' : '<span class="elapsed">1m 20s</span>'}</span></div>
+        <div class="row-title has-key"><span class="num-wrap"><span class="num">1</span></span>${mark}<span class="row-name">${name}</span>${lane}<span class="row-tags">${titleChips}</span></div>
         <div class="row-sub">${rowSub}</div>
       </div>
       <button class="x">x</button>
@@ -77,67 +77,38 @@ function page(rowSub, remote = false, titleChips = '', name = 'PaneForge') {
   </div></div></div>`
 }
 
+// The card as drawn since 2026-09-23 (Robert: "too cluttered ... not modern"): two lines
+// of TEXT. Title: number, name, which copy, one state word. Sub-line: one muted sentence.
 const LOGO = '<span style="flex:none;width:12px;height:12px;display:inline-block"></span>'
-const AGENT = '<span class="row-agent">Claude Code</span>'
-const MODEL = '<span class="chip">sonnet</span>'
-const PLACE = '<button class="chip place">PaneForge · lane a</button>'
-// What a lane card really draws now: ONE chip, the project dropped because the title above
-// has already said it, wearing the lane's own colour.
-const LANE_PLACE = '<button class="chip place lane-chip busy">lane a</button>'
-const LANE = '<span class="chip pf-lane">Toolstash · lane c</span>'
-const CLOCK = ''
-// The title line's own chips. `asks you` and `kept open` are fixed text with `flex: none`,
-// so on one line the NAME is the only thing that can give way - which is the bug this pair
-// of cases pins. The seconds inside the ask chip are its widest state.
+const AGENT = (model = 'Opus 5.5') => `<span class="meta row-agent">${LOGO}${model}</span>`
+const OPEN = '<span class="meta"><span class="elapsed done">2h 51m</span></span>'
+const JOB = '<span class="meta jobs">running lanes-watch.mjs</span>'
+const LANE = '<button class="row-lane lane-chip done"><i class="lane-dot"></i>copy 4</button>'
+// A chat editing one project while holding some OTHER project's copy: the project is named.
+const OTHER = '<span class="row-lane">Toolstash copy 3</span>'
+const STATE = (word, cls = 'idle') => `<span class="row-state ${cls}">${word}</span>`
+const RUNNING = '<span class="row-state working"><span class="elapsed">14m 23s</span></span>'
 const ASKS = '<span class="chip asks">asks you<span class="asks-in">hold</span></span>'
-const KEPT = '<button class="chip kept">kept open</button>'
-// A pane whose turn is over with something still running in the background: the finished
-// turn's clock, and beside it what is still going. The longest thing this chip draws is
-// `running` plus a script name.
-const TURN_DONE = '<span class="elapsed done">4m 12s</span>'
-const JOB = '<span class="chip jobs">running build</span>'
+const KEPT = '<button class="row-kept"><svg viewBox="0 0 16 16" width="11" height="11"></svg></button>'
 
 const CASES = [
-  ...[240, 320, 420].flatMap(width => ['running', 'ready', 'waiting for you'].map(state => ({
-    name: `${state} with turn and age at ${width}px`, width,
-    sub: LOGO + AGENT + '<span class="chip">Fable 5.1</span>' + LANE_PLACE,
-    title: `<span class="chip card-status ${state === 'running' ? 'working' : 'idle'}">${state}</span>` +
-      (state === 'running' ? '<span class="session-clock">turn <span class="elapsed">4m 23s</span></span>' :
-        '<span class="session-clock session-last">last 4m 23s</span>') +
-      '<span class="session-clock">open <span class="elapsed done">1h 27m</span></span>'
+  ...[240, 320, 420].flatMap(width => [
+    ['running', RUNNING], ['ready', STATE('ready')], ['waiting', STATE('waiting')]
+  ].map(([state, title]) => ({
+    name: `${state} in a copy at ${width}px`, width, lane: LANE,
+    sub: AGENT() + OPEN + JOB + title
   }))),
-  { name: 'a plain card', sub: LOGO + AGENT + CLOCK },
-  { name: 'with a model', sub: LOGO + AGENT + MODEL + CLOCK },
-  { name: 'in a lane', sub: LOGO + AGENT + MODEL + LANE_PLACE + CLOCK },
-  { name: 'in a lane, no model', sub: LOGO + AGENT + LANE_PLACE + CLOCK },
-  // The one case that legitimately carries two: a chat editing one project while holding
-  // some OTHER project's lane. Two different facts, so two chips - and the agent's name
-  // still has to survive them.
-  { name: "holding another project's lane", sub: LOGO + AGENT + MODEL + PLACE + LANE + CLOCK },
-  // A pane whose agent is on the OTHER machine. The mark went on the title line rather
-  // than the sub-line precisely so it costs the sub-line nothing, and "costs nothing" is a
-  // claim about pixels - so the worst sub-line is measured again with the mark above it.
-  { name: 'mirrored from another device', sub: LOGO + AGENT + MODEL + LANE_PLACE + CLOCK, remote: true },
-  {
-    name: "mirrored, holding another project's lane",
-    sub: LOGO + AGENT + MODEL + PLACE + LANE + CLOCK,
-    remote: true
-  },
+  { name: 'a plain card', sub: AGENT('Claude Code') + OPEN + STATE('waiting') },
+  { name: 'in a copy', sub: AGENT() + OPEN + STATE('waiting'), lane: LANE },
+  { name: "holding another project's copy", sub: AGENT() + OPEN + STATE('waiting'), lane: OTHER, shortName: true },
+  { name: 'mirrored from another device', sub: AGENT() + OPEN + STATE('waiting'), lane: LANE, remote: true },
   // Robert's own card, 2026-08-28: pane 3, project `clients`, title `pizzasrus`, with a
   // question standing and the pane pinned. The name was drawn as a single letter `p`.
-  { name: 'asking and pinned', sub: LOGO + AGENT + CLOCK, title: ASKS + KEPT, shortName: true },
-  { name: 'asking', sub: LOGO + AGENT + CLOCK, title: ASKS },
-  // Robert's own card, 2026-08-29: pane 1, project `clients`, title `Sonia`, pinned, in a
-  // lane. Nothing is cut off and it still read as broken - three ragged lines with the
-  // clock alone on the second, and a hole between a short name and the chip beside it.
-  { name: 'pinned, short name, in a lane', sub: LOGO + AGENT + LANE_PLACE, title: KEPT, shortName: true },
-  // The background-job chip beside a FINISHED turn's clock - the state that reads as a lie
-  // if the words are wrong and as ragged if they do not fit. `running build` is the widest
-  // ordinary label, and this is the pair that has to share one 190px title line.
-  { name: 'a finished turn with a job still running', sub: LOGO + AGENT + LANE_PLACE, title: TURN_DONE + JOB },
-  // Three state chips is 207px of chrome on a 190px line (measured 2026-08-29), so this
-  // one CANNOT be one row and is not asked to be: what it must do is wrap as a box.
-  { name: 'pinned, with a job still running', sub: LOGO + AGENT + LANE_PLACE, title: KEPT + TURN_DONE + JOB, shortName: true, wraps: true }
+  { name: 'asking and pinned', sub: AGENT() + OPEN, title: ASKS + KEPT, shortName: true },
+  { name: 'asking', sub: AGENT() + OPEN, title: ASKS },
+  { name: 'pinned, short name, in a copy', sub: AGENT() + OPEN + STATE('waiting'), title: KEPT, lane: LANE, shortName: true },
+  // Robert's card of 2026-09-23 itself: pinned, waiting, in copy 4, a job still running.
+  { name: 'pinned, in a copy, with a job still running', sub: AGENT() + OPEN + JOB + STATE('waiting'), title: KEPT, lane: LANE }
 ]
 
 const profile = mkdtempSync(join(tmpdir(), 'pf-cardfit-'))
@@ -260,7 +231,7 @@ try {
       {
         url:
           'data:text/html;charset=utf-8,' +
-          encodeURIComponent(page(c.sub, c.remote, c.title ?? '', c.shortName ? 'Sonia' : 'PaneForge'))
+          encodeURIComponent(page(c.sub, c.remote, c.title ?? '', c.shortName ? 'Sonia' : 'PaneForge', c.lane ?? ''))
       },
       sessionId
     )
@@ -276,9 +247,10 @@ try {
         rowH: document.querySelector('.row').getBoundingClientRect().height,
         lines: Math.round(sub.getBoundingClientRect().height / 15),
         agent: cut(document.querySelector('.row-agent')),
-        place: cut(document.querySelector('.chip.place')),
-        lane: cut(document.querySelector('.chip.pf-lane')),
+        place: cut(document.querySelector('.row-lane')),
+        lane: null,
         clock: cut(document.querySelector('.elapsed')),
+        state: cut(document.querySelector('.row-state')),
         tags: [...document.querySelectorAll('.row-tags > *')].map(cut),
         name: cut(document.querySelector('.row-name')),
         title: (() => {
@@ -362,23 +334,17 @@ try {
     // The card Robert reported: a short name, a pin and a clock is 118px of chrome on a
     // 190px line and has no business taking three rows. It measured 40px tall over two
     // rows with the chips as separate items (2026-08-29), and 19px in one row now.
-    if (c.shortName && !c.title.includes('asks') && !c.wraps)
+    if (c.shortName && !(c.title ?? '').includes('asks'))
       ok(
         m.title.h < 25,
         `${c.name}: the title line is ONE row`,
         `${m.title.h.toFixed(1)}px tall`
       )
-    // ...and a card whose chips genuinely do not fit one row wraps to TWO, never three.
-    // That is what `.row-tags` wrapping inside itself buys, and the failure it replaces is
-    // a chip running off the edge - which the assertion above already refuses. A third row
-    // means the box has stopped wrapping as a unit and is stacking one chip per line.
-    if (c.wraps)
-      ok(
-        m.gaps.rows === 2,
-        `${c.name}: the chips wrap to two rows, not one per chip`,
-        `${m.gaps.rows} rows, ${m.title.h.toFixed(1)}px tall`
-      )
-    ok(fits(m.place), `${c.name}: the place chip is whole`, m.place ? `${m.place.w.toFixed(1)}px of ${m.place.want}px` : '')
+    // Two lines, always: the card no longer wraps its state onto a third.
+    ok(m.gaps.rows === 1, `${c.name}: the title is one line`, `${m.gaps.rows} rows`)
+    ok(m.lines === 1, `${c.name}: the sub-line is one line`, `${m.lines} rows`)
+    ok(fits(m.state), `${c.name}: the state word is whole`, m.state ? `${m.state.w.toFixed(1)}px of ${m.state.want}px` : '')
+    ok(fits(m.place), `${c.name}: which copy it is, whole`, m.place ? `${m.place.w.toFixed(1)}px of ${m.place.want}px` : '')
     if (c.remote)
       ok(
         m.remote !== null && m.remote >= 13,
