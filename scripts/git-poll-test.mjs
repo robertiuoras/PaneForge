@@ -41,7 +41,20 @@ class FakeDate {
 
 const mod = { exports: {} }
 new Function('require', 'module', 'exports', 'Date', js)(
-  (id) => (id === 'node:child_process' ? child_process : {}),
+  (id) =>
+    id === 'node:child_process'
+      ? child_process
+      : id === './gitRun'
+        ? {
+            // The real gate is `scripts/git-gate-test.mjs`'s; here it is a straight call.
+            gitRun: (_cwd, args, opts) =>
+              new Promise((done) =>
+                child_process.execFile('git', args, opts, (err, stdout) =>
+                  done({ ok: !err, status: err ? 1 : 0, stdout: stdout ?? '', stderr: '' })
+                )
+              )
+          }
+        : {},
   mod,
   mod.exports,
   FakeDate
