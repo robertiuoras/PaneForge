@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
-import {mkdtempSync,rmSync} from 'node:fs';
+import {mkdtempSync,rmSync,writeFileSync,readFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import test from 'node:test';
@@ -19,6 +19,24 @@ class FakeClaude {
   async send(input){this.calls.push(['send',input]);input.onEvent({type:'delta',text:'Claude '});input.onEvent({type:'delta',text:'answer'});return {nativeSessionId:input.sessionId,text:'Claude answer'};}
   async stop(nativeSessionId){this.calls.push(['stop',nativeSessionId]);return true;}
 }
+test('standalone profile survives load, save and restart with native identities and unread output intact',()=>{
+ const dir=mkdtempSync(join(tmpdir(),'next-standalone-profile-'));
+ const saved=[{id:'saved-thread',nativeSessionId:'native-original',providerThreadId:'provider-original',provider:'codex',cwd:'/synthetic/project',title:'Unreviewed work',sessionNumber:8,model:'gpt-5.6-sol',effort:'high',status:'idle',items:[{id:'prompt',type:'userMessage',text:'Original request'},{id:'answer',type:'agentMessage',text:'Completed output'}],requests:{'original-request':{turnId:'turn-original'}},archivedItems:[{id:'earlier',text:'Earlier output'}],providerLineage:[{threadId:'previous-thread',nativeSessionId:'previous-native'}],voiceHistory:[{delta:'Saved speech'}],review:{unread:true},futureMetadata:{retain:'unknown fields'}},
+ {id:'interrupted',nativeSessionId:'native-interrupted',provider:'codex',items:[{id:'partial',text:'Partial output'}],activeTurn:'turn-interrupted',status:'running',inputLock:{operationId:'renewal',reason:'Preparing'},contextRenewal:{operationId:'renewal',phase:'preparing',sourceThread:'interrupted'}}];
+ try{
+  const path=join(dir,'sessions.json');writeFileSync(path,JSON.stringify(saved));const original=readFileSync(path,'utf8');
+  const codex=new FakeCodex(),sessions=new Sessions(codex,dir,undefined,new FakeClaude());
+  assert.equal(readFileSync(path,'utf8'),original,'loading must not overwrite the existing profile');
+  assert.deepEqual(sessions.get('saved-thread'),saved[0]);
+  const interrupted=sessions.get('interrupted');assert.equal(interrupted.activeTurn,'turn-interrupted');assert.deepEqual(interrupted.items,saved[1].items);assert.equal(interrupted.inputLock,undefined);assert.equal(interrupted.contextRenewal.phase,'failed');assert.equal(interrupted.contextRenewal.sourceThread,'interrupted');
+  sessions.changed();const reloaded=new Sessions(new FakeCodex(),dir,undefined,new FakeClaude());
+  assert.deepEqual(reloaded.get('saved-thread'),saved[0]);assert.deepEqual(reloaded.get('interrupted'),interrupted);assert.deepEqual(codex.calls,[],'profile recovery must not submit or resume provider work');
+ }finally{rmSync(dir,{recursive:true,force:true});}
+});
+test('malformed saved profile fails without replacing the original bytes',()=>{
+ const dir=mkdtempSync(join(tmpdir(),'next-invalid-profile-'));
+ try{const path=join(dir,'sessions.json'),original='[{"id":"partial"';writeFileSync(path,original);assert.throws(()=>new Sessions(new FakeCodex(),dir,undefined,new FakeClaude()),SyntaxError);assert.equal(readFileSync(path,'utf8'),original);}finally{rmSync(dir,{recursive:true,force:true});}
+});
 test('assistant tool upgrade preserves old provider identity and original history through resume',async()=>{const t=fixture();try{
  const s={id:'assistant-paneforge-next',kind:'assistant',projectId:'paneforge-next',providerThreadId:'old-provider',nativeSessionId:'old-native',cwd:'/synthetic',items:[{id:'old-answer',text:'Original saved answer'}],voiceHistory:[{delta:'Original speech'}],requests:{},status:'idle'};t.sessions.sessions=[s];t.sessions.provider={status:'ready'};
  t.codex.rpc=async(method,params)=>{t.codex.calls.push({method,params});return {'thread/start':{thread:{id:'new-provider',sessionId:'new-native',cwd:'/synthetic'}},'thread/resume':{thread:{cwd:'/synthetic'}},'thread/items/list':{data:[{item:{id:'new-answer',text:'New answer'}}]},'thread/turns/list':{data:[]}}[method]};
