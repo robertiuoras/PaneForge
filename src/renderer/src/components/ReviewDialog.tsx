@@ -28,10 +28,26 @@ export default function ReviewDialog({ agents, activity, onHistory, onClose }: P
   const [query, setQuery] = useState('')
 
   useEffect(() => {
-    void Promise.all([api.dailyReview(), api.listReviews()]).then(([next, reviews]) => {
-      setReport(next)
-      setCompleted(reviews.reviews)
-    })
+    let mounted = true
+    let request = 0
+    const load = (): void => {
+      const generation = ++request
+      void Promise.all([api.dailyReview(), api.listReviews()]).then(([next, reviews]) => {
+        // A slow disk refresh from an earlier minute must not overwrite a newer daily read,
+        // and closing Review must not leave it trying to update an unmounted dialog.
+        if (!mounted || generation !== request) return
+        setReport(next)
+        setCompleted(reviews.reviews)
+      }).catch(() => {
+        /* keep the last complete reading when one side is temporarily unavailable */
+      })
+    }
+    load()
+    const refresh = window.setInterval(load, 60_000)
+    return () => {
+      mounted = false
+      window.clearInterval(refresh)
+    }
   }, [])
 
   const midnight = useMemo(() => {
@@ -80,6 +96,9 @@ export default function ReviewDialog({ agents, activity, onHistory, onClose }: P
             ? `Exact prompts recorded since ${new Date(report.recordingSince).toLocaleString()}. They remain until that saved session is deleted.`
             : 'Exact prompt recording starts with the first prompt sent after this update.'}
           {' '}Tokens come from local Claude and Codex transcripts. Chats outside PaneForge are not included.
+          {' '}{report?.tokens.at
+            ? `Token totals last counted ${new Date(report.tokens.at).toLocaleTimeString()} and refresh in the background.`
+            : 'Token totals are refreshing in the background.'}
         </div>
 
         <input className="search" aria-label="Search today’s review" placeholder="Search prompts, sessions, folders or agents" value={query} onChange={(e) => setQuery(e.target.value)} />

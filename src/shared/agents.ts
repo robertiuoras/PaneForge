@@ -157,13 +157,16 @@ export interface AgentInfo extends AgentSpec {
 }
 
 // Claude model ids are real ones read off the CLI, not guesses: the picker has to
+// (and `main/claudeModels.ts` adds any NEWER id the installed CLI names, so a model
+// released after this list was written reaches the picker without a release). It has to
 // let you pin an exact generation (Opus 5 vs Opus 4.8) rather than only the moving
 // `opus` alias, because "latest" changes under you mid-project.
 const CLAUDE_MODELS: ModelChoice[] = [
   // No separate "[1m]" entry: plain claude-opus-5 already carries the 1M token
   // context window, so listing it twice only made the picker look like a choice
   // between two different models when both launch the same one.
-  { value: 'claude-opus-5', label: 'Opus 5', hint: 'newest, 1M context' },
+  { value: 'claude-opus-5-5', label: 'Opus 5.5', hint: '1M context' },
+  { value: 'claude-opus-5', label: 'Opus 5', hint: '1M context' },
   { value: 'claude-opus-4-8', label: 'Opus 4.8' },
   { value: 'claude-opus-4-7', label: 'Opus 4.7' },
   { value: 'claude-opus-4-6', label: 'Opus 4.6' },

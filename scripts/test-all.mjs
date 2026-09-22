@@ -41,6 +41,7 @@ if (process.platform !== 'win32') {
 const TESTS = [
   ['remotesuite', 'test-remote-test.mjs'],
   ['promptreview', 'prompt-review-test.mjs'],
+  ['reviewload', 'review-load-test.mjs'],
   ['review', 'review-test.mjs'],
   ['claudemd', 'claudemd-size-test.mjs'],
   ['copylogic', 'copy-logic-test.mjs'],
@@ -87,7 +88,6 @@ const TESTS = [
   ['mainsyncio', 'main-sync-io-test.mjs'],
   ['elapsed', 'elapsed-test.mjs'],
   ['usage', 'usage-test.mjs'],
-  ['claudequota', 'claude-quota-test.mjs'],
   ['railplace', 'rail-place-test.mjs'],
   ['cursorclick', 'cursor-click-test.mjs'],
   ['stickyselect', 'sticky-select-test.mjs'],
@@ -154,6 +154,7 @@ const TESTS = [
   ['backjobs', 'backjobs-test.mjs'],
   ['orcatalogue', 'or-catalogue-test.mjs'],
   ['codexmodels', 'codex-models-test.mjs'],
+  ['claudemodels', 'claude-models-test.mjs'],
   ['autohandoff', 'autohandoff-test.mjs'],
   ['offloadfirst', 'offloadfirst-test.mjs'],
   ['idlequit', 'idlequit-test.mjs'],
@@ -189,6 +190,7 @@ const TESTS = [
   // Both folder buttons on a pane open the project, never the copy the pane runs in.
   ['projectfolder', 'project-folder-test.mjs'],
   ['clientname', 'client-name-test.mjs'],
+  ['renametrigger', 'rename-trigger-test.mjs'],
   ['resolvedname', 'resolved-name-test.mjs'],
   ['peerchrome', 'peer-chrome-test.mjs'],
   ['remotelogin', 'remote-login-test.mjs'],
