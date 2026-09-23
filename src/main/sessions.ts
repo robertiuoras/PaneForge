@@ -4434,16 +4434,22 @@ export class SessionManager extends EventEmitter {
       // only ever claimed once the conversation's own log says the turn ran at it. Same
       // seam and the same cost as the model reading above: one cached tail read, and only
       // when the file has actually moved.
-      if (live.effort && meta.agent === 'codex') {
-        const turn = rolloutTurn(codexTranscriptPath(meta.cwd, resumeIdFor(meta.id) ?? ''))
-        if (!live.effort.ladder?.length) {
-          // Which model, in order: the flag the pane was launched with, else the one the
-          // conversation's own log names - a pane started with no model flag took the
-          // person's own default and this app was never told which that is.
-          const model = meta.model || turn.model
-          const ladder = model ? codexLadders(specFor(meta.agent).bin)[model] : undefined
-          if (ladder?.length) live.effort.ladder = ladder
-        }
+      const turn =
+        meta.agent === 'codex'
+          ? rolloutTurn(codexTranscriptPath(meta.cwd, resumeIdFor(meta.id) ?? ''))
+          : undefined
+      // A Codex card follows `/model` too: the conversation's own log names the model it
+      // switched to, and the launch flag stops being true the moment it does.
+      if (turn?.model && turn.model !== meta.model) {
+        meta.model = turn.model
+        changed = true
+      }
+      if (live.effort && turn) {
+        // Which model: the log's, else the launch flag - a pane started with no model
+        // flag took the person's own default and this app was never told which that is.
+        const model = meta.model
+        const ladder = model ? codexLadders(specFor(meta.agent).bin)[model] : undefined
+        if (ladder?.length && ladder !== live.effort.ladder) live.effort.ladder = ladder
         if (turn.effort && turn.effort !== live.effort.confirmed) {
           live.effort = confirmEffort(live.effort, turn.effort, now)
           logEffort({ id: meta.id, confirmed: turn.effort })

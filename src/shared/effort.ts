@@ -329,11 +329,18 @@ export const ROLLOUT_TAIL_BYTES = 64 * 1024
 
 interface TurnContextLine {
   type?: string
-  payload?: { type?: string; effort?: string; reasoning_effort?: string; model?: string }
+  payload?: {
+    type?: string
+    effort?: string
+    reasoning_effort?: string
+    model?: string
+    thread_settings?: { model?: string; reasoning_effort?: string }
+  }
 }
 
 /**
- * The newest turn a Codex rollout recorded: what it ran at, and what model ran it.
+ * The newest turn a Codex rollout recorded: what it ran at, and what model ran it - or,
+ * newer still, what `/model` switched the conversation to (`thread_settings_applied`).
  *
  * The model comes back with it because a pane launched WITHOUT a `--model` flag has no
  * other way of knowing which ladder it is on - the CLI picked the model from the person's
@@ -347,17 +354,27 @@ export function lastTurnContext(tailText: string): { effort?: string; model?: st
   const lines = String(tailText || '').split('\n')
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i].trim()
-    if (!line || line[0] !== '{' || !line.includes('turn_context')) continue
+    if (!line || line[0] !== '{') continue
+    const settings = line.includes('thread_settings_applied')
+    if (!settings && !line.includes('turn_context')) continue
     let row: TurnContextLine
     try {
       row = JSON.parse(line)
     } catch {
       continue
     }
-    if (row.type && row.type !== 'turn_context') continue
-    const raw = row.payload?.effort ?? row.payload?.reasoning_effort
+    let src: { effort?: string; reasoning_effort?: string; model?: string } | undefined
+    if (row.type === 'event_msg' && row.payload?.type === 'thread_settings_applied') {
+      // `/model` typed mid-turn: Codex records the new model and level here at once, and
+      // the next `turn_context` only arrives when the next turn starts.
+      src = row.payload.thread_settings
+    } else if (!row.type || row.type === 'turn_context') {
+      src = row.payload
+    }
+    if (!src) continue
+    const raw = src.effort ?? src.reasoning_effort
     const effort = String(raw || '').trim().toLowerCase() || undefined
-    const model = String(row.payload?.model || '').trim() || undefined
+    const model = String(src.model || '').trim() || undefined
     if (effort || model) return { effort, model }
   }
   return undefined
