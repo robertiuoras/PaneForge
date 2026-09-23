@@ -1,45 +1,44 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { AgentInfo } from '@shared/agents'
-import type { ActivityEntry } from '@shared/activity'
-import { KIND_WORDS } from '@shared/activity'
-import type { PromptReviewReport } from '@shared/types'
 import type { ReviewRecord } from '@shared/reviews'
-import { formatTokens } from '@shared/tokenTally'
+import { ago, filterReviews, firstLine, statusWord, visibleReviews, type ReviewFilter } from '@shared/reviewList'
 import { folderName } from '@shared/place'
-import AgentLogo from './AgentLogo'
 import useDialogFocus from './useDialogFocus'
 
 const api = window.api
-const DAY = 24 * 60 * 60 * 1000
 
 interface Props {
-  agents: AgentInfo[]
-  activity: ActivityEntry[]
   onHistory: () => void
+  onReopen: (r: ReviewRecord) => void
   onClose: () => void
 }
 
-/** One honest cross-session reading: submitted prompts, transcript token use and app actions. */
-export default function ReviewDialog({ agents, activity, onHistory, onClose }: Props): JSX.Element {
+const EMPTY_WORDS: Record<ReviewFilter, string> = {
+  needs: 'Nothing needs you. Finished work is under Done.',
+  done: 'No finished sessions yet. A pane that finishes its work closes into this list.',
+  all: 'No finished sessions yet.'
+}
+
+/** One list of finished sessions: what was asked, what happened, and what still needs you. */
+export default function ReviewDialog({ onHistory, onReopen, onClose }: Props): JSX.Element {
   const dialog = useDialogFocus()
-  const [report, setReport] = useState<PromptReviewReport | null>(null)
-  const [completed, setCompleted] = useState<ReviewRecord[]>([])
-  const [range, setRange] = useState<'today' | 'week'>('today')
+  const [records, setRecords] = useState<ReviewRecord[]>([])
+  const [filter, setFilter] = useState<ReviewFilter | null>(null)
   const [query, setQuery] = useState('')
+  const [openId, setOpenId] = useState<string | null>(null)
+  const [copied, setCopied] = useState<string | null>(null)
 
   useEffect(() => {
     let mounted = true
     let request = 0
     const load = (): void => {
       const generation = ++request
-      void Promise.all([api.dailyReview(), api.listReviews()]).then(([next, reviews]) => {
-        // A slow disk refresh from an earlier minute must not overwrite a newer daily read,
-        // and closing Review must not leave it trying to update an unmounted dialog.
+      void api.listReviews().then((next) => {
+        // A slow disk refresh from an earlier minute must not overwrite a newer read, and
+        // closing Review must not leave it trying to update an unmounted dialog.
         if (!mounted || generation !== request) return
-        setReport(next)
-        setCompleted(reviews.reviews)
+        setRecords(next.reviews)
       }).catch(() => {
-        /* keep the last complete reading when one side is temporarily unavailable */
+        /* keep the last complete reading when the disk read is temporarily unavailable */
       })
     }
     load()
@@ -50,96 +49,140 @@ export default function ReviewDialog({ agents, activity, onHistory, onClose }: P
     }
   }, [])
 
-  const midnight = useMemo(() => {
-    const d = new Date()
-    d.setHours(0, 0, 0, 0)
-    return d.getTime()
-  }, [])
-  const since = range === 'today' ? midnight : midnight - 6 * DAY
+  const visible = useMemo(() => visibleReviews(records), [records])
+  const anyNeeds = useMemo(() => filterReviews(visible, 'needs').length > 0, [visible])
+  const activeFilter: ReviewFilter = filter ?? (anyNeeds ? 'needs' : 'done')
+
   const q = query.trim().toLowerCase()
-  const prompts = (report?.prompts ?? []).filter((x) =>
-    x.at >= since && (!q || `${x.title} ${x.cwd} ${x.agent} ${x.text}`.toLowerCase().includes(q)))
-  const actions = activity.filter((x) =>
-    x.at >= since && (!q || `${KIND_WORDS[x.kind]} ${x.what} ${x.why ?? ''}`.toLowerCase().includes(q)))
-  const count = range === 'today' ? report?.todayCount : report?.weekCount
-  const sessions = range === 'today' ? report?.todaySessions : report?.weekSessions
-  const agentIds = range === 'today' ? report?.todayAgents : report?.weekAgents
-  const tokens = range === 'today' ? report?.tokens.today : report?.tokens.week
-  const reviews = completed.filter((x) => {
-    const at = Date.parse(x.completedAt ?? x.capturedAt ?? x.createdAt)
-    return at >= since && (!q || `${x.title} ${x.provider} ${x.prompt} ${x.report}`.toLowerCase().includes(q))
-  })
+  const rows = useMemo(() => {
+    const byFilter = filterReviews(visible, activeFilter)
+    const matched = q
+      ? byFilter.filter((r) => `${r.title} ${r.cwd} ${r.prompt} ${r.report} ${r.provider}`.toLowerCase().includes(q))
+      : byFilter
+    return [...matched].sort((a, b) => timeOf(b) - timeOf(a))
+  }, [visible, activeFilter, q])
+
+  useEffect(() => {
+    if (openId && !rows.some((r) => r.id === openId)) setOpenId(null)
+  }, [rows, openId])
+
+  const move = (from: number, dir: 1 | -1): void => {
+    const n = rows.length
+    if (!n) return
+    const next = ((from + dir) % n + n) % n
+    const el = dialog.current?.querySelector<HTMLElement>(`[data-review-row="${rows[next].id}"]`)
+    el?.focus()
+  }
 
   return (
     <div className="overlay" onMouseDown={onClose}>
       <div ref={dialog} className="dialog wide tall review-dialog" role="dialog" aria-modal="true" aria-labelledby="review-title" onMouseDown={(e) => e.stopPropagation()}>
         <div className="dialog-head">
           <strong id="review-title">Review</strong>
-          <span className="hint">Every PaneForge session and agent on this machine</span>
+          <span className="hint">Finished sessions on this machine</span>
           <button className="ghost small" onClick={onClose}>Close</button>
         </div>
 
-        <div className="review-tabs" role="group" aria-label="Review period">
-          <button className={range === 'today' ? 'on' : ''} onClick={() => setRange('today')}>Today</button>
-          <button className={range === 'week' ? 'on' : ''} onClick={() => setRange('week')}>7 days</button>
+        <div className="review-tabs" role="group" aria-label="Show">
+          <button className={activeFilter === 'needs' ? 'on' : ''} onClick={() => setFilter('needs')}>Needs you</button>
+          <button className={activeFilter === 'done' ? 'on' : ''} onClick={() => setFilter('done')}>Done</button>
+          <button className={activeFilter === 'all' ? 'on' : ''} onClick={() => setFilter('all')}>All</button>
         </div>
 
-        <div className="review-metrics" aria-live="polite">
-          <div><strong>{report ? count : '…'}</strong><span>prompts</span></div>
-          <div><strong>{report ? formatTokens(tokens ?? 0) : '…'}</strong><span>tokens</span></div>
-          <div><strong>{report ? sessions : '…'}</strong><span>sessions</span></div>
-          <div><strong>{report ? agentIds?.length : '…'}</strong><span>agents</span></div>
-        </div>
-
-        <div className="review-note">
-          {report?.recordingSince
-            ? `Exact prompts recorded since ${new Date(report.recordingSince).toLocaleString()}. They remain until that saved session is deleted.`
-            : 'Exact prompt recording starts with the first prompt sent after this update.'}
-          {' '}Tokens come from local Claude and Codex transcripts. Chats outside PaneForge are not included.
-          {' '}{report?.tokens.at
-            ? `Token totals last counted ${new Date(report.tokens.at).toLocaleTimeString()} and refresh in the background.`
-            : 'Token totals are refreshing in the background.'}
-        </div>
-
-        <input className="search" aria-label="Search today’s review" placeholder="Search prompts, sessions, folders or agents" value={query} onChange={(e) => setQuery(e.target.value)} />
+        <input
+          className="search"
+          aria-label="Search what was asked, what it did, or the project"
+          placeholder="Search what was asked, what it did, or the project"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
 
         <div className="review-scroll">
-          <div className="review-section-head"><strong>Prompts</strong><span>{prompts.length} shown</span></div>
           <div className="review-list">
-            {prompts.map((x) => (
-              <article className="review-prompt" key={x.id}>
-                <div className="review-row-head">
-                  <AgentLogo id={x.agent} spec={agents.find((a) => a.id === x.agent)} size={13} />
-                  <strong>{x.title}</strong>
-                  <span>{x.agent} · {folderName(x.cwd)}</span>
-                  <time>{new Date(x.at).toLocaleString()}</time>
-                </div>
-                <pre>{x.text}</pre>
-              </article>
-            ))}
-            {report && !prompts.length && <div className="empty">No recorded prompts in this view.</div>}
-            {!report && <div className="empty">Reading local prompt and token records…</div>}
-          </div>
-
-          <div className="review-section-head"><strong>Agent reports</strong><span>{reviews.length} shown</span></div>
-          <div className="review-list">
-            {reviews.map((x) => (
-              <article className="review-prompt" key={x.id}>
-                <div className="review-row-head">
-                  <strong>{x.title}</strong>
-                  <span>{x.provider} · {x.kind} · {x.proof}</span>
-                  <time>{new Date(x.completedAt ?? x.capturedAt ?? x.createdAt).toLocaleString()}</time>
-                </div>
-                <pre>{x.report}</pre>
-              </article>
-            ))}
-            {!reviews.length && <div className="empty">No agent reports in this view. Full terminal output remains in History.</div>}
-          </div>
-
-          <div className="review-section-head"><strong>Automatic PaneForge actions</strong><span>{actions.length} shown</span></div>
-          <div className="review-actions">
-            {actions.map((x) => <div key={x.id}><strong>{KIND_WORDS[x.kind]}</strong> {x.what}<span>{x.why ? ` · ${x.why}` : ''} · {new Date(x.at).toLocaleString()}</span></div>)}
-            {!actions.length && <div className="empty">No automatic actions in this view.</div>}
+            {rows.map((r, i) => {
+              const open = openId === r.id
+              const status = statusWord(r)
+              const accent = status === 'Needs you' || status === 'Blocked'
+              return (
+                <article className="review-row-wrap" key={r.id}>
+                  <button
+                    type="button"
+                    className="review-row"
+                    data-review-row={r.id}
+                    aria-expanded={open}
+                    onClick={() => setOpenId(open ? null : r.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'ArrowDown') { e.preventDefault(); move(i, 1) }
+                      else if (e.key === 'ArrowUp') { e.preventDefault(); move(i, -1) }
+                    }}
+                  >
+                    <span className="review-num">#{i + 1}</span>
+                    <strong className="review-project">{folderName(r.cwd)}</strong>
+                    <span className="review-ask">{firstLine(r.prompt)}</span>
+                    <span className="review-result">{firstLine(r.report)}</span>
+                    <span className={'review-status' + (accent ? ' accent' : '')}>{status}</span>
+                    <span className="review-when">{ago(timeOf(r))}</span>
+                  </button>
+                  {open && (
+                    <div className="review-body">
+                      <div className="review-field">
+                        <strong>What was asked</strong>
+                        <pre>{r.prompt}</pre>
+                      </div>
+                      <div className="review-field">
+                        <strong>What it did</strong>
+                        <pre>{r.report}</pre>
+                      </div>
+                      {r.evidence && r.evidence.length > 0 && (
+                        <div className="review-field">
+                          <strong>Evidence</strong>
+                          <ul>{r.evidence.map((e, ei) => <li key={ei}>{e}</li>)}</ul>
+                        </div>
+                      )}
+                      {r.links && r.links.length > 0 && (
+                        <div className="review-field">
+                          <strong>Links</strong>
+                          <ul className="review-links">
+                            {r.links.map((l, li) => (
+                              <li key={li}>
+                                <button className="ghost small" onClick={() => api.openReview(r.id, li)}>{l.label}</button>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      <div className="review-actions">
+                        <button className="primary small" onClick={() => onReopen(r)}>Reopen</button>
+                        <button
+                          className="ghost small"
+                          onClick={() => {
+                            void navigator.clipboard.writeText(`${r.prompt}\n\n${r.report}`)
+                            setCopied(r.id)
+                            window.setTimeout(() => setCopied((c) => (c === r.id ? null : c)), 1500)
+                          }}
+                        >
+                          {copied === r.id ? 'Copied' : 'Copy'}
+                        </button>
+                        <button className="ghost small" onClick={() => api.openReview(r.id, -1)}>Open report</button>
+                        {r.kind === 'result' && (
+                          <button
+                            className="ghost small"
+                            onClick={() => {
+                              void api.acknowledgeReview(r.id, !r.reviewedAt).then(() => {
+                                void api.listReviews().then((next) => setRecords(next.reviews))
+                              })
+                            }}
+                          >
+                            {r.reviewedAt ? 'Mark unread' : 'Mark as read'}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </article>
+              )
+            })}
+            {!rows.length && <div className="review-empty">{EMPTY_WORDS[activeFilter]}</div>}
           </div>
         </div>
 
@@ -150,4 +193,8 @@ export default function ReviewDialog({ agents, activity, onHistory, onClose }: P
       </div>
     </div>
   )
+}
+
+function timeOf(r: ReviewRecord): number {
+  return Date.parse(r.closedAt ?? r.completedAt ?? r.createdAt)
 }

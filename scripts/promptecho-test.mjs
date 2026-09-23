@@ -84,7 +84,7 @@ assert.equal(promptEcho('› y', 'codex'), '', 'a Codex menu key is not a prompt
 // this file, the suite and the typecheck all stayed green. That is exactly the shape
 // `test:desk`'s last block exists for, so it is pinned the same way.
 const pane = readFileSync(join(root, 'src/renderer/src/components/TerminalPane.tsx'), 'utf8')
-const reset = pane.slice(pane.indexOf('api.onPaneReset('))
+const reset = pane.slice(pane.indexOf('const receiveReset ='))
 const body = reset.slice(0, reset.indexOf('\n    const writeData ='))
 assert.ok(body.length > 100 && body.length < 5000, 'could not isolate the pane-reset handler')
 assert.ok(

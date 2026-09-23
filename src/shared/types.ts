@@ -2096,6 +2096,11 @@ export interface Config {
    * Optional so a config written before it existed still loads.
    */
   deadDev?: DeadDevConfig
+  /**
+   * A pane whose work is finished closes itself into Review - `shared/doneClose.ts`. On
+   * unless somebody switches it off; missing means on.
+   */
+  autoCloseDone?: boolean
   reclaim?: ReclaimConfig
   /**
    * Panes somebody has said are never to be closed for being idle - "Keep this pane open"
@@ -2412,6 +2417,8 @@ export interface Api {
    * only thing that copes with a screen that goes away without saying so.
    */
   paneVisibility(client: string, ids: string[], viewer?: string): void
+  /** Which pane the person is looking at, so a finished one is never closed under them. */
+  activePane(id: string | null): void
   /** poke the pty size so a full-screen CLI redraws itself from scratch */
   redraw(id: string): void
   /**

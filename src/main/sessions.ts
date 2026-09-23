@@ -45,6 +45,7 @@ export const NOTHING_OPEN = 'the handoff lists nothing still open'
 import { jobFromTable, paneJob, programName, SHELLS } from '../shared/paneJob'
 import { canSleep, sleepRefusal } from '../shared/sleep'
 import { doneEnough } from '../shared/closeWhenDone'
+import type { DoneReading } from '../shared/doneClose'
 import { folderName, laneOfCheckout, projectOf } from '../shared/place'
 import { dropStale, lentGrid, watchedBorrow, type Borrow } from '../shared/paneSize'
 import { START_COLS, START_ROWS } from '../shared/paneGrid'
@@ -128,7 +129,15 @@ import { exitPlan, exitWords } from '../shared/exitClose'
 import { readsCloudWork, cloudHeld } from '../shared/cloudWork'
 import { outputIsWork } from '../shared/fleet'
 import { nextCwdGone, reapForMissingCwd } from '../shared/cwdGone'
-import { askKeyOf, autoAnswerAt, DEFAULT_AUTO_ANSWER, dueForAuto, pickAnswer } from '../shared/autoAnswer'
+import {
+  askKeyOf,
+  autoAnswerAt,
+  DEFAULT_AUTO_ANSWER,
+  dueForAuto,
+  heldByGuardDeck,
+  pickAnswer
+} from '../shared/autoAnswer'
+import { guardDeckQuestions } from './guardDeckQuestions'
 import { countIntervention } from './interventions'
 import { deskFocused } from './gameMode'
 import { askSignature, CHOOSE_GAP_MS, keysForChoice, readAsk, sameAsk , stampMatches} from '../shared/choices'
@@ -684,6 +693,38 @@ export class SessionManager extends EventEmitter {
 
   list(): Session[] {
     return [...this.sessions.values()].map((s) => s.meta)
+  }
+
+  /** The pane a person is looking at, as the window last said (`sessions:active`). */
+  private activeId: string | null = null
+  setActive(id: string | null): void {
+    this.activeId = id
+  }
+
+  /**
+   * What `shared/doneClose.ts` needs to know about every live pane. The manager reads,
+   * the sweep in `main/doneClose.ts` decides; nothing here closes anything.
+   */
+  doneReadings(): Array<DoneReading & { id: string }> {
+    return [...this.sessions.values()].map((live) => {
+      const m = live.meta
+      return {
+        id: m.id,
+        agent: m.agent,
+        printed: m.printed,
+        status: m.status,
+        asleep: m.asleep,
+        runSince: m.runSince,
+        busyUntil: live.busyUntil,
+        ask: m.ask,
+        drafting: m.drafting,
+        job: m.job,
+        backJob: m.backJob,
+        focused: m.id === this.activeId,
+        lastKeyboard: m.lastKeyboard,
+        turnEndedAt: live.footerEndedAt
+      }
+    })
   }
 
   resumeOrigin(id: string): string | undefined {
@@ -3931,8 +3972,15 @@ export class SessionManager extends EventEmitter {
     // second start line `autoAnswer` reads. Both the presser and the countdown come off
     // that one number, so they cannot promise different seconds. A mirrored pane is left
     // alone - the desk that owns the pty owns this decision, and our focus says nothing
-    // about whether anybody is at THAT one.
-    const held = !!ask && cfg.holdWhileWatching !== false && !live.meta.remote && deskFocused()
+    // about whether anybody is at THAT one. GuardDeck showing this pane's question is
+    // somebody at it too, on a screen this window cannot see (`heldByGuardDeck`) - and
+    // that hold is not behind `holdWhileWatching`, because a popup that is being answered
+    // is not "watching", it is answering, and racing it is the defect either way.
+    const held =
+      !!ask &&
+      !live.meta.remote &&
+      ((cfg.holdWhileWatching !== false && deskFocused()) ||
+        heldByGuardDeck(live.meta.id, guardDeckQuestions(), Date.now()))
     if (held) live.askHold = Date.now()
     const due = ask ? autoAnswerAt(live, cfg, ask) : 0
     const n = ask && (due || held) ? pickAnswer(ask, cfg)?.n : undefined

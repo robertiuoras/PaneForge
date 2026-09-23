@@ -1,0 +1,173 @@
+// A finished pane closes itself into Review; everything that would be LOST keeps it open.
+//
+// Half the file is refusals, as with close-done-test: a person in the pane, a step an
+// agent could take, a subagent still out, a reply ending in a question. The sweep half
+// runs `main/doneClose.ts` against fake pane readings and a fake disk: one Review row per
+// finished turn, one GuardDeck to-do per person-only step naming its machine, and a
+// refused close that records once, not every tick.
+//
+//   node scripts/done-close-test.mjs
+
+import { build } from 'esbuild'
+import { strict as assert } from 'node:assert'
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+const work = join(tmpdir(), 'pf-done-close-test')
+rmSync(work, { recursive: true, force: true })
+mkdirSync(work, { recursive: true })
+const require = createRequire(import.meta.url)
+
+const stubs = {
+  name: 'stubs',
+  setup(b) {
+    b.onResolve({ filter: /^electron$/ }, () => ({ path: 'electron', namespace: 'stub' }))
+    b.onResolve({ filter: /^\.\/profile$/ }, () => ({ path: 'profile', namespace: 'stub' }))
+    b.onLoad({ filter: /^electron$/, namespace: 'stub' }, () => ({ contents: 'exports.app={isPackaged:true}', loader: 'js' }))
+    b.onLoad({ filter: /^profile$/, namespace: 'stub' }, () => ({ contents: 'exports.profileName=()=>undefined', loader: 'js' }))
+  }
+}
+async function bundle(entry, name) {
+  const out = join(work, name)
+  await build({ absWorkingDir: root, entryPoints: [entry], outfile: out, bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent', plugins: [stubs] })
+  return require(out)
+}
+const { doneVerdict, doneReviewId, AUTO_CLOSE_QUIET_MS } = await bundle('src/shared/doneClose.ts', 'shared.cjs')
+const main = await bundle('src/main/doneClose.ts', 'main.cjs')
+
+const NOW = 1_800_000_000_000
+const finished = (over = {}) => ({
+  agent: 'claude', printed: NOW - 600_000, status: 'idle', lastKeyboard: NOW - 400_000,
+  turnEndedAt: NOW - AUTO_CLOSE_QUIET_MS - 1000, reply: 'Built it.\n\n## Next steps\n- None', runningAgents: 0, ...over
+})
+
+// 1. The one shape that closes, and its person-only steps.
+{
+  const v = doneVerdict(finished(), NOW)
+  assert.deepEqual(v, { close: true, personSteps: [] })
+  const steps = doneVerdict(finished({ reply: 'Done.\n\n## Next steps\n- Robert: run /login on the PC\n- After that lands, nothing' }), NOW)
+  assert.equal(steps.close, true)
+  assert.deepEqual(steps.personSteps, ['Robert: run /login on the PC'])
+  console.log('done-close: closes a finished pane, keeps person steps ok')
+}
+
+// 2. Every refusal.
+{
+  const refuse = (over, why) => {
+    const v = doneVerdict(finished(over), NOW)
+    assert.equal(v.close, false, why)
+    return v.reason
+  }
+  assert.equal(refuse({ agent: 'shell' }), 'shell pane')
+  assert.equal(refuse({ turnEndedAt: 0 }), 'no finished turn')
+  assert.equal(refuse({ focused: true }), 'somebody is looking at it')
+  assert.equal(refuse({ lastKeyboard: NOW - 10_000 }), 'not quiet long enough', 'typing restarts the clock')
+  assert.equal(refuse({ turnEndedAt: NOW - 30_000 }), 'not quiet long enough')
+  assert.match(refuse({ ask: { q: 'which?' } }), /busy, asking/)
+  assert.match(refuse({ drafting: true }), /busy, asking/)
+  assert.match(refuse({ backJob: 'npm run build' }), /busy, asking/)
+  assert.match(refuse({ runSince: NOW - 1000 }), /busy, asking/)
+  assert.match(refuse({ status: 'exited' }), /busy, asking/)
+  assert.match(refuse({ asleep: NOW - 1000 }), /busy, asking/)
+  assert.equal(refuse({ reply: undefined }), 'reply not read')
+  assert.equal(refuse({ runningAgents: 2 }), '2 subagents still running')
+  assert.equal(refuse({ reply: 'Which port should it use?' }), 'the reply ends in a question')
+  assert.equal(refuse({ reply: 'Done.\n\n## Next steps\n- Wire the PC watcher\n- Robert: approve' }), '1 step an agent could take')
+  console.log('done-close: refusals ok')
+}
+
+// 3. One id per finished turn.
+assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000')
+
+// 4. The sweep: records, notices, closes; a refused close records once.
+{
+  const transcript = join(work, 'pane.jsonl')
+  const row = (type, content) => JSON.stringify({ type, isSidechain: false, message: { role: type, content } })
+  writeFileSync(transcript, [
+    row('user', 'fix the login'),
+    row('assistant', [{ type: 'text', text: 'Fixed the login.\n\n## Next steps\n- Robert: run /login on the PC\n- Robert: approve the Vercel build' }])
+  ].join('\n'))
+  const written = []
+  const records = []
+  const closes = []
+  const notes = []
+  const activity = []
+  let closeAnswer = { closed: true }
+  const readings = [{ id: 'p1', ...finished({ reply: undefined, runningAgents: undefined }) }, { id: 'sh', ...finished({ agent: 'shell' }) }]
+  const deps = {
+    enabled: () => true,
+    readings: () => readings,
+    transcriptFor: (id) => (id === 'p1' ? transcript : null),
+    resumeIdFor: (id) => (id === 'p1' ? 'native-1' : undefined),
+    history: () => [{ id: 'p1', title: 'login fix', cwd: '/Users/r/Projects/site', agent: 'claude', startedAt: NOW - 600_000, bytes: 1, gist: 'fix the login', askLines: ['fix the login'] }],
+    titleOf: (id) => (id === 'p1' ? { title: 'login fix', cwd: '/Users/r/Projects/site', agent: 'claude' } : undefined),
+    otherwiseBusy: () => null,
+    record: (input, native) => { records.push(input); return { ...input, ...native, provider: native.agent ?? 'claude', title: native.title, reportPath: '/x', createdAt: 'now', attention: false } },
+    close: (id, at) => { closes.push([id, at]); return closeAnswer },
+    noteClose: (id, reason, at) => notes.push([id, reason, at]),
+    writeNotice: (path, body) => written.push([path, JSON.parse(body)]),
+    activity: (what, why) => activity.push([what, why]),
+    now: () => NOW
+  }
+  closeAnswer = { closed: false, reason: 'session is busy or has a background job' }
+  assert.deepEqual(main.sweepDoneClose(deps), [])
+  main.sweepDoneClose(deps)
+  assert.equal(records.length, 2, 'the record call is idempotent upstream, so it is made each tick')
+  assert.equal(written.length, 2, 'notices are written once per turn, not per tick')
+  assert.equal(notes.filter((n) => n[1]).length, 2, 'each refused close is noted')
+  closeAnswer = { closed: true }
+  assert.deepEqual(main.sweepDoneClose(deps), ['p1'])
+  const rec = records[0]
+  assert.equal(rec.id, doneReviewId('p1', readings[0].turnEndedAt))
+  assert.equal(rec.kind, 'result')
+  assert.equal(rec.proof, 'unverified')
+  assert.equal(rec.prompt, 'fix the login')
+  assert.match(rec.report, /Fixed the login/)
+  assert.equal(rec.noRemainingWork, false)
+  assert.equal(rec.closeSession, true)
+  const [path, notice] = written[0]
+  assert.match(path, /guarddeck\/notices\/paneforge-step-done_p1_\d+-1\.json$/)
+  assert.equal(notice.actor, 'paneforge')
+  assert.equal(notice.kind, 'step')
+  assert.equal(notice.machine, 'pc', 'the step said "on the PC"')
+  assert.equal(written[1][1].machine, 'mac', 'a step naming no machine is this machine')
+  assert.equal(notice.title, 'To do: Robert: run /login on the PC')
+  assert.equal(notice.detail, 'site - fix the login')
+  assert.deepEqual(Object.keys(notice.reopen).sort(), ['agent', 'cwd', 'prompt', 'resumeId', 'title'])
+  assert.equal(notice.reopen.resumeId, 'native-1')
+  assert.equal(notes.at(-1)[0], rec.id)
+  assert.ok(notes.at(-1)[2], 'the close is stamped on the record')
+  assert.deepEqual(activity, [['login fix', 'finished, 2 things left for you']])
+  assert.equal(closes.length, 3)
+  // Off means off, before any disk is touched.
+  assert.deepEqual(main.sweepDoneClose({ ...deps, enabled: () => false, transcriptFor: () => { throw new Error('read') } }), [])
+  console.log('done-close: sweep records, notices, closes ok')
+}
+
+// 5. A reply longer than the read window still reads its tail.
+{
+  const big = join(work, 'big.jsonl')
+  const filler = JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'x'.repeat(2000) }] } })
+  writeFileSync(big, [...Array(400).fill(filler), JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'the end' }] } })].join('\n'))
+  assert.equal(main.readReply('claude', big, NOW).text, 'the end')
+  assert.equal(main.readReply('claude', join(work, 'missing.jsonl'), NOW), undefined)
+  console.log('done-close: tail read ok')
+}
+
+// 6. Source: the sweep is wired, the window says which pane it is looking at.
+{
+  const index = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
+  assert.ok(index.includes('sweepDoneClose({'), 'index.ts runs the sweep')
+  assert.ok(index.includes("ipcMain.on('sessions:active'"), 'index.ts hears the active pane')
+  const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
+  assert.ok(sessions.includes('doneReadings()'), 'the manager supplies readings')
+  const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
+  assert.ok(app.includes('window.api.activePane(activeId)'), 'the window reports the active pane')
+  const settings = readFileSync(join(root, 'src/renderer/src/components/SettingsDialog.tsx'), 'utf8')
+  assert.ok(settings.includes('autoCloseDone'), 'there is a switch')
+  console.log('done-close: source wiring ok')
+}

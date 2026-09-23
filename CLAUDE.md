@@ -539,6 +539,24 @@ READING, nothing pressable; opening marks seen. `activity:list`/`seen` `REVIEWED
 minimised/`FIRST_MS` 4 min; `EVERY_MS` 40 min; first and every fourth `offersOff` (Settings
 re-enables); each once before any twice; `seen` resets.
 
+## A finished pane closes itself into Review
+
+`shared/doneClose.ts` (`test:doneclose`), `main/doneClose.ts` on a 15s timer in `index.ts`;
+`config.autoCloseDone` (on). Closes when: agent pane, turn over (`footerEndedAt`), not the
+ACTIVE pane (`sessions:active`), `AUTO_CLOSE_QUIET_MS` 3 min past turn end AND last key,
+`doneEnough`, reply read off the CLI transcript (`shared/replyRead.ts`, `test:replyread`,
+tail `READ_BYTES` 512 KB, `REREAD_MS` 30s), no running subagent (async `Agent` launch with
+no `<task-notification>`; a tool result QUOTING one is not one), reply not ending in `?`,
+`actionableNextSteps` empty. Writes a `result`/`unverified` review `done_<pane>_<turn s>`
+(`recordReview`, idempotent), then `closeAfterResult`; each `personOwnedSteps` step ->
+`~/.claude/guarddeck/notices/paneforge-step-<review>-<n>.json` (`kind: 'step'`, `machine`
+from `machineOf` else this one, `reopen` = cwd/agent/resumeId/prompt), same gate as
+`spoolNotice`. Review = ONE list (`ReviewDialog.tsx`, `shared/reviewList.ts`,
+`test:reviewlist`): Needs you / Done / All, row = number + project + ask + result, expand =
+full reply + Reopen (`--resume`) + Copy; shell rows and bare slash prompts hidden. A shell
+at its prompt is not drawn (`fleet.ts` `idleShell`, `App.tsx` `deskSessions`) until its
+number is pressed or a command runs; the idle countdown still takes it.
+
 ## A session that clears itself asks first
 
 `claude-config/autoclear.mjs` (Stop) -> `pane-clear.mjs` -> `autoclear:ask`; `Keep this

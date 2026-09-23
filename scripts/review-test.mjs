@@ -111,7 +111,9 @@ for (const [patch, reason] of [
   assert.match(closeAfterResult.call(manager, 'pane_1', reportedAt).reason, reason)
   assert.deepEqual(manager.kills, [])
 }
-const busyManager = fakeManager(safeMeta, Date.now() + 1)
+// A minute, not a millisecond: under load the next Date.now() is already past +1 and the
+// busy refusal reads as a clean close (flaked 1 in 4 on 2026-09-23).
+const busyManager = fakeManager(safeMeta, Date.now() + 60_000)
 assert.match(closeAfterResult.call(busyManager, 'pane_1', reportedAt).reason, /busy/)
 const safeManager = fakeManager(safeMeta)
 assert.deepEqual(closeAfterResult.call(safeManager, 'pane_1', reportedAt), { closed: true })

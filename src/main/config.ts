@@ -252,6 +252,8 @@ function defaults(): Config {
     // On. It only ever acts on a dev server that holds no listening socket - one nothing
     // can reach, whoever started it - and never on one launchd or a service supervises.
     deadDev: DEFAULT_DEAD_DEV,
+    // On. A finished pane becomes a Review row and a `--resume` away; see shared/doneClose.ts.
+    autoCloseDone: true,
     reclaim: DEFAULT_RECLAIM,
     autoHandoff: DEFAULT_AUTO_HANDOFF,
     // The token line a session clears itself at, and whether the app watches the CLIs that
