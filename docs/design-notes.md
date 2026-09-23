@@ -5107,3 +5107,27 @@ one thing he said it must not do; a click on any terminal pane takes the focus s
   pane zoom the picture, never the terminal font (`paneZoom`). Pinch = wheel + ctrlKey.
 - The button also counts a machine connected TO this one (a guest), since frames go over
   whichever connection exists.
+
+## A reopened pane comes back with what was on its screen: ConPTY padding read as wrapped prompts (2026-09-23)
+
+Robert, on the PC's panes mirrored on the Mac after a restart: "the prompt tags are in the
+wrong place, not spread out". The mirror is fine; the READER was not. Windows' ConPTY paints
+every row padded with written spaces to the full width, and a pad that fills the last column
+leaves the pending wrap set, so the next thing written lands on a row xterm flags
+`isWrapped` (a later redraw of that row keeps the flag). `seedPrompts` joined every wrapped
+row onto the one above. Over the PC's s8 transcript at the mirror's real 130x55 grid: tags on
+rows 10 and 16 (one ask, two copies whose texts differed only by a swallowed padded
+continuation, so dedupe missed), `/model opus` on 1574 with a 197-char label (the `⎿ Set
+model to…` line glued on), and `Continue the handoff` on 1577 never tagged (glued onto the
+padded blank row above). A Mac pane never pads, which is why only remote PC panes showed it.
+
+Fix: `promptRow` reports `edge` (anything but spaces in the last two cells - xterm's
+`trimRight` keeps WRITTEN spaces, so it is trimmed by hand), and a wrapped row continues the
+one above only when that row reached the edge. After: 16, 1574, 1577. `test:promptpad` holds
+the byte shapes copied from that transcript. Not the reset order: a mirror's two resets
+(400 kB buffer, 4 MiB replay) can seed into the buffer the second is about to replace, and
+xterm keeps markers through RIS at their old line, but `settleEchoes` re-found every such tag
+in the real renderer (dev copy, 12/12), so it was left alone.
+
+Moved out of CLAUDE.md the same day: a pane with no rows on disk is torn once because the bytes
+carry no height.

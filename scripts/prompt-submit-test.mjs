@@ -217,6 +217,13 @@ manager.write(hijack.id, '\r')
 const humanAt = manager.sessions.get(hijack.id).meta.lastKeyboard
 // Their turn is running. This is the window the 2026-08-30 bug typed into, and nothing
 // may go in here - not at any deadline.
+//
+// The renderer reads the CLI's busy footer and says so, as it does for a real agent. This
+// pane is a shell over a stub pty with no foreground process, and on POSIX `sweepIdle`
+// ends a shell's run the moment nothing is in the foreground (`shellDone`) - so without
+// this reading the turn was over within a second on a Mac and the prompt went in, while
+// the same test passed on Windows where that rule is off.
+manager.setBusyOnScreen(hijack.id, true, 'esc to interrupt')
 hijackProc.say(BOOTING)
 await sleep(700)
 ok(
