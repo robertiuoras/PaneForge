@@ -413,6 +413,26 @@ export class RemoteHost extends EventEmitter {
 
   private writingGuest: GuestConn | null = null
 
+  /**
+   * Send one frame to a connected guest by device id. Only the screen view uses it: every
+   * other kind the host sends is an answer to something the guest asked.
+   */
+  sendTo(device: string, m: Msg): PeerIdentity | null {
+    for (const g of this.guests) {
+      if (g.conn.ready && g.conn.peer.id === device) {
+        g.conn.send(m)
+        return g.conn.peer
+      }
+    }
+    return null
+  }
+
+  /** The identity a connected guest introduced itself with, or null. */
+  guestIdentity(device: string): { peer: PeerIdentity; address: string } | null {
+    for (const g of this.guests) if (g.conn.ready && g.conn.peer.id === device) return { peer: g.conn.peer, address: g.conn.address }
+    return null
+  }
+
   private handle(guest: GuestConn, m: Msg): void {
     const conn = guest.conn
     const id = typeof m.id === 'string' ? m.id : ''
@@ -644,6 +664,9 @@ export class RemoteHost extends EventEmitter {
           conn.send({ t: 'pong' })
           return
         default:
+          // The screen view's signalling: offer, answer, candidates, stop, wake. Relayed
+          // to whoever owns the view (main/screenStream.ts); the host only carries them.
+          if (m.t.startsWith('screen:')) this.emit('screen', conn.peer, conn.address, m)
           return
       }
     } catch (err) {

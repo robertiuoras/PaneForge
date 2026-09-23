@@ -442,14 +442,14 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                 <Switch
                   checked={config.soundOnIdle}
                   onChange={(v) => onChange({ soundOnIdle: v })}
-                  label="Chime when a session finishes its turn"
-                  hint="Plays even while PaneForge is focused - a pane you are not reading can still finish. Which sound it makes, and the sound for the other two alerts, is on the Sounds tab."
+                  label="Play a sound when a session stops or waits for you"
+                  hint="Off unless you turn it on. Covers a finished turn, a turn gone silent, a question and the terminal bell. Which sound each one makes is on the Sounds tab."
                 />
                 <Switch
                   checked={config.telegramAsk}
                   onChange={(v) => onChange({ telegramAsk: v })}
-                  label="Send a pane's question, or an error that stopped it, to Telegram"
-                  hint="Both stop the run and leave the pane looking finished: a question waits for somebody to press a row, and an error like a usage limit or an expired login is not retried by anything. Needs TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in the environment or in ~/.claude/usage-notify.env; without them nothing is sent. Message only: answering is still a press here or on the phone."
+                  label="Send an error that stopped a pane to Telegram"
+                  hint="An error like a usage limit or an expired login stops the run and nothing retries it. Questions are not sent: they show on this desk and in GuardDeck. Needs TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in the environment or in ~/.claude/usage-notify.env; without them nothing is sent."
                 />
                 <Switch
                   checked={config.bellAlert}

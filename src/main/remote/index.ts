@@ -87,10 +87,13 @@ export class Remote extends EventEmitter {
     super()
     this.me = () => {
       const c = getConfig().remote
-      return { id: c.id, name: c.name, platform: process.platform, version: app.getVersion(), handoffResume: ['claude', 'codex'], promptSubmit: true, person: this.person }
+      return { id: c.id, name: c.name, platform: process.platform, version: app.getVersion(), handoffResume: ['claude', 'codex'], promptSubmit: true, screenView: true, person: this.person }
     }
     this.host = new RemoteHost(backend, this.me, () => getConfig().remote.code)
     this.host.on('changed', () => this.changed())
+    this.host.on('screen', (peer: PeerIdentity, address: string, m: Msg) =>
+      this.emit('screen', { device: peer.id, name: peer.name, address, msg: m })
+    )
     this.host.onAsk = (peer, sas, address) => this.onAsked(peer, sas, address)
     this.discovery = new Discovery({ ...this.me(), port: getConfig().remote.port, hosting: false })
     this.discovery.on('found', () => this.changed())
@@ -366,6 +369,29 @@ export class Remote extends EventEmitter {
    * that shared its shape would say the PC is idle every time the link is down. Same rule
    * as `peerRefs()` returning null in the lane code, for the same reason.
    */
+  /**
+   * One screen-view frame to a device, over whichever connection to it is up: the one this
+   * machine dialled, else the one it accepted. `offline` = neither; `old` = connected, but
+   * the build there has no screen view.
+   */
+  screenSend(device: string, m: Msg): 'sent' | 'offline' | 'old' {
+    const who = this.screenPeer(device)
+    if (!who) return 'offline'
+    if (who.peer.screenView !== true) return 'old'
+    const c = this.clients.get(device)
+    if (c?.identity()) c.sendScreen(m)
+    else this.host.sendTo(device, m)
+    return 'sent'
+  }
+
+  /** The live identity and address of a device on either connection, or null. */
+  screenPeer(device: string): { peer: PeerIdentity; address: string } | null {
+    const c = this.clients.get(device)
+    const mine = c?.identity()
+    if (c && mine) return { peer: mine, address: c.peer.address }
+    return this.host.guestIdentity(device)
+  }
+
   jobsOn(device: string): Promise<BackJob[]> {
     const client = this.clients.get(device)
     if (!client) return Promise.reject(new Error('That device is not connected'))
@@ -829,6 +855,9 @@ export class Remote extends EventEmitter {
     client.on('reset', (sessionId: string, snapshot?: string) => this.emit('reset', sessionId, snapshot))
     client.on('attention', (s: Session) => this.emit('attention', s))
     client.on('status', () => this.changed())
+    client.on('screen', (m: Msg) =>
+      this.emit('screen', { device: id, name: client.identity()?.name || client.peer.name, address: client.peer.address, msg: m })
+    )
   }
 
   private savePeer(peer: RemotePeer): void {

@@ -49,9 +49,8 @@ import { tour, tourCheck } from './tour'
 import { addSample, dropSample } from './tourSample'
 import { addSound, pruneCustomSounds, removeSound, renameSound, soundData } from './sounds'
 import { writeAttachments, readAttachIns } from './attach'
-import { AskNotifier, askMessage, postAsk, telegramCreds } from './askNotify'
+import { AskNotifier, postAsk, telegramCreds } from './askNotify'
 import { errorMessage } from '../shared/paneError'
-import { askKeyOf } from '../shared/autoAnswer'
 import { type AttachIn, type AttachResult } from '../shared/attach'
 import { CHOOSE_GAP_MS, keysForChoice, sameAsk, stampMatches } from '../shared/choices'
 import { Remote } from './remote'
@@ -112,6 +111,8 @@ import { snapPlan } from '../shared/deskSnap'
 import { crashTestHook, installCrashGuard, logProblem, onCrashReport } from './crash'
 import { onOpenProblem, openLink, openLocal } from './openUrl'
 import { openScreen, screenCan } from './screenView'
+import type { ScreenPeer } from '../shared/screenView'
+import { ScreenViews, loopbackMode, machineName } from './screenStream'
 import { nothingToOpen } from '../shared/openUrl'
 import { startFaultNotify } from './faultNotify'
 import { stopRenderWatch, watchRenderer } from './renderWatch'
@@ -699,7 +700,10 @@ function createWindow(): void {
   win.on('close', rememberBounds)
   // Without this the module keeps a destroyed BrowserWindow, and every later
   // `win?.` call throws "Object has been destroyed" instead of no-opping.
+  const self = win
   win.on('closed', () => {
+    // A rebuilt window is already `win` by the time the dead one closes: leave it alone.
+    if (win !== self) return
     win = null
     stopRenderWatch()
     // Output batched for a window that no longer exists has nowhere to go. send()
@@ -712,15 +716,19 @@ function createWindow(): void {
   // the only way out was killing PaneForge by hand (2026-08-28, ~14 min of renderer CPU
   // with the main thread parked in mach_msg). Reloading is safe here because a pane is
   // restored from desk.json and `--resume`, the same path a restart uses.
+  //
+  // The new window is made BEFORE the dead one is destroyed. Destroying first left the app
+  // with no window for a moment, `window-all-closed` ran, and the rebuild quit the whole app
+  // with every pane in it (2026-09-23 06:45:52Z: renderer SIGTERMed, `recreate`, then
+  // "quit the last window was closed 13 pane(s) open" 89 ms later).
   watchRenderer(win, () => {
     const dead = win
-    win = null
+    createWindow()
     try {
       dead?.destroy()
     } catch {
       /* it is already gone; the point was to stop referencing it */
     }
-    createWindow()
   })
   win.webContents.setWindowOpenHandler(({ url }) => {
     // `about:blank` is xterm's own OSC 8 link handler: `window.open()` with no URL, then
@@ -989,28 +997,14 @@ manager.on('clientNamed', (e: ClientNamed) => {
 })
 
 /**
- * One phone message per question. The pane raises `ask` once per FRAME of a question and
- * a chooser arrives over several frames, so the notifier waits for the frames to stop.
- */
-const askNotifier = new AskNotifier({
-  post: (text: string) =>
-    postAsk(text).then((sent) => {
-      if (!sent && telegramCreds()) console.log("telegram: could not post a pane question")
-      return sent
-    })
-})
-
-/**
- * The same machinery for a pane that STOPPED rather than asked.
+ * A pane that STOPPED on an error goes to Telegram. A pane's QUESTION does not: Robert
+ * 2026-09-23, "remove these question[s] ... in telegram, they gonna come through guarddeck
+ * now". Questions stay on the desk (red row, knock) and go to GuardDeck.
  *
- * A second `AskNotifier` rather than a second implementation: what it does - wait for the
- * frames to stop, then send once, then hold the same message for five minutes - is exactly
- * what an error needs, and for the same reason. A CLI paints its error line in pieces too,
- * and a limit that has been hit is hit again on every retry the CLI makes by itself, which
- * is a phone buzzing four times for one wall.
- *
- * Separate instance, not a shared one, so a pane that hits a limit AND then asks a question
- * sends both: the keys are per pane, and one map would let the first swallow the second.
+ * `AskNotifier` does what an error needs: wait for the frames to stop, send once, then hold
+ * the same message for five minutes. A CLI paints its error line in pieces, and a limit that
+ * has been hit is hit again on every retry the CLI makes by itself, which is a phone buzzing
+ * four times for one wall.
  */
 const errorNotifier = new AskNotifier({
   post: (text: string) =>
@@ -1079,18 +1073,6 @@ function raiseAsk(s: Session): void {
   // alert that must not be gated on the notification settings below - a run that has
   // stopped dead is not a notification preference.
   send('sessions:ask', s)
-  if (!s.remote && getConfig().telegramAsk) {
-    // Debounced, and resolved at the END of the wait rather than now: the option labels
-    // stream in, so this same event fires several times for ONE question with a longer
-    // label each time. Sending on the frame would put three messages on the phone for one
-    // chooser, which is exactly what happened. See ASK_SETTLE_MS in askNotify.ts.
-    askNotifier.schedule(s.id, () => {
-      const live = allSessions().find((x) => x.id === s.id)
-      // Answered at the desk while this was waiting: there is nothing left to ask about.
-      if (!live?.ask) return null
-      return { key: askKeyOf(live.ask), text: askMessage(live.title, live.ask, undefined) }
-    })
-  }
   if (!getConfig().notifyOnIdle || isGameActive()) return
   if (!alive() || win!.isFocused()) return
   win!.flashFrame(true)
@@ -1245,9 +1227,24 @@ const remote = new Remote({
   }
 })
 
+/**
+ * The other machine's screen in a pane (src/main/screenStream.ts): sink panes this desk
+ * opened, and rows saying another machine is watching this one. Listed with the others
+ * by `allSessions()`, never inside SessionManager - nothing to sleep, reclaim or restore.
+ */
+const screenViews = new ScreenViews(
+  remote,
+  (channel, ...args) => {
+    if (alive()) win!.webContents.send(channel, ...args)
+  },
+  () => machineName(getConfig().remote.name)
+)
+screenViews.on('sessions', () => send('sessions:changed', allSessions()))
+remote.on('screen', (e) => screenViews.onRemote(e))
+
 /** Local panes and mirrored ones, as one list. This is what the renderer ever sees. */
 function allSessions(): Session[] {
-  return [...manager.list(), ...remote.sessions()]
+  return [...manager.list(), ...remote.sessions(), ...screenViews.sessions()]
 }
 
 remote.on('data', (id: string, data: string) => pump.push(id, data))
@@ -2183,6 +2180,10 @@ ipcMain.handle('sessions:setEffort', (_e, id: string, choice: EffortChoice) =>
   manager.setEffort(id, choice)
 )
 ipcMain.handle('sessions:kill', (_e, id: string) => {
+  if (screenViews.owns(id)) {
+    screenViews.close(id)
+    return
+  }
   if (remote.owns(id)) {
     // The row goes at once on a live link; a link that could not carry the frame is said
     // out loud, because silence here is a button that looks broken and gets pressed again.
@@ -3071,11 +3072,33 @@ ipcMain.handle('phone:rotate', async () => {
 })
 ipcMain.handle('remote:state', () => remote.state())
 // "See the PC's screen": Moonlight at the paired machine. src/shared/screenView.ts.
-ipcMain.handle('screen:can', () => screenCan(remote.state().peers))
-ipcMain.on('screen:open', () => {
+/**
+ * The machines whose screen this one can show: every paired machine it dials, plus any
+ * machine connected TO it that it has not paired the other way - the view's frames go
+ * over whichever connection is up (`Remote.screenSend`), so pairing direction is not a
+ * reason to hide the button.
+ */
+function screenPeers(): ScreenPeer[] {
+  const st = remote.state()
+  const peers: ScreenPeer[] = st.peers.map((p) => ({ id: p.id, name: p.name, address: p.address, status: p.status }))
+  for (const g of st.guests) {
+    if (!peers.some((p) => p.id === g.id)) peers.push({ id: g.id, name: g.name, address: g.address, status: 'online' })
+  }
+  return peers
+}
+ipcMain.handle('screen:can', () => (loopbackMode()
+  ? { ok: true, disabled: false, title: 'See this machine\'s screen (test)', control: { ok: false, title: '' } }
+  : screenCan(screenPeers())))
+// v1: the button opens the in-app view (src/main/screenStream.ts); Moonlight is behind
+// the pane's `Take control`.
+ipcMain.handle('screen:open', () => screenViews.open(screenPeers()))
+ipcMain.on('screen:control', () => {
   const plan = openScreen(remote.state().peers)
   if (!plan.ok) send('app:error', plan.message)
 })
+ipcMain.handle('screen:signal', (_e, id: string, msg: { t: string; [k: string]: unknown }) =>
+  screenViews.signal(String(id), msg))
+ipcMain.handle('screen:wake', (_e, id: string) => screenViews.wake(String(id)))
 ipcMain.handle('remote:host', (_e, on: boolean) => {
   remote.setHosting(!!on)
   return remote.state()
@@ -4885,6 +4908,8 @@ app.on('before-quit', (e) => {
   // An ssh child holding a forward open is not a pty either, and it outlives this process
   // exactly as cloudflared does.
   shutdownLogins()
+  // A viewer on the other machine hears the view ended rather than watching it freeze.
+  screenViews.shutdown()
   // shutdown() also flushes buffered transcript output, which would otherwise lose the
   // last 1.5 seconds of every pane. It runs once, so the two quit paths cannot double
   // the work between them.

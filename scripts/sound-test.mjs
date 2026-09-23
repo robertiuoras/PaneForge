@@ -359,5 +359,48 @@ is(sounds().custom.length, 0, 'removing an upload forgets it')
 ok(!existsSync(join(userData, 'sounds', second.sound.file)), 'and deletes its copy')
 is(orphanSoundFiles().length, 0, 'leaving nothing behind in the folder')
 
+// ---------------------------------------------------------------------------
+// The stop/waiting sounds are OFF, including on a desk whose saved config says on
+//
+// Robert, 2026-09-23: "dont need sounds when session is stopped/waiting". `defaults()` is
+// written to config.json at first launch, so the real case is a saved `soundOnIdle: true`,
+// and this loads it through `main/config.ts` itself - a fresh module per case, because
+// getConfig caches.
+
+const cfgOut = join(work, 'main-config.bundle.cjs')
+buildSync({
+  absWorkingDir: root,
+  entryPoints: ['src/main/config.ts'],
+  bundle: true,
+  format: 'cjs',
+  platform: 'node',
+  external: ['electron'],
+  outfile: cfgOut
+})
+const loadSaved = (name, saved) => {
+  const dir = join(work, name)
+  mkdirSync(dir, { recursive: true })
+  if (saved) writeFileSync(join(dir, 'config.json'), JSON.stringify(saved))
+  const m = { exports: {} }
+  const stub = { app: { getPath: () => dir, setLoginItemSettings() {} } }
+  new Function('require', 'module', 'exports', '__filename', '__dirname', readFileSync(cfgOut, 'utf8'))(
+    (id) => (id === 'electron' ? stub : createRequire(import.meta.url)(id)),
+    m,
+    m.exports,
+    cfgOut,
+    work
+  )
+  return m.exports.getConfig()
+}
+is(loadSaved('cfg-fresh', null).soundOnIdle, false, 'a fresh install plays no stop/waiting sounds')
+const migrated = loadSaved('cfg-old', { soundOnIdle: true })
+is(migrated.soundOnIdle, false, 'a saved "on" from before 2026-09-23 is moved to off')
+is(migrated.idleSoundsOffV1, true, 'and marked, so the move happens once')
+is(
+  loadSaved('cfg-chosen', { soundOnIdle: true, idleSoundsOffV1: true }).soundOnIdle,
+  true,
+  'a switch turned back on after the move keeps its answer'
+)
+
 rmSync(work, { recursive: true, force: true })
 console.log(`sounds: ${checks} checks passed (${SOUNDS.length} sounds in the catalogue)`)
