@@ -34,3 +34,10 @@ if (chrome.killSignal !== 'SIGKILL') throw new Error(`cleanup used ${chrome.kill
 if (elapsed > 1_000) throw new Error(`cleanup waited ${elapsed.toFixed(0)}ms after Chrome had exited`)
 if (existsSync(profile)) throw new Error('cleanup left its owned Chrome profile behind')
 console.log('close-test-chrome: catches an exit that happens while subscribing')
+
+// A killed Chrome on the PC leaves the process table 34-58s after taskkill says SUCCESS
+// (measured 2026-09-23). A 5s wait there failed every passing fit suite at teardown.
+const { exitWaitMs } = await import('./close-test-chrome.mjs')
+if (exitWaitMs('win32') < 60_000) throw new Error(`Windows waits ${exitWaitMs('win32')}ms, under the measured 58s exit`)
+if (exitWaitMs('darwin') !== 5_000) throw new Error(`macOS wait changed to ${exitWaitMs('darwin')}ms`)
+console.log('close-test-chrome: Windows waits past the measured 58s exit, macOS keeps 5s')
