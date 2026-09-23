@@ -5031,6 +5031,29 @@ on a subagent that already finished. Each `personOwnedSteps` step writes
 from `machineOf` else this one, `reopen` = cwd/agent/resumeId/prompt), through the same gate
 as `spoolNotice`.
 
+### ...and the chat that opened them hears once
+
+Robert, 2026-09-23: "once all sessions consolidate if theres multiple running and they close
+then at end can get summary in 1 session and leave it open". Before this the 3-minute close
+told nobody, and `--close-when-done` sent one bare line per pane. Now `pf open` always sends
+`reportTo` (the opener's `PF_PANE`), each closing pane leaves a note (summary = reply minus its
+`## Next steps`, 360 chars, one line) in `shared/finishedDigest.ts`, and the 15s sweep in
+`main/index.ts` tells the opener ONE prompt once none of its panes is still open, or after
+`DIGEST_MAX_HOLD_MS` 30 min saying how many are. The opener wears `openedOthers` and is never
+auto-closed: it is where the summary lands. An opener that has gone is dropped, not retried;
+every reply is still a Review row.
+
+### The sidebar card is three lines, and line two is the project
+
+Same day: "how do i know what lane im on? and even worse what happens if session renamed then
+i dont know what project im in ... things are cut off". 07d86303 had removed the copy chip;
+the name is whatever the pane was (re)named, so it cannot carry the project. Line 1 = number,
+name (wraps to three lines before an ellipsis), state word; line 2 = logo + `PaneForge · copy
+4` from the lane board's held folder (`SessionCopies.tsx`, plain text); line 3 = model, open
+time, steps, background job, each whole, wrapping rather than clipping. Robert chose three
+lines over two; steps are also in the pane header beside `open`. Measured: `test:cardfit`,
+`scripts/sidebar-fit-probe.mjs` (real window at 1280 and 1440).
+
 ## The other machine's screen is one click away
 
 Robert's ask (2026-09-23, from his phone): see the PC screen from PaneForge, "like windows.app",
@@ -5046,6 +5069,44 @@ design assumptions are written down in the spec and each is reversible.
 The button runs Moonlight `stream <peer address> Desktop` at the paired peer, online peer
 first else the first configured one. Only one viewer runs at a time: a second `stream`
 isn't refused by PaneForge, it is Sunshine on the PC end that refuses it.
+
+
+
+**v1, the in-app view (2026-09-23).** Robert: "opens a smaller window within this screen and i
+can go back to this cli ... all within paneforge not moonlight". So the quick button opens a
+PANE (the design's assumption 2) and Moonlight moved behind `Take control`. The grid is turned
+on when it is off, because single-pane mode would make the view fill the window, which is the
+one thing he said it must not do; a click on any terminal pane takes the focus straight back.
+
+- Signalling rides the existing encrypted peer channel: `screen:offer/answer/ice/locked/
+  refused/stop`, relayed by `RemoteHost.handle` and `RemoteClient.receive` (whichever
+  connection to that device is up - `Remote.screenSend`), every frame tagged `from:
+  sink|source` because in loopback both ends are one process and a candidate looks the same
+  either way. `PeerIdentity.screenView` gates it: absent = older build = `Update PaneForge on
+  <machine> first`, no ten-second wait. `PROTOCOL` stays 1, the same call as `askpair`.
+- Media: sink renderer owns a recvonly RTCPeerConnection, H.264 first
+  (`setCodecPreferences`), `iceServers: []`. Chromium hides host candidates behind
+  `<uuid>.local`, which does not cross a tailnet, so each MAIN process rewrites the other
+  end's host candidates (trickled and in the SDP) to the address of the peer connection they
+  arrived on (`rewriteCandidate`); a foreign LAN address, TCP, srflx are dropped.
+- Source: a hidden capture window (`show: false`, `focusable: false`, in-memory partition
+  `screen-source`, `backgroundThrottling: false`, nodeIntegration only because it loads
+  about:blank and a script from main). One capture stream for every viewer, stopped with the
+  last; `contentHint = 'detail'`, `maintain-resolution`. A viewer silent 30 s is dropped. The
+  source lists a row `<me>'s screen, being watched from <X>`; closing it ends the view both
+  ends (`Closed by <machine>` on the sink).
+- Screen panes live in `ScreenViews`, merged by `allSessions()` like mirrored panes, so no
+  sleep/reclaim/restore/auto-close sweep ever sees them, and closing one skips the confirm.
+- Locked: `query session` on the source before capturing (detached = the person's row is
+  `Disc`, parsed by column so an empty session name is read); a black first frame (max
+  channel < 10 on a 64x36 sample) or a refused capture also reads locked. `Wake the desktop`
+  runs `ssh <user>@<address> tscon <id> /dest:console` from the SINK on a press only - ssh
+  because OpenSSH gives an admin its full token and the source app runs split-token.
+- Zoom sizes the video (width x height) inside an overflow box rather than a transform, so a
+  zoomed picture scrolls; anchor math keeps the pinch point put. Cmd/Ctrl +/-/0 on a screen
+  pane zoom the picture, never the terminal font (`paneZoom`). Pinch = wheel + ctrlKey.
+- The button also counts a machine connected TO this one (a guest), since frames go over
+  whichever connection exists.
 
 ## A reopened pane comes back with what was on its screen: ConPTY padding read as wrapped prompts (2026-09-23)
 

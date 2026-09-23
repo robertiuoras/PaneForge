@@ -30,6 +30,7 @@ import Welcome from './components/Welcome'
 import CopyMenu, { type CopyChoice } from './components/CopyMenu'
 import SessionMenu from './components/SessionMenu'
 import SessionInfo from './components/SessionInfo'
+import SessionCopies from './components/SessionCopies'
 import HandoffDialog, { type HandoffTarget } from './components/HandoffDialog'
 import Mascot, { type CloseSoon } from './components/Mascot'
 import MoveSoon, { soonKey } from './components/MoveSoon'
@@ -80,6 +81,7 @@ import { isPhoneClient, viewerName } from './client'
 import { reconnectNow, useLink } from './linkStore'
 import { linkIconWords, linkLost, linkNote, linkWords } from '@shared/linkState'
 import { HandheldType } from './components/HandheldType'
+import ScreenPane, { paneZoom } from './components/ScreenPane'
 import TerminalPane, {
   paneCopyMenu,
   paneCopyMode,
@@ -789,7 +791,7 @@ export default function App(): JSX.Element {
   const [review, setReview] = useState(false)
   // Drawn only when this machine has Moonlight and a paired peer to look at; re-asked
   // whenever the peer list changes, which is the only thing that changes the answer.
-  const [screenBtn, setScreenBtn] = useState<{ ok: boolean; title: string } | null>(null)
+  const [screenBtn, setScreenBtn] = useState<Awaited<ReturnType<typeof api.screenCan>> | null>(null)
   // What the app has done on its own, and when the list was last looked at. Both live in
   // main (see main/activity.ts): a reload, a renderer rebuilt after a wedge and a restart
   // all lose renderer memory, and "what happened to my pane" is asked after exactly those.
@@ -1196,12 +1198,12 @@ export default function App(): JSX.Element {
   // render would clear and repaint every pane's canvas on every keystroke.
   const termColors = useMemo(() => terminalTheme(config?.theme), [config?.theme])
 
-  // The screen button's answer changes only when the peer list does.
+  // The screen button's answer changes only when the peer or guest list does.
   useEffect(() => {
     let live = true
     api.screenCan().then((r) => { if (live) setScreenBtn(r) }).catch(() => { if (live) setScreenBtn(null) })
     return () => { live = false }
-  }, [remote?.peers.length, remote?.peers.map((p) => p.status).join()])
+  }, [remote?.peers.length, remote?.peers.map((p) => p.status).join(), remote?.guests.map((g) => g.id).join()])
 
   useEffect(() => {
     api.listSessions().then(setSessions)
@@ -1311,7 +1313,7 @@ export default function App(): JSX.Element {
   // flash cannot tell you. Read through a ref so toggling the setting does not
   // resubscribe (and so the listener is attached exactly once).
   const soundOn = useRef(true)
-  soundOn.current = config?.soundOnIdle ?? true
+  soundOn.current = config?.soundOnIdle ?? false
   // Which sound each alert makes, read through a ref for the same reason: the listeners
   // below are attached once, and a picker change must reach the NEXT alert without
   // resubscribing to every session event.
@@ -1994,7 +1996,8 @@ export default function App(): JSX.Element {
     (id: string) => {
       const s = sessions.find((x) => x.id === id)
       if (!s) return
-      if (!config?.confirmClose || s.status === 'exited') return api.killSession(id)
+      // A screen view has nothing to lose - no agent, no conversation - so no question.
+      if (!config?.confirmClose || s.status === 'exited' || s.screen) return api.killSession(id)
       setAsk({
         title: `Close ${s.title}?`,
         body: `${s.agent} is still running in ${s.cwd}. Closing ends it - the conversation stays in history.`,
@@ -3080,6 +3083,23 @@ export default function App(): JSX.Element {
     flash(`Layout: ${LAYOUT_LABEL[next]}`)
   }, [layout, grid, patchConfig, flash])
 
+  /**
+   * The desktop quick button: the paired machine's screen as a pane beside the others.
+   * A second press finds the one already open. The grid is turned on when it is off, so
+   * the view lands BESIDE the terminals rather than filling the window - one click on
+   * any other pane is still all it takes to get back to it (brief 2026-09-23).
+   */
+  const openScreenPane = async (): Promise<void> => {
+    const r = await api.openScreen()
+    if (!r.ok) {
+      flash(r.message)
+      return
+    }
+    if (!(config?.grid ?? false) && !handheld.handheld && sessions.some((x) => x.id !== r.id)) patchConfig({ grid: true })
+    setZoomId(null)
+    setActiveId(r.id)
+  }
+
   const toggleZoom = useCallback(
     (id?: string | null) => {
       const target = id ?? activeRef.current
@@ -3397,6 +3417,10 @@ export default function App(): JSX.Element {
       } else if (k === ',') {
         e.preventDefault()
         setSettings(true)
+      } else if ((k === '+' || k === '=' || k === '-' || k === '0') && activeId && paneZoom.has(activeId)) {
+        // A screen pane zooms its picture; the terminal font is not what anybody meant.
+        e.preventDefault()
+        paneZoom.get(activeId)!(k === '0' ? 0 : k === '-' ? -1 : 1)
       } else if ((k === '+' || k === '=' || k === '-') && config) {
         e.preventDefault()
         const delta = k === '-' ? -1 : 1
@@ -5456,19 +5480,44 @@ export default function App(): JSX.Element {
                           there IS something, which on an ordinary card is never.
                           Cosmetic: `shared/paneBackJobs.ts` feeds no busy reading. */}
                     </span>
+                    {/* Plain words, not a box, at the far end of the title line: one state
+                        per card, and a running turn's word IS its clock. What the last turn
+                        took and whether it wrote anything are on the hover (Robert
+                        2026-09-23: too much info). */}
+                    {!s.ask && s.status !== 'exited' && !s.handingOff && !(alarmAt(s.id) ?? s.closingAt) && (
+                      <span
+                        className={'row-state ' + s.status}
+                        title={[
+                          s.lastRunMs !== undefined && !s.runSince ? `Last turn took ${formatElapsed(s.lastRunMs)}.` : '',
+                          s.changedNothing ? `${s.changedNothing}${s.changedNothingWhy ? ` - ${s.changedNothingWhy}` : ''}` : ''
+                        ].filter(Boolean).join('\n') || undefined}
+                      >
+                        {s.status === 'working' && s.runSince ? (
+                          <Elapsed since={s.runSince} title="This turn" />
+                        ) : s.status === 'idle'
+                          ? (s.engaged !== false ? 'waiting' : 'ready')
+                          : s.status === 'working' ? 'running' : s.status}
+                      </span>
+                    )}
                   </div>
                 )}
-                {/* One muted sentence: which model, how long open, what is left running.
-                    Plain text parted by dots rather than a row of boxes (Robert
-                    2026-09-23: "too cluttered ... not modern"). The agent's NAME is the
-                    logo's hover now - the logo already says it. */}
+                {/* Line two: WHICH PROJECT, always, and which copy of it. The name above
+                    is whatever the pane was called or renamed to, so it cannot carry the
+                    project (Robert 2026-09-23: "what happens if session renamed then i
+                    dont know what project im in"). */}
+                <div className="row-place">
+                  <AgentLogo id={s.agent} spec={agents.find((a) => a.id === s.agent)} size={12} />
+                  <SessionCopies session={s} boards={laneBoards} />
+                </div>
+                {/* Line three, one muted sentence: which model, how long open, steps left,
+                    what is left running. Plain text parted by dots (Robert 2026-09-23:
+                    "too cluttered ... not modern"). */}
                 <div className="row-sub">
                   {(() => {
                     const spec = agents.find((a) => a.id === s.agent)
                     const model = s.model ? agentModelLabel(spec, s.model) : ''
                     return (
                       <span className="meta row-agent" title={(spec?.label ?? s.agent) + (s.model ? ` · ${s.model}` : '')}>
-                        <AgentLogo id={s.agent} spec={spec} size={12} />
                         {model || (spec?.label ?? s.agent)}
                         {s.effort ? ` ${effortChip(s.effort)}${s.effort.pending ? '…' : ''}` : ''}
                       </span>
@@ -5508,25 +5557,6 @@ export default function App(): JSX.Element {
                           </span>
                         )
                       })()}
-                    {/* Plain words, not a box, at the far end of the second line: one state
-                        per card, and a running turn's word IS its clock. What the last turn
-                        took and whether it wrote anything are on the hover (Robert
-                        2026-09-23: too much info). */}
-                    {!s.ask && s.status !== 'exited' && !s.handingOff && !(alarmAt(s.id) ?? s.closingAt) && (
-                      <span
-                        className={'row-state ' + s.status}
-                        title={[
-                          s.lastRunMs !== undefined && !s.runSince ? `Last turn took ${formatElapsed(s.lastRunMs)}.` : '',
-                          s.changedNothing ? `${s.changedNothing}${s.changedNothingWhy ? ` - ${s.changedNothingWhy}` : ''}` : ''
-                        ].filter(Boolean).join('\n') || undefined}
-                      >
-                        {s.status === 'working' && s.runSince ? (
-                          <Elapsed since={s.runSince} title="This turn" />
-                        ) : s.status === 'idle'
-                          ? (s.engaged !== false ? 'waiting' : 'ready')
-                          : s.status === 'working' ? 'running' : s.status}
-                      </span>
-                    )}
                 </div>
               </div>
               {s.status === 'exited' && (
@@ -5610,7 +5640,12 @@ export default function App(): JSX.Element {
         </button>
 
         {/* Everyday views stay one click away; occasional coordination lives in Tools. */}
-        <div className="quick">
+        {/* Two even rows of icons rather than one strip of slivers: at eight buttons one row
+            measured ~26px wide by 36px tall each. Columns = half the buttons, rounded up. */}
+        <div
+          className="quick"
+          style={{ '--quick-cols': Math.ceil((5 + (screenBtn?.ok ? 1 : 0) + (ownerAccess ? 2 : 0)) / 2) } as React.CSSProperties}
+        >
           <button
             className="ghost quick-btn"
             aria-label="Review"
@@ -5625,7 +5660,8 @@ export default function App(): JSX.Element {
               className="ghost quick-btn"
               aria-label="See the other machine's screen"
               title={screenBtn.title}
-              onClick={() => api.openScreen()}
+              disabled={screenBtn.disabled}
+              onClick={() => void openScreenPane()}
             >
               <ScreenIcon />
             </button>
@@ -6074,6 +6110,49 @@ export default function App(): JSX.Element {
               className={'pane-title' + (tiled ? ' draggable' : '')}
               onPointerDown={(e) => beginPaneMove(e, s.id)}
             >
+              {s.screen ? (
+                // Another machine's screen: no agent, no process, no transcript - so none
+                // of the terminal's chips. Name, how long it has been open, Focus, close.
+                <>
+                  <span className="pt-screen-icon" aria-hidden="true"><ScreenIcon /></span>
+                  <span className="pt-name">{s.title}</span>
+                  {!handheld.handheld && (
+                    <span className="session-clock pt-open">open <Elapsed
+                      since={s.openedAt ?? s.createdAt}
+                      className="elapsed done"
+                      title={`Opened ${new Date(s.openedAt ?? s.createdAt).toLocaleString()}.`}
+                    /></span>
+                  )}
+                  <span className="pt-actions">
+                    {grid && (
+                      <button
+                        className="icon pt-focus"
+                        aria-label={zoomId === s.id ? 'Back to the grid' : `Fill the window with ${s.title}`}
+                        title={zoomId === s.id ? 'Back to the grid' : 'Fill the window with this screen'}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          toggleZoom(s.id)
+                        }}
+                      >
+                        {zoomId === s.id ? '⤡' : '⤢'}
+                      </button>
+                    )}
+                    <button
+                      className="icon pt-close"
+                      title={keyLabel('Close (Ctrl W)')}
+                      aria-label={`Close ${s.title}`}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        close(s.id)
+                      }}
+                    >
+                      ×
+                    </button>
+                  </span>
+                </>
+              ) : (<>
               <StatusDot status={s.status} engaged={s.engaged} />
               <AgentLogo id={s.agent} spec={agents.find((a) => a.id === s.agent)} size={14} />
               <span className="pt-name">
@@ -6204,6 +6283,17 @@ export default function App(): JSX.Element {
                   title={`Session opened ${new Date(s.openedAt ?? s.createdAt).toLocaleString()}; includes idle time.`}
                 /></span>
               )}
+              {/* Steps a fresh session could start on, beside the open clock: the card
+                  carries it too, but the pane you are in is where "is there more to do
+                  here" gets asked. */}
+              {!handheld.handheld && s.handoffOpen ? (
+                <span
+                  className="session-clock pt-steps"
+                  title={`This pane's handoff lists ${s.handoffOpen} step(s) a fresh session could start on.`}
+                >
+                  {stepsWord(s.handoffOpen)}
+                </span>
+              ) : null}
               {s.asleep ? (
                 <AsleepChip at={s.asleep} id={s.id} reason={s.asleepReason} />
               ) : s.status === 'exited' ? (
@@ -6460,7 +6550,16 @@ export default function App(): JSX.Element {
                   ×
                 </button>
               </span>
+              </>)}
             </div>
+            {s.screen ? (
+              <ScreenPane
+                session={s}
+                visible={visibleIds.has(s.id)}
+                control={screenBtn?.control ?? null}
+                flash={flash}
+              />
+            ) : (
             <TerminalPane
               sessionId={s.id}
               cwd={s.cwd}
@@ -6517,6 +6616,7 @@ export default function App(): JSX.Element {
               booting={!s.printed && !s.asleep && s.status !== 'exited'}
               asleep={Boolean(s.asleep)}
             />
+            )}
             {/* The mic used to float over the bottom-LEFT of the pane. It is gone from the
                 terminal on purpose (Robert 2026-09-05: "remove the mic icon in the
                 terminal"): it sat directly ON the CLI's own prompt box - Codex draws its

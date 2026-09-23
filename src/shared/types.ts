@@ -468,6 +468,18 @@ export interface Session {
    * namespaced with the device, so nothing else in the app has to care: keystrokes,
    * resizes and closes are routed back over the link by the main process.
    */
+  /**
+   * A pane showing another machine's screen instead of a terminal (`agent: 'screen'`).
+   * `sink` = this machine is looking; `source` = this is the row saying another machine is
+   * watching this one. No process behind either: see src/main/screenStream.ts.
+   */
+  screen?: {
+    role: 'sink' | 'source'
+    /** device id of the other machine */
+    device: string
+    /** the other machine's name: the one being watched (sink) or the watcher (source) */
+    machine: string
+  }
   remote?: {
     /** device id, matching a RemotePeer */
     device: string
@@ -1930,7 +1942,7 @@ export interface Config {
   autoFixUi: boolean
   /** OS notification + taskbar flash when a session goes quiet in the background */
   notifyOnIdle: boolean
-  /** soft chime when a session finishes its turn or asks you something */
+  /** a sound when a session finishes, goes silent, asks you something or rings the bell. Off by default */
   soundOnIdle: boolean
   /**
    * Send a pane's question - and an error that STOPPED it (`shared/paneError.ts`: a usage
@@ -2062,6 +2074,8 @@ export interface Config {
    * somebody typed, and this has no licence over it.
    */
   offloadDefaultsV4?: boolean
+  /** the one-time move of `soundOnIdle` to off (`quietIdleSounds` in shared/sounds.ts) */
+  idleSoundsOffV1?: boolean
   /** roles offered in the swarm dialog, editable by the user */
   swarmRoles: SwarmRole[]
   /** pairing, hosting and the devices whose panes show up in this window */
@@ -2660,6 +2674,11 @@ export interface Api {
   /** file picker that wires an existing binary up as an agent override */
   locateAgent(id: string): Promise<string | null>
 
+  /** Welcome screen's "Get set up" checklist: what is missing on this machine, if anything. */
+  checkSetup(): Promise<import('./setupCheck').SetupRow[]>
+  /** Windows-only: installs Git for Windows, streamed to onInstall like an agent install. */
+  installGit(): Promise<void>
+
   /** named profile this window runs under ('' = the normal installed app) */
   profile(): Promise<string>
   updateState(): Promise<UpdateState>
@@ -2779,10 +2798,21 @@ export interface Api {
 
   /** hosting, pairings, discovered devices and who is connected right now */
   remoteState(): Promise<RemoteState>
-  /** Can this machine show the other one's screen, and what the button should say. */
-  screenCan(): Promise<{ ok: boolean; title: string }>
-  /** Start the viewer (Moonlight) on the paired machine - see src/shared/screenView.ts. */
-  openScreen(): void
+  /**
+   * Can this machine show the other one's screen, and what the button should say.
+   * `control` = whether `Take control` (Moonlight) is available and its title.
+   */
+  screenCan(): Promise<{ ok: boolean; disabled: boolean; title: string; control: { ok: boolean; title: string } }>
+  /** Open (or find) the pane showing the paired machine's screen - src/main/screenStream.ts. */
+  openScreen(): Promise<{ ok: true; id: string } | { ok: false; message: string }>
+  /** `Take control`: start Moonlight on the paired machine - src/shared/screenView.ts. */
+  screenTakeControl(): void
+  /** One signalling frame from a screen pane to the machine it is looking at. */
+  screenSignal(id: string, msg: { t: string; [k: string]: unknown }): Promise<'sent' | 'offline' | 'old'>
+  /** `Wake the desktop`: put the other machine's detached desktop back on its screen. */
+  screenWake(id: string): Promise<{ ok: boolean; message: string }>
+  /** Frames for a screen pane from the machine it is looking at. */
+  onScreenSignal(cb: (id: string, msg: { t: string; [k: string]: unknown }) => void): () => void
   /** start or stop answering other devices */
   setRemoteHost(on: boolean): Promise<RemoteState>
   /** move the listener; returns the state with the error if the port is taken */
@@ -2940,6 +2970,7 @@ export interface Api {
   /** wav bytes in, text out; runs a local whisper, nothing leaves the machine */
   transcribe(wav: ArrayBuffer): Promise<{ text: string; error?: string }>
   installVoice(): Promise<void>
+  installTailscale(): Promise<void>
 
   onData(cb: (id: string, data: string) => void): () => void
   onSessions(cb: (sessions: Session[]) => void): () => void

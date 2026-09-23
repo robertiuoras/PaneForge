@@ -16,7 +16,7 @@
 //
 //   node scripts/shrink-first-test.mjs
 
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { buildSync } from 'esbuild'
 import { tmpdir } from 'node:os'
@@ -35,7 +35,7 @@ buildSync({
   platform: 'node'
 })
 // Same trap as link-state and whatsnew: a bare `C:\...` is protocol `c:` to the loader.
-const { nextResize, GRANT_GRACE_MS } = await import(pathToFileURL(out).href)
+const { nextResize, ptyOwed, GRANT_GRACE_MS } = await import(pathToFileURL(out).href)
 
 let failed = 0
 const ok = (name, cond, detail = '') => {
@@ -139,6 +139,95 @@ ok(
   nextResize({ have: { cols: 120, rows: 40 }, want: null, pty: null, asked: null, waitedMs: 0 }).do ===
     'none'
 )
+
+// A pty left at a grid the terminal is not at, with no borrow on record. Live on the desk
+// 2026-09-23: s15-mudr1l7h's pty 29x16, `borrowed: false`, under a 130x55 terminal - every
+// Claude Code frame wrapped at 29 columns and Fix said "repaired" over it.
+console.log('a pty left behind is told again')
+ok('ptyOwed exists', typeof ptyOwed === 'function')
+const owed = (have, pty) => (typeof ptyOwed === 'function' ? ptyOwed(have, pty) : false)
+ok('a 29x16 pty under a 130x55 terminal is owed the grid', owed({ cols: 130, rows: 55 }, { cols: 29, rows: 16 }))
+ok('a pty at the terminal grid owes nothing', !owed({ cols: 130, rows: 55 }, { cols: 130, rows: 55 }))
+ok('no pty reading owes nothing (a mirror)', !owed({ cols: 130, rows: 55 }, null))
+ok(
+  "main's 20x5 floor is not a mismatch (no resize per observer tick)",
+  !owed({ cols: 15, rows: 3 }, { cols: 20, rows: 5 })
+)
+ok(
+  'a terminal already fitted over a pty at another grid is fitted and re-told, not left',
+  nextResize({
+    have: { cols: 130, rows: 55 },
+    want: { cols: 130, rows: 55 },
+    pty: { cols: 29, rows: 16 },
+    asked: null,
+    waitedMs: 0
+  }).do === 'fit'
+)
+ok(
+  'and a pane at rest stays at rest',
+  nextResize({
+    have: { cols: 130, rows: 55 },
+    want: { cols: 130, rows: 55 },
+    pty: { cols: 130, rows: 55 },
+    asked: null,
+    waitedMs: 0
+  }).do === 'none'
+)
+
+// The whole sequence, the way reshape() in TerminalPane runs it: a box flashes small for a
+// frame, grows back before the shrink is granted, and the grant then fits a terminal that
+// never moved. The old report rule (`changed` only) left the pty at the flash.
+{
+  let term = { cols: 130, rows: 55 }
+  let pty = { cols: 130, rows: 55 }
+  let asked = null
+  const told = []
+  const step = (box) => {
+    const s = nextResize({ have: term, want: box, pty, asked, waitedMs: 10 })
+    if (s.do === 'ask') {
+      asked = { cols: s.cols, rows: s.rows }
+      told.push(asked)
+      pty = { ...asked } // main grants it
+      return
+    }
+    if (s.do !== 'fit') return
+    asked = null
+    const changed = term.cols !== box.cols || term.rows !== box.rows
+    term = { ...box }
+    if (changed || owed(term, pty)) {
+      told.push({ ...term })
+      pty = { ...term }
+    }
+  }
+  step({ cols: 29, rows: 16 }) // the flash: a shrink, asked first
+  step({ cols: 130, rows: 55 }) // back to full before the grant is read: the grant, then a no-op fit
+  step({ cols: 130, rows: 55 })
+  ok(
+    'a shrink flash that grows back leaves the pty at the terminal grid',
+    pty.cols === 130 && pty.rows === 55 && term.cols === 130,
+    `pty ${pty.cols}x${pty.rows}, terminal ${term.cols}x${term.rows}, told ${JSON.stringify(told)}`
+  )
+}
+
+// The shipped renderer uses it: reshape reports on it, the pty effect re-decides on it, and
+// Fix re-asserts the terminal's grid before replaying.
+const pane = readFileSync(join(root, 'src/renderer/src/components/TerminalPane.tsx'), 'utf8')
+ok(
+  'reshape tells the pty when it is owed, not only when the terminal moved',
+  /if \(changed \|\| ptyOwed\(\{ cols: t\.cols, rows: t\.rows \}, ptyRef\.current\)\)\s*\n\s*api\.resize\(/.test(pane)
+)
+ok(
+  'a pty landing at another grid re-runs reshape',
+  /if \(!asked\.current && !ptyOwed\(\{ cols: t\.cols, rows: t\.rows \}, pty \?\? null\)\) return\s*\n\s*reshape\(t, f\)\s*\n\s*\}, \[pty\?\.cols, pty\?\.rows\]\)/.test(pane)
+)
+{
+  const i = pane.indexOf('const redrawHistory = async')
+  const body = i < 0 ? '' : pane.slice(i, pane.indexOf('api.replayHistory(sessionId)', i))
+  ok(
+    'Fix re-asserts the terminal grid on the pty before it replays',
+    /api\.takePaneSize\(sessionId\)[\s\S]*api\.resize\(sessionId, back, t\.rows/.test(body)
+  )
+}
 
 // The control: why any of the above is worth doing.
 console.log('control - a clamp really does tear')

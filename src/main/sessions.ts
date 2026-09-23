@@ -722,10 +722,48 @@ export class SessionManager extends EventEmitter {
         backJob: m.backJob,
         focused: m.id === this.activeId,
         lastKeyboard: m.lastKeyboard,
-        turnEndedAt: live.footerEndedAt
+        turnEndedAt: live.footerEndedAt,
+        openedOthers: this.openers.has(m.id) || this.openChildrenOf(m.id) > 0
       }
     })
   }
+
+  /**
+   * Panes that opened other panes. Kept after those panes close, so the opener stays
+   * open to receive their summary (`shared/finishedDigest.ts`) rather than being taken
+   * by the auto-close in the gap between its last child closing and the summary arriving.
+   */
+  private openers = new Set<string>()
+
+  /** The live pane `ref` names, by id or by title - the two ways `--report-to` spells it. */
+  private paneFor(ref: string): Live | undefined {
+    return this.sessions.get(ref) ?? [...this.sessions.values()].find((l) => l.meta.title === ref)
+  }
+
+  /** Which open pane asked to hear how this one ended. Never itself. */
+  openerOf(id: string): string | undefined {
+    const ref = this.sessions.get(id)?.req.reportTo
+    const opener = ref ? this.paneFor(ref)?.meta.id : undefined
+    return opener && opener !== id ? opener : undefined
+  }
+
+  /** How many panes that `openerId` opened are still open, asleep included. */
+  openChildrenOf(openerId: string): number {
+    let n = 0
+    for (const live of this.sessions.values())
+      if (live.meta.id !== openerId && this.openerOf(live.meta.id) === openerId) {
+        n++
+        this.openers.add(openerId)
+      }
+    return n
+  }
+
+  /**
+   * Called as a `--close-when-done` pane closes, with the opener it names. index.ts
+   * reads the reply and adds the summary to the opener's digest; unset, the opener gets
+   * the old one-line notice.
+   */
+  onFinished: ((meta: Session, opener: string) => void) | null = null
 
   resumeOrigin(id: string): string | undefined {
     const live = this.sessions.get(id)
@@ -2147,13 +2185,11 @@ export class SessionManager extends EventEmitter {
     const { meta } = live
     if (!doneEnough({ ...meta, busyUntil: live.busyUntil }, quiet, now)) return
     const told = live.req.reportTo
-    if (told) {
-      const opener = this.sessions.get(told) ?? [...this.sessions.values()].find((l) => l.meta.title === told)
-      if (opener && opener.meta.id !== meta.id)
-        this.queuePrompt(
-          opener.meta.id,
-          `The pane you opened for "${meta.title}" (${meta.cwd}) has finished and closed itself.`
-        )
+    const opener = this.openerOf(meta.id)
+    if (opener) {
+      this.openers.add(opener)
+      if (this.onFinished) this.onFinished(meta, opener)
+      else this.queuePrompt(opener, `The pane you opened for "${meta.title}" (${meta.cwd}) has finished and closed itself.`)
     }
     console.info(`close-when-done: ${meta.id} finished and closed itself${told ? ` - told ${told}` : ''}`)
     this.kill(meta.id)
@@ -3227,6 +3263,7 @@ export class SessionManager extends EventEmitter {
     forgetSession(id)
     forgetBackgroundAgents(id)
     this.sessions.delete(id)
+    this.openers.delete(id)
     forgetHandoff(id)
     this.emitSessions()
   }

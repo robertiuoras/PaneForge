@@ -264,10 +264,10 @@ generated branch (`pf/w2`, `lane-a`, `worktree-<slug>`) dropped; `copy 2` = seco
 ## Every word on screen is read by somebody who has never used git
 
 lane/checkout/trunk/worktree/slot/merge/conflict/free/stuck stay in code. `copy 2` (folder 1,
-lane `a` 2, `w2` 2) never `copy f`; `main copy`; `Other copies`; `nobody is using it`.
+lane `a` 2, `w2` 2) never `copy f`; `main copy`; `nobody is using it`.
 `copyNumber` (`place.ts`) is the one slot->number. Non-pane chat named via
 `LaneBoardEntry.chatTitle` (`lanes:board`, `main/history.ts` `chatNameFor`); no name = nothing
-drawn. `test:laneplain`.
+drawn.
 
 ## A pane says which client it is working for
 
@@ -379,7 +379,8 @@ newer); busy waits; idle with no turn gets another return. `/clear` no boot pati
 select` footer, options 1..N, one arrow row. Multi-question end: no footer, `REVIEW` above,
 `readReview` DOWN. Refusals: one `❯` over blanks/rules, `don't ask again` (`WIDENS`); RULE =
 blank. Arrows + return never digit, `CHOOSE_GAP_MS`; left question REFUSES. `pty:choose` on
-the SESSION. RED, NOISY: `.row.asking`, `sounds.ask` `knock` on `sessions:ask`;
+the SESSION. RED: `.row.asking`; stop/waiting sounds only with `soundOnIdle` (OFF,
+`quietIdleSounds` moved saved `true` once, `test:sounds`);
 Questions: desk + GuardDeck, NEVER Telegram; `askNotify.ts` = stopping ERRORS
 (`telegramAsk`). Click types NOTHING (`askRef`; `test:askclick`, `test:choices`).
 
@@ -543,19 +544,19 @@ on. Closes when: agent pane, turn over (`footerEndedAt`), not ACTIVE (`sessions:
 transcript (`shared/replyRead.ts`, `test:replyread`), no running subagent, reply not ending
 `?`, `actionableNextSteps` empty. Writes `result`/`unverified` review `done_<pane>_<turn s>`
 (`recordReview`, idempotent), then `closeAfterResult`; each `personOwnedSteps` step becomes a
-GuardDeck notice, `spoolNotice`'s gate. Review = ONE list (`ReviewDialog.tsx`,
+GuardDeck notice, `spoolNotice`'s gate. Opener told once: `finishedDigest.ts`. Review = ONE list (`ReviewDialog.tsx`,
 `shared/reviewList.ts`, `test:reviewlist`): Needs you/Done/All, row = number+project+ask+
 result, expand = full reply + Reopen (`--resume`) + Copy; shell/bare-slash rows hidden. Idle
 shell undrawn (`fleet.ts` `idleShell`) till pressed/run; idle countdown still takes it.
 
 ## A session that clears itself asks first
 
-`claude-config/autoclear.mjs` (Stop) -> `pane-clear.mjs` -> `autoclear:ask`; `Keep this
-session`/`Clear now`; unattended proceeds (`test:autoclear`). `shared/autoclear.ts` refusals,
-`main/autoclear.ts` clock re-checked each tick (turn started, typed, exited, gone, no open
-steps; old PaneForge = no instant fallback). `## Next steps: None` respected. Resume via
-`queuePrompt` on IDLE COMPOSER (`CLEAR_SETTLE_MS`, `SUBMIT_RETRIES_MS`). `armclear` ->
-`pane:armClear` -> `keep.arm()` `ARM_CLEAR_LEAD_MS` 120ms.
+`scripts/autoclear-hook.mjs` (Stop/SessionStart; installer `main/autoclearHooks.ts`, a
+foreign autoclear left alone) -> `<userData>/autoclear-requests/<pane>.json` ->
+`main/autoclearRequests.ts` -> `autoClearAsk` = `autoclear:ask` (`test:autoclearhook`).
+`Keep this session`/`Clear now`; unattended proceeds (`test:autoclear`).
+`shared/autoclear.ts` refusals; `main/autoclear.ts` re-checks each tick. `## Next steps:
+None` respected. Resume: `queuePrompt` on IDLE COMPOSER; `keep.arm()` 120ms.
 
 ## The screen stays on while a pane works
 
@@ -594,12 +595,11 @@ count (`choose()` -> `write()`, auto-answer `'app'`); unsent typing is nothing.
 
 ## The other machine's screen is one click away
 
-Quick button beside Review (`shared/screenView.ts`, `main/screenView.ts`; `test:screenview`)
-starts Moonlight at the paired peer, online first else configured. Drawn only w/ viewer+peer
-(`screenCan`); refusals toast `app:error`; one viewer at a time; `screen-view.log`;
-`screen:*` `DESK_ONLY`. Title = MACHINE, not protocol. Native in-app
-stream (WebRTC) designed in
-`docs/superpowers/specs/2026-09-23-pc-screen-design.md`, not built.
+Quick button beside Review opens the peer's screen as a PANE beside the terminals (grid on,
+never fills the window unasked): `shared/screenStream.ts`, `main/screenStream.ts`,
+`ScreenPane.tsx`; `test:screenstream`, `test:screenview`, `screen-stream-window-test.mjs`.
+`screen:*` on `wire.ts`, gated by `screenView`; panes outside SessionManager. `Take
+control` = Moonlight. View-only. Detail: design-notes.
 
 ## Checks
 

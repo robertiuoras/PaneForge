@@ -154,8 +154,8 @@ export function projectTag(project: string): string {
   if (!name) return ''
   if (name.length <= 8) return name
   const parts = name
-    .replace(/(?!^)[A-Z]/g, (m) => ' ' + m)
-    .split(/[.\-_\s ]+/)
+    .replace(/(?!^)[A-Z]/g, (m) => '\u0000' + m)
+    .split(/[.\-_\s\u0000]+/)
     .filter(Boolean)
   if (parts.length > 1) return parts.map((p) => p[0].toUpperCase()).join('')
   return name.slice(0, 8)

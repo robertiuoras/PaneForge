@@ -41,7 +41,10 @@ try {
     await c.evaluate(`document.documentElement.style.setProperty('--side-w','${width}px')`)
     const sizes = await c.evaluate(`Array.from(document.querySelectorAll('.quick .quick-btn'),e=>{const r=e.getBoundingClientRect();return {w:r.width,h:r.height,y:r.y,label:e.getAttribute('aria-label')}})`)
     check(sizes.length >= 4, 'quick actions exist')
-    check(sizes.every(s => Math.abs(s.w-sizes[0].w)<1 && s.h===sizes[0].h && s.y===sizes[0].y), `equal pills at sidebar width ${width}`)
+    check(sizes.every(s => Math.abs(s.w-sizes[0].w)<1 && s.h===sizes[0].h), `equal pills at sidebar width ${width}`)
+    const rows = [...new Set(sizes.map(s => Math.round(s.y)))]
+    check(sizes.length <= 4 ? rows.length === 1 : rows.length === 2, `icons in two even rows at sidebar width ${width} (${rows.length} rows)`)
+    check(sizes.every(s => s.w >= s.h), `every icon at least as wide as tall at sidebar width ${width} (${Math.round(sizes[0].w)}x${Math.round(sizes[0].h)})`)
     check(sizes.every(s => s.label), 'every icon has an accessible name')
   }
   check(await c.evaluate(`!document.querySelector('.keep-open-toggle .badge')`), 'keep-open has no unexplained count')

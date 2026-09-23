@@ -696,6 +696,10 @@ ok(!server.running, 'the gate test server stopped cleanly')
     'autoclear:cancel', 'autoclear:takeover',
     // Local starting-folder metadata only, like projects:list; no file or session writes.
     'projects:sessionFolders',
+    // Welcome checklist facts: whether claude and git are on PATH and whether the CLI is
+    // signed in, as booleans. Reads `~/.claude.json` for one key's presence; returns no
+    // token, types nothing, reaches no pty.
+    'setup:check',
     'projects:list', 'projects:route', 'agents:list', 'sessions:list', 'sessions:rename',
     // Read-only, and the answer is a public release page's own notes.
     'app:whatsNew',

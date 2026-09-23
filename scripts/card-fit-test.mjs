@@ -45,8 +45,8 @@ if (!CHROME) {
 }
 
 /** The sidebar, at the width it really has, holding one card. */
-function page(rowSub, remote = false, titleChips = '', name = 'PaneForge', lane = '') {
-  const mark = remote
+function page(c) {
+  const mark = c.remote
     ? '<span class="row-remote"><svg viewBox="0 0 16 16" width="13" height="13"></svg></span>'
     : ''
   return `<!doctype html><meta charset="utf-8"><style>
@@ -65,46 +65,50 @@ function page(rowSub, remote = false, titleChips = '', name = 'PaneForge', lane 
   <div class="app"><div class="sidebar" style="width:260px"><div class="list">
     <div class="row">
       <div class="row-text">
-        <div class="row-title has-key"><span class="num-wrap"><span class="num">1</span></span>${mark}<span class="row-name">${name}</span>${lane}<span class="row-tags">${titleChips}</span></div>
-        <div class="row-sub">${rowSub}</div>
+        <div class="row-title has-key"><span class="num-wrap"><span class="num">1</span></span>${mark}<span class="row-name">${c.cardName ?? 'PaneForge'}</span><span class="row-tags">${c.title ?? ''}</span>${c.state ?? ''}</div>
+        <div class="row-place">${LOGO}${c.place ?? PLACE()}</div>
+        <div class="row-sub">${c.sub}</div>
       </div>
       <button class="x">x</button>
     </div>
   </div></div></div>`
 }
 
-// The card as drawn since 2026-09-23 (Robert: "too cluttered ... not modern"): two lines
-// of TEXT. Title: number, name, which copy, one state word. Sub-line: one muted sentence.
+// The card as drawn since 2026-09-23 (Robert: "how do i know what lane im on? ... if
+// session renamed then i dont know what project im in ... things are cut off"): THREE
+// lines. Name + state word; project · copy; model · open · steps · job.
 const LOGO = '<span style="flex:none;width:12px;height:12px;display:inline-block"></span>'
-const AGENT = (model = 'Opus 5.5') => `<span class="meta row-agent">${LOGO}${model}</span>`
+const AGENT = (model = 'Opus 5.5') => `<span class="meta row-agent">${model}</span>`
 const OPEN = '<span class="meta"><span class="elapsed done">2h 51m</span></span>'
+const STEPS = '<span class="meta">3 steps</span>'
 const JOB = '<span class="meta jobs">running lanes-watch.mjs</span>'
-const LANE = '<button class="row-lane lane-chip done"><i class="lane-dot"></i>copy 4</button>'
-// A chat editing one project while holding some OTHER project's copy: the project is named.
-const OTHER = '<span class="row-lane">Toolstash copy 3</span>'
+const PLACE = (project = 'PaneForge', copy = 'copy 4', mark = '') =>
+  `<span class="row-lane${mark}">${mark ? '<i class="lane-dot"></i>' : ''}<span class="row-project">${project}</span>${copy ? `<span class="row-copy">${copy}</span>` : ''}</span>`
 const STATE = (word, cls = 'idle') => `<span class="row-state ${cls}">${word}</span>`
 const RUNNING = '<span class="row-state working"><span class="elapsed">14m 23s</span></span>'
 const ASKS = '<span class="chip asks">asks you<span class="asks-in">hold</span></span>'
 const KEPT = '<button class="row-kept"><svg viewBox="0 0 16 16" width="11" height="11"></svg></button>'
+const LONG = 'fix the compact sidebar so nothing is cut off'
 
 const CASES = [
   ...[240, 320, 420].flatMap(width => [
     ['running', RUNNING], ['ready', STATE('ready')], ['waiting', STATE('waiting')]
-  ].map(([state, title]) => ({
-    name: `${state} in a copy at ${width}px`, width, lane: LANE,
-    sub: AGENT() + OPEN + JOB + title
+  ].map(([word, state]) => ({
+    label: `${word} in a copy at ${width}px`, width, state, place: PLACE('PaneForge', 'copy 4', ' done'),
+    sub: AGENT() + OPEN + STEPS + JOB
   }))),
-  { name: 'a plain card', sub: AGENT('Claude Code') + OPEN + STATE('waiting') },
-  { name: 'in a copy', sub: AGENT() + OPEN + STATE('waiting'), lane: LANE },
-  { name: "holding another project's copy", sub: AGENT() + OPEN + STATE('waiting'), lane: OTHER, shortName: true },
-  { name: 'mirrored from another device', sub: AGENT() + OPEN + STATE('waiting'), lane: LANE, remote: true },
+  { label: 'a plain card', sub: AGENT('Claude Code') + OPEN, state: STATE('waiting'), place: PLACE('PaneForge', '') },
+  { label: 'in a copy', sub: AGENT() + OPEN, state: STATE('waiting') },
+  // Renamed by the app after its topic: the name no longer says the project, the line does.
+  { label: 'renamed, long name', name: LONG, sub: AGENT() + OPEN + STEPS, state: STATE('waiting'), wraps: true },
+  { label: 'renamed, long project', name: 'echo rail', sub: AGENT() + OPEN, state: STATE('ready'), place: PLACE('claude-memory-toolstash-vault', 'main copy') },
+  { label: 'mirrored from another device', sub: AGENT() + OPEN, state: STATE('waiting'), remote: true },
   // Robert's own card, 2026-08-28: pane 3, project `clients`, title `pizzasrus`, with a
   // question standing and the pane pinned. The name was drawn as a single letter `p`.
-  { name: 'asking and pinned', sub: AGENT() + OPEN, title: ASKS + KEPT, shortName: true },
-  { name: 'asking', sub: AGENT() + OPEN, title: ASKS },
-  { name: 'pinned, short name, in a copy', sub: AGENT() + OPEN + STATE('waiting'), title: KEPT, lane: LANE, shortName: true },
-  // Robert's card of 2026-09-23 itself: pinned, waiting, in copy 4, a job still running.
-  { name: 'pinned, in a copy, with a job still running', sub: AGENT() + OPEN + JOB + STATE('waiting'), title: KEPT, lane: LANE }
+  { label: 'asking and pinned', name: 'Sonia', sub: AGENT() + OPEN, title: ASKS + KEPT },
+  { label: 'asking', sub: AGENT() + OPEN, title: ASKS },
+  { label: 'pinned, short name, in a copy', name: 'Sonia', sub: AGENT() + OPEN, title: KEPT, state: STATE('waiting') },
+  { label: 'pinned, in a copy, with a job still running', sub: AGENT() + OPEN + STEPS + JOB, title: KEPT, state: STATE('waiting'), wraps: true }
 ]
 
 const profile = mkdtempSync(join(tmpdir(), 'pf-cardfit-'))
@@ -221,13 +225,13 @@ try {
     return r.result.value
   }
 
-  for (const c of CASES) {
+  for (const c of CASES.map((x) => ({ ...x, cardName: x.name, name: x.label }))) {
     await send(
       'Page.navigate',
       {
         url:
           'data:text/html;charset=utf-8,' +
-          encodeURIComponent(page(c.sub, c.remote, c.title ?? '', c.shortName ? 'Sonia' : 'PaneForge', c.lane ?? ''))
+          encodeURIComponent(page(c))
       },
       sessionId
     )
@@ -244,6 +248,12 @@ try {
         lines: Math.round(sub.getBoundingClientRect().height / 15),
         agent: cut(document.querySelector('.row-agent')),
         place: cut(document.querySelector('.row-lane')),
+        project: cut(document.querySelector('.row-project')),
+        copy: cut(document.querySelector('.row-copy')),
+        placeText: document.querySelector('.row-place').textContent,
+        metas: [...document.querySelectorAll('.row-sub .meta')].map(cut),
+        nameClip: (() => { const el = document.querySelector('.row-name'); return { h: el.clientHeight, want: el.scrollHeight, lines: Math.round(el.getBoundingClientRect().height / 17) } })(),
+        stateTop: (() => { const st = document.querySelector('.row-state, .row-tags > *'); const n = document.querySelector('.row-name'); return st ? Math.round(st.getBoundingClientRect().top - n.getBoundingClientRect().top) : 0 })(),
         lane: null,
         clock: cut(document.querySelector('.elapsed')),
         state: cut(document.querySelector('.row-state')),
@@ -308,39 +318,26 @@ try {
       `${m.agent.w.toFixed(1)}px of ${m.agent.want}px ("${m.agent.text}")`
     )
     ok(fits(m.clock), `${c.name}: the clock is not cut off`, `${m.clock.w.toFixed(1)}px of ${m.clock.want}px`)
-    ok(fits(m.name), `${c.name}: the pane's name is whole`, `${m.name.w.toFixed(1)}px of ${m.name.want}px`)
-    // A card that fits and still reads as broken. Both of these passed every assertion
-    // above on 2026-08-29 while Robert's card drew `Sonia` in a 78px box with 40px of
-    // nothing after it and the clock alone on a second row 135px from the left.
+    ok(fits(m.name) && m.nameClip.want <= m.nameClip.h + 1, `${c.name}: the pane's name is whole`, `${m.name.w.toFixed(1)}px of ${m.name.want}px, ${m.nameClip.h}px of ${m.nameClip.want}px tall`)
     ok(
-      Math.max(0, ...m.gaps.holes) <= 8,
-      `${c.name}: no hole between the things on the title line`,
-      `gaps ${m.gaps.holes.join('/')}px`
+      m.gaps.over <= 1,
+      `${c.name}: nothing on the title line runs off the card`,
+      `${m.gaps.over}px past the edge`
     )
     ok(
       m.loose === 0,
       `${c.name}: every state chip is in the one tag box`,
       `${m.loose} loose on the title line`
     )
-    ok(
-      m.gaps.over <= 1,
-      `${c.name}: nothing on the title line runs off the card`,
-      `${m.gaps.over}px past the edge`
-    )
-    // The card Robert reported: a short name, a pin and a clock is 118px of chrome on a
-    // 190px line and has no business taking three rows. It measured 40px tall over two
-    // rows with the chips as separate items (2026-08-29), and 19px in one row now.
-    if (c.shortName && !(c.title ?? '').includes('asks'))
-      ok(
-        m.title.h < 25,
-        `${c.name}: the title line is ONE row`,
-        `${m.title.h.toFixed(1)}px tall`
-      )
-    // Two lines, always: the card no longer wraps its state onto a third.
-    ok(m.gaps.rows === 1, `${c.name}: the title is one line`, `${m.gaps.rows} rows`)
-    ok(m.lines === 1, `${c.name}: the sub-line is one line`, `${m.lines} rows`)
+    // A long name takes a second line rather than an ellipsis; the state word stays level
+    // with the name's FIRST line, at the right.
+    ok(c.wraps || m.nameClip.lines <= 1, `${c.name}: a short name is one line`, `${m.nameClip.lines} lines`)
+    ok(Math.abs(m.stateTop) <= 3, `${c.name}: the state sits level with the name's first line`, `${m.stateTop}px`)
     ok(fits(m.state), `${c.name}: the state word is whole`, m.state ? `${m.state.w.toFixed(1)}px of ${m.state.want}px` : '')
-    ok(fits(m.place), `${c.name}: which copy it is, whole`, m.place ? `${m.place.w.toFixed(1)}px of ${m.place.want}px` : '')
+    ok(fits(m.project), `${c.name}: the project is named in full`, m.project ? `${m.project.w.toFixed(1)}px of ${m.project.want}px ("${m.project.text}")` : 'missing')
+    ok(fits(m.copy), `${c.name}: which copy it is, whole`, m.copy ? `${m.copy.w.toFixed(1)}px of ${m.copy.want}px` : '')
+    ok(!/lane/i.test(m.placeText), `${c.name}: the place line never says lane`, m.placeText)
+    ok(m.metas.every(fits), `${c.name}: every fact on the third line is whole`, m.metas.map((x) => `${x.text} ${x.w.toFixed(0)}/${x.want}`).join(', '))
     if (c.remote)
       ok(
         m.remote !== null && m.remote >= 13,

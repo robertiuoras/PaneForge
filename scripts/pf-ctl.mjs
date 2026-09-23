@@ -557,7 +557,10 @@ if (cmd === 'list') {
       agent,
       closeWhenDone,
       computeJob: computeId ? { id: computeId, owner: computeOwner } : undefined,
-      reportTo: closeWhenDone ? reportTo : undefined,
+      // Always, not only with --close-when-done: the 3-minute auto-close takes these panes
+      // too, and the opener hears once, when the last of them has closed
+      // (`shared/finishedDigest.ts`).
+      reportTo,
       where: here ? 'local' : undefined,
       device: device || undefined,
       resume: Boolean(resumeId) || continueLast || undefined,

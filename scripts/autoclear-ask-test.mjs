@@ -7,7 +7,9 @@ import { transformSync, buildSync } from 'esbuild'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const source = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
-const from = source.indexOf("ipcMain.handle('autoclear:ask'")
+// The handler body is a named function (the request-file watcher calls it too), and the
+// IPC line that follows it only delegates - so the slice starts at the function.
+const from = source.indexOf('function autoClearAsk(')
 const to = source.indexOf("\nipcMain.handle('autoclear:cancel'", from)
 assert.ok(from >= 0 && to > from, 'autoclear ask handler is present as a bounded IPC block')
 const handlerSource = transformSync(source.slice(from, to), { loader: 'ts', format: 'cjs', target: 'node20' }).code

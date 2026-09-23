@@ -432,12 +432,60 @@ git(repo, 'commit', '-qm', 'master is green again')
 const clearedOut = laneMerge('ready', '--session', 'sess-main')
 ok('and clears once master is really green', /merged into|Finished work/.test(clearedOut), clearedOut)
 
+// ------------------------------------------- merge mode: only the main folder can hold it
+//
+// A merge-mode release is `git merge && git push` in the main folder, so another lane's
+// half-done work cannot be hurt by it and must not hold it. Measured 2026-09-23: over 7
+// days p90 84-103 minutes from a lane's last commit to its merge, worst 241, and eight
+// finished taskdriver lanes sat 43-113 minutes behind one chat's unrelated edits in main.
+
+lane('release', '--session', 'sess-fixer')
+lane('release', '--session', 'sess-notfixed')
+const committed = (dir, file, text, msg) => {
+  writeFileSync(join(dir, file), text)
+  git(dir, 'add', '-A')
+  git(dir, 'commit', '-qm', msg)
+}
+const onMaster = (msg) => git(repo, 'log', '--format=%s', 'master').split('\n').includes(msg)
+
+const typing = JSON.parse(laneMerge('claim', '--session', 'sess-typing'))
+writeFileSync(join(typing.dir, 'half-done.js'), 'export const h =\n')
+const doneA = JSON.parse(laneMerge('claim', '--session', 'sess-done-a'))
+committed(doneA.dir, 'done-a.js', 'export const a = 1\n', 'feat: done a')
+const outA = laneMerge('ready', '--session', 'sess-done-a')
+ok('merge mode: a lane someone is still typing in does not hold a finished one', onMaster('feat: done a'), outA)
+ok(
+  'and the typing lane is left exactly as it was',
+  readFileSync(join(typing.dir, 'half-done.js'), 'utf8') === 'export const h =\n' &&
+    !git(typing.dir, 'log', '--format=%s').includes('feat: done a')
+)
+laneMerge('release', '--session', 'sess-done-a')
+
+writeFileSync(join(repo, 'app.js'), 'console.log("main is mid-edit")\n')
+const doneB = JSON.parse(laneMerge('claim', '--session', 'sess-done-b'))
+committed(doneB.dir, 'done-b.js', 'export const b = 1\n', 'feat: done b')
+const outB = laneMerge('ready', '--session', 'sess-done-b')
+ok('merge mode: an unstaged edit in main to a file no lane brings does not hold it', onMaster('feat: done b'), outB)
+ok('and that edit is still there afterwards', readFileSync(join(repo, 'app.js'), 'utf8') === 'console.log("main is mid-edit")\n')
+laneMerge('release', '--session', 'sess-done-b')
+
+const clash = JSON.parse(laneMerge('claim', '--session', 'sess-clash'))
+committed(clash.dir, 'app.js', 'console.log("lane version")\n', 'feat: clash')
+laneMerge('ready', '--session', 'sess-clash')
+const held = laneMerge('autoship')
+ok('an edit in main to a file a finished lane changes still holds it, by file', !onMaster('feat: clash') && /main \(uncommitted edits to app\.js/.test(held), held)
+ok('and the edit in main is untouched', readFileSync(join(repo, 'app.js'), 'utf8') === 'console.log("main is mid-edit")\n')
+ok('status names main as the hold', JSON.stringify(JSON.parse(laneMerge('status')).blockedBy) === '["main"]')
+git(repo, 'checkout', '--', 'app.js')
+const cleared = laneMerge('autoship')
+ok('and it goes out once main commits or drops that edit', onMaster('feat: clash'), cleared)
+laneMerge('release', '--session', 'sess-clash')
+rmSync(join(typing.dir, 'half-done.js'))
+laneMerge('release', '--session', 'sess-typing')
+
 git(repo, 'remote', 'remove', 'origin')
 
 lane('release', '--session', 'sess-main')
 lane('release', '--session', 'sess-work')
-lane('release', '--session', 'sess-fixer')
-lane('release', '--session', 'sess-notfixed')
-
 console.log(failed ? `\n${failed} failed` : '\nall passed')
 process.exit(failed ? 1 : 0)

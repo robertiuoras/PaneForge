@@ -95,7 +95,10 @@ about the missing signature, not about the app, and it happens once.
 
 **macOS**
 
-- First launch must be **right-click the app > Open > Open**. Once only.
+- First launch must be **right-click the app > Open > Open**. Once only. If that option
+  is not there, open the app normally (it will be blocked), then go to **System
+  Settings > Privacy & Security**, scroll down, and click **Open Anyway** - then **Open**
+  in the warning that reappears.
 - If macOS still refuses: `xattr -dr com.apple.quarantine /Applications/PaneForge.app`
   (the `install.sh` one-liner already does this).
 - Intel Macs have no published build - use *Build it yourself* below.
@@ -119,6 +122,13 @@ None of this recurs: updates after the first install are silent (see below).
 3. **Start a pane.** Tick a project, pick the agent and model, press Enter. That is a
    real terminal running that CLI in that folder - same colours, same keys, same Ctrl-C.
 4. **Press F1** for every shortcut.
+
+Open PaneForge; it walks you through installing an agent and signing in to Claude Code.
+
+**Two machines?** Install PaneForge on both. On one, open **Devices**, press **Copy
+invite**, and paste it into Devices on the other - it pairs itself. If the two are on
+different Wi-Fi or networks, install [Tailscale](https://tailscale.com/download) (free)
+on both first and sign in with the same account, then pair as usual.
 
 The app checks for new versions in the background and offers the update itself, so this
 is the only time you download anything by hand.

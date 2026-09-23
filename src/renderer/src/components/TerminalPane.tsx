@@ -16,7 +16,7 @@ import {
   type AttachIn
 } from '../../../shared/attach'
 import { FULL_SCROLLBACK } from '../../../shared/capacity'
-import { GRANT_GRACE_MS, nextResize } from '../../../shared/shrinkFirst'
+import { GRANT_GRACE_MS, nextResize, ptyOwed } from '../../../shared/shrinkFirst'
 import { readsBusy } from '../../../shared/busy'
 import { whenWords } from '../../../shared/elapsed'
 import { busyEvidence, readsElapsedMs, type BusyReason } from '../../../shared/busy'
@@ -1171,16 +1171,27 @@ function TerminalPane({
     // simply won and never gave it back - the desk went on drawing a full-width pane whose
     // every line wrapped a third of the way across, for as long as it took somebody to
     // resize the window by hand. See `resize` in main/sessions.ts.
-    if (changed) api.resize(sessionId, t.cols, t.rows, isPhoneClient(), viewerName())
+    //
+    // ...and ALSO when the terminal did not move but the pty is at some other grid. A shrink
+    // asked for above leaves the terminal alone until it is granted; a box that grew back
+    // in the meantime fits to the size the terminal already had, so `changed` is false and
+    // the pty was left at the transient grid for good - 29x16 under a 130x55 pane, every
+    // frame the agent drew wrapped a quarter of the way across. See `ptyOwed`.
+    if (changed || ptyOwed({ cols: t.cols, rows: t.rows }, ptyRef.current))
+      api.resize(sessionId, t.cols, t.rows, isPhoneClient(), viewerName())
     return changed
   }
   // The pty has just reported a new grid. A pane holding a shrink back was waiting for
   // exactly this, so it applies now instead of at the end of the grace.
+  // A pty that lands at a grid this terminal is not at, with nothing outstanding, is
+  // re-decided too: `reshape` puts it back at the terminal's grid unless the pane is being
+  // drawn at somebody else's (a mirror, a borrow), which it checks first.
   useEffect(() => {
-    if (!asked.current) return
     const t = term.current
     const f = fit.current
-    if (t && f) reshape(t, f)
+    if (!t || !f) return
+    if (!asked.current && !ptyOwed({ cols: t.cols, rows: t.rows }, pty ?? null)) return
+    reshape(t, f)
   }, [pty?.cols, pty?.rows])
 
   /**
@@ -4310,6 +4321,14 @@ function TerminalPane({
         if (dead) return false
         noteFix('redraw')
         if (!mirrorRef.current) api.takePaneSize(sessionId)
+        // Fix re-asserts this terminal's grid on the pty, not only the borrows it takes
+        // back. A pty left small with NO borrow on record (see `ptyOwed`) had nothing for
+        // `takePaneSize` to return, so Fix replayed history at 130 columns into a CLI still
+        // painting at 29 and said "repaired" over the same torn frame. Only when this pane
+        // is drawn at its own grid: under a borrow `t.cols` is the borrower's, and taking
+        // the borrow back above already hands the pty the desk's.
+        if (!mirrorRef.current && !gridRef.current)
+          api.resize(sessionId, back, t.rows, isPhoneClient(), viewerName())
         replaying.current = true
         if (wide !== back) t.resize(wide, t.rows)
         // Main delivers the snapshot through the same ordered reset/data stream. Reading

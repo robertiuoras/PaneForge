@@ -98,9 +98,13 @@ const ASK_WINDOW_MS = 10 * 60_000
 // pane is focused - and the two would then overwrite each other's number on every session
 // broadcast, which is the same last-writer-wins fight `shared/paneSize.ts` documents.
 const DESK_ONLY = new Set([
-  // A phone must not start a Moonlight window on the desk it is looking at.
+  // A phone must not start a Moonlight window on the desk it is looking at, nor open or
+  // steer a screen view: its frames carry the desk's connection details.
   'screen:open',
   'screen:can',
+  'screen:control',
+  'screen:signal',
+  'screen:wake',
   // Answers the Cmd-Q card. Only the desk can quit the desk.
   'app:quitAnswer',
   // Reads a vault off this machine's disk and opens the Obsidian app here - desk only.
@@ -253,10 +257,13 @@ const GATED_INVOKE = new Set([
   'pty:attachClipboard',
   'agents:install',
   'agents:uninstall',
+  // Same class as `agents:install`: runs winget on this desk.
+  'setup:installGit',
   // Same class as the two above: it runs an installer on this machine.
   'agents:update',
   'update:install',
   'voice:install',
+  'remote:installTailscale',
   // Runs on ANOTHER desk, which is worse rather than better: the passkey enrolled here is
   // the only thing between a stolen cookie and a session on a machine whose own gate was
   // never asked.

@@ -31,6 +31,12 @@ export interface DoneReading extends DonePane {
   reply?: string
   /** Subagents launched in the background and not yet reported back. */
   runningAgents?: number
+  /**
+   * This pane opened other panes (`pf open` from inside it). It is where their one
+   * summary lands (`shared/finishedDigest.ts`), so it stays open - Robert, 2026-09-23:
+   * "get summary in 1 session and leave it open".
+   */
+  openedOthers?: boolean
 }
 
 /**
@@ -49,6 +55,7 @@ export function doneVerdict(p: DoneReading, now = Date.now()): DoneVerdict {
   if (p.agent === 'shell') return { close: false, reason: 'shell pane' }
   if (!p.turnEndedAt) return { close: false, reason: 'no finished turn' }
   if (p.focused) return { close: false, reason: 'somebody is looking at it' }
+  if (p.openedOthers) return { close: false, reason: 'it opened other panes and collects their summary' }
   const quiet = now - Math.max(p.turnEndedAt, p.lastKeyboard)
   if (quiet < AUTO_CLOSE_QUIET_MS) return { close: false, reason: 'not quiet long enough' }
   if (!doneEnough(p, quiet, now)) return { close: false, reason: 'busy, asking, drafting or running something' }

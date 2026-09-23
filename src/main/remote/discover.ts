@@ -10,6 +10,7 @@
 import { EventEmitter } from 'node:events'
 import { createSocket, type Socket } from 'node:dgram'
 import { networkInterfaces } from 'node:os'
+import { isTailnetAddress } from '../../shared/tailnet'
 
 export const DISCOVERY_PORT = 7312
 
@@ -186,7 +187,13 @@ export function broadcastAddresses(): string[] {
   return [...out]
 }
 
-/** This machine's LAN addresses, shown so the other device can be pointed at one. */
+/**
+ * This machine's LAN addresses, shown so the other device can be pointed at one.
+ *
+ * A Tailscale address is the one that still works when the two machines are on
+ * different networks, so it sorts first: an invite tries `addresses` in order, and
+ * the plain-LAN ones only work when both desks share a network anyway.
+ */
 export function localAddresses(): string[] {
   const out: string[] = []
   for (const list of Object.values(networkInterfaces())) {
@@ -194,5 +201,5 @@ export function localAddresses(): string[] {
       if (net.family === 'IPv4' && !net.internal) out.push(net.address)
     }
   }
-  return out
+  return out.sort((a, b) => Number(isTailnetAddress(b)) - Number(isTailnetAddress(a)))
 }

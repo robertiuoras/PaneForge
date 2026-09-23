@@ -5,6 +5,12 @@
 // display type at line-height 1 with negative tracking, two short motion durations. No gradient
 // fill, no glow, no rounded-card-on-a-grid — the thing every generic AI landing page reaches for.
 
+import { useCallback, useEffect, useState } from 'react'
+import type { SetupRow, SetupRowId } from '@shared/setupCheck'
+import InstallConsole from './InstallConsole'
+
+const api = window.api
+
 interface WelcomeProps {
   /** Opens the New session dialog - the one place a folder is picked and a session starts. */
   onStart: () => void
@@ -40,6 +46,84 @@ export default function Welcome({ onStart, onSearch, onTools }: WelcomeProps): J
           See what needs you
         </button>
       </div>
+      <SetupCard onSignIn={onStart} />
+    </div>
+  )
+}
+
+/**
+ * "Get set up": shown only while something is missing (Claude Code, Windows Git, sign-in),
+ * gone the moment `checkSetup` comes back empty. Re-checks when an install finishes and
+ * when the window regains focus - no polling timer, because nothing changes here on its
+ * own between those two moments.
+ */
+function SetupCard({ onSignIn }: { onSignIn: () => void }): JSX.Element | null {
+  const [rows, setRows] = useState<SetupRow[] | null>(null)
+  const [log, setLog] = useState<SetupRowId | ''>('')
+  const [running, setRunning] = useState<SetupRowId | ''>('')
+  const [error, setError] = useState('')
+  // Bumped per click so retrying the same row remounts the console instead of
+  // re-showing a dead log from the last attempt.
+  const [attempt, setAttempt] = useState(0)
+
+  const refresh = useCallback(() => {
+    api.checkSetup().then(setRows).catch(() => setRows([]))
+  }, [])
+
+  useEffect(() => {
+    refresh()
+    window.addEventListener('focus', refresh)
+    return () => window.removeEventListener('focus', refresh)
+  }, [refresh])
+
+  const done = useCallback(
+    (ok: boolean) => {
+      setRunning('')
+      if (!ok) {
+        setError('That did not finish - the log above says why.')
+        return
+      }
+      setLog('')
+      setError('')
+      refresh()
+    },
+    [refresh]
+  )
+
+  if (!rows || rows.length === 0) return null
+
+  const start = (id: string): void => {
+    void (id === 'git' ? api.installGit() : api.installAgent(id))
+  }
+
+  const press = (row: SetupRow): void => {
+    setError('')
+    if (row.id === 'signin') {
+      onSignIn()
+      return
+    }
+    setLog(row.id)
+    setRunning(row.id)
+    setAttempt((n) => n + 1)
+  }
+
+  return (
+    <div className="setup-card">
+      <div className="setup-h">Get set up</div>
+      {rows.map((row) => (
+        <div className="setup-row" key={row.id}>
+          <span>{row.text}</span>
+          <button
+            className="pill"
+            disabled={running !== '' && running !== row.id}
+            onClick={() => press(row)}
+          >
+            {running === row.id ? 'Working...' : row.button}
+          </button>
+        </div>
+      ))}
+      {log && <InstallConsole key={log + attempt} agentId={log} onDone={done} start={start} />}
+      {error && <span className="install-err">{error}</span>}
     </div>
   )
 }

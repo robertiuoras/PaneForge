@@ -17,7 +17,7 @@ import { DEFAULT_DEAD_DEV } from '../shared/deadDev'
 import { DEFAULT_RECLAIM , type ReclaimConfig } from '../shared/reclaim'
 import { DEFAULT_AUTO_ANSWER, type AutoAnswerConfig } from '../shared/autoAnswer'
 import { DEFAULT_RECOVER } from '../shared/recover'
-import { DEFAULT_SOUNDS } from '../shared/sounds'
+import { DEFAULT_SOUNDS, quietIdleSounds } from '../shared/sounds'
 import { DEFAULT_THEME } from '../shared/theme'
 // wire.ts is pure crypto with no config import of its own, so the code generator can
 // live where the protocol does without the two files importing each other.
@@ -181,7 +181,7 @@ function defaults(): Config {
     mouseSelect: true,
     autoFixUi: true,
     notifyOnIdle: true,
-    soundOnIdle: true,
+    soundOnIdle: false,
     // Silent with no credentials on the machine, so this default sends nothing anywhere it
     // was not already set up to send.
     telegramAsk: true,
@@ -306,6 +306,7 @@ export function getConfig(): Config {
       ...base,
       ...raw,
       ...(raw.offloadDefaultsV4 ? {} : { offloadDefaultsV4: true }),
+      ...quietIdleSounds(raw),
       window: { ...base.window, ...(raw.window ?? {}) },
       voice: { ...base.voice, ...(raw.voice ?? {}) },
       promptRecall: { ...base.promptRecall, ...(raw.promptRecall ?? {}) },

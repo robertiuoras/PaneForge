@@ -557,6 +557,41 @@ async function main() {
   be.emitSessions()
   ok('a closed pane leaves the mirror', await until(() => client.list().length === 1))
 
+  // ---------------------------------------------------------------- screen view
+  // The in-app screen view signals over this same channel, in BOTH directions: the viewer
+  // may be either end of the TCP connection. Every `screen:*` kind is relayed untouched.
+  const screenAtHost = []
+  const screenAtClient = []
+  host.on('screen', (who, address, m) => screenAtHost.push([who.id, address, m]))
+  client.on('screen', (m) => screenAtClient.push(m))
+  ok('a peer that never said screenView is an older build', client.identity()?.screenView !== true && host.guestIdentity('GUEST')?.peer.screenView !== true)
+  const kinds = ['screen:offer', 'screen:answer', 'screen:ice', 'screen:locked', 'screen:refused', 'screen:stop']
+  for (const t of kinds) client.sendScreen({ t, view: 'v1', sdp: t === 'screen:offer' ? 'v=0 offer' : undefined })
+  ok('every screen kind reaches the host, in order', await until(() => screenAtHost.length === kinds.length), JSON.stringify(screenAtHost))
+  ok('host side knows who sent it and from where', screenAtHost[0]?.[0] === 'GUEST' && screenAtHost[0]?.[1] === '127.0.0.1', JSON.stringify(screenAtHost[0]))
+  ok('the offer arrives intact', screenAtHost.map((x) => x[2].t).join() === kinds.join() && screenAtHost[0][2].sdp === 'v=0 offer')
+  ok('the host can send one to that guest by device id', host.sendTo('GUEST', { t: 'screen:answer', view: 'v1', sdp: 'v=0 answer' })?.id === 'GUEST')
+  ok('and the guest hears it', await until(() => screenAtClient.length === 1) && screenAtClient[0].sdp === 'v=0 answer', JSON.stringify(screenAtClient))
+  ok('an unknown device is not sent anything', host.sendTo('NOBODY', { t: 'screen:stop', view: 'v1' }) === null)
+  client.sendScreen({ t: 'bogus', view: 'v1' })
+  await new Promise((r) => setTimeout(r, 100))
+  ok('and does not surface as a screen frame', screenAtHost.length === kinds.length)
+
+  // A build that has the view says so in its handshake, both ways round.
+  const svPort = await freePort()
+  const svHost = new RemoteHost(be.api, () => ({ ...identity, id: 'SVHOST', screenView: true }), () => code)
+  svHost.start(svPort)
+  const svClient = new RemoteClient(
+    { id: 'SVHOST', name: 'Desk PC', address: '127.0.0.1', port: svPort, code, auto: true },
+    () => ({ id: 'SVGUEST', name: 'Laptop', platform: 'darwin', version: '0', screenView: true })
+  )
+  svClient.connect()
+  ok('a screen-capable host is read as one', await until(() => svClient.identity()?.screenView === true), JSON.stringify(svClient.identity()))
+  ok('and a screen-capable guest too', await until(() => svHost.guestIdentity('SVGUEST')?.peer.screenView === true))
+  svClient.disconnect()
+  svHost.stop()
+  ok('a disconnected client sends nothing', svClient.sendScreen({ t: 'screen:stop', view: 'v1' }) === null)
+
   // ---------------------------------------------------------------- encryption
   // Everything above went over a real socket. If any of it were readable, a terminal
   // transcript - which is where pasted keys and printed file contents live - would be

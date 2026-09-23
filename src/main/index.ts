@@ -24,7 +24,8 @@ import { startMainWatch, stopMainWatch } from './mainWatch'
 import { SessionManager, setSilenceAlert, type WriteOrigin } from './sessions'
 import { acknowledgeReview, listReviews, noteReviewClose, recordReview, reviewCloseArmAction, reviewOpenTarget, type ReviewCloseArm } from './reviews'
 import { ComputeReviews, computeResult } from './computeReviews'
-import { mayNotify, noticesDir, sweepDoneClose } from './doneClose'
+import { mayNotify, noticesDir, readReply, sweepDoneClose } from './doneClose'
+import { FinishedDigest, summaryOf } from '../shared/finishedDigest'
 import { DataPump } from './dataPump'
 import { DiscordPresence } from './discordPresence'
 import { countPresence, needsTokens, type PresenceCounts } from '../shared/discordRpc'
@@ -109,6 +110,8 @@ import { snapPlan } from '../shared/deskSnap'
 import { crashTestHook, installCrashGuard, logProblem, onCrashReport } from './crash'
 import { onOpenProblem, openLink, openLocal } from './openUrl'
 import { openScreen, screenCan } from './screenView'
+import type { ScreenPeer } from '../shared/screenView'
+import { ScreenViews, loopbackMode, machineName } from './screenStream'
 import { nothingToOpen } from '../shared/openUrl'
 import { startFaultNotify } from './faultNotify'
 import { stopRenderWatch, watchRenderer } from './renderWatch'
@@ -142,6 +145,8 @@ import { briefAnchor, clearCommandFor, hasFreshPaneHandoff, readAsk as readAutoC
 import { handoffFor, verifiedPaneHandoff } from './handoffSteps'
 import { briefForTask } from './backlogStore'
 import { startAutoClearWatch, stopAutoClearWatch } from './autoclearWatch'
+import { startAutoClearRequests, stopAutoClearRequests } from './autoclearRequests'
+import { installAutoClearHooks } from './autoclearHooks'
 import { handoffReceiverCanQuit, INTERRUPT_WAIT_MS, type HandoffItem, type HandoffRequest } from '../shared/handoff'
 import { HandoffQueue } from './handoffQueue'
 import { devServersOf, listRunningDevs, localDevCommand, stopDevServer } from './devServers'
@@ -186,6 +191,7 @@ import { listActivity, markActivitySeen, noteActivity, onActivityChange } from '
 import { activityFromReclaim, entry as activityEntry } from '../shared/activity'
 import { hookDenyNames } from './hookDeny'
 import { ensurePrereq, onPath, refreshPath, runCommand, runOnce, stopInstalls } from './install'
+import { checkSetup } from './setupCheck'
 import { swapAndRelaunch } from './macUpdate'
 import {
   checkForUpdates,
@@ -696,7 +702,10 @@ function createWindow(): void {
   win.on('close', rememberBounds)
   // Without this the module keeps a destroyed BrowserWindow, and every later
   // `win?.` call throws "Object has been destroyed" instead of no-opping.
+  const self = win
   win.on('closed', () => {
+    // A rebuilt window is already `win` by the time the dead one closes: leave it alone.
+    if (win !== self) return
     win = null
     stopRenderWatch()
     // Output batched for a window that no longer exists has nowhere to go. send()
@@ -709,15 +718,19 @@ function createWindow(): void {
   // the only way out was killing PaneForge by hand (2026-08-28, ~14 min of renderer CPU
   // with the main thread parked in mach_msg). Reloading is safe here because a pane is
   // restored from desk.json and `--resume`, the same path a restart uses.
+  //
+  // The new window is made BEFORE the dead one is destroyed. Destroying first left the app
+  // with no window for a moment, `window-all-closed` ran, and the rebuild quit the whole app
+  // with every pane in it (2026-09-23 06:45:52Z: renderer SIGTERMed, `recreate`, then
+  // "quit the last window was closed 13 pane(s) open" 89 ms later).
   watchRenderer(win, () => {
     const dead = win
-    win = null
+    createWindow()
     try {
       dead?.destroy()
     } catch {
       /* it is already gone; the point was to stop referencing it */
     }
-    createWindow()
   })
   win.webContents.setWindowOpenHandler(({ url }) => {
     // `about:blank` is xterm's own OSC 8 link handler: `window.open()` with no URL, then
@@ -1215,9 +1228,24 @@ const remote = new Remote({
   }
 })
 
+/**
+ * The other machine's screen in a pane (src/main/screenStream.ts): sink panes this desk
+ * opened, and rows saying another machine is watching this one. Listed with the others
+ * by `allSessions()`, never inside SessionManager - nothing to sleep, reclaim or restore.
+ */
+const screenViews = new ScreenViews(
+  remote,
+  (channel, ...args) => {
+    if (alive()) win!.webContents.send(channel, ...args)
+  },
+  () => machineName(getConfig().remote.name)
+)
+screenViews.on('sessions', () => send('sessions:changed', allSessions()))
+remote.on('screen', (e) => screenViews.onRemote(e))
+
 /** Local panes and mirrored ones, as one list. This is what the renderer ever sees. */
 function allSessions(): Session[] {
-  return [...manager.list(), ...remote.sessions()]
+  return [...manager.list(), ...remote.sessions(), ...screenViews.sessions()]
 }
 
 remote.on('data', (id: string, data: string) => pump.push(id, data))
@@ -1553,9 +1581,25 @@ ipcMain.on('sessions:active', (_e, id: unknown) => manager.setActive(typeof id =
 // A finished pane closes itself into Review - the rule is `shared/doneClose.ts`, the disk
 // half `main/doneClose.ts`. Fifteen seconds: the quiet it waits for is minutes, and the
 // cheap gates run before any transcript is read.
+// The panes a chat opened report back to it ONCE, when the last of them has closed
+// (`shared/finishedDigest.ts`). Flushed on the same 15s tick as the sweep that feeds it.
+const finishedDigest = new FinishedDigest()
+manager.onFinished = (meta, opener) => {
+  const file = transcriptFor(meta.id)
+  const reply = file ? readReply(meta.agent, file) : undefined
+  finishedDigest.add(opener, {
+    id: meta.id,
+    title: meta.title,
+    project: basename(meta.cwd),
+    summary: reply?.text ? summaryOf(reply.text) : '',
+    personSteps: []
+  })
+}
 setInterval(() => {
   try {
     sweepDoneClose({
+      openerOf: (id) => manager.openerOf(id),
+      finished: (opener, note) => finishedDigest.add(opener, note),
       enabled: () => getConfig().autoCloseDone !== false,
       readings: () => manager.doneReadings(),
       transcriptFor,
@@ -1584,6 +1628,8 @@ setInterval(() => {
   } catch (e) {
     console.warn(`done-close: sweep failed - ${(e as Error).message}`)
   }
+  for (const opener of finishedDigest.flush((o) => manager.openChildrenOf(o), (o, text) => manager.tellPane(o, text)))
+    console.info(`done-close: told ${opener} what the panes it opened did`)
 }, 15_000).unref()
 ipcMain.handle('reviews:record', (_e, input: import('../shared/reviews').ReviewInput) => {
   const session = manager.list().find((s) => s.id === input?.sessionId)
@@ -2054,6 +2100,10 @@ ipcMain.handle('sessions:setEffort', (_e, id: string, choice: EffortChoice) =>
   manager.setEffort(id, choice)
 )
 ipcMain.handle('sessions:kill', (_e, id: string) => {
+  if (screenViews.owns(id)) {
+    screenViews.close(id)
+    return
+  }
   if (remote.owns(id)) {
     // The row goes at once on a live link; a link that could not carry the frame is said
     // out loud, because silence here is a button that looks broken and gets pressed again.
@@ -2942,11 +2992,33 @@ ipcMain.handle('phone:rotate', async () => {
 })
 ipcMain.handle('remote:state', () => remote.state())
 // "See the PC's screen": Moonlight at the paired machine. src/shared/screenView.ts.
-ipcMain.handle('screen:can', () => screenCan(remote.state().peers))
-ipcMain.on('screen:open', () => {
+/**
+ * The machines whose screen this one can show: every paired machine it dials, plus any
+ * machine connected TO it that it has not paired the other way - the view's frames go
+ * over whichever connection is up (`Remote.screenSend`), so pairing direction is not a
+ * reason to hide the button.
+ */
+function screenPeers(): ScreenPeer[] {
+  const st = remote.state()
+  const peers: ScreenPeer[] = st.peers.map((p) => ({ id: p.id, name: p.name, address: p.address, status: p.status }))
+  for (const g of st.guests) {
+    if (!peers.some((p) => p.id === g.id)) peers.push({ id: g.id, name: g.name, address: g.address, status: 'online' })
+  }
+  return peers
+}
+ipcMain.handle('screen:can', () => (loopbackMode()
+  ? { ok: true, disabled: false, title: 'See this machine\'s screen (test)', control: { ok: false, title: '' } }
+  : screenCan(screenPeers())))
+// v1: the button opens the in-app view (src/main/screenStream.ts); Moonlight is behind
+// the pane's `Take control`.
+ipcMain.handle('screen:open', () => screenViews.open(screenPeers()))
+ipcMain.on('screen:control', () => {
   const plan = openScreen(remote.state().peers)
   if (!plan.ok) send('app:error', plan.message)
 })
+ipcMain.handle('screen:signal', (_e, id: string, msg: { t: string; [k: string]: unknown }) =>
+  screenViews.signal(String(id), msg))
+ipcMain.handle('screen:wake', (_e, id: string) => screenViews.wake(String(id)))
 ipcMain.handle('remote:host', (_e, on: boolean) => {
   remote.setHosting(!!on)
   return remote.state()
@@ -3264,7 +3336,8 @@ ipcMain.handle('remote:handoffCancel', (_e, id: string) => handoffQueue.drop(Str
 // is the Stop hook's (`claude-config/autoclear.mjs`); this end owns the countdown, which is
 // the only part a person can stop. Payload is re-read here because the phone server reaches
 // this channel too - see `readAutoClearAsk`.
-ipcMain.handle('autoclear:ask', (_e, raw: unknown) => {
+// The same body answers a request FILE from the shipped hook (`autoclearRequests.ts`).
+function autoClearAsk(raw: unknown): { ok: boolean; reason?: string } {
   const ask = readAutoClearAsk(raw)
   if (!ask) return { ok: false, reason: 'that is not an autoclear request' }
   if (remote.owns(ask.paneId)) return { ok: false, reason: 'that pane lives on another device' }
@@ -3301,7 +3374,8 @@ ipcMain.handle('autoclear:ask', (_e, raw: unknown) => {
     }
   }
   return manager.armAutoClear(ask.paneId, { ...ask, prompt: resumeBrief(ask, briefAnchor(ask, handoff?.path ?? null, (p) => existsSync(p))), command })
-})
+}
+ipcMain.handle('autoclear:ask', (_e, raw: unknown) => autoClearAsk(raw))
 ipcMain.handle('autoclear:cancel', (_e, id: string) => manager.cancelAutoClear(String(id), 'cancelled'))
 ipcMain.handle('autoclear:takeover', (_e, id: string) => manager.takeOver(String(id)))
 // The renderer runs from file:// in production, which is not a secure context, so
@@ -3572,6 +3646,38 @@ ipcMain.on('app:relaunchAsAdmin', () => {
 
 /** One install at a time per agent, so a double-click cannot run npm twice. */
 const installing = new Set<string>()
+
+ipcMain.handle('setup:check', () => checkSetup())
+
+/**
+ * Git for Windows, for the Welcome checklist's Windows-only row. Not an agent CLI, so
+ * it does not belong in `agents.ts`'s catalogue - but it streams to the same
+ * `agents:install-event` bus (agentId `'git'`) so `InstallConsole.tsx` needs no change
+ * to show its progress.
+ */
+ipcMain.handle('setup:installGit', async () => {
+  const id = 'git'
+  if (installing.has(id)) return
+  const say = (chunk: string): void => send('agents:install-event', { agentId: id, chunk })
+  installing.add(id)
+  try {
+    const command = 'winget install --id Git.Git -e --source winget'
+    say(`> ${command}\r\n\r\n`)
+    const code = await runOnce(command, say)
+    refreshPath()
+    const found = onPath('git')
+    send('agents:install-event', {
+      agentId: id,
+      chunk: found
+        ? '\r\nGit is ready.\r\n'
+        : `\r\nInstaller exited with code ${code} and git is still not on PATH.\r\n`,
+      done: true,
+      ok: found
+    })
+  } finally {
+    installing.delete(id)
+  }
+})
 
 ipcMain.handle('agents:install', async (_e, id: string) => {
   if (installing.has(id)) return
@@ -4045,6 +4151,31 @@ ipcMain.handle('voice:install', async () => {
   send('agents:install-event', {
     agentId: '__voice__',
     chunk: ok ? '\r\nVoice is ready.\r\n' : '\r\nStill no whisper binary on PATH.\r\n',
+    done: true,
+    ok
+  })
+})
+
+// Two machines on different networks only reach each other through Tailscale - see
+// `src/shared/tailnet.ts`. Windows has no equivalent of "open the download page and drag
+// it to Applications", so the Devices dialog's button runs winget the same way Settings
+// installs an agent; on macOS the button just opens the download page (`shell.openExternal`
+// from the renderer), which needs no handler here.
+ipcMain.handle('remote:installTailscale', async () => {
+  const say = (chunk: string): void => send('agents:install-event', { agentId: '__tailscale__', chunk })
+  if (process.platform !== 'win32') {
+    say('\r\nInstall Tailscale from https://tailscale.com/download\r\n')
+    send('agents:install-event', { agentId: '__tailscale__', chunk: '', done: true, ok: false })
+    return
+  }
+  const command = 'winget install --id Tailscale.Tailscale -e --source winget'
+  say(`> ${command}\r\n\r\n`)
+  const code = await runOnce(command, say)
+  refreshPath()
+  const ok = code === 0
+  send('agents:install-event', {
+    agentId: '__tailscale__',
+    chunk: ok ? '\r\nTailscale is installed. Sign in, then pair as usual.\r\n' : '\r\nInstall did not finish.\r\n',
     done: true,
     ok
   })
@@ -4541,6 +4672,7 @@ app.whenReady().then(() => {
   // and repoints them when an upgrade moves the app. It never throws and never overrides
   // a registration somebody made themselves.
   updateLog('lanes', installLaneHooks(app.isPackaged && !profileName()))
+  updateLog('autoclear', installAutoClearHooks(app.isPackaged && !profileName()))
   // Whatever the runs before this one left running. Delayed inside, and a no-op on a
   // machine that has never leaked one. See consoles.ts.
   sweepOldConsoles(rememberAppPid())
@@ -4569,6 +4701,7 @@ app.whenReady().then(() => {
   // the antigravity statusline tee is put in place, which is a no-op unless that CLI is
   // installed here. See autoclearWatch.ts.
   startAutoClearWatch(manager)
+  startAutoClearRequests(join(app.getPath('userData'), 'autoclear-requests'), autoClearAsk)
   createWindow()
   applyVoiceHotkey(cfg)
   crashTestHook()
@@ -4755,6 +4888,8 @@ app.on('before-quit', (e) => {
   // An ssh child holding a forward open is not a pty either, and it outlives this process
   // exactly as cloudflared does.
   shutdownLogins()
+  // A viewer on the other machine hears the view ended rather than watching it freeze.
+  screenViews.shutdown()
   // shutdown() also flushes buffered transcript output, which would otherwise lose the
   // last 1.5 seconds of every pane. It runs once, so the two quit paths cannot double
   // the work between them.
@@ -4772,6 +4907,7 @@ app.on('will-quit', (e) => {
   stopPressure()
   stopAway()
   stopAutoClearWatch()
+  stopAutoClearRequests()
   stopUsage()
   removeTestClipboard()
   hardExit()

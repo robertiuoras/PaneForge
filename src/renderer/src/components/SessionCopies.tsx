@@ -1,12 +1,21 @@
 import type { LaneBoard, LaneBoardEntry, Session } from '@shared/types'
 import { describePlace } from '@shared/place'
-import { laneBusy, samePath } from '../laneWords'
+import { laneBusy } from '../laneWords'
 
-/** Show the assigned work folder once per project, keeping the launch folder in its tooltip. */
-export default function SessionCopies({ session, boards, onOpen }: {
+/**
+ * The card's place line: the PROJECT, always, then which copy of it this chat works in.
+ *
+ * Robert, 2026-09-23: "how do i know what lane im on? and even worse what happens if
+ * session renamed then i dont know what project im in?" The card's name is whatever the
+ * pane was called or renamed to (`shared/clientName.ts` renames it after the topic), so the
+ * project cannot ride on the name. It has its own line, drawn from the folder the chat
+ * actually holds on the lane board - the hook moves a chat into `PaneForge-c` while the
+ * pane was opened in `PaneForge`, and the folder the pane opened in would name the wrong
+ * copy. Plain text, not a button: the copy dialog it used to open is gone.
+ */
+export default function SessionCopies({ session, boards }: {
   session: Session
   boards: LaneBoard[]
-  onOpen: (cwd: string) => void
 }): JSX.Element {
   const within = (path: string, root: string): boolean => {
     const clean = (value: string): string => value.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
@@ -24,47 +33,30 @@ export default function SessionCopies({ session, boards, onOpen }: {
       primary = held
     } else other.push(held)
   }
+  const cwd = primary?.dir ?? session.cwd
+  const lane = primary?.lane ?? session.lane
+  const place = describePlace({ cwd, lane })
+  // "main copy" only when copies exist to tell it apart from; one folder is just the project.
+  const hasCopies = place.kind === 'lane' || lane === 'main' ||
+    boards.some(b => within(cwd, b.repo) && b.lanes.some(l => !l.peer && l.lane !== 'main'))
+  const role = place.kind === 'lane' || hasCopies ? place.role : ''
+  const mark = primary?.conflicted ? ' stuck' : primary?.ready ? ' done' : primary && laneBusy(primary) ? ' busy' : ''
+  const state = mark === ' stuck' ? '\nStuck: its changes clash with the main copy.'
+    : mark === ' done' ? '\nFinished: waiting to be merged into the main copy.'
+    : mark === ' busy' ? '\nBeing worked on.' : ''
+  const elsewhere = other.map(held => describePlace({ cwd: held.dir, lane: held.lane }).short).join('\n')
   const opened = describePlace({ cwd: session.cwd, lane: session.lane })
-  // ONE chip per card, whatever else this chat happens to be holding.
-  //
-  // A chat that has visited three other projects holds a work folder in each, and each
-  // used to get its own chip. Four chips wrap the card onto extra rows, and a sidebar of
-  // those fits three cards on a 16-inch screen (Robert, 2026-09-17: "theres too many
-  // other copies 4 ... i can barely see even 3 sessions cards on the left"). The other
-  // holds are still worth knowing about, so they move into this chip's tooltip, where
-  // they cost no height. Releasing them is the lane board's job, not a card's.
-  const copies = [
-    { cwd: primary?.dir ?? session.cwd, lane: primary?.lane ?? session.lane, held: primary, primary: true }
-  ]
-  const elsewhere = other
-    .map(held => describePlace({ cwd: held.dir, lane: held.lane }).short)
-    .join('\n')
-  return <>{copies.map(copy => {
-    const place = describePlace({ cwd: copy.cwd, lane: copy.lane })
-    const mark = copy.held?.conflicted ? ' stuck' : copy.held?.ready ? ' done' : copy.held && laneBusy(copy.held) ? ' busy' : ''
-    const moved = copy.primary && !samePath(copy.cwd, session.cwd)
-    const label = copy.primary && session.title.includes(place.project) ? place.role : place.short
-    // The main folder of a project the name already says is nothing worth a word: only
-    // a second copy, or a project the name does not mention, is drawn beside the name.
-    if (place.kind !== 'lane' && session.title.includes(place.project)) return null
-    const Tag = place.kind === 'lane' ? 'button' : 'span'
-    // Finished / stuck / busy is the DOT's colour, not a second word after the name
-    // (`copy 4 done` read as noise - Robert 2026-09-23). The words are on the hover.
-    const state = mark === ' stuck' ? '\nStuck: its changes clash with the main copy.'
-      : mark === ' done' ? '\nFinished: waiting to be merged into the main copy.'
-      : mark === ' busy' ? '\nBeing worked on.' : ''
-    return <Tag key={copy.cwd}
-      className={'row-lane' + (place.kind === 'lane' ? ' lane-chip' : '') + mark}
-      title={`${copy.held ? 'Assigned work folder: ' : ''}${place.full}${state}\n${copy.cwd}` +
-        (moved ? `\nSession opened in ${opened.role}: ${session.cwd}. Its assigned work folder is shown here.` : '') +
-        '\nCopy numbers identify folders, not the number of open sessions.' +
-        (copy.primary && elsewhere ? `\n\nThis chat is also holding a work folder in:\n${elsewhere}` : '') +
-        (place.kind === 'lane' ? '\nClick to inspect saved commits and uncommitted files.' : '')}
-      onClick={event => {
-        event.stopPropagation()
-        if (place.kind === 'lane') onOpen(copy.cwd)
-      }}>
-      {mark ? <i className="lane-dot" aria-hidden="true" /> : null}{label}
-    </Tag>
-  })}</>
+  return (
+    <span
+      className={'row-lane' + mark}
+      title={`${place.full}${state}\n${cwd}` +
+        (primary && !within(session.cwd, cwd) ? `\nSession opened in ${opened.short}: ${session.cwd}.` : '') +
+        (role && place.kind === 'lane' ? '\nCopy numbers name folders, not how many sessions are open.' : '') +
+        (elsewhere ? `\n\nThis chat is also holding a work folder in:\n${elsewhere}` : '')}
+    >
+      {mark ? <i className="lane-dot" aria-hidden="true" /> : null}
+      <span className="row-project">{place.project}</span>
+      {role ? <span className="row-copy">{role}</span> : null}
+    </span>
+  )
 }
