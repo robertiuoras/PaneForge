@@ -816,6 +816,12 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                   hint="A pane whose last reply is done - no question, nothing left running, no step an agent could take next - closes itself after three minutes of nobody looking at it. What it was asked and what it did go to Review, where Reopen brings the same conversation back. A pane you are looking at, one with a draft or a question, one running something in the background, and a shell are never touched. Steps only you can do become GuardDeck to-dos."
                 />
                 <Switch
+                  checked={config.promptExpand !== false}
+                  onChange={(v) => onChange({ promptExpand: v })}
+                  label="Show a fuller brief before sending a long prompt"
+                  hint="Long rough prompts are shown back with a goal, where to start and what done means. You pick which version to send."
+                />
+                <Switch
                   checked={config.autoAnswer?.enabled === true}
                   onChange={(v) =>
                     onChange({

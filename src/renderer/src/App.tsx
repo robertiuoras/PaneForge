@@ -4,6 +4,7 @@ import { agentModelLabel, type AgentInfo } from '@shared/agents'
 import { effortChip, effortWords } from '@shared/effort'
 import { chordOf, resolveKeymap, sameChord } from '@shared/keymap'
 import { stripAnsi } from '@shared/ansi'
+import { composerWipe } from '@shared/draft'
 import type {
   Agent,
   Config,
@@ -786,6 +787,18 @@ export default function App(): JSX.Element {
   }, [])
   /** The "split one long ask into panes" dialog. Opened from a press, never on its own. */
   const [splitting, setSplitting] = useState(false)
+  /**
+   * The words the split dialog opens with, when a pane's expand card sent it there - the
+   * ask is already typed, and making somebody paste it a second time is the one step that
+   * turns "Open as separate panes" into a button nobody presses. Empty from the palette.
+   */
+  const [splitInitial, setSplitInitial] = useState<string | undefined>(undefined)
+  // Stable, because every pane is handed it and a new function per render would defeat the
+  // pane's memo (`samePaneProps`) on every render of this component.
+  const openSplitWith = useCallback((text: string) => {
+    setSplitInitial(text)
+    setSplitting(true)
+  }, [])
   const [board, setBoard] = useState<string | null>(null)
   const [history, setHistory] = useState(false)
   const [review, setReview] = useState(false)
@@ -2120,27 +2133,10 @@ export default function App(): JSX.Element {
       const shell = s.agent === 'shell'
       const cmd = shell ? 'clear' : '/clear'
       // Empty the prompt box first, or a half-typed line ends up with /clear stuck on
-      // the end of it and the whole mess submitted. Which key does that is not the same
-      // in both, and sending both is worse than either: Escape empties PowerShell's line
-      // but leaves Claude Code's box alone, Ctrl-U empties Claude Code's box (offered
-      // back on Ctrl-Y) but arrives at a PowerShell prompt as a literal character that
-      // turns the command into one it cannot find. One key each, both measured.
-      //
-      // One Ctrl-U is not enough, though, and that was the bug: measured against a real
-      // Claude Code REPL, it empties a ONE-LINE box and leaves every earlier line of a
-      // shift+Enter draft exactly where it was. "/clear" then landed on the end of line
-      // one and the whole draft went to the model as a prompt - the run kept its context
-      // and burned a turn saying so. The wipe is a loop now: Ctrl-K takes whatever the
-      // cursor is sitting in front of, Ctrl-U the head behind it, Backspace joins the
-      // emptied line to the one above. One round per line walks a draft of any shape
-      // back to nothing, and a round that runs past the top is three no-ops on an empty
-      // box - so overshooting is free and undershooting is the bug.
-      const draft = paneDraft.get(s.id)
-      // A draft the reconstruction has lost track of gets the flat budget rather than a
-      // count derived from text already known to be wrong.
-      const lines = draft?.certain && draft.text ? draft.text.split('\n').length : 0
-      const rounds = Math.min(24, Math.max(4, lines + 2))
-      const wipe = shell ? '\x1b' : '\x0b\x15\x7f'.repeat(rounds)
+      // the end of it and the whole mess submitted. Escape for a shell, the Ctrl-K /
+      // Ctrl-U / Backspace loop for an agent - `composerWipe` in shared/draft.ts says why
+      // each, and why the loop runs once per line of the draft.
+      const wipe = shell ? '\x1b' : composerWipe(paneDraft.get(s.id))
       // The pane keeps its screen off the keystrokes it relays, and these are not
       // keystrokes - so it is told directly, before a byte goes out. Without this the
       // button cleared the pane and took the conversation off the screen with it, which is
@@ -3643,7 +3639,10 @@ export default function App(): JSX.Element {
         group: 'Actions',
         title: 'Split a long ask into panes',
         hint: 'one request, one pane per part that can run alone',
-        run: () => setSplitting(true)
+        run: () => {
+          setSplitInitial(undefined)
+          setSplitting(true)
+        }
       },
       {
         id: 'history',
@@ -6570,6 +6569,10 @@ export default function App(): JSX.Element {
               clickMovesCursor={config?.clickMovesCursor ?? true}
               mouseSelect={config?.mouseSelect ?? true}
               autoFixUi={config?.autoFixUi ?? true}
+              // A long rough prompt is held on Enter and shown back as a full brief. On
+              // unless switched off; `shared/promptExpand.ts` decides which prompts count.
+              promptExpand={config?.promptExpand !== false}
+              onSplitAsk={openSplitWith}
               termTheme={termColors}
               // The question this pane is sitting on, read in the main process so the
               // desk, a phone and a bot are all answering the same reading of it.
@@ -6750,6 +6753,7 @@ export default function App(): JSX.Element {
         <SplitDialog
           projects={projects}
           cwd={sessions.find((x) => x.id === activeId)?.cwd}
+          initial={splitInitial}
           onLaunch={(reqs) => {
             setSplitting(false)
             if (!reqs.length) return

@@ -1,0 +1,28 @@
+scripts/rail-test.mjs:191  constant READ_MARKS= `(() => {
+  const rail = document.querySelector('.mark-rail')
+  return {
+    rail: rail ? Math.round...
+src/shared/promptEcho.ts:78  function seedPrompts(lines: string[]): SeededPrompt[]
+src/shared/rail.ts:61  function separation(n: number, span: number): number
+src/shared/rail.ts:30  constant BAR= 5
+src/shared/draft.ts:64  constant RAIL_LABEL_CHARS= 400
+src/shared/rail.ts:165  function placeRail(raw: number[], span: number): RailTag[]
+src/shared/promptEcho.ts:32  constant ECHO= /^ {0,4}❯ {1,3}(\S.*)$/
+src/renderer/src/components/SessionMenu.tsx:15  interface MenuItem
+src/shared/rail.ts:144  interface RailTag
+src/renderer/src/components/TerminalPane.tsx:38  import ../../../shared/railimport { placeRail } from '../../../shared/rail'
+src/shared/rail.ts:1  file rail.ts
+scripts/rail-test.mjs:31  constant PORT= Number(process.env.PF_RAIL_PORT ?? 9412)
+src/shared/rail.ts:79  function fitSeparation(raw: number[], span: number): number
+scripts/rail-test.mjs:1  file rail-test.mjs
+src/shared/rail.ts:49  function driftCap(span: number): number
+scripts/rail-click-test.mjs:1  file rail-click-test.mjs
+scripts/rail-place-test.mjs:1  file rail-place-test.mjs
+scripts/lane-roster-test.mjs:109  function prompt(hookFile, session, cwd)
+scripts/promptecho-test.mjs:128  constant naive= screen.filter((r) => promptEcho(r)).length
+src/shared/pickRelease.ts:15  property tag_nametag_name?: string
+scripts/lane-tagsync-test.mjs:145  constant tags= git(beta, 'tag').split('\n').filter(Boolean)
+src/shared/wireJson.ts:17  type_alias Tagged
+scripts/lane-tagsync-test.mjs:114  constant tags= git(beta, 'tag').split('\n').filter(Boolean).sort()
+scripts/lane-tagsync-test.mjs:1  file lane-tagsync-test.mjs
+scripts/stash-activate-probe.mjs:402  constant tag= `${rel >= 0 ? '+' : ''}${rel}`.padStart(7)

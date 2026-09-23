@@ -12,6 +12,26 @@ CLI run (`HEADLESS` only), EMPTY folder under userData, `--setting-sources ""`,
 MERGES; `--bare` = `Not logged in`). Not a plan = `null`, quotes 160 chars; every `{` tried.
 `MAX_TASKS` 4, overflow in `dropped`. Nothing opens until rows edited.
 
+## A long rough prompt is shown back as a brief before it is sent
+
+`shared/promptExpand.ts`, `main/promptExpand.ts`, `ExpandCard.tsx`, `TerminalPane.tsx`
+`holdForExpand`; `test:promptexpand`, replay `scripts/promptexpand-replay.mjs <out.md>` (real
+haiku calls; `--dry-run` none). Gate = promptlab's own numbers (`scopeOf` mirrors `score.mjs`,
+parity over the corpus): `shouldExpand` = 60+ words, or 25+ with 3+ items; never `/` `!` `#`.
+Held Enter only: keyboard, agent pane, certain draft, no paste/question/sleep/sync, NOT a mirror
+(`@device/id`), not a `\`-Enter (new line), not the text a card was just put away on (Esc then
+Enter = send as typed); a question arriving under the card takes the key. Model run budget =
+`EXPAND_WAIT_MS`; runner errors never carry `err.message` (Node's holds the whole argv). Starts early on a 1500 ms typing pause; main shares a run per text, kills a
+superseded one, caches 10 min. Model: `expandArgs` - Claude Code only (never the desk's default
+agent), haiku, rules as `--system-prompt`
+(the ask is DATA: in the user message an imperative ask hijacked it), `--tools ''` LAST (list
+flag swallows what follows; agents run with bypass). Paid-key env vars deleted. Where = code
+search (`.codegraph` + `code-map.mjs where`, else `git ls-files`), never the model. Send full
+brief = `replaceDraft` (MAIN writes the wipe and resets `typed`/`draft`: `typeLine` ignores
+Ctrl-U, a renderer wipe left the brief queued behind nobody). Error / `EXPAND_WAIT_MS` = the
+held Enter goes as typed + one toast. `prompt-expand.log`: per run ms/ok, per card the choice;
+never prompt text. `config.promptExpand` (on).
+
 ## A pane can run on somebody else's model
 
 `shared/agents.ts` (`test:agentenv`): `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` only; base

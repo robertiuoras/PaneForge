@@ -30,7 +30,15 @@ import {
   type CopyCtx,
   type CopyState
 } from '../../../shared/copyMode'
-import { feedDraft, flatDraft, newDraft, RAIL_LABEL_CHARS, type DraftState } from '../../../shared/draft'
+import { composerWipe, feedDraft, flatDraft, newDraft, RAIL_LABEL_CHARS, type DraftState } from '../../../shared/draft'
+import {
+  EXPAND_WAIT_MS,
+  shouldExpand,
+  wordCount,
+  type ExpandAnswer,
+  type ExpandChoice
+} from '../../../shared/promptExpand'
+import ExpandCard, { briefOf, type ExpandOpen } from './ExpandCard'
 import type { InputRow } from '../../../shared/cursorMove'
 import {
   cellAt,
@@ -211,6 +219,14 @@ interface Props {
   agent?: string
   /** Say something happened, in the window's own toast. */
   onToast?: (msg: string) => void
+  /**
+   * Hold the Enter on a long rough prompt and show it back as a full brief first
+   * (`shared/promptExpand.ts` decides which prompts; `ExpandCard.tsx` draws it). Config
+   * `promptExpand`, on unless switched off.
+   */
+  promptExpand?: boolean
+  /** Open the split dialog on these words - the expand card's "Open as separate panes". */
+  onSplitAsk?: (text: string) => void
 }
 
 /**
@@ -424,6 +440,40 @@ export const syncedPanes = new Set<string>()
  * that draft. The mirror feeds it the same bytes instead.
  */
 const paneFeed = new Map<string, (d: string) => void>()
+
+/**
+ * How long typing has to pause before a long draft's brief is started early.
+ *
+ * The brief costs a small model run measured at 20-48 s for a full answer (5-7 s for a
+ * tiny one, CLI start ~1.5 s of it) - far too long to START at the Enter. Main shares a run
+ * between identical texts, so a run started here while the person rereads their prompt is
+ * the same run the Enter then waits on, and most of the wait has already happened. 1.5 s is
+ * a pause, not a gap between words: a new keystroke cancels the timer, and a new text
+ * replaces the run main was doing for this pane.
+ */
+const EXPAND_EARLY_MS = 1500
+
+/**
+ * Each pane's expand card, for a probe to open with a canned answer and read back.
+ *
+ * The real path needs a model run and a person's Enter; a headless window test has
+ * neither. `open(id, text, answer)` opens the card exactly as a held Enter does, with the
+ * answer handed in instead of asked for (omit it to ask for real); `state(id)` is the card
+ * as the pane holds it, `null` when none is up.
+ */
+const paneExpand = new Map<
+  string,
+  { open: (text: string, answer?: ExpandAnswer) => void; state: () => ExpandOpen | null }
+>()
+;(window as unknown as { __pfExpand?: unknown }).__pfExpand = {
+  open: (id: string, text: string, answer?: ExpandAnswer): boolean => {
+    const hook = paneExpand.get(id)
+    if (!hook) return false
+    hook.open(text, answer)
+    return true
+  },
+  state: (id: string): ExpandOpen | null => paneExpand.get(id)?.state() ?? null
+}
 
 /**
  * The selection chip's own size, in pixels, so `chipSpot` can keep it inside the pane.
@@ -914,7 +964,9 @@ function TerminalPane({
   autoAnswerN,
   autoAnswerHeld,
   agent,
-  onToast
+  onToast,
+  promptExpand = false,
+  onSplitAsk
 }: Props): JSX.Element {
   // How many times each pane has rendered, where a probe can read it.
   //
@@ -1001,6 +1053,27 @@ function TerminalPane({
   // the way the old one wanted.
   const agentRef = useRef(agent)
   agentRef.current = agent
+  /**
+   * The expand card, when the pane is holding an Enter (`ExpandCard.tsx`).
+   *
+   * State for the drawing, a ref for the keystroke path: `onData` is attached once per
+   * session and decides on every key whether a card is up, so it cannot wait for a render
+   * to find out. `putExpand` writes both, always together.
+   */
+  const [expandCard, setExpandCard] = useState<ExpandOpen | null>(null)
+  const expandRef = useRef<ExpandOpen | null>(null)
+  const putExpand = (card: ExpandOpen | null): void => {
+    expandRef.current = card
+    setExpandCard(card)
+  }
+  const promptExpandRef = useRef(promptExpand)
+  promptExpandRef.current = promptExpand
+  /** What the card's buttons do. They send keystrokes, so they are built beside `onData`. */
+  const expandOps = useRef<{
+    original: () => void
+    brief: (text: string, choice: 'expanded' | 'edited') => void
+    close: (choice: ExpandChoice) => void
+  } | null>(null)
   /**
    * Every keystroke this pane's MOUSE handlers have sent, for a probe to read.
    *
@@ -2909,6 +2982,226 @@ function TerminalPane({
       refreshSelChip()
     })
 
+    // ---- The held Enter ---------------------------------------------------------------
+    // A long rough prompt is shown back as a full brief before it goes (`ExpandCard.tsx`,
+    // `shared/promptExpand.ts`). Everything that TYPES lives here, beside the keystrokes,
+    // because every send has to leave the draft reconstruction telling the truth.
+    let expandSeq = 0
+    let earlyTimer: number | undefined
+    let earlySent = ''
+    let expandWait: number | undefined
+    /** The held Enter is on its way out - `holdForExpand` must not catch it a second time. */
+    let releasing = false
+    /**
+     * The text a card was put away on. The next Enter on that same text goes straight
+     * through: after Esc, Enter is how a person on the keyboard sends it as typed.
+     */
+    let dismissedText = ''
+
+    /**
+     * May this pane hold an Enter on what is in its box right now.
+     *
+     * Only an agent's prompt - a shell's Enter runs a command and is never a brief. Only a
+     * draft the reconstruction is CERTAIN of: after an arrow key or a history recall the
+     * text here is a guess, and a brief written from a guess would be typed over what the
+     * person really has. Never while a question is up (the Enter answers it), while the
+     * pane sleeps, or while typing is synchronised - one held Enter cannot speak for the
+     * other panes that were sent the same prompt. Never on a pane the other machine runs
+     * (a mirror, `@device/id`): the brief's code search reads THIS machine's disk, which
+     * does not have that pane's files, and the hold-and-retype path over the wire has not
+     * been proven - its Enter goes straight through, as it always did.
+     */
+    const mayExpand = (): boolean =>
+      promptExpandRef.current &&
+      !mirrorRef.current &&
+      !sessionId.startsWith('@') &&
+      !!agentRef.current &&
+      agentRef.current !== 'shell' &&
+      pending.certain &&
+      !pending.inPaste &&
+      !askRef.current &&
+      !asleepRef.current &&
+      !syncedPanes.has(sessionId) &&
+      shouldExpand(pending.text)
+
+    /** Start the brief while the person pauses, so the Enter finds it written. */
+    const startExpandEarly = (): void => {
+      window.clearTimeout(earlyTimer)
+      earlyTimer = undefined
+      if (!mayExpand()) return
+      earlyTimer = window.setTimeout(() => {
+        earlyTimer = undefined
+        const text = pending.text
+        if (dead || expandRef.current || text === earlySent || !mayExpand()) return
+        earlySent = text
+        // Nothing to do with the answer: main keeps it for the Enter that asks again.
+        void api.expandPrompt(text, cwdRef.current, sessionId).catch(() => undefined)
+      }, EXPAND_EARLY_MS)
+    }
+
+    /** Put the card away and say what was chosen. Sends nothing. */
+    const closeExpand = (choice: ExpandChoice): void => {
+      const card = expandRef.current
+      if (!card) return
+      window.clearTimeout(expandWait)
+      expandWait = undefined
+      if (choice === 'dismissed') dismissedText = card.text
+      putExpand(null)
+      api.expandChose(choice, {
+        paneId: sessionId,
+        words: card.words,
+        ms: card.answer?.ms,
+        waitedMs: Date.now() - card.openedAt
+      })
+    }
+
+    /**
+     * The held Enter, sent as it would have gone.
+     *
+     * Through xterm's own input rather than a write, so it takes the one keystroke path
+     * below: into the draft (which is what tags the rail and files the ask in History),
+     * then the pty, then any synchronised panes - a second copy of that path here would be
+     * a second place for it to drift. `releasing` is what stops it being held again.
+     */
+    const sendOriginal = (choice: 'original' | 'fallback'): void => {
+      if (!expandRef.current) return
+      closeExpand(choice)
+      releasing = true
+      try {
+        t.input('\r', true)
+      } finally {
+        releasing = false
+      }
+      t.focus()
+    }
+
+    /**
+     * Empty the box and type `text` in its place.
+     *
+     * The wipe is the /clear button's (`composerWipe`), and it is fed through the draft
+     * too, so the reconstruction reads an empty box rather than a prompt that was never
+     * sent. Main writes the wipe and sends the brief (`replaceDraft`): it keeps its own
+     * record of the box, and only it can empty that record - a wipe written from here left
+     * main believing the ask was still typed, and the brief waited behind nobody. Main's
+     * queue then waits for the box to come back idle and presses return as its own
+     * keystroke - a burst this size written as bytes arrives as a paste, and its trailing
+     * return is one more character of it.
+     *
+     * The ask is filed under what the person TYPED: History and the prompt archive are a
+     * record of what was asked, and the brief is the app's wording of it. The review of
+     * what was submitted is main's, from the brief it typed (`brief: true` skips it here). The rail tag is
+     * main's, not this: main announces the line it typed (`pane:typed`, origin app), and
+     * noting the original here as well would draw two tags for one turn.
+     */
+    const sendBrief = (text: string, choice: 'expanded' | 'edited'): void => {
+      const card = expandRef.current
+      if (!card || !text.trim()) return
+      closeExpand(choice)
+      const wipe = composerWipe(pending, Infinity)
+      pinned.current = true
+      setScrolledUp(false)
+      feedInput(wipe)
+      api.replaceDraft(sessionId, wipe, text)
+      api.promptUsed(card.text.trim(), { cwd: cwdRef.current, id: sessionId, brief: true })
+      t.focus()
+    }
+
+    /**
+     * Hold the Enter and put the card up. `canned` is the test hook's answer; without it
+     * the brief is asked for, and the run started early for the same text is the one this
+     * waits on.
+     */
+    const openExpand = (text: string, canned?: ExpandAnswer): void => {
+      window.clearTimeout(earlyTimer)
+      earlyTimer = undefined
+      window.clearTimeout(expandWait)
+      const card: ExpandOpen = {
+        seq: ++expandSeq,
+        text,
+        words: wordCount(text),
+        openedAt: Date.now(),
+        answer: null,
+        picks: []
+      }
+      putExpand(card)
+      // No brief, or no brief in time: the prompt goes exactly as typed, and one line says
+      // so. A card that waited for ever would be a pane that swallowed an Enter.
+      const fallBack = (): void => {
+        if (dead || expandRef.current?.seq !== card.seq) return
+        sendOriginal('fallback')
+        toast.current?.("Couldn't write a fuller brief in time, so your prompt went as you typed it.")
+      }
+      const settle = (answer: ExpandAnswer): void => {
+        const now = expandRef.current
+        if (dead || now?.seq !== card.seq) return
+        if ('error' in answer) return fallBack()
+        putExpand({ ...now, answer, picks: answer.expansion.questions.map(() => 0) })
+      }
+      expandWait = window.setTimeout(() => {
+        if (!expandRef.current?.answer) fallBack()
+      }, EXPAND_WAIT_MS)
+      if (canned) {
+        settle(canned)
+        return
+      }
+      api.expandPrompt(text, cwdRef.current, sessionId).then(settle, (err: unknown) =>
+        settle({ error: String(err) })
+      )
+    }
+    /**
+     * Does the expand card take this keystroke, rather than the pty.
+     *
+     * A card is up: this pane is holding an Enter. Escape puts the card away and leaves the
+     * prompt in the box, and the next Enter on it sends it as typed; Enter is the card's main button once there is a brief to send (an
+     * Enter while it is still being written is ignored rather than read as "send it as
+     * typed" - that is a button, not a guess). Anything else puts the card away and goes
+     * through as ordinary typing: the card may never stand between a person and their pane.
+     *
+     * No card: an Enter the person pressed on a draft that qualifies is held, and the card
+     * goes up in its place.
+     */
+    const holdForExpand = (d: string, fromKeyboard: boolean): boolean => {
+      const card = expandRef.current
+      if (card) {
+        // A question came up while the card was open: the key is its answer, not the card's.
+        if (askRef.current) {
+          closeExpand('dismissed')
+          return false
+        }
+        if (d === '\x1b') {
+          closeExpand('dismissed')
+          return true
+        }
+        if (d === '\r') {
+          const brief = card.editing ? null : briefOf(card)
+          if (brief) sendBrief(brief, 'expanded')
+          return true
+        }
+        closeExpand('dismissed')
+        return false
+      }
+      // A backslash before the Enter is Claude Code's new line, not a send.
+      if (
+        d === '\r' &&
+        fromKeyboard &&
+        !releasing &&
+        pending.text !== dismissedText &&
+        !pending.text.trimEnd().endsWith('\\') &&
+        mayExpand()
+      ) {
+        openExpand(pending.text)
+        return true
+      }
+      return false
+    }
+
+    expandOps.current = {
+      original: () => sendOriginal('original'),
+      brief: sendBrief,
+      close: closeExpand
+    }
+    paneExpand.set(sessionId, { open: openExpand, state: () => expandRef.current })
+
     // onKey precedes onData synchronously. Modified F3 shares the cursor-report
     // encoding, so a real key must win over protocol classification.
     let keyboardData: string | null = null
@@ -2929,6 +3222,9 @@ function TerminalPane({
         if (d === '\x1b') void api.takeOverPane(sessionId)
         return
       }
+      // A long rough prompt's Enter is held and shown back as a full brief, and while that
+      // card is up it answers Escape and Enter itself. See `holdForExpand`.
+      if (holdForExpand(d, fromKeyboard)) return
       pinned.current = true
       setScrolledUp(false)
       feedInput(d)
@@ -2941,6 +3237,9 @@ function TerminalPane({
           api.write(id, d)
           paneFeed.get(id)?.(d)
         }
+      // A long draft that has stopped changing gets its brief started now, so a held Enter
+      // finds it mostly written.
+      startExpandEarly()
     })
 
     t.onSelectionChange(() => {
@@ -4618,6 +4917,10 @@ function TerminalPane({
       paneOwedHistory.delete(sessionId)
       paneArmClear.delete(sessionId)
       paneFeed.delete(sessionId)
+      paneExpand.delete(sessionId)
+      window.clearTimeout(earlyTimer)
+      window.clearTimeout(expandWait)
+      expandOps.current = null
       paneMarks.delete(sessionId)
       paneCopyMode.delete(sessionId)
       copy.current = null
@@ -5433,6 +5736,38 @@ function TerminalPane({
           </div>
         </div>
       )}
+      {/* The held Enter: a long rough prompt shown back as a full brief. The pane keeps the
+          keyboard; the card's buttons send through the same path the Enter would have. */}
+      {expandCard && (
+        <ExpandCard
+          card={expandCard}
+          onPick={(q, o) => {
+            const now = expandRef.current
+            if (!now || now.seq !== expandCard.seq) return
+            const picks = [...now.picks]
+            picks[q] = o
+            putExpand({ ...now, picks })
+          }}
+          onBrief={(text, choice) => expandOps.current?.brief(text, choice)}
+          onOriginal={() => expandOps.current?.original()}
+          onEditing={(on) => {
+            const now = expandRef.current
+            if (!now || now.seq !== expandCard.seq) return
+            putExpand({ ...now, editing: on })
+            if (!on) term.current?.focus()
+          }}
+          onSplit={
+            onSplitAsk
+              ? () => {
+                  // The ask stays in the box - the dialog opens its own panes from it, and
+                  // whether this pane still sends it is the person's call, not this one's.
+                  expandOps.current?.close('dismissed')
+                  onSplitAsk(expandCard.text)
+                }
+              : undefined
+          }
+        />
+      )}
     </div>
   )
 }
@@ -5493,6 +5828,9 @@ function samePaneProps(a: Props, b: Props): boolean {
     a.asleep === b.asleep &&
     a.agent === b.agent &&
     a.onToast === b.onToast &&
+    a.promptExpand === b.promptExpand &&
+    // Stable in App (`useCallback`), so this compares by reference and costs nothing.
+    a.onSplitAsk === b.onSplitAsk &&
     a.autoAnswerAt === b.autoAnswerAt &&
     a.autoAnswerN === b.autoAnswerN &&
     a.autoAnswerHeld === b.autoAnswerHeld &&

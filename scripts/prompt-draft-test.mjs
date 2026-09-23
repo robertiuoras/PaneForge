@@ -28,7 +28,7 @@ buildSync({
   platform: 'node',
   outfile: out
 })
-const { feedDraft, newDraft, flatDraft, looksFinished, looksSplittable, LANE_OPTIONS, SLASH_OPTIONS } =
+const { feedDraft, newDraft, flatDraft, looksFinished, looksSplittable, composerWipe, LANE_OPTIONS, SLASH_OPTIONS } =
   createRequire(import.meta.url)(out)
 
 const ESC = String.fromCharCode(27)
@@ -220,6 +220,40 @@ check(
     'add offer replies to the dashboard and fix the avatar upload on safari and migrate the billing and'
   ) === false
 )
+
+// --- emptying the box: composerWipe ------------------------------------------
+// Moved out of App's /clear button so the expand card empties the box the same way before
+// its brief goes in. One round (Ctrl-K, Ctrl-U, Backspace) per line of the draft plus two,
+// never fewer than four, never more than 24 - the numbers the /clear button shipped with.
+
+const ROUND = '\x0b\x15\x7f'
+const rounds = (w) => (w.length % ROUND.length === 0 && w === ROUND.repeat(w.length / ROUND.length) ? w.length / ROUND.length : -1)
+check('no draft known gets the flat four rounds', rounds(composerWipe(undefined)) === 4)
+check('a one-line draft gets four rounds', rounds(composerWipe({ text: 'fix the login bug', certain: true, inPaste: false })) === 4)
+check(
+  'a five-line draft gets a round per line and two over',
+  rounds(composerWipe({ text: 'a\nb\nc\nd\ne', certain: true, inPaste: false })) === 7
+)
+check(
+  'a draft the reconstruction lost track of gets the flat budget, not its line count',
+  rounds(composerWipe({ text: 'a\nb\nc\nd\ne', certain: false, inPaste: false })) === 4
+)
+check(
+  'a forty-line draft is capped at 24 rounds',
+  rounds(composerWipe({ text: Array(40).fill('x').join('\n'), certain: true, inPaste: false })) === 24
+)
+check(
+  'the expand card lifts the cap: a forty-line draft gets 42 rounds',
+  rounds(composerWipe({ text: Array(40).fill('x').join('\n'), certain: true, inPaste: false }, Infinity)) === 42
+)
+{
+  // The wipe is fed into the reconstruction as well as the pty. It must read as an empty,
+  // certain box - and must never count as a submitted line.
+  const typed = feed([...'a long rough prompt about the rail', '\x1b\r', ...'and a second line'])
+  const r = feedDraft({ text: typed.text, certain: typed.certain, inPaste: false }, composerWipe(typed))
+  check('the wipe empties the reconstructed draft', r.state.text === '' && r.state.certain === true, JSON.stringify(r.state))
+  check('...and submits nothing', r.submitted.length === 0)
+}
 
 rmSync(work, { recursive: true, force: true })
 console.log(failed ? `\n${failed} failing` : '\nall good')

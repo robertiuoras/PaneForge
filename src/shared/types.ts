@@ -4,6 +4,7 @@ import type { FrameMeta, LoginInput, LoginRequest } from './remoteLogin'
 
 import type { AutoClearAsk } from './autoclear'
 import type { SplitAnswer } from './splitPlan'
+import type { ExpandAnswer, ExpandChoice } from './promptExpand'
 import type { Away } from './away'
 import type { LinkState } from './linkState'
 // Types shared by the Electron main process and the React renderer.
@@ -2051,6 +2052,8 @@ export interface Config {
   voice: VoiceConfig
   /** say so when a draft repeats an ask already made - see PromptRecallConfig. On. */
   promptRecall: PromptRecallConfig
+  /** Show a long rough prompt back as a full brief before it is sent (`shared/promptExpand.ts`). */
+  promptExpand: boolean
   /** stay out of the way while a game is running - see GameModeConfig */
   gameMode: GameModeConfig
   /**
@@ -2382,6 +2385,12 @@ export interface Api {
    * `queuePrompt`). Use it for anything the app hands a chat unattended.
    */
   sendPrompt(id: string, text: string): void
+  /**
+   * Empty the pane's prompt box with `wipe` and send `text` in its place - the expand card's
+   * "Send full brief". Main does both, so its own record of the box is emptied too (see
+   * `SessionManager.replaceDraft`).
+   */
+  replaceDraft(id: string, wipe: string, text: string): void
   /** send the same line to every live session */
   /**
    * `borrowed` is a phone saying "this is my screen's size, not the desk's". One pty
@@ -2961,10 +2970,19 @@ export interface Api {
    * an agent CLI once, headlessly - so it is only ever called from a press.
    */
   splitPrompt(text: string): Promise<SplitAnswer>
+  /**
+   * Read a rough ask into a full brief (`shared/promptExpand.ts`). Runs a small model on the
+   * included plan, so it is slow - seconds, not milliseconds. The same text asked twice while
+   * the first run is going shares that run, which is what lets the pane start it early.
+   */
+  expandPrompt(text: string, cwd: string, paneId: string): Promise<ExpandAnswer>
+  /** What the person did with an expand card. Fire-and-forget, logged for the outcome rate. */
+  expandChose(choice: ExpandChoice, meta: { paneId: string; words: number; ms?: number; waitedMs?: number }): void
   /** Exact submitted prompts retained even after terminal scrollback evicts their rows. */
   panePrompts(id: string): Promise<PromptReviewEntry[]>
   /** Record that a draft was actually sent. Fire-and-forget. */
-  promptUsed(draft: string, meta: { cwd?: string; agent?: string; id?: string }): void
+  /** `brief`: the pane sent the expand card's brief in its place, and main records that one */
+  promptUsed(draft: string, meta: { cwd?: string; agent?: string; id?: string; brief?: boolean }): void
 
   voiceStatus(): Promise<VoiceStatus>
   /** wav bytes in, text out; runs a local whisper, nothing leaves the machine */

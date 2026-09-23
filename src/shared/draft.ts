@@ -390,3 +390,38 @@ export function looksSplittable(text: string, min = 120): boolean {
         .filter((s) => s.length > 12 && DOING.test(s))
   return jobs.length >= 3
 }
+
+/**
+ * The keystrokes that empty an agent CLI's prompt box, however many lines it holds.
+ *
+ * Which key does that is not the same in a shell and in an agent, and sending both is
+ * worse than either: Escape empties PowerShell's line but leaves Claude Code's box alone,
+ * Ctrl-U empties Claude Code's box (offered back on Ctrl-Y) but arrives at a PowerShell
+ * prompt as a literal character that turns the command into one it cannot find. One key
+ * each, both measured - a shell pane is sent Escape by its caller, never this.
+ *
+ * One Ctrl-U is not enough, though, and that was the bug: measured against a real Claude
+ * Code REPL, it empties a ONE-LINE box and leaves every earlier line of a shift+Enter
+ * draft exactly where it was. "/clear" then landed on the end of line one and the whole
+ * draft went to the model as a prompt - the run kept its context and burned a turn saying
+ * so. The wipe is a loop now: Ctrl-K takes whatever the cursor is sitting in front of,
+ * Ctrl-U the head behind it, Backspace joins the emptied line to the one above. One round
+ * per line walks a draft of any shape back to nothing, and a round that runs past the top
+ * is three no-ops on an empty box - so overshooting is free and undershooting is the bug.
+ *
+ * A draft the reconstruction has lost track of gets the flat budget rather than a count
+ * derived from text already known to be wrong.
+ *
+ * Two callers: the /clear button (`App.tsx` `clearPane`), which empties the box before
+ * typing the command, and the expand card (`ExpandCard.tsx`), which empties it before the
+ * full brief goes in - either way a leftover line would ride along with what is sent.
+ *
+ * `max` is the /clear button's 24 rounds unless the caller says otherwise. The expand card
+ * passes no ceiling: it only ever holds LONG asks, a pasted one is often past 22 lines, and
+ * a leftover line there would be sent above the brief. A round is three bytes.
+ */
+export function composerWipe(draft: DraftState | undefined, max = 24): string {
+  const lines = draft?.certain && draft.text ? draft.text.split('\n').length : 0
+  const rounds = Math.min(max, Math.max(4, lines + 2))
+  return '\x0b\x15\x7f'.repeat(rounds)
+}
