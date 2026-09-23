@@ -2807,6 +2807,25 @@ input[type='range']::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px var(--ac
 .sw-label { font-size: 12.5px; }
 .sw-hint { color: var(--muted); font-size: 11px; }
 
+/* A row and the `?` that holds what the row used to say. The button sits OUTSIDE the
+   switch's own label, so pressing it cannot toggle the setting; the paragraph it opens
+   spans the whole row, under both. */
+.sw-why { display: grid; grid-template-columns: 1fr auto; align-items: start; }
+.sw-why .sw-row { grid-column: 1; }
+.why-btn {
+  grid-column: 2; align-self: center; flex: none;
+  width: 20px; height: 20px; border-radius: 50%; padding: 0;
+  background: transparent; border: 1px solid var(--line-strong); color: var(--muted);
+  font-size: 11px; line-height: 1; cursor: pointer;
+  transition: color var(--fast), border-color var(--fast);
+}
+.why-btn:hover { color: var(--fg); border-color: var(--accent); }
+.why-btn[aria-expanded='true'] { color: var(--accent); border-color: var(--accent); }
+.why-text { grid-column: 1 / -1; margin: 2px 4px 8px; max-width: 62ch; }
+/* The same `?` under a heading rather than beside a switch: a `.setting` is a column, so
+   the button would otherwise stretch the width of the dialog. */
+.setting > .why-btn { align-self: flex-start; }
+
 .seg {
   display: inline-flex; padding: 2px; gap: 2px;
   background: #ffffff0a; border: 1px solid var(--line); border-radius: 8px;

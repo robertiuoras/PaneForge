@@ -100,6 +100,7 @@ export const SURFACE: Surface = {
   onHandoffMoved: ['on', 'handoff:moved'],
   pathForFile: ['local'],
   adminStatus: ['invoke', 'admin:status'],
+  settingsFacts: ['invoke', 'settings:facts'],
   adminEnable: ['invoke', 'admin:enable'],
   adminDisable: ['invoke', 'admin:disable'],
   relaunchAsAdmin: ['send', 'app:relaunchAsAdmin'],

@@ -21,7 +21,7 @@ const COMPONENTS = resolve(root, 'src/renderer/src/components')
 /** Files whose whole contents belong to one tab. */
 const WHOLE_FILE = [
   ['AppearanceTab.tsx', 'appearance'],
-  ['SoundsTab.tsx', 'sounds']
+  ['SoundsTab.tsx', 'alerts']
 ]
 
 /** Turn a JSX string literal back into the words a person sees. */

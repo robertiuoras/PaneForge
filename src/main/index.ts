@@ -1910,6 +1910,14 @@ ipcMain.handle('config:set', (_e, patch: Partial<Config>) => {
  */
 ipcMain.handle('discord:status', () => presence.status())
 
+// What this machine has, so Settings can leave out the rows about what it has not. Both
+// readings are of something OUTSIDE the app - an env file, another program - so they are
+// taken when the dialog opens rather than held for the life of the process.
+ipcMain.handle('settings:facts', () => ({
+  telegram: !!telegramCreds(),
+  discord: presence.status().connected
+}))
+
 ipcMain.handle('config:pickRoot', async () => {
   const r = await dialog.showOpenDialog({
     title: 'Choose the folder that holds your projects',
