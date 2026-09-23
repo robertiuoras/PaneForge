@@ -30,6 +30,7 @@ import Welcome from './components/Welcome'
 import CopyMenu, { type CopyChoice } from './components/CopyMenu'
 import SessionMenu from './components/SessionMenu'
 import SessionInfo from './components/SessionInfo'
+import SessionCopies from './components/SessionCopies'
 import HandoffDialog, { type HandoffTarget } from './components/HandoffDialog'
 import Mascot, { type CloseSoon } from './components/Mascot'
 import MoveSoon, { soonKey } from './components/MoveSoon'
@@ -5479,19 +5480,44 @@ export default function App(): JSX.Element {
                           there IS something, which on an ordinary card is never.
                           Cosmetic: `shared/paneBackJobs.ts` feeds no busy reading. */}
                     </span>
+                    {/* Plain words, not a box, at the far end of the title line: one state
+                        per card, and a running turn's word IS its clock. What the last turn
+                        took and whether it wrote anything are on the hover (Robert
+                        2026-09-23: too much info). */}
+                    {!s.ask && s.status !== 'exited' && !s.handingOff && !(alarmAt(s.id) ?? s.closingAt) && (
+                      <span
+                        className={'row-state ' + s.status}
+                        title={[
+                          s.lastRunMs !== undefined && !s.runSince ? `Last turn took ${formatElapsed(s.lastRunMs)}.` : '',
+                          s.changedNothing ? `${s.changedNothing}${s.changedNothingWhy ? ` - ${s.changedNothingWhy}` : ''}` : ''
+                        ].filter(Boolean).join('\n') || undefined}
+                      >
+                        {s.status === 'working' && s.runSince ? (
+                          <Elapsed since={s.runSince} title="This turn" />
+                        ) : s.status === 'idle'
+                          ? (s.engaged !== false ? 'waiting' : 'ready')
+                          : s.status === 'working' ? 'running' : s.status}
+                      </span>
+                    )}
                   </div>
                 )}
-                {/* One muted sentence: which model, how long open, what is left running.
-                    Plain text parted by dots rather than a row of boxes (Robert
-                    2026-09-23: "too cluttered ... not modern"). The agent's NAME is the
-                    logo's hover now - the logo already says it. */}
+                {/* Line two: WHICH PROJECT, always, and which copy of it. The name above
+                    is whatever the pane was called or renamed to, so it cannot carry the
+                    project (Robert 2026-09-23: "what happens if session renamed then i
+                    dont know what project im in"). */}
+                <div className="row-place">
+                  <AgentLogo id={s.agent} spec={agents.find((a) => a.id === s.agent)} size={12} />
+                  <SessionCopies session={s} boards={laneBoards} />
+                </div>
+                {/* Line three, one muted sentence: which model, how long open, steps left,
+                    what is left running. Plain text parted by dots (Robert 2026-09-23:
+                    "too cluttered ... not modern"). */}
                 <div className="row-sub">
                   {(() => {
                     const spec = agents.find((a) => a.id === s.agent)
                     const model = s.model ? agentModelLabel(spec, s.model) : ''
                     return (
                       <span className="meta row-agent" title={(spec?.label ?? s.agent) + (s.model ? ` · ${s.model}` : '')}>
-                        <AgentLogo id={s.agent} spec={spec} size={12} />
                         {model || (spec?.label ?? s.agent)}
                         {s.effort ? ` ${effortChip(s.effort)}${s.effort.pending ? '…' : ''}` : ''}
                       </span>
@@ -5531,25 +5557,6 @@ export default function App(): JSX.Element {
                           </span>
                         )
                       })()}
-                    {/* Plain words, not a box, at the far end of the second line: one state
-                        per card, and a running turn's word IS its clock. What the last turn
-                        took and whether it wrote anything are on the hover (Robert
-                        2026-09-23: too much info). */}
-                    {!s.ask && s.status !== 'exited' && !s.handingOff && !(alarmAt(s.id) ?? s.closingAt) && (
-                      <span
-                        className={'row-state ' + s.status}
-                        title={[
-                          s.lastRunMs !== undefined && !s.runSince ? `Last turn took ${formatElapsed(s.lastRunMs)}.` : '',
-                          s.changedNothing ? `${s.changedNothing}${s.changedNothingWhy ? ` - ${s.changedNothingWhy}` : ''}` : ''
-                        ].filter(Boolean).join('\n') || undefined}
-                      >
-                        {s.status === 'working' && s.runSince ? (
-                          <Elapsed since={s.runSince} title="This turn" />
-                        ) : s.status === 'idle'
-                          ? (s.engaged !== false ? 'waiting' : 'ready')
-                          : s.status === 'working' ? 'running' : s.status}
-                      </span>
-                    )}
                 </div>
               </div>
               {s.status === 'exited' && (
@@ -6276,6 +6283,17 @@ export default function App(): JSX.Element {
                   title={`Session opened ${new Date(s.openedAt ?? s.createdAt).toLocaleString()}; includes idle time.`}
                 /></span>
               )}
+              {/* Steps a fresh session could start on, beside the open clock: the card
+                  carries it too, but the pane you are in is where "is there more to do
+                  here" gets asked. */}
+              {!handheld.handheld && s.handoffOpen ? (
+                <span
+                  className="session-clock pt-steps"
+                  title={`This pane's handoff lists ${s.handoffOpen} step(s) a fresh session could start on.`}
+                >
+                  {stepsWord(s.handoffOpen)}
+                </span>
+              ) : null}
               {s.asleep ? (
                 <AsleepChip at={s.asleep} id={s.id} reason={s.asleepReason} />
               ) : s.status === 'exited' ? (

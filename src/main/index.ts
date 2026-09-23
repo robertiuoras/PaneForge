@@ -24,7 +24,8 @@ import { startMainWatch, stopMainWatch } from './mainWatch'
 import { SessionManager, setSilenceAlert, type WriteOrigin } from './sessions'
 import { acknowledgeReview, listReviews, noteReviewClose, recordReview, reviewCloseArmAction, reviewOpenTarget, type ReviewCloseArm } from './reviews'
 import { ComputeReviews, computeResult } from './computeReviews'
-import { mayNotify, noticesDir, sweepDoneClose } from './doneClose'
+import { mayNotify, noticesDir, readReply, sweepDoneClose } from './doneClose'
+import { FinishedDigest, summaryOf } from '../shared/finishedDigest'
 import { DataPump } from './dataPump'
 import { DiscordPresence } from './discordPresence'
 import { countPresence, needsTokens, type PresenceCounts } from '../shared/discordRpc'
@@ -1580,9 +1581,25 @@ ipcMain.on('sessions:active', (_e, id: unknown) => manager.setActive(typeof id =
 // A finished pane closes itself into Review - the rule is `shared/doneClose.ts`, the disk
 // half `main/doneClose.ts`. Fifteen seconds: the quiet it waits for is minutes, and the
 // cheap gates run before any transcript is read.
+// The panes a chat opened report back to it ONCE, when the last of them has closed
+// (`shared/finishedDigest.ts`). Flushed on the same 15s tick as the sweep that feeds it.
+const finishedDigest = new FinishedDigest()
+manager.onFinished = (meta, opener) => {
+  const file = transcriptFor(meta.id)
+  const reply = file ? readReply(meta.agent, file) : undefined
+  finishedDigest.add(opener, {
+    id: meta.id,
+    title: meta.title,
+    project: basename(meta.cwd),
+    summary: reply?.text ? summaryOf(reply.text) : '',
+    personSteps: []
+  })
+}
 setInterval(() => {
   try {
     sweepDoneClose({
+      openerOf: (id) => manager.openerOf(id),
+      finished: (opener, note) => finishedDigest.add(opener, note),
       enabled: () => getConfig().autoCloseDone !== false,
       readings: () => manager.doneReadings(),
       transcriptFor,
@@ -1611,6 +1628,8 @@ setInterval(() => {
   } catch (e) {
     console.warn(`done-close: sweep failed - ${(e as Error).message}`)
   }
+  for (const opener of finishedDigest.flush((o) => manager.openChildrenOf(o), (o, text) => manager.tellPane(o, text)))
+    console.info(`done-close: told ${opener} what the panes it opened did`)
 }, 15_000).unref()
 ipcMain.handle('reviews:record', (_e, input: import('../shared/reviews').ReviewInput) => {
   const session = manager.list().find((s) => s.id === input?.sessionId)

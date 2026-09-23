@@ -10,6 +10,7 @@ import { app } from 'electron'
 import { profileName } from './profile'
 import { doneReviewId, doneVerdict, type DoneReading } from '../shared/doneClose'
 import { machineOf, readClaudeReply, readCodexReply, type ReplyRead } from '../shared/replyRead'
+import { summaryOf, type FinishedNote } from '../shared/finishedDigest'
 import type { ReviewInput, ReviewRecord } from '../shared/reviews'
 import type { HistoryEntry } from '../shared/types'
 
@@ -115,6 +116,10 @@ export interface DoneCloseDeps {
   noteClose: (reviewId: string, reason?: string, closedAt?: string) => void
   writeNotice: (path: string, body: string) => void
   activity: (what: string, why: string) => void
+  /** The pane that opened this one and wants its summary, when there is one. */
+  openerOf?: (id: string) => string | undefined
+  /** Leave a note for that opener (`shared/finishedDigest.ts`). */
+  finished?: (opener: string, note: FinishedNote) => void
   now?: () => number
 }
 
@@ -185,8 +190,17 @@ export function sweepDoneClose(d: DoneCloseDeps): string[] {
         if (!existsSync(path)) d.writeNotice(path, JSON.stringify(notice, null, 2))
       }
     }
+    const opener = d.openerOf?.(id)
     const res = d.close(id, now)
     if (res.closed) {
+      if (opener)
+        d.finished?.(opener, {
+          id,
+          title: native.title,
+          project: basename(native.cwd),
+          summary: summaryOf(reply.text),
+          personSteps: verdict.personSteps
+        })
       d.noteClose(reviewId, undefined, new Date(now).toISOString())
       d.activity(native.title, verdict.personSteps.length ? `finished, ${verdict.personSteps.length} thing${verdict.personSteps.length === 1 ? '' : 's'} left for you` : 'finished')
       console.info(`done-close: ${id} finished and closed itself into Review (${reviewId})`)
