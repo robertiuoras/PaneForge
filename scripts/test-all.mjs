@@ -22,7 +22,7 @@
 //   node scripts/test-all.mjs rail theme  only the ones whose name contains one of these
 
 import { execFileSync, spawn, spawnSync, execSync } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, readdirSync, statSync } from 'node:fs'
 import { cpus, loadavg, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -424,10 +424,46 @@ const TMP_ROOT = mkdtempSync(join(tmpdir(), 'pf-test-run-'))
 // A suite's headless Chrome outlives a killed run (ppid 1) and then blocks the real Chrome
 // from opening: macOS activates the running bundle instead of launching a window. Kill any
 // Chrome whose profile lives under this run's root before dropping the root.
+// `pkill` does not exist on Windows, so this swallowed its own ENOENT and left every test
+// Chrome running. The profile stayed locked, `rmSync` threw EPERM, and the whole root
+// leaked - 10 roots and 1.3 GB of them on the PC by 2026-09-23. Match the process by its
+// `--user-data-dir`, the same way the POSIX branch does, so this cannot reach the user's
+// own Chrome or another run's.
+const killChromeUnder = (root) => {
+  if (process.platform === 'win32') {
+    const q = root.replace(/'/g, "''")
+    execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+      `Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" |` +
+      ` Where-Object { $_.CommandLine -like '*--user-data-dir=${q}*' } |` +
+      ` ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`
+    ], { stdio: 'ignore', timeout: 20_000, windowsHide: true })
+    return
+  }
+  execSync(`pkill -9 -f -- "--user-data-dir=${root}"`, { stdio: 'ignore' })
+}
 const dropTmp = () => {
-  try { execSync(`pkill -9 -f -- "--user-data-dir=${TMP_ROOT}"`, { stdio: 'ignore' }) } catch {}
+  try { killChromeUnder(TMP_ROOT) } catch {}
   rmSync(TMP_ROOT, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
 }
+// A run killed before `exit` - or one whose cleanup lost a race with a Chrome that had not
+// released its handles yet - leaves its root behind for good, because the name is unique
+// per run and nothing else knows it. Reclaim the ones old enough that no live run owns them.
+const sweepStaleRoots = () => {
+  const parent = tmpdir()
+  let entries
+  try { entries = readdirSync(parent) } catch { return }
+  for (const name of entries) {
+    if (!name.startsWith('pf-test-run-')) continue
+    const full = join(parent, name)
+    if (full === TMP_ROOT) continue
+    try {
+      if (Date.now() - statSync(full).mtimeMs < 6 * 60 * 60 * 1000) continue
+    } catch { continue }
+    try { killChromeUnder(full) } catch {}
+    try { rmSync(full, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }) } catch {}
+  }
+}
+sweepStaleRoots()
 // `exit` alone leaks the root on every Ctrl-C, and this name is unique per run, so nothing
 // later reclaims it. A signal has to drop it itself, then die of that signal.
 process.on('exit', dropTmp)
