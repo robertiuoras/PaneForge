@@ -152,6 +152,8 @@
     "test:deaddev": "node scripts/deaddev-test.mjs",
     "test:exitedsweep": "node scripts/exited-sweep-test.mjs",
     "test:mascot": "node scripts/mascot-test.mjs",
+    "test:effort": "node scripts/effort-test.mjs",
+    "test:modeladvice": "node scripts/model-advice-test.mjs",
     "test:petmood": "node scripts/petmood-test.mjs",
     "test:devservers": "node scripts/devservers-test.mjs",
     "test:devlist": "node scripts/devlist-test.mjs",

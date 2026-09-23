@@ -123,6 +123,7 @@ export class DiscordPresence {
   /** Latest desk shape. Remembered even while disconnected, sent once ready. */
   update(counts: PresenceCounts): void {
     this.counts = counts
+    this.note({ countedBy: counts.countedBy ?? null })
     this.scheduleSend()
   }
 

@@ -585,6 +585,18 @@ export interface Session {
    */
   effort?: PaneEffort
   /**
+   * A quiet suggestion, waiting to be pressed or dismissed - `shared/modelAdvice.ts`. Set
+   * only on a Claude Code pane's FIRST ask of a fresh conversation, and only when the ask
+   * plainly reads as lighter or harder than the pane's current model and effort. Cleared
+   * the moment it is answered, the pane's next ask goes in, or the pane closes.
+   */
+  modelAdvice?: {
+    tier: 'light' | 'heavy'
+    to: { family?: 'opus' | 'sonnet' | 'haiku' | 'fable' | 'other'; model: string; effort: string }
+    from: { model: string; effort: string }
+    askedAt: number
+  }
+  /**
    * Epoch ms this pane was put to sleep: the pty is gone and the card is not.
    *
    * A sleeping pane carries `status: 'exited'` as well, deliberately - every guard in
@@ -2118,6 +2130,11 @@ export interface Config {
    * unless somebody switches it off; missing means on.
    */
   autoCloseDone?: boolean
+  /**
+   * The quiet model/effort suggestion on a Claude Code pane's first ask -
+   * `shared/modelAdvice.ts`. On unless somebody switches it off; missing means on.
+   */
+  modelAdvice?: boolean
   reclaim?: ReclaimConfig
   /**
    * Panes somebody has said are never to be closed for being idle - "Keep this pane open"
@@ -2657,6 +2674,18 @@ export interface Api {
   ): () => void
   /** Answer that card: `go` false keeps the pane on this machine. */
   answerOffload(id: string, go: boolean): Promise<void>
+  /** A Claude Code pane's first ask read lighter or harder than its model and effort. */
+  onModelAdvice(
+    cb: (ask: {
+      id: string
+      tier: 'light' | 'heavy'
+      to: { model: string; effort: string }
+      from: { model: string; effort: string }
+      askedAt: number
+    }) => void
+  ): () => void
+  /** `Switch` types `/model` and `/effort`; `Keep` just clears the card. */
+  answerModelAdvice(id: string, doSwitch: boolean): Promise<void>
   /** Cmd-Q refused because panes are still working: the card's words. */
   onQuitAsk(cb: (ask: { names: string[]; count: number }) => void): () => void
   /** Answer that card: `go` true quits with the guard lowered, false keeps working. */

@@ -967,6 +967,11 @@ const presence = new DiscordPresence({
 })
 function presenceCounts(): PresenceCounts {
   const counts = countPresence(allSessions(), appStartedAt)
+  // Another desk connected to this one mirrors every pane here, so its count already
+  // includes them. Unless this desk mirrors some other machine too (then both counts are
+  // the whole desk), this one stays quiet rather than put its half on the profile.
+  const guest = remote.state().guests[0]
+  if (guest && !remote.sessions().length) counts.countedBy = guest.name
   // The token numbers cost a walk of every transcript written this week (7.6s of async
   // I/O on this Mac, 7,546 files), so they are counted only while a row on the card
   // actually says one. `tokenSpend` answers from its own cache and refreshes behind
@@ -1264,6 +1269,10 @@ manager.on('armclear', (id: string) => {
   noteActivity(activityEntry('cleared', manager.list().find((x) => x.id === id)?.title ?? 'a pane', 'it was out of context, and its handoff said there was work left'))
 })
 manager.on('handover', (id: string, until: number) => send('pane:handover', id, until))
+// A Claude Code pane's first ask suggested a lighter or stronger model - `sessions:` also
+// carries this on every broadcast (`meta.modelAdvice`), but a card that only ever showed
+// up on the NEXT full sessions list would arrive a tick late next to the ask it is about.
+manager.on('modelAdvice', (id: string, advice: Session['modelAdvice']) => send('model:advice', { id, ...advice }))
 remote.on('reset', (id: string, snapshot?: string) => {
   pump.flushOne(id)
   send('pane:reset', id, snapshot ?? remote.buffer(id))
@@ -1283,6 +1292,8 @@ remote.on('sessions', () => {
 remote.on('attention', (s: Session) => raiseAttention(s))
 remote.on('changed', (state: RemoteState) => {
   send('remote:changed', state)
+  // A desk connecting or leaving decides whether this machine speaks for the profile.
+  presence.update(presenceCounts())
   publishCapacity()
 })
 
@@ -2099,6 +2110,12 @@ ipcMain.handle('sessions:closeWhenDone', (_e, id: string, reportTo?: string) =>
 // pane acts on it at its next turn boundary. See `shared/effort.ts`.
 ipcMain.handle('sessions:setEffort', (_e, id: string, choice: EffortChoice) =>
   manager.setEffort(id, choice)
+)
+// A model/effort suggestion on a Claude Code pane's first ask - `shared/modelAdvice.ts`.
+// `Switch` types `/model` and `/effort` at the next idle composer; `Keep` (or letting the
+// card go idle, or the pane's next ask) just clears it. Nothing types on its own.
+ipcMain.handle('model:adviceAnswer', (_e, id: string, doSwitch: boolean) =>
+  manager.answerModelAdvice(id, !!doSwitch)
 )
 ipcMain.handle('sessions:kill', (_e, id: string) => {
   if (screenViews.owns(id)) {
@@ -3361,11 +3378,14 @@ function autoClearAsk(raw: unknown): { ok: boolean; reason?: string } {
   const pane = manager.list().find((s) => s.id === ask.paneId)
   const command = clearCommandFor(pane?.agent)
   if (!command) return { ok: false, reason: 'nothing here knows how to clear that pane' }
-  // A pane that left work running in the background reads as finished from every other
-  // angle - the turn ended, the footer stopped, `engaged` dropped - and clearing it
-  // restarts the CLI on top of a build that is still going. The hook asks again later.
-  const job = backJobOf(ask.paneId)
-  if (job) return { ok: false, reason: `that pane is still running ${job}` }
+  // A background job the pane left running is NOT a reason to refuse. `backJobOf` only
+  // ever sees shell subtrees (`run_in_background` Bash, Monitor loops), and those outlive
+  // `/clear`: 2026-09-23 the rbuild and `lane.mjs resolve` jobs were still in `ps` after
+  // it, and the fresh session is handed their output files. A running SUBAGENT, which a
+  // clear would kill, is refused by the hook itself (`agent_running`) before it asks.
+  // Refusing here only took the cancellable countdown away: pane-clear waited up to 30
+  // minutes, then typed the clear itself with no card (14 of 17 clears that day), and
+  // twice died mid-wait and cleared nothing.
   // The hook's 23-word resume prompt names no file and says nothing about what finished
   // looks like. Both halves are on THIS side: `handoffSteps.ts` knows which file the
   // handoff is, and the ask carries the steps it says are still open. A `noResume` clear

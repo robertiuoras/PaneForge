@@ -4,14 +4,16 @@ import {
   DEFAULT_DISCORD_STYLE,
   DEFAULT_LINK_LABEL,
   DEFAULT_LINK_URL,
-  DISCORD_TOKENS,
   MAX_BUTTONS,
   NO_PRESENCE_STATUS,
   PRESENCE_IMAGE_TEXT,
+  PRESET_ROWS,
+  TOKEN_PHRASES,
   VISIBLE_ROWS,
   buildActivity,
   newRowId,
   chosenRows,
+  togglePhrase,
   type DiscordButton,
   type DiscordRow,
   type DiscordStyle,
@@ -95,6 +97,7 @@ export default function DiscordTab({ config, onChange }: Props): JSX.Element {
   const setButtons = (buttons: DiscordButton[]): void => setStyle({ buttons })
   const patchButton = (i: number, patch: Partial<DiscordButton>): void =>
     setButtons(style.buttons.map((b, n) => (n === i ? { ...b, ...patch } : b)))
+  const [addingLine, setAddingLine] = useState(false)
 
   const counts = preview === 'busy' ? SAMPLE_BUSY : SAMPLE_IDLE
   // Which rows this sample desk would actually put on the card, so a row that is
@@ -134,25 +137,47 @@ export default function DiscordTab({ config, onChange }: Props): JSX.Element {
           <div className="setting">
             <div className="setting-row">
               <label>Lines</label>
-              <button
-                className="ghost small"
-                onClick={() =>
-                  setRows([
-                    ...style.rows,
-                    { id: newRowId(style.rows), text: '', when: 'always', on: true }
-                  ])
-                }
-              >
-                Add a line
+              <button className="ghost small" onClick={() => setAddingLine((v) => !v)}>
+                {addingLine ? 'Never mind' : 'Add a line'}
               </button>
             </div>
             <div className="hint">
               Discord draws two lines and no more, so the first two that have something to
-              say are the ones on the card. Drag order decides which: move a line up to put
-              it on top, switch one off to hand its place to the one under it. A line whose
-              words come out empty - "on {'{projects}'}" with nothing running - takes no
-              space either.
+              say are the ones on the card. Move a line up to put it on top, switch one off
+              to hand its place to the one under it. A line whose words come out empty -
+              "on {'{projects}'}" with nothing running - takes no space either.
             </div>
+            {addingLine && (
+              <div className="pickrow discord-presets">
+                {PRESET_ROWS.map((preset) => (
+                  <button
+                    key={preset.label}
+                    className="chip pick"
+                    onClick={() => {
+                      setRows([
+                        ...style.rows,
+                        { id: newRowId(style.rows), text: preset.text, when: preset.when, on: true }
+                      ])
+                      setAddingLine(false)
+                    }}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+                <button
+                  className="chip pick"
+                  onClick={() => {
+                    setRows([
+                      ...style.rows,
+                      { id: newRowId(style.rows), text: '', when: 'always', on: true }
+                    ])
+                    setAddingLine(false)
+                  }}
+                >
+                  Blank line to write myself
+                </button>
+              </div>
+            )}
             <div className="row-list">
               {style.rows.map((row, i) => {
                 const text = row.text.trim()
@@ -203,6 +228,25 @@ export default function DiscordTab({ config, onChange }: Props): JSX.Element {
                       spellCheck={false}
                       onChange={(e) => patchRow(i, { text: e.target.value })}
                     />
+                    <div className="pickrow discord-chips">
+                      {TOKEN_PHRASES.map((t) => {
+                        const kept = rowHasPhrase(row.text, t.phrase)
+                        return (
+                          <button
+                            key={t.token}
+                            className={'chip pick' + (kept ? ' on' : '')}
+                            title={
+                              kept
+                                ? `Remove ${t.label.toLowerCase()} from this line`
+                                : `Add ${t.label.toLowerCase()} to this line`
+                            }
+                            onClick={() => patchRow(i, { text: togglePhrase(row.text, t.phrase) })}
+                          >
+                            {t.label}
+                          </button>
+                        )
+                      })}
+                    </div>
                     <div className="hint dim">
                       {!row.on
                         ? 'Switched off - nothing on the card.'
@@ -226,15 +270,9 @@ export default function DiscordTab({ config, onChange }: Props): JSX.Element {
 
           <div className="setting">
             <div className="hint">
-              Write whatever you like around these, which stand in for the numbers:
-            </div>
-            <div className="token-legend">
-              {DISCORD_TOKENS.map(([token, what]) => (
-                <div key={token}>
-                  <code>{token}</code>
-                  <span>{what}</span>
-                </div>
-              ))}
+              The buttons on each line above build the wording for you - click one to add
+              that bit, click it again to take it back out. The box itself still works if
+              you want to type your own words around them, but nothing here needs it.
             </div>
             <div className="hint">
               Discord cuts a line off past 128 characters, so a long project list drops its
@@ -328,7 +366,7 @@ export default function DiscordTab({ config, onChange }: Props): JSX.Element {
               className="ghost small"
               onClick={() => onChange({ discordStyle: cloneStyle(DEFAULT_DISCORD_STYLE) })}
             >
-              Back to the default wording
+              Reset to default
             </button>
           </div>
         </>
@@ -344,6 +382,14 @@ function cloneStyle(style: DiscordStyle): DiscordStyle {
     rows: style.rows.map((r) => ({ ...r })),
     buttons: style.buttons.map((b) => ({ ...b }))
   }
+}
+
+/** Whether a line's own words already include a chip's phrase - so the chip can show as pressed. */
+function rowHasPhrase(text: string, phrase: string): boolean {
+  return text
+    .split(' · ')
+    .map((p) => p.trim())
+    .includes(phrase)
 }
 
 /**
@@ -363,6 +409,12 @@ function DiscordStatus(): JSX.Element {
   const at = status.acceptedAt ? new Date(status.acceptedAt).toLocaleTimeString() : ''
   return (
     <div className="setting">
+      {status.countedBy && (
+        <div className="hint">
+          Your Discord profile is showing {status.countedBy}&apos;s count, which already
+          includes the panes on this computer, so this computer stays quiet.
+        </div>
+      )}
       {!status.connected ? (
         <div className="hint">
           No Discord to talk to. PaneForge looks for it again every minute, so starting

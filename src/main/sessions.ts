@@ -96,7 +96,9 @@ import {
 import { rolloutTurn } from './effort'
 import type { EffortChoice, PaneEffort } from '../shared/types'
 import { codexLadders } from './effortLevels'
-import { logEffort } from './activationLog'
+import { logEffort, logModelAdvice } from './activationLog'
+import { judgeModelAdvice } from '../shared/modelAdvice'
+import { catalogueIdFor, currentClaudeEffort } from './modelAdvice'
 import { codexTranscriptPath } from './transcripts'
 import { endHookDeny, feedHookDeny } from './hookDeny'
 import { continueAfterRestore, restoredClock } from '../shared/restoreTurn'
@@ -227,6 +229,8 @@ const BUFFER_LIMIT = 400_000
 const ms = (name: string, fallback: number): number => Number(process.env[name]) || fallback
 const PROMPT_START_MS = ms('PF_PROMPT_START_MS', 2500)
 const PROMPT_QUIET_MS = ms('PF_PROMPT_QUIET_MS', 900)
+/** Silence after which a busy footer is a leftover, not a turn (see `idle` in `queuePrompt`). */
+const PROMPT_STALE_BUSY_MS = ms('PF_PROMPT_STALE_BUSY_MS', 5000)
 const PROMPT_WAIT_MAX_MS = ms('PF_PROMPT_WAIT_MAX_MS', 45_000)
 const PROMPT_POLL_MS = ms('PF_PROMPT_POLL_MS', 300)
 const PROMPT_ENTER_MS = ms('PF_PROMPT_ENTER_MS', 350)
@@ -1797,6 +1801,65 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
+   * A Claude Code pane's first ask, scored against the model and effort it is already
+   * on. Never holds the write - the ask goes through unchanged, this only reads it and,
+   * if the rule found something worth saying, sets the card and tells the desk.
+   */
+  private adviseModel(live: Live, prompt: string): void {
+    if (live.meta.agent !== 'claude' || getConfig().modelAdvice === false) return
+    // The model this pane is really on: the transcript's own reading (`meta.model`,
+    // `main/paneModel.ts` - which itself already falls back to the launch `--model`), or
+    // the configured default when neither said anything. `defaultModels` is `{}` out of
+    // the box, so a pane started with no `--model` and no configured default is a model
+    // this app has NEVER been told - guessing `claude-sonnet-5` for it would be advice
+    // about a model the pane might not even be running. No evidence, no card.
+    const fromModel = live.meta.model || getConfig().defaultModels?.claude
+    if (!fromModel) {
+      logModelAdvice({ id: live.meta.id, refused: 'unknown-model' })
+      return
+    }
+    const fromEffort = currentClaudeEffort(live.req.effort?.manual)
+    const advice = judgeModelAdvice({ prompt, model: fromModel, effort: fromEffort })
+    if (!advice) {
+      logModelAdvice({ id: live.meta.id, from: { model: fromModel, effort: fromEffort }, refused: 'no signal' })
+      return
+    }
+    const toModel = advice.to.family ? catalogueIdFor(advice.to.family) : fromModel
+    live.meta.modelAdvice = {
+      tier: advice.tier,
+      to: { family: advice.to.family, model: toModel, effort: advice.to.effort },
+      from: { model: fromModel, effort: fromEffort },
+      askedAt: Date.now()
+    }
+    logModelAdvice({
+      id: live.meta.id,
+      tier: advice.tier,
+      reason: advice.reason,
+      from: { model: fromModel, effort: fromEffort },
+      to: { model: toModel, effort: advice.to.effort }
+    })
+    this.emit('modelAdvice', live.meta.id, live.meta.modelAdvice)
+    this.emitSessions()
+  }
+
+  /**
+   * `Switch` types the two CLI commands that carry it out; `Keep` (or the card going idle,
+   * or the pane's next ask) just clears the card. Either way it lands on an idle
+   * composer, the same as every other queued prompt - see `queuePrompt`'s own contract.
+   */
+  answerModelAdvice(id: string, doSwitch: boolean): void {
+    const live = this.sessions.get(id)
+    const advice = live?.meta.modelAdvice
+    if (!live || !advice) return
+    live.meta.modelAdvice = undefined
+    logModelAdvice({ id, answered: doSwitch ? 'switch' : 'keep', to: advice.to })
+    this.emitSessions()
+    if (!doSwitch) return
+    if (advice.to.model !== advice.from.model) this.sendPrompt(id, `/model ${advice.to.model}`)
+    if (advice.to.effort !== advice.from.effort) this.sendPrompt(id, `/effort ${advice.to.effort}`)
+  }
+
+  /**
    * The turn boundary, and the only place this feature ever types.
    *
    * Answers true when it has TAKEN the write over - the prompt is held for as long as the
@@ -1974,6 +2037,10 @@ export class SessionManager extends EventEmitter {
     const asked = submitted ? live.typed : ''
     if (submitted) {
       live.meta.lastKeyboard = Date.now()
+      // A card left over from the pane's FIRST ask has nothing to say about this one -
+      // it leaves the moment the next turn boundary arrives, whether it was pressed or
+      // not. `adviseModel` a few lines down may set a fresh one for THIS turn.
+      if (live.meta.modelAdvice) live.meta.modelAdvice = undefined
       // A person sending a line owns the pane, so an armed countdown stands down for it -
       // and an `app` write never does. `standDownFor` is the whole decision; without it
       // this app's own queued prompt cancelled the clear and the log blamed the person.
@@ -1982,6 +2049,27 @@ export class SessionManager extends EventEmitter {
       const slash = isSlashCommand(live.typed)
       cleared = slash && clearsConversation(live.typed)
       bare = !slash && isBareReturn(live.submitLine)
+      // The FIRST ask of a fresh conversation, and only that one: `engaged` is read here,
+      // before the block below ever sets it, which is the one moment "nothing has been
+      // asked of this pane yet" is still true. A slash command and a bare return are
+      // never an ask at all, so neither reaches this.
+      //
+      // `engaged` alone is not enough: a restart (~1267) and a wake (~1555) both reset it
+      // to false on a pane that is really resuming a conversation with plenty of context
+      // already loaded - `!live.req.resume && !live.req.resumeId` is what tells a pane
+      // that has genuinely never been asked anything apart from one continuing an old
+      // chat. And an `app` write is this app typing autoclear's own resume prompt into an
+      // idle-looking composer, never a person - only `origin === 'desk'` or a phone's own
+      // typing earns a card.
+      if (
+        !slash &&
+        !bare &&
+        !live.meta.engaged &&
+        !live.req.resume &&
+        !live.req.resumeId &&
+        origin !== 'app'
+      )
+        this.adviseModel(live, live.typed)
       // A7: how often a person had to step in. Counted here because this is the one place
       // that knows all four readings at once - who did it, whether anything was sent,
       // whether the pane was holding a question, and whether a turn was running.
@@ -3750,9 +3838,17 @@ export class SessionManager extends EventEmitter {
         seen = text.length
       }
     }
+    // A WORKING LINE THAT HAS STOPPED MOVING IS NOT A TURN. A live footer ticks every
+    // second (spinner glyph, `(12s ...)` counter), so a busy reading on a pty that has
+    // printed nothing for PROMPT_STALE_BUSY_MS is a leftover. After `/clear`, Claude Code's
+    // last bytes are `✳ Forming… (running SessionEnd hooks… 0/2 · 0s)` and then silence
+    // while the fresh session sits ready: every post-clear resume on 2026-09-23 read busy
+    // until the 45s budget ran out (22 of 22 at 44.5-45.3s; fresh panes 2-3s), and at
+    // 10:54:14 Robert started typing into s4-mudqp2ef 41s in, so the resume never went.
     const idle = (live: Live): boolean => {
       repaint(live)
-      return Date.now() - live.meta.lastOutput >= PROMPT_QUIET_MS && !readsBusy(painted) && !composerHeld(painted)
+      const quietMs = Date.now() - live.meta.lastOutput
+      return quietMs >= PROMPT_QUIET_MS && (quietMs >= PROMPT_STALE_BUSY_MS || !readsBusy(painted)) && !composerHeld(painted)
     }
 
     // THE WAIT'S DEADLINE MAY NOT ALSO BE THE CONFIRM'S. `deadline` caps how long we

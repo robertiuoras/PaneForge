@@ -255,6 +255,9 @@ function defaults(): Config {
     deadDev: DEFAULT_DEAD_DEV,
     // On. A finished pane becomes a Review row and a `--resume` away; see shared/doneClose.ts.
     autoCloseDone: true,
+    // On. Only fires on a Claude Code pane's first ask, and only says anything the rule
+    // scored evidence for - see shared/modelAdvice.ts.
+    modelAdvice: true,
     reclaim: DEFAULT_RECLAIM,
     autoHandoff: DEFAULT_AUTO_HANDOFF,
     // The token line a session clears itself at, and whether the app watches the CLIs that

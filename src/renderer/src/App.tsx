@@ -36,6 +36,7 @@ import HandoffDialog, { type HandoffTarget } from './components/HandoffDialog'
 import Mascot, { type CloseSoon } from './components/Mascot'
 import MoveSoon, { soonKey } from './components/MoveSoon'
 import OffloadSoon from './components/OffloadSoon'
+import ModelAdvice from './components/ModelAdvice'
 import QuitGuard from './components/QuitGuard'
 import StopServer from './components/StopServer'
 import { chordAllowed, raiseLogin, type LoginRequest } from '../../shared/remoteLogin'
@@ -7531,6 +7532,8 @@ export default function App(): JSX.Element {
       />
       {/* A new pane the app decided to start on the other machine, before it does. */}
       <OffloadSoon />
+      {/* A Claude Code pane's first ask read lighter or harder than its model/effort. */}
+      <ModelAdvice sessions={sessions} agents={agents} />
       <QuitGuard />
       <UpdateToast />
       <WhatsNewCard />

@@ -672,7 +672,7 @@ html.glass .mascot-icon:hover { background: var(--glass-hi); }
 .pickrow { display: flex; gap: 6px; margin: 4px 0 2px; }
 button.chip.pick { cursor: pointer; font: inherit; font-size: 11px; padding: 3px 10px; }
 button.chip.pick:hover { color: var(--text); border-color: var(--line-strong); }
-button.chip.pick.on { color: var(--bg); background: var(--accent); border-color: var(--accent); }
+button.chip.pick.on { color: var(--accent-on); background: var(--accent); border-color: var(--accent); }
 
 /* A pane taken off the idle clock, where its countdown would have been. Green rather than
    amber: nothing is about to happen to this pane, which is the whole point of it. */
@@ -3204,12 +3204,11 @@ input[type='range']::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px var(--ac
 .re-moves button { min-width: 28px; }
 .hint.dim { opacity: 0.8; }
 
-/* Two columns so the token and its meaning line up down the list; the token itself is
-   what gets copied, so it keeps the monospace it is typed in. */
-.token-legend { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin: 6px 0 8px; font-size: 11.5px; }
-.token-legend > div { display: contents; }
-.token-legend code { color: var(--accent); font: 11.5px ui-monospace, Consolas, monospace; }
-.token-legend span { color: var(--muted); }
+/* The one-click phrases under a line's own text box, and the ready-made lines under
+   "Add a line" - same chip as the rest of the app, just allowed to wrap since there are
+   more of them than fit one row. */
+.pickrow.discord-chips, .pickrow.discord-presets { flex-wrap: wrap; margin: 2px 0 0; }
+.pickrow.discord-presets { margin: 6px 0 2px; }
 
 .install-console { margin-top: 10px; border: 1px solid var(--line); border-radius: var(--r-sm); background: #06060a; overflow: hidden; }
 .ic-head { display: flex; align-items: center; gap: 7px; padding: 6px 9px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px; }
