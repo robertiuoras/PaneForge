@@ -65,6 +65,20 @@ if (locked) {
   const pic = await ev(`window.__pfScreen[${JSON.stringify(id)}].pic`)
   ok(pic?.w === 1280 && pic?.h === 720, 'at the source\'s own size', pic)
 
+  // The fake card never calls getUserMedia, so ask the capture page itself whether a real
+  // desktop capture could run there: about:blank could not (no secure context, no
+  // navigator.mediaDevices), and only the live PC found that out.
+  const cap = (await fetch(`http://127.0.0.1:${port}/json/list`).then((r) => r.json())).find((t) => t.url.endsWith('screen-capture.html'))
+  const media = cap
+    ? await new Promise((resolve) => {
+        const ws = new WebSocket(cap.webSocketDebuggerUrl)
+        ws.onopen = () => ws.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression: 'window.isSecureContext && typeof navigator.mediaDevices?.getUserMedia', returnByValue: true } }))
+        ws.onmessage = (e) => { resolve(JSON.parse(e.data).result?.result?.value); ws.close() }
+        ws.onerror = () => resolve('ws error')
+      })
+    : 'no capture page'
+  ok(media === 'function', 'the capture page can reach getUserMedia (a secure context)', media)
+
   // Beside the terminal, not over it.
   const layout = await ev(`(() => {
     const shown = [...document.querySelectorAll('.pane:not(.hidden)')]
@@ -134,7 +148,7 @@ ok(gone, 'the close button ends the view')
 if (!locked) {
   await sleep(500)
   const targets = await fetch(`http://127.0.0.1:${port}/json/list`).then((r) => r.json())
-  ok(!targets.some((t) => t.url === 'about:blank'), 'and the capture window with it', targets.map((t) => t.url))
+  ok(!targets.some((t) => t.url.endsWith('screen-capture.html')), 'and the capture window with it', targets.map((t) => t.url))
 }
 
 console.log(failed ? `screen-stream window: ${failed}/${checks} FAILED` : `screen-stream window: ok (${checks} checks)`)

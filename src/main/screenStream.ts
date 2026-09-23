@@ -18,8 +18,10 @@
  * src/shared/screenStream.ts; design in docs/superpowers/specs/2026-09-23-pc-screen-design.md.
  */
 
-import { BrowserWindow, desktopCapturer, ipcMain, screen, type IpcMainEvent } from 'electron'
+import { app, BrowserWindow, desktopCapturer, ipcMain, screen, type IpcMainEvent } from 'electron'
 import { execFile } from 'node:child_process'
+import { writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { EventEmitter } from 'node:events'
 import { hostname, userInfo } from 'node:os'
 import { randomBytes } from 'node:crypto'
@@ -441,7 +443,7 @@ export class ScreenViews extends EventEmitter {
       height: 200,
       title: 'PaneForge screen capture',
       webPreferences: {
-        // No remote content is ever loaded here: about:blank plus the script below, which
+        // No remote content is ever loaded here: a blank local page plus the script below, which
         // needs ipcRenderer to talk to this file. A separate in-memory partition keeps the
         // app window's permission handlers and storage out of it.
         nodeIntegration: true,
@@ -458,8 +460,14 @@ export class ScreenViews extends EventEmitter {
         this.winReady = null
       }
     })
+    // A local file, not about:blank: a top-level about:blank has an opaque origin, which is
+    // not a secure context, and Chromium then leaves `navigator.mediaDevices` undefined - the
+    // real capture failed on the PC with `reading 'getUserMedia'` while the fake test card
+    // (a canvas, no getUserMedia) passed every loopback check. file:// is a secure context.
+    const page = join(app.getPath('userData'), 'screen-capture.html')
+    writeFileSync(page, '<!doctype html><title>PaneForge screen capture</title>')
     this.winReady = win
-      .loadURL('about:blank')
+      .loadFile(page)
       .then(() => win.webContents.executeJavaScript(`(${captureScript.toString()})()`))
       .then(() => win)
     return this.winReady
