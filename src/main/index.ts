@@ -4534,7 +4534,7 @@ app.whenReady().then(() => {
   // here is what makes several chats safe to run against one project for anybody else -
   // and repoints them when an upgrade moves the app. It never throws and never overrides
   // a registration somebody made themselves.
-  updateLog('lanes', installLaneHooks())
+  updateLog('lanes', installLaneHooks(app.isPackaged && !profileName()))
   // Whatever the runs before this one left running. Delayed inside, and a no-op on a
   // machine that has never leaked one. See consoles.ts.
   sweepOldConsoles(rememberAppPid())

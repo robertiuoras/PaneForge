@@ -53,13 +53,13 @@ buildSync({
 })
 
 /** Run installLaneHooks() with a throwaway home, and hand back what it did and wrote. */
-function run(home, settings) {
+function run(home, settings, stable = true) {
   mkdirSync(join(home, '.claude'), { recursive: true })
   const file = join(home, '.claude', 'settings.json')
   if (settings !== undefined) writeFileSync(file, typeof settings === 'string' ? settings : JSON.stringify(settings, null, 2), 'utf8')
   const r = spawnSync(
     process.execPath,
-    ['--input-type=module', '-e', `import { installLaneHooks } from ${JSON.stringify(pathToFileURL(bundle).href)}\nconsole.log(installLaneHooks())`],
+    ['--input-type=module', '-e', `import { installLaneHooks } from ${JSON.stringify(pathToFileURL(bundle).href)}\nconsole.log(installLaneHooks(${stable}))`],
     { encoding: 'utf8', timeout: 30_000, env: { ...process.env, USERPROFILE: home, HOME: home } }
   )
   let json
@@ -114,6 +114,28 @@ say('an upgrade repoints the old entries', /installed ->/.test(c.said), c.said +
 say('without leaving the old path behind', !laneCommands(c.settings).some((x) => x.includes('C:/Old/Location')), JSON.stringify(laneCommands(c.settings)))
 say('and still exactly four', laneCommands(c.settings).length === 4, JSON.stringify(laneCommands(c.settings)))
 
+// ---------------------------------------------------------------- pointed at a lane copy
+
+// 2026-09-23: a dev copy built in PaneForge-d had repointed every hook on the Mac at that
+// lane folder. The installed app's next start must take them back to its own path...
+const laneHome = join(work, 'lane-pointed')
+run(laneHome, {})
+const onLane = JSON.parse(readFileSync(join(laneHome, '.claude', 'settings.json'), 'utf8'))
+for (const groups of Object.values(onLane.hooks))
+  for (const g of groups) for (const h of g.hooks ?? []) if (h.command.includes('lane-hook.mjs')) h.command = h.command.replace(REPO.replace(/\\/g, '/'), '/Users/x/Projects/PaneForge-d')
+const lp = run(laneHome, onLane)
+say('an entry pointing into a lane copy is repointed', !laneCommands(lp.settings).some((x) => x.includes('PaneForge-d')), JSON.stringify(laneCommands(lp.settings)))
+say('to the running app, four entries', laneCommands(lp.settings).length === 4, JSON.stringify(laneCommands(lp.settings)))
+
+// ...and a dev or try copy never writes the file at all, whatever it finds there.
+const devHome = join(work, 'dev-copy')
+const before = JSON.stringify(onLane, null, 2)
+const dv = run(devHome, before, false)
+say('a dev or try copy refuses to install', /never rewires/.test(dv.said), dv.said + dv.err)
+say('and leaves settings.json byte-for-byte', dv.raw === before, dv.raw.slice(0, 120))
+const dvFresh = run(join(work, 'dev-fresh'), {}, false)
+say('even on a machine with no lane hooks', laneCommands(dvFresh.settings).length === 0, JSON.stringify(dvFresh.settings))
+
 // ---------------------------------------------------------------- hand-wired machine
 
 const mine = join(work, 'handwired')
@@ -153,7 +175,7 @@ mkdirSync(join(off, '.claude'), { recursive: true })
 writeFileSync(join(off, '.claude', 'settings.json'), '{}', 'utf8')
 const g = spawnSync(
   process.execPath,
-  ['--input-type=module', '-e', `import { installLaneHooks } from ${JSON.stringify(pathToFileURL(bundle).href)}\nconsole.log(installLaneHooks())`],
+  ['--input-type=module', '-e', `import { installLaneHooks } from ${JSON.stringify(pathToFileURL(bundle).href)}\nconsole.log(installLaneHooks(true))`],
   { encoding: 'utf8', timeout: 30_000, env: { ...process.env, USERPROFILE: off, HOME: off, PANEFORGE_NO_LANE_HOOKS: '1' } }
 )
 say('PANEFORGE_NO_LANE_HOOKS opts out', /skipped/.test(g.stdout ?? ''), (g.stdout ?? '') + (g.stderr ?? ''))
