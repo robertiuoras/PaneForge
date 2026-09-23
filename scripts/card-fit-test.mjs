@@ -88,6 +88,7 @@ const STATE = (word, cls = 'idle') => `<span class="row-state ${cls}">${word}</s
 const RUNNING = '<span class="row-state working"><span class="elapsed">14m 23s</span></span>'
 const ASKS = '<span class="chip asks">asks you<span class="asks-in">hold</span></span>'
 const KEPT = '<button class="row-kept"><svg viewBox="0 0 16 16" width="11" height="11"></svg></button>'
+const ASLEEP = '<button class="chip asleep">asleep 7m</button>'
 const LONG = 'fix the compact sidebar so nothing is cut off'
 
 const CASES = [
@@ -108,6 +109,9 @@ const CASES = [
   { label: 'asking and pinned', name: 'Sonia', sub: AGENT() + OPEN, title: ASKS + KEPT },
   { label: 'asking', sub: AGENT() + OPEN, title: ASKS },
   { label: 'pinned, short name, in a copy', name: 'Sonia', sub: AGENT() + OPEN, title: KEPT, state: STATE('waiting') },
+  // Robert's card, 2026-09-24: `taskdriver.a` / `i` on two lines, the pin on the first and
+  // `asleep 7m` boxed below it - a four-line card for a short name and one state.
+  { label: 'pinned and asleep, in a copy', name: 'taskdriver.ai', sub: AGENT() + OPEN, title: KEPT + ASLEEP, place: PLACE('taskdriver.ai', 'copy 4'), oneRow: true },
   { label: 'pinned, in a copy, with a job still running', sub: AGENT() + OPEN + STEPS + JOB, title: KEPT, state: STATE('waiting'), wraps: true }
 ]
 
@@ -332,6 +336,7 @@ try {
     // A long name takes a second line rather than an ellipsis; the state word stays level
     // with the name's FIRST line, at the right.
     ok(c.wraps || m.nameClip.lines <= 1, `${c.name}: a short name is one line`, `${m.nameClip.lines} lines`)
+    if (c.oneRow) ok(m.gaps.rows === 1, `${c.name}: name and state share one line`, `${m.gaps.rows} rows`)
     ok(Math.abs(m.stateTop) <= 3, `${c.name}: the state sits level with the name's first line`, `${m.stateTop}px`)
     ok(fits(m.state), `${c.name}: the state word is whole`, m.state ? `${m.state.w.toFixed(1)}px of ${m.state.want}px` : '')
     ok(fits(m.project), `${c.name}: the project is named in full`, m.project ? `${m.project.w.toFixed(1)}px of ${m.project.want}px ("${m.project.text}")` : 'missing')

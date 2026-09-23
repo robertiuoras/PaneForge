@@ -999,10 +999,16 @@ button.row-lane:hover { color: var(--text); }
 .row-state.starting { color: var(--warn); }
 .row-kept {
   flex: none; display: inline-flex; align-items: center; justify-content: center;
-  width: 16px; height: 16px; padding: 0; border: none; background: none; border-radius: 4px;
-  color: var(--muted); cursor: pointer; opacity: 0.8;
+  width: 14px; height: 16px; padding: 0; border: none; background: none; border-radius: 4px;
+  color: var(--ok); cursor: pointer;
 }
-.row-kept:hover { color: var(--text); opacity: 1; background: #ffffff0d; }
+.row-kept:hover { filter: brightness(1.25); background: #ffffff0d; }
+/* On the title line `asleep 7m` is a word like `waiting`, not a box: the box's 14px of
+   border and padding beside a pin pushed a 13-letter name onto two lines (2026-09-24). */
+.row-title.has-key .chip.asleep {
+  border: none; background: none; padding: 0; font-size: 11px; font-weight: 500; letter-spacing: 0;
+}
+.row-title.has-key .row-tags { gap: 4px; }
 /* Three lines, 2026-09-23: name + state / project · copy / model · open · steps.
    Nothing on a card is cut short except a name past three lines: the name wraps to a
    third line, the project line wraps before it clips, and the sentence below wraps
