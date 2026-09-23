@@ -19,7 +19,7 @@
 // same three levels. Nothing here decides anything: the policy is in src/shared/capacity.ts
 // so it can be tested without filling a real machine's RAM.
 
-import { execFileSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { cpus, freemem, loadavg, totalmem, platform } from 'node:os'
 import { lagLevel, type Pressure } from '../shared/capacity'
@@ -31,20 +31,33 @@ export const SAMPLE_MS = 15_000
 const WARN_FREE = 0.2
 const CRIT_FREE = 0.08
 
+/**
+ * The last level macOS reported, refreshed in the background.
+ *
+ * This was an `execFileSync` on every read, on the main process. A sysctl is microseconds,
+ * but starting one is a fork, and on 2026-09-23 (load 400 on 10 cores, 87 MB free) a fork
+ * took 2-4 seconds - every one of them a frozen window, and every child that finished in
+ * that stretch left unreaped: 245 zombies under PaneForge that morning. Now a read answers
+ * from the last reading and asks for a new one without waiting; the first read is `normal`,
+ * which is what a failed probe has always meant here.
+ */
+let darwinLevel: Pressure = 'normal'
+let darwinAskedAt = 0
+let darwinAsking = false
 function darwinPressure(): Pressure {
-  try {
-    const out = execFileSync('/usr/sbin/sysctl', ['-n', 'kern.memorystatus_vm_pressure_level'], {
-      encoding: 'utf8',
-      timeout: 2000,
-    }).trim()
-    // 1 normal, 2 warn, 4 critical. Anything unparseable is treated as normal on purpose:
-    // a probe that fails must never be the reason the app starts trimming panes.
-    if (out === '4') return 'critical'
-    if (out === '2') return 'warn'
-    return 'normal'
-  } catch {
-    return 'normal'
+  const now = Date.now()
+  if (!darwinAsking && now - darwinAskedAt >= SAMPLE_MS / 2) {
+    darwinAsking = true
+    darwinAskedAt = now
+    execFile('/usr/sbin/sysctl', ['-n', 'kern.memorystatus_vm_pressure_level'], { encoding: 'utf8', timeout: 5000 }, (err, stdout) => {
+      darwinAsking = false
+      // 1 normal, 2 warn, 4 critical. Anything unparseable is treated as normal on purpose:
+      // a probe that fails must never be the reason the app starts trimming panes.
+      const out = err ? '' : stdout.trim()
+      darwinLevel = out === '4' ? 'critical' : out === '2' ? 'warn' : 'normal'
+    })
   }
+  return darwinLevel
 }
 
 function linuxAvailable(): number | null {

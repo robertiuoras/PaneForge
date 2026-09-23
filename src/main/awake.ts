@@ -1,6 +1,6 @@
 // Electron's half of "do not sleep while a pane is working". Every judgement is in
 // shared/awake.ts; this file is the power API and the clock.
-import { spawn, execFile, execFileSync, type ChildProcess } from 'node:child_process'
+import { spawn, execFile, type ChildProcess } from 'node:child_process'
 import { powerSaveBlocker, screen } from 'electron'
 import { AwakeKeeper, type AwakePane } from '../shared/awake'
 
@@ -13,23 +13,22 @@ export const AWAKE_TICK_MS = 30_000
  */
 let lidShutAt = 0
 let lidShutAnswer = false
+let lidAsking = false
 
+// Answered from the last reading, refreshed without waiting: an `execFileSync` here froze
+// the main process for as long as the fork took, 2-4s at load 400 (see memory.ts).
 function lidShut(): boolean {
   if (process.platform !== 'darwin') return false
   const now = Date.now()
-  if (now - lidShutAt < AWAKE_TICK_MS / 2) return lidShutAnswer
+  if (lidAsking || now - lidShutAt < AWAKE_TICK_MS / 2) return lidShutAnswer
   lidShutAt = now
-  try {
-    const out = execFileSync('ioreg', ['-r', '-k', 'AppleClamshellState', '-d', '4'], {
-      encoding: 'utf8',
-      timeout: 3000
-    })
-    lidShutAnswer = /"AppleClamshellState"\s*=\s*Yes/.test(out)
-  } catch {
+  lidAsking = true
+  execFile('ioreg', ['-r', '-k', 'AppleClamshellState', '-d', '4'], { encoding: 'utf8', timeout: 5000 }, (err, out) => {
+    lidAsking = false
     // A reading that failed is not a shut lid. Falling through to `false` keeps the
     // behaviour this app always had rather than blanking a screen somebody is reading.
-    lidShutAnswer = false
-  }
+    lidShutAnswer = !err && /"AppleClamshellState"\s*=\s*Yes/.test(out)
+  })
   return lidShutAnswer
 }
 
