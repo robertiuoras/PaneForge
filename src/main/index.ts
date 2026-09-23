@@ -3378,11 +3378,14 @@ function autoClearAsk(raw: unknown): { ok: boolean; reason?: string } {
   const pane = manager.list().find((s) => s.id === ask.paneId)
   const command = clearCommandFor(pane?.agent)
   if (!command) return { ok: false, reason: 'nothing here knows how to clear that pane' }
-  // A pane that left work running in the background reads as finished from every other
-  // angle - the turn ended, the footer stopped, `engaged` dropped - and clearing it
-  // restarts the CLI on top of a build that is still going. The hook asks again later.
-  const job = backJobOf(ask.paneId)
-  if (job) return { ok: false, reason: `that pane is still running ${job}` }
+  // A background job the pane left running is NOT a reason to refuse. `backJobOf` only
+  // ever sees shell subtrees (`run_in_background` Bash, Monitor loops), and those outlive
+  // `/clear`: 2026-09-23 the rbuild and `lane.mjs resolve` jobs were still in `ps` after
+  // it, and the fresh session is handed their output files. A running SUBAGENT, which a
+  // clear would kill, is refused by the hook itself (`agent_running`) before it asks.
+  // Refusing here only took the cancellable countdown away: pane-clear waited up to 30
+  // minutes, then typed the clear itself with no card (14 of 17 clears that day), and
+  // twice died mid-wait and cleared nothing.
   // The hook's 23-word resume prompt names no file and says nothing about what finished
   // looks like. Both halves are on THIS side: `handoffSteps.ts` knows which file the
   // handoff is, and the ask carries the steps it says are still open. A `noResume` clear

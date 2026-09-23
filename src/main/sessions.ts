@@ -229,6 +229,8 @@ const BUFFER_LIMIT = 400_000
 const ms = (name: string, fallback: number): number => Number(process.env[name]) || fallback
 const PROMPT_START_MS = ms('PF_PROMPT_START_MS', 2500)
 const PROMPT_QUIET_MS = ms('PF_PROMPT_QUIET_MS', 900)
+/** Silence after which a busy footer is a leftover, not a turn (see `idle` in `queuePrompt`). */
+const PROMPT_STALE_BUSY_MS = ms('PF_PROMPT_STALE_BUSY_MS', 5000)
 const PROMPT_WAIT_MAX_MS = ms('PF_PROMPT_WAIT_MAX_MS', 45_000)
 const PROMPT_POLL_MS = ms('PF_PROMPT_POLL_MS', 300)
 const PROMPT_ENTER_MS = ms('PF_PROMPT_ENTER_MS', 350)
@@ -3828,9 +3830,17 @@ export class SessionManager extends EventEmitter {
         seen = text.length
       }
     }
+    // A WORKING LINE THAT HAS STOPPED MOVING IS NOT A TURN. A live footer ticks every
+    // second (spinner glyph, `(12s ...)` counter), so a busy reading on a pty that has
+    // printed nothing for PROMPT_STALE_BUSY_MS is a leftover. After `/clear`, Claude Code's
+    // last bytes are `✳ Forming… (running SessionEnd hooks… 0/2 · 0s)` and then silence
+    // while the fresh session sits ready: every post-clear resume on 2026-09-23 read busy
+    // until the 45s budget ran out (22 of 22 at 44.5-45.3s; fresh panes 2-3s), and at
+    // 10:54:14 Robert started typing into s4-mudqp2ef 41s in, so the resume never went.
     const idle = (live: Live): boolean => {
       repaint(live)
-      return Date.now() - live.meta.lastOutput >= PROMPT_QUIET_MS && !readsBusy(painted) && !composerHeld(painted)
+      const quietMs = Date.now() - live.meta.lastOutput
+      return quietMs >= PROMPT_QUIET_MS && (quietMs >= PROMPT_STALE_BUSY_MS || !readsBusy(painted)) && !composerHeld(painted)
     }
 
     // THE WAIT'S DEADLINE MAY NOT ALSO BE THE CONFIRM'S. `deadline` caps how long we

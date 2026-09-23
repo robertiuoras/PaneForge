@@ -52,5 +52,8 @@ const out = `${run.stdout ?? ''}${run.stderr ?? ''}`.split('\n')
 const keep = out.filter((l) =>
   /error TS|\bFAIL\b|✗|not ok|failed|Error:|passed|all good|checks? ok|rbuild: exit|cannot reach/i.test(l)
 )
-console.log((keep.length ? keep : out.slice(-20)).join('\n'))
+// rbuild's own exit line alone says nothing: `npm error Missing script: "test:x"` matched no
+// pattern and a run printed only `rbuild: exit 1` (2026-09-23). Then the tail is the answer.
+const said = keep.some((l) => !/rbuild: exit/.test(l))
+console.log((said ? keep : out.slice(-20)).join('\n'))
 process.exit(run.status ?? 1)

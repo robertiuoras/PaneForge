@@ -168,6 +168,53 @@ export function contextTokens(transcriptPath) {
   return 0
 }
 
+/**
+ * Ids of this session's background subagents still in flight, read off its transcript.
+ * `/clear` restarts the CLI and kills them; a Bash background job survives it, which is
+ * why the app no longer refuses over one (`autoClearAsk` in `src/main/index.ts`) and this
+ * is the one refusal left. A background `Agent` launch answers `Async agent launched ...
+ * agentId: X` (a `SendMessage` resume answers `resumedAgentId`) and reports back as a
+ * `<task-notification>` with the same `<tool-use-id>`; a launch with no notification is
+ * still running. Mirrors `runningAgentsOf` in the private hook; unreadable = [] (a
+ * transcript we cannot read never blocks the clear forever).
+ */
+export function runningAgents(transcriptPath) {
+  let text
+  try {
+    text = readFileSync(transcriptPath, 'utf8')
+  } catch {
+    return []
+  }
+  const answered = new Map()
+  const launched = new Set()
+  const notified = new Set()
+  for (const line of text.split('\n')) {
+    if (!line) continue
+    if (line.includes('<task-notification>')) {
+      for (const m of line.matchAll(/<tool-use-id>([^<]+)<\/tool-use-id>/g)) notified.add(m[1])
+      continue
+    }
+    if (!/"tool_use"|"tool_result"/.test(line)) continue
+    let row
+    try {
+      row = JSON.parse(line)
+    } catch {
+      continue
+    }
+    const content = row?.message?.content
+    if (!Array.isArray(content)) continue
+    for (const c of content) {
+      if (c?.type === 'tool_use' && (c.name === 'Agent' || c.name === 'SendMessage')) launched.add(c.id)
+      else if (c?.type === 'tool_result' && launched.has(c.tool_use_id) && !c.is_error) {
+        const t = typeof c.content === 'string' ? c.content : (c.content || []).map((x) => x?.text || '').join('\n')
+        const id = t.match(/Async agent launched[\s\S]*?agentId:\s*([A-Za-z0-9_-]+)/)?.[1] ?? t.match(/"resumedAgentId"\s*:\s*"([^"]+)"/)?.[1]
+        if (id) answered.set(c.tool_use_id, id)
+      }
+    }
+  }
+  return [...answered].filter(([use]) => !notified.has(use)).map(([, id]) => id)
+}
+
 export function blockMessage(tokens, threshold, path) {
   return (
     `AUTO-CLEAR: this session is at ~${Math.round(tokens / 1000)}k tokens of context, past the ${Math.round(threshold / 1000)}k line, ` +
@@ -310,6 +357,12 @@ export function run(argv, input, env = process.env, now = Date.now()) {
   const steps = actionableNextSteps(h.text)
   if (!steps.length) {
     log(`stop ${tag} no-open-steps ${h.path}`)
+    return 0
+  }
+  // Not recorded as requested: the next Stop after the agent reports back asks again.
+  const agents = input.transcript_path ? runningAgents(String(input.transcript_path)) : []
+  if (agents.length) {
+    log(`stop ${tag} agent-running ${agents.join(',')}`)
     return 0
   }
   const request = {

@@ -35,6 +35,7 @@ process.env.PF_PROMPT_POLL_MS ??= '40'
 process.env.PF_PROMPT_ENTER_MS ??= '60'
 process.env.PF_PROMPT_CONFIRM_MS ??= '200'
 process.env.PF_PROMPT_WAIT_MAX_MS ??= '5000'
+process.env.PF_PROMPT_STALE_BUSY_MS ??= '1500'
 // Pinned here rather than read from the module: the SHIPPED budget is 6, and the cap
 // assertion below is about the cap existing at all, not about the number.
 process.env.PF_PROMPT_ENTER_TRIES ??= '3'
@@ -615,6 +616,23 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
   manager.setBusyOnScreen(pane.id, true, 'Esc to interrupt · 1s')
   live.proc.say('Working')
   ok(live.meta.status === 'working' && Boolean(live.meta.runSince), 'a subsequent real turn still starts')
+  manager.kill(pane.id)
+}
+
+// A working line that has stopped moving is a leftover, not a turn. After `/clear`
+// Claude Code's last bytes are its SessionEnd spinner and then silence while the fresh
+// session sits ready; every post-clear resume on 2026-09-23 waited out the whole budget
+// on that frame (22 of 22 at ~45s). Painted once, then quiet: typed after the stale
+// window, well before the budget - and not before the window.
+{
+  const pane = manager.start({ cwd: root, agent: 'shell' })
+  const live = manager.sessions.get(pane.id)
+  live.proc.say('\r\n✳ Forming… (running SessionEnd hooks… 0/2 · 0s)\r\n')
+  manager.sendPrompt(pane.id, 'Continue the handoff after a clear.')
+  await sleep(800)
+  ok(!live.proc.writes.join('').includes('after a clear'), 'a busy line younger than the stale window still holds the prompt', JSON.stringify(live.proc.writes))
+  await sleep(1400)
+  ok(live.proc.writes.join('').includes('after a clear'), 'a busy line nothing has repainted for the stale window does not', JSON.stringify(live.proc.writes))
   manager.kill(pane.id)
 }
 

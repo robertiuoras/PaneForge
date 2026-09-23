@@ -140,6 +140,28 @@ const twice = runHook('stop', { session_id: 'sess-1', transcript_path: transcrip
 say('asked once per session', twice.code === 0 && requests().length === 1, JSON.stringify(twice))
 rmSync(join(reqDir, files[0]), { force: true })
 
+// A background subagent still in flight: /clear would kill it, so no request until it
+// reports back. Rows in the real transcript's shape (2026-09-23 session jsonl).
+const withAgent = (done) => {
+  const f = transcript(250_000)
+  const rows = [
+    { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'toolu_bg1', name: 'Agent', input: { prompt: 'x' } }] } },
+    { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_bg1', content: [{ type: 'text', text: 'Async agent launched successfully.\nagentId: a1b2c3 (use SendMessage)' }] }] } },
+    { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'toolu_fg1', name: 'Agent', input: { prompt: 'y' } }] } },
+    { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_fg1', content: 'the foreground agent report' }] } }
+  ]
+  if (done) rows.push({ type: 'user', message: { content: '<task-notification><task-id>a1b2c3</task-id><tool-use-id>toolu_bg1</tool-use-id></task-notification>' } })
+  const out = f.replace(/\.jsonl$/, `-agent-${done}.jsonl`)
+  writeFileSync(out, rows.map((r) => JSON.stringify(r)).join('\n') + '\n' + readFileSync(f, 'utf8'))
+  return out
+}
+say('parser: a launched background agent with no report is running, a foreground one never', JSON.stringify(hook.runningAgents(withAgent(false))) === '["a1b2c3"]' && hook.runningAgents(withAgent(true)).length === 0)
+const busy = runHook('stop', { session_id: 'sess-7', transcript_path: withAgent(false) })
+say('a running background agent: no request', busy.code === 0 && requests().length === 0 && !busy.err, JSON.stringify(busy))
+const freed = runHook('stop', { session_id: 'sess-7', transcript_path: withAgent(true) })
+say('once it reported back, the next stop asks', freed.code === 0 && requests().length === 1, JSON.stringify({ freed, r: requests() }))
+for (const f of requests()) rmSync(join(reqDir, f), { force: true })
+
 // Nothing open means no clear, even over the line with a fresh file.
 writeFileSync(expected, '## Next steps\nNone\n')
 const none = runHook('stop', { session_id: 'sess-3', transcript_path: transcript(250_000) })
