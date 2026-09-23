@@ -49,9 +49,8 @@ import { tour, tourCheck } from './tour'
 import { addSample, dropSample } from './tourSample'
 import { addSound, pruneCustomSounds, removeSound, renameSound, soundData } from './sounds'
 import { writeAttachments, readAttachIns } from './attach'
-import { AskNotifier, askMessage, postAsk, telegramCreds } from './askNotify'
+import { AskNotifier, postAsk, telegramCreds } from './askNotify'
 import { errorMessage } from '../shared/paneError'
-import { askKeyOf } from '../shared/autoAnswer'
 import { type AttachIn, type AttachResult } from '../shared/attach'
 import { CHOOSE_GAP_MS, keysForChoice, sameAsk, stampMatches } from '../shared/choices'
 import { Remote } from './remote'
@@ -987,28 +986,14 @@ manager.on('clientNamed', (e: ClientNamed) => {
 })
 
 /**
- * One phone message per question. The pane raises `ask` once per FRAME of a question and
- * a chooser arrives over several frames, so the notifier waits for the frames to stop.
- */
-const askNotifier = new AskNotifier({
-  post: (text: string) =>
-    postAsk(text).then((sent) => {
-      if (!sent && telegramCreds()) console.log("telegram: could not post a pane question")
-      return sent
-    })
-})
-
-/**
- * The same machinery for a pane that STOPPED rather than asked.
+ * A pane that STOPPED on an error goes to Telegram. A pane's QUESTION does not: Robert
+ * 2026-09-23, "remove these question[s] ... in telegram, they gonna come through guarddeck
+ * now". Questions stay on the desk (red row, knock) and go to GuardDeck.
  *
- * A second `AskNotifier` rather than a second implementation: what it does - wait for the
- * frames to stop, then send once, then hold the same message for five minutes - is exactly
- * what an error needs, and for the same reason. A CLI paints its error line in pieces too,
- * and a limit that has been hit is hit again on every retry the CLI makes by itself, which
- * is a phone buzzing four times for one wall.
- *
- * Separate instance, not a shared one, so a pane that hits a limit AND then asks a question
- * sends both: the keys are per pane, and one map would let the first swallow the second.
+ * `AskNotifier` does what an error needs: wait for the frames to stop, send once, then hold
+ * the same message for five minutes. A CLI paints its error line in pieces, and a limit that
+ * has been hit is hit again on every retry the CLI makes by itself, which is a phone buzzing
+ * four times for one wall.
  */
 const errorNotifier = new AskNotifier({
   post: (text: string) =>
@@ -1077,18 +1062,6 @@ function raiseAsk(s: Session): void {
   // alert that must not be gated on the notification settings below - a run that has
   // stopped dead is not a notification preference.
   send('sessions:ask', s)
-  if (!s.remote && getConfig().telegramAsk) {
-    // Debounced, and resolved at the END of the wait rather than now: the option labels
-    // stream in, so this same event fires several times for ONE question with a longer
-    // label each time. Sending on the frame would put three messages on the phone for one
-    // chooser, which is exactly what happened. See ASK_SETTLE_MS in askNotify.ts.
-    askNotifier.schedule(s.id, () => {
-      const live = allSessions().find((x) => x.id === s.id)
-      // Answered at the desk while this was waiting: there is nothing left to ask about.
-      if (!live?.ask) return null
-      return { key: askKeyOf(live.ask), text: askMessage(live.title, live.ask, undefined) }
-    })
-  }
   if (!getConfig().notifyOnIdle || isGameActive()) return
   if (!alive() || win!.isFocused()) return
   win!.flashFrame(true)
