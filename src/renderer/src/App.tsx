@@ -5633,7 +5633,12 @@ export default function App(): JSX.Element {
         </button>
 
         {/* Everyday views stay one click away; occasional coordination lives in Tools. */}
-        <div className="quick">
+        {/* Two even rows of icons rather than one strip of slivers: at eight buttons one row
+            measured ~26px wide by 36px tall each. Columns = half the buttons, rounded up. */}
+        <div
+          className="quick"
+          style={{ '--quick-cols': Math.ceil((5 + (screenBtn?.ok ? 1 : 0) + (ownerAccess ? 2 : 0)) / 2) } as React.CSSProperties}
+        >
           <button
             className="ghost quick-btn"
             aria-label="Review"

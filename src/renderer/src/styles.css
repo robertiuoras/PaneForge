@@ -2961,7 +2961,7 @@ input[type='range']::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px var(--ac
 .dialog.tall { height: min(760px, 90vh); display: flex; flex-direction: column; }
 .tab-body { max-height: min(58vh, 560px); overflow-y: auto; padding-right: 4px; display: flex; flex-direction: column; gap: 14px; }
 
-.quick { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 6px; }
+.quick { display: grid; grid-template-columns: repeat(var(--quick-cols, 4), minmax(0, 1fr)); gap: 6px; }
 .quick .ghost { flex: 1; justify-content: center; }
 
 /* Daily review: dense enough to scan a busy day, with exact prompts still readable. */
@@ -3422,12 +3422,13 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
 /* --------------------------------------------------------------------------
    Quick actions, as icons.
 
-   The row used to be three word buttons that wrapped on a narrow sidebar. Fixed
-   square targets keep it on one line however many actions it grows to, and the
-   sentence that was the label lives on the tooltip instead. */
+   The row used to be three word buttons that wrapped on a narrow sidebar, then one
+   line of icons that became eight thin slivers. Now a grid of two even rows (App.tsx
+   sets `--quick-cols` to half the buttons), and the sentence that was the label lives
+   on the tooltip. */
 .quick-btn {
   flex: 1; display: flex; align-items: center; justify-content: center;
-  position: relative; height: 36px; min-width: 0; padding: 0; color: var(--muted);
+  position: relative; height: 32px; min-width: 0; padding: 0; color: var(--muted);
 }
 .quick-btn:hover:not(:disabled) { color: var(--text); }
 .quick-btn.live { color: var(--ok); border-color: #35d07f33; }
