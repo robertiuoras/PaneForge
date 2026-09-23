@@ -110,6 +110,8 @@ import { snapPlan } from '../shared/deskSnap'
 import { crashTestHook, installCrashGuard, logProblem, onCrashReport } from './crash'
 import { onOpenProblem, openLink, openLocal } from './openUrl'
 import { openScreen, screenCan } from './screenView'
+import type { ScreenPeer } from '../shared/screenView'
+import { ScreenViews, loopbackMode, machineName } from './screenStream'
 import { nothingToOpen } from '../shared/openUrl'
 import { startFaultNotify } from './faultNotify'
 import { stopRenderWatch, watchRenderer } from './renderWatch'
@@ -1242,9 +1244,24 @@ const remote = new Remote({
   }
 })
 
+/**
+ * The other machine's screen in a pane (src/main/screenStream.ts): sink panes this desk
+ * opened, and rows saying another machine is watching this one. Listed with the others
+ * by `allSessions()`, never inside SessionManager - nothing to sleep, reclaim or restore.
+ */
+const screenViews = new ScreenViews(
+  remote,
+  (channel, ...args) => {
+    if (alive()) win!.webContents.send(channel, ...args)
+  },
+  () => machineName(getConfig().remote.name)
+)
+screenViews.on('sessions', () => send('sessions:changed', allSessions()))
+remote.on('screen', (e) => screenViews.onRemote(e))
+
 /** Local panes and mirrored ones, as one list. This is what the renderer ever sees. */
 function allSessions(): Session[] {
-  return [...manager.list(), ...remote.sessions()]
+  return [...manager.list(), ...remote.sessions(), ...screenViews.sessions()]
 }
 
 remote.on('data', (id: string, data: string) => pump.push(id, data))
@@ -2081,6 +2098,10 @@ ipcMain.handle('sessions:setEffort', (_e, id: string, choice: EffortChoice) =>
   manager.setEffort(id, choice)
 )
 ipcMain.handle('sessions:kill', (_e, id: string) => {
+  if (screenViews.owns(id)) {
+    screenViews.close(id)
+    return
+  }
   if (remote.owns(id)) {
     // The row goes at once on a live link; a link that could not carry the frame is said
     // out loud, because silence here is a button that looks broken and gets pressed again.
@@ -2969,11 +2990,33 @@ ipcMain.handle('phone:rotate', async () => {
 })
 ipcMain.handle('remote:state', () => remote.state())
 // "See the PC's screen": Moonlight at the paired machine. src/shared/screenView.ts.
-ipcMain.handle('screen:can', () => screenCan(remote.state().peers))
-ipcMain.on('screen:open', () => {
+/**
+ * The machines whose screen this one can show: every paired machine it dials, plus any
+ * machine connected TO it that it has not paired the other way - the view's frames go
+ * over whichever connection is up (`Remote.screenSend`), so pairing direction is not a
+ * reason to hide the button.
+ */
+function screenPeers(): ScreenPeer[] {
+  const st = remote.state()
+  const peers: ScreenPeer[] = st.peers.map((p) => ({ id: p.id, name: p.name, address: p.address, status: p.status }))
+  for (const g of st.guests) {
+    if (!peers.some((p) => p.id === g.id)) peers.push({ id: g.id, name: g.name, address: g.address, status: 'online' })
+  }
+  return peers
+}
+ipcMain.handle('screen:can', () => (loopbackMode()
+  ? { ok: true, disabled: false, title: 'See this machine\'s screen (test)', control: { ok: false, title: '' } }
+  : screenCan(screenPeers())))
+// v1: the button opens the in-app view (src/main/screenStream.ts); Moonlight is behind
+// the pane's `Take control`.
+ipcMain.handle('screen:open', () => screenViews.open(screenPeers()))
+ipcMain.on('screen:control', () => {
   const plan = openScreen(remote.state().peers)
   if (!plan.ok) send('app:error', plan.message)
 })
+ipcMain.handle('screen:signal', (_e, id: string, msg: { t: string; [k: string]: unknown }) =>
+  screenViews.signal(String(id), msg))
+ipcMain.handle('screen:wake', (_e, id: string) => screenViews.wake(String(id)))
 ipcMain.handle('remote:host', (_e, on: boolean) => {
   remote.setHosting(!!on)
   return remote.state()
@@ -4782,6 +4825,8 @@ app.on('before-quit', (e) => {
   // An ssh child holding a forward open is not a pty either, and it outlives this process
   // exactly as cloudflared does.
   shutdownLogins()
+  // A viewer on the other machine hears the view ended rather than watching it freeze.
+  screenViews.shutdown()
   // shutdown() also flushes buffered transcript output, which would otherwise lose the
   // last 1.5 seconds of every pane. It runs once, so the two quit paths cannot double
   // the work between them.

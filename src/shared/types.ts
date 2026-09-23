@@ -468,6 +468,18 @@ export interface Session {
    * namespaced with the device, so nothing else in the app has to care: keystrokes,
    * resizes and closes are routed back over the link by the main process.
    */
+  /**
+   * A pane showing another machine's screen instead of a terminal (`agent: 'screen'`).
+   * `sink` = this machine is looking; `source` = this is the row saying another machine is
+   * watching this one. No process behind either: see src/main/screenStream.ts.
+   */
+  screen?: {
+    role: 'sink' | 'source'
+    /** device id of the other machine */
+    device: string
+    /** the other machine's name: the one being watched (sink) or the watcher (source) */
+    machine: string
+  }
   remote?: {
     /** device id, matching a RemotePeer */
     device: string
@@ -2779,10 +2791,21 @@ export interface Api {
 
   /** hosting, pairings, discovered devices and who is connected right now */
   remoteState(): Promise<RemoteState>
-  /** Can this machine show the other one's screen, and what the button should say. */
-  screenCan(): Promise<{ ok: boolean; title: string }>
-  /** Start the viewer (Moonlight) on the paired machine - see src/shared/screenView.ts. */
-  openScreen(): void
+  /**
+   * Can this machine show the other one's screen, and what the button should say.
+   * `control` = whether `Take control` (Moonlight) is available and its title.
+   */
+  screenCan(): Promise<{ ok: boolean; disabled: boolean; title: string; control: { ok: boolean; title: string } }>
+  /** Open (or find) the pane showing the paired machine's screen - src/main/screenStream.ts. */
+  openScreen(): Promise<{ ok: true; id: string } | { ok: false; message: string }>
+  /** `Take control`: start Moonlight on the paired machine - src/shared/screenView.ts. */
+  screenTakeControl(): void
+  /** One signalling frame from a screen pane to the machine it is looking at. */
+  screenSignal(id: string, msg: { t: string; [k: string]: unknown }): Promise<'sent' | 'offline' | 'old'>
+  /** `Wake the desktop`: put the other machine's detached desktop back on its screen. */
+  screenWake(id: string): Promise<{ ok: boolean; message: string }>
+  /** Frames for a screen pane from the machine it is looking at. */
+  onScreenSignal(cb: (id: string, msg: { t: string; [k: string]: unknown }) => void): () => void
   /** start or stop answering other devices */
   setRemoteHost(on: boolean): Promise<RemoteState>
   /** move the listener; returns the state with the error if the port is taken */

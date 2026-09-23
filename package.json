@@ -54,6 +54,7 @@
     "test:cliclaim": "node scripts/transcript-cli-claim-test.mjs",
     "test:quitwords": "node scripts/quit-words-test.mjs",
     "test:screenview": "node scripts/screen-view-test.mjs",
+    "test:screenstream": "node scripts/screen-stream-test.mjs",
     "test:notes": "node scripts/release-notes-test.mjs",
     "test:trydiff": "node scripts/try-diff-test.mjs",
     "test:sidehidden": "node scripts/side-hidden-test.mjs",

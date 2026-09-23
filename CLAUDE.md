@@ -594,12 +594,11 @@ count (`choose()` -> `write()`, auto-answer `'app'`); unsent typing is nothing.
 
 ## The other machine's screen is one click away
 
-Quick button beside Review (`shared/screenView.ts`, `main/screenView.ts`; `test:screenview`)
-starts Moonlight at the paired peer, online first else configured. Drawn only w/ viewer+peer
-(`screenCan`); refusals toast `app:error`; one viewer at a time; `screen-view.log`;
-`screen:*` `DESK_ONLY`. Title = MACHINE, not protocol. Native in-app
-stream (WebRTC) designed in
-`docs/superpowers/specs/2026-09-23-pc-screen-design.md`, not built.
+Quick button beside Review opens the peer's screen as a PANE beside the terminals (grid on,
+never fills the window unasked): `shared/screenStream.ts`, `main/screenStream.ts`,
+`ScreenPane.tsx`; `test:screenstream`, `test:screenview`, `screen-stream-window-test.mjs`.
+`screen:*` on `wire.ts`, gated by `screenView`; panes outside SessionManager. `Take
+control` = Moonlight. View-only. Detail: design-notes.
 
 ## Checks
 

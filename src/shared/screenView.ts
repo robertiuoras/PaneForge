@@ -17,6 +17,8 @@
 export const SCREEN_APP = 'Desktop'
 
 export interface ScreenPeer {
+  /** The paired device's id; absent only in tests that never open a pane. */
+  id?: string
   name: string
   address: string
   status: 'off' | 'connecting' | 'online' | 'error'
@@ -58,8 +60,24 @@ export function screenPlan(viewer: string | null, peers: ScreenPeer[]): ScreenPl
   return { ok: true, peer, args: ['stream', peer.address, SCREEN_APP] }
 }
 
-/** The button's title, in words for somebody who has never heard of Sunshine. */
+/** `Take control`'s title, in words for somebody who has never heard of Sunshine. */
 export function screenTitle(peers: ScreenPeer[]): string {
   const peer = screenPeer(peers)
-  return peer ? `See ${peer.name}'s screen (opens Moonlight)` : 'See the other machine\'s screen'
+  return peer ? `Take control of ${peer.name}'s screen (opens Moonlight)` : 'See the other machine\'s screen'
+}
+
+/**
+ * The quick button, v1: it opens the other machine's screen in a pane here, so it is drawn
+ * whenever a machine is paired - Moonlight is only behind `Take control` now. A paired
+ * machine that is not connected greys the button out with its status in the title,
+ * and no pane opens: a pane that could only ever say "not connected" is noise.
+ */
+export function screenButton(peers: ScreenPeer[]): { ok: boolean; disabled: boolean; title: string } {
+  const peer = screenPeer(peers)
+  if (!peer) return { ok: false, disabled: true, title: 'No other machine is paired with this one yet.' }
+  if (peer.status !== 'online') {
+    const why = peer.status === 'connecting' ? 'connecting' : peer.status === 'error' ? 'could not connect' : 'not connected'
+    return { ok: true, disabled: true, title: `${peer.name}'s screen - ${why} right now` }
+  }
+  return { ok: true, disabled: false, title: `See ${peer.name}'s screen` }
 }
