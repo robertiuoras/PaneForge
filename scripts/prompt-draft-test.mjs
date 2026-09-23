@@ -298,10 +298,6 @@ check(
   'a forty-line draft is capped at 24 rounds',
   rounds(composerWipe({ text: Array(40).fill('x').join('\n'), certain: true, inPaste: false })) === 24
 )
-check(
-  'the expand card lifts the cap: a forty-line draft gets 42 rounds',
-  rounds(composerWipe({ text: Array(40).fill('x').join('\n'), certain: true, inPaste: false }, Infinity)) === 42
-)
 {
   // The wipe is fed into the reconstruction as well as the pty. It must read as an empty,
   // certain box - and must never count as a submitted line.

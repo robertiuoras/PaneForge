@@ -156,8 +156,6 @@ const GATED_SEND = new Set([
   // Strictly more than `pty:write`: it types text into a pane AND presses Enter for it, so
   // a stolen cookie needs no second call to make the agent act.
   'pty:prompt',
-  // `pty:prompt` plus an erase: it empties the box first. Same power, same gate.
-  'pty:replaceDraft',
   'shell:reveal',
   'shell:external',
   // Same rule as the invoke side, and the same omission: these are fire-and-forget, so a

@@ -6570,10 +6570,6 @@ export default function App(): JSX.Element {
               clickMovesCursor={config?.clickMovesCursor ?? true}
               mouseSelect={config?.mouseSelect ?? true}
               autoFixUi={config?.autoFixUi ?? true}
-              // A long rough prompt is held on Enter and shown back as a full brief. On
-              // unless switched off; `shared/promptExpand.ts` decides which prompts count.
-              promptExpand={config?.promptExpand !== false}
-              onSplitAsk={openSplitWith}
               termTheme={termColors}
               // The question this pane is sitting on, read in the main process so the
               // desk, a phone and a bot are all answering the same reading of it.

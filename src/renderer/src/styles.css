@@ -2250,8 +2250,6 @@ body.sizing * { user-select: none !important; }
      desk can read the CLI's own question beside the card; a handset is showing one pane
      at a time and has nothing to read beside it. */
   .pane-ask { left: 8px; right: 8px; width: auto; max-height: 60%; }
-  /* The expand card's buttons and answer chips are the whole card on a phone. */
-  .expand-card .expand-btn { min-height: 44px; padding-inline: 14px; }
 
   /* ---- ...and the HOME screen is what a phone sees first ---------------------
      Everything above this was written for a pane: the answer card, and the close button
@@ -2374,91 +2372,6 @@ body.sizing * { user-select: none !important; }
   .sel-copy { animation: none; }
 }
 .icon.fix { font-size: 10.5px; font-weight: 600; letter-spacing: 0.3px; }
-
-/* The expand card: a long rough prompt, held on Enter and shown back as a full brief
-   (`components/ExpandCard.tsx`, `shared/promptExpand.ts`).
-
-   Following the design vault's linear.app entry, like `.copy-menu` above: one surface step
-   above the pane, a hairline border rather than a heavy one, the 4-step text ramp read as
-   `--text` for what the card says and `--muted` for what it is about, and the only motion
-   is the app's 120ms `--fast` on hover - nothing moves when it appears, because it appears
-   on a keypress somebody is already looking at. `--muted` on `--surface-2` is the pair
-   `npm run test:contrast` already holds to 3:1 for the copy menu.
-
-   Inside the pane, across its bottom, where the composer the Enter came from is drawn -
-   and with its own scroll, so a brief with three questions never pushes its buttons off
-   the bottom of a short pane. */
-.expand-card {
-  position: absolute; z-index: 11;
-  left: 8px; right: 8px; bottom: 8px; top: auto;
-  max-width: 560px; max-height: 70%;
-  display: flex; flex-direction: column; gap: 8px;
-  padding: 10px 12px;
-  overflow-y: auto; overscroll-behavior: contain;
-  background: var(--surface-2); color: var(--text);
-  border: 1px solid var(--line-strong); border-radius: var(--r);
-  box-shadow: var(--shadow);
-  font-size: 12px; line-height: 1.45;
-}
-.expand-lead { display: flex; flex-direction: column; gap: 2px; }
-.expand-lead[role='status'] { flex-direction: row; align-items: baseline; gap: 8px; }
-.expand-title { font-weight: 600; }
-.expand-note { color: var(--muted); }
-.expand-secs { color: var(--muted); font-variant-numeric: tabular-nums; }
-/* The brief as a label/value sheet - Linear's issue properties panel: labels in a narrow
-   muted column, values in --text, rows separated by space rather than rules. Everything is
-   shown; nothing folds away. */
-.expand-sheet {
-  margin: 0;
-  display: grid; grid-template-columns: 84px minmax(0, 1fr);
-  column-gap: 12px; row-gap: 8px;
-}
-.expand-label { color: var(--muted); font-size: 11px; line-height: 17px; }
-.expand-value { margin: 0; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.expand-value p { margin: 0; }
-.expand-list { margin: 0; padding-left: 14px; display: flex; flex-direction: column; gap: 2px; }
-.expand-where { list-style: none; padding-left: 0; }
-.expand-where code { font-size: 11px; color: var(--text); overflow-wrap: anywhere; }
-.expand-sym { margin-left: 8px; color: var(--muted); }
-.expand-btn {
-  display: inline-flex; align-items: center; gap: 6px;
-  min-height: 26px; padding: 3px 10px;
-  background: var(--surface-3); color: var(--text);
-  border: 1px solid var(--line); border-radius: var(--r-sm);
-  font-size: 12px; cursor: pointer;
-  transition: border-color var(--fast), background var(--fast);
-}
-.expand-btn:hover { border-color: var(--line-strong); }
-.expand-btn.primary {
-  padding: 3px 12px; font-weight: 600;
-  background: var(--accent); color: var(--accent-fg, #fff); border-color: transparent;
-}
-.expand-btn.primary:hover { border-color: transparent; filter: brightness(1.08); }
-/* A choice is a segmented control - every option visible, the picked one lit - never a
-   menu that has to be opened to see what is in it. */
-.expand-seg {
-  display: inline-flex; flex-wrap: wrap; align-self: flex-start;
-  padding: 2px; gap: 2px;
-  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-sm);
-}
-.expand-seg .expand-btn { min-height: 22px; padding: 2px 8px; background: transparent; border-color: transparent; }
-.expand-seg .expand-btn.on {
-  background: color-mix(in oklab, var(--accent) 18%, var(--surface-3));
-  border-color: color-mix(in oklab, var(--accent) 45%, transparent);
-  color: var(--text); font-weight: 600;
-}
-.expand-bundled {
-  display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  padding-top: 6px; border-top: 1px solid var(--line);
-}
-.expand-edit {
-  min-height: 160px; resize: vertical;
-  background: var(--surface); color: var(--text);
-  border: 1px solid var(--line-strong); border-radius: var(--r-sm);
-  padding: 8px; font: 12px/1.45 var(--mono, ui-monospace, monospace);
-}
-.expand-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.expand-hint { margin-left: auto; color: var(--muted); font-size: 11px; }
 
 /* The terminal's scrollbar is the one that gets dragged - 20k lines of scrollback
    behind a 10px hairline was a target you had to aim at. Wider, higher contrast,

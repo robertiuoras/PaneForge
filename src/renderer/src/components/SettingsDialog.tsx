@@ -822,12 +822,6 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                   hint="Only the very first thing you type into a fresh Claude Code chat, before anything has been asked of it. A quick lookup or a small edit gets offered a lower effort, or a cheaper model when the ask is really just a question; a hard, multi-file or repeated-failure ask gets offered a stronger one. It only ever suggests - nothing switches until you press Switch, and it never says anything mid-conversation, where a model change would resend the whole chat."
                 />
                 <Switch
-                  checked={config.promptExpand !== false}
-                  onChange={(v) => onChange({ promptExpand: v })}
-                  label="Show a fuller brief before sending a long prompt"
-                  hint="Long rough prompts are shown back with a goal, where to start and what done means. You pick which version to send."
-                />
-                <Switch
                   checked={config.autoAnswer?.enabled === true}
                   onChange={(v) =>
                     onChange({

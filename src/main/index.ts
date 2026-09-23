@@ -81,7 +81,6 @@ import { ensureDesktopShortcut, syncLaunchAtLogin } from './winShortcut'
 import { handOffToInstalled } from './strayLaunch'
 import { priorPrompt, recordPrompt } from './promptArchive'
 import { splitPrompt } from './splitPrompt'
-import { expandPrompt, noteExpandChoice } from './promptExpand'
 import { adminStatus, disableAdminMode, enableAdminMode, relaunchViaTask } from './admin'
 import {
   cancelDeferred,
@@ -2343,13 +2342,6 @@ ipcMain.on('pty:prompt', (_e, id: string, text: string) => {
   manager.sendPrompt(id, text)
 })
 
-// The expand card's "Send full brief": erase the box, then send the brief as a job the app
-// hands the pane. Local panes only - the card is never offered on another machine's pane.
-ipcMain.on('pty:replaceDraft', (_e, id: string, wipe: string, text: string) => {
-  if (!text || remote.owns(id)) return
-  manager.replaceDraft(id, wipe, text)
-})
-
 /** What each pane has typed since its last Enter - only ever used to spot `/clear`. */
 const typedLine = new Map<string, string>()
 
@@ -4122,58 +4114,20 @@ ipcMain.handle('prompt:split', async (_e, text: string) => {
 })
 
 /**
- * "Show this back as a full brief before sending it" - see main/promptExpand.ts.
- *
- * Slower than a split but far cheaper: a haiku round trip, run on the CLI's own
- * subscription login, never a paid key. Every failure comes back as `{ error }`.
- */
-ipcMain.handle('prompt:expand', async (_e, text: string, cwd: string, paneId: string) => {
-  try {
-    return await expandPrompt(text, cwd, paneId)
-  } catch (e) {
-    return { error: e instanceof Error ? e.message : String(e) }
-  }
-})
-
-/**
- * What the person did with an expand card. Fire-and-forget, same as `prompt:used` below -
- * the renderer has already moved on by the time this is sent.
- */
-ipcMain.on(
-  'prompt:expandChose',
-  (
-    _e,
-    choice: import('../shared/promptExpand').ExpandChoice,
-    meta: { paneId: string; words: number; ms?: number; waitedMs?: number }
-  ) => {
-    try {
-      noteExpandChoice(choice, meta)
-    } catch {
-      // Logging the outcome must never be the reason a send failed.
-    }
-  }
-)
-
-/**
  * A pane's draft was submitted. Fire-and-forget: the renderer is mid-keystroke and has
  * nothing to do with the answer.
  */
-ipcMain.on('prompt:used', (_e, draft: string, meta: { cwd?: string; agent?: string; id?: string; brief?: boolean }) => {
+ipcMain.on('prompt:used', (_e, draft: string, meta: { cwd?: string; agent?: string; id?: string }) => {
   // Before the recall gate, and outside its try: History's one-line note is a different
   // feature with a different switch, and "you have asked this before" being off is not a
   // reason for a closed session to go back to being a folder name and a clock.
   if (meta.id) {
     try {
       const session = manager.list().find((x) => x.id === meta.id)
-      // A brief sent in the typed ask's place is recorded by main's own queue as the text
-      // it typed (`replaceDraft`); the review is exactly what was submitted, and the
-      // transcript claimer needs a line the pane really typed - the ask alone is neither.
-      if (!meta.brief) {
-        if (session) recordPromptReview(session, draft)
-        // ...and to the transcript claimer, which uses a line the pane is KNOWN to have
-        // typed as its proof that a conversation is its own. See noteSubmittedPrompt.
-        noteSubmittedPrompt(meta.id, draft)
-      }
+      if (session) recordPromptReview(session, draft)
+      // ...and to the transcript claimer, which uses a line the pane is KNOWN to have
+      // typed as its proof that a conversation is its own. See noteSubmittedPrompt.
+      noteSubmittedPrompt(meta.id, draft)
       history.noteAsk(meta.id, draft)
       // ...and onto the live session, so the app can say WHICH conversation a pane is in
       // while the pane still exists. See Session.gist.

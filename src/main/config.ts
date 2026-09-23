@@ -236,7 +236,6 @@ function defaults(): Config {
     // configured by default - the app's own history is what it runs on, and a second one is
     // only worth naming if the person already has prompts written down somewhere else.
     promptRecall: { enabled: true, extraArchives: [] },
-    promptExpand: true,
     // On: it costs nothing until a turn is actually cut in half, it only ever fires on a
     // pane that is idle with an unfinished answer on it, and it stops after three in a row.
     // Off by default would ship a feature whose entire value is that nobody has to notice.

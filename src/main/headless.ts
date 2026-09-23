@@ -11,8 +11,8 @@
 // for the reason it is absent from `shared/agents.ts`' own headless table - its flags are
 // unverified, and refusing beats a guess that opens a window nobody asked for.
 //
-// Split off `main/splitPrompt.ts` on 2026-09-23 so `main/promptExpand.ts` could run its own
-// one-shot CLI (`haiku`, same flags) without a second copy of the flag table or the exec.
+// Split off `main/splitPrompt.ts` on 2026-09-23 so a second one-shot CLI caller could share
+// the flag table and the exec (that caller, the brief card, was removed 2026-09-24).
 
 import { execFile, type ChildProcess } from 'node:child_process'
 import { specFor } from './agents'

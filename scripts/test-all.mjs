@@ -320,7 +320,6 @@ const TESTS = [
   ['funnel', 'funnel-test.mjs'],
   ['gist', 'gist-test.mjs'],
   ['splitplan', 'split-plan-test.mjs'],
-  ['promptexpand', 'promptexpand-test.mjs'],
   ['qr', 'qr-test.mjs'],
   ['pairask', 'pair-ask-test.mjs'],
   ['gate', 'release-gate-test.mjs'],

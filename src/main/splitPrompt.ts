@@ -6,8 +6,7 @@
 // `null` - never an empty plan, which is a different, real answer ("this is one job").
 //
 // The run itself - the flag table, which CLI can answer, and the exec with a budget - is
-// `main/headless.ts` now (split off 2026-09-23 so `main/promptExpand.ts` could run its own
-// one-shot CLI without a second copy of it). What stays here is the part specific to a
+// `main/headless.ts` now (split off 2026-09-23 for a second caller since removed). What stays here is the part specific to a
 // SPLIT: the prompt asked, how many panes it may propose, and what is done with an answer
 // that is wrong.
 

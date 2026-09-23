@@ -472,16 +472,12 @@ export function looksSplittable(text: string, min = 120): boolean {
  * A draft the reconstruction has lost track of gets the flat budget rather than a count
  * derived from text already known to be wrong.
  *
- * Two callers: the /clear button (`App.tsx` `clearPane`), which empties the box before
- * typing the command, and the expand card (`ExpandCard.tsx`), which empties it before the
- * full brief goes in - either way a leftover line would ride along with what is sent.
- *
- * `max` is the /clear button's 24 rounds unless the caller says otherwise. The expand card
- * passes no ceiling: it only ever holds LONG asks, a pasted one is often past 22 lines, and
- * a leftover line there would be sent above the brief. A round is three bytes.
+ * Caller: the /clear button (`App.tsx` `clearPane`), which empties the box before typing
+ * the command - a leftover line would ride along with it. Capped at 24 rounds; a round is
+ * three bytes.
  */
-export function composerWipe(draft: DraftState | undefined, max = 24): string {
+export function composerWipe(draft: DraftState | undefined): string {
   const lines = draft?.certain && draft.text ? draft.text.split('\n').length : 0
-  const rounds = Math.min(max, Math.max(4, lines + 2))
+  const rounds = Math.min(24, Math.max(4, lines + 2))
   return '\x0b\x15\x7f'.repeat(rounds)
 }

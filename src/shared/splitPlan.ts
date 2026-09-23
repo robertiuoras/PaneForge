@@ -132,9 +132,6 @@ export function splitInstruction(
  * in a sentence before printing the real object left the scan chasing a brace that never
  * closes, and the whole plan was reported as "not a plan". Measured against a live
  * `claude -p` answer, which is why it is written this way rather than `indexOf('{')`.
- *
- * Generalised past `splitPlan`'s own `"tasks"` so `shared/promptExpand.ts` can ask for
- * `"goal"` with the same scan rather than a second copy of it.
  */
 export function firstObjectWith(raw: string, key: string): string | null {
   const named = new RegExp(`"${key}"\\s*:`)

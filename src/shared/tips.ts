@@ -77,7 +77,6 @@ export const TIPS: Tip[] = [
   { id: 'idle-close', say: 'A full machine gives itself room back: it trims, then moves a finished pane to a paired device, then offers to close one - always with a countdown first.' },
   { id: 'dev-servers', say: 'Ask the pet "what is running" and it lists every dev server on this machine, with the pane and the port. "Close the dev in pane 2" stops one.' },
   { id: 'recall', say: 'Ask something you have asked before and a small chip says so, with when. It never blocks you.' },
-  { id: 'improve', say: 'The chip beside a prompt rewrites it into something sharper before you send it.' },
   { id: 'telegram', say: 'A pane’s question can go to Telegram, and tapping the answer there presses the button here.' },
   { id: 'text-view', say: 'A pane’s output is also readable as plain text you can select - useful on a phone, where a terminal cannot be highlighted.' },
   { id: 'theme', say: 'Every colour in this window is derived from one accent. Appearance changes all of it at once, light or dark.' },
