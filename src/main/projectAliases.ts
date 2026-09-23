@@ -86,7 +86,9 @@ export function aliasesFor(project: Project, now = Date.now()): ProjectAlias[] {
     add(slug.split('/').pop(), 'remote')
   }
 
-  for (const file of ['README.md', 'CLAUDE.md']) {
+  // AGENTS.md is where a repo's instructions live once Codex reads them too (CLAUDE.md then
+  // holds `@AGENTS.md`), so the domains named there are the ones CLAUDE.md used to carry.
+  for (const file of ['README.md', 'CLAUDE.md', 'AGENTS.md']) {
     const text = readHead(join(project.path, file), HEAD_BYTES)
     if (!text) continue
     for (const d of domains(text)) add(d, 'domain')
