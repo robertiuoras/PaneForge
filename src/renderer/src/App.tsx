@@ -5125,11 +5125,6 @@ export default function App(): JSX.Element {
             )}
           </div>
         </div>
-        {/* Not an icon: this is the one row in the list whose click does something other
-            than switch to a pane, and a word is the cheapest way to say so. */}
-        <span className="row-open" aria-hidden="true">
-          watch
-        </span>
       </div>
     )
   }
