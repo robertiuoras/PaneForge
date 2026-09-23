@@ -63,6 +63,9 @@ export default function ScreenPane({ session, visible, control, flash }: Props):
   const [box, setBox] = useState<{ w: number; h: number }>({ w: 0, h: 0 })
   const [waking, setWaking] = useState(false)
   const pcRef = useRef<RTCPeerConnection | null>(null)
+  // Which offer the current connection made. A retry can overtake a slow answer: the
+  // source echoes this number, and anything answering an older offer is dropped.
+  const attemptRef = useRef(0)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const boxRef = useRef<HTMLDivElement | null>(null)
   const frozenRef = useRef<HTMLCanvasElement | null>(null)
@@ -99,6 +102,7 @@ export default function ScreenPane({ session, visible, control, flash }: Props):
     hangUp()
     const pc = new RTCPeerConnection({ iceServers: [] })
     pcRef.current = pc
+    const n = ++attemptRef.current
     const tr = pc.addTransceiver('video', { direction: 'recvonly' })
     // H.264 first: hardware decode on the Mac, the design's safe codec. AV1 is the
     // measured second try (docs/superpowers/specs/2026-09-23-pc-screen-design.md).
@@ -121,6 +125,7 @@ export default function ScreenPane({ session, visible, control, flash }: Props):
       if (!e.candidate || pcRef.current !== pc) return
       void api.screenSignal(id, {
         t: 'screen:ice',
+        n,
         candidate: e.candidate.candidate,
         sdpMid: e.candidate.sdpMid,
         sdpMLineIndex: e.candidate.sdpMLineIndex
@@ -136,7 +141,7 @@ export default function ScreenPane({ session, visible, control, flash }: Props):
     try {
       await pc.setLocalDescription(await pc.createOffer())
       if (pcRef.current !== pc) return
-      const res = await api.screenSignal(id, { t: 'screen:offer', sdp: pc.localDescription?.sdp ?? '' })
+      const res = await api.screenSignal(id, { t: 'screen:offer', n, sdp: pc.localDescription?.sdp ?? '' })
       if (res === 'offline') dispatch({ t: 'refuse', why: 'offline' })
       else if (res === 'old') dispatch({ t: 'refuse', why: 'old' })
     } catch (err) {
@@ -173,6 +178,8 @@ export default function ScreenPane({ session, visible, control, flash }: Props):
     return api.onScreenSignal((view, m: Signal) => {
       if (view !== id) return
       const pc = pcRef.current
+      // An older offer's answer, candidates or refusal: its connection is already gone.
+      if (typeof m.n === 'number' && m.n !== attemptRef.current && m.t !== 'screen:stop') return
       switch (m.t) {
         case 'screen:answer':
           if (pc && typeof m.sdp === 'string') void pc.setRemoteDescription({ type: 'answer', sdp: m.sdp }).catch(() => {})

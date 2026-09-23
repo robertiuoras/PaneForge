@@ -8,16 +8,22 @@
 //   PF_SCREEN_LOOPBACK=1 PF_SCREEN_FAKE=locked npm run try -- --keep --headless --remote-debugging-port=9444
 //   PF_PORT=9444 node scripts/screen-stream-window-test.mjs --locked
 //
+//   PF_SCREEN_LOOPBACK=1 PF_SCREEN_FAKE=slow npm run try -- --keep --headless --remote-debugging-port=9444
+//   PF_PORT=9444 node scripts/screen-stream-window-test.mjs --slow
+//
 // What it reads: the quick button opens a pane (not a Moonlight window), the pane shares
 // the window with a terminal pane, a picture arrives, the quality line fills, the zoom
 // buttons / pinch / Cmd-Ctrl 0 move the zoom, a click on the terminal pane takes the focus
 // back, and closing the view stops the capture. `--locked`: the card says the screen is
-// locked and offers `Wake the desktop`.
+// locked and offers `Wake the desktop`. `--slow`: the test card takes longer to start than
+// the viewer's connect timeout, as a real PC desktop capture did, so the viewer's retry
+// overtakes the first answer - and the picture still arrives.
 
 import { connect } from './ui-lab.mjs'
 
 const port = process.env.PF_PORT ?? '9444'
 const locked = process.argv.includes('--locked')
+const slow = process.argv.includes('--slow')
 const link = await connect(port)
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -60,7 +66,7 @@ if (locked) {
   ok(wake.includes('Wake the desktop'), 'and offers Wake the desktop', wake)
   ok((await ev(`window.__pfScreen[${JSON.stringify(id)}].failure`)) === 'locked', 'state machine reads locked')
 } else {
-  const phase = await until(`window.__pfScreen[${JSON.stringify(id)}].phase === 'connected' && 'connected'`, 20000)
+  const phase = await until(`window.__pfScreen[${JSON.stringify(id)}].phase === 'connected' && 'connected'`, slow ? 45000 : 20000)
   ok(phase === 'connected', 'a picture arrives', await ev(`JSON.stringify(window.__pfScreen[${JSON.stringify(id)}])`))
   const pic = await ev(`window.__pfScreen[${JSON.stringify(id)}].pic`)
   ok(pic?.w === 1280 && pic?.h === 720, 'at the source\'s own size', pic)

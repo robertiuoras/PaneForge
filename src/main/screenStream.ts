@@ -29,6 +29,7 @@ import type { Msg } from './remote/wire'
 import { screenLog } from './screenView'
 import { screenPeer, type ScreenPeer } from '../shared/screenView'
 import {
+  CONNECT_TIMEOUT_MS,
   SCREEN_FPS,
   consoleReading,
   rewriteCandidate,
@@ -88,7 +89,12 @@ export function loopbackMode(): boolean {
  * instead of the desktop; `locked` = answer every offer as a detached console.
  */
 function fakeCapture(): boolean {
-  return process.env.PF_SCREEN_FAKE === '1'
+  return process.env.PF_SCREEN_FAKE === '1' || fakeSlow()
+}
+/** The test card, only as slow to start as a real desktop capture on the PC: past the
+ *  viewer's connect timeout, so its retry overtakes the first answer. */
+function fakeSlow(): boolean {
+  return process.env.PF_SCREEN_FAKE === 'slow'
 }
 function fakeLocked(): boolean {
   return process.env.PF_SCREEN_FAKE === 'locked'
@@ -306,7 +312,7 @@ export class ScreenViews extends EventEmitter {
     if (m.t === 'screen:ice' && typeof m.candidate === 'string') {
       const c = e.address ? rewriteCandidate(m.candidate, e.address) : m.candidate
       if (c === null) return
-      this.win?.webContents.send('screen-src', { t: 'ice', view, candidate: c, sdpMid: m.sdpMid, sdpMLineIndex: m.sdpMLineIndex })
+      this.win?.webContents.send('screen-src', { t: 'ice', view, n: m.n, candidate: c, sdpMid: m.sdpMid, sdpMLineIndex: m.sdpMLineIndex })
       return
     }
     if (m.t === 'screen:stop') {
@@ -317,7 +323,9 @@ export class ScreenViews extends EventEmitter {
   }
 
   private async offer(e: ScreenEventIn, view: string, sdp: string): Promise<void> {
-    const reply = (m: Msg): void => void this.post(e.device, { ...m, view, from: 'source' })
+    // Every reply names the offer it answers, so the viewer can drop one its retry overtook.
+    const n = e.msg.n
+    const reply = (m: Msg): void => void this.post(e.device, { ...m, view, n, from: 'source' })
     // A detached console has no desktop to capture: say so before trying, with what the
     // viewer needs to wake it.
     const detached = fakeLocked() ? { id: 1, user: userInfo().username } : await this.consoleDetached()
@@ -358,7 +366,16 @@ export class ScreenViews extends EventEmitter {
     this.armOrphan(v)
     try {
       const win = await this.captureWindow()
-      win.webContents.send('screen-src', { t: 'offer', view, sdp, sourceId, fake: fakeCapture(), fps: SCREEN_FPS })
+      win.webContents.send('screen-src', {
+        t: 'offer',
+        view,
+        n,
+        sdp,
+        sourceId,
+        fake: fakeCapture(),
+        slowMs: fakeSlow() ? CONNECT_TIMEOUT_MS + 2000 : 0,
+        fps: SCREEN_FPS
+      })
     } catch (err) {
       screenLog(`capture window failed: ${(err as Error).message}`)
       reply({ t: 'screen:refused', message: `${this.myName()} could not start showing its screen.` })
@@ -371,7 +388,7 @@ export class ScreenViews extends EventEmitter {
     let v: SourceView | undefined
     for (const x of this.views.values()) if (x.role === 'source' && x.view === view) v = x
     if (!v) return
-    const reply = (out: Msg): void => void this.post(v!.device, { ...out, view, from: 'source' })
+    const reply = (out: Msg): void => void this.post(v!.device, { ...out, view, n: m.n, from: 'source' })
     switch (m.t) {
       case 'answer':
         reply({ t: 'screen:answer', sdp: m.sdp })
@@ -511,12 +528,25 @@ export function machineName(configured: string): string {
 function captureScript(): void {
   const { ipcRenderer } = (window as any).require('electron')
   const pcs = new Map<string, RTCPeerConnection>()
+  // The newest offer per view. A viewer retries when the first answer is slow (a real
+  // desktop capture can take longer than its connect timeout): the older offer's work is
+  // dropped the moment it resumes, so one view never holds two connections.
+  const newest = new Map<string, number>()
+  const pcN = new WeakMap<RTCPeerConnection, number>()
   let stream: MediaStream | null = null
+  let starting: Promise<MediaStream> | null = null
   let fakeTimer: any = null
   const out = (m: any): void => ipcRenderer.send('screen-src', m)
 
-  async function capture(m: any): Promise<MediaStream> {
-    if (stream && stream.getVideoTracks().some((t) => t.readyState === 'live')) return stream
+  // One capture at a time, shared: a second offer waits for the first one's stream.
+  function capture(m: any): Promise<MediaStream> {
+    if (stream && stream.getVideoTracks().some((t) => t.readyState === 'live')) return Promise.resolve(stream)
+    if (!starting) starting = startCapture(m).finally(() => (starting = null))
+    return starting
+  }
+
+  async function startCapture(m: any): Promise<MediaStream> {
+    if (m.slowMs) await new Promise((r) => setTimeout(r, m.slowMs))
     if (m.fake) {
       // A moving test card: a clock and a sweeping bar, so a frozen picture is visible.
       const c = document.createElement('canvas')
@@ -593,6 +623,10 @@ function captureScript(): void {
 
   ipcRenderer.on('screen-src', async (_e: unknown, m: any) => {
     if (m.t === 'offer') {
+      const n = typeof m.n === 'number' ? m.n : 0
+      if (n < (newest.get(m.view) ?? 0)) return
+      newest.set(m.view, n)
+      const superseded = (): boolean => newest.get(m.view) !== n
       const old = pcs.get(m.view)
       if (old) {
         old.close()
@@ -600,12 +634,18 @@ function captureScript(): void {
       }
       try {
         const s = await capture(m)
+        if (superseded()) {
+          // Stopped while the capture started: nothing may keep it running.
+          if (!newest.has(m.view)) stopAll()
+          return
+        }
         const pc = new RTCPeerConnection({ iceServers: [] })
         pcs.set(m.view, pc)
+        pcN.set(pc, n)
         pc.onicecandidate = (ev) => {
-          if (ev.candidate) out({ t: 'ice', view: m.view, candidate: ev.candidate.candidate, sdpMid: ev.candidate.sdpMid, sdpMLineIndex: ev.candidate.sdpMLineIndex })
+          if (ev.candidate) out({ t: 'ice', view: m.view, n, candidate: ev.candidate.candidate, sdpMid: ev.candidate.sdpMid, sdpMLineIndex: ev.candidate.sdpMLineIndex })
         }
-        pc.onconnectionstatechange = () => out({ t: 'state', view: m.view, state: pc.connectionState })
+        pc.onconnectionstatechange = () => out({ t: 'state', view: m.view, n, state: pc.connectionState })
         await pc.setRemoteDescription({ type: 'offer', sdp: m.sdp })
         const track = s.getVideoTracks()[0]
         const tr = pc.getTransceivers().find((t) => t.receiver.track?.kind === 'video')
@@ -614,7 +654,8 @@ function captureScript(): void {
           await tr.sender.replaceTrack(track)
         } else pc.addTrack(track, s)
         await pc.setLocalDescription(await pc.createAnswer())
-        out({ t: 'answer', view: m.view, sdp: pc.localDescription?.sdp })
+        if (superseded()) return
+        out({ t: 'answer', view: m.view, n, sdp: pc.localDescription?.sdp })
         try {
           const sender = pc.getSenders().find((x) => x.track === track)
           if (sender) {
@@ -623,18 +664,19 @@ function captureScript(): void {
             await sender.setParameters(p)
           }
         } catch {}
-        if (!m.fake && (await looksBlack(s))) out({ t: 'black', view: m.view })
+        if (!m.fake && (await looksBlack(s)) && !superseded()) out({ t: 'black', view: m.view, n })
       } catch (err: any) {
-        out({ t: 'failed', view: m.view, message: String(err?.message || err) })
+        if (!superseded()) out({ t: 'failed', view: m.view, n, message: String(err?.message || err) })
       }
       return
     }
     if (m.t === 'ice') {
       const pc = pcs.get(m.view)
-      if (pc) pc.addIceCandidate({ candidate: m.candidate, sdpMid: m.sdpMid, sdpMLineIndex: m.sdpMLineIndex }).catch(() => {})
+      if (pc && (typeof m.n !== 'number' || pcN.get(pc) === m.n)) pc.addIceCandidate({ candidate: m.candidate, sdpMid: m.sdpMid, sdpMLineIndex: m.sdpMLineIndex }).catch(() => {})
       return
     }
     if (m.t === 'stop') {
+      newest.delete(m.view)
       pcs.get(m.view)?.close()
       pcs.delete(m.view)
       stopAll()
