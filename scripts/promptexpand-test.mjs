@@ -255,7 +255,7 @@ if (existsSync(scorePath) && existsSync(corpusPath)) {
   const hold = pane.slice(pane.indexOf('const holdForExpand ='), pane.indexOf('expandOps.current = {'))
   ok('holdForExpand was found', hold.length > 200)
   ok('an Enter after Esc on the same text goes through', /pending\.text !== dismissedText/.test(hold))
-  ok('a backslash-Enter (new line) is never held', /endsWith\('\\\\'\)/.test(hold))
+  ok('a backslash-Enter (new line) is never held', /!\(continuesOnBackslash\(agentRef\.current\) && enterContinues\(pending\)\)/.test(hold))
   ok('a question that came up takes the key from the card', /if \(askRef\.current\) \{\s*closeExpand\('dismissed'\)\s*return false/.test(hold))
   ok('a sent brief is not filed twice for review', /promptUsed\(card\.text\.trim\(\), \{[^}]*brief: true \}/.test(pane) && /if \(!meta\.brief\)/.test(src('src/main/index.ts')))
 }

@@ -28,7 +28,7 @@ buildSync({
   platform: 'node',
   outfile: out
 })
-const { feedDraft, newDraft, flatDraft, looksFinished, looksSplittable, composerWipe, LANE_OPTIONS, SLASH_OPTIONS } =
+const { feedDraft, newDraft, flatDraft, looksFinished, looksSplittable, composerWipe, enterContinues, LANE_OPTIONS, SLASH_OPTIONS } =
   createRequire(import.meta.url)(out)
 
 const ESC = String.fromCharCode(27)
@@ -88,6 +88,62 @@ check('a bracketed paste is unchanged', (() => {
   return r.submitted.length === 1 && r.submitted[0] === 'one\ntwo'
 })())
 check('an ordinary Enter still submits on its own', feed([...'hello', '\r']).submitted.length === 1)
+
+// --- backslash + Enter: Claude Code's new line --------------------------------
+
+// Claude Code turns a `\` typed right before Enter into a new line and sends nothing; Codex
+// 0.155.1 sends the line, backslash and all. So the rule is the caller's to switch on.
+const CLAUDE = { backslashNewline: true }
+{
+  const r = feed([...'first line \\', '\r'], CLAUDE)
+  check('backslash + Enter sends nothing', r.submitted.length === 0, JSON.stringify(r.submitted))
+  check('...and leaves a new line where the backslash was', r.text === 'first line \n', JSON.stringify(r.text))
+  const one = feedDraft({ text: 'first line \\', certain: true, inPaste: false }, '\r', CLAUDE)
+  check('...and says the Enter made a new line', one.continued === true && one.submitted.length === 0)
+}
+{
+  const r = feed([...'first line \\', '\r', ...'second line', '\r'], CLAUDE)
+  check(
+    'the next plain Enter sends both lines once',
+    r.submitted.length === 1 && r.submitted[0] === 'first line \nsecond line',
+    JSON.stringify(r.submitted)
+  )
+  check('a plain Enter is not a new line', feedDraft(newDraft(), 'x\r', CLAUDE).continued === false)
+  check('enterContinues reads the same rule', enterContinues({ text: 'a\\', certain: true, inPaste: false }) && !enterContinues({ text: 'a\\', certain: true, inPaste: false, folded: true }))
+}
+check(
+  'without the option a backslash + Enter still sends (Codex)',
+  (() => {
+    const r = feed([...'fix it\\', '\r'])
+    return r.submitted.length === 1 && r.submitted[0] === 'fix it\\'
+  })()
+)
+// Measured on Claude Code v2.1.280: a short paste ending in `\` + Enter is a new line like a
+// typed one; a paste it folds into "[Pasted text #1]" (over 800 characters, or four lines)
+// sends, backslash and all.
+{
+  const r = feed([ESC + '[200~C:\\Users\\me\\' + ESC + '[201~', '\r'], CLAUDE)
+  check('a short pasted path ending in a backslash is a new line too', r.submitted.length === 0 && r.text === 'C:\\Users\\me\n', JSON.stringify(r))
+}
+{
+  const long = 'x'.repeat(800) + '\\'
+  const r = feed([ESC + '[200~' + long + ESC + '[201~', '\r'], CLAUDE)
+  check('a folded paste (801 characters) sends, its backslash untouched', r.submitted.length === 1 && r.submitted[0] === long, JSON.stringify(r.submitted.map((l) => l.length)))
+  const r800 = feed([ESC + '[200~' + 'x'.repeat(799) + '\\' + ESC + '[201~', '\r'], CLAUDE)
+  check('...but 800 characters is not folded', r800.submitted.length === 0)
+}
+{
+  const four = feed([ESC + '[200~a\rb\rc\rd\\' + ESC + '[201~', '\r'], CLAUDE)
+  check('a four-line paste is folded and sends', four.submitted.length === 1 && four.submitted[0] === 'a\nb\nc\nd\\', JSON.stringify(four.submitted))
+  const three = feed([ESC + '[200~a\nb\nc\\' + ESC + '[201~', '\r'], CLAUDE)
+  check('...a three-line one is not', three.submitted.length === 0 && three.text === 'a\nb\nc\n', JSON.stringify(three))
+}
+check(
+  'a typed backslash after a folded paste is still a new line',
+  feed([ESC + '[200~' + 'y'.repeat(900) + ESC + '[201~', ' \\', '\r'], CLAUDE).submitted.length === 0
+)
+check('backslash then a space sends (the backslash must be last)', feed([...'typed \\ ', '\r'], CLAUDE).submitted.length === 1)
+check('after an arrow key the rule stays out of it', feed([...'abc\\', ESC + '[D', '\r'], CLAUDE).submitted.length === 1)
 
 // --- escapes: the case that broke this once --------------------------------
 

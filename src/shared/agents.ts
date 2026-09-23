@@ -661,7 +661,7 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
  * `openrouter`, `deepseek` and `glm` are Claude Code with a different base URL, so they
  * read the clipboard too - the binary is what decides this, never the model behind it.
  */
-const CLIPBOARD_IMAGE_AGENTS = new Set([
+const CLAUDE_CODE_AGENTS = new Set([
   'claude',
   'openrouter',
   'deepseek',
@@ -672,7 +672,16 @@ const CLIPBOARD_IMAGE_AGENTS = new Set([
 
 /** Would a raw ^V put an image in front of this agent, rather than nothing? */
 export function pastesClipboardImage(agent: string | undefined): boolean {
-  return !!agent && CLIPBOARD_IMAGE_AGENTS.has(agent)
+  return !!agent && CLAUDE_CODE_AGENTS.has(agent)
+}
+
+/**
+ * Does a `\` typed before Enter make a new line in this agent's prompt box instead of
+ * sending it? Claude Code's does; Codex 0.155.1 sends the line (measured 2026-09-23). The
+ * binary decides this too, so it is the same set. See `DraftOptions.backslashNewline`.
+ */
+export function continuesOnBackslash(agent: string | undefined): boolean {
+  return !!agent && CLAUDE_CODE_AGENTS.has(agent)
 }
 
 export function allAgents(custom: AgentSpec[] = []): AgentSpec[] {

@@ -121,7 +121,7 @@ import {
 } from '../shared/slashTurn'
 import { feedDraft, newDraft, type DraftState } from '../shared/draft'
 import { OutBuffer } from './outBuffer'
-import { allAgents, buildArgs, colourEnv, hasAgent, modelValue, resolveEnv } from '../shared/agents'
+import { allAgents, buildArgs, colourEnv, continuesOnBackslash, hasAgent, modelValue, resolveEnv } from '../shared/agents'
 import { homedir } from 'node:os'
 import { allowsCwd, scrubForeignKeys } from '../shared/paneTrust'
 import { anchoredStart, readsBusy, composerHeld, type BusyReason } from '../shared/busy'
@@ -1971,8 +1971,13 @@ export class SessionManager extends EventEmitter {
     // The whole line, for the rail. The window builds its own tags from the keystrokes it
     // relays, so a line that came FROM the window is already tagged there; only a line
     // typed by this app or by a phone needs telling. `Live.draft` says why.
-    const whole = feedDraft(live.draft, data)
+    const whole = feedDraft(live.draft, data, {
+      backslashNewline: continuesOnBackslash(live.meta.agent)
+    })
     live.draft = whole.state
+    // `typeLine` ignores Enter, so the `\` Claude Code just turned into a line break is still
+    // on the end of `typed`, and the words asked would read "one \two".
+    if (whole.continued && live.typed.endsWith('\\')) live.typed = live.typed.slice(0, -1) + '\n'
     // A CLI owns its composer. An automatic stop cannot recover a typed line, so a known
     // draft and an edited line we cannot faithfully reconstruct both refuse it.
     const drafting = !whole.state.certain || whole.state.text.trim().length > 0
@@ -1998,7 +2003,10 @@ export class SessionManager extends EventEmitter {
     // Submitting is what starts the clock. The pane's busy footer confirms it a
     // moment later, but a turn that is still drawing its first frame is already
     // running, and starting here is what makes the readout mean "since I asked".
-    const submitted = data.includes('\r') || data.includes('\n')
+    // Except the Enter after a typed `\` in Claude Code: that is a new line in the box,
+    // and a line still in the box has not started anything.
+    const submitted =
+      (data.includes('\r') || data.includes('\n')) && !(whole.continued && !whole.submitted.length)
     // Did this keystroke throw the conversation away? `/clear` is the one command that
     // puts a pane back to the state a brand new one is in - nothing has been asked of it
     // and there is nothing waiting to be read - which is the ONLY thing "Ready" is meant
