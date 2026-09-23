@@ -1713,6 +1713,30 @@ export class SessionManager extends EventEmitter {
     this.queuePrompt(id, text)
   }
 
+  /**
+   * Empty the composer and send `text` in place of what was typed - the expand card's
+   * "Send full brief" (`shared/promptExpand.ts`).
+   *
+   * Not the window writing the erase and then calling `sendPrompt`, which is what shipped
+   * first and never sent anything: this file's record of the typed line (`typeLine`) keeps
+   * slashTurn's rule that Ctrl-U does NOT empty a line, so after the erase it still held the
+   * whole 335-character ask, `queuedPromptDecision` read that as a person mid-draft, and the
+   * brief sat queued behind nobody (measured in a dev copy: accepted, still untyped 65s
+   * later, the box on screen empty). The erase is written here as the app's own bytes - not
+   * a person's key, so it does not move `lastKeyboard` - and the records of the box are
+   * reset the way a restarted process resets them, because the box IS empty now.
+   */
+  replaceDraft(id: string, wipe: string, text: string): void {
+    const live = this.sessions.get(id)
+    if (!live || !live.proc || !text) return
+    this.write(id, wipe, 'app')
+    live.typed = ''
+    live.submitLine = newSubmitLine()
+    live.draft = newDraft()
+    live.meta.drafting = undefined
+    this.queuePrompt(id, text)
+  }
+
   /** A native receipt may say queued only after the real recovery ledger is saved. */
   sendNativePrompt(id: string, text: string): boolean {
     const live = this.sessions.get(id)

@@ -20,6 +20,8 @@ const feedInput = data => feeds.push(data)
 const install = new Function('t','api','pinned','setScrolledUp','feedInput','isTerminalReply', `
  const sessionId = 'source', handoverRef = {current:0}, asleepRef = {current:false};
  const syncedPanes = new Set(['source','peer']), paneFeed = new Map([['peer',feedInput]]);
+ // The expand card's gate (a long prompt's held Enter) is its own suite's; here it holds nothing.
+ const holdForExpand = () => false, startExpandEarly = () => {};
  let keyboardData = null;
  ${callback}
  return key => { keyboardData = key; t.input(key, true); };

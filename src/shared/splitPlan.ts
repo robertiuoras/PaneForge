@@ -125,17 +125,22 @@ export function splitInstruction(
 }
 
 /**
- * The first balanced `{...}` in a model's answer, or null. Fences and prose survive it.
+ * The first balanced `{...}` in a model's answer that carries `"<key>":`, or null. Fences
+ * and prose survive it.
  *
  * Every `{` is tried, not only the first one: a CLI that writes `the shape is {tasks: ...}`
  * in a sentence before printing the real object left the scan chasing a brace that never
  * closes, and the whole plan was reported as "not a plan". Measured against a live
  * `claude -p` answer, which is why it is written this way rather than `indexOf('{')`.
+ *
+ * Generalised past `splitPlan`'s own `"tasks"` so `shared/promptExpand.ts` can ask for
+ * `"goal"` with the same scan rather than a second copy of it.
  */
-function firstObject(raw: string): string | null {
+export function firstObjectWith(raw: string, key: string): string | null {
+  const named = new RegExp(`"${key}"\\s*:`)
   for (let from = raw.indexOf('{'); from >= 0; from = raw.indexOf('{', from + 1)) {
     const found = balancedAt(raw, from)
-    if (found && /"tasks"\s*:/.test(found)) return found
+    if (found && named.test(found)) return found
   }
   return null
 }
@@ -174,7 +179,7 @@ function str(v: unknown): string {
  * a real answer and must never share a shape with "the model printed an apology".
  */
 export function parseSplit(raw: string, max = MAX_TASKS): SplitPlan | null {
-  const body = firstObject(raw)
+  const body = firstObjectWith(raw, 'tasks')
   if (!body) return null
   let data: unknown
   try {

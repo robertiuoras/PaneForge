@@ -279,6 +279,7 @@
     "test:funnel": "node scripts/funnel-test.mjs",
     "test:gist": "node scripts/gist-test.mjs",
     "test:splitplan": "node scripts/split-plan-test.mjs",
+    "test:promptexpand": "node scripts/promptexpand-test.mjs",
     "test:elapsed": "node scripts/elapsed-test.mjs",
     "test:usage": "node scripts/usage-test.mjs",
     "test:lanepeers": "node scripts/lane-peers-test.mjs",

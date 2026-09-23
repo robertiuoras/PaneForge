@@ -647,6 +647,7 @@ ok(!server.running, 'the gate test server stopped cleanly')
   ok(gated.has('phone:tunnel') && gated.has('remote:pair'), 'the ways in are gated')
   ok(gated.has('clipboard:read') && gated.has('history:delete'), 'exfil and deletion are gated')
   ok(gated.has('prompt:split'), 'reading a long ask starts an agent here, so it is gated')
+  ok(gated.has('prompt:expand'), 'showing a fuller brief starts an agent here too, so it is gated the same way')
 
   // Reviewed 2026-08-16: reads, watches, and the state a phone needs to draw a screen.
   // `board:tasks`/`board:memory` write, but only to the board's own notes - they cannot
@@ -786,7 +787,7 @@ ok(!server.running, 'the gate test server stopped cleanly')
     'sessions:reorder', 'sessions:attention-clear', 'pty:resize', 'pty:return', 'pty:take', 'pty:visible',
     'pty:redraw', 'sessions:busy', 'clipboard:write', 'recents:edit', 'recents:copy',
     
-    'prompt:used', 'improve:cancel', 'research:cancel', 'improve:record', 'sessions:bell',
+    'prompt:used', 'prompt:expandChose', 'improve:cancel', 'research:cancel', 'improve:record', 'sessions:bell',
     // Reviewed 2026-08-25: one line in this desk's own reclaim log saying why a pane was
     // or was not closed. It starts nothing and answers nothing - the worst a phone reaches
     // is a bigger log file.
