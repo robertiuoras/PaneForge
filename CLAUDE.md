@@ -656,10 +656,10 @@ Dev server travels (`test:devservers`): tree OR repo-path command ->
 script name, rebuilt from receiver lockfile, never argv; `SCRIPT_NAME`; ambiguous dropped;
 only `DEV_SCRIPT` (`dev|start|serve|watch|preview[:x]`).
 
-Turn rung `turnsPlan` (3 turns here, verdict not `ok`, past `keepLocal`, `queueable`): same countdown,
-dearest first, ONE per sweep. Mac verdict adds `compressorLevel`. Stray `next dev` = `PaneUsage.devMb`
-in `paneCost`. Dirty same-named checkout -> `landingCopy` picks a clean free lane copy.
-`overlap()` reads `origin/lane-*`.
+Turn rung `turnsPlan` (3 turns here, not `ok`, past `keepLocal`, `queueable`): same countdown,
+dearest first, ONE per sweep. Verdict adds `compressorLevel`, stray `next dev` `PaneUsage.devMb`
+in `paneCost`, dirty same-name copy -> `landingCopy` takes a clean free one. `overlap()` reads
+`origin/lane-*`.
 
 ## What Windows loses between restarts
 
