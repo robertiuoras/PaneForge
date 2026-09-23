@@ -1263,6 +1263,10 @@ manager.on('armclear', (id: string) => {
   noteActivity(activityEntry('cleared', manager.list().find((x) => x.id === id)?.title ?? 'a pane', 'it was out of context, and its handoff said there was work left'))
 })
 manager.on('handover', (id: string, until: number) => send('pane:handover', id, until))
+// A Claude Code pane's first ask suggested a lighter or stronger model - `sessions:` also
+// carries this on every broadcast (`meta.modelAdvice`), but a card that only ever showed
+// up on the NEXT full sessions list would arrive a tick late next to the ask it is about.
+manager.on('modelAdvice', (id: string, advice: Session['modelAdvice']) => send('model:advice', { id, ...advice }))
 remote.on('reset', (id: string, snapshot?: string) => {
   pump.flushOne(id)
   send('pane:reset', id, snapshot ?? remote.buffer(id))
@@ -2098,6 +2102,12 @@ ipcMain.handle('sessions:closeWhenDone', (_e, id: string, reportTo?: string) =>
 // pane acts on it at its next turn boundary. See `shared/effort.ts`.
 ipcMain.handle('sessions:setEffort', (_e, id: string, choice: EffortChoice) =>
   manager.setEffort(id, choice)
+)
+// A model/effort suggestion on a Claude Code pane's first ask - `shared/modelAdvice.ts`.
+// `Switch` types `/model` and `/effort` at the next idle composer; `Keep` (or letting the
+// card go idle, or the pane's next ask) just clears it. Nothing types on its own.
+ipcMain.handle('model:adviceAnswer', (_e, id: string, doSwitch: boolean) =>
+  manager.answerModelAdvice(id, !!doSwitch)
 )
 ipcMain.handle('sessions:kill', (_e, id: string) => {
   if (screenViews.owns(id)) {

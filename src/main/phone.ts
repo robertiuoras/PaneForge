@@ -223,6 +223,11 @@ const GATED_INVOKE = new Set([
   // somebody's weekly limit per turn, which is nobody's decision to make through a stolen
   // cookie.
   'sessions:setEffort',
+  // Same class again, one line down: `Switch` on the model-advice card ends in `/model`
+  // and `/effort` typed into that pane at its next idle composer. `Keep` costs nothing a
+  // stolen cookie could want, but this channel answers both buttons, so it is gated
+  // rather than split into a gated and an ungated twin.
+  'model:adviceAnswer',
   // Typing, on a delay. `autoclear:ask` ends in `/clear` plus a prompt typed into a pane
   // unless somebody at the desk stops it, and `autoclear:answer` with 'now' skips even
   // that wait - so both are the same class as `pty:write`, not a lesser one.

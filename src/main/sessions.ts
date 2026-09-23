@@ -96,7 +96,9 @@ import {
 import { rolloutTurn } from './effort'
 import type { EffortChoice, PaneEffort } from '../shared/types'
 import { codexLadders } from './effortLevels'
-import { logEffort } from './activationLog'
+import { logEffort, logModelAdvice } from './activationLog'
+import { judgeModelAdvice } from '../shared/modelAdvice'
+import { catalogueIdFor, currentEffortLevel } from './modelAdvice'
 import { codexTranscriptPath } from './transcripts'
 import { endHookDeny, feedHookDeny } from './hookDeny'
 import { continueAfterRestore, restoredClock } from '../shared/restoreTurn'
@@ -1773,6 +1775,55 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
+   * A Claude Code pane's first ask, scored against the model and effort it is already
+   * on. Never holds the write - the ask goes through unchanged, this only reads it and,
+   * if the rule found something worth saying, sets the card and tells the desk.
+   */
+  private adviseModel(live: Live, prompt: string): void {
+    if (live.meta.agent !== 'claude' || getConfig().modelAdvice === false) return
+    const fromModel = live.meta.model || getConfig().defaultModels?.claude || 'claude-sonnet-5'
+    const fromEffort = currentEffortLevel()
+    const advice = judgeModelAdvice({ prompt, model: fromModel, effort: fromEffort })
+    if (!advice) {
+      logModelAdvice({ id: live.meta.id, from: { model: fromModel, effort: fromEffort }, refused: 'no signal' })
+      return
+    }
+    const toModel = advice.to.family ? catalogueIdFor(advice.to.family) : fromModel
+    live.meta.modelAdvice = {
+      tier: advice.tier,
+      to: { family: advice.to.family, model: toModel, effort: advice.to.effort },
+      from: { model: fromModel, effort: fromEffort },
+      askedAt: Date.now()
+    }
+    logModelAdvice({
+      id: live.meta.id,
+      tier: advice.tier,
+      reason: advice.reason,
+      from: { model: fromModel, effort: fromEffort },
+      to: { model: toModel, effort: advice.to.effort }
+    })
+    this.emit('modelAdvice', live.meta.id, live.meta.modelAdvice)
+    this.emitSessions()
+  }
+
+  /**
+   * `Switch` types the two CLI commands that carry it out; `Keep` (or the card going idle,
+   * or the pane's next ask) just clears the card. Either way it lands on an idle
+   * composer, the same as every other queued prompt - see `queuePrompt`'s own contract.
+   */
+  answerModelAdvice(id: string, doSwitch: boolean): void {
+    const live = this.sessions.get(id)
+    const advice = live?.meta.modelAdvice
+    if (!live || !advice) return
+    live.meta.modelAdvice = undefined
+    logModelAdvice({ id, answered: doSwitch ? 'switch' : 'keep', to: advice.to })
+    this.emitSessions()
+    if (!doSwitch) return
+    if (advice.to.model !== advice.from.model) this.sendPrompt(id, `/model ${advice.to.model}`)
+    if (advice.to.effort !== advice.from.effort) this.sendPrompt(id, `/effort ${advice.to.effort}`)
+  }
+
+  /**
    * The turn boundary, and the only place this feature ever types.
    *
    * Answers true when it has TAKEN the write over - the prompt is held for as long as the
@@ -1942,6 +1993,10 @@ export class SessionManager extends EventEmitter {
     const asked = submitted ? live.typed : ''
     if (submitted) {
       live.meta.lastKeyboard = Date.now()
+      // A card left over from the pane's FIRST ask has nothing to say about this one -
+      // it leaves the moment the next turn boundary arrives, whether it was pressed or
+      // not. `adviseModel` a few lines down may set a fresh one for THIS turn.
+      if (live.meta.modelAdvice) live.meta.modelAdvice = undefined
       // A person sending a line owns the pane, so an armed countdown stands down for it -
       // and an `app` write never does. `standDownFor` is the whole decision; without it
       // this app's own queued prompt cancelled the clear and the log blamed the person.
@@ -1950,6 +2005,11 @@ export class SessionManager extends EventEmitter {
       const slash = isSlashCommand(live.typed)
       cleared = slash && clearsConversation(live.typed)
       bare = !slash && isBareReturn(live.submitLine)
+      // The FIRST ask of a fresh conversation, and only that one: `engaged` is read here,
+      // before the block below ever sets it, which is the one moment "nothing has been
+      // asked of this pane yet" is still true. A slash command and a bare return are
+      // never an ask at all, so neither reaches this.
+      if (!slash && !bare && !live.meta.engaged) this.adviseModel(live, live.typed)
       // A7: how often a person had to step in. Counted here because this is the one place
       // that knows all four readings at once - who did it, whether anything was sent,
       // whether the pane was holding a question, and whether a turn was running.

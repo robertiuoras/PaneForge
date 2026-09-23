@@ -106,13 +106,17 @@ export function ladderFromModelList(payload: unknown, model: string): string[] |
   return out.length ? out : undefined
 }
 
-const CONTINUATION =
+// Exported for `shared/modelAdvice.ts`, which reuses these exact lists rather than
+// keeping a second opinion of "hard" and "small" beside them - see that file's header.
+// Nothing here changes: the export is the only difference, so this suite's own results
+// are the proof that reusing them cost Codex nothing.
+export const CONTINUATION =
   /^(continue|go on|carry on|proceed|next|yes|ok|okay|do it|same again|keep going)$/
 
 const RESOLVED = /\b(works now|fixed|all good|passing|that's it|thats it|thanks|done)\b/
 
 /** Word-boundary signals that a problem is hard, and the plain words for each group. */
-const HIGH: Array<[RegExp, string]> = [
+export const HIGH: Array<[RegExp, string]> = [
   [/\b(security|auth|token|secret|credential|permission|vulnerab\w*|injection)\b/, 'security-sensitive'],
   [
     /\b(why|diagnos\w*|investigat\w*|root cause|debug\w*|flaky|intermittent|race|deadlock|regression|crash\w*|hang\w*|leak\w*)\b/,
@@ -125,11 +129,11 @@ const HIGH: Array<[RegExp, string]> = [
   [/\b(migrat\w*|architect\w*|trade-?offs?|design decision|refactor across)\b/, 'a difficult tradeoff']
 ]
 
-const LOW =
+export const LOW =
   /\b(rename|typo|format|lint|indent|comment|what is|where is|show me|list|find|grep|print|read|open|explain this line|bump|add import|remove unused|wording|label)\b/
 
 /** The longest an ask can be and still be a lookup. Past this it is work. */
-const LOW_MAX_CHARS = 160
+export const LOW_MAX_CHARS = 160
 
 function highReason(text: string, failures?: number): string | undefined {
   if ((failures ?? 0) >= 2) return 'repeated failed attempts'

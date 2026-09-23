@@ -88,6 +88,15 @@ export function logEffort(entry: Record<string, unknown>): void {
   write('effort.log', entry)
 }
 
+/**
+ * One line per model-advice decision on a Claude Code pane's first ask - what it was
+ * running, what was suggested and why, or that nothing was suggested and why not. Never
+ * the prompt text itself: this is a log about the DECISION, not a transcript.
+ */
+export function logModelAdvice(entry: Record<string, unknown>): void {
+  write('model-advice.log', entry)
+}
+
 export function logActivation(entry: Record<string, unknown>): void {
   write('activation.log', entry)
 }

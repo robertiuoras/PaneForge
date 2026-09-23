@@ -816,6 +816,12 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                   hint="A pane whose last reply is done - no question, nothing left running, no step an agent could take next - closes itself after three minutes of nobody looking at it. What it was asked and what it did go to Review, where Reopen brings the same conversation back. A pane you are looking at, one with a draft or a question, one running something in the background, and a shell are never touched. Steps only you can do become GuardDeck to-dos."
                 />
                 <Switch
+                  checked={config.modelAdvice !== false}
+                  onChange={(v) => onChange({ modelAdvice: v })}
+                  label="Suggest a lighter or stronger model for a new chat's first ask"
+                  hint="Only the very first thing you type into a fresh Claude Code chat, before anything has been asked of it. A quick lookup or a small edit gets offered a lower effort, or a cheaper model when the ask is really just a question; a hard, multi-file or repeated-failure ask gets offered a stronger one. It only ever suggests - nothing switches until you press Switch, and it never says anything mid-conversation, where a model change would resend the whole chat."
+                />
+                <Switch
                   checked={config.autoAnswer?.enabled === true}
                   onChange={(v) =>
                     onChange({

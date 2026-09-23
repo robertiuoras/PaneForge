@@ -132,6 +132,9 @@ export const SURFACE: Surface = {
   onLaneMoved: ['on', 'lane:moved'],
   onHandoffMoved: ['on', 'handoff:moved'],
   onOffloadSoon: ['on', 'offload:soon'],
+  /** A Claude Code pane's first ask reads lighter or harder than its model/effort. */
+  onModelAdvice: ['on', 'model:advice'],
+  answerModelAdvice: ['invoke', 'model:adviceAnswer'],
   /** Cmd-Q with panes still working: the card, and its answer. */
   onQuitAsk: ['on', 'app:quitAsk'],
   answerQuit: ['invoke', 'app:quitAnswer'],

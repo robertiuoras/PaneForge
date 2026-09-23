@@ -110,6 +110,7 @@ const TESTS = [
   ['panemodel', 'panemodel-test.mjs'],
   ['startmodel', 'start-model-test.mjs'],
   ['effort', 'effort-test.mjs'],
+  ['modeladvice', 'model-advice-test.mjs'],
   ['staleframe', 'stale-frame-test.mjs'],
   ['wakescreen', 'wakescreen-test.mjs'],
   ['cloudwork', 'cloud-work-test.mjs'],
