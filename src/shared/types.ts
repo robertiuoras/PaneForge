@@ -2773,6 +2773,10 @@ export interface Api {
 
   /** hosting, pairings, discovered devices and who is connected right now */
   remoteState(): Promise<RemoteState>
+  /** Can this machine show the other one's screen, and what the button should say. */
+  screenCan(): Promise<{ ok: boolean; title: string }>
+  /** Start the viewer (Moonlight) on the paired machine - see src/shared/screenView.ts. */
+  openScreen(): void
   /** start or stop answering other devices */
   setRemoteHost(on: boolean): Promise<RemoteState>
   /** move the listener; returns the state with the error if the port is taken */

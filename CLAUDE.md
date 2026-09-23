@@ -28,20 +28,15 @@ there, PreToolUse refuses elsewhere. `node scripts/lane.mjs status --repo <dir>`
 - Shipped once `landedOnOrigin` proves it; failed lane out of `lastShip.lanes`.
   `state.passed[id]`.
 - ONE PANE, ONE LANE: a claim drops other holds with the same `PF_PANE`; no pane id = kept.
-- Trunk = `.lanes.json` `branch`, else origin/HEAD, else main/master, NEVER the root's checkout
-  (`trunkName`). Root off trunk: `trunkHome` moves it back (clean, ff, `merge lane` merges on
-  it, no file changes) or ship refuses, lanes stay ready, doctor `MAIN FOLDER` (`test:lanetrunk`).
-- `sweep [--dry-run]`: removes a copy ONLY when `unmergedWork` is null (0 ahead of
-  `origin/<trunk>`, `status --porcelain` empty) - any work = kept forever. Lane folder at once,
-  other checkout 3d idle; kept for ledger/any `pf list` row incl. exited/process cwd/locked/
-  nested. Started by `ready`/`release`/`ship`, `retry` every 6h (`.git/paneforge-sweep-at`), the
-  app on pane end/6h (`sweepCopies`, no git in main); one at a time (`paneforge-sweep.lock`).
-  Ignored files archived `~/.local/share/worktree-archive`, origin proof, last-moment recheck;
-  `state.swept` -> doctor `CLEANED UP` (`test:lanesweepfolders`).
-- Sidebar never lists copies (`copiesNotice`, `laneWords.ts`): one line per project only for
-  a clash no chat took (`Fix it`) or finished work held `WAITING_TOO_LONG_MS` 6h (`test:laneplain`).
-- Lane hooks install only from the installed app (`installLaneHooks(stable)`); a dev/try copy
-  pointed every hook at `PaneForge-d` (`test:lanehooks`).
+- Trunk = `.lanes.json` `branch`, else origin/HEAD, else main/master, never the root's
+  checkout (`trunkName`); `trunkHome` moves a parked root back or ship refuses (`test:lanetrunk`).
+- `sweep [--dry-run]` removes a copy ONLY when `unmergedWork` is null (0 ahead of
+  `origin/<trunk>`, clean); any work = kept forever. Lane folder at once, other 3d idle,
+  none in use. Run by `ready`/`release`/`retry` 6h and the app
+  (`sweepCopies`); `paneforge-sweep.lock`; doctor `CLEANED UP` (`test:lanesweepfolders`).
+- Sidebar lists no copies; `copiesNotice` draws one line only for an untaken clash or work
+  held 6h (`test:laneplain`).
+- Lane hooks install only from the installed app (`installLaneHooks(stable)`, `test:lanehooks`).
 - Roster asks `status --held` (`test:lanes`). First edit of a file another lane changed is
   told with line ranges (`guard` exits 0 with text); same region: message that chat first
   (`test:laneoverlap`).
@@ -587,6 +582,17 @@ unknown/ambiguous/finished/no title/no backlog/`--task`+`--prompt`.
 `interventions.log`, one `SessionInfo.tsx` line (`test:interventions`). `app` writes never
 count (`choose()` -> `write()`, auto-answer `'app'`); unsent typing is nothing.
 `docs/agentic-backlog-2026-09-02.md`.
+
+## The other machine's screen is one click away
+
+Quick button beside Review (`shared/screenView.ts`, `main/screenView.ts`; `test:screenview`):
+starts Moonlight `stream <peer address> Desktop` at the paired peer (online first, else
+first). Drawn only with a viewer AND a peer (`screenCan`); refusals toast via `app:error`;
+one viewer at a time (a second `stream` makes Sunshine refuse); `screen-view.log`;
+`screen:*` are `DESK_ONLY`. Title names the MACHINE, never the protocol. Moonlight not
+Windows App: RDP lagged and its disconnect detaches the console, which breaks every capture
+(2026-09-06). Native in-app stream (WebRTC, zoom/pinch ours) designed in
+`docs/superpowers/specs/2026-09-23-pc-screen-design.md`, not built.
 
 ## Checks
 

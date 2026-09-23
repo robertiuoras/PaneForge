@@ -138,6 +138,7 @@ const TESTS = [
   ['cliclaim', 'transcript-cli-claim-test.mjs'],
   ['clearclaim', 'transcript-clear-test.mjs'],
   ['quitwords', 'quit-words-test.mjs'],
+  ['screenview', 'screen-view-test.mjs'],
   ['rendercost', 'rendercost-test.mjs'],
   ['reclaim', 'reclaim-test.mjs'],
   ['sleepreason', 'sleep-reason-test.mjs'],
