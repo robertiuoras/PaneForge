@@ -84,10 +84,36 @@ export function nextResize(i: {
   }
   const w = i.want
   if (!w || !(w.cols > 0) || !(w.rows > 0)) return { do: 'none' }
-  if (w.cols === i.have.cols && w.rows === i.have.rows) return { do: 'none' }
+  // The terminal already fits its box - but the pty may not be at that grid. A shrink ask
+  // whose box grew back before the grant lands here: the terminal never moved, so the fit
+  // that follows changes nothing and nothing re-tells the pty. See `ptyOwed` below.
+  if (w.cols === i.have.cols && w.rows === i.have.rows) return ptyOwed(i.have, i.pty) ? { do: 'fit' } : { do: 'none' }
   // Only COLUMNS decide the direction. Rows cannot clamp a column move, and taking rows
   // away is what a phone keyboard does on every tap - making that wait would move the
   // screen under somebody who is typing.
   if (w.cols < i.have.cols) return { do: 'ask', cols: w.cols, rows: w.rows }
   return { do: 'fit' }
+}
+
+/** main/sessions.ts `resize` floors every grid at these, so a terminal under them still matches. */
+const MIN_COLS = 20
+const MIN_ROWS = 5
+
+/**
+ * Whether the pty is owed this terminal's grid - it is confirmed at some OTHER shape.
+ *
+ * The renderer used to tell the pty only when the TERMINAL changed shape. That misses the
+ * one move where it does not: a shrink asks the pty first and leaves the terminal alone
+ * (`nextResize` 'ask'), and when the box grows back before the grant - a layout flashing a
+ * tile small for a frame - the fit that follows finds the terminal already right, reports
+ * nothing, and the pty stays at the transient grid for good. Measured 2026-09-23 on the
+ * live desk: s15-mudr1l7h's pty at 29x16 with `borrowed: false` under a 130x55 terminal,
+ * `sinceResizeMs: null` in fix.log (the terminal never changed shape), and Claude Code's
+ * frame wrapped at 29 columns across the whole pane until the app was touched.
+ *
+ * `pty` null is "nobody has said", which owes nothing: a mirror, or a pane not yet listed.
+ */
+export function ptyOwed(have: Grid, pty: Grid | null): boolean {
+  if (!pty || !(pty.cols > 0) || !(pty.rows > 0)) return false
+  return pty.cols !== Math.max(have.cols, MIN_COLS) || pty.rows !== Math.max(have.rows, MIN_ROWS)
 }

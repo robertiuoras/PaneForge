@@ -310,6 +310,7 @@ const TESTS = [
   ['nativeauthlimits', 'native-auth-limits-test.mjs'],
   ['nativetranscript', 'native-transcript-test.mjs'],
   ['panesize', 'pane-size-test.mjs'],
+  ['shrinkfirst', 'shrink-first-test.mjs'],
   ['borrowask', 'borrowask-test.mjs'],
   ['linkstate', 'link-state-test.mjs'],
   ['tunnel', 'tunnel-test.mjs'],
