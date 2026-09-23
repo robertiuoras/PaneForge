@@ -26,16 +26,22 @@ there, PreToolUse refuses elsewhere. `node scripts/lane.mjs status --repo <dir>`
   "release": "merge", "pool": ["main","a"] }`. No-remote repos, `claude-memory`: no lanes.
   Never leave one conflicted.
 - Shipped once `landedOnOrigin` proves it; failed lane out of `lastShip.lanes`.
-  `state.passed[id]`; empty kept `SWEEP_GRACE_MS` 24h.
+  `state.passed[id]`.
 - ONE PANE, ONE LANE: a claim drops other holds with the same `PF_PANE`; no pane id = kept.
 - Trunk = `.lanes.json` `branch`, else origin/HEAD, else main/master, NEVER the root's checkout
   (`trunkName`). Root off trunk: `trunkHome` moves it back (clean, ff, `merge lane` merges on
   it, no file changes) or ship refuses, lanes stay ready, doctor `MAIN FOLDER` (`test:lanetrunk`).
-- `sweep [--dry-run]`: `retry` starts it detached every 6h (stamp `.git/paneforge-sweep-at`, first
-  sight only starts it). Lane folder 6h idle, other checkout 3d; kept for ledger/any `pf list`
-  row incl. exited/process cwd/locked/nested. Push, `wip/<folder>-<date>` snapshot, archive
-  `~/.local/share/worktree-archive`, origin proof, last-moment recheck; `state.swept` ->
-  doctor `CLEANED UP` (`test:lanesweepfolders`).
+- `sweep [--dry-run]`: removes a copy ONLY when `unmergedWork` is null (0 ahead of
+  `origin/<trunk>`, `status --porcelain` empty) - any work = kept forever. Lane folder at once,
+  other checkout 3d idle; kept for ledger/any `pf list` row incl. exited/process cwd/locked/
+  nested. Started by `ready`/`release`/`ship`, `retry` every 6h (`.git/paneforge-sweep-at`), the
+  app on pane end/6h (`sweepCopies`, no git in main); one at a time (`paneforge-sweep.lock`).
+  Ignored files archived `~/.local/share/worktree-archive`, origin proof, last-moment recheck;
+  `state.swept` -> doctor `CLEANED UP` (`test:lanesweepfolders`).
+- Sidebar never lists copies (`copiesNotice`, `laneWords.ts`): one line per project only for
+  a clash no chat took (`Fix it`) or finished work held `WAITING_TOO_LONG_MS` 6h (`test:laneplain`).
+- Lane hooks install only from the installed app (`installLaneHooks(stable)`); a dev/try copy
+  pointed every hook at `PaneForge-d` (`test:lanehooks`).
 - Roster asks `status --held` (`test:lanes`). First edit of a file another lane changed is
   told with line ranges (`guard` exits 0 with text); same region: message that chat first
   (`test:laneoverlap`).

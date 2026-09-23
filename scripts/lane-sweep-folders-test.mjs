@@ -50,7 +50,7 @@ git(root, 'init', '-q', '--bare', '-b', 'master', origin)
 mkdirSync(join(repo, 'scripts'), { recursive: true })
 writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'demo', version: '0.0.1' }, null, 2) + '\n')
 writeFileSync(join(repo, '.gitignore'), '.env\nnode_modules\n.next\n')
-writeFileSync(join(repo, '.lanes.json'), JSON.stringify({ pool: ['main', 'c', 'd', 'e', 'f', 'g', 'h'], release: 'merge' }, null, 2) + '\n')
+writeFileSync(join(repo, '.lanes.json'), JSON.stringify({ pool: ['main', 'c', 'd', 'e', 'f', 'g', 'h', 'm', 'u', 'w'], release: 'merge' }, null, 2) + '\n')
 installLane(here, repo)
 git(repo, 'init', '-q', '-b', 'master')
 git(repo, 'config', 'user.email', 'test@example.com')
@@ -86,10 +86,25 @@ function age(dir, ms) {
 const HOUR = 60 * 60 * 1000
 const DAY = 24 * HOUR
 
-// c: an empty lane nobody has touched for 7h - the ordinary case, removed.
+// c: an empty lane nobody uses - the ordinary case, removed. It carries a copied .env
+// (ignored, archived) and dependencies (ignored, rebuilt, never archived).
 const laneC = addTree('demo-c', 'lane-c')
-// d: an empty lane touched an hour ago - kept.
+writeFileSync(join(laneC, '.env'), 'SECRET=copied\n')
+mkdirSync(join(laneC, 'node_modules', 'dep'), { recursive: true })
+writeFileSync(join(laneC, 'node_modules', 'dep', 'index.js'), 'dependency\n')
+// d: an empty lane touched a minute ago - removed too: no idle clock for a finished lane.
 const laneD = addTree('demo-d', 'lane-d')
+// m: a lane whose commit was merged into the project and pushed - finished, removed.
+const laneM = addTree('demo-m', 'lane-m')
+commit(laneM, 'merged.js', 'feat: merged back')
+git(repo, 'merge', '-q', '--ff-only', 'lane-m')
+git(repo, 'push', '-q', 'origin', 'master')
+// w: a lane with a commit the project does not have - NEVER removed, however old.
+const laneW = addTree('demo-w', 'lane-w')
+commit(laneW, 'work.js', 'feat: not merged')
+// u: a lane with only an unsaved new file - NEVER removed, however old.
+const laneU = addTree('demo-u', 'lane-u')
+writeFileSync(join(laneU, 'draft.md'), 'half-written\n')
 // e: old, but a PaneForge pane (an asleep one) is open in it - kept.
 const laneE = addTree('demo-e', 'lane-e')
 // f: old, but the ledger says a chat holds it - kept.
@@ -99,8 +114,7 @@ const laneF = addTree('demo-f', 'lane-f')
 const posix = process.platform !== 'win32'
 const laneG = posix ? addTree('demo-g', 'lane-g') : null
 // A hand-made checkout of a feature branch, four days idle, carrying everything that can be
-// lost: a commit origin lacks, an unsaved edit, an untracked file, an ignored .env - and
-// dependencies and build output that must NOT be archived.
+// lost: a commit origin lacks, an unsaved edit, an untracked file, an ignored .env - kept.
 const feature = addTree('demo-feature', 'feat/x')
 commit(feature, 'feature.js', 'feat: only in this folder')
 writeFileSync(join(feature, 'feature.js'), 'edited but never committed\n')
@@ -116,8 +130,9 @@ const young = addTree('demo-young', 'feat/young')
 const locked = addTree('demo-locked', 'feat/locked')
 git(repo, 'worktree', 'lock', locked)
 
-for (const d of [laneC, laneE, laneF, laneG].filter(Boolean)) age(d, 7 * HOUR)
-age(laneD, 1 * HOUR)
+for (const d of [laneC, laneE, laneF, laneG, laneM].filter(Boolean)) age(d, 7 * HOUR)
+for (const d of [laneW, laneU]) age(d, 30 * DAY)
+age(laneD, 60 * 1000)
 age(feature, 4 * DAY)
 age(young, 1 * DAY)
 age(locked, 4 * DAY)
@@ -159,16 +174,32 @@ try {
 
   // ------------------------------------------------------------ dry run
   const dry = lane({}, 'sweep', '--dry-run')
-  ok('dry run names the idle lane', /Would remove demo-c\b/.test(dry), dry)
-  ok('dry run names the idle feature folder', /Would remove demo-feature\b/.test(dry), dry)
-  ok('dry run removes nothing', existsSync(laneC) && existsSync(feature))
+  ok('dry run names the finished lane', /Would remove demo-c\b/.test(dry), dry)
+  ok('dry run keeps the feature folder with work in it', /Keeping demo-feature: it has 1 saved change not in the main copy/.test(dry), dry)
+  ok('dry run removes nothing', existsSync(laneC) && existsSync(laneD))
+
+  // ------------------------------------------------------------ one sweep at a time
+  const lockFile = join(repo, '.git', 'paneforge-sweep.lock')
+  writeFileSync(lockFile, `${process.pid} ${Date.now()}\n`)
+  const locked2 = lane({}, 'sweep')
+  ok('a live sweep holding the lock stops a second one', /another sweep/.test(locked2) && existsSync(laneC), locked2)
+  writeFileSync(lockFile, `999999 ${Date.now()}\n`)
+  const stale = lane({}, 'sweep', '--dry-run')
+  ok('a dry run ignores the lock', /Would remove demo-c\b/.test(stale), stale)
+  rmSync(lockFile, { force: true })
 
   // ------------------------------------------------------------ the real sweep
   const said = lane({}, 'sweep')
-  ok('the idle lane folder is gone', !existsSync(laneC), said)
+  ok('the finished lane folder is gone', !existsSync(laneC), said)
   ok('its branch is kept', Boolean(git(repo, 'branch', '--list', 'lane-c')))
-  ok('the feature folder is gone', !existsSync(feature), said)
-  ok('a lane used an hour ago stays', existsSync(laneD) && /Keeping demo-d: it was used/.test(said), said)
+  ok('a finished lane used a minute ago is gone too', !existsSync(laneD), said)
+  ok('a lane whose work was merged is gone', !existsSync(laneM), said)
+  ok('a lane with an unmerged commit stays, a month idle', existsSync(laneW) && /Keeping demo-w: it has 1 saved change not in the main copy yet/.test(said), said)
+  ok('its commit is still there', git(laneW, 'log', '-1', '--format=%s') === 'feat: not merged')
+  ok('a lane with an unsaved file stays, a month idle', existsSync(laneU) && existsSync(join(laneU, 'draft.md')) && /Keeping demo-u: it has 1 unsaved file/.test(said), said)
+  ok('the feature folder with work stays', existsSync(feature) && /Keeping demo-feature: it has 1 saved change/.test(said), said)
+  ok('...with its unsaved edit untouched', readFileSync(join(feature, 'feature.js'), 'utf8') === 'edited but never committed\n')
+  ok('nothing of it was pushed', !git(origin, 'for-each-ref', '--format=%(refname:short)', 'refs/heads').split('\n').some((h) => h === 'feat/x' || h.startsWith('wip/')))
   ok('a lane with a pane open stays', existsSync(laneE) && /Keeping demo-e: a PaneForge pane is open/.test(said), said)
   ok('a lane a chat holds stays', existsSync(laneF) && /Keeping demo-f: a chat/.test(said), said)
   if (posix) ok('a lane a program runs in stays', existsSync(laneG) && /Keeping demo-g: a program is running/.test(said), said)
@@ -176,31 +207,19 @@ try {
   ok('a locked folder stays', existsSync(locked) && /Keeping demo-locked: somebody locked it/.test(said), said)
   ok('the main folder is never on the list', !/demo:|\bdemo \(/.test(said), said)
 
-  // Where the feature folder's work went.
-  const heads = git(origin, 'for-each-ref', '--format=%(refname:short)', 'refs/heads')
-  ok('its branch is on origin under its own name', heads.split('\n').includes('feat/x'), heads)
-  const wip = heads.split('\n').find((h) => h.startsWith('wip/demo-feature-'))
-  ok('its unsaved edit is on origin as a snapshot', Boolean(wip), heads)
-  if (wip) {
-    ok('the snapshot holds the edit', git(origin, 'show', `${wip}:feature.js`) === 'edited but never committed', git(origin, 'show', `${wip}:feature.js`))
-    ok('...and the untracked notes', git(origin, 'show', `${wip}:notes.md`) === 'untracked notes')
-    ok('...on top of the committed work', git(origin, 'log', '--format=%s', wip).includes('feat: only in this folder'))
-  }
   const archives = join(home, '.local', 'share', 'worktree-archive')
   const day = existsSync(archives) ? readdirSync(archives)[0] : null
-  const tgz = day ? join(archives, day, 'demo-feature.tgz') : ''
-  ok('an archive was written', Boolean(tgz) && existsSync(tgz) && statSync(tgz).size > 0, day)
+  const tgz = day ? join(archives, day, 'demo-c.tgz') : ''
+  ok('the finished lane\'s ignored files were archived', Boolean(tgz) && existsSync(tgz) && statSync(tgz).size > 0, day)
   if (tgz && existsSync(tgz)) {
     const inside = execFileSync('tar', ['-tzf', tgz], { encoding: 'utf8' })
-    ok('the archive holds the ignored .env', /(^|\n)(\.\/)?\.env\n/.test(inside), inside)
-    ok('...and the untracked notes', /notes\.md/.test(inside), inside)
-    ok('...and no dependencies or build output', !/node_modules|\.next/.test(inside), inside)
+    ok('the archive holds the copied .env', /(^|\r?\n)(\.\/)?\.env\r?\n/.test(inside), inside)
+    ok('...and no dependencies', !/node_modules/.test(inside), inside)
   }
-  ok('the report says where the work is', /Removed the demo-feature folder \(its work is on the server as feat\/x and wip\/demo-feature-/.test(said), said)
-  ok('the empty lane is reported as already saved', /Removed the demo-c folder \(everything in it was already on the server\)/.test(said), said)
+  ok('the finished lane is reported as already saved', /Removed the demo-c folder \(everything in it was already on the server; files git does not keep are in /.test(said), said)
 
   const doc = lane({}, 'doctor')
-  ok('doctor lists what was cleaned up', /CLEANED UP[\s\S]*Removed the demo-c folder[\s\S]*Removed the demo-feature folder/.test(doc), doc)
+  ok('doctor lists what was cleaned up', /CLEANED UP[\s\S]*Removed the demo-c folder/.test(doc), doc)
 
   // ------------------------------------------------------------ once is enough
   const again = lane({}, 'sweep')
@@ -209,6 +228,13 @@ try {
   // ------------------------------------------------------------ a removed lane comes back
   const claimed = lane({}, 'claim', '--session', 'newcomer', '--cwd', repo, '--prefer', 'c')
   ok('a chat can take the removed lane again', existsSync(laneC), claimed)
+
+  // ------------------------------------------------------------ a chat letting go
+  // SessionEnd runs `release`; the folder it held is finished, so it goes right after.
+  lane({}, 'release', '--session', 'someone')
+  const letGo = Date.now() + 60_000
+  while (existsSync(laneF) && Date.now() < letGo) execFileSync(process.execPath, ['-e', 'setTimeout(() => {}, 500)'])
+  ok('a finished lane goes once its chat lets go', !existsSync(laneF), lane({}, 'doctor'))
 
   // ------------------------------------------------------------ the clock
   // `retry` (the app's timer, lane-cron on the PC) starts the sweep every six hours.

@@ -310,7 +310,7 @@ export function ledgerRepos(panes: LanePane[], roots = projectRoots()): string[]
  * Deliberately no `git` here: this runs on a poll, and the module's whole cost story is
  * that it reads a file and spawns nothing.
  */
-function mainCheckout(dir: string): string | null {
+export function mainCheckout(dir: string): string | null {
   let at = resolve(dir)
   for (;;) {
     const dot = join(at, '.git')

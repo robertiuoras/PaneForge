@@ -1,8 +1,9 @@
 // ensureLaneFolder(): a lane the sweep reclaimed is rebuilt before a session is spawned
 // into it.
 //
-// The bug this pins down had no error message of its own. sweepLanes() removes a lane that
-// is merged, empty and unheld, which is correct. A pane restored after the app was closed
+// The bug this pins down had no error message of its own. The copy sweep (scripts/lane.mjs
+// sweep) removes a lane that is merged, empty and unheld, which is correct. A pane restored
+// after the app was closed
 // still remembers that folder as its cwd, and Claude Code spawns every hook with the
 // session's cwd - so a cwd that is not there fails all of them at once with
 // `posix_spawn '/bin/sh'` ENOENT, the lane hook included, which is the one thing that would
@@ -86,7 +87,7 @@ function fixture(name) {
 
 {
   const { repo, lane } = fixture('swept')
-  // Exactly what sweepLanes() does to a lane holding nothing.
+  // Exactly what the copy sweep (scripts/lane.mjs sweep) does to a lane holding nothing.
   git(repo, ['worktree', 'remove', lane])
   check('precondition: the sweep removed the lane folder', !existsSync(lane))
 

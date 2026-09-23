@@ -71,10 +71,8 @@ import { diffFiles, diffPatch } from './diff'
 import { withDefaultModel } from '../shared/startModel'
 import type { ClientNamed, DiffScope, EffortChoice, PhoneState , LaneBoard} from '../shared/types'
 import { detectLane, laneExtras, resolveLane } from './lanes'
-import { inspectLaneFolders, laneWork, mergeLaneBack, repoOf, returnToBase, sweepLanes, trackTyped } from './laneWork'
-import { sweepDue } from '../shared/gitGate'
-import { attachLaneOwners, laneBoards, laneReclaim, laneRetry, markGone } from './laneBoard'
-import { listLaneTimeline, onLaneTimelineChange, watchLaneTimeline } from './laneTimeline'
+import { inspectLaneFolders, laneWork, returnToBase, trackTyped } from './laneWork'
+import { attachLaneOwners, laneBoards, laneEngine, laneReclaim, laneRetry, ledgerRepos, mainCheckout, markGone } from './laneBoard'
 import type { LanePane } from './laneBoard'
 import { resolveRevealTarget } from './revealPath'
 import { which } from './which'
@@ -2279,7 +2277,7 @@ async function laneWentQuiet(id: string): Promise<void> {
   send('lane:moved', id, `Cleared, and lane ${lane} was empty - this pane is back in ${basename(home)}`)
   // The pane has left, so the folder is free to go. Anything that was in it would have
   // stopped returnToBase() above.
-  void sweepLanes(repo, busyDirs())
+  sweepCopies([repo], COPIES_SOON_MS)
 }
 /**
  * A mirrored pane is never resized from here.
@@ -2673,8 +2671,6 @@ const boardsNow = (): LaneBoard[] => {
 }
 
 ipcMain.handle('lanes:board', () => boardsNow())
-// The readings are taken in main, on a timer, for the reason above.
-watchLaneTimeline(boardsNow)
 
 // What the agent in a folder has actually changed. Read-only, and the file list and the
 // patches are separate calls on purpose - a 300-file diff is 300 patches nobody opened.
@@ -2685,54 +2681,45 @@ ipcMain.handle(
     diffPatch(cwd, scope, path, untracked)
 )
 
-// A worktree lane of the user's own project: what is in it, and putting it back.
+// A worktree lane of the user's own project: what is in it.
 ipcMain.handle('lanes:work', (_e, cwd: string) => laneWork(cwd))
 // Physical worktrees are read separately from the ledger. A forgotten ledger claim must
 // never make an on-disk copy invisible to the Issues safety check.
 ipcMain.handle('lanes:folders', (_e, repo: string) => inspectLaneFolders(repo))
-ipcMain.handle('lanes:merge', async (_e, cwd: string) => {
-  const result = await mergeLaneBack(cwd, { busy: busyDirs() })
-  // A lane that merged while its own pane was still in it is now empty, and will be
-  // swept the moment that pane closes or is cleared.
-  if (result.ok) send('sessions:changed', allSessions())
-  return result
-})
 
 /**
- * Delete the lanes that hold nothing, everywhere the desk is currently working.
+ * Remove the copies of a project whose work is all in it and that nothing is using.
  *
- * Lanes are created without being asked, so they have to disappear the same way. A lane
- * whose commits went back into main passes the "holds nothing" test by itself, which
- * makes this the auto-delete for merged lanes as well as for the ones that were never
- * used. Anything with a commit, an uncommitted file or a session in it is skipped, so
- * the worst case is a folder that lives one sweep longer than it needed to.
+ * The deciding is scripts/lane.mjs `sweep` (keepReason): nothing unmerged, nothing unsaved,
+ * no chat holding it, no pane or program in it. It used to be done here as well, by
+ * reading every copy of every project with ~9 git calls each on a five-minute clock
+ * (laneWork's sweepLanes, 2026-09-23 - with the lookups around it, 1083 git processes in
+ * two minutes from the installed app), and it almost never removed anything: it waited a
+ * day, and refused a copy with any ignored file in it, which is every copy (`.env`,
+ * `node_modules`). Now this only starts the engine, at the moments a copy can become
+ * removable - a pane ending, a pane leaving its copy after /clear - and on a six-hour
+ * clock. The engine also starts one itself after work lands (ready, release, ship).
+ * Not detached: execFile reaps it, and a sweep cut short by a quit is re-checked next time.
  */
-// One sweep at a time, and never on a clock the machine cannot keep up with (`sweepDue`,
-// `shared/gitGate.ts`). This used to reset its throttle on every `sessions` event and had
-// no guard against overlapping itself: on 2026-09-22 that was 270 concurrent git children
-// of this process and a load average of 400.
-const sweep = { startedAt: 0, tookMs: 0, running: false, soon: false }
-async function sweepEmptyLanes(): Promise<void> {
+const COPIES_SOON_MS = 60_000
+const COPIES_EVERY_MS = 6 * 60 * 60 * 1000
+const COPIES_TIMEOUT_MS = 20 * 60 * 1000
+const copiesSweptAt = new Map<string, number>()
+function sweepCopies(repos: string[], gap: number): void {
   const now = Date.now()
-  if (!sweepDue({ now, ...sweep, loadPerCore: loadPerCore() })) return
-  sweep.running = true
-  sweep.soon = false
-  sweep.startedAt = now
-  try {
-    const busy = busyDirs()
-    for (const repo of await knownRepos()) {
-      try {
-        // A pane that ended in a lane keeps the folder on screen after the folder is
-        // gone, and restarting it would fail on a path the user never typed. So each
-        // removed lane hands its card back to the project it belongs to.
-        for (const dir of await sweepLanes(repo, busy)) manager.relocate(dir, repo)
-      } catch {
-        /* a repo that vanished under us is not worth a crash on a tidy-up */
+  for (const repo of new Set(repos)) {
+    if (now - (copiesSweptAt.get(repo) ?? 0) < gap) continue
+    const engine = laneEngine(repo)
+    if (!engine) continue
+    copiesSweptAt.set(repo, now)
+    execFile(
+      process.execPath,
+      [engine, 'sweep', '--repo', repo],
+      { cwd: repo, windowsHide: true, timeout: COPIES_TIMEOUT_MS, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } },
+      () => {
+        /* what it removed is in the ledger's `swept`, which doctor prints */
       }
-    }
-  } finally {
-    sweep.running = false
-    sweep.tookMs = Date.now() - now
+    )
   }
 }
 // A stuck lane is retried on a clock rather than only when some chat happens to run a
@@ -2744,50 +2731,22 @@ setInterval(() => {
   // And the lanes held by chats that are not here any more: a killed pane never runs its
   // SessionEnd hook, so its lane sat held - and blocking the release - for twelve hours.
   laneReclaim(lanePanes())
-  // Same clock, different lanes: the user's own worktree lanes, tidied when they are
-  // empty. Paced by `sweepDue` inside, and a no-op for a repo with no lanes.
-  void sweepEmptyLanes()
+  // Same clock, and the copies nothing has freed up since: no git here, the list of
+  // projects with copies is read off disk, and each is swept at most every six hours.
+  sweepCopies(ledgerRepos(lanePanes()), COPIES_EVERY_MS)
 }, 60_000).unref()
 
-/**
- * Every project this window knows about, as repository roots: the panes on screen, the
- * workspaces, and the projects folder itself. A lane is created beside a repo and can
- * outlive every pane that ever opened it, so the sweep below cannot only look at what
- * is open right now or a project's last lane would never be cleared.
- */
-async function knownRepos(): Promise<string[]> {
-  const folders = [
-    ...manager.list().map((s) => s.cwd),
-    ...getConfig().presets.flatMap((p) => p.items.map((i) => i.path)),
-    ...listProjects().map((p) => p.path)
-  ]
-  // One `git rev-parse` per folder, and a desk with every project open has plenty of
-  // them. They do not depend on each other, so they go out together rather than one
-  // after another - this used to be the front half of an eight-second freeze.
-  const found = await Promise.all([...new Set(folders.filter(Boolean))].map((f) => repoOf(f)))
-  return [...new Set(found.filter((r): r is string => Boolean(r)))]
-}
-
-// A pane ending is when a lane most often stops being needed, and waiting up to five
-// minutes to notice leaves a folder on screen that has nothing in it. Only a pane ENDING
-// asks - `sessions` fires on every status change of every pane - and it asks for the
-// shorter gap, not for a sweep now: a sweep it cannot have yet is picked up by the
-// minute clock above. Deferred so the sweep's git calls are never on the path of the pane
-// list redrawing.
+// A pane ending is when a copy most often stops being needed: its chat let go, and nothing
+// else may be in it. Only the projects of the panes that ended are swept, and not at once -
+// the CLI's own SessionEnd hook frees the chat's hold in the seconds after the pane goes.
 manager.on('sessions', () => {
-  const live = manager.list().filter((s) => s.status !== 'exited').length
-  const ended = live < paneCountAtSweepAsk
-  paneCountAtSweepAsk = live
-  if (!ended || laneSweepQueued) return
-  sweep.soon = true
-  laneSweepQueued = true
-  setTimeout(() => {
-    laneSweepQueued = false
-    void sweepEmptyLanes()
-  }, 3000).unref()
+  const live = new Set(manager.list().filter((s) => s.status !== 'exited').map((s) => s.id))
+  const ended = [...liveCwds].filter(([id]) => !live.has(id)).map(([, cwd]) => cwd)
+  liveCwds = new Map(manager.list().filter((s) => live.has(s.id)).map((s) => [s.id, s.cwd]))
+  const repos = ended.map((cwd) => mainCheckout(cwd)).filter((r): r is string => Boolean(r))
+  if (repos.length) setTimeout(() => sweepCopies(repos, COPIES_SOON_MS), 15_000).unref()
 })
-let laneSweepQueued = false
-let paneCountAtSweepAsk = 0
+let liveCwds = new Map<string, string>()
 
 // Other devices. Every one of these answers with the whole state, so the dialog never
 // has to guess what a change did - it just redraws what it is handed.
@@ -3915,9 +3874,6 @@ ipcMain.on('reclaim:log', (_e, entry: Record<string, unknown>) => {
 })
 
 // --- what the app did on its own -------------------------------------------
-
-ipcMain.handle('lanes:timeline', () => listLaneTimeline())
-onLaneTimelineChange((items) => send('lanes:timeline-changed', items))
 
 ipcMain.handle('activity:list', () => listActivity())
 ipcMain.on('activity:seen', () => markActivitySeen())

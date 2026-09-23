@@ -1,32 +1,21 @@
 // Regression test for the lane lifecycle - src/main/laneWork.ts.
 //
-// The half that was missing until now: a worktree lane was created and then left alone
-// forever. Its commits were never merged, its folder never removed, and a lane that
-// disagreed with main told nobody. Each check below is one of the ways that goes wrong:
+// A lane that disagreed with main used to tell nobody. Each check below is one of the
+// ways that goes wrong:
 //
 //   - work is reported honestly (commits, uncommitted files, conflicts) without touching
 //     either working tree, because it is polled while agents are typing
-//   - a merge back refuses on a dirty lane, a dirty main checkout, or a conflict, and
-//     leaves the main checkout exactly as it found it (no half-finished merge)
-//   - a clean merge really lands on the base branch, and the empty lane is removed
-//   - the sweep only ever deletes a lane holding nothing - one untracked file is enough
-//     to keep it
 //   - a cleared session goes back to the original folder only when the lane is empty and
 //     the folder is free
 //
 //   node scripts/lane-work-test.mjs
 
 import { buildSync } from 'esbuild'
-import { execFileSync, spawn, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-
-// sweepLanes keeps an empty lane until it has been quiet for SWEEP_GRACE_MS (a day);
-// every lane here is built a millisecond before it is swept. The grace itself is pinned
-// in scripts/lane-sweep-test.mjs.
-process.env.PF_SWEEP_GRACE_MS = '0'
 
 const repoRoot = resolve(import.meta.dirname, '..')
 // realpath: macOS hands out /var/folders/... for a temp dir that git and the app both
@@ -140,33 +129,6 @@ const commit = (cwd, file, text, msg) => {
   check('reading left main on its own commit', !existsSync(join(repo, 'feature.js')))
 }
 
-// ---------------------------------------------------------------- merging back
-
-{
-  const { repo, lane } = fixture('merge')
-  commit(lane, 'feature.js', 'export const f = 1\n', 'add feature')
-  commit(lane, 'second.js', 'export const s = 2\n', 'add second')
-
-  const busy = (await lw.mergeLaneBack(lane, { busy: [lane] }))
-  check('a merge with a session still in the lane succeeds', busy.ok === true, JSON.stringify(busy))
-  check('...and reports the commits it moved', busy.ok && busy.commits === 2)
-  check('...and leaves the folder alone while a session holds it', busy.ok && busy.removed === false)
-  check('...and the files are on the base branch', existsSync(join(repo, 'feature.js')))
-  check('...as a merge commit, so the lane is on the record', git(repo, ['log', '-1', '--pretty=%s']).startsWith('merge lane w2'))
-  check('a second merge has nothing to do', (await lw.mergeLaneBack(lane)).reason === 'nothing')
-  check('the merged lane now reads as empty', (await lw.laneWork(lane))?.empty === true)
-}
-
-{
-  const { repo, lane } = fixture('merge-free')
-  commit(lane, 'feature.js', 'export const f = 1\n', 'add feature')
-  const r = (await lw.mergeLaneBack(lane))
-  check('a merged lane nobody is in is removed', r.ok === true && r.removed === true, JSON.stringify(r))
-  check('...folder gone', !existsSync(lane))
-  check('...branch gone', !git(repo, ['branch', '--list', 'pf/w2']))
-  check('...and the work is on main', existsSync(join(repo, 'feature.js')))
-}
-
 // ---------------------------------------------------------------- refusing
 
 {
@@ -176,128 +138,6 @@ const commit = (cwd, file, text, msg) => {
 
   const seen = (await lw.laneWork(lane))
   check('an overlapping change is surfaced before anyone merges', seen?.conflicts.includes('app.js'), JSON.stringify(seen?.conflicts))
-
-  const r = (await lw.mergeLaneBack(lane))
-  check('a conflicting merge refuses', r.ok === false && r.reason === 'conflict', JSON.stringify(r))
-  check('...naming the files', r.ok === false && r.conflicts?.includes('app.js'))
-  check('...leaving the main checkout clean', git(repo, ['status', '--porcelain']) === '')
-  check('...with no merge left half-done', !existsSync(join(repo, '.git', 'MERGE_HEAD')))
-  check('...and main still has its own version', readFileSync(join(repo, 'app.js'), 'utf8').includes('main'))
-}
-
-{
-  const { lane } = fixture('lane-dirty')
-  commit(lane, 'feature.js', 'export const f = 1\n', 'add feature')
-  writeFileSync(join(lane, 'feature.js'), 'export const f = 2\n')
-  const r = (await lw.mergeLaneBack(lane))
-  check('a merge refuses while the lane has uncommitted work', r.ok === false && r.reason === 'lane-dirty', JSON.stringify(r))
-}
-
-{
-  const { repo, lane } = fixture('base-dirty')
-  commit(lane, 'feature.js', 'export const f = 1\n', 'add feature')
-  writeFileSync(join(repo, 'README.md'), '# edited by hand\n')
-  const r = (await lw.mergeLaneBack(lane))
-  check('a merge refuses onto a dirty main checkout', r.ok === false && r.reason === 'base-dirty', JSON.stringify(r))
-  check('...and did not touch that edit', readFileSync(join(repo, 'README.md'), 'utf8').includes('by hand'))
-}
-
-// ---------------------------------------------------------------- sweeping
-
-{
-  const { repo, lane } = fixture('sweep')
-  const w3 = `${repo}-w3`
-  git(repo, ['worktree', 'add', '-b', 'pf/w3', w3])
-  git(w3, ['config', 'user.email', 'test@example.com'])
-  git(w3, ['config', 'user.name', 'test'])
-  commit(w3, 'kept.js', 'export const k = 1\n', 'work worth keeping')
-
-  const removed = await lw.sweepLanes(repo, [])
-  check('an empty lane is swept', removed.some((p) => lw.samePath(p, lane)) && !existsSync(lane))
-  check('...and its branch with it', !git(repo, ['branch', '--list', 'pf/w2']))
-  check('a lane holding commits is left alone', existsSync(w3))
-
-  // The empty folder a Windows removal leaves behind (see dropEmptyShells): git has
-  // already forgotten it, so nothing else would ever come back for it.
-  mkdirSync(lane, { recursive: true })
-  await lw.sweepLanes(repo, [])
-  check('an empty leftover lane folder is cleaned up', !existsSync(lane))
-
-  // A lane with nothing but an untracked file must survive: that is an agent mid-edit.
-  const w4 = `${repo}-w4`
-  git(repo, ['worktree', 'add', '-b', 'pf/w4', w4])
-  writeFileSync(join(w4, 'scratch.txt'), 'wip\n')
-  await lw.sweepLanes(repo, [])
-  check('a lane with only an untracked file is left alone', existsSync(w4))
-
-  // And one a session is sitting in is never touched, empty or not.
-  const w5 = `${repo}-w5`
-  git(repo, ['worktree', 'add', '-b', 'pf/w5', w5])
-  await lw.sweepLanes(repo, [w5])
-  check('a lane with a session in it is left alone', existsSync(w5))
-  await lw.sweepLanes(repo, [])
-  check('...and swept once that session is gone', !existsSync(w5))
-
-  // A lane scripts/lane.mjs handed to a CLI chat: the claim is in the ledger, but the
-  // chat's pane is still in the main checkout, so `busy` says nothing about it. The
-  // folder is brand new, clean and empty - the exact shape the sweep deletes - and
-  // deleting it took the checkout out from under a chat that had been told to use it.
-  const ledger = join(repo, '.git', 'paneforge-lanes.json')
-  const w6 = `${repo}-w6`
-  const claim = (seen) =>
-    writeFileSync(ledger, JSON.stringify({ lanes: { w6: { session: 'chat', seen } }, ready: {}, conflicts: {} }))
-  git(repo, ['worktree', 'add', '-b', 'pf/w6', w6])
-  claim(Date.now())
-  await lw.sweepLanes(repo, [])
-  check('a lane claimed by a chat that is not in it yet is left alone', existsSync(w6))
-  // ...and the claim is not forever: once lane.mjs would hand that lane to somebody else,
-  // this may delete it. Two windows that disagree is a lane deleted and re-made all day.
-  claim(Date.now() - 2 * 60 * 60 * 1000)
-  await lw.sweepLanes(repo, [])
-  check('...and swept once the claim has gone stale', !existsSync(w6))
-
-  // Finished work waiting on a release is held, not abandoned.
-  const w7 = `${repo}-w7`
-  git(repo, ['worktree', 'add', '-b', 'pf/w7', w7])
-  writeFileSync(ledger, JSON.stringify({ lanes: {}, ready: { w7: { at: 1 } }, conflicts: {} }))
-  await lw.sweepLanes(repo, [])
-  check('a lane waiting on a release is left alone', existsSync(w7))
-  rmSync(ledger, { force: true })
-}
-
-// ------------------------------------------- a folder Windows will not let go of
-
-{
-  // The case that got past the unit tests and only turned up in the running app: on
-  // Windows, `git worktree remove` empties the lane and deregisters it, then fails on
-  // the last step - deleting the folder - because a process still has it as its current
-  // directory. That is normal: the pane that was just moved out of the lane is such a
-  // process for a second or two. Reading git's exit code alone left the branch behind
-  // forever and re-tried the same lane on every sweep.
-  const { repo, lane } = fixture('locked')
-  const holder = spawn(
-    process.execPath,
-    [
-      '-e',
-      "const { existsSync } = require('node:fs'); process.stdin.once('data', () => process.stdout.write(existsSync(process.cwd()) ? 'present' : 'missing'))"
-    ],
-    { cwd: lane, stdio: ['pipe', 'pipe', 'inherit'] }
-  )
-  await new Promise((r) => setTimeout(r, 400))
-
-  const removed = await lw.sweepLanes(repo, [])
-  holder.stdin.write('check\n')
-  const cwdAfterSweep = await new Promise((resolve) => holder.stdout.once('data', (chunk) => resolve(String(chunk))))
-  check('a paused CLI still has a valid cwd path after the lane sweep', cwdAfterSweep === 'present', cwdAfterSweep)
-  if (process.platform === 'win32') {
-    check('a Windows lane whose folder is pinned open is still swept', removed.some((p2) => lw.samePath(p2, lane)))
-    check('...git no longer calls it a worktree', !git(repo, ['worktree', 'list']).includes('-w2'))
-    check('...and its branch is deleted, not left behind', !git(repo, ['branch', '--list', 'pf/w2']))
-  } else {
-    check('a POSIX lane used as a live cwd remains a worktree', git(repo, ['worktree', 'list']).includes('-w2'))
-    check('...and its branch remains available to that process', Boolean(git(repo, ['branch', '--list', 'pf/w2'])))
-  }
-  holder.kill()
 }
 
 // ---------------------------------------------------------------- back to base
@@ -321,24 +161,12 @@ const commit = (cwd, file, text, msg) => {
   check('the main checkout is never sent anywhere', (await lw.returnToBase(repo, [])) === null)
 }
 
-// Merging commits must not discard output excluded by .gitignore.
-{
-  const { repo, lane } = fixture('merge-ignored-output')
-  commit(lane, '.gitignore', 'ignored.out\n', 'ignore output')
-  writeFileSync(join(lane, 'ignored.out'), 'agent result\n')
-  const merged = await lw.mergeLaneBack(lane)
-  check('ignored output does not block commit integration', merged.ok === true)
-  check('merged lane retains ignored output', merged.removed === false && readFileSync(join(lane, 'ignored.out'), 'utf8') === 'agent result\n')
-}
-
 // An unreadable Git index is unknown, never a clean lane eligible for cleanup.
 {
   const { repo, lane } = fixture('unreadable-status')
   const index = git(lane, ['rev-parse', '--path-format=absolute', '--git-path', 'index'])
   writeFileSync(index, 'corrupt index')
   check('failed status is unknown', await lw.laneWork(lane) === null)
-  await lw.sweepLanes(repo)
-  check('unreadable lane is retained', existsSync(lane))
   check('failed folder enumeration is unknown', await lw.inspectLaneFolders(join(work, 'missing-repo')) === null)
 }
 

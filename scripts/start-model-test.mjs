@@ -59,10 +59,10 @@ t('the request is not mutated', () => {
 // Every launcher that starts a NEW pane in main goes through the rule.
 const main = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
 t('sessions:start / startMany / pf open start through it', () => {
-  assert.match(main, /manager\.start\(withDefaultModel\(lane, getConfig\(\)\.defaultModels\)\)/)
+  assert.match(main, /(?:manager\.start|startComputeAware)\(withDefaultModel\(lane, getConfig\(\)\.defaultModels\)\)/)
 })
 t("a paired desk's guest launch starts through it", () => {
-  assert.match(main, /startSession: async \(req\) => \{\s*return manager\.start\(withDefaultModel\(await laneFor\(req\), getConfig\(\)\.defaultModels\)\)/)
+  assert.match(main, /startSession: async \(req\) => \{[\s\S]{0,400}?return (?:manager\.start|startComputeAware)\(withDefaultModel\(await laneFor\(req\), getConfig\(\)\.defaultModels\)\)/)
 })
 t('PaneForge --open starts through it', () => {
   assert.match(main, /async function openRequest[\s\S]{0,400}withDefaultModel\(/)

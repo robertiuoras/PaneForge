@@ -54,11 +54,6 @@ export const BLURBS: Blurb[] = [
     text: 'Paste one long request and an agent reads it once, headlessly, into the parts that do not need each other - a pane each, with a brief written to stand on its own. Nothing opens until you have read the rows and can edit them.'
   },
   {
-    id: 'lane',
-    title: 'Its own copy',
-    text: 'Two chats cannot edit one folder without writing over each other, so this pane works in a folder of its own. What it does there goes back into the main folder by itself once this chat has finished.'
-  },
-  {
     id: 'newSession',
     title: 'New session',
     text: 'Open one or more panes, each an agent running in a project folder. Tick several projects to start them all in one go, and each pane keeps its own terminal, history and folder.'

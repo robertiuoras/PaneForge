@@ -165,6 +165,8 @@ const GATED_INVOKE = new Set([
   // A report can close a pane or ask the desktop to open local evidence.
   'reviews:record',
   'reviews:open',
+  // Binds a compute job to a shell pane, which is then CLOSED when the job's result lands.
+  'sessions:watchCompute',
   // `login:need` puts a card on the desk that offers to open a browser; `login:open`
   // opens an ssh forward and drives a browser through it. Both start something.
   'login:need',
@@ -249,7 +251,6 @@ const GATED_INVOKE = new Set([
   'agents:update',
   'update:install',
   'voice:install',
-  'lanes:merge',
   // Runs on ANOTHER desk, which is worse rather than better: the passkey enrolled here is
   // the only thing between a stolen cookie and a session on a machine whose own gate was
   // never asked.

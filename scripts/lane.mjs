@@ -4207,9 +4207,8 @@ function doctor() {
 // Nothing above ever deleted one - `idleEmpty` frees a ledger row, never a folder - and a
 // checkout that is not `<repo>-<letter>` was invisible to this file altogether. Lane folders
 // come back in minutes when a chat needs one (lane c was deleted at 05:11 and made again at
-// 05:12), so an unused one is only worth six hours; a folder somebody made by hand for a
-// branch gets three days.
-const SWEEP_LANE_IDLE_MS = 6 * 60 * 60 * 1000
+// 05:12). A lane folder goes as soon as its work is all in the project and nothing uses it
+// (keepReason); a folder somebody made by hand for a branch gets three idle days.
 const SWEEP_OTHER_IDLE_MS = 3 * 24 * 60 * 60 * 1000
 /** Rebuilt by an install or a build, so never archived. One `production-build` was 2.1 GB and stalled a tar for 7 minutes. */
 const REGENERABLE =
@@ -4378,8 +4377,14 @@ function keepReason(w, ctx) {
   if (id && (state.ready[id] || state.conflicts[id])) return 'its finished work is still waiting to go out'
   if (ctx.all.some((o) => o.dir !== w.dir && within(o.dir, w.dir))) return 'another checkout sits inside it'
   if (ctx.panes.some((p) => within(p, w.dir))) return 'a PaneForge pane is open in it'
-  if (ctx.idle !== false) {
-    const limit = id ? SWEEP_LANE_IDLE_MS : SWEEP_OTHER_IDLE_MS
+  const work = unmergedWork(w)
+  if (work) return work
+  // A lane folder whose work is all in the project is removed as soon as nothing is using
+  // it: the copies are the app's scratch, and a finished one left on disk is what Robert
+  // saw as "other copies (6)", every row saying `done` (2026-09-23). A folder somebody made
+  // by hand for a branch still gets its three idle days.
+  if (ctx.idle !== false && !id) {
+    const limit = SWEEP_OTHER_IDLE_MS
     const touched = newestTouch(w.dir, now() - limit)
     if (touched > now() - limit) return `it was used ${ago(touched)} ago`
   }
@@ -4387,6 +4392,25 @@ function keepReason(w, ctx) {
   ctx.procs ??= processDirs()
   if (ctx.procs === null) return 'could not check whether a program is running in it'
   if (ctx.procs.some((p) => within(p, w.dir))) return 'a program is running in it'
+  return null
+}
+
+/**
+ * What a folder holds that the project does not have yet, or null when everything in it is
+ * already on origin's trunk. A folder with ANY such work is never removed - not after six
+ * idle hours, not with its work pushed somewhere first: to a person who does not read git,
+ * work that now lives only on a `wip/` branch is work that disappeared (brief 2026-09-23).
+ * Ignored files are not work in this sense; sweepOne archives the ones nothing rebuilds.
+ */
+function unmergedWork(w) {
+  const ahead = gitSafe(w.dir, 'rev-list', '--count', `origin/${MB}..HEAD`)
+  if (!ahead.ok) return 'could not check whether its work is in the main copy'
+  const commits = Number(ahead.out.trim()) || 0
+  if (commits) return `it has ${commits} saved change${commits === 1 ? '' : 's'} not in the main copy yet`
+  const status = gitSafe(w.dir, 'status', '--porcelain')
+  if (!status.ok) return 'could not check it for unsaved changes'
+  const files = status.out.split('\n').filter(Boolean).length
+  if (files) return `it has ${files} unsaved file${files === 1 ? '' : 's'}`
   return null
 }
 
@@ -4541,6 +4565,81 @@ function sweepOne(w) {
  * `state.swept`, which `doctor` prints. Returns the lines to show.
  */
 function sweep({ dryRun = false } = {}) {
+  // Started by several clocks and events now (retry, ready, release, ship, a pane closing
+  // in the app), so two can meet. One at a time per repo; the second has nothing to add.
+  const unlock = dryRun ? () => {} : sweepLock()
+  if (!unlock) return ['Nothing removed: another sweep of this project is running.']
+  try {
+    return sweepOnce({ dryRun })
+  } finally {
+    unlock()
+  }
+}
+
+const SWEEP_LOCK = join(commonDir, 'paneforge-sweep.lock')
+/** A sweep that died holding the lock frees it after this long (archiving one big folder took 7 min). */
+const SWEEP_LOCK_STALE_MS = 60 * 60 * 1000
+
+/** The process is running (signal 0 asks without sending anything). */
+function processAlive(pid) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (e) {
+    return e?.code === 'EPERM'
+  }
+}
+
+/** Take the sweep lock, or null when a live sweep holds it. Returns the release. */
+function sweepLock() {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      writeFileSync(SWEEP_LOCK, `${process.pid} ${now()}\n`, { flag: 'wx' })
+      return () => {
+        try {
+          unlinkSync(SWEEP_LOCK)
+        } catch {
+          /* already gone */
+        }
+      }
+    } catch {
+      let pid = 0
+      let at = 0
+      try {
+        ;[pid, at] = readFileSync(SWEEP_LOCK, 'utf8').trim().split(/\s+/).map(Number)
+      } catch {
+        /* vanished between the two calls: try again */
+      }
+      if (pid && now() - at < SWEEP_LOCK_STALE_MS && processAlive(pid)) return null
+      try {
+        unlinkSync(SWEEP_LOCK)
+      } catch {
+        /* someone else cleared it */
+      }
+    }
+  }
+  return null
+}
+
+/**
+ * Start a sweep in the background. Detached: archiving one big folder took 7 minutes on
+ * 2026-09-23 and nothing that calls this should wait on it. What it removes lands in
+ * `state.swept`, which doctor prints.
+ */
+function sweepSoon() {
+  try {
+    spawn(process.execPath, [fileURLToPath(import.meta.url), 'sweep', '--repo', MAIN], {
+      cwd: MAIN,
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true
+    }).unref()
+  } catch {
+    /* no sweep this time; the next landing or the six-hour clock starts one */
+  }
+}
+
+function sweepOnce({ dryRun }) {
   const out = []
   const panes = openPaneDirs()
   if (panes === null) return ['Nothing removed: PaneForge could not be asked which folders have a pane open (is it running with Phone on?).']
@@ -4558,7 +4657,7 @@ function sweep({ dryRun = false } = {}) {
       continue
     }
     if (dryRun) {
-      out.push(`Would remove ${name} (${w.branch ?? 'no branch'}), after saving its work.`)
+      out.push(`Would remove ${name} (${w.branch ?? 'no branch'}): everything in it is already in the main copy.`)
       continue
     }
     try {
@@ -4665,6 +4764,8 @@ try {
     const r = ready(session, arg('lane'))
     console.log(`Lane ${r.lane} marked done${r.commits ? ` (${r.commits} commit${r.commits === 1 ? '' : 's'})` : ''}.`)
     sayRelease(r.release)
+    // Work that just landed leaves a folder with nothing in it; it goes once its chat lets go.
+    if (r.release?.shipped) sweepSoon()
   } else if (cmd === 'resolve') {
     const r = resolveConflict(session, arg('lane'))
     if (r.resolved) {
@@ -4683,6 +4784,8 @@ try {
     const r = releaseClaim(session, { gone: argv.includes('--gone') })
     if (r.marked) console.log(`Lane ${r.marked.lane} had finished work - marked done on the way out.`)
     sayRelease(r.release)
+    // The chat let go of its folder: the moment a finished copy becomes removable.
+    sweepSoon()
   } else if (cmd === 'sleep') {
     console.log(JSON.stringify(sleepLane(session, arg('pane') ?? PANE)))
   } else if (cmd === 'wake') {
@@ -4762,18 +4865,7 @@ try {
     // PC), every SWEEP_EVERY_MS. Detached, because archiving one big folder took 7 minutes
     // on 2026-09-23 and the retry must not wait on it; what it removes lands in
     // `state.swept`, which doctor prints.
-    if (sweepDue()) {
-      try {
-        spawn(process.execPath, [fileURLToPath(import.meta.url), 'sweep', '--repo', MAIN], {
-          cwd: MAIN,
-          detached: true,
-          stdio: 'ignore',
-          windowsHide: true
-        }).unref()
-      } catch {
-        /* no sweep this time; the next one is six hours away */
-      }
-    }
+    if (sweepDue()) sweepSoon()
     // Last, because the release above may be the one that needs describing.
     const described = reconcileNotes(reap(read()))
     if (described) console.log(`Wrote what changed onto the v${described} release page.`)

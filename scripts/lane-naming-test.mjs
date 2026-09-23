@@ -28,7 +28,7 @@
 
 import { buildSync } from 'esbuild'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -162,10 +162,6 @@ function fixture(name) {
   ok('an old <repo>-w2 lane is still recognised', Boolean(work), JSON.stringify(work))
   ok('with its label read as it is on disk', work?.lane === 'w2', String(work?.lane))
   ok('and its commit still counted', work?.ahead === 1, JSON.stringify(work))
-
-  const merged = await laneWorkMod.mergeLaneBack(old)
-  ok('and it still merges back into the project', merged?.ok === true, JSON.stringify(merged))
-  ok('the work really landed', existsSync(join(f.repo, 'legacy.js')))
 
   // The app never makes another one: the next lane is a letter, beside the old folder.
   const next = await lanes.resolveLane(f.repo, [f.repo])

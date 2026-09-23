@@ -688,10 +688,6 @@ ok(!server.running, 'the gate test server stopped cleanly')
     // profile is function names out of this build, and the reload is the same recovery
     // renderWatch.ts already performs on its own.
     'app:renderCost', 'app:reloadWindow',
-    // What has happened to each copy of each project: a reading of a file this app wrote
-    // itself, naming folders and chat titles the sidebar already draws. Nothing in it can
-    // be pressed and nothing in it types.
-    'lanes:timeline',
     // Reviewed 2026-09-19. Reads a pane's prompt box back by replaying its own bytes
     // through an off-screen terminal. It types nothing, submits nothing and clears
     // nothing - the same class as `sessions:buffer`, which it is built out of.

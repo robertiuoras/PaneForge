@@ -163,16 +163,6 @@ async function lagDuring(fn) {
     read.value.every((w) => w?.ahead === 1 && w.dirty === 0),
     JSON.stringify(read.value.map((w) => w && { lane: w.lane, ahead: w.ahead }))
   )
-
-  // The whole sweep, which is what actually runs on the timer. Nothing here is empty, so
-  // every lane is inspected and kept - the slowest case, and the one the user sits in.
-  const swept = await lagDuring(() => lw.sweepLanes(repo, []))
-  check('a sweep of lanes holding work removes nothing', swept.value.length === 0)
-  check(
-    `the thread stays free throughout a sweep (${swept.ticks} ticks, worst ${swept.worst.toFixed(0)}ms)`,
-    swept.ticks >= MIN_TICKS,
-    `${swept.ticks} timer ticks during the sweep - synchronous git yields none`
-  )
 }
 
 // ---------------------------------------------------------------- the source guard

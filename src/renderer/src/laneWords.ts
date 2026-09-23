@@ -8,7 +8,7 @@
 
 // Relative, where the rest of the renderer says `@shared/types`: the alias is a tsconfig
 // path, and the test builds this file on its own, which knows nothing about it.
-import type { LaneBoardEntry } from '../../shared/types'
+import type { LaneBoard, LaneBoardEntry } from '../../shared/types'
 import { copyNumber, describePlace, paneRef, projectOf } from '../../shared/place'
 
 /** How long since `ms`, in the roughest unit that is still true. */
@@ -326,4 +326,51 @@ export function laneTip(lane: LaneBoardEntry, pane?: number): string {
         : 'Its own chat is still around and should fix it.') +
     (held ? `\n${held}` : '')
   )
+}
+
+/** How long finished work may wait to go into its project before that is worth a line. */
+export const WAITING_TOO_LONG_MS = 6 * 60 * 60 * 1000
+
+/** The one line the sidebar may draw about a project's copies. */
+export interface CopiesNotice {
+  repo: string
+  text: string
+  /** The copy whose clash a chat can be handed; absent on a line with nothing to press. */
+  fix?: LaneBoardEntry
+}
+
+/**
+ * What the sidebar says about one project's copies: nothing, unless it needs the person.
+ *
+ * It used to list every copy - `Other copies (6)`, most rows saying `done` - and Robert
+ * (2026-09-23): "too confusing ... why other copies is just showing done". A second chat on
+ * a project gets its own copy behind the scenes, its work is merged by itself when the chat
+ * finishes, and the empty copy is deleted after (scripts/lane.mjs sweep). `done` meant
+ * "waiting for the other chats to finish so it can be merged in one go", which nobody has
+ * to act on. So there are two lines left, and only these:
+ *
+ *  - two chats changed the same lines and no chat has taken the fix: one button hands it
+ *    to a chat (the app also does that by itself as soon as one is free);
+ *  - finished work has waited WAITING_TOO_LONG_MS with the saving refused: the reason,
+ *    which is worth a look, but no button, because saving can be a release in some projects.
+ */
+export function copiesNotice(board: LaneBoard, now = Date.now()): CopiesNotice | null {
+  const project = describePlace({ cwd: board.repo }).project
+  const clash = board.lanes.filter((l) => l.conflicted && !l.resolver && !l.peer)
+  if (clash.length)
+    return {
+      repo: board.repo,
+      text:
+        clash.length === 1
+          ? `Two chats changed the same lines in ${project}.`
+          : `${clash.length} chats' work clashes in ${project}.`,
+      fix: clash[0]
+    }
+  const waiting = board.lanes.filter((l) => l.ready && !l.conflicted).length
+  if (!waiting || !board.hold || now - board.hold.at < WAITING_TOO_LONG_MS) return null
+  const chats = waiting === 1 ? "One chat's" : `${waiting} chats'`
+  return {
+    repo: board.repo,
+    text: `${chats} finished work has waited ${ago(board.hold.at, now)} to go into ${project}: ${holdWords(board.hold, now) || board.hold.reason}`
+  }
 }

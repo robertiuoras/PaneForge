@@ -24,8 +24,6 @@ import BoardDialog from './components/BoardDialog'
 import CommandPalette, { type Command } from './components/CommandPalette'
 import ConfirmDialog from './components/ConfirmDialog'
 import DiffDialog from './components/DiffDialog'
-import LaneDialog from './components/LaneDialog'
-import LaneHelp from './components/LaneHelp'
 import { PaneMenu } from './components/PaneMenu'
 import Welcome from './components/Welcome'
 import CopyMenu, { type CopyChoice } from './components/CopyMenu'
@@ -169,8 +167,7 @@ import RestoreDialog from './components/RestoreDialog'
 import { measureRefreshRate } from './refreshRate'
 import SettingsDialog from './components/SettingsDialog'
 import ShortcutsDialog from './components/ShortcutsDialog'
-import LaneStrip, { useLaneBoards, useLaneTimeline } from './components/LaneStrip'
-import SessionCopies from './components/SessionCopies'
+import LaneStrip, { useLaneBoards } from './components/LaneStrip'
 import StatusDot from './components/StatusDot'
 import SwarmDialog, { type SwarmStart } from './components/SwarmDialog'
 import SplitDialog from './components/SplitDialog'
@@ -3942,10 +3939,7 @@ export default function App(): JSX.Element {
   // The dev lanes of every repo an open pane is in - one board per repo. Empty on a
   // machine with no lane-using checkout, and then nothing below draws anything.
   const laneBoards = useLaneBoards()
-  const laneTimeline = useLaneTimeline()
   // The worktree lane whose contents are open on screen, by folder.
-  const [laneCwd, setLaneCwd] = useState<string | null>(null)
-  const [laneHelp, setLaneHelp] = useState(false)
   // A pane that was cleared in an empty lane is moved back to the project folder by the
   // main process; that is a thing happening to your window, so it says so.
   useEffect(() => api.onLaneMoved((_id, message) => flash(message)), [flash])
@@ -5509,11 +5503,6 @@ export default function App(): JSX.Element {
                       {s.changedNothing}
                     </span>
                   ) : null}
-                  <SessionCopies session={s} boards={laneBoards} onOpen={cwd => {
-                    setActiveId(s.id)
-                    handheld.showPane()
-                    setLaneCwd(cwd)
-                  }} />
                 </div>
               </div>
               {s.status === 'exited' && (
@@ -5711,13 +5700,7 @@ export default function App(): JSX.Element {
 
         {/* Only the lanes no open pane accounts for, across every open repo; the rest are
             chips on the session cards below. Renders nothing without a lane-using repo. */}
-        <LaneStrip
-          boards={laneBoards}
-          sessions={sessions}
-          timeline={laneTimeline}
-          onFocus={setActiveId}
-          onHelp={() => setLaneHelp(true)}
-        />
+        <LaneStrip boards={laneBoards} sessions={sessions} onFocus={setActiveId} />
 
         <div className="section">
           {/* "Running" read as "these are all busy" on a list of idle panes. */}
@@ -6715,26 +6698,6 @@ export default function App(): JSX.Element {
           onClose={() => setReview(false)}
         />
       )}
-      {laneCwd && (
-        <LaneDialog
-          cwd={laneCwd}
-          // The lanes this window already polls, so the dialog can list the OTHER copies
-          // of the project without a poll of its own - see LaneDialog's own note.
-          boards={laneBoards}
-          sessions={sessions}
-          onFocus={(id) => {
-            setActiveId(id)
-            handheld.showPane()
-            setLaneCwd(null)
-          }}
-          onClose={() => setLaneCwd(null)}
-          onHelp={() => setLaneHelp(true)}
-          onReview={() => {
-            const s = sessions.find((x) => x.cwd === laneCwd)
-            setDiff({ cwd: laneCwd, lane: s?.lane, scope: 'all' })
-          }}
-        />
-      )}
       {/* Drawn BEFORE the diff on purpose: both are `.overlay`, so the later one in the
           tree is the one on top, and reading a pane's changes has to open OVER the list
           you picked it from rather than under it. */}
@@ -6746,9 +6709,6 @@ export default function App(): JSX.Element {
           scope={diff.scope}
           onClose={() => setDiff(null)}
         />
-      )}
-      {laneHelp && (
-        <LaneHelp onClose={() => setLaneHelp(false)} boards={laneBoards} sessions={sessions} />
       )}
       {/* A pane's output as selectable text. Over the whole screen, for the same reason
           the action sheet is: what it is for is reading, and a phone's pane is 404px. */}

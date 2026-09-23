@@ -143,7 +143,6 @@ const TESTS = [
   ['reclaim', 'reclaim-test.mjs'],
   ['sleepreason', 'sleep-reason-test.mjs'],
   ['activity', 'activity-test.mjs'],
-  ['lanetimeline', 'lane-timeline-test.mjs'],
   ['askstamp', 'ask-stamp-test.mjs'],
   ['hookdeny', 'hookdeny-test.mjs'],
   ['deaddev', 'deaddev-test.mjs'],
@@ -177,7 +176,6 @@ const TESTS = [
   ['place', 'place-test.mjs'],
   ['sessioncopies', 'session-copies-test.mjs'],
   ['lanevisitor', 'lane-visitor-test.mjs'],
-  ['lanesweep', 'lane-sweep-test.mjs'],
   ['lanework', 'lane-work-test.mjs'],
   ['lanemergehold', 'lane-mergehold-test.mjs'],
   // A lane whose hooks rewrite its ledger every turn is not dirty forever.
