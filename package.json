@@ -1,6 +1,6 @@
 {
   "name": "claude-orchestrator",
-  "version": "0.8.221",
+  "version": "0.8.222",
   "private": true,
   "description": "PaneForge",
   "author": "Robert",
@@ -378,7 +378,7 @@
         "filter": [
           "lane.mjs",
           "lane-hook.mjs",
-        "run-hidden.vbs",
+          "run-hidden.vbs",
           "lane-peers.mjs",
           "lane-merge.mjs",
           "test-app.mjs",
