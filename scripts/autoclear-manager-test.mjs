@@ -107,6 +107,26 @@ try {
     timers.slice(start).find((t) => t.ms === 120).fn()
     assert.equal(live.proc.writes.some((text) => text.includes('/new')), clears, `${label} during the arm lead has the expected clear result`)
   }
+  // A `\` + Enter in Claude Code is a new line in its box: nothing was sent, so nothing is
+  // filed, no turn starts, and the line keeps growing until the Enter that does send it.
+  {
+    const manager = new SessionManager()
+    const started = manager.start({ cwd: root, agent: 'claude' })
+    const live = manager.sessions.get(started.id)
+    live.meta.runSince = undefined
+    live.turnPending = false
+    const sent = []
+    manager.on('submitted', (_id, line) => sent.push(line))
+    manager.write(started.id, 'first line \\', 'desk')
+    manager.write(started.id, '\r', 'desk')
+    assert.deepEqual(sent, [], 'backslash + Enter files no submitted line')
+    assert.equal(live.turnPending, false, 'backslash + Enter starts no turn')
+    assert.equal(live.typed, 'first line \n', 'the typed line keeps the break, not the backslash')
+    manager.write(started.id, 'second', 'desk')
+    manager.write(started.id, '\r', 'desk')
+    assert.deepEqual(sent, ['first line \nsecond'], 'the next Enter sends both lines once')
+    assert.equal(live.turnPending, true, 'and that Enter starts the turn')
+  }
   console.log('autoclear manager: delayed handoff and draft guards behaved')
 } finally {
   global.setTimeout = realTimers

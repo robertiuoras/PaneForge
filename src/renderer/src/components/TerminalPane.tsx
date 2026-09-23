@@ -6,7 +6,7 @@ import { Terminal, type ILink, type IMarker } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { WebglAddon } from '@xterm/addon-webgl'
-import { allAgents, pastesClipboardImage } from '../../../shared/agents'
+import { allAgents, continuesOnBackslash, pastesClipboardImage } from '../../../shared/agents'
 import { spriteReserve } from '../../../shared/mascot'
 import { mascotRect, onMascotRect } from '../mascotSpot'
 import { unwrapForClipboard } from '../unwrapCopy'
@@ -30,7 +30,7 @@ import {
   type CopyCtx,
   type CopyState
 } from '../../../shared/copyMode'
-import { composerWipe, feedDraft, flatDraft, newDraft, RAIL_LABEL_CHARS, type DraftState } from '../../../shared/draft'
+import { composerWipe, enterContinues, feedDraft, flatDraft, newDraft, RAIL_LABEL_CHARS, type DraftState } from '../../../shared/draft'
 import {
   EXPAND_WAIT_MS,
   shouldExpand,
@@ -2820,7 +2820,7 @@ function TerminalPane({
       }
     }
     const feedInput = (d: string): void => {
-      const r = feedDraft(pending, d)
+      const r = feedDraft(pending, d, { backslashNewline: continuesOnBackslash(agentRef.current) })
       pending = r.state
       publishDraft(sessionId, r.state)
       for (const line of r.submitted) noteSubmitted(line)
@@ -3180,13 +3180,14 @@ function TerminalPane({
         closeExpand('dismissed')
         return false
       }
-      // A backslash before the Enter is Claude Code's new line, not a send.
+      // A backslash before the Enter is Claude Code's new line, not a send - the same rule
+      // the draft itself follows when this Enter reaches it (`enterContinues`).
       if (
         d === '\r' &&
         fromKeyboard &&
         !releasing &&
         pending.text !== dismissedText &&
-        !pending.text.trimEnd().endsWith('\\') &&
+        !(continuesOnBackslash(agentRef.current) && enterContinues(pending)) &&
         mayExpand()
       ) {
         openExpand(pending.text)
