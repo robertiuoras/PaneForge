@@ -378,7 +378,9 @@ const laneProfile = (id) => (id === 'main' ? 'dev' : `dev-${id}`)
 // Taskdriver's full verification runs on the PC. The shared verifier reads the
 // PC evidence for this exact tree; a missing verifier or proof holds the release.
 const TASKDRIVER_PC = process.platform === 'darwin' && basename(MAIN) === 'taskdriver.ai'
-const TASKDRIVER_PROOF = join(dirname(own), 'claude-memory', 'claude-config', 'taskdriver-pc-proof.mjs')
+// Beside the REPO, not beside this script: an installed copy runs from inside the app
+// bundle, where dirname(own) is Contents/ and the verifier is never found.
+const TASKDRIVER_PROOF = join(dirname(MAIN), 'claude-memory', 'claude-config', 'taskdriver-pc-proof.mjs')
 
 /**
  * Take a lane's folder out of Finder, on macOS.
