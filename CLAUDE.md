@@ -379,7 +379,8 @@ newer); busy waits; idle with no turn gets another return. `/clear` no boot pati
 select` footer, options 1..N, one arrow row. Multi-question end: no footer, `REVIEW` above,
 `readReview` DOWN. Refusals: one `❯` over blanks/rules, `don't ask again` (`WIDENS`); RULE =
 blank. Arrows + return never digit, `CHOOSE_GAP_MS`; left question REFUSES. `pty:choose` on
-the SESSION. RED, NOISY: `.row.asking`, `sounds.ask` `knock` on `sessions:ask`;
+the SESSION. RED: `.row.asking`; stop/waiting sounds only with `soundOnIdle` (OFF,
+`quietIdleSounds` moved saved `true` once, `test:sounds`);
 Questions: desk + GuardDeck, NEVER Telegram; `askNotify.ts` = stopping ERRORS
 (`telegramAsk`). Click types NOTHING (`askRef`; `test:askclick`, `test:choices`).
 

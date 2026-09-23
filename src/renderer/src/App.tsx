@@ -1312,7 +1312,7 @@ export default function App(): JSX.Element {
   // flash cannot tell you. Read through a ref so toggling the setting does not
   // resubscribe (and so the listener is attached exactly once).
   const soundOn = useRef(true)
-  soundOn.current = config?.soundOnIdle ?? true
+  soundOn.current = config?.soundOnIdle ?? false
   // Which sound each alert makes, read through a ref for the same reason: the listeners
   // below are attached once, and a picker change must reach the NEXT alert without
   // resubscribing to every session event.

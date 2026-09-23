@@ -1942,7 +1942,7 @@ export interface Config {
   autoFixUi: boolean
   /** OS notification + taskbar flash when a session goes quiet in the background */
   notifyOnIdle: boolean
-  /** soft chime when a session finishes its turn or asks you something */
+  /** a sound when a session finishes, goes silent, asks you something or rings the bell. Off by default */
   soundOnIdle: boolean
   /**
    * Send a pane's question - and an error that STOPPED it (`shared/paneError.ts`: a usage
@@ -2074,6 +2074,8 @@ export interface Config {
    * somebody typed, and this has no licence over it.
    */
   offloadDefaultsV4?: boolean
+  /** the one-time move of `soundOnIdle` to off (`quietIdleSounds` in shared/sounds.ts) */
+  idleSoundsOffV1?: boolean
   /** roles offered in the swarm dialog, editable by the user */
   swarmRoles: SwarmRole[]
   /** pairing, hosting and the devices whose panes show up in this window */
