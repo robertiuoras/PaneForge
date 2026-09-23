@@ -145,6 +145,9 @@ const URL='https://github.com/robertiuoras/PaneForge/releases/tag/v0.8.188'
   await sleep(50)
   ok(el.__opened.length===before,'about:blank and an empty target are never handed to the OS')
   ok(told.length===1,'...and nobody is told their browser refused a page they never asked for')
+  // The log write is queued (src/main/logWrite.ts), so wait for the line, not a fixed
+  // 50ms: on the PC under load it landed after the read and failed the gate (2026-09-23).
+  for(let waited=0;waited<2000&&!logged().includes('nothing to open');waited+=20) await sleep(20)
   ok(logged().includes('nothing to open'),'...but it is still written down, because the caller is the bug')
 
   // The silent half: openPath answers with a string, and '' is the success.

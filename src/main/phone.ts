@@ -192,6 +192,9 @@ const GATED_INVOKE = new Set([
   'sessions:restart',
   'sessions:switchAgent',
   'sessions:kill',
+  // Several kills at once, picked by the app rather than named by the caller - same
+  // class as `sessions:kill`, gated the same way.
+  'sessions:clearFinished',
   // Arms the same kill for later: `shared/closeWhenDone.ts` closes the pane once nothing
   // is left running in it. A deferred kill is still a kill, so it sits with `sessions:kill`
   // rather than with the reads. `pf close-when-done` reaches it over this same surface.

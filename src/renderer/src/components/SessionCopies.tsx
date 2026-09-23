@@ -44,10 +44,18 @@ export default function SessionCopies({ session, boards, onOpen }: {
     const mark = copy.held?.conflicted ? ' stuck' : copy.held?.ready ? ' done' : copy.held && laneBusy(copy.held) ? ' busy' : ''
     const moved = copy.primary && !samePath(copy.cwd, session.cwd)
     const label = copy.primary && session.title.includes(place.project) ? place.role : place.short
+    // The main folder of a project the name already says is nothing worth a word: only
+    // a second copy, or a project the name does not mention, is drawn beside the name.
+    if (place.kind !== 'lane' && session.title.includes(place.project)) return null
     const Tag = place.kind === 'lane' ? 'button' : 'span'
+    // Finished / stuck / busy is the DOT's colour, not a second word after the name
+    // (`copy 4 done` read as noise - Robert 2026-09-23). The words are on the hover.
+    const state = mark === ' stuck' ? '\nStuck: its changes clash with the main copy.'
+      : mark === ' done' ? '\nFinished: waiting to be merged into the main copy.'
+      : mark === ' busy' ? '\nBeing worked on.' : ''
     return <Tag key={copy.cwd}
-      className={'chip place' + (place.kind === 'lane' ? ' lane-chip' : '') + mark}
-      title={`${copy.held ? 'Assigned work folder: ' : ''}${place.full}\n${copy.cwd}` +
+      className={'row-lane' + (place.kind === 'lane' ? ' lane-chip' : '') + mark}
+      title={`${copy.held ? 'Assigned work folder: ' : ''}${place.full}${state}\n${copy.cwd}` +
         (moved ? `\nSession opened in ${opened.role}: ${session.cwd}. Its assigned work folder is shown here.` : '') +
         '\nCopy numbers identify folders, not the number of open sessions.' +
         (copy.primary && elsewhere ? `\n\nThis chat is also holding a work folder in:\n${elsewhere}` : '') +
@@ -56,7 +64,7 @@ export default function SessionCopies({ session, boards, onOpen }: {
         event.stopPropagation()
         if (place.kind === 'lane') onOpen(copy.cwd)
       }}>
-      {label}{mark === ' stuck' || mark === ' done' ? mark : ''}
+      {mark ? <i className="lane-dot" aria-hidden="true" /> : null}{label}
     </Tag>
   })}</>
 }

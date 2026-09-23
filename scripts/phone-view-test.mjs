@@ -21,6 +21,7 @@ import { mkdtempSync, rmSync, existsSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { connect } from './ui-lab.mjs'
+import { testChrome } from './test-chrome.mjs'
 
 const arg = (name, fallback) => {
   const i = process.argv.indexOf(`--${name}`)
@@ -39,14 +40,7 @@ const ok = (cond, what, detail = '') => {
   console.error(`  FAIL ${what}${detail ? ` - ${detail}` : ''}`)
 }
 
-const CHROME =
-  process.env.PF_TEST_CHROME ||
-  [
-    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-    '/Applications/Chromium.app/Contents/MacOS/Chromium',
-    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe'
-  ].find((p) => existsSync(p))
+const CHROME = testChrome()
 
 if (!CHROME) {
   console.log('phone view: SKIPPED - no system Chrome found (nothing was downloaded)')
