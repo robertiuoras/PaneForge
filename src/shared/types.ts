@@ -531,6 +531,17 @@ export interface Session {
    */
   subagent?: string
   /**
+   * How many turns this pane has finished on THIS machine - counted at `endRun`, never
+   * carried across a move (the far end starts its own pane, at zero).
+   *
+   * The turn-count rung of the automatic move (`turnsPlan`, shared/autoHandoff.ts) reads
+   * it: a pane that has finished `TURNS_BEFORE_MOVE` turns here while this desk reads
+   * `warn` has proved it is a long session that does not need the laptop, which is the
+   * moment Robert wanted it offered to the PC (2026-09-23: "automatically after a few turns
+   * if it should"). Absent = zero.
+   */
+  turnsHere?: number
+  /**
    * The last turn ended having changed no file in this pane's folder - `changed no files`,
    * or absent when there is nothing to say. See `shared/changedNothing.ts`.
    *

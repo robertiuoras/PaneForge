@@ -231,6 +231,64 @@ export function handoffConversationError(
   return null
 }
 
+/**
+ * What the receiver knows about one lane copy of a repo it might land a blocked handoff in.
+ *
+ * `handoff.log` 2026-09-23 03:08-03:38Z: three panes moved from the Mac reached the PC and
+ * were refused there outright - `taskdriver.ai-a has 2 unpushed commit(s) on lane-a here`,
+ * `assistant-c has uncommitted work on this machine`, `claude-memory has uncommitted work` -
+ * because the same-named checkout on the receiving machine was busy with somebody else's
+ * work. The pane had nowhere else to go even though the repo has free lane copies sitting
+ * right beside it (`<repo>-a`, `<repo>-b`, ... - git worktrees `resolveLane` already makes
+ * for a second local session in one folder). This is the pure reading of those copies that
+ * `landingCopy` below turns into a decision.
+ */
+export interface CopyState {
+  path: string
+  /** the lane letter this copy would be known by ('a' | 'b' | ...) */
+  label: string
+  /** something already exists at `path` */
+  exists: boolean
+  /** a worktree of THIS repo lives there - false when the folder is unrelated */
+  isCopy: boolean
+  /** `git status --porcelain` is non-empty there */
+  dirty: boolean
+  /** commits ahead of `origin/<trunk>`; -1 means this could not be told, and counts as dirty */
+  unmerged: number
+  /** a pane or the lane ledger already holds this folder */
+  inUse: boolean
+}
+
+/** Where a blocked handoff should land instead, or why it cannot land anywhere. */
+export type Landing = { path: string; label: string; make: boolean } | { refusal: string }
+
+/**
+ * The blocked target itself is never touched twice: the first copy that is already a clean,
+ * merged, free worktree of this repo wins outright, because making a NEW one when a good one
+ * is sitting idle would leave lane folders piling up for no reason. Failing that, the first
+ * label with nothing at all on disk yet is free to become one. Only when every label in the
+ * pool is dirty, unmerged or taken does this refuse - and the refusal names every copy and
+ * why, because a person reading `handoff.log` for "why didn't it land" needs the same answer
+ * a debugger would have to work out from the raw states.
+ */
+export function landingCopy(blocked: string, copies: CopyState[]): Landing {
+  const clean = copies.find((c) => c.exists && c.isCopy && !c.dirty && c.unmerged === 0 && !c.inUse)
+  if (clean) return { path: clean.path, label: clean.label, make: false }
+  const empty = copies.find((c) => !c.exists)
+  if (empty) return { path: empty.path, label: empty.label, make: true }
+  const reasons = copies.map((c) => `${c.path} ${reasonFor(c)}`)
+  return { refusal: `${blocked}; no clean copy to land in: ${reasons.join(', ')}` }
+}
+
+function reasonFor(c: CopyState): string {
+  if (!c.isCopy) return 'is not a copy of this repo'
+  if (c.unmerged < 0) return 'could not be checked'
+  if (c.dirty) return 'has uncommitted work'
+  if (c.unmerged > 0) return `has ${c.unmerged} unpushed commit(s)`
+  if (c.inUse) return 'is in use'
+  return 'is not usable'
+}
+
 const slash = (p: string): string => p.replace(/\\/g, '/')
 
 /**

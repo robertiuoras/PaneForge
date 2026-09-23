@@ -1,16 +1,14 @@
 # PaneForge
 
-**Short form, loaded every turn. Cap 12,000 tokens (`npm run test:claudemd`). A rule, never
-its history.** Why: `docs/design-notes.md`, same headings. Verbatim long forms:
-`docs/claude-md-full-2026-08-31.md`, `docs/claude-md-full-2026-09-19.md` (every story cut on
-2026-09-19). **Read the matching section there BEFORE CHANGING the thing.** Never re-derive a
-recorded decision. `test:x` = `npm run test:x`.
+**Short form, every turn. Cap 12,000 tokens (`test:claudemd`). A rule, never its history.**
+Why: `docs/design-notes.md`, same headings; long forms `docs/claude-md-full-*.md`. **Read its section BEFORE CHANGING the thing; never re-derive a recorded
+decision.** `test:x` = `npm run test:x`.
 
 ## Never close the app you are running inside
 
 Installed `PaneForge` hosts this session: never `npm run setup`, `Stop-Process PaneForge`,
-NSIS installer. Copies: `npm run try` (profile via `src/main/profile.ts`: own userData, lock,
-config, taskbar; minimized, no focus), `-- --show`, `-- --close`. A `dist/` app hand-opened
+NSIS installer. Copies: `npm run try` (profile `src/main/profile.ts`: own userData/lock/config/taskbar;
+minimized, no focus), `-- --show`, `-- --close`. A `dist/` app hand-opened
 with no profile opens `/Applications/PaneForge.app` and quits, whichever newer
 (`shared/strayLaunch.ts`, `test:straylaunch`); headless refused; no installed app = left alone.
 
@@ -73,17 +71,16 @@ steer; a DO step has NO clock (`waitsForYou`); Next ticks the step it leaves. So
 (`demoFor`, `previewSound`). Done tick 16px `accent-color: #3d8bfd` stays put; PLAYING moves
 after `DONE_BEAT_MS`; one bar SEGMENT per step. Survives reopen (`tour.done`, `tour.checks`;
 `kept from an earlier run`, `Check again`). ONE SIZE 520px, 2x2 buttons, Next disabled not
-removed. `Try:` body line = `Do this:`; bodies carry `See: <what Robert sees>` lines.
+removed. `Try:` = `Do this:`; bodies carry `See:` lines.
 `SPOT_MAX_FRAC` 0.45; pane step needs a LIVE process.
 
 `--show` window is watched: pid recorded, `closeTestApps` spares it; only `--close`/next `npm
-run try` take it (`force`; `test:devkeep`). Dev-window test on both machines first: `npm run
-try -- --pull --show`.
+run try` take it (`force`; `test:devkeep`).
 
 `"release": "version"`: below 1.0 patch (`feat:`), `feat!:` minor, `ship minor|major`. One per
 2h (`COOLDOWN_MS`); manual `npm version`/`git tag`/tag push blocked; `npm run ship` skips the
 gate. Stops named: typecheck, `npm test` (`suiteFailure`), conflict (`test:gate`). Notes =
-subjects between tags (`scripts/release-notes.mjs`, `test:notes`). Asset size before fixing
+subjects between tags (`test:notes`). Asset size before fixing
 `latest.yml` (`reconcileFeed`, `test:laneargs`). Tag push runs `Release` (mac AND win). `npm
 run release` (`scripts/release.mjs`) is a GUARD: refuses over a complete release, before the
 build without `GH_TOKEN`, when GitHub cannot be asked; holds served bytes against `dist/`
@@ -597,13 +594,12 @@ count (`choose()` -> `write()`, auto-answer `'app'`); unsent typing is nothing.
 Quick button beside Review (`shared/screenView.ts`, `main/screenView.ts`; `test:screenview`)
 starts Moonlight at the paired peer, online first else configured. Drawn only w/ viewer+peer
 (`screenCan`); refusals toast `app:error`; one viewer at a time; `screen-view.log`;
-`screen:*` `DESK_ONLY`. Title = MACHINE, not protocol. Native in-app
-stream (WebRTC) designed in
+`screen:*` `DESK_ONLY`. Title = MACHINE, not protocol. WebRTC stream: spec
 `docs/superpowers/specs/2026-09-23-pc-screen-design.md`, not built.
 
 ## Checks
 
-On the PC in one command: `node scripts/pc-check.mjs typecheck <suite...>` (rbuild, retries, failures + totals only).
+PC: `node scripts/pc-check.mjs typecheck <suite...>` (rbuild, retries, failures + totals).
 `npm run typecheck`, `npm test` (`scripts/test-all.mjs`, no window/network/CLI); gate step 3
 (`agentGate.ts`) needs `test`. Pins: `docs/design-notes.md` **Checks — what each suite pins**.
 Window (`test:x`): autoclearlag, view, stashdrag, activate, restorefix, askclick, askrender,
@@ -655,9 +651,14 @@ MID-TURN never picked; `main/handoffQueue.ts` moves at turn end, expires `waitMi
 12m`; `TICK_MS` 5s. `AutoPane.asking` refuses; failed = `cooldownMinutes`. `idleOffloadPlan`
 (`offloadIdleMinutes` 0/30). `handingOff` refused by `reclaim.ts`.
 
-Dev server travels (`shared/devServers.ts`, `test:devservers`): tree OR repo-path command ->
+Dev server travels (`test:devservers`): tree OR repo-path command ->
 script name, rebuilt from receiver lockfile, never argv; `SCRIPT_NAME`; ambiguous dropped;
 only `DEV_SCRIPT` (`dev|start|serve|watch|preview[:x]`).
+
+Turn rung `turnsPlan` (3 turns here, verdict not `ok`, past `keepLocal`, `queueable`): same countdown,
+dearest first, ONE per sweep. Mac verdict adds `compressorLevel`. Stray `next dev` = `PaneUsage.devMb`
+in `paneCost`. Dirty same-named checkout -> `landingCopy` picks a clean free lane copy.
+`overlap()` reads `origin/lane-*`.
 
 ## What Windows loses between restarts
 

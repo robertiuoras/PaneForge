@@ -85,8 +85,8 @@ async function main() {
     git(receiverDir, 'config', 'user.email', 'b@b.com')
     git(receiverDir, 'config', 'user.name', 'b')
 
-    const err = await ensureRepo({ branch: 'lane-a', sha, url: bare, dirRel: undefined }, senderDir, receiverRoot)
-    ok('reachable sha: ensureRepo returns no error', err === '', err)
+    const res = await ensureRepo({ branch: 'lane-a', sha, url: bare, dirRel: undefined }, senderDir, receiverRoot)
+    ok('reachable sha: ensureRepo returns no error', res.error === undefined, res.error)
     const headBranch = git(receiverDir, 'rev-parse', '--abbrev-ref', 'HEAD')
     const headSha = git(receiverDir, 'rev-parse', 'HEAD')
     ok('reachable sha: receiver lands on lane-a', headBranch === 'lane-a', headBranch)
@@ -125,10 +125,10 @@ async function main() {
     git(receiverDir, 'config', 'user.email', 'b@b.com')
     git(receiverDir, 'config', 'user.name', 'b')
 
-    const err = await ensureRepo({ branch: 'lane-b', sha, url: bare, dirRel: undefined }, senderDir, receiverRoot)
-    ok('unreachable sha: ensureRepo refuses', err !== '')
-    ok('unreachable sha: error names the branch', err.includes('lane-b'), err)
-    ok('unreachable sha: error names the commit', err.includes(sha.slice(0, 8)), err)
+    const res = await ensureRepo({ branch: 'lane-b', sha, url: bare, dirRel: undefined }, senderDir, receiverRoot)
+    ok('unreachable sha: ensureRepo refuses', res.error !== undefined)
+    ok('unreachable sha: error names the branch', res.error?.includes('lane-b'), res.error)
+    ok('unreachable sha: error names the commit', res.error?.includes(sha.slice(0, 8)), res.error)
   }
 
   console.log(`\n${checks - failures}/${checks} checks passed`)

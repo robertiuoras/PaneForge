@@ -2060,6 +2060,18 @@ function guard(session, path) {
 const OVERLAP_SAID_MS = 10 * 60 * 1000
 const OVERLAP_CLEAR_MS = 60 * 1000
 
+/** Turn a `-U0` diff's `@@` headers into `[start, end]` line ranges. Shared by the local
+ * working-tree read and the remote commit-to-commit read below. */
+function parseHunkRanges(diffOut) {
+  const out = []
+  for (const m of diffOut.matchAll(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/gm)) {
+    const start = Number(m[1])
+    const n = m[2] === undefined ? 1 : Number(m[2])
+    out.push([start, n ? start + n - 1 : start])
+  }
+  return out
+}
+
 function hunksOf(dir, rel) {
   // Merge-base to WORKING TREE. `git diff <branch>...` looks right and is not: with one
   // side omitted it diffs to HEAD, so an uncommitted edit - the one a live chat is making
@@ -2068,11 +2080,59 @@ function hunksOf(dir, rel) {
   if (!base.ok || !base.out) return []
   const r = gitSafe(dir, 'diff', '-U0', base.out, '--', rel)
   if (!r.ok || !r.out) return []
+  return parseHunkRanges(r.out)
+}
+
+/** Merge-base to a COMMIT, not a working tree - `ref` is `origin/lane-<id>`, a branch
+ * nobody here has a checkout of. */
+function remoteHunksOf(ref, rel) {
+  const base = gitSafe(MAIN, 'merge-base', MB, ref)
+  if (!base.ok || !base.out) return []
+  const r = gitSafe(MAIN, 'diff', '-U0', base.out, ref, '--', rel)
+  if (!r.ok || !r.out) return []
+  return parseHunkRanges(r.out)
+}
+
+/**
+ * The same overlap read as `hunksOf`, but for a lane the OTHER machine pushed.
+ *
+ * Autosync commits and pushes whatever a lane worktree's current branch is - see
+ * `pruneRemoteLanes` above - so a lane branch on origin can be this desk's own copy, or a
+ * same-named lane on the other machine, and the two look identical by name alone. On
+ * 2026-09-23 three moves reached the PC in one session and both desks had lanes open on
+ * this repo at once; the guard only ever read this desk's own lane directories, so a
+ * lane the PC was editing never showed up here at all. Told apart by commit, not name: a
+ * local lane dir for the same id whose HEAD matches the remote sha is this desk's own
+ * lane, already covered by `hunksOf`, and is skipped so the same work is never reported
+ * twice under two different labels.
+ *
+ * The fetch is throttled the same OVERLAP_SAID_MS as the "said" half of the cache below,
+ * recorded in the cache file itself (`__fetchedAt`) so a quiet file nobody else edits
+ * costs one `ls-remote`-sized fetch per ten minutes, not one per guard call.
+ */
+function remoteLaneHunks(rel, cache, t) {
+  if (!hasOrigin()) return []
+  if (!cache.__fetchedAt || t - cache.__fetchedAt >= OVERLAP_SAID_MS) {
+    // Silent on failure: no network is "read whatever refs we already have," never a
+    // reason to tell the chat we could not check.
+    gitSafe(MAIN, 'fetch', '--quiet', 'origin', '+refs/heads/lane-*:refs/remotes/origin/lane-*')
+    cache.__fetchedAt = t
+  }
+  const listed = gitSafe(MAIN, 'for-each-ref', '--format=%(refname:short) %(objectname)', 'refs/remotes/origin/lane-*')
+  if (!listed.ok || !listed.out) return []
   const out = []
-  for (const m of r.out.matchAll(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/gm)) {
-    const start = Number(m[1])
-    const n = m[2] === undefined ? 1 : Number(m[2])
-    out.push([start, n ? start + n - 1 : start])
+  for (const line of listed.out.split('\n')) {
+    const [ref, sha] = line.trim().split(/\s+/)
+    if (!ref || !sha) continue
+    const id = ref.slice('origin/lane-'.length)
+    if (!id) continue
+    const dir = laneDir(id)
+    if (existsSync(dir)) {
+      const head = gitSafe(dir, 'rev-parse', 'HEAD')
+      if (head.ok && head.out.trim() === sha) continue // this desk's own lane - already read above
+    }
+    const hunks = remoteHunksOf(ref, rel)
+    if (hunks.length) out.push({ id, ref, hunks })
   }
   return out
 }
@@ -2111,7 +2171,11 @@ function overlap(session, path) {
     const holder = state.lanes[id]
     found.push({ id, dir, hunks, held: Boolean(holder && holder.session !== session) })
   }
-  for (const k of Object.keys(cache)) if (t - (cache[k]?.at ?? 0) > OVERLAP_SAID_MS) delete cache[k]
+  for (const r of remoteLaneHunks(rel, cache, t)) found.push({ id: r.id, ref: r.ref, hunks: r.hunks, remote: true })
+  for (const k of Object.keys(cache)) {
+    if (k === '__fetchedAt') continue // a timestamp, not a `{ at, hit }` entry - the prune below does not apply
+    if (t - (cache[k]?.at ?? 0) > OVERLAP_SAID_MS) delete cache[k]
+  }
   cache[key] = { at: t, hit: found.length > 0 }
   try {
     writeFileSync(cachePath, JSON.stringify(cache))
@@ -2124,11 +2188,12 @@ function overlap(session, path) {
     const shown = hs.slice(0, 6).map(([a, b]) => (a === b ? `${a}` : `${a}-${b}`))
     return shown.join(', ') + (hs.length > 6 ? ` and ${hs.length - 6} more` : '')
   }
-  const rows = found.map(
-    (f) =>
-      `${f.id === 'main' ? 'the main checkout' : `lane ${f.id}`} (${f.dir}, ${
-        f.held ? 'another chat is in it' : 'nobody in it, work not yet merged'
-      }) at lines ${ranges(f.hunks)}`
+  const rows = found.map((f) =>
+    f.remote
+      ? `lane ${f.id} on the other machine (${f.ref}, not yet merged) at lines ${ranges(f.hunks)}`
+      : `${f.id === 'main' ? 'the main checkout' : `lane ${f.id}`} (${f.dir}, ${
+          f.held ? 'another chat is in it' : 'nobody in it, work not yet merged'
+        }) at lines ${ranges(f.hunks)}`
   )
   return (
     `${basename(MAIN)}: ${rel} is also changed, not yet on ${MB}, in ${rows.join('; ')}. ` +
