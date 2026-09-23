@@ -2735,7 +2735,6 @@ export interface Api {
 
 
   listHistory(): Promise<HistoryEntry[]>
-  dailyReview(): Promise<PromptReviewReport>
   searchHistory(query: string): Promise<HistoryHit[]>
   readHistory(id: string): Promise<string>
   deleteHistory(id: string): Promise<void>

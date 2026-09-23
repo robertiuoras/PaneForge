@@ -36,8 +36,6 @@ const surfaceFile = path.join(root, 'src', 'shared', 'surface.ts')
  */
 const DESK_SIDE = {
   recordReview: 'pf-ctl review - explicit agent result publishing, guarded phone invoke',
-  acknowledgeReview: 'Next Review host POST /api/reviews/:id/ack - retained result read state only',
-  openReview: 'Next Review host POST /api/reviews/:id/open - guarded saved report opening',
   tellPane: 'pf tell <pane> "..." - how the far desk says "signed in" to the pane that asked',
   // A pane says of ITSELF that it should go once it is done. The person who would press a
   // button for this is the person who would simply close the pane; the caller that cannot

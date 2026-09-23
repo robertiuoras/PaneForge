@@ -3256,6 +3256,15 @@ are local scratch and cannot collide; the trunk can, and so can a release cut tw
   say the check could not run.
 - `PF_DEVICE` overrides the hostname. `npm run test:lanepeers`, `npm run test:lanedevice`.
 
+## Releasing happens when Robert asks, and not before: the tour's off-state helper
+
+Robert, 2026-09-04: "why is there another button calld run test:cloudwork? its wrong" — a
+raw `test:x` identifier had reached the tour card's screen. `checkName(script)` turns a
+script path into that `test:x` form and is for finding the suite on disk, never for the
+screen; `checkWords(count)` is the one that renders, returning "Checking this change" or
+"Checking this change (N checks)". Same file (`shared/tour.ts`), two different jobs — the
+tour's passing/off state calls `checkWords`, never `checkName`.
+
 ## Releasing happens when Robert asks, and not before (full rules, moved out of CLAUDE.md 2026-08-31)
 
 **`.lanes.json` says `"release": "merge"`, deliberately.** Finishing work merges into master and
@@ -4450,6 +4459,10 @@ offer. A **preselect, never a cap** — an unticked pane keeps its conversation 
 silent paths (an update restart, `restoreAfterRestart: 'always'`) are deliberately untouched.
 `npm run test:capacity`.
 
+`reclaim.log`'s source/reason field used to read `manual` for a sleep the person never asked
+for — old builds mislabelled it that way whenever the cause wasn't one of the named ones. The
+field is now one of source/reason/quiet-vs-threshold/request/refusal/completion/wake, always.
+
 ## ...and before it closes one, it tries to move it (full rules, moved out of CLAUDE.md 2026-08-31)
 
 Four rungs, each firing only where the one above did not solve it: trim scrollback (~5%) → start the NEXT pane
@@ -4958,6 +4971,13 @@ carried the null before the restart that showed the message. One restart with th
 asleep was enough, and a second confirmed it. The claim is now made inside the asleep
 branch, before the return. `sleep-test.mjs` pins the order.
 
+## A reopened pane comes back with what was on its screen: a raw Fix write tore a pane (2026-09-19)
+
+Self-Fix's repair writes through the same `writeStaged` stage as a restore, but a raw write
+skips the staged size, and it tore a mended pane to a 2-row-by-59-column frame it should
+have painted at 59 rows by 784 columns. `writeStaged` now goes through the stage on every
+call, Fix included.
+
 ## ...and before it closes one, it tries to move it — offered once (2026-09-10)
 
 Two automatic moves armed on 2026-09-10 (04:17Z, 04:24Z) and were dismissed within 2-4s;
@@ -4994,6 +5014,23 @@ path, whichever is newer (Robert 2026-09-18: "should only have 1 at a time") -> 
 `npm run try` copies (profile `dev`) are refused first. Windows has no installed-path
 reader yet, so it answers `no installed copy` there.
 
+## A finished pane closes itself into Review
+
+A pane whose turn is over, that nobody is looking at, that has been quiet three minutes,
+with no question, draft, job, background job or running subagent, and whose last reply
+lists no step an agent could take, records itself as a Review row (report = the reply read
+off the CLI's own transcript) and closes through the existing `closeAfterResult` gate. Steps
+only a person can take become GuardDeck to-dos naming the machine, with a reopen block.
+
+Detail moved out of CLAUDE.md to keep it short: the transcript tail read for the reply is
+capped at `READ_BYTES` 512 KB and rereads every `REREAD_MS` 30s. "No running subagent" means
+an async `Agent` launch that has not yet produced a `<task-notification>` - a tool result
+that merely QUOTES one back does not count, which matters because a pane can be mid-report
+on a subagent that already finished. Each `personOwnedSteps` step writes
+`~/.claude/guarddeck/notices/paneforge-step-<review>-<n>.json` (`kind: 'step'`, `machine`
+from `machineOf` else this one, `reopen` = cwd/agent/resumeId/prompt), through the same gate
+as `spoolNotice`.
+
 ## The other machine's screen is one click away
 
 Robert's ask (2026-09-23, from his phone): see the PC screen from PaneForge, "like windows.app",
@@ -5005,4 +5042,8 @@ laggy on this WAN link (avg 87 ms RTT) and an RDP disconnect leaves the console 
 which is the state that breaks every capture-based viewer, including the native stream that
 comes next. The question round could not run (no card to tap from Discord), so the four
 design assumptions are written down in the spec and each is reversible.
+
+The button runs Moonlight `stream <peer address> Desktop` at the paired peer, online peer
+first else the first configured one. Only one viewer runs at a time: a second `stream`
+isn't refused by PaneForge, it is Sunshine on the PC end that refuses it.
 

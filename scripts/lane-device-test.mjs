@@ -225,6 +225,15 @@ console.log('\n6. a repo with no origin is untouched')
   ok(existsSync(join(solo, '.git')), 'the checkout is intact')
 }
 
-rmSync(root, { recursive: true, force: true })
+// Windows can hold a just-exited git child's handle on a file under `root` for a beat
+// (AV scan, delayed close) - `maxRetries`/`retryDelay` are Node's own answer to that
+// transient EPERM/EBUSY/ENOTEMPTY, not a swallow of a real failure. If the temp dir still
+// won't go, that is noise about disk cleanup, never the assertions above: report it and
+// still exit on `failed`, so a passing run is never reported as a crash.
+try {
+  rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+} catch (e) {
+  console.log(`\n(cleanup: could not remove ${root}: ${e.message})`)
+}
 console.log(failed ? `\n${failed} failed\n` : '\nall good\n')
 process.exit(failed ? 1 : 0)

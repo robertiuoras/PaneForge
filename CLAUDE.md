@@ -19,14 +19,13 @@ with no profile opens `/Applications/PaneForge.app` and quits, whichever newer
 Hook assigns `main` (master) or worktree `PaneForge-a/-b/-c` on `lane-a/-b/-c`; write only
 there, PreToolUse refuses elsewhere. `node scripts/lane.mjs status --repo <dir>`.
 
-- Visiting chat gets a letter lane, never `main`, unless it has uncommitted work.
+- Visitor gets a letter lane, not `main`, unless dirty.
 - Hand-typed `/clear` returns the lane only when QUIET; mid-turn stays (`laneWentQuiet`,
   `moveTo` restarts the CLI). `shared/laneReturn.ts` `mayReturnLane`; `test:lanereturn`.
 - One engine `lane.mjs --repo <dir>`. `.lanes.json` `{ "lanes": false, "branch": "main",
   "release": "merge", "pool": ["main","a"] }`. No-remote repos, `claude-memory`: no lanes.
   Never leave one conflicted.
-- Shipped once `landedOnOrigin` proves it; failed lane out of `lastShip.lanes`.
-  `state.passed[id]`.
+- Shipped once `landedOnOrigin` proves it; failed lane out of `lastShip.lanes`; `state.passed`.
 - ONE PANE, ONE LANE: a claim drops other holds with the same `PF_PANE`; no pane id = kept.
 - Trunk = `.lanes.json` `branch`, else origin/HEAD, else main/master, never the root's
   checkout (`trunkName`); `trunkHome` moves a parked root back or ship refuses (`test:lanetrunk`).
@@ -65,11 +64,11 @@ Never cut one while a next step is open.
 `test:look`): each `feat:`/`fix:`/`perf:` commit since the installed build touching `src/`,
 deduped by subject, is a step. Card = NAME in screen words (SCOPE via `SCOPE_PLACES`, then
 files), ONE sentence, ring, the commit's `scripts/<x>-test.mjs` RUN with result; off: commit
-sentence, `See:` bullets, passing look, script names (`checkWords` not `checkName`); live line
+sentence, `See:` bullets, passing look via `checkWords`; live line
 BOTTOM. Pane step opens the desk's pane or one SHELL pane, never an agent. Suites = ONE verdict
 (`checkedAll`, `summaryCount`; no number = `Checked`). STARTING IS THE APPROVAL: nothing before,
-everything on arrival after (`started` not `playing`; `TourProgress`, `app:tourCheckLine`;
-check in flight holds; `steps()` pulse). Plays itself (`dwellFor`); Pause stops; Previous/Next
+everything on arrival after (`started` not `playing`; `TourProgress`, `app:tourCheckLine`; check in
+flight holds). Plays itself (`dwellFor`); Pause stops; Previous/Next
 steer; a DO step has NO clock (`waitsForYou`); Next ticks the step it leaves. Sound on arrival
 (`demoFor`, `previewSound`). Done tick 16px `accent-color: #3d8bfd` stays put; PLAYING moves
 after `DONE_BEAT_MS`; one bar SEGMENT per step. Survives reopen (`tour.done`, `tour.checks`;
@@ -213,11 +212,10 @@ opened; unpaired = pairing page; wrong codes lock; cookie `hmac(deviceId, code)`
 - Automation `scripts/pf-ctl.mjs`, never `open --args`: `pf open <cwd> --prompt "..." [--agent
   A] [--model M]`, `pf list` verifies; `--close-when-done` (`--report-to` default `PF_PANE`;
   `shared/closeWhenDone.ts`, `CLOSE_DONE_QUIET_MS` 8s, `test:closedone`).
-- Quiet result delivery: use `pf-ctl review <review.json>` for an explicit completed result,
-  requested update, decision or blocker. Follow `docs/reviews-runtime-contract.md`; save
-  original request, evidence and native identity before an evidence-gated close. Do not
-  use elapsed quiet time, sleeping or process exit as completion. Review retains reports
-  after closing; reading an informational result never approves a decision.
+- Quiet result delivery: `pf-ctl review <review.json>` for a completed result/update/
+  decision/blocker (`docs/reviews-runtime-contract.md`); save request+evidence+identity
+  before an evidence-gated close; quiet time/sleep/exit never means done; reports persist
+  after closing; reading one never approves it.
 - `test:phone`, `test:phoneview`; `window.__pf[id].term.buffer`. Not built: B1, H2.
 
 ## One long ask is several panes
@@ -275,8 +273,7 @@ drawn. `test:laneplain`.
 
 `shared/clientName.ts`, `main/clients.ts`; `test:clientname`. Roster =
 `clients/<who>/README.md` walking UP; first heading, contact stripped; parenthetical kept
-only for a person (`A4 Advocate (Adie Bradley)` -> `Adie Bradley`; `PIA Team (Property
-Investors Alliance)` stays); `Client` off. Prompt name matches ONE client, word boundary,
+only for a person, not an org; `Client` off. Prompt name matches ONE client, word boundary,
 `MIN_ALIAS`, not `GENERIC`. Replace only on STRONG reading (`topicReading`, `repeatedTopic`);
 `/clear` empties `topicAsks`. Others get `topicTitle` where `mayTopicName` (client tree,
 `Desktop`/`Downloads`/root); real repo waits three agreeing asks, EARLIEST names. Rename is
@@ -445,10 +442,9 @@ flight; memory at `FOOTPRINT_MS` 20s (`dueForFootprint`), new pane forces one.
 (`test:restoreturn`). `history.ts` -> `userData/history/<id>.log`, `tail()` `BUFFER_LIMIT`, no
 ANSI-strip; desk must carry `scrollbackId` (`test:scrollback`). Clock `openedAt`; mid-turn
 via `queuePrompt`; `askAfterUpdate` off. PAINTED size: `max(recorded, paintedWidth(bytes))`
-(the record is the LAUNCH width on every crash-killed pane, so the bytes decide) and the
-recorded ROWS (`sizeOf`, `replayRows`; antigravity's frame is cursor-up arithmetic against
-the HEIGHT) -> staged before the restore mark, resize in write CALLBACK; Fix writes through
-the same stage (`writeStaged` - raw, it tore a mended pane 2 -> 59/784, 2026-09-19); a pane
+and the recorded ROWS (`sizeOf`, `replayRows`) -> staged before the restore mark, resize in
+write CALLBACK; Fix writes through
+the same stage (`writeStaged` - raw); a pane
 with no rows on disk is torn once, the bytes carry no height (`shared/replayWidth.ts`,
 `test:replaywidth`). Self-Fix `repair()` once, `RESTORE_FIX_MS` 1.2s; mirror refused, hidden
 FLAGGED (`test:restorefix`). Rail = KEYSTROKES; `seedMarks` scans `❯ <text>` once
@@ -541,21 +537,16 @@ re-enables); each once before any twice; `seen` resets.
 
 ## A finished pane closes itself into Review
 
-`shared/doneClose.ts` (`test:doneclose`), `main/doneClose.ts` on a 15s timer in `index.ts`;
-`config.autoCloseDone` (on). Closes when: agent pane, turn over (`footerEndedAt`), not the
-ACTIVE pane (`sessions:active`), `AUTO_CLOSE_QUIET_MS` 3 min past turn end AND last key,
-`doneEnough`, reply read off the CLI transcript (`shared/replyRead.ts`, `test:replyread`,
-tail `READ_BYTES` 512 KB, `REREAD_MS` 30s), no running subagent (async `Agent` launch with
-no `<task-notification>`; a tool result QUOTING one is not one), reply not ending in `?`,
-`actionableNextSteps` empty. Writes a `result`/`unverified` review `done_<pane>_<turn s>`
-(`recordReview`, idempotent), then `closeAfterResult`; each `personOwnedSteps` step ->
-`~/.claude/guarddeck/notices/paneforge-step-<review>-<n>.json` (`kind: 'step'`, `machine`
-from `machineOf` else this one, `reopen` = cwd/agent/resumeId/prompt), same gate as
-`spoolNotice`. Review = ONE list (`ReviewDialog.tsx`, `shared/reviewList.ts`,
-`test:reviewlist`): Needs you / Done / All, row = number + project + ask + result, expand =
-full reply + Reopen (`--resume`) + Copy; shell rows and bare slash prompts hidden. A shell
-at its prompt is not drawn (`fleet.ts` `idleShell`, `App.tsx` `deskSessions`) until its
-number is pressed or a command runs; the idle countdown still takes it.
+`shared/doneClose.ts` (`test:doneclose`), `main/doneClose.ts`, 15s timer; `config.autoCloseDone`
+on. Closes when: agent pane, turn over (`footerEndedAt`), not ACTIVE (`sessions:active`),
+`AUTO_CLOSE_QUIET_MS` 3 min past turn end AND last key, `doneEnough`, reply read off
+transcript (`shared/replyRead.ts`, `test:replyread`), no running subagent, reply not ending
+`?`, `actionableNextSteps` empty. Writes `result`/`unverified` review `done_<pane>_<turn s>`
+(`recordReview`, idempotent), then `closeAfterResult`; each `personOwnedSteps` step becomes a
+GuardDeck notice, `spoolNotice`'s gate. Review = ONE list (`ReviewDialog.tsx`,
+`shared/reviewList.ts`, `test:reviewlist`): Needs you/Done/All, row = number+project+ask+
+result, expand = full reply + Reopen (`--resume`) + Copy; shell/bare-slash rows hidden. Idle
+shell undrawn (`fleet.ts` `idleShell`) till pressed/run; idle countdown still takes it.
 
 ## A session that clears itself asks first
 
@@ -603,13 +594,11 @@ count (`choose()` -> `write()`, auto-answer `'app'`); unsent typing is nothing.
 
 ## The other machine's screen is one click away
 
-Quick button beside Review (`shared/screenView.ts`, `main/screenView.ts`; `test:screenview`):
-starts Moonlight `stream <peer address> Desktop` at the paired peer (online first, else
-first). Drawn only with a viewer AND a peer (`screenCan`); refusals toast via `app:error`;
-one viewer at a time (a second `stream` makes Sunshine refuse); `screen-view.log`;
-`screen:*` are `DESK_ONLY`. Title names the MACHINE, never the protocol. Moonlight not
-Windows App: RDP lagged and its disconnect detaches the console, which breaks every capture
-(2026-09-06). Native in-app stream (WebRTC, zoom/pinch ours) designed in
+Quick button beside Review (`shared/screenView.ts`, `main/screenView.ts`; `test:screenview`)
+starts Moonlight at the paired peer, online first else configured. Drawn only w/ viewer+peer
+(`screenCan`); refusals toast `app:error`; one viewer at a time; `screen-view.log`;
+`screen:*` `DESK_ONLY`. Title = MACHINE, not protocol. Native in-app
+stream (WebRTC) designed in
 `docs/superpowers/specs/2026-09-23-pc-screen-design.md`, not built.
 
 ## Checks
@@ -617,10 +606,10 @@ Windows App: RDP lagged and its disconnect detaches the console, which breaks ev
 On the PC in one command: `node scripts/pc-check.mjs typecheck <suite...>` (rbuild, retries, failures + totals only).
 `npm run typecheck`, `npm test` (`scripts/test-all.mjs`, no window/network/CLI); gate step 3
 (`agentGate.ts`) needs `test`. Pins: `docs/design-notes.md` **Checks — what each suite pins**.
-Window: `test:autoclearlag`, `test:view`, `test:stashdrag`, `test:activate`, `test:restorefix`,
-`test:askclick`, `test:askrender`, `test:devicesfit`, `test:phoneview`, `test:contrast`,
-`test:renderwatchlive`, `test:panefit`, `test:railtrack`. Network: `test:discordbrand`, `node
-scripts/mac-update-test.mjs --live <v>`. `npm run competitors` (`test:competitors`).
+Window (`test:x`): autoclearlag, view, stashdrag, activate, restorefix, askclick, askrender,
+devicesfit, phoneview, contrast, renderwatchlive, panefit, railtrack. Network:
+`test:discordbrand`, `node scripts/mac-update-test.mjs --live <v>`. `npm run competitors`
+(`test:competitors`).
 
 ## A turn the transport cut in half finishes itself
 
@@ -630,23 +619,21 @@ in a row stops; new output only; sends via `queuePrompt`.
 
 ## A full machine gets its panes back
 
-`capacity.ts` trims scrollback (~5%); `shared/reclaim.ts` closes (CLI ~190 MB, Codex 16-17
-MB); `test:reclaim`. Trim is a DELETE; recovery from raw log (`REDRAW_BYTES` 4 MB);
-`TRIM_GRACE_MS` 5 min, `TRIM_SETTLE_MS` 60s. `kill()` -> `recordEnd` keeps History/`resumeId`/
-`scrollbackId`. Pressure triggers, never a clock. Never: `needsYou`, focused/on-screen/
-working/starting/stalled, mirror. `.cap-pop` on verdict CHANGE, `CAPACITY_NOTE_MS` 12s,
-`over` only, `CAPACITY_QUIET_MS` 10 min. `touchPane` clears `closeSoon`; `Session.closeKept`
-`kept 10m`; `idleCloseAt` clamps, `sameDeadline`. `ReclaimPane.pinned` (`onTheClock`,
-`reclaimPlan`); `keptUntil` 1h. Footer reading `shared/cloudWork.ts` (`N cloud sessions still
+`capacity.ts` trims scrollback (~5%); `shared/reclaim.ts` closes (CLI ~190MB, Codex 16-17MB);
+`test:reclaim`. Trim is a DELETE; recovery from raw log (`REDRAW_BYTES` 4 MB);
+`TRIM_GRACE_MS` 5min, `TRIM_SETTLE_MS` 60s. `kill()` -> `recordEnd` keeps
+History/`resumeId`/`scrollbackId`. Pressure triggers, never a clock. Never: needsYou/focused/on-screen/
+working/starting/stalled/mirror. `.cap-pop` on verdict CHANGE, `CAPACITY_NOTE_MS` 12s, `over` only, `CAPACITY_QUIET_MS` 10min. `touchPane` clears `closeSoon`; `Session.closeKept` `kept 10m`; `idleCloseAt` clamps,
+`sameDeadline`. `ReclaimPane.pinned` (`reclaimPlan`); `keptUntil` 1h. Footer reading
+`shared/cloudWork.ts` (`N cloud sessions still
 running`/`N shells still running`, `CLOUD_HOLD_MS` 45 min, `test:cloudwork`). `quietSince` =
 keystroke/byte/KEYBOARD LEAVING. `shared/away.ts` `AWAY_AFTER_MS` 60s
-(`powerMonitor.getSystemIdleTime()`, `main/away.ts` 15s, `sawPerson`); `unread` holds CLOCK
-only. `idleSleepPlan` (`reclaim.idleSleepMinutes` 30) stops agent, keeps card, `asleep 3m`.
-`reclaim.log` source/reason/quiet vs threshold/request/refusal/completion/wake (old builds
-mislabelled `manual`); `pid`/`version`/`seq`; shutdown 250 ms; `node
-scripts/sleep-cause-live.mjs`. Person-woken keeps clock `WAKE_GRACE_MS` 5 min (`wokeAt`).
-Only MEMORY shortens sleep (`sleepPressureOf`). `reclaim.idleCloseMinutes` 0/5. `restorePlan`
-all/two/one at normal/warn/critical, never zero (`test:capacity`).
+(`getSystemIdleTime()`, `main/away.ts` 15s, `sawPerson`); `unread` holds CLOCK only. `idleSleepPlan` (`reclaim.idleSleepMinutes` 30) stops agent/keeps card, `asleep 3m`.
+`reclaim.log` source/reason/quiet-vs-threshold/request/refusal/completion/wake;
+pid/version/seq; shutdown 250ms; `node scripts/sleep-cause-live.mjs`. Person-woken keeps
+clock `WAKE_GRACE_MS` 5 min (`wokeAt`).
+Only MEMORY shortens sleep (`sleepPressureOf`). `reclaim.idleCloseMinutes` 0/5. `restorePlan` all/two/one at
+normal/warn/critical, never zero (`test:capacity`).
 
 ## ...and before it closes one, it tries to move it
 
@@ -705,8 +692,8 @@ scope (`gh auth refresh -h github.com -s workflow`).
 every window suite:
 
 ```
-npm run build                                             # skip w/ --keep or you measure the last build
-npm run try -- --headless --remote-debugging-port=9444   # never 9333: that is the Chrome Automation browser
+npm run build # --keep skips, else stale build
+npm run try -- --headless --remote-debugging-port=9444 # not 9333: Chrome Automation's port
 node scripts/ui-lab.mjs eval "<js, awaitPromise>"
 node scripts/ui-lab.mjs shot --out /tmp/x.png --selector .dialog --width 1280 --height 560
 npm run try -- --close
