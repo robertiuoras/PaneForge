@@ -34,6 +34,7 @@ import { composerWipe, enterContinues, feedDraft, flatDraft, newDraft, RAIL_LABE
 import {
   EXPAND_WAIT_MS,
   shouldExpand,
+  isFirstAsk,
   wordCount,
   type ExpandAnswer,
   type ExpandChoice
@@ -1070,6 +1071,7 @@ function TerminalPane({
   promptExpandRef.current = promptExpand
   /** What the card's buttons do. They send keystrokes, so they are built beside `onData`. */
   const expandOps = useRef<{
+    accept: () => void
     original: () => void
     brief: (text: string, choice: 'expanded' | 'edited') => void
     close: (choice: ExpandChoice) => void
@@ -3009,7 +3011,8 @@ function TerminalPane({
      * other panes that were sent the same prompt. Never on a pane the other machine runs
      * (a mirror, `@device/id`): the brief's code search reads THIS machine's disk, which
      * does not have that pane's files, and the hold-and-retype path over the wire has not
-     * been proven - its Enter goes straight through, as it always did.
+     * been proven - its Enter goes straight through, as it always did. Only the FIRST ask
+     * of a conversation (`isFirstAsk`): a follow-up rides on what the agent already knows.
      */
     const mayExpand = (): boolean =>
       promptExpandRef.current &&
@@ -3022,7 +3025,8 @@ function TerminalPane({
       !askRef.current &&
       !asleepRef.current &&
       !syncedPanes.has(sessionId) &&
-      shouldExpand(pending.text)
+      shouldExpand(pending.text) &&
+      isFirstAsk(list.map((m) => m.full))
 
     /** Start the brief while the person pauses, so the Enter finds it written. */
     const startExpandEarly = (): void => {
@@ -3115,14 +3119,30 @@ function TerminalPane({
       window.clearTimeout(earlyTimer)
       earlyTimer = undefined
       window.clearTimeout(expandWait)
-      const card: ExpandOpen = {
+      putExpand({
         seq: ++expandSeq,
         text,
         words: wordCount(text),
         openedAt: Date.now(),
         answer: null,
-        picks: []
-      }
+        picks: [],
+        accepted: false
+      })
+      // A test hands its answer in and skips the question - it is testing the brief.
+      if (canned) acceptExpand(canned)
+    }
+
+    /**
+     * The person said yes to a fuller brief: now the card waits for it. Nothing is written
+     * over their prompt without that yes (Robert, 2026-09-24: "ask user for permission").
+     * The run started early for the same text is the one this waits on, so the wait is
+     * usually short.
+     */
+    const acceptExpand = (canned?: ExpandAnswer): void => {
+      const open = expandRef.current
+      if (!open || open.accepted) return
+      const card: ExpandOpen = { ...open, accepted: true, openedAt: Date.now() }
+      const text = card.text
       putExpand(card)
       // No brief, or no brief in time: the prompt goes exactly as typed, and one line says
       // so. A card that waited for ever would be a pane that swallowed an Enter.
@@ -3152,7 +3172,8 @@ function TerminalPane({
      * Does the expand card take this keystroke, rather than the pty.
      *
      * A card is up: this pane is holding an Enter. Escape puts the card away and leaves the
-     * prompt in the box, and the next Enter on it sends it as typed; Enter is the card's main button once there is a brief to send (an
+     * prompt in the box, and the next Enter on it sends it as typed. While the card is still
+     * asking, Enter is its yes; once there is a brief, Enter sends it (an
      * Enter while it is still being written is ignored rather than read as "send it as
      * typed" - that is a button, not a guess). Anything else puts the card away and goes
      * through as ordinary typing: the card may never stand between a person and their pane.
@@ -3173,6 +3194,10 @@ function TerminalPane({
           return true
         }
         if (d === '\r') {
+          if (!card.accepted) {
+            acceptExpand()
+            return true
+          }
           const brief = card.editing ? null : briefOf(card)
           if (brief) sendBrief(brief, 'expanded')
           return true
@@ -3197,6 +3222,7 @@ function TerminalPane({
     }
 
     expandOps.current = {
+      accept: () => acceptExpand(),
       original: () => sendOriginal('original'),
       brief: sendBrief,
       close: closeExpand
@@ -5751,6 +5777,7 @@ function TerminalPane({
           }}
           onBrief={(text, choice) => expandOps.current?.brief(text, choice)}
           onOriginal={() => expandOps.current?.original()}
+          onAccept={() => expandOps.current?.accept()}
           onEditing={(on) => {
             const now = expandRef.current
             if (!now || now.seq !== expandCard.seq) return

@@ -138,6 +138,30 @@ export function shouldExpand(text: string): boolean {
   return words >= EXPAND_MIN_WORDS || (words >= BUNDLED_MIN_WORDS && items >= BUNDLED_ITEMS)
 }
 
+/** The slash commands that start a conversation over. */
+const FRESH_START = /^\/(clear|new|reset)(\s|$)/i
+
+/**
+ * Whether the next ask opens a conversation, read from the lines this pane already sent,
+ * oldest first (its rail tags, which a restored pane rebuilds from its prompt ledger).
+ *
+ * Only the ask that STARTS a piece of work is worth a brief. A follow-up - "that broke",
+ * "also the button" - rides on everything the agent already knows, and a card on it is an
+ * interruption (Robert, 2026-09-24: "activating too often and not on the first prompt").
+ * So: walking back from the newest line, a `/clear` (or `/new`, `/reset`) before any real
+ * ask means yes; a real ask first means no. Other slash commands (`/model`) are not asks,
+ * and `/compact` keeps the conversation, so it is not a fresh start either.
+ */
+export function isFirstAsk(sent: readonly string[]): boolean {
+  for (let i = sent.length - 1; i >= 0; i--) {
+    const line = String(sent[i] || '').trim()
+    if (!line) continue
+    if (FRESH_START.test(line)) return true
+    if (line[0] !== '/') return false
+  }
+  return true
+}
+
 /**
  * How long the card waits before it gives up and sends the original as typed.
  *

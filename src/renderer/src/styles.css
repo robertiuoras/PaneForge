@@ -2400,22 +2400,26 @@ body.sizing * { user-select: none !important; }
   box-shadow: var(--shadow);
   font-size: 12px; line-height: 1.45;
 }
-.expand-wait { display: flex; align-items: baseline; gap: 8px; }
+.expand-lead { display: flex; flex-direction: column; gap: 2px; }
+.expand-lead[role='status'] { flex-direction: row; align-items: baseline; gap: 8px; }
+.expand-title { font-weight: 600; }
+.expand-note { color: var(--muted); }
 .expand-secs { color: var(--muted); font-variant-numeric: tabular-nums; }
-.expand-body { display: flex; flex-direction: column; gap: 8px; }
-.expand-sec { display: flex; flex-direction: column; gap: 3px; }
-.expand-h {
-  margin: 0; font-size: 11px; font-weight: 600; color: var(--muted);
-  display: flex; align-items: baseline; gap: 8px;
+/* The brief as a label/value sheet - Linear's issue properties panel: labels in a narrow
+   muted column, values in --text, rows separated by space rather than rules. Everything is
+   shown; nothing folds away. */
+.expand-sheet {
+  margin: 0;
+  display: grid; grid-template-columns: 84px minmax(0, 1fr);
+  column-gap: 12px; row-gap: 8px;
 }
-.expand-sub { font-weight: 400; }
-.expand-goal, .expand-q p { margin: 0; }
-.expand-list { margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 2px; }
+.expand-label { color: var(--muted); font-size: 11px; line-height: 17px; }
+.expand-value { margin: 0; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.expand-value p { margin: 0; }
+.expand-list { margin: 0; padding-left: 14px; display: flex; flex-direction: column; gap: 2px; }
 .expand-where { list-style: none; padding-left: 0; }
-.expand-where code { font-size: 11px; color: var(--text); }
+.expand-where code { font-size: 11px; color: var(--text); overflow-wrap: anywhere; }
 .expand-sym { margin-left: 8px; color: var(--muted); }
-.expand-q { display: flex; flex-direction: column; gap: 4px; }
-.expand-chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .expand-btn {
   display: inline-flex; align-items: center; gap: 6px;
   min-height: 26px; padding: 3px 10px;
@@ -2425,17 +2429,27 @@ body.sizing * { user-select: none !important; }
   transition: border-color var(--fast), background var(--fast);
 }
 .expand-btn:hover { border-color: var(--line-strong); }
-.expand-btn.primary { padding: 3px 12px; border-radius: var(--r-sm); font-weight: 600; }
-.expand-chip.on { border-color: var(--accent); color: var(--accent-text); }
-.expand-sug { font-size: 10px; color: var(--muted); }
+.expand-btn.primary {
+  padding: 3px 12px; font-weight: 600;
+  background: var(--accent); color: var(--accent-fg, #fff); border-color: transparent;
+}
+.expand-btn.primary:hover { border-color: transparent; filter: brightness(1.08); }
+/* A choice is a segmented control - every option visible, the picked one lit - never a
+   menu that has to be opened to see what is in it. */
+.expand-seg {
+  display: inline-flex; flex-wrap: wrap; align-self: flex-start;
+  padding: 2px; gap: 2px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-sm);
+}
+.expand-seg .expand-btn { min-height: 22px; padding: 2px 8px; background: transparent; border-color: transparent; }
+.expand-seg .expand-btn.on {
+  background: color-mix(in oklab, var(--accent) 18%, var(--surface-3));
+  border-color: color-mix(in oklab, var(--accent) 45%, transparent);
+  color: var(--text); font-weight: 600;
+}
 .expand-bundled {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
   padding-top: 6px; border-top: 1px solid var(--line);
-}
-.expand-typed summary { cursor: pointer; color: var(--muted); font-size: 11px; }
-.expand-typed p {
-  margin: 4px 0 0; max-height: 140px; overflow-y: auto;
-  white-space: pre-wrap; word-break: break-word; color: var(--text);
 }
 .expand-edit {
   min-height: 160px; resize: vertical;

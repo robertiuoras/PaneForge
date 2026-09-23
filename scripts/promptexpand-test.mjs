@@ -27,6 +27,7 @@ const {
   wordCount,
   scopeOf,
   shouldExpand,
+  isFirstAsk,
   EXPAND_MIN_WORDS,
   BUNDLED_MIN_WORDS,
   BUNDLED_ITEMS,
@@ -188,6 +189,15 @@ ok('a matching path is returned', scored.some((s) => s.file === 'src/shared/rail
 ok('a zero-score path is never returned', !scored.some((s) => s.file === 'src/main/index.ts'))
 ok('ties prefer the shorter path', whereFromFiles(['a/rail.ts', 'aa/rail.ts'], ['rail'])[0].file === 'a/rail.ts')
 
+// --- isFirstAsk: only the ask that starts a conversation gets a card ----------------------
+ok('a pane with nothing sent is a first ask', isFirstAsk([]) === true)
+ok('after a real ask, the next is a follow-up', isFirstAsk(['build the settings page']) === false)
+ok('after /clear it is a first ask again', isFirstAsk(['fix the rail', '/clear']) === true)
+ok('/new and /reset also start over', isFirstAsk(['x y', '/new']) && isFirstAsk(['x y', '/reset']))
+ok('/model is not an ask and does not start over', isFirstAsk(['/model opus']) === true && isFirstAsk(['fix it', '/model opus']) === false)
+ok('/compact keeps the conversation', isFirstAsk(['fix it', '/compact']) === false)
+ok('an ask after /clear is a follow-up', isFirstAsk(['/clear', 'build it']) === false)
+
 // --- expandedPrompt ------------------------------------------------------------------------
 const expansion = {
   goal: 'Group the sidebar by state',
@@ -256,6 +266,9 @@ if (existsSync(scorePath) && existsSync(corpusPath)) {
   ok('holdForExpand was found', hold.length > 200)
   ok('an Enter after Esc on the same text goes through', /pending\.text !== dismissedText/.test(hold))
   ok('a backslash-Enter (new line) is never held', /!\(continuesOnBackslash\(agentRef\.current\) && enterContinues\(pending\)\)/.test(hold))
+  ok('the card waits for a yes before any brief is asked for', /const openExpand =[\s\S]*?accepted: false[\s\S]*?const acceptExpand =/.test(pane) && !/const openExpand =[\s\S]*?api\.expandPrompt[\s\S]*?const acceptExpand =/.test(pane))
+  ok('only the first ask of a conversation is held', /isFirstAsk\(list\.map\(\(m\) => m\.full\)\)/.test(pane))
+  ok('the card has no fold-away section', !/<details/.test(src('src/renderer/src/components/ExpandCard.tsx')))
   ok('a question that came up takes the key from the card', /if \(askRef\.current\) \{\s*closeExpand\('dismissed'\)\s*return false/.test(hold))
   ok('a sent brief is not filed twice for review', /promptUsed\(card\.text\.trim\(\), \{[^}]*brief: true \}/.test(pane) && /if \(!meta\.brief\)/.test(src('src/main/index.ts')))
 }

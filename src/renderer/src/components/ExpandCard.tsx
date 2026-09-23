@@ -11,6 +11,10 @@
 // pointer and refuses the focus a mousedown would otherwise give it. The one exception is
 // Edit, whose text box is the point.
 //
+// It ASKS first ("Write it up as a fuller brief?") and only then waits: a prompt is never
+// rewritten without a yes. The brief reads as a short label/value sheet - everything shown,
+// nothing folded away behind a disclosure (Robert, 2026-09-24: "stop with those dropdowns").
+//
 // No animation: it appears on a keypress somebody is looking at, and the only motion is
 // the app's own `--fast` on hover. The waiting line counts seconds, which is the one
 // honest thing to show for a run measured at 20-48 s.
@@ -36,6 +40,9 @@ export interface ExpandOpen {
   picks: number[]
   /** The brief is open for editing - Enter in the terminal must not send the unedited one. */
   editing?: boolean
+  /** The person said yes to a brief. Until then the card only asks, and nothing is run
+   * on their behalf that they will see. */
+  accepted: boolean
 }
 
 /** The prompt "Send full brief" types, with the answers as they stand on the card. */
@@ -51,6 +58,8 @@ interface Props {
   onPick: (question: number, option: number) => void
   onBrief: (text: string, choice: 'expanded' | 'edited') => void
   onOriginal: () => void
+  /** Yes, write the brief. */
+  onAccept: () => void
   onEditing: (on: boolean) => void
   /** Present only where the split dialog can be opened; the button is hidden without it. */
   onSplit?: () => void
@@ -89,30 +98,30 @@ function Waiting({ since }: { since: number }): JSX.Element {
   const now = useNow(1000, since)
   const secs = Math.max(0, Math.floor((now - since) / 1000))
   return (
-    <div className="expand-wait" role="status" aria-live="polite">
-      <span>Writing a fuller brief…</span>
+    <div className="expand-lead" role="status" aria-live="polite">
+      <span className="expand-title">Writing a fuller brief…</span>
       <span className="expand-secs">{secs}s</span>
     </div>
   )
 }
 
-function Section({
-  title,
-  sub,
-  children
-}: {
-  title: string
-  sub?: string
-  children: React.ReactNode
-}): JSX.Element {
+/** One row of the brief: what it is about on the left, what it says on the right. */
+function Row({ label, children }: { label: string; children: React.ReactNode }): JSX.Element {
   return (
-    <section className="expand-sec">
-      <h4 className="expand-h">
-        {title}
-        {sub ? <span className="expand-sub">{sub}</span> : null}
-      </h4>
-      {children}
-    </section>
+    <>
+      <dt className="expand-label">{label}</dt>
+      <dd className="expand-value">{children}</dd>
+    </>
+  )
+}
+
+function Lines({ items }: { items: string[] }): JSX.Element {
+  return (
+    <ul className="expand-list">
+      {items.map((d, i) => (
+        <li key={i}>{d}</li>
+      ))}
+    </ul>
   )
 }
 
@@ -121,6 +130,7 @@ export default function ExpandCard({
   onPick,
   onBrief,
   onOriginal,
+  onAccept,
   onEditing,
   onSplit
 }: Props): JSX.Element {
@@ -141,7 +151,14 @@ export default function ExpandCard({
         if (!(ev.target instanceof HTMLTextAreaElement)) ev.preventDefault()
       }}
     >
-      {!answer ? (
+      {!card.accepted ? (
+        <div className="expand-lead">
+          <span className="expand-title">Write this up as a fuller brief first?</span>
+          <span className="expand-note">
+            Adds a goal, where to start and what done means. You see it before anything is sent.
+          </span>
+        </div>
+      ) : !answer ? (
         <Waiting since={card.openedAt} />
       ) : card.editing ? (
         <textarea
@@ -159,75 +176,72 @@ export default function ExpandCard({
           }}
         />
       ) : e ? (
-        <div className="expand-body">
-          <Section title="Goal">
-            <p className="expand-goal">{e.goal}</p>
-          </Section>
-          {answer.where.length > 0 && (
-            <Section title="Where to start" sub="found by searching the code for your words">
-              <ul className="expand-list expand-where">
-                {answer.where.map((w) => (
-                  <li key={w.file + ':' + (w.line ?? '')}>
-                    <code>{w.line ? `${w.file}:${w.line}` : w.file}</code>
-                    {w.symbol ? <span className="expand-sym">{w.symbol}</span> : null}
-                  </li>
-                ))}
-              </ul>
-            </Section>
-          )}
-          {e.done.length > 0 && (
-            <Section title="Done means">
-              <ul className="expand-list">
-                {e.done.map((d, i) => (
-                  <li key={i}>{d}</li>
-                ))}
-              </ul>
-            </Section>
-          )}
-          {e.outOfScope.length > 0 && (
-            <Section title="Leave alone">
-              <ul className="expand-list">
-                {e.outOfScope.map((d, i) => (
-                  <li key={i}>{d}</li>
-                ))}
-              </ul>
-            </Section>
-          )}
-          {e.questions.length > 0 && (
-            <Section title="Your call">
-              {e.questions.map((q, qi) => (
-                <div className="expand-q" key={qi}>
-                  <p>{q.ask}</p>
-                  <div className="expand-chips">
-                    {q.options.map((o, oi) => (
+        <>
+          <dl className="expand-sheet">
+            <Row label="Goal">
+              <p>{e.goal}</p>
+            </Row>
+            {answer.where.length > 0 && (
+              <Row label="Start in">
+                <ul className="expand-list expand-where">
+                  {answer.where.map((w) => (
+                    <li key={w.file + ':' + (w.line ?? '')}>
+                      <code>{w.line ? `${w.file}:${w.line}` : w.file}</code>
+                      {w.symbol ? <span className="expand-sym">{w.symbol}</span> : null}
+                    </li>
+                  ))}
+                </ul>
+              </Row>
+            )}
+            {e.done.length > 0 && (
+              <Row label="Done when">
+                <Lines items={e.done} />
+              </Row>
+            )}
+            {e.outOfScope.length > 0 && (
+              <Row label="Leave alone">
+                <Lines items={e.outOfScope} />
+              </Row>
+            )}
+            {e.questions.map((q, qi) => (
+              <Row key={qi} label={qi === 0 ? 'Your call' : ''}>
+                <p>{q.ask}</p>
+                <div className="expand-seg">
+                  {q.options.map((o, oi) => {
+                    const on = (card.picks[qi] ?? 0) === oi
+                    return (
                       <Btn
                         key={oi}
-                        className={'expand-chip' + ((card.picks[qi] ?? 0) === oi ? ' on' : '')}
+                        className={'expand-opt' + (on ? ' on' : '')}
                         onPress={() => onPick(qi, oi)}
+                        title={oi === 0 ? 'Suggested' : undefined}
                       >
                         {o}
-                        {oi === 0 ? <span className="expand-sug">suggested</span> : null}
                       </Btn>
-                    ))}
-                  </div>
+                    )
+                  })}
                 </div>
-              ))}
-            </Section>
-          )}
+              </Row>
+            ))}
+          </dl>
           {answer.bundled && onSplit && (
             <div className="expand-bundled">
               <span>This asks for several separate things</span>
               <Btn onPress={onSplit}>Open as separate panes</Btn>
             </div>
           )}
-        </div>
+        </>
       ) : null}
-      <details className="expand-typed">
-        <summary onMouseDown={(ev) => ev.preventDefault()}>What you typed</summary>
-        <p>{card.text}</p>
-      </details>
       <div className="expand-actions">
-        {card.editing ? (
+        {!card.accepted ? (
+          <>
+            <Btn className="primary" onPress={onAccept} title="Enter">
+              Write brief
+            </Btn>
+            <Btn onPress={onOriginal}>Send as typed</Btn>
+            <span className="expand-hint">Enter to write it · Esc to keep typing</span>
+          </>
+        ) : card.editing ? (
           <>
             <Btn className="primary" onPress={() => onBrief(edited, 'edited')}>
               Send this
@@ -238,10 +252,9 @@ export default function ExpandCard({
           <>
             {brief !== null && (
               <Btn className="primary" onPress={() => onBrief(brief, 'expanded')} title="Enter">
-                Send full brief
+                Send brief
               </Btn>
             )}
-            <Btn onPress={onOriginal}>Send as I typed it</Btn>
             {brief !== null && (
               <Btn
                 onPress={() => {
@@ -252,7 +265,8 @@ export default function ExpandCard({
                 Edit
               </Btn>
             )}
-            <span className="expand-hint">Esc keeps your prompt in the box</span>
+            <Btn onPress={onOriginal}>Send as typed</Btn>
+            <span className="expand-hint">Esc to keep typing</span>
           </>
         )}
       </div>
