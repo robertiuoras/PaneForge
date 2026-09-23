@@ -445,10 +445,10 @@ via `queuePrompt`; `askAfterUpdate` off. PAINTED size: `max(recorded, paintedWid
 and the recorded ROWS (`sizeOf`, `replayRows`) -> staged before the restore mark, resize in
 write CALLBACK; Fix writes through
 the same stage (`writeStaged` - raw); a pane
-with no rows on disk is torn once, the bytes carry no height (`shared/replayWidth.ts`,
+with no rows on disk is torn once (`shared/replayWidth.ts`,
 `test:replaywidth`). Self-Fix `repair()` once, `RESTORE_FIX_MS` 1.2s; mirror refused, hidden
 FLAGGED (`test:restorefix`). Rail = KEYSTROKES; `seedMarks` scans `❯ <text>` once
-(`test:promptecho`). Reply mark per CLI (Claude `"type":"assistant"`, antigravity
+(`test:promptecho`); ConPTY pad `edge` (`test:promptpad`). Reply mark per CLI (Claude `"type":"assistant"`, antigravity
 `"type":"PLANNER_RESPONSE"`, `hasReply`); wrong = `conversation-unverified`, never sleeps;
 refusal hold doubles `sleepHoldMs` 10 min -> 2 h (`test:sleep`). Asleep pane claims its
 conversation in `start()` BEFORE the early return (`noteSession`, `resumeIdFor`). Nothing
