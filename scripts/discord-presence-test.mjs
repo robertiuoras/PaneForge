@@ -48,6 +48,9 @@ const {
   chosenRows,
   migrateRows,
   needsTokens,
+  togglePhrase,
+  TOKEN_PHRASES,
+  PRESET_ROWS,
   DEFAULT_DISCORD_STYLE,
   DEFAULT_ROWS,
   MAX_BUTTONS,
@@ -110,6 +113,16 @@ function check(name, ok, extra = '') {
   check('activity: the mark is on the idle card too', idle.assets?.large_image === 'icon', JSON.stringify(idle.assets))
   const one = buildActivity({ running: 1, total: 1, names: ['x'], ...base })
   check('activity: singular noun', one.details === '1/1 session running', one.details)
+  // The Discord tab builds lines from buttons: a chip adds its phrase, a second press takes it out.
+  check('chips: add to an empty line with no separator', togglePhrase('', '{tokens} tokens today') === '{tokens} tokens today')
+  check('chips: add after existing text', togglePhrase('{running} running', 'on {projects}') === '{running} running · on {projects}')
+  check('chips: second press removes it', togglePhrase('{running} running · on {projects}', 'on {projects}') === '{running} running')
+  check('chips: every token has a plain-word button', TOKEN_PHRASES.every((t) => t.label && !/[{}]/.test(t.label) && t.phrase.includes(t.token)))
+  check('presets: every ready-made line fills in', PRESET_ROWS.every((r) => buildActivity({ running: 1, total: 2, asleep: 1, names: ['x'], tokensToday: 1200, tokensWeek: 9000, ...base }, { ...DEFAULT_DISCORD_STYLE, rows: [{ id: 'p', text: r.text, when: 'always', on: true }] })?.details && !/[{}]/.test(buildActivity({ running: 1, total: 2, asleep: 1, names: ['x'], tokensToday: 1200, tokensWeek: 9000, ...base }, { ...DEFAULT_DISCORD_STYLE, rows: [{ id: 'p', text: r.text, when: 'always', on: true }] }).details)))
+  // 2026-09-23: the PC's desk of one pane put "1/1 session running" on the profile over the
+  // Mac's 7/15. A desk whose panes another connected desk already counts sends a clear.
+  check('activity: a desk counted by another desk says nothing',
+    buildActivity({ running: 1, total: 1, names: ['x'], ...base, countedBy: 'MacBook' }) === null)
   const many = buildActivity({
     running: 9,
     total: 9,

@@ -966,6 +966,11 @@ const presence = new DiscordPresence({
 })
 function presenceCounts(): PresenceCounts {
   const counts = countPresence(allSessions(), appStartedAt)
+  // Another desk connected to this one mirrors every pane here, so its count already
+  // includes them. Unless this desk mirrors some other machine too (then both counts are
+  // the whole desk), this one stays quiet rather than put its half on the profile.
+  const guest = remote.state().guests[0]
+  if (guest && !remote.sessions().length) counts.countedBy = guest.name
   // The token numbers cost a walk of every transcript written this week (7.6s of async
   // I/O on this Mac, 7,546 files), so they are counted only while a row on the card
   // actually says one. `tokenSpend` answers from its own cache and refreshes behind
@@ -1286,6 +1291,8 @@ remote.on('sessions', () => {
 remote.on('attention', (s: Session) => raiseAttention(s))
 remote.on('changed', (state: RemoteState) => {
   send('remote:changed', state)
+  // A desk connecting or leaving decides whether this machine speaks for the profile.
+  presence.update(presenceCounts())
   publishCapacity()
 })
 

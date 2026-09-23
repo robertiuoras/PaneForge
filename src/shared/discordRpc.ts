@@ -88,6 +88,13 @@ export interface PresenceCounts {
   tokensToday?: number
   /** the same, over the last seven days including today */
   tokensWeek?: number
+  /**
+   * The name of another desk that is connected to this one and so already counts every
+   * pane here. Set, this machine says nothing: a Discord account shows ONE presence, and
+   * the PC's own desk of one pane went up as "1/1 session running" over the Mac's 7/15
+   * (2026-09-23).
+   */
+  countedBy?: string
 }
 
 /** The few fields of a pane the presence reads, so a caller can pass anything shaped like one. */
@@ -188,6 +195,8 @@ export interface PresenceStatus {
   cleared: boolean
   /** Discord refused the last frame, in its own words */
   error: string | null
+  /** another desk shows this one's panes, so this machine sends nothing (`PresenceCounts.countedBy`) */
+  countedBy?: string | null
 }
 
 export const NO_PRESENCE_STATUS: PresenceStatus = {
@@ -409,6 +418,55 @@ export const DISCORD_TOKENS: ReadonlyArray<readonly [string, string]> = [
   ['{tokensWeek}', 'the same over the last seven days']
 ]
 
+/**
+ * One button per `DISCORD_TOKENS` entry, in plain words, for the "insert this" chips in
+ * the editor. `label` is what the button says; `phrase` is what gets added to the line -
+ * never the raw `{token}` itself, so nobody has to know that syntax exists to build a
+ * line. Order matches `DISCORD_TOKENS`.
+ */
+export const TOKEN_PHRASES: ReadonlyArray<{ token: string; label: string; phrase: string }> = [
+  { token: '{running}', label: 'Running count', phrase: '{running} running' },
+  { token: '{total}', label: 'Total panes', phrase: '{total} {sessions} total' },
+  { token: '{idle}', label: 'Idle count', phrase: '{idle} idle' },
+  { token: '{asleep}', label: 'Asleep count', phrase: '{asleep} asleep' },
+  { token: '{sessions}', label: 'Running / total', phrase: DEFAULT_DETAILS },
+  { token: '{projects}', label: 'Projects', phrase: 'on {projects}' },
+  { token: '{project}', label: 'First project', phrase: 'on {project}' },
+  { token: '{tokens}', label: 'Tokens today', phrase: '{tokens} tokens today' },
+  { token: '{tokensWeek}', label: 'Tokens this week', phrase: '{tokensWeek} tokens this week' }
+]
+
+/**
+ * A whole ready-made line, for the "Add a line" picker - a complete row with sensible
+ * wording and timing, so starting a new line never needs typing.
+ */
+export const PRESET_ROWS: ReadonlyArray<{ label: string; text: string; when: RowWhen }> = [
+  { label: 'Panes running', text: DEFAULT_DETAILS, when: 'running' },
+  { label: 'Projects being worked on', text: DEFAULT_STATE, when: 'running' },
+  { label: 'Panes asleep', text: '{asleep} asleep', when: 'always' },
+  { label: 'Tokens spent today', text: '{tokens} tokens today', when: 'always' },
+  { label: 'Tokens spent this week', text: '{tokensWeek} tokens this week', when: 'always' }
+]
+
+/**
+ * Adds `phrase` to `text`, or takes it back out if it is already there - the chip is a
+ * toggle, not just an inserter. Joined with " · ", the same separator the rest of the
+ * app uses to run short facts together, and never put in front of an empty line.
+ */
+export function togglePhrase(text: string, phrase: string): string {
+  const parts = text
+    .split(' · ')
+    .map((p) => p.trim())
+    .filter(Boolean)
+  const at = parts.indexOf(phrase)
+  if (at >= 0) {
+    parts.splice(at, 1)
+  } else {
+    parts.push(phrase)
+  }
+  return parts.join(' · ')
+}
+
 /** Whether anything on the card asks for the token numbers, which cost a disk walk. */
 export function needsTokens(style: DiscordStyle): boolean {
   return (style.rows ?? []).some((r) => r.on && /\{tokens(Week)?\}/.test(r.text))
@@ -506,7 +564,7 @@ export function buildActivity(
   /** test seam; the app never passes it */
   now: number = Date.now()
 ): Record<string, unknown> | null {
-  if (c.total <= 0) return null
+  if (c.total <= 0 || c.countedBy) return null
   const rows = visibleRows(c, style)
   if (!rows.length) return null
 
