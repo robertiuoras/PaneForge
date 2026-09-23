@@ -442,8 +442,8 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                 <Switch
                   checked={config.soundOnIdle}
                   onChange={(v) => onChange({ soundOnIdle: v })}
-                  label="Chime when a session finishes its turn"
-                  hint="Plays even while PaneForge is focused - a pane you are not reading can still finish. Which sound it makes, and the sound for the other two alerts, is on the Sounds tab."
+                  label="Play a sound when a session stops or waits for you"
+                  hint="Off unless you turn it on. Covers a finished turn, a turn gone silent, a question and the terminal bell. Which sound each one makes is on the Sounds tab."
                 />
                 <Switch
                   checked={config.telegramAsk}

@@ -634,8 +634,24 @@ export class RemoteClient extends EventEmitter {
         return
       }
       default:
+        if (m.t.startsWith('screen:')) this.emit('screen', m)
         return
     }
+  }
+
+  /**
+   * The screen view's frames go out on this connection when it is up. Returns the other
+   * end's identity so the caller can tell an older build (no `screenView`) from a yes.
+   */
+  sendScreen(m: Msg): PeerIdentity | null {
+    if (this.status !== 'online' || !this.conn?.ready) return null
+    this.conn.send(m)
+    return this.conn.peer
+  }
+
+  /** Who is on the other end right now, or null when not connected. */
+  identity(): PeerIdentity | null {
+    return this.status === 'online' && this.conn?.ready ? this.conn.peer : null
   }
 
   private settle(m: Msg, value: unknown): void {
