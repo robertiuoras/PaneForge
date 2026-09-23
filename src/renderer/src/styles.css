@@ -1324,6 +1324,15 @@ html:is(.hi-refresh, .on-battery) .mascot-ball { animation: none !important; }
   transition: background var(--fast), border-color var(--fast), color var(--fast);
 }
 .welcome-chip:hover { background: var(--surface-2); border-color: var(--line-strong); color: var(--text); }
+/* "Get set up": only drawn while `checkSetup` still has rows, so it reads as a checklist
+   that finishes rather than a permanent fixture of the empty desk. */
+.setup-card {
+  display: flex; flex-direction: column; gap: 6px; margin-top: 4px; width: 100%;
+  padding: 12px 13px; border: 1px solid var(--line); border-radius: var(--r);
+  background: var(--surface-2);
+}
+.setup-h { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.setup-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 12.5px; color: var(--text); }
 /* The one empty state that is a first-run instruction rather than "nothing matched". */
 .empty.first-run { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 16px 2px; }
 .empty.first-run code { color: var(--text); word-break: break-all; }

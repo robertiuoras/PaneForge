@@ -2674,6 +2674,11 @@ export interface Api {
   /** file picker that wires an existing binary up as an agent override */
   locateAgent(id: string): Promise<string | null>
 
+  /** Welcome screen's "Get set up" checklist: what is missing on this machine, if anything. */
+  checkSetup(): Promise<import('./setupCheck').SetupRow[]>
+  /** Windows-only: installs Git for Windows, streamed to onInstall like an agent install. */
+  installGit(): Promise<void>
+
   /** named profile this window runs under ('' = the normal installed app) */
   profile(): Promise<string>
   updateState(): Promise<UpdateState>
@@ -2965,6 +2970,7 @@ export interface Api {
   /** wav bytes in, text out; runs a local whisper, nothing leaves the machine */
   transcribe(wav: ArrayBuffer): Promise<{ text: string; error?: string }>
   installVoice(): Promise<void>
+  installTailscale(): Promise<void>
 
   onData(cb: (id: string, data: string) => void): () => void
   onSessions(cb: (sessions: Session[]) => void): () => void

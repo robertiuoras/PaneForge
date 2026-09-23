@@ -257,10 +257,13 @@ const GATED_INVOKE = new Set([
   'pty:attachClipboard',
   'agents:install',
   'agents:uninstall',
+  // Same class as `agents:install`: runs winget on this desk.
+  'setup:installGit',
   // Same class as the two above: it runs an installer on this machine.
   'agents:update',
   'update:install',
   'voice:install',
+  'remote:installTailscale',
   // Runs on ANOTHER desk, which is worse rather than better: the passkey enrolled here is
   // the only thing between a stolen cookie and a session on a machine whose own gate was
   // never asked.

@@ -259,7 +259,10 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
     modelFlag: '--model',
     models: CLAUDE_MODELS,
     color: '#d97757',
-    install: 'npm i -g @anthropic-ai/claude-code',
+    // Native installer (docs.anthropic.com/en/docs/claude-code/setup, verified 2026-09-23):
+    // no Node required, unlike the npm package this replaced.
+    install: 'curl -fsSL https://claude.ai/install.sh | bash',
+    installWin: 'powershell -NoProfile -Command "irm https://claude.ai/install.ps1 | iex"',
     uninstall: 'npm rm -g @anthropic-ai/claude-code',
     note: 'Anthropic subscription or API key',
     docs: 'https://docs.claude.com/en/docs/claude-code'
@@ -293,7 +296,10 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1'
     },
     color: '#8b5cf6',
-    install: 'npm i -g @anthropic-ai/claude-code',
+    // Native installer (docs.anthropic.com/en/docs/claude-code/setup, verified 2026-09-23):
+    // no Node required, unlike the npm package this replaced.
+    install: 'curl -fsSL https://claude.ai/install.sh | bash',
+    installWin: 'powershell -NoProfile -Command "irm https://claude.ai/install.ps1 | iex"',
     uninstall: 'npm rm -g @anthropic-ai/claude-code',
     free: true,
     note: 'One OpenRouter key, any model on it - free ones included. Paste the key in Settings.',
@@ -334,7 +340,10 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1'
     },
     color: '#4d6bfe',
-    install: 'npm i -g @anthropic-ai/claude-code',
+    // Native installer (docs.anthropic.com/en/docs/claude-code/setup, verified 2026-09-23):
+    // no Node required, unlike the npm package this replaced.
+    install: 'curl -fsSL https://claude.ai/install.sh | bash',
+    installWin: 'powershell -NoProfile -Command "irm https://claude.ai/install.ps1 | iex"',
     uninstall: 'npm rm -g @anthropic-ai/claude-code',
     free: true,
     note: 'DeepSeek key in Settings - no subscription, pay per token',
@@ -369,7 +378,10 @@ export const BUILTIN_AGENTS: AgentSpec[] = [
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1'
     },
     color: '#14b8a6',
-    install: 'npm i -g @anthropic-ai/claude-code',
+    // Native installer (docs.anthropic.com/en/docs/claude-code/setup, verified 2026-09-23):
+    // no Node required, unlike the npm package this replaced.
+    install: 'curl -fsSL https://claude.ai/install.sh | bash',
+    installWin: 'powershell -NoProfile -Command "irm https://claude.ai/install.ps1 | iex"',
     uninstall: 'npm rm -g @anthropic-ai/claude-code',
     free: true,
     note: 'Z.ai key in Settings - pay per token, or a GLM Coding Plan',
