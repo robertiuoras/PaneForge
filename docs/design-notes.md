@@ -5031,6 +5031,29 @@ on a subagent that already finished. Each `personOwnedSteps` step writes
 from `machineOf` else this one, `reopen` = cwd/agent/resumeId/prompt), through the same gate
 as `spoolNotice`.
 
+### ...and the chat that opened them hears once
+
+Robert, 2026-09-23: "once all sessions consolidate if theres multiple running and they close
+then at end can get summary in 1 session and leave it open". Before this the 3-minute close
+told nobody, and `--close-when-done` sent one bare line per pane. Now `pf open` always sends
+`reportTo` (the opener's `PF_PANE`), each closing pane leaves a note (summary = reply minus its
+`## Next steps`, 360 chars, one line) in `shared/finishedDigest.ts`, and the 15s sweep in
+`main/index.ts` tells the opener ONE prompt once none of its panes is still open, or after
+`DIGEST_MAX_HOLD_MS` 30 min saying how many are. The opener wears `openedOthers` and is never
+auto-closed: it is where the summary lands. An opener that has gone is dropped, not retried;
+every reply is still a Review row.
+
+### The sidebar card is three lines, and line two is the project
+
+Same day: "how do i know what lane im on? and even worse what happens if session renamed then
+i dont know what project im in ... things are cut off". 07d86303 had removed the copy chip;
+the name is whatever the pane was (re)named, so it cannot carry the project. Line 1 = number,
+name (wraps to three lines before an ellipsis), state word; line 2 = logo + `PaneForge · copy
+4` from the lane board's held folder (`SessionCopies.tsx`, plain text); line 3 = model, open
+time, steps, background job, each whole, wrapping rather than clipping. Robert chose three
+lines over two; steps are also in the pane header beside `open`. Measured: `test:cardfit`,
+`scripts/sidebar-fit-probe.mjs` (real window at 1280 and 1440).
+
 ## The other machine's screen is one click away
 
 Robert's ask (2026-09-23, from his phone): see the PC screen from PaneForge, "like windows.app",

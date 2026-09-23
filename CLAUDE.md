@@ -264,10 +264,10 @@ generated branch (`pf/w2`, `lane-a`, `worktree-<slug>`) dropped; `copy 2` = seco
 ## Every word on screen is read by somebody who has never used git
 
 lane/checkout/trunk/worktree/slot/merge/conflict/free/stuck stay in code. `copy 2` (folder 1,
-lane `a` 2, `w2` 2) never `copy f`; `main copy`; `Other copies`; `nobody is using it`.
+lane `a` 2, `w2` 2) never `copy f`; `main copy`; `nobody is using it`.
 `copyNumber` (`place.ts`) is the one slot->number. Non-pane chat named via
 `LaneBoardEntry.chatTitle` (`lanes:board`, `main/history.ts` `chatNameFor`); no name = nothing
-drawn. `test:laneplain`.
+drawn.
 
 ## A pane says which client it is working for
 
@@ -543,7 +543,7 @@ on. Closes when: agent pane, turn over (`footerEndedAt`), not ACTIVE (`sessions:
 transcript (`shared/replyRead.ts`, `test:replyread`), no running subagent, reply not ending
 `?`, `actionableNextSteps` empty. Writes `result`/`unverified` review `done_<pane>_<turn s>`
 (`recordReview`, idempotent), then `closeAfterResult`; each `personOwnedSteps` step becomes a
-GuardDeck notice, `spoolNotice`'s gate. Review = ONE list (`ReviewDialog.tsx`,
+GuardDeck notice, `spoolNotice`'s gate. Opener told once: `finishedDigest.ts`. Review = ONE list (`ReviewDialog.tsx`,
 `shared/reviewList.ts`, `test:reviewlist`): Needs you/Done/All, row = number+project+ask+
 result, expand = full reply + Reopen (`--resume`) + Copy; shell/bare-slash rows hidden. Idle
 shell undrawn (`fleet.ts` `idleShell`) till pressed/run; idle countdown still takes it.

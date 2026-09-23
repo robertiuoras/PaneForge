@@ -212,7 +212,10 @@ ok(
 ok('the sidebar has no "Other copies" list any more', !/Other<span|Other copies/.test(strip))
 ok('no copy row is drawn', !/<LaneRow|lane-tag/.test(strip))
 const app = readFileSync(join(repoRoot, 'src', 'renderer', 'src', 'App.tsx'), 'utf8')
-ok('a session card carries no copy chip', !/<SessionCopies\b/.test(app))
+// ...but every card says its PROJECT and which copy, as plain text on its own line, not a
+// button into the old copies card (Robert, later 2026-09-23: "how do i know what lane im
+// on? ... if session renamed then i dont know what project im in").
+ok('a session card says its project and copy as plain text', /<SessionCopies session=\{s\} boards=\{laneBoards\} \/>/.test(app) && !/onOpen/.test(readFileSync(join(repoRoot, 'src', 'renderer', 'src', 'components', 'SessionCopies.tsx'), 'utf8')))
 ok('and nothing opens the old copies card or its help card', !/<LaneDialog\b|<LaneHelp\b/.test(app))
 const notice = (board, now) => words.copiesNotice({ repo: '/Users/x/Projects/demo', device: null, releasing: null, lastShip: null, hold: null, ...board }, now)
 const entry = (x) => ({ lane: 'a', dir: '/Users/x/Projects/demo-a', branch: 'lane-a', from: null, session: null, ownerPane: null, held: false, seen: 0, ready: false, conflicted: false, adoptable: false, resolver: null, ...x })

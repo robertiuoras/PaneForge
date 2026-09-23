@@ -37,6 +37,7 @@ async function bundle(entry, name) {
   return require(out)
 }
 const { doneVerdict, doneReviewId, AUTO_CLOSE_QUIET_MS } = await bundle('src/shared/doneClose.ts', 'shared.cjs')
+const digest = await bundle('src/shared/finishedDigest.ts', 'digest.cjs')
 const main = await bundle('src/main/doneClose.ts', 'main.cjs')
 
 const NOW = 1_800_000_000_000
@@ -111,8 +112,11 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
     noteClose: (id, reason, at) => notes.push([id, reason, at]),
     writeNotice: (path, body) => written.push([path, JSON.parse(body)]),
     activity: (what, why) => activity.push([what, why]),
+    openerOf: (id) => (id === 'p1' ? 'boss' : undefined),
+    finished: (opener, note) => told.push([opener, note]),
     now: () => NOW
   }
+  const told = []
   closeAnswer = { closed: false, reason: 'session is busy or has a background job' }
   assert.deepEqual(main.sweepDoneClose(deps), [])
   main.sweepDoneClose(deps)
@@ -145,6 +149,11 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
   assert.ok(notes.at(-1)[2], 'the close is stamped on the record')
   assert.deepEqual(activity, [['login fix', 'finished, 2 things left for you']])
   assert.equal(closes.length, 3)
+  assert.equal(told.length, 1, 'the opener is noted once, and only for the close that happened')
+  assert.equal(told[0][0], 'boss')
+  assert.equal(told[0][1].project, 'site')
+  assert.match(told[0][1].summary, /Fixed the login/)
+  assert.deepEqual(told[0][1].personSteps, ['Robert: run /login on the PC', 'Robert: approve the Vercel build'], 'person steps travel with the summary')
   // Off means off, before any disk is touched.
   assert.deepEqual(main.sweepDoneClose({ ...deps, enabled: () => false, transcriptFor: () => { throw new Error('read') } }), [])
   console.log('done-close: sweep records, notices, closes ok')
@@ -172,4 +181,43 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
   const settings = readFileSync(join(root, 'src/renderer/src/components/SettingsDialog.tsx'), 'utf8')
   assert.ok(settings.includes('autoCloseDone'), 'there is a switch')
   console.log('done-close: source wiring ok')
+}
+
+// 5. The panes a chat opened report back ONCE, when the last has closed (Robert
+// 2026-09-23: "get summary in 1 session and leave it open").
+{
+  assert.equal(doneVerdict(finished({ openedOthers: true }), NOW).close, false, 'an opener is never auto-closed')
+  const reply = '## Done\n\nFixed **the login** and `npm test` passes.\n\n- one\n- two\n\n## Next steps\n- None'
+  assert.equal(digest.summaryOf(reply), 'Done Fixed the login and npm test passes. one two')
+  assert.ok(digest.summaryOf('word '.repeat(200)).length <= digest.SUMMARY_CHARS + 1, 'a long reply is cut to one short line')
+  assert.match(digest.summaryOf('word '.repeat(200)), /…$/)
+  const d = new digest.FinishedDigest()
+  const note = (id, title) => ({ id, title, project: 'taskdriver.ai', summary: `did ${title}`, personSteps: [] })
+  const sent = []
+  let open = 2
+  const tell = (o, t) => { sent.push([o, t]); return true }
+  d.add('boss', note('a', 'idea 1'), NOW)
+  d.add('boss', note('a', 'idea 1'), NOW)
+  assert.deepEqual(d.flush(() => open, tell, NOW + 1000), [], 'held while siblings are still open')
+  d.add('boss', { ...note('b', 'idea 2'), personSteps: ['log in on the PC'] }, NOW + 2000)
+  open = 0
+  assert.deepEqual(d.flush(() => open, tell, NOW + 3000), ['boss'])
+  assert.equal(sent.length, 1, 'one prompt for all of them')
+  assert.match(sent[0][1], /^All 2 panes you opened have finished and closed into Review\. 1\) "idea 1" \(taskdriver\.ai\): did idea 1 2\) "idea 2"/)
+  assert.match(sent[0][1], /Left for you: log in on the PC\./)
+  assert.doesNotMatch(sent[0][1], /\n/, 'one line: it is typed into a CLI')
+  assert.equal(d.size(), 0)
+  d.add('boss', note('c', 'idea 3'), NOW)
+  assert.deepEqual(d.flush(() => 1, tell, NOW + digest.DIGEST_MAX_HOLD_MS - 1), [])
+  assert.deepEqual(d.flush(() => 1, tell, NOW + digest.DIGEST_MAX_HOLD_MS), ['boss'], 'a stuck sibling does not hold the summary for ever')
+  assert.match(sent[1][1], /^The pane you opened for "idea 3".* 1 other pane is still open\.$/)
+  d.add('gone', note('d', 'x'), NOW)
+  assert.deepEqual(d.flush(() => 0, () => false, NOW), [], 'an opener that has gone is dropped, not retried')
+  assert.equal(d.size(), 0)
+  const index = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
+  assert.ok(index.includes('finishedDigest.flush('), 'index.ts flushes the digest')
+  assert.ok(index.includes('manager.onFinished ='), '--close-when-done panes feed it too')
+  const ctl = readFileSync(join(root, 'scripts/pf-ctl.mjs'), 'utf8')
+  assert.doesNotMatch(ctl, /reportTo: closeWhenDone \? reportTo/, 'pf open always says who opened the pane')
+  console.log('done-close: one summary back to the opener ok')
 }
