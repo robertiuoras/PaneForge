@@ -284,15 +284,27 @@ if (process.platform !== 'win32' && typeof electronBin === 'string' && existsSyn
   const r = spawnSync('/bin/sh', ['-c', line], { input: hookInput, encoding: 'utf8', timeout: 60_000, env: { ...env, PF_CLAUDE_HOME: join(work, 'ch-electron') } })
   say('POSIX line on the Electron binary blocks with exit 2', r.status === 2 && /AUTO-CLEAR/.test(r.stderr), `${r.status} ${r.stderr?.slice(0, 300)}`)
 } else console.log('skip  POSIX Electron-as-Node run (no electron binary here)')
-const ps = ['pwsh', 'powershell'].find((x) => spawnSync(x, ['-NoProfile', '-Command', 'exit 0']).status === 0)
-if (ps) {
-  // Electron's own binary where it is installed (the real fallback), else node standing in.
-  const asNode = typeof electronBin === 'string' && existsSync(electronBin) ? electronBin : process.execPath
-  const pr = runnerFor('win32', false, asNode)
-  const line = pr.line(HOOK, ['--event=stop', `--user-data=${join(work, 'ud-ps')}`])
-  const r = spawnSync(ps, ['-NoProfile', '-NonInteractive', '-Command', line], { input: hookInput, encoding: 'utf8', timeout: 60_000, env: { ...process.env, ...env, PF_CLAUDE_HOME: join(work, 'ch-ps') } })
-  say(`PowerShell line (${ps}, ${asNode === process.execPath ? 'node' : 'Electron'}) gets stdin and keeps exit 2`, r.status === 2 && /AUTO-CLEAR/.test(r.stderr), `${r.status} ${r.stderr?.slice(0, 300)}`)
-} else console.log('skip  PowerShell run (no PowerShell here; proven on the PC 2026-09-23)')
+// Both PowerShells: the docs do not say which one `"shell": "powershell"` starts.
+const shells = ['powershell', 'pwsh'].filter((x) => spawnSync(x, ['-NoProfile', '-Command', 'exit 0']).status === 0)
+// Electron's own binary is the real fallback. Its start is judged only once it is warm: on
+// the PC (2026-09-23) a fresh copy took 23s and then 132s just to run `-e`, which is the
+// machine scanning or starved, not the command shape - that is skipped OUT LOUD, never passed.
+let electronWarm = false
+if (shells.length && typeof electronBin === 'string' && existsSync(electronBin)) {
+  const t0 = Date.now()
+  const warm = spawnSync(electronBin, ['-e', 'process.exit(3)'], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, timeout: 120_000 })
+  const ms = Date.now() - t0
+  electronWarm = warm.status === 3 && ms < 15_000
+  if (!electronWarm) console.log(`skip  PowerShell + Electron (Electron-as-Node took ${ms} ms, status ${warm.status}, on this machine)`)
+}
+for (const ps of shells)
+  for (const asNode of [process.execPath, ...(electronWarm ? [electronBin] : [])]) {
+    const who = asNode === process.execPath ? 'node' : 'Electron'
+    const line = runnerFor('win32', false, asNode).line(HOOK, ['--event=stop', `--user-data=${join(work, `ud-${ps}-${who}`)}`])
+    const r = spawnSync(ps, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', line], { input: hookInput, encoding: 'utf8', timeout: 60_000, env: { ...process.env, ...env, PF_CLAUDE_HOME: join(work, `ch-${ps}-${who}`) } })
+    say(`PowerShell line (${ps}, ${who}) gets stdin and keeps exit 2`, r.status === 2 && /AUTO-CLEAR/.test(r.stderr), `${r.status} ${r.error?.code ?? ''} ${r.stderr?.slice(0, 300)}`)
+  }
+if (!shells.length) console.log('skip  PowerShell run (no PowerShell here; proven on the PC 2026-09-23)')
 
 try {
   rmSync(work, { recursive: true, force: true })
