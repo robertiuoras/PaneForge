@@ -380,8 +380,8 @@ select` footer, options 1..N, one arrow row. Multi-question end: no footer, `REV
 `readReview` DOWN. Refusals: one `❯` over blanks/rules, `don't ask again` (`WIDENS`); RULE =
 blank. Arrows + return never digit, `CHOOSE_GAP_MS`; left question REFUSES. `pty:choose` on
 the SESSION. RED, NOISY: `.row.asking`, `sounds.ask` `knock` on `sessions:ask`;
-`main/askNotify.ts` Telegram (one per question, never mirror; `pf-telegram.mjs` TAP ->
-`pty:choose`; `test:asknotify`). Click types NOTHING (`askRef`; `test:askclick`, `test:choices`).
+Questions: desk + GuardDeck, NEVER Telegram; `askNotify.ts` = stopping ERRORS
+(`telegramAsk`). Click types NOTHING (`askRef`; `test:askclick`, `test:choices`).
 
 ## Arrowing through a question may not cost the whole desk
 
