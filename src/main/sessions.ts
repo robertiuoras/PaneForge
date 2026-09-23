@@ -98,7 +98,7 @@ import type { EffortChoice, PaneEffort } from '../shared/types'
 import { codexLadders } from './effortLevels'
 import { logEffort, logModelAdvice } from './activationLog'
 import { judgeModelAdvice } from '../shared/modelAdvice'
-import { catalogueIdFor, currentEffortLevel } from './modelAdvice'
+import { catalogueIdFor, currentClaudeEffort } from './modelAdvice'
 import { codexTranscriptPath } from './transcripts'
 import { endHookDeny, feedHookDeny } from './hookDeny'
 import { continueAfterRestore, restoredClock } from '../shared/restoreTurn'
@@ -1781,8 +1781,18 @@ export class SessionManager extends EventEmitter {
    */
   private adviseModel(live: Live, prompt: string): void {
     if (live.meta.agent !== 'claude' || getConfig().modelAdvice === false) return
-    const fromModel = live.meta.model || getConfig().defaultModels?.claude || 'claude-sonnet-5'
-    const fromEffort = currentEffortLevel()
+    // The model this pane is really on: the transcript's own reading (`meta.model`,
+    // `main/paneModel.ts` - which itself already falls back to the launch `--model`), or
+    // the configured default when neither said anything. `defaultModels` is `{}` out of
+    // the box, so a pane started with no `--model` and no configured default is a model
+    // this app has NEVER been told - guessing `claude-sonnet-5` for it would be advice
+    // about a model the pane might not even be running. No evidence, no card.
+    const fromModel = live.meta.model || getConfig().defaultModels?.claude
+    if (!fromModel) {
+      logModelAdvice({ id: live.meta.id, refused: 'unknown-model' })
+      return
+    }
+    const fromEffort = currentClaudeEffort(live.req.effort?.manual)
     const advice = judgeModelAdvice({ prompt, model: fromModel, effort: fromEffort })
     if (!advice) {
       logModelAdvice({ id: live.meta.id, from: { model: fromModel, effort: fromEffort }, refused: 'no signal' })
@@ -2009,7 +2019,23 @@ export class SessionManager extends EventEmitter {
       // before the block below ever sets it, which is the one moment "nothing has been
       // asked of this pane yet" is still true. A slash command and a bare return are
       // never an ask at all, so neither reaches this.
-      if (!slash && !bare && !live.meta.engaged) this.adviseModel(live, live.typed)
+      //
+      // `engaged` alone is not enough: a restart (~1267) and a wake (~1555) both reset it
+      // to false on a pane that is really resuming a conversation with plenty of context
+      // already loaded - `!live.req.resume && !live.req.resumeId` is what tells a pane
+      // that has genuinely never been asked anything apart from one continuing an old
+      // chat. And an `app` write is this app typing autoclear's own resume prompt into an
+      // idle-looking composer, never a person - only `origin === 'desk'` or a phone's own
+      // typing earns a card.
+      if (
+        !slash &&
+        !bare &&
+        !live.meta.engaged &&
+        !live.req.resume &&
+        !live.req.resumeId &&
+        origin !== 'app'
+      )
+        this.adviseModel(live, live.typed)
       // A7: how often a person had to step in. Counted here because this is the one place
       // that knows all four readings at once - who did it, whether anything was sent,
       // whether the pane was holding a question, and whether a turn was running.

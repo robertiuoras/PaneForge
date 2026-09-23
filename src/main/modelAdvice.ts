@@ -7,7 +7,6 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { BUILTIN_AGENTS, findAgent, modelValue, type ModelChoice } from '../shared/agents'
 import type { ModelFamily } from '../shared/modelAdvice'
-import { logModelAdvice } from './activationLog'
 
 /** Same override Claude Code itself honours - `claudeTrust.ts` reads the same folder. */
 function claudeHome(): string {
@@ -43,6 +42,20 @@ export function currentEffortLevel(now = Date.now()): string {
   return level
 }
 
+/**
+ * The effort a Claude Code pane is really on: what it was LAUNCHED with, when this pane's
+ * own request carried one, else the desk-wide `settings.json` reading above.
+ *
+ * `StartSessionRequest.effort` is the same field Codex's own auto-effort uses
+ * (`{ mode, manual }`) - nothing sets `manual` for a Claude launch today, so this reads as
+ * the settings.json fallback for every pane that exists right now, and starts reading a
+ * real per-pane value the day something does set it, with no change needed here.
+ */
+export function currentClaudeEffort(launchEffort: string | undefined, now = Date.now()): string {
+  const launch = launchEffort?.trim().toLowerCase()
+  return launch || currentEffortLevel(now)
+}
+
 /** Claude Code's own model catalogue, `shared/agents.ts` `CLAUDE_MODELS`. */
 const CLAUDE_MODELS: ModelChoice[] = findAgent(BUILTIN_AGENTS, 'claude').models ?? []
 
@@ -60,9 +73,4 @@ export function catalogueIdFor(family: ModelFamily): string {
   const prefix = `claude-${family}`
   const found = CLAUDE_MODELS.find((m) => modelValue(m).startsWith(prefix))
   return found ? modelValue(found) : family
-}
-
-/** One line per decision - never the prompt text, which is the whole point of the log. */
-export function logAdvice(entry: Record<string, unknown>): void {
-  logModelAdvice(entry)
 }

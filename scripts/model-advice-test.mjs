@@ -206,6 +206,29 @@ t('three or more distinct file paths reads as work across several files', () => 
 })
 
 // ---------------------------------------------------------------------------
+// Pre-ship review, 2026-09-23: `read`/`open`/`list`/`find`/`comment` dropped from THIS
+// rule's own light set (Codex's LOW is untouched), and Sonnet is only offered when a
+// question ALSO matches a concrete LOW word - the question shape alone proved nothing.
+
+t('"read" is no longer this rule\'s own light word, and carries no other signal', () => {
+  assert.equal(
+    judgeModelAdvice({ prompt: 'read the handoff and carry on', model: OPUS, effort: 'medium' }),
+    null
+  )
+})
+
+t('a question about the state of the work, not the code, gets no card', () => {
+  assert.equal(judgeModelAdvice({ prompt: 'what is left to do?', model: OPUS, effort: 'medium' }), null)
+})
+
+t('a question with no concrete LOW word is a shape, not evidence', () => {
+  assert.equal(
+    judgeModelAdvice({ prompt: 'can you look at this screenshot?', model: OPUS, effort: 'medium' }),
+    null
+  )
+})
+
+// ---------------------------------------------------------------------------
 // Codex's own suite must still pass on its own - see `test:effort`. Import assurance:
 // the exact fixtures effort-test.mjs uses give the same reading through the export this
 // file reuses.
@@ -227,6 +250,32 @@ t('main reads live.meta.engaged before the block that sets it', () => {
   assert.ok(adviseAt > 0, 'the advice call is in sessions.ts')
   assert.ok(setAt > 0, 'the engaged flip is in sessions.ts')
   assert.ok(adviseAt < setAt, 'the read must come before the write it is about')
+})
+
+// Pre-ship review: a restart/wake resets `engaged` to false on a pane that is really
+// resuming a real conversation (~1267, ~1555), and autoclear types its own resume prompt
+// with `origin: 'app'` while `engaged` is still false too - neither is a person's first
+// ask, so the guard the advice call sits behind must name all three refusals.
+t('the advice guard also refuses a resuming pane and an app-origin write', () => {
+  const src = readFileSync(new URL('../src/main/sessions.ts', import.meta.url), 'utf8')
+  const guardStart = src.lastIndexOf('if (', src.indexOf('this.adviseModel(live, live.typed)'))
+  const guard = src.slice(guardStart, src.indexOf('this.adviseModel(live, live.typed)'))
+  assert.match(guard, /!live\.meta\.engaged/)
+  assert.match(guard, /!live\.req\.resume\b/)
+  assert.match(guard, /!live\.req\.resumeId\b/)
+  assert.match(guard, /origin !== 'app'/)
+})
+
+t('a resuming pane is never advised, even with engaged false', () => {
+  // `judgeModelAdvice` itself has no idea what a resume is - that refusal lives in
+  // sessions.ts's guard, proved above by source. This just keeps the two facts pinned
+  // together: a resumed conversation still reads as a perfectly good heavy ask on its own.
+  const a = judgeModelAdvice({
+    prompt: 'why does the build fail on windows again',
+    model: SONNET,
+    effort: 'medium'
+  })
+  assert.equal(a.tier, 'heavy')
 })
 
 console.log(`model-advice: ${pass} checks passed`)

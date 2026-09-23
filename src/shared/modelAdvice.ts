@@ -19,7 +19,7 @@
 // what "hard" and "small" mean is how they quietly disagree eighteen months from now.
 // Codex's own suite (`test:effort`) proves this import changed nothing about it.
 
-import { CONTINUATION, HIGH, LOW, LOW_MAX_CHARS } from './effort'
+import { CONTINUATION, HIGH, LOW_MAX_CHARS } from './effort'
 
 /** The two directions this card ever points. */
 export type ModelAdviceTier = 'light' | 'heavy'
@@ -36,8 +36,6 @@ export interface ModelAdviceInput {
   model: string
   /** `low` | `medium` | `high` (or whatever `~/.claude/settings.json` names); unknown = 'medium'. */
   effort: string
-  /** How many files were dropped onto the composer with this ask, if any. */
-  attachments?: number
 }
 
 export interface ModelAdviceTarget {
@@ -96,6 +94,26 @@ const HEAVY_WORDS = /\b(plan|design|investigat\w*|root cause|race|flaky|security
 const IMPERATIVE_VERBS =
   /\b(build|implement|create|write|add|refactor|migrate|fix|design|architect|integrate|configure|set ?up|generate|make)\b/
 
+/**
+ * Codex's own LOW list, minus the five words that mean "read something back" rather than
+ * "this is a small, bounded ask": `read`, `open`, `list`, `find`, `comment` are all things
+ * a HARD investigation does just as often as a quick one does ("read the handoff and see
+ * what a race condition left behind"), so on their own they said nothing this rule could
+ * trust. Codex's `LOW` is untouched - this is a second, narrower opinion for THIS rule
+ * only, never a change to what Codex classifies a turn as.
+ */
+const LIGHT_LOW =
+  /\b(rename|typo|format|lint|indent|what is|where is|show me|grep|print|explain this line|bump|add import|remove unused|wording|label)\b/
+
+/**
+ * A question about the STATE OF THE WORK - what is left, what is next - rather than about
+ * the code or the system. On a pane's FIRST ask there is no earlier turn for "left to do"
+ * to refer to, so a sentence shaped like this is either pasted in from somewhere else or
+ * not really asking this app anything an effort level could answer - treated the same as
+ * a bare continuation, not as evidence either way.
+ */
+const META_STATUS = /\b(left to do|next steps?|what(?:'s| is) (?:left|next))\b/
+
 /** Ends `?`, short, and asks for an answer rather than for work. */
 function isPureQuestion(raw: string): boolean {
   const t = raw.trim()
@@ -119,6 +137,7 @@ export function judgeModelAdvice(input: ModelAdviceInput): ModelAdvice | null {
   const lower = text.toLowerCase()
   const bare = lower.replace(/[.!?,;:]+$/, '').trim()
   if (CONTINUATION.test(bare)) return null
+  if (META_STATUS.test(lower)) return null
 
   const heavySignals: string[] = []
   for (const [re, words] of HIGH) {
@@ -132,11 +151,15 @@ export function judgeModelAdvice(input: ModelAdviceInput): ModelAdvice | null {
   if (taskListLines(text) >= 3) heavySignals.push('a multi-step list')
   if (raw.length > 600) heavySignals.push('a long ask')
   if (HEAVY_WORDS.test(lower)) heavySignals.push('planning or investigation')
-  if ((input.attachments ?? 0) > 0) heavySignals.push('a file attached')
 
   const lightSignals: string[] = []
-  if (LOW.test(lower) && raw.length < LOW_MAX_CHARS) lightSignals.push('small edit or lookup')
-  const pureLookup = isPureQuestion(raw)
+  const lowHit = LIGHT_LOW.test(lower) && raw.length < LOW_MAX_CHARS
+  if (lowHit) lightSignals.push('small edit or lookup')
+  // A "pure lookup" - the one thing that can move Opus/Fable down to Sonnet - is a
+  // question shape AND a concrete LOW word together. The shape alone was "can you look at
+  // this screenshot?": grammatically a lookup, but nothing here says it is SMALL, so on
+  // its own it is not evidence either way.
+  const pureLookup = isPureQuestion(raw) && lowHit
   if (pureLookup) lightSignals.push('a quick lookup')
 
   const heavy = heavySignals.length > 0
