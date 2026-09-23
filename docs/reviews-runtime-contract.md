@@ -6,6 +6,8 @@ Agents record a result only after writing an explicit completion, decision, or b
 
 GuardDeck notices are emitted only for explicit `notify: true` records by the packaged Darwin production profile. A notice is one durable `~/.claude/guarddeck/notices/paneforge-review-<id>.json` file. Informational result acknowledgement uses `~/.claude/guarddeck/result-receipts/<id>.json` with ISO `reviewedAt`; clearing acknowledgement removes that receipt and restores attention.
 
+The app also closes finished panes on its own (`src/main/doneClose.ts`): an agent pane whose turn is over, that nobody is looking at, that has been quiet three minutes, with no question, draft, job, background job or running subagent, and whose last reply lists no step an agent could take, is recorded as a `result` with `proof: "unverified"` (id `done_<pane>_<turn>`, report = the reply as the CLI's own transcript has it) and closed through the same `closeAfterResult` gate. Each step only a person can take becomes `~/.claude/guarddeck/notices/paneforge-step-<review>-<n>.json` with `kind: "step"`, `machine: "pc" | "mac"` and a `reopen` block (`cwd`, `agent`, `resumeId`, `title`, `prompt`) for GuardDeck to bring the conversation back once the step is done; same production gate as result notices.
+
 Publish with `node scripts/pf-ctl.mjs review /absolute/path/result.json`. Use one stable ID
 for one outcome; retries must retain the same content. The JSON has this shape (replace all
 example values with observed state):

@@ -2944,22 +2944,40 @@ input[type='range']::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px var(--ac
 .review-tabs { display: flex; gap: 5px; }
 .review-tabs button { background: transparent; color: var(--muted); border: 1px solid var(--line); border-radius: 7px; padding: 5px 10px; }
 .review-tabs button.on { color: var(--text); border-color: var(--accent); background: color-mix(in oklab, var(--accent) 12%, transparent); }
-.review-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
-.review-metrics > div { border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; background: var(--surface-2); display: flex; flex-direction: column; gap: 2px; }
-.review-metrics strong { font-size: 20px; font-variant-numeric: tabular-nums; }
-.review-metrics span, .review-section-head span { color: var(--muted); font-size: 11px; }
-.review-note { color: var(--muted); font-size: 11px; line-height: 1.45; }
-.review-scroll { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 3px; }
-.review-section-head { display: flex; align-items: baseline; justify-content: space-between; margin-top: 4px; }
-.review-list, .review-actions { display: flex; flex-direction: column; gap: 7px; }
-.review-prompt, .review-actions > div { border: 1px solid var(--line); border-radius: 9px; padding: 9px 11px; background: var(--surface-2); }
-.review-row-head { display: flex; align-items: center; gap: 7px; min-width: 0; }
-.review-row-head > span { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.review-row-head time { margin-left: auto; color: var(--muted); font-size: 11px; white-space: nowrap; }
-.review-prompt pre { margin: 8px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.45; color: var(--text); }
-.review-actions > div { font-size: 12px; }
-.review-actions span { color: var(--muted); }
-@media (max-width: 620px) { .review-metrics { grid-template-columns: repeat(2, 1fr); } .review-row-head { flex-wrap: wrap; } .review-row-head time { width: 100%; margin-left: 20px; } }
+.review-scroll { min-height: 0; overflow-y: auto; padding-right: 3px; }
+/* One list container, hairline-divided rows - not a stack of separately-radiused cards.
+   Following the design vault's linear.app entry: hairline borders instead of shadows, a
+   single surface step above the panel it sits on. */
+.review-list { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--surface-2); }
+.review-row-wrap + .review-row-wrap { border-top: 1px solid var(--line); }
+.review-row {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0;
+  background: none; border: 0; padding: 9px 12px; text-align: left; color: var(--text);
+  font: inherit; cursor: pointer;
+  transition: background 0.1s ease;
+}
+.review-row:hover { background: color-mix(in oklab, var(--text) 4%, transparent); }
+.review-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.review-num { flex: none; min-width: 28px; font-variant-numeric: tabular-nums; font-size: 11px; color: var(--muted); }
+.review-project { flex: none; max-width: 22%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.review-ask { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.review-result { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.review-status { flex: none; font-size: 12px; color: var(--muted); }
+.review-status.accent { color: var(--accent); }
+.review-when { flex: none; font-size: 11px; color: var(--muted); white-space: nowrap; }
+.review-body { padding: 4px 12px 12px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 10px; }
+.review-field { display: flex; flex-direction: column; gap: 4px; }
+.review-field > strong { font-size: 11px; color: var(--muted); }
+.review-field pre, .review-field ul { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.45; color: var(--text); padding-left: 0; list-style: none; }
+.review-links { display: flex; flex-direction: column; gap: 4px; }
+.review-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.review-empty { padding: 14px 12px; color: var(--muted); font-size: 12px; }
+@media (max-width: 620px) {
+  .review-row { flex-wrap: wrap; min-height: 44px; }
+  .review-project, .review-ask, .review-result { max-width: none; white-space: normal; }
+  .review-status, .review-when { flex: none; }
+  .review-actions button { min-height: 44px; }
+}
 
 /* All that is left of the pane mic.
    The resting button is gone from every pane (Robert 2026-09-05: "remove the mic icon in

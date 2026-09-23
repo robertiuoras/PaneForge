@@ -57,7 +57,7 @@ import {
 } from 'node:fs'
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { hostname } from 'node:os'
+import { homedir, hostname, tmpdir } from 'node:os'
 import { closeTestApps } from './test-app.mjs'
 import { mergeAutoConflicts, mergeImportConflicts } from './lane-merge.mjs'
 import {
@@ -2413,6 +2413,39 @@ function installDeps() {
   )
 }
 
+const RBUILD = join(homedir(), '.claude', 'rbuild.mjs')
+
+/**
+ * On the Mac the typecheck runs on the PC through rbuild: nothing heavy runs on the laptop,
+ * and a loaded Mac timed the local one out (see below). `undefined` means "not handled
+ * here, run it locally"; null means it passed; a sentence means it did not.
+ * A repo under the temp dir stays local: the fixture tests stub npm and must not reach the PC.
+ */
+function remoteTypecheckFailure() {
+  if (process.platform !== 'darwin' || !existsSync(RBUILD)) return undefined
+  const tmp = tmpdir()
+  if ([tmp, `/private${tmp}`].some((t) => MAIN.startsWith(t))) return undefined
+  const at = process.argv.indexOf('--session')
+  const session =
+    (at >= 0 && process.argv[at + 1]) || process.env.CLAUDE_SESSION_ID || process.env.CODEX_THREAD_ID || `lane-${hostname()}`
+  const r = spawnSync(process.execPath, [RBUILD, '--repo', MAIN, '--session', session, 'typecheck'], {
+    encoding: 'utf8',
+    timeout: 1_200_000
+  })
+  if (r.status === 0) return null
+  const all = `${r.stdout ?? ''}${r.stderr ?? ''}`
+  const detail = all
+    .split('\n')
+    .filter((l) => /error TS/.test(l))
+    .slice(0, 3)
+    .join('; ')
+  if (detail) return `${MB} does not typecheck, so it was not released - ${detail}. Fix it and it goes out by itself.`
+  return (
+    `${MB}'s typecheck could not run on the PC, so nothing was released - ${firstLine(all) || r.error?.message || `exit ${r.status}`}. ` +
+    `That is the remote runner, not the code.`
+  )
+}
+
 /** Empty when master compiles (or has no typecheck script), a sentence when it does not. */
 function taskdriverProofFailure(dir, ref) {
   const r = spawnSync(process.execPath, [TASKDRIVER_PROOF, '--repo', dir, '--ref', ref], {
@@ -2454,6 +2487,8 @@ function typecheckFailure(state) {
     const failed = installDeps()
     if (failed) return failed
   }
+  const remote = remoteTypecheckFailure()
+  if (remote !== undefined) return remote
   // One string + shell: npm on Windows is npm.cmd, which cannot be spawned directly.
   const r = spawnSync('npm run --silent typecheck', {
     cwd: MAIN,
@@ -2462,6 +2497,12 @@ function typecheckFailure(state) {
     shell: true
   })
   if (r.status === 0) return null
+  // Killed by the timeout is not a type error either. Measured 2026-09-23: taskdriver.ai's
+  // typecheck ran past 150s on a Mac at load 44-88 and `ship` said "main does not typecheck"
+  // twice, with no error line, about a tree the PC compiled clean in 52.9s.
+  if (r.error?.code === 'ETIMEDOUT' || r.signal) {
+    return `${MB}'s typecheck was stopped after 150s, so nothing was released. That is this machine's load, not the code.`
+  }
   const all = `${r.stdout ?? ''}${r.stderr ?? ''}`
   const detail = all
     .split('\n')

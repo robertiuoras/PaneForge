@@ -68,6 +68,18 @@ export function actionableNextSteps(md: string): string[] {
   return openNextSteps(md).filter((body) => !BLOCKED_OPENER.test(body) && !PERSON_OWNED.test(body))
 }
 
+/**
+ * The steps only a PERSON can take - a login, a purchase, an approval, "your call".
+ *
+ * The other half of `actionableNextSteps`, kept as its own reading because a pane that
+ * finishes with nothing but these is DONE from the app's point of view (`shared/doneClose.ts`)
+ * and each of them becomes a GuardDeck to-do that names the machine it happens on. A step
+ * behind a trigger word (`after`, `once`, `when`) is neither: nobody can start it now.
+ */
+export function personOwnedSteps(md: string): string[] {
+  return openNextSteps(md).filter((body) => !BLOCKED_OPENER.test(body) && PERSON_OWNED.test(body))
+}
+
 /** What a card says beside a pane, or null when there is nothing worth a chip. */
 export function stepsWord(open: number): string | null {
   if (!open) return null

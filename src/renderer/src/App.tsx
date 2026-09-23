@@ -5,6 +5,7 @@ import { effortChip, effortWords } from '@shared/effort'
 import { chordOf, resolveKeymap, sameChord } from '@shared/keymap'
 import { stripAnsi } from '@shared/ansi'
 import type {
+  Agent,
   Config,
   DiffScope,
   HistoryEntry,
@@ -54,7 +55,7 @@ import Elapsed, { formatElapsed, kb, useNow } from './components/Elapsed'
 import GitBadge from './components/GitBadge'
 import HistoryDialog from './components/HistoryDialog'
 import ReviewDialog from './components/ReviewDialog'
-import { fleetRow, fleetWaiting } from '@shared/fleet'
+import { fleetRow, fleetWaiting, idleShell } from '@shared/fleet'
 import { deskGroups, deskRows as buildDeskRows, type DeskRow } from '@shared/desk'
 import {
   ToolsIcon,
@@ -638,14 +639,23 @@ export default function App(): JSX.Element {
   // the whole desk; it writes an attribute and no state. See `shared/headerFit.ts`.
   useHeaderFits([sessions])
 
+  const [activeId, setActiveId] = useState<string | null>(null)
+  /**
+   * What the desk draws: every pane but a shell sitting at its prompt (`idleShell`), which
+   * still exists - its number switches to it, and then it is the active pane and drawn.
+   */
+  const deskSessions = useMemo(
+    () => sessions.filter((s) => s.id === activeId || !idleShell(s)),
+    [sessions, activeId]
+  )
   const shownSessions = useMemo(
     () =>
-      sessions.filter(
+      deskSessions.filter(
         (session) =>
           deviceFilter === 'all' ||
           (deviceFilter === 'local' ? !session.remote : session.remote?.device === deviceFilter)
       ),
-    [sessions, deviceFilter]
+    [deskSessions, deviceFilter]
   )
   const [projects, setProjects] = useState<Project[]>([])
   const [agents, setAgents] = useState<AgentInfo[]>([])
@@ -659,7 +669,6 @@ export default function App(): JSX.Element {
   // sleep sweep is about to answer. Written below where `pressure` is computed; a ref
   // rather than a dependency because `handoffPanes` is deliberately built from refs.
   const sleepPressureRef = useRef<SleepPressure>('ok')
-  const [activeId, setActiveId] = useState<string | null>(null)
   /**
    * When the keyboard last LEFT each pane, which is when its idle clock may start.
    *
@@ -970,6 +979,9 @@ export default function App(): JSX.Element {
   const keymap = useMemo(() => resolveKeymap(config?.keys), [config?.keys])
   const activeRef = useRef<string | null>(null)
   activeRef.current = activeId
+  // Main closes finished panes on its own (`main/doneClose.ts`) and must never take the
+  // one a person is looking at.
+  useEffect(() => { window.api.activePane(activeId) }, [activeId])
   // Read from inside listeners that outlive a render - the draft watcher below fires on
   // every keystroke and must not re-subscribe each time the session list changes.
   const sessionsRef = useRef<Session[]>([])
@@ -2207,12 +2219,12 @@ export default function App(): JSX.Element {
     () =>
       tiled
         ? gridPick(
-            sessions.map((s) => ({ id: s.id, rank: GRID_RANK[fleetState(s)] })),
+            deskSessions.map((s) => ({ id: s.id, rank: GRID_RANK[fleetState(s)] })),
             gridRoom(box.w, box.h, box.gap),
             activeId ?? undefined
           )
         : { shown: [], hidden: 0 },
-    [tiled, sessions, box.w, box.h, box.gap, activeId]
+    [tiled, deskSessions, box.w, box.h, box.gap, activeId]
   )
   const cellAt = useMemo(
     () => new Map(gridChoice.shown.map((id, i) => [id, i])),
@@ -3196,6 +3208,7 @@ export default function App(): JSX.Element {
         setToolsOpen(false)
         setBoard(null)
         setHistory(false)
+        setReview(false)
         setDevices(false)
         setRenaming(null)
         return
@@ -4957,8 +4970,8 @@ export default function App(): JSX.Element {
    * switch to until it has been opened.
    */
   const deskRows = useMemo(
-    () => buildDeskRows(sessions, shownSessions, remote?.peers ?? [], deviceFilter),
-    [sessions, shownSessions, remote, deviceFilter]
+    () => buildDeskRows(deskSessions, shownSessions, remote?.peers ?? [], deviceFilter),
+    [deskSessions, shownSessions, remote, deviceFilter]
   )
 
   const groups = useMemo(() => deskGroups(deskRows, byState), [deskRows, byState])
@@ -5611,9 +5624,9 @@ export default function App(): JSX.Element {
         <div className="quick">
           <button
             className="ghost quick-btn"
-            aria-label="Review today"
+            aria-label="Review"
             aria-haspopup="dialog"
-            title="Review: prompts, sessions, agents, tokens and automatic actions"
+            title="Review: finished sessions, what was asked and what they did"
             onClick={() => setReview(true)}
           >
             <ReviewIcon />
@@ -6730,9 +6743,11 @@ export default function App(): JSX.Element {
       )}
       {review && (
         <ReviewDialog
-          agents={agents}
-          activity={activity}
           onHistory={() => { setReview(false); setHistory(true) }}
+          onReopen={(r) => {
+            setReview(false)
+            start([{ cwd: r.cwd, title: r.title.replace(/ \(closed session\)$/, ''), agent: r.provider as Agent, resume: true, resumeId: r.nativeSessionId, where: 'local' }])
+          }}
           onClose={() => setReview(false)}
         />
       )}

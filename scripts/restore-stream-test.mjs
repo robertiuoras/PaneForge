@@ -47,10 +47,10 @@ await new Promise(resolve => tail.write(snapshot.slice(-400000), resolve))
 assert.equal(tail.buffer.active.getLine(0).translateToString(true).includes('BASE SCREEN'), false)
 tail.dispose()
 
-for (const mode of ['plain', 'staged', 'cancel']) {
-  const staged = mode !== 'plain'
+for (const mode of ['plain', 'staged', 'empty', 'cancel']) {
+  const staged = mode === 'staged' || mode === 'cancel'
   const term = new xterm.Terminal({ cols: 91, rows: 59, allowProposedApi: true })
-  let job, reset, delta, marks = 0, disposed = 0, typed = 0
+  let job, reset, delta, marks = 0, disposed = 0, typed = 0, blank = true
   const list = [{ marker: { dispose: () => disposed++ } }]
   const noop = () => {}
   const api = {
@@ -58,7 +58,7 @@ for (const mode of ['plain', 'staged', 'cancel']) {
     replayHistory: async () => {
       // This delta is already in the snapshot. It must not be appended twice.
       delta('pane', '\x1b[HOLD FRAME')
-      reset('pane', snapshot + '\x1b[7;1HBOUNDARY')
+      reset('pane', mode === 'empty' ? '' : snapshot + '\x1b[7;1HBOUNDARY')
       // Arrives before xterm's snapshot write callback, after main's boundary.
       delta('pane', '\x1b[8;1HAFTER SNAPSHOT')
       return true
@@ -75,7 +75,7 @@ for (const mode of ['plain', 'staged', 'cancel']) {
     // keep is the identity stub above, so this is what the component's `cleanOutput`
     // reduces to here: withoutBinaryBells(keep(d)).
     cleanOutput: (d) => withoutBinaryBells(d),
-    needRestoreFix: { current: false }, armRestoreFix: noop, pinned: { current: true }, setBlank: noop,
+    needRestoreFix: { current: false }, armRestoreFix: noop, pinned: { current: true }, setBlank: value => { blank = value },
     seedMarks: () => marks++, reshape: noop, replayColsRef: { current: 120 }, replaying: { current: false },
     restorePromptMarks: async () => {},
     // The old pane's SHAPE, not just its width: antigravity's frame is drawn against the
@@ -89,7 +89,7 @@ for (const mode of ['plain', 'staged', 'cancel']) {
     dead: false, scrollIntent: { current: 0 }, setScrolledUp: noop,
     wipeTimer: undefined, wipeSnap: null, makeKeeper: () => x => x, readingSnapshot: false
   }
-  const cancel = runInNewContext(js(between('    let gone = false', '    /**\n     * Whether the agent')) + js(between('    const offReset =', '    /**\n     * Full repair')) + '\n(() => { gone = true; finishInitialReplay?.(); initialReplay = undefined })', context)
+  const cancel = runInNewContext(js(between('    let gone = false', '    /**\n     * Whether the agent')) + js(between('    const receiveReset =', '    /**\n     * Full repair')) + '\n(() => { gone = true; finishInitialReplay?.(); initialReplay = undefined })', context)
   const completed = job.run()
   if (mode === 'cancel') {
     cancel()
@@ -99,6 +99,9 @@ for (const mode of ['plain', 'staged', 'cancel']) {
     continue
   }
   await completed
+  await new Promise(resolve => term.write('', resolve))
+  assert.equal(blank, false, 'live output uncovers even an empty initial snapshot')
+  if (mode === 'empty') { term.dispose(); continue }
   const row = n => term.buffer.active.getLine(n).translateToString(true)
   assert.equal(row(0), 'BASE SCREEN', 'base screen survives animation-heavy restore')
   assert.equal(row(6), 'BOUNDARY', 'snapshot replaces pre-boundary live data')
@@ -108,6 +111,25 @@ for (const mode of ['plain', 'staged', 'cancel']) {
   assert.equal(term.rows, 59, 'and the pane is handed back its own height after a staged replay')
   assert.equal(disposed, 1, 'obsolete pre-snapshot markers are disposed')
   assert.equal(marks > 0 && typed > 0, true)
+  // Reconnect after initial replay, while a later snapshot is still parsing.
+  // Both the staged tail and live stream address the same row: the newest must win.
+  if (staged) {
+    reset('pane', base + '\x1b[7;1HRECONNECTED');
+    delta('pane', '\x1b[9;1H\x1b[2KLIVE END');
+    for (let i = 0; i < 5; i++) await new Promise(resolve => term.write('', resolve));
+    assert.equal(row(8), 'LIVE END', 'reconnect tail cannot overwrite newer output');
+    assert.equal(term.cols, 91, 'reconnect restores the current width');
+    reset('pane', base + '\x1b[7;1HFIRST');
+    delta('pane', '\x1b[10;1HBEFORE SECOND');
+    reset('pane', base + '\x1b[7;1HSECOND');
+    delta('pane', '\x1b[9;1H\x1b[2KNEWEST');
+    for (let i = 0; i < 8; i++) await new Promise(resolve => term.write('', resolve));
+    assert.equal(row(6), 'SECOND', 'latest snapshot wins in back-to-back reconnects');
+    assert.equal(row(8), 'NEWEST', 'live output follows both complete snapshots');
+    assert.equal(row(9), '', 'second snapshot replaces earlier deltas');
+    assert.equal(term.cols, 91, 'overlapping resets cannot strand the replay width');
+    assert.equal(term.rows, 59, 'overlapping resets cannot strand the replay height');
+  }
   term.dispose()
 }
 console.log('restore-stream: animated tail, bounded repair, hidden/asleep guards and ordered staged replay passed')

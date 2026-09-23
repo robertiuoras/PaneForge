@@ -267,6 +267,19 @@ const SECTION_TITLE: Record<FleetSection['key'], string> = {
   ended: 'Ended'
 }
 
+/**
+ * A shell pane with nothing to show: no command in the foreground, no turn running.
+ *
+ * Robert, 2026-09-23: "no shells etc then i can see in review whats done". A shell that is
+ * only sitting at its prompt is not work, so the desk stops drawing it - it comes back the
+ * moment a command runs, when its number is pressed, and the idle countdown (`reclaim.ts`
+ * `idleClosePlan`) takes it like any other quiet pane. A shell serving something has a
+ * `job`, which is why a dev server never disappears.
+ */
+export function idleShell(s: { agent: string; job?: string | null; runSince?: number }): boolean {
+  return s.agent === 'shell' && !s.job && !s.runSince
+}
+
 export function fleetSections<T extends FleetPane & { id: string }>(sessions: T[]): FleetSection<T>[] {
   const ordered = fleetOrder(sessions)
   const out: FleetSection<T>[] = (['yourMove', 'running', 'idle', 'ended'] as const).map((key) => ({

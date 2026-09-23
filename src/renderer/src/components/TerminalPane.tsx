@@ -3756,7 +3756,15 @@ function TerminalPane({
     let gone = false
     let initialReplay: (() => void) | undefined
     let finishInitialReplay: (() => void) | undefined
-    let replayDeltas: string[] | null = null
+    // Reconnect snapshots need the same ordering as the first replay. A staged
+    // replay enqueues its tail from a write callback, so later IPC events must
+    // wait outside xterm's queue until that tail and its size restoration finish.
+    let replayEvents: Array<() => void> | null = null
+    const drainReplayEvents = (): void => {
+      const events = replayEvents ?? []
+      replayEvents = null
+      if (!dead) for (const event of events) event()
+    }
     // A mirror can receive its fast network buffer before the deeper transcript replay
     // reaches the front of the queue. Keep its cover through both so opening a pane shows
     // one complete frame, not a terminal visibly racing down through its history.
@@ -4067,26 +4075,34 @@ function TerminalPane({
       setHandoverUntil(until > Date.now() ? until : 0)
     })
 
-    const offReset = api.onPaneReset((id, snapshot) => {
+    const receiveReset = (id: string, snapshot: string): void => {
       if (id !== sessionId) return
+      if (dead) return
+      if (replayEvents) {
+        replayEvents.push(() => receiveReset(id, snapshot))
+        return
+      }
       if (initialReplay) {
         const settle = initialReplay
         initialReplay = undefined
-        if (!snapshot) return settle()
+        if (!snapshot) {
+          awaitingInitialReplay = false
+          if (sawOutput) setBlank(false)
+          settle()
+          return
+        }
         for (const m of list.splice(0)) m.marker.dispose()
         publish()
         window.clearTimeout(wipeTimer)
         wipeSnap = null
         keep = makeKeeper()
-        replayDeltas = []
+        replayEvents = []
         pendingDataWrites++
         // Discard any live bytes already parsed before main's snapshot boundary.
         // RIS is queued with the snapshot, never an imperative reset ahead of writes.
         replayBuffer('\x1bc' + snapshot, () => {
-          const deltas = replayDeltas ?? []
-          replayDeltas = null
           pendingDataWrites--
-          for (const data of deltas) writeData(data)
+          drainReplayEvents()
           drainTyped()
           // The next pane's replay may start only after these deltas were parsed.
           t.write('', settle)
@@ -4129,6 +4145,7 @@ function TerminalPane({
         readingSnapshot = false
       }
       pendingDataWrites++
+      replayEvents = []
       writeStaged('\x1bc' + bytes, () => {
         pendingDataWrites--
         if (dead) return
@@ -4156,8 +4173,10 @@ function TerminalPane({
         seedMarks()
         drainTyped()
         if (snapshot && !awaitingInitialReplay) setBlank(false)
+        drainReplayEvents()
       })
-    })
+    }
+    const offReset = api.onPaneReset(receiveReset)
 
     const writeData = (data: string): void => {
       if (!sawOutput && !awaitingInitialReplay) setBlank(false)
@@ -4189,11 +4208,13 @@ function TerminalPane({
         drainTyped()
       })
     }
-    const off = api.onData((id, data) => {
+    const receiveData = (id: string, data: string): void => {
       if (id !== sessionId) return
-      if (replayDeltas) replayDeltas.push(data)
+      if (dead) return
+      if (replayEvents) replayEvents.push(() => receiveData(id, data))
       else writeData(data)
-    })
+    }
+    const off = api.onData(receiveData)
 
     /**
      * Full repair of a pane that drew itself wrong: measure again, tell the pty the true

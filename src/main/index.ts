@@ -1,7 +1,7 @@
 import { flushLogsOnExit } from './logWrite'
 import { profileRenderer, reloadRenderer } from './renderCost'
 import { execFile, spawn } from 'node:child_process'
-import { existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -23,6 +23,7 @@ import {
 import { startMainWatch, stopMainWatch } from './mainWatch'
 import { SessionManager, setSilenceAlert, type WriteOrigin } from './sessions'
 import { acknowledgeReview, listReviews, noteReviewClose, recordReview, reviewCloseArmAction, reviewOpenTarget, type ReviewCloseArm } from './reviews'
+import { mayNotify, noticesDir, sweepDoneClose } from './doneClose'
 import { DataPump } from './dataPump'
 import { DiscordPresence } from './discordPresence'
 import { countPresence, needsTokens, type PresenceCounts } from '../shared/discordRpc'
@@ -129,6 +130,7 @@ import {
   resumeIdFor,
   resumableTranscript,
   transcriptPath,
+  transcriptFor,
   codexTranscriptPath,
   nativeTranscriptPage
 } from './transcripts'
@@ -1523,6 +1525,43 @@ ipcMain.handle('reviews:open', async (_e, id: string, index: number) => {
   const target = reviewOpenTarget(String(id), Number(index), history.list())
   return { opened: target ? /^https?:/.test(target) ? await openLink(target, 'review') : await openLocal(target, 'review') : false }
 })
+// The pane the person is looking at. A finished pane is never closed under them.
+ipcMain.on('sessions:active', (_e, id: unknown) => manager.setActive(typeof id === 'string' && id ? id : null))
+// A finished pane closes itself into Review - the rule is `shared/doneClose.ts`, the disk
+// half `main/doneClose.ts`. Fifteen seconds: the quiet it waits for is minutes, and the
+// cheap gates run before any transcript is read.
+setInterval(() => {
+  try {
+    sweepDoneClose({
+      enabled: () => getConfig().autoCloseDone !== false,
+      readings: () => manager.doneReadings(),
+      transcriptFor,
+      resumeIdFor,
+      history: () => history.list(),
+      titleOf: (id) => {
+        const s = manager.list().find((x) => x.id === id)
+        return s ? { title: s.title, cwd: s.cwd, agent: s.agent } : undefined
+      },
+      otherwiseBusy: (id) =>
+        continuationOwnsSource(id) || preparingContinuations.has(id) || handoffQueue.pending().some((q) => q.id === id) || backJobOf(id)
+          ? 'session has a pending continuation, handoff, or background job'
+          : null,
+      record: recordReview,
+      close: (id, at) => manager.closeAfterResult(id, at),
+      noteClose: noteReviewClose,
+      writeNotice: (path, body) => {
+        if (!mayNotify()) return
+        mkdirSync(noticesDir(), { recursive: true, mode: 0o700 })
+        const tmp = `${path}.${process.pid}.tmp`
+        writeFileSync(tmp, body, { mode: 0o600 })
+        renameSync(tmp, path)
+      },
+      activity: (what, why) => noteActivity(activityEntry('closed', what, why))
+    })
+  } catch (e) {
+    console.warn(`done-close: sweep failed - ${(e as Error).message}`)
+  }
+}, 15_000).unref()
 ipcMain.handle('reviews:record', (_e, input: import('../shared/reviews').ReviewInput) => {
   const session = manager.list().find((s) => s.id === input?.sessionId)
   const old = !session && input?.nativeSessionId ? history.list().find((h) => h.id === input.sessionId && h.resumeId === input.nativeSessionId) : undefined

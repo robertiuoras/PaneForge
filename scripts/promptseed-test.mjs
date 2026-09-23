@@ -36,7 +36,7 @@ const redraw = src.slice(src.indexOf('const redrawHistory = async'))
 const body = redraw.slice(0, redraw.indexOf('paneRedraw.set('))
 check(body.includes('api.replayHistory(sessionId)'), 'redraw asks main for an ordered history snapshot')
 check(!body.includes('t.reset()'), 'redraw cannot reset ahead of queued terminal output')
-const reset = src.slice(src.indexOf('const offReset = '), src.indexOf('const off = api.onData'))
+const reset = src.slice(src.indexOf('const receiveReset = '), src.indexOf('const receiveData = '))
 check(reset.includes('m.marker.dispose()') && reset.includes('seedMarks()'), 'ordered reset replaces obsolete tags and seeds the new snapshot')
 
 // `seedMarks` deduplicates existing tags and may rebind retained archived tags when their

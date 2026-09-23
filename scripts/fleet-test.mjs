@@ -37,6 +37,7 @@ const {
   fleetState,
   fleetWaiting,
   gitLine,
+  idleShell,
   outputIsWork,
   previewFrom
 } = createRequire(
@@ -388,6 +389,15 @@ is(
     /if \(busyHere\) \{\s+const wasRunning = Boolean\(s\.meta\.runSince\)/,
     'the run clock the footer starts is gated on the same reading'
   )
+  checks += 4
+}
+
+// A shell at its prompt is not drawn; one running a command, or an agent pane, is.
+{
+  assert.equal(idleShell({ agent: 'shell' }), true)
+  assert.equal(idleShell({ agent: 'shell', job: 'npm run dev' }), false)
+  assert.equal(idleShell({ agent: 'shell', runSince: 5 }), false)
+  assert.equal(idleShell({ agent: 'claude' }), false)
   checks += 4
 }
 

@@ -45,6 +45,7 @@ export const NOTHING_OPEN = 'the handoff lists nothing still open'
 import { jobFromTable, paneJob, programName, SHELLS } from '../shared/paneJob'
 import { canSleep, sleepRefusal } from '../shared/sleep'
 import { doneEnough } from '../shared/closeWhenDone'
+import type { DoneReading } from '../shared/doneClose'
 import { folderName, laneOfCheckout, projectOf } from '../shared/place'
 import { dropStale, lentGrid, watchedBorrow, type Borrow } from '../shared/paneSize'
 import { START_COLS, START_ROWS } from '../shared/paneGrid'
@@ -692,6 +693,38 @@ export class SessionManager extends EventEmitter {
 
   list(): Session[] {
     return [...this.sessions.values()].map((s) => s.meta)
+  }
+
+  /** The pane a person is looking at, as the window last said (`sessions:active`). */
+  private activeId: string | null = null
+  setActive(id: string | null): void {
+    this.activeId = id
+  }
+
+  /**
+   * What `shared/doneClose.ts` needs to know about every live pane. The manager reads,
+   * the sweep in `main/doneClose.ts` decides; nothing here closes anything.
+   */
+  doneReadings(): Array<DoneReading & { id: string }> {
+    return [...this.sessions.values()].map((live) => {
+      const m = live.meta
+      return {
+        id: m.id,
+        agent: m.agent,
+        printed: m.printed,
+        status: m.status,
+        asleep: m.asleep,
+        runSince: m.runSince,
+        busyUntil: live.busyUntil,
+        ask: m.ask,
+        drafting: m.drafting,
+        job: m.job,
+        backJob: m.backJob,
+        focused: m.id === this.activeId,
+        lastKeyboard: m.lastKeyboard,
+        turnEndedAt: live.footerEndedAt
+      }
+    })
   }
 
   resumeOrigin(id: string): string | undefined {

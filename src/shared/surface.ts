@@ -85,6 +85,7 @@ export const SURFACE: Surface = {
   returnSize: ['send', 'pty:return'],
   takePaneSize: ['send', 'pty:take'],
   paneVisibility: ['send', 'pty:visible'],
+  activePane: ['send', 'sessions:active'],
   redraw: ['send', 'pty:redraw'],
   setBusy: ['send', 'sessions:busy'],
   setClosing: ['send', 'sessions:closing'],
