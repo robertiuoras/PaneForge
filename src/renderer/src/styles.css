@@ -771,14 +771,6 @@ button.chip.kept:hover { filter: brightness(1.3); }
    reads as 4.93:1 and is still plainly dimmer than a live row. */
 .row.listed { opacity: 0.82; }
 .row.listed:hover, .row.listed.asking { opacity: 1; }
-/* This is the one row in the list whose press does something other than switch panes,
-   and a word is the cheapest way to say so. */
-.row-open {
-  flex: none; font-size: 9.5px; font-weight: 600; letter-spacing: 0.07em;
-  text-transform: uppercase; color: var(--accent-text);
-  opacity: 0; transition: opacity var(--fast);
-}
-.row.listed:hover .row-open { opacity: 0.9; }
 /* The sort button is a mode, so it says which mode it is in. */
 .quick-btn.on { color: var(--accent-text); }
 .row.active { background: #ffffff0f; border-color: var(--line-strong); }

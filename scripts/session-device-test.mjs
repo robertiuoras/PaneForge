@@ -47,10 +47,10 @@ try {
   eq((await picks()).map(p=>p.text),['This device','Test PC','Automatic'],'device order')
   eq((await picks())[0].selected,'true','local default selected')
   const go=(name='Device preference test')=>c.evaluate(`[...document.querySelectorAll('#pf-device-fixture .proj')].find(p=>p.querySelector('.proj-name')?.textContent===${JSON.stringify(name)}).click()`)
-  // An untouched local default is placement the app may override, never a hand pick:
-  // offloadFirst reads `where: 'local'` as final and the pane could never leave the Mac.
+  // An untouched "This device" still STARTS here - the app never picks the PC at start
+  // while this laptop is selected - but carries no pin, so a mid-session move stays open.
   await go()
-  eq(await c.evaluate('window.__pfDeviceFixture.launch().map(r=>[r.where ?? null, r.stayHere ?? null])'),[[null,null]],'untouched local default leaves the machine to the app')
+  eq(await c.evaluate('window.__pfDeviceFixture.launch().map(r=>[r.where ?? null, r.stayHere ?? null])'),[['local',null]],'untouched local default starts here without pinning')
   eq(await c.evaluate('window.api.getConfig().then(c=>c.defaultSessionWhere)'),'local','untouched launch saves nothing')
   await c.evaluate('window.__pfDeviceFixture.open()')
   await c.evaluate('document.querySelectorAll("#pf-device-fixture .where-picks button")[1].click()')
