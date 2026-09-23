@@ -21,7 +21,7 @@
 // (scripts/lane-work-test.mjs) and cheap enough to call on a timer.
 
 import { execFile } from 'node:child_process'
-import { gitRun } from './gitRun'
+import { gitRun, isRead } from './gitRun'
 import { existsSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 import { feedDraft, LANE_OPTIONS } from '../shared/draft'
@@ -83,13 +83,6 @@ function run(cwd: string, args: string[], timeout: number, stdoutOnly: boolean):
     ok: r.ok,
     out: (stdoutOnly ? r.stdout : r.stdout + r.stderr).trim()
   }))
-}
-
-/** Commands that only read, so two identical ones in flight can share one process. */
-function isRead(args: string[]): boolean {
-  const [verb, sub] = args
-  if (verb === 'worktree') return sub === 'list'
-  return ['rev-parse', 'status', 'log', 'rev-list', 'merge-tree', 'cherry', 'diff'].includes(verb)
 }
 
 const git = (cwd: string, args: string[], timeout = 20000): Promise<GitRun> =>

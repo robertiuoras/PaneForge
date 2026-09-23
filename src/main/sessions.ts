@@ -4,7 +4,8 @@
 // Everything here runs in the Electron MAIN process. The renderer never touches a
 // pty directly - it sends keystrokes over IPC and receives output events back.
 
-import { execFile, spawn } from 'node:child_process'
+import { spawn } from 'node:child_process'
+import { gitRun } from './gitRun'
 import { existsSync } from 'node:fs'
 import { EventEmitter } from 'node:events'
 import * as pty from '@lydell/node-pty'
@@ -1085,9 +1086,9 @@ export class SessionManager extends EventEmitter {
     const live = this.sessions.get(id)
     if (!live || live.meta.lane) return
     const cwd = live.meta.cwd
-    execFile('git', ['-C', cwd, 'rev-parse', '--abbrev-ref', 'HEAD'], { timeout: 4000 }, (err, out) => {
-      if (err) return
-      const lane = laneOfCheckout(cwd, String(out))
+    void gitRun(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'], { timeout: 4000, read: true }).then((r) => {
+      if (!r.ok) return
+      const lane = laneOfCheckout(cwd, r.stdout)
       const now = this.sessions.get(id)
       if (!lane || !now || now.meta.lane) return
       now.meta.lane = lane

@@ -34,7 +34,8 @@ import {
 } from 'node:fs'
 import type { Dirent } from 'node:fs'
 import { link, mkdir, readdir, readlink, symlink } from 'node:fs/promises'
-import { execFile, execFileSync } from 'node:child_process' // sync-on-purpose: ensureLaneFolder only
+import { execFileSync } from 'node:child_process' // sync-on-purpose: ensureLaneFolder only
+import { gitRun, isRead } from './gitRun'
 import { createServer } from 'node:net'
 import { hideCopyFolder } from './hideCopy'
 import { homedir } from 'node:os'
@@ -91,16 +92,12 @@ export interface LaneExtras {
  * the full 15s timeout. Same reasoning, and the same measurement, as laneWork.ts's run().
  */
 function git(cwd: string, args: string[], timeout = 15000): Promise<{ ok: boolean; out: string }> {
-  return new Promise((done) => {
-    execFile(
-      'git',
-      args,
-      { cwd, encoding: 'utf8', windowsHide: true, timeout, maxBuffer: 64 * 1024 * 1024 },
-      (err, stdout, stderr) => {
-        done({ ok: !err, out: (stdout ?? '').trim() || (stderr ?? '').trim() })
-      }
-    )
-  })
+  // Through the one gate (`gitRun.ts`): measured 2026-09-23, 53 identical
+  // `rev-parse --git-common-dir` children at once with the Mac at load 481.
+  return gitRun(cwd, args, { timeout, read: isRead(args) }).then((r) => ({
+    ok: r.ok,
+    out: r.stdout.trim() || r.stderr.trim()
+  }))
 }
 
 /** Windows paths differ in case and slash direction for the same folder. */

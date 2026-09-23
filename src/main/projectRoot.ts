@@ -12,7 +12,7 @@
 // `--git-common-dir` is the `.git` shared by every checkout of a repository, so for a
 // worktree it points OUT of the folder being asked about and its parent is the trunk.
 
-import { execFile } from 'node:child_process'
+import { gitRun } from './gitRun'
 import { basename, dirname, join, resolve } from 'node:path'
 import { existsSync, statSync } from 'node:fs'
 import { copySuffixOf } from '../shared/place'
@@ -25,11 +25,7 @@ const TIMEOUT = 4000
 const cache = new Map<string, { at: number; root: string }>()
 
 function git(cwd: string, args: string[]): Promise<string | null> {
-  return new Promise((done) => {
-    execFile('git', ['-C', cwd, ...args], { timeout: TIMEOUT }, (err, out) =>
-      done(err ? null : String(out).trim())
-    )
-  })
+  return gitRun(cwd, args, { timeout: TIMEOUT, read: true }).then((r) => (r.ok ? r.stdout.trim() : null))
 }
 
 function isDir(p: string): boolean {

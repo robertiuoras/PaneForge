@@ -69,3 +69,10 @@ export function gitRun(cwd: string, args: string[], opts: GitRunOptions): Promis
   )
 }
 
+/** Commands that only read, so two identical ones in flight can share one process. */
+export function isRead(args: string[]): boolean {
+  // `git -C <dir> ...` callers put the folder first.
+  const [verb, sub] = args[0] === '-C' ? args.slice(2) : args
+  if (verb === 'worktree') return sub === 'list'
+  return ['rev-parse', 'status', 'log', 'rev-list', 'merge-tree', 'cherry', 'diff'].includes(verb)
+}
