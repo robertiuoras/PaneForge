@@ -61,6 +61,7 @@ import {
   UsersIcon,
   HistoryIcon,
   ReviewIcon,
+  ScreenIcon,
   LinkIcon,
   CopyIcon,
   SearchIcon,
@@ -780,6 +781,9 @@ export default function App(): JSX.Element {
   const [board, setBoard] = useState<string | null>(null)
   const [history, setHistory] = useState(false)
   const [review, setReview] = useState(false)
+  // Drawn only when this machine has Moonlight and a paired peer to look at; re-asked
+  // whenever the peer list changes, which is the only thing that changes the answer.
+  const [screenBtn, setScreenBtn] = useState<{ ok: boolean; title: string } | null>(null)
   // What the app has done on its own, and when the list was last looked at. Both live in
   // main (see main/activity.ts): a reload, a renderer rebuilt after a wedge and a restart
   // all lose renderer memory, and "what happened to my pane" is asked after exactly those.
@@ -1182,6 +1186,13 @@ export default function App(): JSX.Element {
   // Memoised because it is an object identity xterm compares against: a fresh one every
   // render would clear and repaint every pane's canvas on every keystroke.
   const termColors = useMemo(() => terminalTheme(config?.theme), [config?.theme])
+
+  // The screen button's answer changes only when the peer list does.
+  useEffect(() => {
+    let live = true
+    api.screenCan().then((r) => { if (live) setScreenBtn(r) }).catch(() => { if (live) setScreenBtn(null) })
+    return () => { live = false }
+  }, [remote?.peers.length, remote?.peers.map((p) => p.status).join()])
 
   useEffect(() => {
     api.listSessions().then(setSessions)
@@ -5607,6 +5618,16 @@ export default function App(): JSX.Element {
           >
             <ReviewIcon />
           </button>
+          {screenBtn?.ok && (
+            <button
+              className="ghost quick-btn"
+              aria-label="See the other machine's screen"
+              title={screenBtn.title}
+              onClick={() => api.openScreen()}
+            >
+              <ScreenIcon />
+            </button>
+          )}
           <button
             className="ghost quick-btn"
             aria-label="Tools"

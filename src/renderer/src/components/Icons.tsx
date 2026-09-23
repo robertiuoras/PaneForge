@@ -104,6 +104,11 @@ export function ReviewIcon(p: IconProps): JSX.Element {
   return <Svg {...p}><rect x="2.5" y="2.5" width="11" height="11" rx="1.5" /><path d="M5 6h1.5M8 6h3M5 9h1.5M8 9h3M5 12h1.5M8 12h3" /></Svg>
 }
 
+/** The other machine's screen: a monitor on a stand. */
+export function ScreenIcon(p: IconProps): JSX.Element {
+  return <Svg {...p}><rect x="1.5" y="2.5" width="13" height="8.5" rx="1.5" /><path d="M8 11v2.5M5 13.5h6" /></Svg>
+}
+
 /** What the app did on its own: a bell. */
 export function BellIcon(p: IconProps): JSX.Element {
   return (

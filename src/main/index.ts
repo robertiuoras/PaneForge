@@ -109,6 +109,7 @@ import {
 import { snapPlan } from '../shared/deskSnap'
 import { crashTestHook, installCrashGuard, logProblem, onCrashReport } from './crash'
 import { onOpenProblem, openLink, openLocal } from './openUrl'
+import { openScreen, screenCan } from './screenView'
 import { nothingToOpen } from '../shared/openUrl'
 import { startFaultNotify } from './faultNotify'
 import { stopRenderWatch, watchRenderer } from './renderWatch'
@@ -2871,6 +2872,12 @@ ipcMain.handle('phone:rotate', async () => {
   return phoneState()
 })
 ipcMain.handle('remote:state', () => remote.state())
+// "See the PC's screen": Moonlight at the paired machine. src/shared/screenView.ts.
+ipcMain.handle('screen:can', () => screenCan(remote.state().peers))
+ipcMain.on('screen:open', () => {
+  const plan = openScreen(remote.state().peers)
+  if (!plan.ok) send('app:error', plan.message)
+})
 ipcMain.handle('remote:host', (_e, on: boolean) => {
   remote.setHosting(!!on)
   return remote.state()

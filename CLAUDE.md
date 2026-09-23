@@ -573,6 +573,17 @@ unknown/ambiguous/finished/no title/no backlog/`--task`+`--prompt`.
 count (`choose()` -> `write()`, auto-answer `'app'`); unsent typing is nothing.
 `docs/agentic-backlog-2026-09-02.md`.
 
+## The other machine's screen is one click away
+
+Quick button beside Review (`shared/screenView.ts`, `main/screenView.ts`; `test:screenview`):
+starts Moonlight `stream <peer address> Desktop` at the paired peer (online first, else
+first). Drawn only with a viewer AND a peer (`screenCan`); refusals toast via `app:error`;
+one viewer at a time (a second `stream` makes Sunshine refuse); `screen-view.log`;
+`screen:*` are `DESK_ONLY`. Title names the MACHINE, never the protocol. Moonlight not
+Windows App: RDP lagged and its disconnect detaches the console, which breaks every capture
+(2026-09-06). Native in-app stream (WebRTC, zoom/pinch ours) designed in
+`docs/superpowers/specs/2026-09-23-pc-screen-design.md`, not built.
+
 ## Checks
 
 On the PC in one command: `node scripts/pc-check.mjs typecheck <suite...>` (rbuild, retries, failures + totals only).

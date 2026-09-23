@@ -178,6 +178,8 @@ export const SURFACE: Surface = {
   forgetPhoneKey: ['invoke', 'phone:forgetKey'],
   onPhone: ['on', 'phone:changed'],
   remoteState: ['invoke', 'remote:state'],
+  screenCan: ['invoke', 'screen:can'],
+  openScreen: ['send', 'screen:open'],
   setRemoteHost: ['invoke', 'remote:host'],
   setRemotePort: ['invoke', 'remote:port'],
   rotateRemoteCode: ['invoke', 'remote:rotate'],

@@ -4987,3 +4987,16 @@ ship, and every chat on the machine was refused its lane for the morning.
 path, whichever is newer (Robert 2026-09-18: "should only have 1 at a time") -> `open -a` it and quit, named in `updater.log`. Unpackaged and
 `npm run try` copies (profile `dev`) are refused first. Windows has no installed-path
 reader yet, so it answers `no installed copy` there.
+
+## The other machine's screen is one click away
+
+Robert's ask (2026-09-23, from his phone): see the PC screen from PaneForge, "like windows.app",
+better if the app draws it itself, with zoom and free resize. The PC already ran Sunshine, RDP
+and Parsec and the Mac already had Moonlight paired, so the first cut is a button that starts
+Moonlight at the peer PaneForge knows - the only option that needs nothing Robert reserved
+(server installs, ports, credentials). Moonlight over Windows App because RDP was measured
+laggy on this WAN link (avg 87 ms RTT) and an RDP disconnect leaves the console detached,
+which is the state that breaks every capture-based viewer, including the native stream that
+comes next. The question round could not run (no card to tap from Discord), so the four
+design assumptions are written down in the spec and each is reversible.
+
