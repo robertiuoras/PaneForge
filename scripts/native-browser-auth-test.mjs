@@ -14,9 +14,10 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { closeTestChrome } from './close-test-chrome.mjs'
+import { testChrome } from './test-chrome.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-const chromePath = [join(process.env.PROGRAMFILES || 'C:/Program Files', 'Google/Chrome/Application/chrome.exe'), '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/Applications/Chromium.app/Contents/MacOS/Chromium'].find(existsSync)
+const chromePath = testChrome()
 const opensslPath = ['/usr/bin/openssl', join(process.env.PROGRAMFILES || 'C:/Program Files', 'Git/usr/bin/openssl.exe')].find(existsSync)
 if (!chromePath || !opensslPath) { console.log(`native browser auth: SKIPPED - ${!chromePath ? 'system Chrome' : 'openssl'} unavailable`); process.exit(0) }
 

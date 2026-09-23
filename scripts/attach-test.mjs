@@ -175,6 +175,7 @@ ok(realpathSync(dir).startsWith(realpathSync(userData) + sep), 'attachments live
 
 const wrote = M.writeAttachments(small, AT)
 ok(wrote.paths.length === 1 && !wrote.error, 'a screenshot is saved', JSON.stringify(wrote))
+ok(!('shots' in wrote), 'a screenshot attachment does not request a PaneForge preview')
 ok(existsSync(wrote.paths[0]), 'the path answered is a file that is really there')
 ok(readFileSync(wrote.paths[0]).equals(PNG), 'the bytes arrive unchanged')
 

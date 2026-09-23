@@ -23,6 +23,7 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { testChrome } from './test-chrome.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const css = readFileSync(join(here, '..', 'src', 'renderer', 'src', 'styles.css'), 'utf8')
@@ -35,12 +36,7 @@ const ok = (cond, what, detail = '') => {
   if (!cond) failures++
 }
 
-const CHROME = [
-  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-  '/Applications/Chromium.app/Contents/MacOS/Chromium',
-  'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-  'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe'
-].find((p) => existsSync(p))
+const CHROME = testChrome()
 
 if (!CHROME) {
   console.log('pane header fit: SKIPPED - no system Chrome found (nothing was downloaded)')

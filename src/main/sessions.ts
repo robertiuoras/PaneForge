@@ -1178,6 +1178,7 @@ export class SessionManager extends EventEmitter {
     live.meta.status = 'starting'
     live.meta.printed = undefined
     live.meta.exitCode = undefined
+    live.meta.exitedAt = undefined
     live.meta.attention = false
     live.meta.bell = false
     live.meta.stalledSince = undefined
@@ -1469,6 +1470,7 @@ export class SessionManager extends EventEmitter {
     live.meta.status = 'starting'
     live.meta.printed = undefined
     live.meta.exitCode = undefined
+    live.meta.exitedAt = undefined
     live.meta.engaged = false
     live.busyUntil = 0
     live.ackedAt = 0
@@ -3421,8 +3423,12 @@ export class SessionManager extends EventEmitter {
       meta.status = 'exited'
       // A pane put to sleep killed this process itself and has already said everything
       // below. Writing the kill's exit code onto it would put `exited 143` on a card
-      // whose whole point is that nothing went wrong - see `sleep()`.
+      // whose whole point is that nothing went wrong - see `sleep()`. `exitedAt` is
+      // stamped only past this point: `sleep()` never wants this pane found by
+      // `shared/exitedSweep.ts`, which keys off `asleep` but the field would otherwise
+      // sit there stamped anyway.
       if (meta.asleep) return
+      meta.exitedAt = Date.now()
       meta.exitCode = exitCode
       // The pane has stopped talking for good: a tee left open would hold the file
       // handle for as long as the dead card sits in the list, and on Windows that is

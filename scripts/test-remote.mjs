@@ -20,7 +20,14 @@ if (probe.status !== 0 || probe.stdout.trim().toUpperCase() !== 'DESKTOP-CMSUCM1
   console.error(`PC transport: ${detail.slice(-1200)}`)
   process.exit(3)
 }
-const transport = join(homedir(), 'Projects', 'claude-memory', 'claude-config', 'rbuild.mjs')
+// The synchronous runner: streams the PC's output and exits with its code. The
+// claude-config/rbuild.mjs beside it became a queue shim on 2026-09-23 that exits 75
+// ("queued") and refuses without a session, so the lane gate read every master as red
+// with nothing but this file's first line as the reason.
+const transport = join(homedir(), '.claude', 'rbuild.mjs')
+// rbuild records a session id on each job; a Claude Code shell carries only the CODE_ one.
+const session = process.env.CLAUDE_SESSION_ID || process.env.CODEX_THREAD_ID || process.env.CLAUDE_CODE_SESSION_ID ||
+  process.env.PF_PANE || `suite-${process.pid}`
 if (!existsSync(transport)) {
   console.error('Tests deferred: established PC transport unavailable. No local browser fallback.')
   process.exit(3)
@@ -41,10 +48,12 @@ try {
   }
   const revision = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim()
   console.log(`PC suite snapshot: ${revision}, including current working-tree edits; ${stage}`)
-  const result = spawnSync(process.execPath, [transport, '--repo', stage, '--', 'npm run typecheck && node scripts/test-all.mjs', ...args], {
+  const result = spawnSync(process.execPath, [transport, '--repo', stage, '--session', session, '--', 'npm run typecheck && node scripts/test-all.mjs', ...args], {
     cwd: stage, stdio: 'inherit', env: { ...process.env, RBUILD_HOST: 'Gamer@100.78.1.77' },
   })
   status = result.status ?? 1
+  // rbuild 3 = the PC dropped before the run; a deferral, never a verdict on the code.
+  if (status === 3) console.error('Tests deferred: PC connection dropped before the suite ran. No local browser fallback.')
 } finally {
   rmSync(stage, { recursive: true, force: true })
 }

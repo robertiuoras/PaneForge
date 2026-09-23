@@ -47,11 +47,11 @@ import { whatsNew } from './whatsNew'
 import { tour, tourCheck } from './tour'
 import { addSample, dropSample } from './tourSample'
 import { addSound, pruneCustomSounds, removeSound, renameSound, soundData } from './sounds'
-import { writeAttachments, readAttachIns, withShots } from './attach'
+import { writeAttachments, readAttachIns } from './attach'
 import { AskNotifier, askMessage, postAsk, telegramCreds } from './askNotify'
 import { errorMessage } from '../shared/paneError'
 import { askKeyOf } from '../shared/autoAnswer'
-import { ATTACH_MAX_BYTES, THUMB_KEEP, type AttachIn, type AttachResult } from '../shared/attach'
+import { type AttachIn, type AttachResult } from '../shared/attach'
 import { CHOOSE_GAP_MS, keysForChoice, sameAsk, stampMatches } from '../shared/choices'
 import { Remote } from './remote'
 import { readInvite } from './remote/invite'
@@ -159,6 +159,7 @@ import {
 } from './remoteLogin'
 import { shellQuote, type LoginInput } from '../shared/remoteLogin'
 import { DEFAULT_DEAD_DEV } from '../shared/deadDev'
+import { clearFinishedNow, exitedSweep, finishedCount, type ExitedFact } from '../shared/exitedSweep'
 import { listBackJobs, type BackJob } from './backJobs'
 import { DEFAULT_AUTO_HANDOFF } from '../shared/autoHandoff'
 import {
@@ -2056,6 +2057,52 @@ ipcMain.handle('sessions:kill', (_e, id: string) => {
   if (!known) send('sessions:changed', allSessions())
   return
 })
+
+/**
+ * A finished pane that closes itself once it has sat dead for a while - see
+ * `shared/exitedSweep.ts`. `sessions:clearFinished` is the button's half: every finished
+ * pane, not just the ones past ten minutes, removed the instant somebody presses it.
+ */
+// When a person last pressed each pane's card or row. The renderer's own focus stamps
+// never reach main, and `lastKeyboard` only moves on typing - so without this a click on a
+// dead pane somebody was reading did not hold the ten-minute sweep (review of e4ce613e).
+const touchedAt = new Map<string, number>()
+ipcMain.on('sessions:touched', (_e, id: unknown) => {
+  if (typeof id === 'string' && id) touchedAt.set(id, Date.now())
+})
+function exitedFacts(): ExitedFact[] {
+  return manager.list().map((s) => ({
+    id: s.id,
+    remote: Boolean(s.remote),
+    status: s.status,
+    asleep: s.asleep,
+    exitedAt: s.exitedAt,
+    ask: s.ask,
+    handingOff: s.handingOff,
+    lastKeyboard: Math.max(s.lastKeyboard ?? 0, touchedAt.get(s.id) ?? 0) || undefined
+  }))
+}
+function removeFinished(removals: { id: string; reason: string }[]): void {
+  if (removals.length === 0) return
+  for (const r of removals) {
+    const s = manager.list().find((x) => x.id === r.id)
+    logReclaim({ action: 'exited-sweep-close', pane: r.id, reason: r.reason })
+    manager.kill(r.id)
+    noteActivity(activityEntry('closed', s?.title || s?.cwd || 'A finished pane', r.reason))
+  }
+  send('sessions:changed', allSessions())
+}
+ipcMain.handle('sessions:clearFinished', () => {
+  const removals = clearFinishedNow(exitedFacts())
+  removeFinished(removals)
+  return removals.length
+})
+// The automatic half: the same facts the button reads, checked on its own clock so a
+// pane nobody presses the button on still leaves the sidebar ten minutes after it dies.
+setInterval(() => {
+  const removals = exitedSweep(exitedFacts(), Date.now())
+  removeFinished(removals)
+}, 30_000).unref()
 ipcMain.handle('sessions:buffer', (_e, id: string) =>
   remote.owns(id) ? remote.buffer(id) : manager.buffer(id)
 )
@@ -3323,8 +3370,8 @@ ipcMain.handle('pty:choose', (_e, id: string, n: number, want?: string): boolean
 })
 
 ipcMain.handle('pty:attach', (_e, id: string, files: AttachIn[]): Promise<AttachResult> => {
-  if (remote.owns(id)) return withShots(files, remote.attachOn(id, files))
-  return withShots(files, writeAttachments(files))
+  if (remote.owns(id)) return remote.attachOn(id, files)
+  return Promise.resolve(writeAttachments(files))
 })
 
 /**
@@ -3337,22 +3384,11 @@ ipcMain.handle('pty:attach', (_e, id: string, files: AttachIn[]): Promise<Attach
 ipcMain.handle('pty:attachPaths', (_e, id: string, paths: string[]): Promise<AttachResult> => {
   if (!remote.owns(id)) {
     const local = Array.isArray(paths) ? paths.filter((p) => typeof p === 'string' && p) : []
-    // Local drops keep their original paths, including folders and large files.
-    // Read only a bounded set of small images for the decorative preview.
-    const pictures = local.filter((p) => /\.(png|jpe?g|webp|gif|bmp|ico|tiff?)$/i.test(p)).slice(0, THUMB_KEEP)
-    const files = pictures.flatMap((p) => {
-      try {
-        if (statSync(p).size > ATTACH_MAX_BYTES) return []
-        return readAttachIns([p]).files
-      } catch {
-        return []
-      }
-    })
-    return withShots(files, { paths: local })
+    return Promise.resolve({ paths: local })
   }
   const read = readAttachIns(paths)
   if (read.error) return Promise.resolve({ paths: [], error: read.error })
-  return withShots(read.files, remote.attachOn(id, read.files))
+  return remote.attachOn(id, read.files)
 })
 
 /**
@@ -3370,8 +3406,8 @@ ipcMain.handle('pty:attachClipboard', (_e, id: string): Promise<AttachResult> =>
   const png = img.toPNG()
   if (!png.length) return Promise.resolve({ paths: [], error: 'No image on the clipboard' })
   const files: AttachIn[] = [{ name: 'clipboard.png', data: png.toString('base64') }]
-  if (remote.owns(id)) return withShots(files, remote.attachOn(id, files))
-  return withShots(files, writeAttachments(files))
+  if (remote.owns(id)) return remote.attachOn(id, files)
+  return Promise.resolve(writeAttachments(files))
 })
 
 /**

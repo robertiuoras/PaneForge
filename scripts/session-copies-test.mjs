@@ -30,7 +30,10 @@ try {
   assert.equal(text(render()), 'copy 3', 'opened copy 2 + assigned copy 3 renders only assigned copy')
   assert.match(render(), /Session opened in copy 2/, 'launch folder remains inspectable')
   assert.equal(text(render({ ...session, cwd: '/projects/taskdriver.ai-b', lane: 'b' })), 'copy 3', 'same assigned and opened copy is not doubled')
-  assert.equal(text(render({ ...session, cwd: '/projects/taskdriver.ai', lane: undefined }, [])), 'main copy')
+  // The main folder of a project the card's name already says is not worth a word
+  // (Robert 2026-09-23: cards too cluttered); a card named for something else still says it.
+  assert.equal(text(render({ ...session, cwd: '/projects/taskdriver.ai', lane: undefined }, [])), '', 'main folder of the named project draws nothing')
+  assert.equal(text(render({ ...session, title: 'echo rail', cwd: '/projects/taskdriver.ai', lane: undefined }, [])), 'taskdriver.ai', 'a card named for something else says its project')
   const assistant = { ...session, cwd: '/projects/assistant', lane: undefined, title: 'assistant' }
   const assistantBoard = { repo: '/projects/assistant', lanes: [{ ...held, lane: 'e', dir: '/projects/assistant-e' }] }
   assert.equal(text(render(assistant, [assistantBoard])), 'copy 6', 'a single visible session retains its actual assigned slot')
@@ -52,6 +55,11 @@ try {
   tree.props.children[0].props.onClick({ stopPropagation() { stopped = true } })
   assert.deepEqual(opened, ['/projects/taskdriver.ai-b'], 'click inspects assigned folder, not launch folder')
   assert.equal(stopped, true)
-  assert.equal(text(render(session, [{ ...board, lanes: [{ ...held, conflicted: true }] }])), 'copy 3 stuck')
-  console.log('session copies: 16 checks passed')
+  // Stuck is the dot's colour and the hover's word, not a word after the label.
+  const stuck = render(session, [{ ...board, lanes: [{ ...held, conflicted: true }] }])
+  assert.equal(text(stuck), 'copy 3')
+  assert.match(stuck, /class="row-lane lane-chip stuck"/, 'a stuck copy is marked')
+  assert.match(stuck, /lane-dot/, '...with its dot')
+  assert.match(stuck, /Stuck: its changes clash/, '...and says why on hover')
+  console.log('session copies: 20 checks passed')
 } finally { rmSync(work, { recursive: true, force: true }) }
