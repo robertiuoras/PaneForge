@@ -2310,6 +2310,19 @@ function busyLanes(state) {
   })
 }
 
+/**
+ * What holds a release right now. In `merge` mode a release is `git merge && git push` into
+ * the main folder and nothing else: another lane's half-done work is never touched by it
+ * (`finish` leaves busy lanes where they are), so the only thing that can hold it is an
+ * edit in the main folder the merge would land on - `mainBlockers`. Measured 2026-09-23 over
+ * the previous 7 days: median 4 minutes from a lane's last commit to its merge, but p90
+ * 84-103 minutes and worst 241, every long one waiting on a chat in some other lane.
+ */
+function releaseHolds(state) {
+  if (RELEASE !== 'merge') return busyLanes(state)
+  return mainBlockers(state) ? ['main'] : []
+}
+
 /** One busy lane, said the way a person needs to hear it: what is in it, and how stale. */
 function busyDetail(id) {
   const w = laneWork(id)
@@ -2860,7 +2873,14 @@ function autoshipRun(kind = 'auto', session = 'auto') {
   // this release: try them all again before deciding what is shippable.
   if (retryConflicts(state)) write(state)
   if (state.release) return { shipped: false, reason: 'another chat is mid-release' }
-  const busy = busyLanes(state)
+  const busy = releaseHolds(state)
+  // Same shape as the sentence below so the sidebar's `holdWords` reads it as "main copy",
+  // with the file named, because committing that one file is the whole fix.
+  if (busy.length && RELEASE === 'merge') {
+    const files = mainBlockers(state).split('\n').map((l) => l.replace(/ \(.*\)$/, ''))
+    const more = files.length > 1 ? ` and ${files.length - 1} more` : ''
+    return { shipped: false, reason: `waiting on chats still working: main (uncommitted edits to ${files[0]}${more} that finished work changes)` }
+  }
   // Named with the evidence, not just the lane. An agent repeats this reason to a person
   // verbatim, and "waiting on chats still working: main" was read - correctly, from what
   // it says - as "somebody is mid-feature", when the truth was an untouched file and an
@@ -3214,20 +3234,33 @@ function beatRelease(session) {
  * folder, neither touched by any lane - and every finished lane in both repos sat unmerged
  * behind `main checkout is dirty, commit first` for a day, while the strip drew both mains
  * as dirty copies nobody could clear from a chat.
+ *
+ * In `merge` mode an UNSTAGED edit to a tracked file is the same case as an untracked one.
+ * git merges around it and refuses only when the merge touches that file, and `merge
+ * --abort` loses an edit only in a file the merge touched - so a file no ready lane brings
+ * is safe. A STAGED change still blocks (git will not merge over an index that differs
+ * from HEAD), and `version` mode keeps the whole rule because it commits package.json on
+ * top of this folder. Measured 2026-09-23: taskdriver.ai's main held one chat's
+ * unrelated x-agent work, and eight finished lanes had waited 43-113 minutes behind it.
  */
 function mainBlockers(state) {
   const porcelain = git(MAIN, ...WORK_STATUS)
   if (!porcelain) return ''
   const lines = porcelain.split('\n').filter(Boolean)
   const tracked = lines.filter((l) => !l.startsWith('??'))
-  if (tracked.length) return tracked.join('\n')
-  const untracked = new Set(lines.map((l) => l.slice(3).replace(/^"(.*)"$/, '$1')))
+  if (tracked.length && RELEASE !== 'merge') return tracked.join('\n')
+  // Asked by name, not read off the porcelain columns: `git()` trims, so the first line's
+  // leading space (the "unstaged" column) is gone and ` M app.js` reads as staged `M app.js`.
+  const names = (...args) => git(MAIN, ...args).split('\n').filter(Boolean)
+  const staged = names('diff', '--cached', '--name-only')
+  if (staged.length) return staged.map((f) => `${f} (staged)`).join('\n')
+  const dirty = new Set([...names('diff', '--name-only'), ...names('ls-files', '--others', '--exclude-standard')])
   const blocked = []
   for (const id of Object.keys(state.ready)) {
     if (id === 'main') continue
     const r = gitSafe(MAIN, 'diff', '--name-only', `${MB}...${laneBranch(id)}`)
     if (!r.ok) continue
-    for (const f of r.out.split('\n')) if (f && untracked.has(f)) blocked.push(`?? ${f} (lane ${id} brings this file)`)
+    for (const f of r.out.split('\n')) if (f && dirty.has(f)) blocked.push(`${f} (lane ${id} brings this file)`)
   }
   return blocked.join('\n')
 }
@@ -3268,6 +3301,9 @@ function ship(kind, session) {
     if (offTrunk) throw new Error(offTrunk)
     const dirty = mainBlockers(state)
     if (dirty) throw new Error(`main checkout is dirty, commit first:\n${dirty}`)
+    // Read before anything merges: a merge-mode release no longer waits for these, so it
+    // must not reach into them either (see `finish`).
+    const working = new Set(busyLanes(state))
 
     // A hand-cut release skips the SUITE, deliberately - it is Robert asking for a build
     // of work he has already watched being verified - but it may not skip the compiler.
@@ -3380,7 +3416,7 @@ function ship(kind, session) {
       // told to its own chat, not silently skipped.
       const rebased = []
       for (const id of POOL) {
-        if (id === 'main') continue
+        if (id === 'main' || working.has(id)) continue
         const c = catchUp(id)
         if (c.moved) rebased.push(id)
         if (c.conflicts.length) noteConflict(conflicts, id, `${MB} merge: ${c.conflicts.join(', ')}`, state.conflicts)
@@ -4003,7 +4039,7 @@ function statusOf(state, session, held) {
       }
     }),
     // Why a finished lane has not gone out yet, in one field.
-    blockedBy: busyLanes(state),
+    blockedBy: releaseHolds(state),
     pending: shippable(state),
     release: state.release,
     lastShip: state.lastShip,
