@@ -242,7 +242,11 @@ export default function NewSessionDialog({
         // The saved default decides WHERE it opens; only a picker pressed THIS time pins the
         // pane there (`stayHere`). A default is not a pin: with `defaultSessionWhere: 'local'`
         // every pane carried the pin and the pressure card could suggest moving nothing.
-        where: proj?.scope ? 'local' : where !== 'auto' ? where : undefined,
+        // Nor is an untouched `local` a hand pick: offloadFirst reads `where: 'local'` as
+        // final, so 14 of 34 starts on 2026-09-22 stayed on the Mac under pressure with
+        // "you chose this machine" from a picker nobody pressed. Untouched local = the app
+        // decides; a saved `remote` still sends work off the laptop.
+        where: proj?.scope || (touched && where === 'local') ? 'local' : where === 'remote' ? 'remote' : undefined,
         stayHere: proj?.scope || (touched && where === 'local') ? true : undefined
       }
     })
