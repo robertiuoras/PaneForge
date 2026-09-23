@@ -33,13 +33,14 @@
 //   node scripts/lane.mjs ship [patch|minor|major] merge ready lanes, one release
 //   node scripts/lane.mjs autoship                 ship, but only if no chat is mid-work
 //   node scripts/lane.mjs retry                    re-try stuck lanes (the app, on a timer)
+//   node scripts/lane.mjs sweep [--dry-run]        remove unused checkout folders, work saved first
 //   node scripts/lane.mjs release --session <id>   give the lane back (SessionEnd)
 //
 // Nothing above is typed by hand. `ready` and `release` both end in `autoship`, so the
 // release happens by itself the moment the LAST chat with unfinished PaneForge work
 // stops having any: whoever finishes last cuts the version, for everyone.
 
-import { execFileSync, spawnSync } from 'node:child_process'
+import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import {
   copyFileSync,
   existsSync,
@@ -55,7 +56,7 @@ import {
   unlinkSync,
   writeFileSync
 } from 'node:fs'
-import { basename, dirname, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { homedir, hostname, tmpdir } from 'node:os'
 import { closeTestApps } from './test-app.mjs'
@@ -311,18 +312,7 @@ function loadProfile() {
   } catch {
     /* no file, or unreadable - the defaults below are the whole of the behaviour */
   }
-  // The branch the main checkout has checked out IS the branch lanes belong to: it is what
-  // `main` (the lane) sits on, so a repo whose default is `main` rather than `master` needs
-  // no configuration at all. origin/HEAD is the fallback for a detached main checkout.
-  let branch = cfg.branch
-  if (!branch) {
-    const head = gitSafe(MAIN, 'symbolic-ref', '--quiet', '--short', 'HEAD')
-    if (head.ok && head.out) branch = head.out
-    else {
-      const o = gitSafe(MAIN, 'symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD')
-      branch = o.ok && o.out ? o.out.replace(/^origin\//, '') : 'master'
-    }
-  }
+  const branch = cfg.branch || trunkName()
   // `PF_RELEASE` is how a release is ASKED FOR in a repo whose standing answer is "merge".
   //
   // PaneForge sets `"release": "merge"` on purpose - finishing work merges and pushes, and
@@ -345,6 +335,31 @@ function loadProfile() {
     pool: Array.isArray(cfg.pool) && cfg.pool.length ? cfg.pool : DEFAULT_POOL,
     enabled: cfg.lanes !== false
   }
+}
+/**
+ * The trunk, when `.lanes.json` does not name it: origin's default branch, else `main` or
+ * `master`. Never "whatever the main folder has checked out".
+ *
+ * That was the rule until 2026-09-23, and it merged finished lanes into a feature branch for
+ * 35 hours: taskdriver.ai's main folder had been left on `feat/github-actions-usage-card`,
+ * every `ready` merged into it, and it was 171 commits ahead of origin/main before anybody
+ * noticed. Nothing compared the target with origin's default. A folder's checkout is a
+ * fact about what somebody was last doing there, not a declaration of where work goes.
+ *
+ * When both `main` and `master` exist and there is no origin to ask, the one the main folder
+ * is on wins - that is a choice between two trunk-shaped names, not a side branch. The main
+ * folder's own branch is the last resort only for a repo with neither name and no origin,
+ * where there is no other name to use.
+ */
+function trunkName() {
+  const o = gitSafe(MAIN, 'symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD')
+  if (o.ok && o.out) return o.out.replace(/^origin\//, '')
+  const has = (b) => gitSafe(MAIN, 'rev-parse', '--verify', '--quiet', `refs/heads/${b}`).ok
+  const head = gitSafe(MAIN, 'symbolic-ref', '--quiet', '--short', 'HEAD')
+  const on = head.ok ? head.out : ''
+  if ((on === 'main' || on === 'master') && has(on)) return on
+  for (const b of ['main', 'master']) if (has(b)) return b
+  return on || 'master'
 }
 const PROFILE = loadProfile()
 
@@ -2356,6 +2371,79 @@ function fastForwardMain() {
   gitSafe(MAIN, 'merge', '--ff-only', `origin/${MB}`)
 }
 
+/**
+ * Why the main folder cannot simply be put back on the trunk, or null when it can.
+ *
+ * "Put back" is two ref writes and no file change: the trunk moves forward to the commit
+ * the folder already has, and the folder's HEAD is pointed at the trunk. That is only true
+ * when the trunk is behind (or level with) the folder's commit, nothing is half-done in the
+ * folder, and no other checkout has the trunk open - moving a branch under another checkout
+ * makes that checkout look edited.
+ */
+function trunkBlocker(on) {
+  if (!on) return 'It is not on any branch, so there is nothing to move back.'
+  const trunk = gitSafe(MAIN, 'rev-parse', '--verify', '--quiet', `refs/heads/${MB}`)
+  if (!trunk.ok) return `There is no ${MB} branch on this computer to move it back to.`
+  if (gitSafe(MAIN, ...WORK_STATUS).out) return 'It has unsaved edits, so it is left alone until they are committed.'
+  if (gitSafe(MAIN, 'rev-parse', '--verify', '--quiet', 'MERGE_HEAD').ok)
+    return 'A merge is half-finished in it, so it is left alone.'
+  if (!gitSafe(MAIN, 'merge-base', '--is-ancestor', `refs/heads/${MB}`, 'HEAD').ok)
+    return `${on} and ${MB} have each got work the other lacks, so a person has to decide where it goes.`
+  // Proof the folder was parked, not being worked on: finished chats have already merged
+  // into it (`ship` writes `merge lane <x>`). A branch somebody made on purpose and has only
+  // their own commits on is theirs - moving it to the trunk would put their next commit
+  // there and the next release would push it (pre-ship review, 2026-09-23).
+  const merges = gitSafe(MAIN, 'log', '--merges', '--format=%s', `refs/heads/${MB}..HEAD`).out
+  if (!/^merge lane /m.test(merges))
+    return `Nothing a finished chat did is on ${on}, so somebody may be using it on purpose. Switch the main folder back to ${MB} when that work is done.`
+  const other = gitSafe(MAIN, 'worktree', 'list', '--porcelain').out.split('\n\n').find((block) => {
+    const path = /^worktree (.+)$/m.exec(block)?.[1]
+    return path && resolve(path) !== resolve(MAIN) && block.includes(`\nbranch refs/heads/${MB}`)
+  })
+  if (other) return `${MB} is open in another folder (${/^worktree (.+)$/m.exec(other)[1]}), so it cannot be moved from here.`
+  return null
+}
+
+/**
+ * Make sure finished lanes merge into the trunk, not into whatever the main folder is on.
+ *
+ * `ship` merges in the main folder, so a folder parked on a side branch receives every
+ * lane (taskdriver.ai, 2026-09-23: 35 hours, 171 commits, see trunkName). When it is safe
+ * (trunkBlocker) the folder is put back without touching a file; when it is not, nothing
+ * merges, the lanes keep their ready marks for the next retry, and `state.trunk` carries
+ * the sentence `doctor` prints. Returns that sentence, or null when the folder is on the
+ * trunk. Writes the state itself: its callers throw straight after.
+ */
+function trunkHome(state) {
+  const head = gitSafe(MAIN, 'symbolic-ref', '--quiet', '--short', 'HEAD')
+  const on = head.ok ? head.out : ''
+  if (on === MB) {
+    if (state.trunk?.stuck) {
+      state.trunk = null
+      write(state)
+    }
+    return null
+  }
+  const blocker = trunkBlocker(on)
+  if (!blocker) {
+    const tip = git(MAIN, 'rev-parse', 'HEAD')
+    const was = git(MAIN, 'rev-parse', `refs/heads/${MB}`)
+    // Old value given, so a trunk that moved since the check is refused rather than rewound.
+    git(MAIN, 'update-ref', '-m', `lanes: main folder back on ${MB}`, `refs/heads/${MB}`, tip, was)
+    git(MAIN, 'symbolic-ref', '-m', `lanes: main folder back on ${MB}`, 'HEAD', `refs/heads/${MB}`)
+    state.trunk = {
+      at: now(),
+      text: `The main folder had been left on ${on}, which already had everything in ${MB}. It is back on ${MB}; no file in it changed.`
+    }
+    write(state)
+    return null
+  }
+  const text = `The main folder is on a side branch (${on || 'none'}), so finished chats are waiting. ${blocker}`
+  state.trunk = { stuck: true, at: state.trunk?.stuck ? state.trunk.at : now(), text }
+  write(state)
+  return text
+}
+
 /** Anything a release would actually put out. */
 function shippable(state) {
   if (unreleasedOnMaster() > 0) return true
@@ -2567,7 +2655,10 @@ function suiteFailure(state) {
 
   const head = gitSafe(MAIN, 'rev-parse', 'HEAD')
   const commit = head.ok ? head.out : null
-  if (commit && state.suite?.commit === commit) return state.suite.ok ? null : state.suite.reason
+  if (commit && state.suite?.commit === commit &&
+      (state.suite.ok || !cannotRun(state.suite.reason ?? ''))) {
+    return state.suite.ok ? null : state.suite.reason
+  }
 
   if (dependenciesMissing(pkg)) {
     const failed = installDeps()
@@ -2631,7 +2722,7 @@ function suiteFailure(state) {
   if (cannotRun(all)) {
     return (
       `${MB}'s test suite could not run, so nothing was released - ${firstLine(all)}. ` +
-      `That is this checkout's tooling, not the code.`
+      `Required tooling or remote transport is unavailable; this is not a code verdict.`
     )
   }
   // test-all.mjs prints one line per check; the FAIL lines are the whole answer and the
@@ -3172,6 +3263,9 @@ function ship(kind, session) {
   write(state)
 
   try {
+    // First: every merge below lands on whatever the main folder has checked out.
+    const offTrunk = trunkHome(state)
+    if (offTrunk) throw new Error(offTrunk)
     const dirty = mainBlockers(state)
     if (dirty) throw new Error(`main checkout is dirty, commit first:\n${dirty}`)
 
@@ -3958,6 +4052,22 @@ function doctor() {
   )
   say()
 
+  // Said before anything else, because nothing below goes out while it is true.
+  {
+    const st = read()
+    const head = gitSafe(MAIN, 'symbolic-ref', '--quiet', '--short', 'HEAD')
+    const on = head.ok ? head.out : ''
+    if (on !== MB) {
+      say('MAIN FOLDER')
+      say(`  ${st.trunk?.stuck ? st.trunk.text : `The main folder is on a side branch (${on || 'none'}), so finished chats are waiting. ${trunkBlocker(on) ?? 'The next release puts it back by itself.'}`}`)
+      say()
+    } else if (st.trunk && !st.trunk.stuck && now() - st.trunk.at < 24 * 60 * 60 * 1000) {
+      say('MAIN FOLDER')
+      say(`  ${st.trunk.text} (${ago(st.trunk.at)} ago)`)
+      say()
+    }
+  }
+
   say('LANES')
   const live = s.lanes.filter((l) => l.exists || l.heldBy || l.ready || l.conflicted || l.ahead > 0)
   for (const l of live) {
@@ -4171,7 +4281,492 @@ function doctor() {
     say()
   }
 
+  // What the sweep removed, so a folder that vanished can be traced to where its work went.
+  const swept = (read().swept ?? []).filter((r) => now() - r.at < 7 * 24 * 60 * 60 * 1000)
+  if (swept.length) {
+    say('CLEANED UP')
+    for (const r of swept) say(`  ${ago(r.at)} ago: ${r.text}`)
+    say()
+  }
+
   return out.join('\n')
+}
+
+// ---------------------------------------------------------------- sweep: folders nobody uses
+
+// Measured 2026-09-23: taskdriver.ai had 18 checkout folders, ~36 GB, on a disk 94% full.
+// Nothing above ever deleted one - `idleEmpty` frees a ledger row, never a folder - and a
+// checkout that is not `<repo>-<letter>` was invisible to this file altogether. Lane folders
+// come back in minutes when a chat needs one (lane c was deleted at 05:11 and made again at
+// 05:12). A lane folder goes as soon as its work is all in the project and nothing uses it
+// (keepReason); a folder somebody made by hand for a branch gets three idle days.
+const SWEEP_OTHER_IDLE_MS = 3 * 24 * 60 * 60 * 1000
+/** Rebuilt by an install or a build, so never archived. One `production-build` was 2.1 GB and stalled a tar for 7 minutes. */
+const REGENERABLE =
+  /(^|\/)(node_modules|\.next(-[^/]*)?|production-build|build|dist|\.turbo|__pycache__|\.pytest_cache|\.cache|coverage|test-results|playwright-report|\.codegraph|graphify-out|ios-derived-data)(\/|$)|\.tsbuildinfo$|(^|\/)\.DS_Store$/
+const TAR_EXCLUDES = ['node_modules', '.next*', 'production-build', 'build', 'dist', '.turbo', '__pycache__']
+const SWEEP_KEEP = 20
+/** How often `retry` starts a sweep. Folders only become removable after six idle hours anyway. */
+const SWEEP_EVERY_MS = 6 * 60 * 60 * 1000
+const SWEEP_STAMP = join(commonDir, 'paneforge-sweep-at')
+
+/**
+ * Whether a sweep is due, taking the slot when it is. Stamped BEFORE the sweep runs, so one
+ * that crashes or is killed waits its six hours rather than restarting on every retry tick.
+ * A repo with no stamp only starts the clock: the first sweep happens six hours after the
+ * first retry, never in the first minute of a repo lanes have just met - or of a test's.
+ */
+function sweepDue() {
+  let last = null
+  try {
+    last = Number(readFileSync(SWEEP_STAMP, 'utf8').trim()) || 0
+  } catch {
+    /* never swept */
+  }
+  if (last !== null && now() - last < SWEEP_EVERY_MS) return false
+  try {
+    writeFileSync(SWEEP_STAMP, `${now()}\n`, 'utf8')
+  } catch {
+    return false // a stamp that cannot be written would sweep on every tick
+  }
+  return last !== null
+}
+
+const pathKey = (p) => (process.platform === 'win32' ? resolve(p).toLowerCase() : resolve(p))
+/** `child` is `dir` or somewhere under it. */
+const within = (child, dir) => {
+  const c = pathKey(child)
+  const d = pathKey(dir)
+  return c === d || c.startsWith(d.endsWith(sep) ? d : d + sep)
+}
+/** How a folder is named to a person: beside the project when it is, its full path when not. */
+function folderWords(dir) {
+  const rel = relative(dirname(MAIN), dir)
+  return rel && !rel.startsWith('..') && !isAbsolute(rel) ? rel.split(sep).join('/') : dir
+}
+const stamp = (t = new Date()) => t.toISOString().slice(0, 10).replace(/-/g, '')
+
+/** Every checkout of this repo git knows about, the main folder excluded. */
+function worktreesOf() {
+  const r = gitSafe(MAIN, 'worktree', 'list', '--porcelain')
+  if (!r.ok) throw new Error(`could not list this project's folders: ${firstLine(r.out)}`)
+  return r.out
+    .split(/\n\s*\n/)
+    .map((block) => ({
+      dir: /^worktree (.+)$/m.exec(block)?.[1]?.trim(),
+      head: /^HEAD ([0-9a-f]+)$/m.exec(block)?.[1] ?? null,
+      branch: /^branch refs\/heads\/(.+)$/m.exec(block)?.[1]?.trim() ?? null,
+      locked: /^locked\b/m.test(block),
+      prunable: /^prunable\b/m.test(block)
+    }))
+    .filter((w) => w.dir && pathKey(w.dir) !== pathKey(MAIN))
+}
+
+/**
+ * The folders PaneForge has a live pane in, from `pf list` - or null when the app could not
+ * be asked. Null stops the whole sweep: "no panes" and "no answer" must never read the same.
+ * `LANE_PANES_FILE` stands in for the app in tests (the same five tab-separated columns).
+ */
+function openPaneDirs() {
+  let out
+  if (process.env.LANE_PANES_FILE) {
+    try {
+      out = readFileSync(process.env.LANE_PANES_FILE, 'utf8')
+    } catch {
+      return null
+    }
+  } else {
+    const env = { ...process.env }
+    // pf-ctl exits 0 having asked nothing when this is set - an empty list that is not one.
+    delete env.PF_CTL_NO_APP
+    const r = spawnSync(process.execPath, [join(here, 'pf-ctl.mjs'), 'list'], {
+      encoding: 'utf8',
+      timeout: 30_000,
+      env,
+      windowsHide: true
+    })
+    if (r.status !== 0) return null
+    out = r.stdout ?? ''
+  }
+  return out
+    .split('\n')
+    .map((l) => l.split('\t'))
+    // Every listed pane, `exited` included: an ASLEEP pane lists as exited and wakes back
+    // into its folder, so a removed folder would be a pane resuming into nothing.
+    .filter((c) => c.length >= 5 && c[4].trim())
+    .map((c) => c[4].trim())
+}
+
+/**
+ * Where every process on this computer is running from: a dev server or a terminal left in
+ * a folder is somebody using it, pane or not. macOS/Linux only (`lsof`); an empty answer on
+ * Windows leaves the pane check and the idle clock to decide. Null = could not be asked.
+ */
+function processDirs() {
+  if (process.platform === 'win32') return []
+  const r = spawnSync('lsof', ['-a', '-d', 'cwd', '-Fn'], { encoding: 'utf8', timeout: 60_000, maxBuffer: 64 * 1024 * 1024 })
+  // lsof exits 1 whenever one process could not be read, and still lists every other one.
+  if (!r.stdout) return null
+  return r.stdout
+    .split('\n')
+    .filter((l) => l.startsWith('n/'))
+    .map((l) => l.slice(1))
+}
+
+/**
+ * The newest change anywhere in a checkout, or anything newer than `since` - the walk
+ * stops at the first file that proves the folder is in use, so a busy one costs a handful
+ * of stats. Dependencies and build output are skipped: an install is not somebody working.
+ * The checkout's own HEAD and reflog are counted too, because a commit changes no file.
+ * The index is NOT: any read-only `git status` rewrites it when a file's stat data moved
+ * (this script's own `retry` did, so the sweep it started read every folder as used a
+ * moment ago and removed nothing; PaneForge's card badge runs `git status` too).
+ */
+function newestTouch(dir, since, gitState = true) {
+  let newest = 0
+  const see = (p) => {
+    try {
+      newest = Math.max(newest, lstatSync(p).mtimeMs)
+    } catch {
+      /* gone while we looked */
+    }
+  }
+  const gitDir = gitSafe(dir, 'rev-parse', '--absolute-git-dir')
+  if (gitState && gitDir.ok) for (const f of ['HEAD', join('logs', 'HEAD')]) see(join(gitDir.out, f))
+  const stack = [dir]
+  while (stack.length && newest <= since) {
+    const d = stack.pop()
+    see(d)
+    let entries
+    try {
+      entries = readdirSync(d, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const e of entries) {
+      if (e.name === 'node_modules' || e.name === '.git' || e.name.startsWith('.next')) continue
+      const p = join(d, e.name)
+      if (e.isDirectory()) stack.push(p)
+      else see(p)
+      if (newest > since) break
+    }
+  }
+  return newest
+}
+
+/**
+ * Why this folder must stay, or null when it is a candidate. `ctx` is read once per sweep;
+ * `ctx.idle === false` skips the clock, for the last-moment re-check after this sweep's own
+ * `git status` may have refreshed the folder's index.
+ */
+function keepReason(w, ctx) {
+  if (w.locked) return 'somebody locked it on purpose'
+  const id = POOL.find((l) => l !== 'main' && pathKey(laneDir(l)) === pathKey(w.dir)) ?? null
+  const state = read()
+  if (id && state.lanes[id]) return 'a chat holds it'
+  if (Object.values(state.lanes).some((c) => c.cwd && within(c.cwd, w.dir))) return 'a chat is working in it'
+  if (id && (state.ready[id] || state.conflicts[id])) return 'its finished work is still waiting to go out'
+  if (ctx.all.some((o) => o.dir !== w.dir && within(o.dir, w.dir))) return 'another checkout sits inside it'
+  if (ctx.panes.some((p) => within(p, w.dir))) return 'a PaneForge pane is open in it'
+  const work = unmergedWork(w)
+  if (work) return work
+  // A lane folder whose work is all in the project is removed as soon as nothing is using
+  // it: the copies are the app's scratch, and a finished one left on disk is what Robert
+  // saw as "other copies (6)", every row saying `done` (2026-09-23). A folder somebody made
+  // by hand for a branch still gets its three idle days.
+  if (ctx.idle !== false && !id) {
+    const limit = SWEEP_OTHER_IDLE_MS
+    const touched = newestTouch(w.dir, now() - limit)
+    if (touched > now() - limit) return `it was used ${ago(touched)} ago`
+  }
+  // Last, because it is the one slow question (one lsof, ~4s) and most folders never reach it.
+  ctx.procs ??= processDirs()
+  if (ctx.procs === null) return 'could not check whether a program is running in it'
+  if (ctx.procs.some((p) => within(p, w.dir))) return 'a program is running in it'
+  return null
+}
+
+/**
+ * What a folder holds that the project does not have yet, or null when everything in it is
+ * already on origin's trunk. A folder with ANY such work is never removed - not after six
+ * idle hours, not with its work pushed somewhere first: to a person who does not read git,
+ * work that now lives only on a `wip/` branch is work that disappeared (brief 2026-09-23).
+ * Ignored files are not work in this sense; sweepOne archives the ones nothing rebuilds.
+ */
+function unmergedWork(w) {
+  const ahead = gitSafe(w.dir, 'rev-list', '--count', `origin/${MB}..HEAD`)
+  if (!ahead.ok) return 'could not check whether its work is in the main copy'
+  const commits = Number(ahead.out.trim()) || 0
+  if (commits) return `it has ${commits} saved change${commits === 1 ? '' : 's'} not in the main copy yet`
+  const status = gitSafe(w.dir, 'status', '--porcelain')
+  if (!status.ok) return 'could not check it for unsaved changes'
+  const files = status.out.split('\n').filter(Boolean).length
+  if (files) return `it has ${files} unsaved file${files === 1 ? '' : 's'}`
+  return null
+}
+
+/** Push `spec` to origin; true when origin took it. */
+function pushed(spec) {
+  return gitSafe(MAIN, 'push', '--quiet', 'origin', spec).ok
+}
+
+/** Origin (not a stale or foreign remote) has `sha` on some branch. Fetch first. */
+function onOrigin(sha) {
+  return Boolean(gitSafe(MAIN, 'branch', '-r', '--contains', sha, '--list', 'origin/*').out.trim())
+}
+
+/**
+ * The folder's whole working state as a git tree - committed, staged, edited and untracked
+ * (not ignored) - built in a private index so the folder's own staging is never touched.
+ */
+function workTree(dir, label) {
+  const tmpIndex = join(tmpdir(), `lane-sweep-${process.pid}-${label}.index`)
+  const env = { ...process.env, GIT_INDEX_FILE: tmpIndex }
+  const run = (...args) =>
+    execFileSync('git', args, { cwd: dir, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 10 * 60_000 }).trim()
+  try {
+    copyFileSync(resolve(dir, git(dir, 'rev-parse', '--git-path', 'index')), tmpIndex)
+    run('add', '-A')
+    return run('write-tree')
+  } finally {
+    try {
+      unlinkSync(tmpIndex)
+    } catch {
+      /* never made */
+    }
+  }
+}
+
+/**
+ * Save everything in one folder where it survives the folder, then remove it. Returns the
+ * sentence to report, or throws with the reason nothing was removed. The order is the
+ * zero-loss order from the 2026-09-23 cleanup, which ran for real on taskdriver.ai:
+ * commits to origin, unsaved edits to origin as a snapshot commit, untracked and ignored
+ * files to an archive, proof on origin, a last look that nothing moved meanwhile, and only
+ * then the removal.
+ */
+function sweepOne(w) {
+  const started = now()
+  const name = basename(w.dir)
+  const wip = `wip/${name}-${stamp()}`
+  if (!gitSafe(MAIN, 'fetch', '--quiet', '--prune', 'origin').ok) throw new Error('origin could not be reached to check what it has')
+  const head = git(w.dir, 'rev-parse', 'HEAD')
+  const subject = git(w.dir, 'log', '-1', '--format=%s', head)
+  // A deploy-on-push repo builds a `release:` tip; pushing one is a release, never a backup.
+  if (/^release\b/i.test(subject)) throw new Error(`its last commit is a release ("${subject.slice(0, 60)}"), which is not pushed without a person`)
+
+  const savedAs = []
+  // 1. A named branch goes up under its own name, unless origin already has exactly this.
+  //    Asked first: with nothing to send, git hands a pre-push hook no ref lines, and
+  //    taskdriver's hook reads that as a hand-typed push and demands proof from the PC.
+  //    Never the trunk or a lane branch: a push to the trunk is a release in a deploy-on-
+  //    push repo, and lane branches are scratch - both go up as a snapshot below instead.
+  if (w.branch && w.branch !== MB && !/^lane-/.test(w.branch)) {
+    const there = gitSafe(MAIN, 'ls-remote', 'origin', `refs/heads/${w.branch}`)
+    if (!there.ok) throw new Error('origin could not be asked what it has')
+    if (there.out.split(/\s/)[0] === head || pushed(`${head}:refs/heads/${w.branch}`)) savedAs.push(w.branch)
+  }
+  // 2. Unsaved edits become a commit whose parent is HEAD, so it carries the folder's
+  //    commits too.
+  const headTree = git(w.dir, 'rev-parse', `${head}^{tree}`)
+  const tree = workTree(w.dir, name)
+  const keep =
+    tree === headTree ? head : git(w.dir, 'commit-tree', tree, '-p', head, '-m', `wip: ${name} - unsaved edits, kept before the folder was removed (${stamp()})`)
+  // 3. Whatever origin still lacks - the snapshot, or commits only this folder has - goes
+  //    up as `wip/<folder>-<date>`.
+  if (keep !== head || (!savedAs.length && !onOrigin(head))) {
+    // Same folder swept twice in a day (lanes come back): the second snapshot gets a time.
+    const later = `${wip}-${Date.now()}`
+    const as = pushed(`${keep}:refs/heads/${wip}`) ? wip : pushed(`${keep}:refs/heads/${later}`) ? later : null
+    if (!as) throw new Error(keep !== head ? 'its unsaved edits could not be sent to origin' : 'its commits could not be sent to origin')
+    savedAs.push(as)
+  }
+
+  // 4. Files git does not keep, to an archive. Only the ones nothing can rebuild. NUL-
+  //    separated end to end: a quoted non-ASCII name would fail the tar on every sweep.
+  let archive = null
+  const listed = [
+    ...gitSafe(w.dir, 'ls-files', '-z', '-o', '--exclude-standard', '--directory').out.split('\0'),
+    ...gitSafe(w.dir, 'ls-files', '-z', '-o', '-i', '--exclude-standard', '--directory').out.split('\0')
+  ]
+  const files = [...new Set(listed.filter((f) => f && !REGENERABLE.test(f.replace(/\/$/, ''))))]
+  if (files.length) {
+    const dir = join(homedir(), '.local', 'share', 'worktree-archive', stamp())
+    mkdirSync(dir, { recursive: true })
+    archive = join(dir, `${name}.tgz`)
+    if (existsSync(archive)) archive = join(dir, `${name}-${Date.now()}.tgz`)
+    const list = join(tmpdir(), `lane-sweep-${process.pid}-${name}.list`)
+    writeFileSync(list, files.join('\0') + '\0', 'utf8')
+    try {
+      const tar = spawnSync(
+        'tar',
+        ['-czf', archive, ...TAR_EXCLUDES.map((x) => `--exclude=${x}`), '-C', w.dir, '--null', '-T', list],
+        { encoding: 'utf8', timeout: 15 * 60_000, windowsHide: true }
+      )
+      if (tar.status !== 0) throw new Error(`its untracked files could not be archived: ${firstLine(`${tar.stderr}${tar.error?.message ?? ''}`)}`)
+      const check = spawnSync('tar', ['-tzf', archive], { encoding: 'utf8', timeout: 5 * 60_000, maxBuffer: 256 * 1024 * 1024, windowsHide: true })
+      if (check.status !== 0) throw new Error('the archive of its untracked files did not read back')
+    } finally {
+      try {
+        unlinkSync(list)
+      } catch {
+        /* already gone */
+      }
+    }
+  }
+
+  // 5. Proof, not intent: after a fresh fetch, ORIGIN must hold the commit this folder is on
+  //    (or the snapshot that carries it). A push that "worked" and is not there is not a backup.
+  if (!gitSafe(MAIN, 'fetch', '--quiet', '--prune', 'origin').ok || !onOrigin(keep))
+    throw new Error('origin does not have its latest commit, so it was kept')
+
+  // 6. The minutes the pushes and the tar took are minutes somebody could have come back.
+  //    Every question again - a fresh process list included - plus: no file in it written
+  //    since this started, the same commit, the same unsaved work.
+  const again = keepReason(w, { all: worktreesOf(), panes: openPaneDirs() ?? [w.dir], procs: processDirs(), idle: false })
+  if (again) throw new Error(`kept at the last moment: ${again}`)
+  if (newestTouch(w.dir, started, false) > started) throw new Error('kept at the last moment: something in it changed while it was being saved')
+  if (git(w.dir, 'rev-parse', 'HEAD') !== head || workTree(w.dir, `${name}-again`) !== tree)
+    throw new Error('kept at the last moment: its work changed while it was being saved')
+  // Windows has no lsof. A folder any program has open (as its folder, or a file in it)
+  // cannot be renamed there, so a rename there and back is the question asked instead.
+  if (process.platform === 'win32') {
+    const probe = `${w.dir}.sweep-probe`
+    try {
+      renameSync(w.dir, probe)
+    } catch {
+      throw new Error('kept at the last moment: a program has something in it open')
+    }
+    renameSync(probe, w.dir)
+  }
+
+  dropModulesLink(w.dir)
+  const removed = gitSafe(MAIN, 'worktree', 'remove', '--force', w.dir)
+  if (!removed.ok) throw new Error(`git would not remove it: ${firstLine(removed.out)}`)
+
+  const on = /github\.com/i.test(gitSafe(MAIN, 'remote', 'get-url', 'origin').out) ? 'GitHub' : 'the server'
+  const saved = savedAs.length ? `its work is on ${on} as ${savedAs.join(' and ')}` : `everything in it was already on ${on}`
+  return `Removed the ${folderWords(w.dir)} folder (${saved}${archive ? `; files git does not keep are in ${archive}` : ''}).`
+}
+
+/**
+ * `lane.mjs sweep [--dry-run]`: remove the checkout folders nobody is using, never their
+ * work. Lane folders with no chat, no pane, no program in them and no change for six hours;
+ * any other checkout of this repo after three days. Every removal is reported in
+ * `state.swept`, which `doctor` prints. Returns the lines to show.
+ */
+function sweep({ dryRun = false } = {}) {
+  // Started by several clocks and events now (retry, ready, release, ship, a pane closing
+  // in the app), so two can meet. One at a time per repo; the second has nothing to add.
+  const unlock = dryRun ? () => {} : sweepLock()
+  if (!unlock) return ['Nothing removed: another sweep of this project is running.']
+  try {
+    return sweepOnce({ dryRun })
+  } finally {
+    unlock()
+  }
+}
+
+const SWEEP_LOCK = join(commonDir, 'paneforge-sweep.lock')
+/** A sweep that died holding the lock frees it after this long (archiving one big folder took 7 min). */
+const SWEEP_LOCK_STALE_MS = 60 * 60 * 1000
+
+/** The process is running (signal 0 asks without sending anything). */
+function processAlive(pid) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (e) {
+    return e?.code === 'EPERM'
+  }
+}
+
+/** Take the sweep lock, or null when a live sweep holds it. Returns the release. */
+function sweepLock() {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      writeFileSync(SWEEP_LOCK, `${process.pid} ${now()}\n`, { flag: 'wx' })
+      return () => {
+        try {
+          unlinkSync(SWEEP_LOCK)
+        } catch {
+          /* already gone */
+        }
+      }
+    } catch {
+      let pid = 0
+      let at = 0
+      try {
+        ;[pid, at] = readFileSync(SWEEP_LOCK, 'utf8').trim().split(/\s+/).map(Number)
+      } catch {
+        /* vanished between the two calls: try again */
+      }
+      if (pid && now() - at < SWEEP_LOCK_STALE_MS && processAlive(pid)) return null
+      try {
+        unlinkSync(SWEEP_LOCK)
+      } catch {
+        /* someone else cleared it */
+      }
+    }
+  }
+  return null
+}
+
+/**
+ * Start a sweep in the background. Detached: archiving one big folder took 7 minutes on
+ * 2026-09-23 and nothing that calls this should wait on it. What it removes lands in
+ * `state.swept`, which doctor prints.
+ */
+function sweepSoon() {
+  try {
+    spawn(process.execPath, [fileURLToPath(import.meta.url), 'sweep', '--repo', MAIN], {
+      cwd: MAIN,
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true
+    }).unref()
+  } catch {
+    /* no sweep this time; the next landing or the six-hour clock starts one */
+  }
+}
+
+function sweepOnce({ dryRun }) {
+  const out = []
+  const panes = openPaneDirs()
+  if (panes === null) return ['Nothing removed: PaneForge could not be asked which folders have a pane open (is it running with Phone on?).']
+  if (!dryRun && !hasOrigin()) return ['Nothing removed: this project has no origin to keep a copy of the work on.']
+  if (!dryRun) gitSafe(MAIN, 'fetch', '--quiet', 'origin')
+  const all = worktreesOf()
+  const ctx = { all, panes, procs: undefined }
+  const removed = []
+  for (const w of all) {
+    const name = folderWords(w.dir)
+    if (w.prunable || !existsSync(w.dir)) continue
+    const why = keepReason(w, ctx)
+    if (why) {
+      out.push(`Keeping ${name}: ${why}.`)
+      continue
+    }
+    if (dryRun) {
+      out.push(`Would remove ${name} (${w.branch ?? 'no branch'}): everything in it is already in the main copy.`)
+      continue
+    }
+    try {
+      removed.push(sweepOne(w))
+      out.push(removed[removed.length - 1])
+    } catch (e) {
+      out.push(`Kept ${name}: ${e.message}.`)
+    }
+  }
+  if (!dryRun) {
+    gitSafe(MAIN, 'worktree', 'prune')
+    if (removed.length) {
+      const state = read()
+      state.swept = [...(state.swept ?? []), ...removed.map((text) => ({ at: now(), text }))].slice(-SWEEP_KEEP)
+      write(state)
+    }
+  }
+  return out
 }
 
 // ---------------------------------------------------------------- entry
@@ -4260,6 +4855,8 @@ try {
     const r = ready(session, arg('lane'))
     console.log(`Lane ${r.lane} marked done${r.commits ? ` (${r.commits} commit${r.commits === 1 ? '' : 's'})` : ''}.`)
     sayRelease(r.release)
+    // Work that just landed leaves a folder with nothing in it; it goes once its chat lets go.
+    if (r.release?.shipped) sweepSoon()
   } else if (cmd === 'resolve') {
     const r = resolveConflict(session, arg('lane'))
     if (r.resolved) {
@@ -4278,6 +4875,8 @@ try {
     const r = releaseClaim(session, { gone: argv.includes('--gone') })
     if (r.marked) console.log(`Lane ${r.marked.lane} had finished work - marked done on the way out.`)
     sayRelease(r.release)
+    // The chat let go of its folder: the moment a finished copy becomes removable.
+    sweepSoon()
   } else if (cmd === 'sleep') {
     console.log(JSON.stringify(sleepLane(session, arg('pane') ?? PANE)))
   } else if (cmd === 'wake') {
@@ -4317,6 +4916,13 @@ try {
     // change it disagreed with had shipped. The app calls this on a timer instead. When
     // master has not moved and RETRY_MS has not passed this is one `rev-parse` per lane.
     const state = reap(read())
+    // The timer is also what puts a main folder left on a side branch back, before anything
+    // below merges into it. Said once when it changes, not on every tick.
+    {
+      const before = state.trunk?.at
+      trunkHome(state)
+      if (state.trunk && state.trunk.at !== before) console.log(state.trunk.text)
+    }
     // Lanes nobody holds that are still carrying commits: the backstop for every way a
     // claim can disappear without its work being declared done. `reap` drains the claim it
     // is dropping right now, but a lane orphaned before that existed - or by a kill between
@@ -4346,6 +4952,11 @@ try {
     // The clock is what was missing. autoship is a no-op unless there is something to put
     // out, nobody is mid-edit and the cooldown has passed.
     sayRelease(autoship('auto', session ?? 'auto'))
+    // The folder sweep rides the same clocks (the app's timer on the Mac, lane-cron on the
+    // PC), every SWEEP_EVERY_MS. Detached, because archiving one big folder took 7 minutes
+    // on 2026-09-23 and the retry must not wait on it; what it removes lands in
+    // `state.swept`, which doctor prints.
+    if (sweepDue()) sweepSoon()
     // Last, because the release above may be the one that needs describing.
     const described = reconcileNotes(reap(read()))
     if (described) console.log(`Wrote what changed onto the v${described} release page.`)
@@ -4369,6 +4980,9 @@ try {
         )
       else if (p?.reason) console.log(`Stable promotion of ${p.tag} waits: ${p.reason}`)
     }
+  } else if (cmd === 'sweep') {
+    if (argv.includes('--if-due') && !sweepDue()) process.exit(0)
+    for (const line of sweep({ dryRun: argv.includes('--dry-run') })) console.log(line)
   } else if (cmd === 'doctor') console.log(doctor())
   else if (cmd === 'status') console.log(JSON.stringify(status(session, { held: argv.includes('--held') }), null, 2))
   else {

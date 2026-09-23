@@ -775,6 +775,39 @@ function movedTo(
   return cand.file
 }
 
+/**
+ * Claim the conversation Claude Code itself says this pane's process is in.
+ *
+ * The CLI keeps `~/.claude/sessions/<pid>.json` (`{pid, sessionId, cwd, ...}`) for every
+ * live process. The claim rules above infer a pane's file from timing and typed lines,
+ * and when they cannot the pane has no conversation at all - which refuses its sleep. On
+ * 2026-09-23, 17 of the last 21 sleep refusals on this desk were `conversation-unverified`
+ * with `transcript: null`, at memory pressure 2, while pane 5's pid file named a 1.1 MB
+ * transcript on disk. So the app could not free one idle pane when the machine needed it.
+ *
+ * Only asked when inference found nothing, and only believed when the row is for this
+ * pid, in this pane's folder, and its transcript exists.
+ */
+export function claimFromCli(id: string, pid: number | undefined): boolean {
+  const s = started.get(id)
+  if (!s || s.agent !== 'claude' || !pid) return false
+  let row: { pid?: unknown; sessionId?: unknown; cwd?: unknown }
+  try {
+    const base = process.env.PF_CLAUDE_HOME || join(homedir(), '.claude')
+    row = JSON.parse(readFileSync(join(base, 'sessions', `${pid}.json`), 'utf8'))
+  } catch {
+    return false
+  }
+  if (row.pid !== pid || typeof row.sessionId !== 'string' || typeof row.cwd !== 'string') return false
+  if (!sameCwd(row.cwd, s.cwd)) return false
+  const file = transcriptPath(s.cwd, row.sessionId)
+  if (!file) return false
+  claimed.set(id, file)
+  settled.add(id)
+  released.delete(file)
+  return true
+}
+
 /** The conversation id to resume this pane with - the transcript's own file name. */
 export function resumeIdFor(id: string): string | undefined {
   const s = started.get(id)

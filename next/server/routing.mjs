@@ -52,6 +52,7 @@ export async function dispatchConversationTurn(supervisor,session,data,steer=fal
     if(session.activeTurn||sessions.busy.has(session.id))throw Error('This conversation is running. Wait before starting Code.');
     const lane=session.laneId?projects.requireLane(session.projectId,session.laneId):projects.laneForCwd(session.projectId,session.cwd);
     if(!lane||lane.path!==session.cwd)throw Error('This saved lane is no longer available. Reopen the project and choose its current lane.');
+    if(session.title==='New conversation'&&typeof data.text==='string'&&data.text.trim())sessions.rename(session.id,data.text.trim().replace(/\s+/g,' ').slice(0,60));
     const run=await terminal.runCodeTurn({sessionId:session.id,projectId:session.projectId,laneId:lane.id,laneName:lane.name,cwd:lane.path,provider:session.provider,model:session.model,effort:session.effort,requestId:data.requestId,text:data.text,...(remoteReview?{expectedTerminalId:review.terminalId,expectedNativeSessionId:review.nativeSessionId}:{})});
     return {status:202,result:{...run,sessionId:session.id,execution:'pc'}};
    }

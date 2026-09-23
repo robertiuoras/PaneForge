@@ -206,62 +206,29 @@ ok(
   !drawn.some((t) => /\blanes?\b/i.test(t)),
   drawn.filter((t) => /\blanes?\b/i.test(t)).join(' | ')
 )
-ok(
-  'the section is headed "Other copies", and still gives the middle word up first when narrow'
-,
-  strip.includes('Other<span className="wide-word"> copies</span>'))
-// The desk tag is 92px of every row and says this machine's own name on a one-machine
-// desk. Only the OTHER machine's rows keep it.
-ok(
-  'the desk tag is drawn only when the desk is not this one'
-,
-  /lane\.device && \(!here \|\| lane\.device !== here\)/.test(strip))
-ok(
-  'the tag beside a row is the copy NUMBER, never the slot letter'
-,
-  /copyNumber\(lane\.lane\)/.test(strip))
-ok(
-  '"stuck" is a state, not a label a person can act on - the badge says who it needs'
-,
-  !/>\s*\{stuck\} stuck/.test(strip))
+// Robert, 2026-09-23: "see other copies 6 ... too confusing ... why other copies is just
+// showing done". The sidebar stopped listing copies at all; what is left is one line per
+// project, and only when it needs him (copiesNotice in laneWords.ts).
+ok('the sidebar has no "Other copies" list any more', !/Other<span|Other copies/.test(strip))
+ok('no copy row is drawn', !/<LaneRow|lane-tag/.test(strip))
+const app = readFileSync(join(repoRoot, 'src', 'renderer', 'src', 'App.tsx'), 'utf8')
+ok('a session card carries no copy chip', !/<SessionCopies\b/.test(app))
+ok('and nothing opens the old copies card or its help card', !/<LaneDialog\b|<LaneHelp\b/.test(app))
+const notice = (board, now) => words.copiesNotice({ repo: '/Users/x/Projects/demo', device: null, releasing: null, lastShip: null, hold: null, ...board }, now)
+const entry = (x) => ({ lane: 'a', dir: '/Users/x/Projects/demo-a', branch: 'lane-a', from: null, session: null, ownerPane: null, held: false, seen: 0, ready: false, conflicted: false, adoptable: false, resolver: null, ...x })
+ok('finished copies say nothing: that was every "done" row', notice({ lanes: [entry({ ready: true }), entry({ lane: 'b', ready: true })], hold: { reason: 'waiting on chats still working: c (2 unmerged commits)', at: Date.now() } }) === null)
+ok('a copy a chat is working in says nothing', notice({ lanes: [entry({ held: true, seen: Date.now() })] }) === null)
+const clash = notice({ lanes: [entry({ conflicted: true })] })
+ok('a clash no chat has taken is one line with a button', Boolean(clash?.fix) && clash.text === 'Two chats changed the same lines in demo.', JSON.stringify(clash))
+ok('a clash a chat is already fixing says nothing', notice({ lanes: [entry({ conflicted: true, resolver: 'abc' })] }) === null)
+const stale = notice({ lanes: [entry({ ready: true })], hold: { reason: 'the typecheck fails on master', at: Date.now() - 7 * 3600_000 } })
+ok('finished work held back for hours is one line, with nothing to press', Boolean(stale) && !stale.fix && /^One chat's finished work has waited 7h to go into demo: /.test(stale.text), JSON.stringify(stale))
+for (const n of [clash, stale])
+  ok(`"${n?.text}" carries no git word and no "done"`, Boolean(n) && !/\b(lanes?|done|checkout|worktree|branch|merge|commit|trunk|repo)\b/i.test(n.text), n?.text)
 
-
-// ------------------------------------- the card the copy chip opens, and its "what is this?"
-//
-// Robert, 2026-09-07, on a screenshot of this dialog: "its just too hard to understand
-// though right?" - and it was. Nine git words on one card ("Lane e", repo, branch,
-// checkout, merging, commits, uncommitted, `lane-e -> main`, "Merge into main"), the same
-// fact explained three times over, and rows headed "lane b" beside a title that had
-// already numbered the copies. None of it was pinned: this file only ever read LaneStrip,
-// so the dialog drifted straight back to the vocabulary the strip had been cleaned of.
-const dialog = readFileSync(join(repoRoot, 'src', 'renderer', 'src', 'components', 'LaneDialog.tsx'), 'utf8')
-const help = readFileSync(join(repoRoot, 'src', 'renderer', 'src', 'components', 'LaneHelp.tsx'), 'utf8')
+// The copy chip and its blurb are gone: nothing on screen may explain copies any more.
 const blurbs = readFileSync(join(repoRoot, 'src', 'shared', 'blurbs.ts'), 'utf8')
-
-ok('the dialog calls the project\'s own folder "the main copy", never a checkout', !dialog.includes('main checkout'))
-ok('and a row is headed by a copy NUMBER, never "lane b"', !/`lane \$\{slot\}`/.test(dialog))
-ok('which is copyNumber, the one place a slot becomes a number', dialog.includes('copy ${copyNumber(slot) ?? slot}'))
-ok('the button does not say "merge"', !/Merge into /.test(dialog))
-ok('it says what happens in words - and "now", because it is only ever early', dialog.includes('Bring it back now'))
-ok(
-  'the card SAYS the work goes back by itself; the button is the sooner version, not the only version',
-  dialog.includes('on its own once this chat finishes')
-)
-ok('nothing on the card is "uncommitted"', !/uncommitted/.test(dialog))
-ok('and no count is phrased as a double negative', !/does not have`/.test(dialog))
-ok('no git command is printed at somebody who has never used git', !/git merge /.test(dialog))
-ok('a commit is a "saved change"', !/\bcommit\$\{/.test(dialog))
-
-ok('the help card is not headed "Lanes"', !help.includes('<strong>Lanes</strong>'))
-ok('and it does not teach the word - the reader never needs it', !/is a <b>lane<\/b>/.test(help))
-
-const blurb = /id: 'lane',[\s\S]*?text: '([^']*)'/.exec(blurbs)
-ok('found the copy chip\'s blurb', Boolean(blurb))
-ok(
-  'the blurb under the title carries no git word either',
-  Boolean(blurb) && !/\b(repo|branch|checkout|merg\w+)\b/i.test(blurb[1]),
-  blurb && blurb[1]
-)
+ok('no blurb explains copies', !/id: 'lane',/.test(blurbs))
 
 console.log(failed ? `\n${failed} plain-words check(s) failed` : '\nall plain-words checks passed')
 process.exit(failed ? 1 : 0)

@@ -66,7 +66,7 @@ const executionStarting=new Set();
 const turnDispatcher={sessions,terminal,projects,executionStarting,hasActiveCode,ensureCodexReady};
 // Older prototype conversations lacked projectId. Only adopt the canonical
 // Next checkout after realpath validation; never broaden another project.
-const legacyNextProject=projects.list().find(project=>project.id==='paneforge-next');
+const legacyNextProject=projects.available().find(project=>project.id==='paneforge-next');
 if(sessions.sessions.map(session=>assignLegacyPaneForgeNextProject(session,legacyNextProject)).some(Boolean))sessions.changed();
 // Older sessions retain their saved project IDs. Fill lane metadata only when the
 // saved cwd exactly matches a currently verified worktree for that project.

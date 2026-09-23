@@ -83,6 +83,12 @@ export function WorkspaceApp() {
   const [selectedId, setSelectedId] = useState(() =>
     saved("paneforge-selected-session"),
   );
+  const [palette, setPalette] = useState(() =>
+    saved("paneforge-next.palette") === "mint" ? "mint" : "forge",
+  );
+  useEffect(() => {
+    document.documentElement.dataset.palette = palette;
+  }, [palette]);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
   const [projectFilter, setProjectFilter] = useState("");
@@ -633,6 +639,20 @@ export function WorkspaceApp() {
               </small>
             </button>
           ))}
+          <details className="appearance-settings">
+            <summary>Settings</summary>
+            <label>Appearance
+              <select aria-label="Colour palette" value={palette} onChange={(event) => {
+                const value = event.target.value;
+                setPalette(value);
+                try { save("paneforge-next.palette", value); }
+                catch { setNotice("Colour preference could not be saved. It applies to this window only."); }
+              }}>
+                <option value="forge">Original · warm charcoal</option>
+                <option value="mint">Cool grey · mint</option>
+              </select>
+            </label>
+          </details>
           <div className="index-footer">
             <ShieldCheck size={17} />
             <p>

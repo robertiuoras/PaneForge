@@ -26,9 +26,13 @@ try {
   assert.equal(laneOwner(lane, [{ ...asleep, asleep: false }]), undefined, 'closed pane does not retain visible ownership')
   const html = renderToStaticMarkup(React.createElement(Strip, { boards: [{ repo: '/p/repo', lanes: [lane] }], sessions: [asleep] }))
   assert.equal(html, '', 'sleeping pane is not counted again under Other copies')
-  const { CopyRow } = load('src/renderer/src/components/LaneDialog.tsx', '\nexport { CopyRow };')
-  const row = renderToStaticMarkup(React.createElement(CopyRow, { copy: { dir: '/p/repo-a', slot: 'a', self: false, trunk: false, work: null }, onFocus() {} }))
-  assert.match(row, /could not be read/i, 'a failed inspection never claims an empty copy')
+  const done = { ...lane, ownerPane: null, held: false, ready: true }
+  const quiet = renderToStaticMarkup(React.createElement(Strip, { boards: [{ repo: '/p/repo', lanes: [done], hold: { reason: 'waiting on chats still working: b', at: Date.now() } }], sessions: [] }))
+  assert.equal(quiet, '', 'a finished copy nobody has to act on draws nothing - no "done" row')
+  const stuck = { ...done, ready: false, conflicted: true, resolver: null }
+  const loud = renderToStaticMarkup(React.createElement(Strip, { boards: [{ repo: '/p/repo', lanes: [stuck], hold: null }], sessions: [] }))
+  assert.match(loud, /Two chats changed the same lines in repo\./, 'a clash nobody took is said once')
+  assert.match(loud, />Fix it</, '...with the one button')
   const main = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
   // To the end of that one declaration, not to the next landmark further down the file:
   // slicing as far as `ipcMain.handle('lanes:board'` swallowed whatever was written
@@ -38,5 +42,5 @@ try {
   const expr = main.slice(from, main.indexOf('\n\n', from))
   const lanePanes = new Function('manager', 'resumeIdFor', expr.replace(': LanePane[]', '') + '; return lanePanes')({ list: () => [asleep, { ...asleep, id: 'closed', asleep: false }] }, id => id)
   assert.deepEqual(lanePanes().map(p => p.id), ['sleep'], 'backend supplies sleeping panes to ownership matching')
-  console.log('copy logic: 5 checks passed')
+  console.log('copy logic: 7 checks passed')
 } finally { rmSync(dir, { recursive: true, force: true }) }

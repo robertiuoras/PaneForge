@@ -147,7 +147,7 @@ function startDirectPcTurn ({ host, script, onData, spawnFn }) {
 
 function codexCommand ({ nativeSessionId, prompt, model, effort }) {
   if(typeof model!=='string'||!/^[A-Za-z0-9._-]{1,100}$/.test(model)||typeof effort!=='string'||!/^[a-z]{1,32}$/.test(effort)) fail('PC Codex requires the session’s confirmed model and effort.')
-  const base = `codex exec --json --disable unified_exec_tty -m ${model} -c 'model_reasoning_effort="${effort}"' -c 'model_provider="openai"' -c 'forced_login_method="chatgpt"' -c 'approval_policy="on-request"' -s workspace-write`
+  const base = `$codexWorker exec --json --disable unified_exec_tty -c $receiptConfig -m ${model} -c 'model_reasoning_effort="${effort}"' -c 'model_provider="openai"' -c 'forced_login_method="chatgpt"' -c 'approval_policy="on-request"' -s workspace-write`
   return nativeSessionId ? `${base} resume ${quotePs(nativeSessionId)} ${prompt}` : `${base} ${prompt}`
 }
 
@@ -161,6 +161,11 @@ function codexTaskScripts ({ checkout, nativeSessionId, text, jobId, model, effo
     '$code=1; try {',
     `$checkout=${quotePs(checkout)}`, "if(!(Test-Path -LiteralPath $checkout)){throw 'PC lane checkout is unavailable.'}",
     'Set-Location -LiteralPath $checkout',
+    "$env:KNOWLEDGE_RECEIPTS=Join-Path $checkout '.paneforge-knowledge-receipts'; $receiptConfig='shell_environment_policy.set.KNOWLEDGE_RECEIPTS='+(ConvertTo-Json -InputObject $env:KNOWLEDGE_RECEIPTS -Compress)",
+    // 0.155.1 fails Windows runtime sandbox validation on the paired PC. The
+    // isolated 0.154.0 worker passed the same Limited-task sandbox checkpoint.
+    // Preserve the global CLI and fail closed if this verified worker is absent.
+    "$codexWorker=Join-Path $env:LOCALAPPDATA 'PaneForgeNext\\codex-compat-0.154.0\\node_modules\\.bin\\codex.cmd'; if(!(Test-Path -LiteralPath $codexWorker)){throw 'Next PC worker Codex 0.154.0 is not installed in its isolated directory.'}; $workerVersion=& $codexWorker --version; if($LASTEXITCODE -ne 0 -or $workerVersion.Trim() -ne 'codex-cli 0.154.0'){throw 'Next PC worker version verification failed.'}",
     "Get-ChildItem Env: | Where-Object {$_.Name -match 'API_KEY|ACCESS_TOKEN|AUTH_TOKEN|SECRET|OPENAI_BASE_URL|ANTHROPIC|AWS_|VERTEX|BEDROCK'} | ForEach-Object {Remove-Item ('Env:'+$_.Name)}",
     `$previousErrorAction=$ErrorActionPreference; $ErrorActionPreference='Continue'; if(Test-Path -LiteralPath (Join-Path $job 'cancel.marker')){$code=130}else{& ${command} 1> (Join-Path $job 'stdout.log') 2> (Join-Path $job 'stderr.log'); if($null -ne $LASTEXITCODE){$code=$LASTEXITCODE}}; $ErrorActionPreference=$previousErrorAction`,
     "} catch { $_ | Out-String | Add-Content -LiteralPath (Join-Path $job 'stderr.log'); $code=1 } finally { $tmp=Join-Path $job 'exit.tmp'; Set-Content -LiteralPath $tmp -Value $code -NoNewline; Move-Item -LiteralPath $tmp -Destination (Join-Path $job 'exit.txt') -Force }; exit $code"
@@ -178,7 +183,9 @@ function codexTaskScripts ({ checkout, nativeSessionId, text, jobId, model, effo
     'Start-ScheduledTask -TaskName $task',
     '$outAt=0; $errAt=0; $started=Get-Date',
     `while($true){foreach($pair in @(@((Join-Path $job 'stdout.log'),'outAt'),@((Join-Path $job 'stderr.log'),'errAt'))){$path=$pair[0];$name=$pair[1];if(Test-Path -LiteralPath $path){$value=Get-Content -LiteralPath $path -Raw;if($value.Length -gt (Get-Variable -Name $name -ValueOnly)){[Console]::Out.Write($value.Substring((Get-Variable -Name $name -ValueOnly)));Set-Variable -Name $name -Value $value.Length}}};if(Test-Path -LiteralPath (Join-Path $job 'exit.txt')){foreach($pair in @(@((Join-Path $job 'stdout.log'),'outAt'),@((Join-Path $job 'stderr.log'),'errAt'))){$path=$pair[0];$name=$pair[1];if(Test-Path -LiteralPath $path){$value=Get-Content -LiteralPath $path -Raw;if($value.Length -gt (Get-Variable -Name $name -ValueOnly)){[Console]::Out.Write($value.Substring((Get-Variable -Name $name -ValueOnly)));Set-Variable -Name $name -Value $value.Length}}};$code=[int](Get-Content -LiteralPath (Join-Path $job 'exit.txt') -Raw);[Console]::Out.WriteLine(('__PANEFORGE_CODE_EXIT__:${jobId}:'+$code));exit $code};$state=(Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue).State;if($state -ne 'Running' -and ((Get-Date)-$started).TotalSeconds -ge 10){Write-Error 'PaneForge PC Code task ended without an exit receipt.';exit 1};Start-Sleep -Milliseconds 250}`,
-    '} finally { Unregister-ScheduledTask -TaskName $task -Confirm:$false -ErrorAction SilentlyContinue; Remove-Item -LiteralPath $job -Force -Recurse -ErrorAction SilentlyContinue }'
+    // Keep the worker transcript and identity even after success. An SSH failure
+    // is not worker completion: preserve its task too until an exit receipt exists.
+    "} finally { if(Test-Path -LiteralPath (Join-Path $job 'exit.txt')){Unregister-ScheduledTask -TaskName $task -Confirm:$false -ErrorAction SilentlyContinue} }"
   ].join('; ')
   const cancel = [
     "$ErrorActionPreference='Stop'", `$job=Join-Path $env:LOCALAPPDATA ${quotePs(`PaneForgeNext\\code-turns\\${jobId}`)}; $task=${quotePs(task)}; $pidPath=Join-Path $job 'pid.json'`,

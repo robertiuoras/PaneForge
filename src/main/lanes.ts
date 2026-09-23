@@ -924,9 +924,10 @@ export async function resolveLane(cwd: string, taken: string[]): Promise<Lane> {
 /**
  * Put a lane checkout back on disk before a session is spawned into it.
  *
- * sweepLanes() deletes a lane that is merged, empty and unheld, and that is right: an
- * empty lane is tens of thousands of node_modules hardlinks holding no work. What the
- * sweep cannot know is that a chat will be LAUNCHED into that folder afterwards - a pane
+ * The copy sweep (scripts/lane.mjs `sweep`) deletes a lane that is merged, empty and
+ * unheld, and that is right: an empty lane is tens of thousands of node_modules hardlinks
+ * holding no work. What the sweep cannot know is that a chat will be LAUNCHED into that
+ * folder afterwards - a pane
  * restored after the app was closed, or a terminal opened there by hand.
  *
  * That launch used to fail in a way nothing could report. Claude Code spawns every hook

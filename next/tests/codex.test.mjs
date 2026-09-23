@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { basename, isAbsolute, join } from 'node:path';
 import test from 'node:test';
 import { scopedCodexConfig, verifyEffectiveCapabilities } from '../server/codex.mjs';
 
@@ -18,9 +19,9 @@ test('creates a dedicated fixture process configuration for each conversation la
   const config=scopedCodexConfig('project-a','/safe/project-a-lane').mcp_servers.paneforge_fixture;
   assert.equal(config.env.PANEFORGE_PROJECT_ID,'project-a');
   assert.equal(config.env.PANEFORGE_PROJECT_CWD,'/safe/project-a-lane');
-  assert.ok(config.env.PANEFORGE_DATA_DIR.startsWith('/'));
-  assert.ok(config.env.PANEFORGE_DATA_DIR.endsWith('.local-runtime/app'));
-  assert.equal(config.command,process.execPath);assert.match(config.args[0],/server\/fixture-mcp\.mjs$/);
+  assert.ok(isAbsolute(config.env.PANEFORGE_DATA_DIR));
+  assert.ok(config.env.PANEFORGE_DATA_DIR.endsWith(join('.local-runtime', 'app')));
+  assert.equal(config.command,process.execPath);assert.equal(basename(config.args[0]),'fixture-mcp.mjs');
 });
 
 test('fails closed when live search is disabled',()=>assert.throws(()=>verifyEffectiveCapabilities({config:{...config,web_search:'disabled'}},{data:[]}),/Live web search/));

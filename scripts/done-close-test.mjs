@@ -130,11 +130,13 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
   assert.equal(rec.noRemainingWork, false)
   assert.equal(rec.closeSession, true)
   const [path, notice] = written[0]
-  assert.match(path, /guarddeck\/notices\/paneforge-step-done_p1_\d+-1\.json$/)
+  // `noticesDir()` joins with the platform separator, so on Windows this is
+  // `...\guarddeck\notices\...`; normalize before matching against the posix-style pattern.
+  assert.match(path.split('\\').join('/'), /guarddeck\/notices\/paneforge-step-done_p1_\d+-1\.json$/)
   assert.equal(notice.actor, 'paneforge')
   assert.equal(notice.kind, 'step')
   assert.equal(notice.machine, 'pc', 'the step said "on the PC"')
-  assert.equal(written[1][1].machine, 'mac', 'a step naming no machine is this machine')
+  assert.equal(written[1][1].machine, process.platform === 'win32' ? 'pc' : 'mac', 'a step naming no machine is this machine')
   assert.equal(notice.title, 'To do: Robert: run /login on the PC')
   assert.equal(notice.detail, 'site - fix the login')
   assert.deepEqual(Object.keys(notice.reopen).sort(), ['agent', 'cwd', 'prompt', 'resumeId', 'title'])

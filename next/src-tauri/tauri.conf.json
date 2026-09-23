@@ -7,7 +7,8 @@
   "app": {
     "windows": [{
       "title": "PaneForge Next",
-      "url": "http://127.0.0.1:4321",
+      "url": "about:blank",
+      "create": false,
       "width": 1280,
       "height": 850,
       "minWidth": 375,

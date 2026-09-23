@@ -7,31 +7,28 @@
 // that and a project has four stale checkouts and work in branches its owner has
 // forgotten exist.
 //
-// So this file answers the three questions the lane raises after it is made:
+// So this file answers the question the lane raises after it is made:
 //
 //   laneWork()      what is in this lane - commits, uncommitted files, and whether it
 //                   would conflict with the branch it came from (asked without touching
 //                   a single working tree, so it is safe to poll)
-//   mergeLaneBack() put it back on that branch, refusing rather than guessing whenever
-//                   the merge is not clean
-//   sweepLanes()    delete the lanes that hold nothing - merged, empty, and no session
-//                   in them. Anything with work in it is never touched.
+//
+// The copy sweep - deleting the lanes that hold nothing - is scripts/lane.mjs `sweep`.
 //
 // Everything here is node builtins and `git`, so it is testable without Electron
 // (scripts/lane-work-test.mjs) and cheap enough to call on a timer.
 
-import { execFile } from 'node:child_process'
 import { gitRun, isRead } from './gitRun'
-import { existsSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 import { feedDraft, LANE_OPTIONS } from '../shared/draft'
-import type { LaneMergeResult, LaneWork } from '../shared/types'
+import type { LaneWork } from '../shared/types'
 
 /**
  * The lane folder shapes: `<repo>-a` (what lanes.ts and scripts/lane.mjs both create) and
  * `<repo>-w2` (what this app made before the two naming schemes were merged).
  *
- * The old shape is still read, merged and swept - a lane that exists on someone's disk with
+ * The old shape is still read and swept - a lane that exists on someone's disk with
  * real commits in it must not become invisible because the app renamed a convention. It is
  * simply never created again, so old lanes drain away and the folder shape goes with them.
  *
@@ -41,7 +38,7 @@ import type { LaneMergeResult, LaneWork } from '../shared/types'
  */
 const LANE_DIR = /-(w\d+|[a-z])$/
 
-export type { LaneMergeResult, LaneWork }
+export type { LaneWork }
 
 interface GitRun {
   /** git's exit code; -1 when it could not be run at all. */
@@ -84,9 +81,6 @@ function run(cwd: string, args: string[], timeout: number, stdoutOnly: boolean):
     out: (stdoutOnly ? r.stdout : r.stdout + r.stderr).trim()
   }))
 }
-
-const git = (cwd: string, args: string[], timeout = 20000): Promise<GitRun> =>
-  run(cwd, args, timeout, false)
 
 /** stdout only, for the commands whose stderr is progress noise. */
 const gitOut = (cwd: string, args: string[], timeout = 20000): Promise<GitRun> =>
@@ -200,18 +194,6 @@ async function dirtyFiles(cwd: string): Promise<string[] | null> {
 }
 
 /**
- * Ignored files are deliberately excluded from the normal dirty count: lanes seed
- * ignored dependencies and local environment files, and those must not block a merge.
- * They are still real files, though.  Before the only destructive operation, treat an
- * unreadable status or one ignored path as a reason to leave the whole lane alone.
- */
-async function hasIgnoredFiles(cwd: string): Promise<boolean> {
-  const r = await gitOut(cwd, ['status', '--porcelain', '-z', '--ignored=matching'])
-  if (!r.ok) return true
-  return r.out.split('\0').some((entry) => entry.startsWith('!! '))
-}
-
-/**
  * The newest commit on this checkout, as a subject and a time.
  *
  * Read with `--no-walk` off HEAD, so it costs one object read and cannot be slowed by a
@@ -264,14 +246,6 @@ function laneLabel(dir: string, repo: string): string | null {
 }
 
 /**
- * The branch a lane with this label carries. `lane-a` now; `pf/w2` for the lanes made
- * before the schemes were merged, which are still on disk until their work lands.
- */
-function laneBranches(label: string): string[] {
-  return [`lane-${label}`, `pf/${label}`]
-}
-
-/**
  * What is in a lane, or null when the folder is not a lane of its repo.
  *
  * Reads only: seven git commands against the object store and the index, no working tree
@@ -320,141 +294,6 @@ export async function laneWork(dir: string): Promise<LaneWork | null> {
   }
 }
 
-/**
- * Put a lane's commits back on the branch it came from.
- *
- * Refuses instead of improvising, every time:
- *   - uncommitted work in the lane is the agent's, not ours to commit or stash
- *   - uncommitted work in the main checkout would end up inside somebody else's merge
- *   - a conflict is aborted and handed back as a file list, because resolving it needs
- *     the person who wrote both sides
- *
- * `--no-ff` on purpose: the merge commit is the record that lane w2 existed, which is
- * the only trace left once the folder is swept.
- */
-export async function mergeLaneBack(
-  dir: string,
-  opts: { busy?: string[] } = {}
-): Promise<LaneMergeResult> {
-  const work = await laneWork(dir)
-  if (!work) return { ok: false, reason: 'not-a-lane' }
-  if (work.dirty > 0) {
-    return {
-      ok: false,
-      reason: 'lane-dirty',
-      detail: `${work.dirty} uncommitted file${work.dirty === 1 ? '' : 's'} in the lane - commit or discard them first.`
-    }
-  }
-  if (work.ahead === 0) return { ok: false, reason: 'nothing' }
-  if (work.baseDirty) {
-    return {
-      ok: false,
-      reason: 'base-dirty',
-      detail: `${work.repo} has uncommitted changes - a merge would land on top of them.`
-    }
-  }
-  if (work.conflicts.length) return { ok: false, reason: 'conflict', conflicts: work.conflicts }
-
-  const merged = await git(work.repo, [
-    'merge',
-    '--no-ff',
-    '--no-edit',
-    '-m',
-    `merge lane ${work.lane} (${work.branch})`,
-    work.branch
-  ])
-  if (!merged.ok) {
-    // Only merge-tree said it was clean, so this is a case it cannot see (a hook, a
-    // locked file). Leave the checkout exactly as it was found.
-    const conflicts = (await gitOut(work.repo, ['diff', '--name-only', '--diff-filter=U'])).out
-      .split(/\r?\n/)
-      .filter(Boolean)
-    await git(work.repo, ['merge', '--abort'])
-    return conflicts.length
-      ? { ok: false, reason: 'conflict', conflicts }
-      : { ok: false, reason: 'failed', detail: merged.out.split(/\r?\n/)[0] }
-  }
-
-  // Merged and empty: the folder is now pure cost. It only goes if no session is in it.
-  const held =
-    (opts.busy ?? []).some((b) => samePath(b, work.dir)) ||
-    (await heldAsProcessCwd(work.dir))
-  const removed = held ? false : await removeLane(work.repo, work.dir, work.branch)
-  return { ok: true, commits: work.ahead, base: work.base, branch: work.branch, removed }
-}
-
-/**
- * Delete a lane folder and its branch. Git refuses if the worktree has changes in it,
- * which is the safety net: this is only ever called on a lane that has just been proven
- * empty, and if that changed in between, git says no and nothing is lost.
- */
-async function removeLane(repo: string, dir: string, branch: string): Promise<boolean> {
-  // Git protects ordinary changes but will delete ignored output even without --force.
-  // Both manual merge and automatic sweep pass through this final guard.
-  if (await hasIgnoredFiles(dir)) return false
-  await git(repo, ['worktree', 'remove', dir], 120_000)
-  if (!(await finished(repo, dir))) return false
-  // -d, never -D: a branch with unmerged commits keeps existing, folder or no folder.
-  await git(repo, ['branch', '-d', branch])
-  await git(repo, ['worktree', 'prune'])
-  return true
-}
-
-/**
- * Did the removal actually take, whatever git's exit code said?
- *
- * On Windows `git worktree remove` empties the folder and deregisters the worktree, and
- * then fails on the last step - deleting the folder itself - whenever any process still
- * has it as its current directory. The pane that was just moved out of the lane is
- * exactly such a process for a second or two. Reading git's exit code alone, that lane
- * kept its branch forever and was retried on every sweep: measured on git 2.53, the
- * folder was left behind, empty, with `pf/w2` still on the branch list.
- *
- * So the question asked is the one that matters - is this still a worktree of the repo -
- * and the empty shell of a folder is swept up separately.
- */
-async function finished(repo: string, dir: string): Promise<boolean> {
-  if ((await laneFolders(repo)).some((p) => samePath(p, dir))) return false
-  try {
-    // Only ever an empty directory by this point: git deleted the contents itself.
-    rmSync(dir, { recursive: true, force: true })
-  } catch {
-    /* still held - the next sweep gets it, and git no longer thinks it is a lane */
-  }
-  return true
-}
-
-const exec = (cwd: string, args: string[], timeout: number): Promise<boolean> =>
-  run(cwd, args, timeout, true).then((r) => r.ok)
-
-/**
- * Is a process still rooted in this folder even though PaneForge has no pane metadata
- * for it?
- *
- * CLI agents keep one process alive between prompts. On POSIX a directory can be
- * unlinked while that process still uses it, so `git worktree remove` succeeds and the
- * next prompt fails before its hook can rebuild the lane. Windows refuses the removal
- * itself. `lsof -d cwd` asks the missing question on macOS/Linux without walking the
- * lane's files; if lsof is unavailable, preserving a clean lane is safer than making a
- * live session unusable.
- */
-async function heldAsProcessCwd(dir: string): Promise<boolean> {
-  if (process.platform === 'win32') return false
-  return new Promise((done) => {
-    execFile(
-      'lsof',
-      ['-t', '-a', '-d', 'cwd', '--', dir],
-      { encoding: 'utf8', windowsHide: true, timeout: 10_000 },
-      (err, stdout) => {
-        if (!err) return done(Boolean(stdout.trim()))
-        // lsof uses status 1 for the ordinary "no matching process" answer. Any other
-        // failure leaves the lane intact because it could not prove the cwd is unused.
-        done(Number((err as NodeJS.ErrnoException).code) !== 1)
-      }
-    )
-  })
-}
-
 /** The main checkout a folder belongs to (itself, when it is not a worktree). */
 export function repoOf(cwd: string): Promise<string | null> {
   return mainRepo(cwd)
@@ -481,189 +320,6 @@ function inside(child: string, parent: string): boolean {
   const c = physicalPath(child)
   const p = physicalPath(parent)
   return c === p || c.startsWith(p + '\\') || c.startsWith(p + '/')
-}
-
-/**
- * Has this lane's work ended up in the project by some route other than a merge?
- *
- * `empty` answers the ordinary case: the commits went back, so the branch is level with
- * base and there is nothing ahead. A squash merge never produces that - the commit is
- * rewritten under a new id, so the lane reads as one commit ahead of base forever and
- * its folder would outlive the work by weeks.
- *
- * `git cherry` is the question that survives the rewrite: it compares by patch rather
- * than by commit id and prints `+` for anything with no equivalent upstream. None of
- * those means every change in this lane is in the project already. A lane squashed from
- * SEVERAL commits is not patch-equivalent to the one commit that replaced it and keeps
- * its folder - the point here is to be sure, not to be thorough.
- */
-async function absorbed(repo: string, work: LaneWork): Promise<'patch' | null> {
-  const cherry = await gitOut(repo, ['cherry', work.base, work.branch])
-  if (!cherry.ok) return null
-  const unique = cherry.out
-    .split(/\r?\n/)
-    .filter(Boolean)
-    .some((l) => l.startsWith('+'))
-  return unique ? null : 'patch'
-}
-
-/**
- * A lane is held for as long as scripts/lane.mjs would still honour its claim.
- *
- * Matches IDLE_EMPTY_MS there on purpose: a claim lane.mjs would refuse to hand to
- * anyone else is one this file must not delete, and a claim it would hand away is fair
- * game. Two windows that disagree is how a lane gets deleted and re-created forever.
- */
-const CLAIM_HELD_MS = 60 * 60 * 1000
-
-/**
- * Which lanes somebody holds without SITTING in them.
- *
- * `busy` - the folder each live pane is in - is the whole story when this app put an
- * agent in a lane itself. It is not the story when scripts/lane.mjs hands a lane to a CLI
- * session: the hook tells that chat to work in `<repo>-a` while its pane stays in the main
- * checkout, so between the claim and the chat's first write the folder is empty, clean and
- * looks abandoned. It was then deleted out from under a chat that had been told to use it,
- * on every sweep, which reads as the worktree "vanishing" seconds after `lane claim`
- * returned its path.
- *
- * A lane waiting on a release counts as held too. `ready` and `conflicts` are work that
- * finished and has nowhere to go yet, not work nobody wants.
- */
-async function heldLanes(repo: string): Promise<Set<string>> {
-  const held = new Set<string>()
-  // Worktrees share one ledger, and in a worktree `.git` is a file - ask git rather than
-  // joining a path that only happens to be right in the main checkout.
-  const common = await gitOut(repo, ['rev-parse', '--git-common-dir'])
-  if (!common.ok) return held
-  const file = resolve(repo, common.out.trim(), 'paneforge-lanes.json')
-  let state: {
-    lanes?: Record<string, { seen?: number; claimed?: number }>
-    ready?: Record<string, unknown>
-    conflicts?: Record<string, unknown>
-  }
-  try {
-    // lane.mjs writes then renames, so a half-written file is impossible: a parse failure
-    // means something else owns that name, and `busy` is then the only answer available.
-    state = JSON.parse(readFileSync(file, 'utf8'))
-  } catch {
-    return held
-  }
-  const now = Date.now()
-  for (const [id, claim] of Object.entries(state.lanes ?? {}))
-    if (now - (claim?.seen ?? claim?.claimed ?? 0) < CLAIM_HELD_MS) held.add(id)
-  for (const id of Object.keys(state.ready ?? {})) held.add(id)
-  for (const id of Object.keys(state.conflicts ?? {})) held.add(id)
-  return held
-}
-
-/**
- * Delete every lane of this repo that holds nothing and has no session in it.
- *
- * "Holds nothing" is deliberately strict - no commits of its own, no uncommitted file,
- * not even an untracked one - because the alternative is deleting an agent's work while
- * it is between commits. A lane whose commits were merged back passes this test on its
- * own, so merged lanes disappear a sweep later without anyone deciding to delete them.
- *
- * Removal is async: a lane's `node_modules` is tens of thousands of hardlinks, and
- * unlinking them on the main thread would freeze every pane in the window.
- */
-/**
- * How long a lane that holds nothing is kept before it is deleted (24h).
- *
- * It arrived unnamed and untested, and being a bare `Date.now()` comparison it made every
- * removal assertion in scripts/lane-sweep-test.mjs and scripts/lane-work-test.mjs fail:
- * a test builds its lane a millisecond before it sweeps. `PF_SWEEP_GRACE_MS` is how those
- * tests ask for the behaviour without waiting a day, and is read at CALL time so a test
- * can set it either side of the sweep.
- */
-export const SWEEP_GRACE_MS = 24 * 60 * 60 * 1000
-const sweepGrace = (): number => {
-  const raw = Number(process.env.PF_SWEEP_GRACE_MS)
-  return Number.isFinite(raw) && raw >= 0 ? raw : SWEEP_GRACE_MS
-}
-
-export async function sweepLanes(repo: string, busy: string[] = []): Promise<string[]> {
-  const removed: string[] = []
-  const held = await heldLanes(repo)
-  const folders = await laneFolders(repo)
-  for (const dir of folders) {
-    // A pane that cd'd into a subfolder of the lane reports that subfolder, and it is
-    // just as much "somebody is in there" as the lane root is.
-    if (busy.some((b) => inside(b, dir))) continue
-    const work = await laneWork(dir)
-    if (!work || work.dirty > 0) continue
-    // Never discard a file merely because Git is configured to ignore it.  This keeps
-    // seeded dependencies too; retained disk is recoverable, deleted agent output is not.
-    if (await hasIgnoredFiles(dir)) continue
-    // Claimed by a chat that is not in the folder yet. See heldLanes().
-    if (held.has(work.lane)) continue
-    // Ours to delete, or somebody else's worktree that happens to sit at `<repo>-a` and
-    // be tidy today. laneWork() reads any lane-shaped folder on purpose - the panel should
-    // describe one either way - but nothing is REMOVED unless this app or scripts/lane.mjs
-    // made it, which is what the branch name says: `lane-a` now, `pf/w2` for the lanes that
-    // predate the two schemes being merged.
-    if (!laneBranches(work.lane).includes(work.branch)) continue
-    const how = work.empty ? 'history' : await absorbed(repo, work)
-    if (!how) continue
-    // A lane that holds nothing TODAY may still be a folder somebody is coming back to:
-    // a chat between turns has no uncommitted file and no unmerged commit, and neither
-    // does one whose work has just been merged back. So a lane is kept until it has been
-    // untouched for SWEEP_GRACE_MS. `work.at` is the lane's own last activity and the
-    // folder's mtime is the fallback for a lane that never recorded one.
-    const mtime = existsSync(dir) ? statSync(dir).mtimeMs : 0
-    const lastActive = Math.max(work.at || 0, mtime)
-    if (Date.now() - lastActive < sweepGrace()) continue
-    // A paused CLI session is invisible to `busy`: its PaneForge pane can remain in the
-    // main checkout while the agent process is rooted here. POSIX permits deleting that
-    // cwd, but the agent cannot start its next turn afterwards.
-    if (await heldAsProcessCwd(dir)) continue
-    await exec(repo, ['worktree', 'remove', dir], 120_000)
-    // Not the exit code - see finished(). A lane can be gone and still make git unhappy.
-    if (!(await finished(repo, dir))) continue
-    // `-d` is the safe delete and refuses anything the base branch does not have. A
-    // squash-merged lane is exactly that case and always will be, and its patches have
-    // just been shown to be in the project, so that one is deleted outright.
-    await exec(repo, ['branch', how === 'history' ? '-d' : '-D', work.branch], 20_000)
-    removed.push(dir)
-  }
-  if (removed.length) await exec(repo, ['worktree', 'prune'], 20_000)
-  // The list read above is still the answer unless this sweep removed something.
-  await dropEmptyShells(repo, removed.length ? await laneFolders(repo) : folders)
-  return removed
-}
-
-/**
- * Delete the empty folder a removed lane can leave behind.
- *
- * See finished(): git empties and deregisters the lane, then cannot delete the folder
- * itself while a process still has it as its working directory - which the pane that
- * just left the lane does, for a second or two. By the time that has passed, the folder
- * is no longer a worktree, so nothing was ever coming back for it. Verified in the app:
- * `lanedemo-w2` stayed on disk containing nothing at all.
- *
- * Only ever an EMPTY lane-shaped folder beside the repo, so there is nothing to lose. That
- * is also what clears the last of the old `-w<N>` folders off a machine: they stop being
- * created, their work is merged by the normal path, and the shell goes here.
- */
-async function dropEmptyShells(repo: string, registered: string[]): Promise<void> {
-  const parent = dirname(repo)
-  let siblings: string[] = []
-  try {
-    siblings = readdirSync(parent)
-  } catch {
-    return
-  }
-  for (const name of siblings) {
-    if (!name.startsWith(`${basename(repo)}-`) || !LANE_DIR.test(name)) continue
-    const dir = join(parent, name)
-    if (registered.some((p) => samePath(p, dir))) continue
-    try {
-      if (readdirSync(dir).length === 0) rmSync(dir, { recursive: true, force: true })
-    } catch {
-      /* still held, or not a directory - either way not ours to force */
-    }
-  }
 }
 
 /**

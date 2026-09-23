@@ -1,35 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { LaneBoard, LaneBoardEntry, Session } from '@shared/types'
-import type { LaneEvent } from '@shared/laneTimeline'
-import { eventsFor } from '@shared/laneTimeline'
-import LaneTimelineFlyout from './LaneTimelineFlyout'
-import { copyNumber, paneRef } from '@shared/place'
 import { appVisible, onAppVisible } from '../appVisible'
-import {
-  ago,
-  deviceTip,
-  holdWords,
-  laneBusy,
-  laneChipLabel,
-  laneHeadline,
-  laneProject,
-  laneState,
-  laneTip,
-  laneUnder,
-  RELEASE_STUCK_MS
-} from '../laneWords'
+import type { CopiesNotice } from '../laneWords'
+import { copiesNotice, laneProject } from '../laneWords'
 
 const api = window.api
 
 interface Props {
   boards: LaneBoard[]
   sessions: Session[]
-  /** What has happened to each copy, from useLaneTimeline. */
-  timeline: LaneEvent[]
   /** focus the pane a job was handed to */
   onFocus: (id: string) => void
-  /** open the "How lanes work" card */
-  onHelp: () => void
 }
 
 /**
@@ -40,11 +21,9 @@ interface Props {
  * lane is then left out of every release, silently, until a human learns about it from a
  * sentence buried in another chat's hook output. Lane b sat like that for a day.
  *
- * The lane a pane holds is drawn ON that pane's card (LaneChip below), because that is
- * where you are already looking and a second list of the same sessions was two places to
- * read one fact. What is left over is what no card can say: a lane whose chat is gone,
- * finished work waiting on a release, a conflict nobody owns. Only those appear here, so
- * on an ordinary day this section is not on screen at all.
+ * None of that is drawn as a list of copies any more (copiesNotice in ../laneWords says
+ * why): the only lines left are the ones that need a person, so on an ordinary day this
+ * is not on screen at all.
  */
 export function useLaneBoards(): LaneBoard[] {
   const [boards, setBoards] = useState<LaneBoard[]>([])
@@ -69,27 +48,6 @@ export function useLaneBoards(): LaneBoard[] {
   }, [])
 
   return boards
-}
-
-/**
- * What has happened to the copies, newest first, across every project.
- *
- * Not polled: main takes the readings on its own timer (main/laneTimeline.ts) because the
- * strip stops polling the moment the window is off screen, and that is the stretch this
- * log is asked about. The window asks once and is told after that.
- */
-export function useLaneTimeline(): LaneEvent[] {
-  const [items, setItems] = useState<LaneEvent[]>([])
-  useEffect(() => {
-    let live = true
-    api.laneTimeline().then((x) => live && setItems(x ?? []))
-    const off = api.onLaneTimeline((x) => setItems(x))
-    return () => {
-      live = false
-      off()
-    }
-  }, [])
-  return items
 }
 
 /**
@@ -138,69 +96,7 @@ function fixPrompt(lane: LaneBoardEntry, repo: string): string {
   )
 }
 
-/**
- * The lane a pane holds, on the pane's own card beside its agent and model.
- *
- * Colour carries the three states a release cares about, and nothing else: blue while a
- * chat is working in that checkout right now, green once its work is finished and waiting
- * for the next version, red when the work will not merge and is being left out of every
- * release. A lane merely held, with nobody typing, stays grey.
- */
-export function LaneChip({
-  lane,
-  paneProject,
-  onHelp
-}: {
-  lane: LaneBoardEntry
-  /**
-   * The project the card beside this chip has already named. When the lane is a copy of
-   * that same project the chip drops the name and says only `lane a` - see
-   * `laneChipLabel`. Left out, the chip always names the project, which is what the lane
-   * strip's own rows want.
-   */
-  paneProject?: string
-  onHelp?: () => void
-}): JSX.Element {
-  // "lane a" beside a "w2" worktree chip read as two halves of one fact, and they are not
-  // related at all: w2 is this pane's own checkout of whatever project it opened, and this
-  // is a lane in a release pool that the chat in this pane happens to hold.
-  //
-  // The prefix used to be the literal letters "PF", which was right while PaneForge was the
-  // only repository with lanes and became a lie the day any repo could have them: a chat
-  // holding taskdriver's lane b had a chip on it reading "PF lane b". It is the project's
-  // own name now, from the lane's folder.
-  const base = laneChipLabel(lane, paneProject)
-  const label = lane.conflicted ? `${base} stuck` : lane.ready ? `${base} done` : base
-  return (
-    <span
-      className={
-        'chip pf-lane' +
-        (lane.conflicted ? ' stuck' : lane.ready ? ' done' : laneBusy(lane) ? ' busy' : '')
-      }
-      role={onHelp ? 'button' : undefined}
-      onClick={
-        onHelp &&
-        ((e) => {
-          e.stopPropagation()
-          onHelp()
-        })
-      }
-      title={
-        `This chat is also editing ${laneProject(lane)}, in its own copy of the folder ` +
-        `- ${laneState(lane, true)}.\n` +
-        `Nothing to do with the folder this pane is open in.\n${laneTip(lane)}` +
-        (onHelp ? '\nClick: how lanes work.' : '')
-      }
-    >
-      {label}
-    </span>
-  )
-}
-
-export default function LaneStrip({ boards, sessions, timeline, onFocus, onHelp }: Props): JSX.Element | null {
-  // Which copy's log is open, and the row it opened from. One at a time: the panel is a
-  // reading of ONE copy, and two of them side by side would be a list with no heading.
-  const [reading, setReading] = useState<{ repo: string; lane: string; title: string; at: DOMRect } | null>(null)
+export default function LaneStrip({ boards, sessions, onFocus }: Props): JSX.Element | null {
   // A job is handed over once. Keyed by when the conflict started, so a lane that gets
   // stuck again later is a new job and not one this ref has already forgotten about.
   const handed = useRef(new Set<string>())
@@ -233,123 +129,14 @@ export default function LaneStrip({ boards, sessions, timeline, onFocus, onHelp 
       }
   }, [boards, sessions])
 
-  // Whatever a session card already says is not repeated here. Every open repo's lanes
-  // are listed, not just one winner's - each row already names its project (laneLabel),
-  // so one flat list still reads unambiguously.
-  const orphans = boards.flatMap((b) =>
-    b.lanes
-      .filter((l) => !laneOwner(l, sessions))
-      // A hold whose chat is dead is a ledger entry the next sweep gives back, not a copy
-      // anyone is in; five of them with old chat names on were the whole strip on
-      // 2026-09-03. Conflicted or finished work is still somebody's to see.
-      .filter((l) => !l.gone || l.conflicted || l.ready)
-      // `here` travels with the row because a board is one machine's reading of one repo,
-      // and a row may be about the other machine - see LaneRow's device tag.
-      .map((l) => ({ repo: b.repo, lane: l, here: b.device, hold: b.hold }))
-  )
-  if (!orphans.length) return null
-  const stuck = orphans.filter((o) => o.lane.conflicted).length
-  // The oldest running release, so "releasing" can stop being said about one that is not.
-  const releasingAt = boards
-    .map((b) => b.releasing)
-    .filter((at): at is number => at !== null)
-    .sort((a, b) => a - b)[0]
-  const wedged = releasingAt !== undefined && Date.now() - releasingAt > RELEASE_STUCK_MS
+  // The copies themselves are never listed: see copiesNotice for what was here and why.
+  const notices = boards.map((b) => copiesNotice(b)).filter((n): n is CopiesNotice => n !== null)
+  if (!notices.length) return null
 
-  return (
-    <>
-      <div className="section">
-        {/* The middle word is the first thing a narrow sidebar gives up: the heading was
-            ellipsed to `LANES ELSEWHERE …` with the count - the one number on the line -
-            inside the part that got cut. */}
-        {/* "Lanes" is this app's word for a thing that already has a plain one: an extra
-            copy of a project folder, so two chats can work on it without landing on each
-            other. The heading says the plain one. The middle word is still the first
-            thing a narrow sidebar gives up - the heading was ellipsed with the count, the
-            one number on the line, inside the part that got cut. */}
-        <span className="section-title" title="Copies across projects without an open chat card in this window. Chats in another window or on another device may still own them.">
-          Other<span className="wide-word"> copies</span> ({orphans.length})
-        </span>
-        {stuck > 0 && (
-          <span
-            className="badge stuck"
-            title="Two chats changed the same lines, so this work won't merge until someone picks. Everything else still ships."
-          >
-            {stuck} need you
-          </span>
-        )}
-        {releasingAt !== undefined && (
-          <span
-            className={'badge ' + (wedged ? 'stuck' : 'run')}
-            title={
-              wedged
-                ? 'A release started and never finished - usually a machine that went away mid-release. ' +
-                  'It is dropped by itself after twenty minutes and the work goes out with the next one.'
-                : 'Finished lanes are being folded into one update right now'
-            }
-          >
-            {wedged ? `release stuck ${ago(releasingAt)}` : 'releasing'}
-          </span>
-        )}
-        <button className="ghost small lane-what" onClick={onHelp} title="How lanes work">
-          ?
-        </button>
-      </div>
-      <div className="lanes">
-        {/* The device is part of the key: both desks can hold `main` of one repo at once
-            (lane.mjs calls it a shared trunk), which is two rows for one lane letter. */}
-        {orphans.map((o) => (
-          <LaneRow
-            key={`${o.repo}:${o.lane.lane}:${o.lane.device ?? ''}`}
-            lane={o.lane}
-            repo={o.repo}
-            here={o.here}
-            hold={o.hold}
-            sessions={sessions}
-            onFocus={onFocus}
-            onRead={(at) =>
-              setReading({ repo: o.repo, lane: o.lane.lane, title: laneHeadline(o.lane), at })
-            }
-          />
-        ))}
-      </div>
-      {reading && (
-        <LaneTimelineFlyout
-          items={eventsFor(timeline, reading.repo, reading.lane)}
-          title={reading.title}
-          anchor={reading.at}
-          onClose={() => setReading(null)}
-        />
-      )}
-    </>
-  )
-}
-
-function LaneRow({
-  lane,
-  repo,
-  here,
-  hold,
-  sessions,
-  onFocus,
-  onRead
-}: {
-  lane: LaneBoardEntry
-  repo: string
-  /** the machine this window is running on, to tell "here" from "the other desk" */
-  here: string | null
-  /** this repo's release gate, on why finished work has not gone out */
-  hold: { reason: string; at: number } | null
-  sessions: Session[]
-  onFocus: (id: string) => void
-  /** Open this copy's own log, beside the row that was pressed. */
-  onRead: (at: DOMRect) => void
-}): JSX.Element {
   // The automatic hand-over waits for a pane that is not mid-turn, and leaves a conflict
   // whose own chat is still alive to that chat. This is the same job for someone who does
   // not want to wait for either, which is why it may land in a busy pane.
-  const handOver = (e: React.MouseEvent): void => {
-    e.stopPropagation()
+  const handOver = (lane: LaneBoardEntry, repo: string): void => {
     const target = laneOwner(lane, sessions) ?? sessions.find((s) => s.status !== 'exited')
     if (!target) return
     onFocus(target.id)
@@ -357,82 +144,24 @@ function LaneRow({
     api.write(target.id, fixPrompt(lane, repo))
   }
 
-  // The pane holding this lane, as its Ctrl-N number.
-  //
-  // Only the HOLDER can be resolved: `ownerPane` is matched in the main process, which is
-  // the one side that can see a pane's conversation id (laneBoard.ts `attachLaneOwners`).
-  // A resolver is recorded as a bare chat id with no such match, so it stays a short hex
-  // string - `paneRef` prints whichever of the two it was given.
-  const owner = laneOwner(lane, sessions)
-  const holderPane = owner ? sessions.indexOf(owner) + 1 : undefined
-  // Every row here belongs to a chat that is NOT a pane in this window - that is what the
-  // strip is - so "somebody is working in it right now" is the one fact about it no card
-  // can carry, and it was the one fact drawn in the same grey as a lane nobody has touched
-  // since yesterday.
-  const busy = laneBusy(lane)
-
   return (
-    <div
-      className={
-        'row lane-row readable' +
-        (lane.conflicted ? ' stuck' : '') +
-        (lane.ready ? ' done' : '') +
-        (busy ? ' busy' : '')
-      }
-      // The row says what is true now; pressing it says what happened before that. It is
-      // the only place a copy that was stuck all morning and then settled leaves a trace.
-      role="button"
-      tabIndex={0}
-      onClick={(e) => onRead(e.currentTarget.getBoundingClientRect())}
-      onKeyDown={(e) => {
-        if (e.key !== 'Enter' && e.key !== ' ') return
-        e.preventDefault()
-        onRead(e.currentTarget.getBoundingClientRect())
-      }}
-      title={
-        laneTip(lane, holderPane) +
-        (lane.ready && hold ? `\n\n${hold.reason}` : '') +
-        '\n\nClick: what has happened to this copy.'
-      }
-    >
-      {/* The copy's NUMBER, never its slot letter. `a` is scripts/lane.mjs's word for a
-          position in a pool and means nothing to the person reading this row; the folder
-          the project itself lives in is copy 1, so `a` is 2. A slot of neither shape is
-          printed as it is rather than given an invented number (src/shared/place.ts). */}
-      <span className={'lane-tag' + (lane.conflicted ? ' stuck' : busy ? ' busy' : '')}>
-        {lane.lane === 'main' ? 1 : (copyNumber(lane.lane) ?? lane.lane)}
-      </span>
-      <div className="row-text">
-        {/* Was `lane.branch`, which is the single word this whole change exists to stop
-            printing: several rows saying `master`, for different repositories, with
-            nothing on any of them naming one. */}
-        {/* The JOB first, when the chat left a name behind - "which job" is the question
-            a list of seven is asking, and `taskdriver copy 4 "idea #675"` answered it
-            second, after a number that means nothing to the reader. The copy moves down
-            to the state line. A copy whose chat left no name keeps the folder up top. */}
-        <div className="row-title">{laneHeadline(lane)}</div>
-        <div className="row-sub">
-          {laneUnder(lane, laneState(lane, false, Date.now(), holderPane, hold))}
-          {lane.conflicted && lane.resolver ? ` - ${paneRef(undefined, lane.resolver)} has it` : ''}
+    <div className="lanes">
+      {notices.map((n) => (
+        <div key={n.repo} className={'row lane-row readable' + (n.fix ? ' stuck' : '')}>
+          <div className="row-text">
+            <div className="row-title">{n.text}</div>
+          </div>
+          {n.fix && (
+            <button
+              className="ghost small lane-fix"
+              onClick={() => n.fix && handOver(n.fix, n.repo)}
+              title="A chat picks which version of the lines to keep"
+            >
+              Fix it
+            </button>
+          )}
         </div>
-      </div>
-      {/* Which desk, drawn only when it is the OTHER one.
-          It used to be drawn on every row, and on a one-machine desk that is the same
-          word repeated down the strip - 92px of reserved width (styles.css .lane-device)
-          spent saying nothing, taken off the front of the line that carries the state.
-          The row that has to be read differently is the one this window cannot free, and
-          that is the only row that keeps the tag. `here` unknown keeps it too: a device
-          we cannot compare against is not a device we can call ours. */}
-      {lane.device && (!here || lane.device !== here) && (
-        <span className="lane-device away" title={deviceTip(lane, here)}>
-          {lane.device}
-        </span>
-      )}
-      {lane.conflicted && !lane.resolver && !lane.peer && (
-        <button className="ghost small lane-fix" onClick={handOver} title="Hand the job to a pane now">
-          fix
-        </button>
-      )}
+      ))}
     </div>
   )
 }

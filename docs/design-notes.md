@@ -73,6 +73,12 @@ folder name, so each checkout opens its own window.
 
 ## Lanes: more than one chat works on this repo
 
+**The trunk is declared, never read off the main folder (2026-09-23).** taskdriver.ai's main folder was left on `feat/github-actions-usage-card`; lane.mjs took the root's checkout as the trunk, so every `ready` for 35 hours merged there (171 commits ahead of origin/main). Now `.lanes.json` `branch`, else origin/HEAD, else main/master. A root found off it is moved back by two ref writes when that changes no file AND the side branch already carries `merge lane` merges (the proof it was parked, not worked on - a pre-ship review showed a plain feature branch would otherwise be taken over and its next commit pushed). Anything else refuses the release and keeps the lanes ready. `lane-trunk-test.mjs`.
+
+**Unused checkout folders are swept, work first (2026-09-23).** 18 taskdriver folders, ~36 GB, disk 94% full; nothing deleted a folder and non-`<repo>-<letter>` worktrees were invisible. `lane.mjs sweep`, started detached by `retry` every 6h (the app timer on the Mac, lane-cron on the PC; nothing scheduled runs on the Mac). Kept: ledger hold or cwd, ready/conflicted, locked, nested checkout, ANY `pf list` row (an asleep pane lists as `exited`), a process cwd (lsof; Windows uses a rename probe at the end), recent change (6h lane / 3d other). Zero-loss order from the reference script that ran for real: push named branch (never the trunk), temp-index snapshot to `wip/<folder>-<date>`, NUL-separated tar of untracked+ignored minus regenerable dirs, `fetch --prune` + origin-only containment proof, then a last look (fresh processes, no file written since start, same HEAD and work tree) before `worktree remove --force`. No pane answer = nothing removed. `lane-sweep-folders-test.mjs`.
+
+**Copies are invisible, and a finished one goes at once (2026-09-23, later).** Robert: "see other copies 6 ... too confusing ... why other copies is just showing done". `done` meant "finished, waiting for the other chats so the batch merges once" - nothing for him to do. The sidebar now draws no copy list, no copy chip on cards, no copy dialog; `copiesNotice` gives at most one line per project, only for a clash no chat has taken (button hands it to a chat) or finished work held back 6h+ (reason, no button: saving can be a release elsewhere). The sweep's rule changed with it: a copy with ANY work (commits not on `origin/<trunk>`, any `status --porcelain` line) is never removed, however old - a `wip/` branch is lost work to a non-coder - and a finished lane folder is removed as soon as nothing uses it, no idle clock. The app's own sweep (laneWork `sweepLanes`, ~9 git per copy per project every 5 min, kept anything with an ignored file i.e. everything) is gone; main only starts `lane.mjs sweep` for the ended pane's project (`sweepCopies`). Measured with 3 idle shell panes, headless copy, 120s: v0.8.221 510 git spawns, session-start lane-b 31, after (see commit). Hook install: a dev/try copy resolved `getAppPath()` to its lane checkout and repointed every hook on the Mac there (seen live twice on 2026-09-23); only `app.isPackaged && !profileName()` installs now.
+
 Chats get started from other projects ("add X to PaneForge" from one, "fix Y" from
 another) and would otherwise share this checkout: two builds writing one `out/`, two
 version bumps, two releases minutes apart.
@@ -3250,6 +3256,15 @@ are local scratch and cannot collide; the trunk can, and so can a release cut tw
   say the check could not run.
 - `PF_DEVICE` overrides the hostname. `npm run test:lanepeers`, `npm run test:lanedevice`.
 
+## Releasing happens when Robert asks, and not before: the tour's off-state helper
+
+Robert, 2026-09-04: "why is there another button calld run test:cloudwork? its wrong" — a
+raw `test:x` identifier had reached the tour card's screen. `checkName(script)` turns a
+script path into that `test:x` form and is for finding the suite on disk, never for the
+screen; `checkWords(count)` is the one that renders, returning "Checking this change" or
+"Checking this change (N checks)". Same file (`shared/tour.ts`), two different jobs — the
+tour's passing/off state calls `checkWords`, never `checkName`.
+
 ## Releasing happens when Robert asks, and not before (full rules, moved out of CLAUDE.md 2026-08-31)
 
 **`.lanes.json` says `"release": "merge"`, deliberately.** Finishing work merges into master and
@@ -4444,6 +4459,10 @@ offer. A **preselect, never a cap** — an unticked pane keeps its conversation 
 silent paths (an update restart, `restoreAfterRestart: 'always'`) are deliberately untouched.
 `npm run test:capacity`.
 
+`reclaim.log`'s source/reason field used to read `manual` for a sleep the person never asked
+for — old builds mislabelled it that way whenever the cause wasn't one of the named ones. The
+field is now one of source/reason/quiet-vs-threshold/request/refusal/completion/wake, always.
+
 ## ...and before it closes one, it tries to move it (full rules, moved out of CLAUDE.md 2026-08-31)
 
 Four rungs, each firing only where the one above did not solve it: trim scrollback (~5%) → start the NEXT pane
@@ -4952,6 +4971,13 @@ carried the null before the restart that showed the message. One restart with th
 asleep was enough, and a second confirmed it. The claim is now made inside the asleep
 branch, before the return. `sleep-test.mjs` pins the order.
 
+## A reopened pane comes back with what was on its screen: a raw Fix write tore a pane (2026-09-19)
+
+Self-Fix's repair writes through the same `writeStaged` stage as a restore, but a raw write
+skips the staged size, and it tore a mended pane to a 2-row-by-59-column frame it should
+have painted at 59 rows by 784 columns. `writeStaged` now goes through the stage on every
+call, Fix included.
+
 ## ...and before it closes one, it tries to move it — offered once (2026-09-10)
 
 Two automatic moves armed on 2026-09-10 (04:17Z, 04:24Z) and were dismissed within 2-4s;
@@ -4988,6 +5014,23 @@ path, whichever is newer (Robert 2026-09-18: "should only have 1 at a time") -> 
 `npm run try` copies (profile `dev`) are refused first. Windows has no installed-path
 reader yet, so it answers `no installed copy` there.
 
+## A finished pane closes itself into Review
+
+A pane whose turn is over, that nobody is looking at, that has been quiet three minutes,
+with no question, draft, job, background job or running subagent, and whose last reply
+lists no step an agent could take, records itself as a Review row (report = the reply read
+off the CLI's own transcript) and closes through the existing `closeAfterResult` gate. Steps
+only a person can take become GuardDeck to-dos naming the machine, with a reopen block.
+
+Detail moved out of CLAUDE.md to keep it short: the transcript tail read for the reply is
+capped at `READ_BYTES` 512 KB and rereads every `REREAD_MS` 30s. "No running subagent" means
+an async `Agent` launch that has not yet produced a `<task-notification>` - a tool result
+that merely QUOTES one back does not count, which matters because a pane can be mid-report
+on a subagent that already finished. Each `personOwnedSteps` step writes
+`~/.claude/guarddeck/notices/paneforge-step-<review>-<n>.json` (`kind: 'step'`, `machine`
+from `machineOf` else this one, `reopen` = cwd/agent/resumeId/prompt), through the same gate
+as `spoolNotice`.
+
 ## The other machine's screen is one click away
 
 Robert's ask (2026-09-23, from his phone): see the PC screen from PaneForge, "like windows.app",
@@ -4999,4 +5042,8 @@ laggy on this WAN link (avg 87 ms RTT) and an RDP disconnect leaves the console 
 which is the state that breaks every capture-based viewer, including the native stream that
 comes next. The question round could not run (no card to tap from Discord), so the four
 design assumptions are written down in the spec and each is reversible.
+
+The button runs Moonlight `stream <peer address> Desktop` at the paired peer, online peer
+first else the first configured one. Only one viewer runs at a time: a second `stream`
+isn't refused by PaneForge, it is Sunshine on the PC end that refuses it.
 

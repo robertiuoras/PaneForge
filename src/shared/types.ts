@@ -10,7 +10,6 @@ import type { LinkState } from './linkState'
 // Keep this file dependency-free: it is imported from both sides of the IPC bridge.
 
 import type { ActivityEntry } from './activity'
-import type { LaneEvent } from './laneTimeline'
 import type { AttachIn, AttachResult } from './attach'
 import type { BackJob } from './backJobs'
 import type { Verdict } from './capacity'
@@ -787,6 +786,8 @@ export interface StartSessionRequest {
    * not known at the moment the turn ends. See `CLOSE_DONE_QUIET_MS`.
    */
   closeWhenDone?: boolean
+  /** A submitted GuardDeck job whose retained receipt owns this shell's completion. */
+  computeJob?: { id: string; owner: string }
   /**
    * The pane to tell when that happens - an id or a title, resolved when it is needed
    * rather than when the pane opens, because the opener may have gone by then.
@@ -1020,15 +1021,6 @@ export interface LaneWork {
   /** up to four uncommitted paths, lane-relative, as `git status` spells them */
   touching: string[]
 }
-
-export type LaneMergeResult =
-  | { ok: true; commits: number; base: string; branch: string; removed: boolean }
-  | {
-      ok: false
-      reason: 'not-a-lane' | 'nothing' | 'lane-dirty' | 'base-dirty' | 'conflict' | 'failed'
-      conflicts?: string[]
-      detail?: string
-    }
 
 export interface LaneBoard {
   repo: string
@@ -2349,6 +2341,7 @@ export interface Api {
    * `pf open --close-when-done` arms at the open, asked for later. `false` = no such pane.
    */
   armCloseWhenDone(id: string, reportTo?: string): Promise<boolean>
+  watchCompute(id: string, job: string, owner: string): Promise<{ watching: boolean; pane: string; job: string }>
   /**
    * End this pane's agent and keep its card: the process and its whole tree go, the row
    * stays where it is wearing an `asleep` chip, and what is on screen is untouched.
@@ -2627,22 +2620,10 @@ export interface Api {
   diffPatch(cwd: string, scope: DiffScope, path: string, untracked: boolean): Promise<DiffPatch>
   /** one board per lane-using repo the open panes are in; empty on a machine without one */
   laneBoard(): Promise<LaneBoard[]>
-  /**
-   * What has HAPPENED to each copy of each project, newest first.
-   *
-   * The board above is the present tense - who has it, is it finished, will it go in.
-   * This is the past one, and it is the only place a copy that was stuck for an hour and
-   * then settled leaves any trace. See `shared/laneTimeline.ts`.
-   */
-  laneTimeline(): Promise<LaneEvent[]>
-  /** The log gained an entry. Carries the whole list, newest first. */
-  onLaneTimeline(fn: (items: LaneEvent[]) => void): () => void
   /** what is in a pane's worktree lane; null when the folder is not a lane */
   laneWork(cwd: string): Promise<LaneWork | null>
   /** physical worktree lanes of a known repository, including copies absent from its ledger */
   laneFolders(repo: string): Promise<string[] | null>
-  /** merge a worktree lane back into the branch it came from */
-  mergeLane(cwd: string): Promise<LaneMergeResult>
   /** a pane was sent back to its project folder because its lane held nothing */
   onLaneMoved(cb: (id: string, message: string) => void): () => void
   /** A queued handoff finished, failed, or gave up waiting - said on screen, not only logged. */
@@ -2754,7 +2735,6 @@ export interface Api {
 
 
   listHistory(): Promise<HistoryEntry[]>
-  dailyReview(): Promise<PromptReviewReport>
   searchHistory(query: string): Promise<HistoryHit[]>
   readHistory(id: string): Promise<string>
   deleteHistory(id: string): Promise<void>

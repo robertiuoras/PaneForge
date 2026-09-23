@@ -41,8 +41,8 @@ if (process.platform !== 'win32') {
 const TESTS = [
   ['remotesuite', 'test-remote-test.mjs'],
   ['promptreview', 'prompt-review-test.mjs'],
-  ['reviewload', 'review-load-test.mjs'],
   ['review', 'review-test.mjs'],
+  ['computereview', 'compute-review-test.mjs'],
   ['reviewlist', 'review-list-test.mjs'],
   ['doneclose', 'done-close-test.mjs'],
   ['replyread', 'reply-read-test.mjs'],
@@ -137,6 +137,7 @@ const TESTS = [
   ['verifiedhandoff', 'verified-handoff-test.mjs'],
   ['continuation', 'continuation-test.mjs'],
   ['claim', 'transcript-claim-test.mjs'],
+  ['cliclaim', 'transcript-cli-claim-test.mjs'],
   ['clearclaim', 'transcript-clear-test.mjs'],
   ['quitwords', 'quit-words-test.mjs'],
   ['screenview', 'screen-view-test.mjs'],
@@ -144,7 +145,6 @@ const TESTS = [
   ['reclaim', 'reclaim-test.mjs'],
   ['sleepreason', 'sleep-reason-test.mjs'],
   ['activity', 'activity-test.mjs'],
-  ['lanetimeline', 'lane-timeline-test.mjs'],
   ['askstamp', 'ask-stamp-test.mjs'],
   ['hookdeny', 'hookdeny-test.mjs'],
   ['deaddev', 'deaddev-test.mjs'],
@@ -179,7 +179,6 @@ const TESTS = [
   ['place', 'place-test.mjs'],
   ['sessioncopies', 'session-copies-test.mjs'],
   ['lanevisitor', 'lane-visitor-test.mjs'],
-  ['lanesweep', 'lane-sweep-test.mjs'],
   ['lanework', 'lane-work-test.mjs'],
   ['lanemergehold', 'lane-mergehold-test.mjs'],
   // A lane whose hooks rewrite its ledger every turn is not dirty forever.

@@ -474,11 +474,17 @@ function requestFingerprint ({ laneId, provider, text }) {
 // A provider's `turn.completed` only proves that it stopped responding. It does
 // not prove that a requested edit, read, build, or client workflow happened.
 function finalTurnText (output) {
-  let final = '';
+  const messages = [];
   for (const line of String(output).split(/\r?\n/)) {
-    try { const event=JSON.parse(line.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g,'')); if(event.type==='item.completed' && event.item?.type==='agent_message' && typeof event.item.text==='string') final=event.item.text; } catch {}
+    try {
+      const event=JSON.parse(line.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g,''));
+      if(event.type==='item.completed' && event.item?.type==='agent_message' && typeof event.item.text==='string') messages.push(event.item.text);
+    } catch {}
   }
-  return final.slice(0, 98000);
+  const final = messages.pop() || '';
+  // Completion hooks can append an acknowledgment after the actual work report.
+  // Retain the earlier messages rather than silently losing files and test proof.
+  return (final + (messages.length ? '\n\n### Earlier response details\n\n' + messages.join('\n\n') : '')).slice(0, 98000);
 }
 
 function turnOutcome (output) {
@@ -486,7 +492,10 @@ function turnOutcome (output) {
   for (const line of String(output).split(/\r?\n/)) {
     try { const event = JSON.parse(line.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')); if (event?.item?.type === 'agent_message' && typeof event.item.text === 'string') messages.push(event.item.text) } catch {}
   }
-  return /\b(couldn['’]t|unable|cannot|timed out|unverified|failed)\b/i.test(messages.join('\n')) ? 'needs_attention' : 'unverified'
+  // A zero failure count is a test summary, not a reported failure. Keep all
+  // other failure wording conservative; this still does not prove completion.
+  const report = messages.join('\n').replace(/(?<![\d.])\b0\s+failed\b/gi, '')
+  return /\b(couldn['’]t|unable|cannot|timed out|unverified|failed)\b/i.test(report) ? 'needs_attention' : 'unverified'
 }
 
 function validIdentity (value) {

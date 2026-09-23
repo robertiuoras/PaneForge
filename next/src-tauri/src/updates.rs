@@ -56,14 +56,15 @@ fn stop_response(response: &str, revision: &str) -> Result<Option<u32>, String> 
 }
 
 fn stop_idle(data: &Path, revision: &str) -> Result<Option<u32>, String> {
-    let actual = probe_supervisor()?.ok_or("Supervisor is unavailable for safe shutdown")?;
+    let port = saved_supervisor_port(data)?.ok_or("Supervisor endpoint is unavailable")?;
+    let actual = probe_supervisor(port)?.ok_or("Supervisor is unavailable for safe shutdown")?;
     require_matching_supervisor(actual, revision, data)?;
     let token =
         fs::read_to_string(data.join(".native-control-token")).map_err(|e| e.to_string())?;
     if token.len() != 64 || !token.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err("Native supervisor capability is invalid".into());
     }
-    let address = format!("127.0.0.1:{PORT}")
+    let address = format!("127.0.0.1:{port}")
         .parse()
         .map_err(|_| "Invalid supervisor address")?;
     let mut stream =
@@ -74,7 +75,7 @@ fn stop_idle(data: &Path, revision: &str) -> Result<Option<u32>, String> {
     stream
         .set_write_timeout(Some(Duration::from_secs(3)))
         .map_err(|e| e.to_string())?;
-    write!(stream,"POST /api/native-update/stop HTTP/1.0\r\nHost: 127.0.0.1:{PORT}\r\nAuthorization: Bearer {token}\r\nx-paneforge-revision: {revision}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").map_err(|e| e.to_string())?;
+    write!(stream,"POST /api/native-update/stop HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\nAuthorization: Bearer {token}\r\nx-paneforge-revision: {revision}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").map_err(|e| e.to_string())?;
     let mut response = String::new();
     stream
         .take(65536)
@@ -216,6 +217,52 @@ fn run(app: &tauri::AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn real_supervisor_shutdown_uses_saved_nondefault_endpoint() {
+        let dir = std::env::temp_dir().join(format!("next-dynamic-stop-{}", std::process::id()));
+        fs::create_dir(&dir).unwrap();
+        struct Fixture {
+            child: std::process::Child,
+            dir: PathBuf,
+        }
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                let _ = self.child.kill();
+                let _ = self.child.wait();
+                let _ = fs::remove_dir_all(&self.dir);
+            }
+        }
+        let reserved = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = reserved.local_addr().unwrap().port();
+        fs::write(dir.join("native-supervisor-port"), port.to_string()).unwrap();
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        drop(reserved);
+        let mut fixture = Fixture {
+            child: Command::new("node")
+                .arg(root.join("scripts/start.mjs"))
+                .current_dir(root)
+                .env("PANEFORGE_PORT", port.to_string())
+                .env("PANEFORGE_DATA_DIR", &dir)
+                .env("PANEFORGE_PROJECTS_ROOT", &dir)
+                .env("PANEFORGE_ENABLE_BACKGROUND_RECOVERY", "0")
+                .env("PANEFORGE_REVISION", "dynamic-port-test")
+                .env("PANEFORGE_NATIVE_CONTROL", "1")
+                .env("PANEFORGE_NOTIFICATIONS", "0")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::inherit())
+                .spawn()
+                .unwrap(),
+            dir,
+        };
+        wait_for_supervisor("dynamic-port-test", &fixture.dir, port).unwrap();
+        assert_eq!(
+            stop_idle(&fixture.dir, "dynamic-port-test").unwrap(),
+            Some(fixture.child.id())
+        );
+        assert!(fixture.child.wait().unwrap().success());
+    }
+
     #[test]
     fn persisted_status_replaces_existing_receipt() {
         let dir =

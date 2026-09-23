@@ -3,6 +3,19 @@ import test from 'node:test';
 import {forgeBuildPrompt} from '../server/prompt-forge.mjs';
 import {macInteractiveArgs,pcInteractiveCommand} from '../server/terminal.mjs';
 
+test('PC outcome distinguishes zero failed tests from an actual failure',async()=>{
+ const {TerminalService}=await import('../server/terminal.mjs');
+ const {mkdtempSync,rmSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
+ for(const [text,expected] of [['3 tests, 3 passed, 0 failed','unverified'],['3 tests, 2 passed, 1 failed','needs_attention'],['0 failed tests; deployment failed','needs_attention'],['10 failed','needs_attention']]){
+  const dir=mkdtempSync(join(tmpdir(),'pc-outcome-'));let settled;
+  const service=new TerminalService({dataDir:dir,prepareTerminal:async args=>({...args,host:'pc',checkout:'C:\\work'}),startCodeTurn:()=>({done:Promise.resolve({output:[{type:'thread.started',thread_id:'remote-native'},{type:'item.completed',item:{type:'agent_message',text}},{type:'turn.completed'}].map(x=>JSON.stringify(x)).join('\n')}),stop:()=>false}),onChange:()=>{if(!service.codeTurns.size)settled?.();}});
+  try{
+   const done=new Promise(resolve=>{settled=resolve});await service.runCodeTurn({sessionId:'session',projectId:'project',laneId:'lane',provider:'codex',requestId:'test',text:'Build fixture'});await done;
+   assert.equal(service.state()[0].code.requests.test.outcome,expected,text);
+  }finally{await service.close();rmSync(dir,{recursive:true,force:true});}
+ }
+});
+
 test('restart retains an uncertain request for Review and prevents a new PC turn',async()=>{
  const {TerminalService}=await import('../server/terminal.mjs');const {ReviewStore}=await import('../server/review-store.mjs');
  const {mkdtempSync,writeFileSync,rmSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
@@ -93,11 +106,11 @@ test('PC completed receipt retains the exact request and final output for durabl
   assert.equal(terminal.state()[0].code.requests.first.text,args.text);
   const duplicate=await terminal.runCodeTurn(args);assert.equal(duplicate.id,run.id);assert.equal(launches.length,1);
   const done=new Promise(resolve=>{changed=()=>{if(!terminal.codeTurns.size)resolve();};});
-  complete({output:[{type:'thread.started',thread_id:'remote-native'},{type:'item.completed',item:{type:'agent_message',text:'Earlier progress'}},{type:'item.completed',item:{type:'agent_message',text:'Fixture ready'}},{type:'turn.completed'}].map(x=>JSON.stringify(x)).join('\n')});
+  complete({output:[{type:'thread.started',thread_id:'remote-native'},{type:'item.completed',item:{type:'agent_message',text:'Implemented module; tests 3, pass 3'}},{type:'item.completed',item:{type:'agent_message',text:'Knowledge checkpoint settled'}},{type:'turn.completed'}].map(x=>JSON.stringify(x)).join('\n')});
   await done;
   const notices=[];const store=new ReviewStore(dir,{onRecord:r=>notices.push(r)});
   const record=store.capturePcTurn(terminal.state()[0],'first',session);
-  assert.equal(record.nativeSessionId,'remote-native');assert.equal(record.execution,'pc');assert.equal(record.terminalId,run.id);assert.equal(record.prompt,args.text);assert.match(record.report,/Fixture ready/);assert.doesNotMatch(record.report,/Earlier progress/);assert.equal(record.proof,'claimed');assert.equal(session.nativeSessionId,'local-native');
+  assert.equal(record.nativeSessionId,'remote-native');assert.equal(record.execution,'pc');assert.equal(record.terminalId,run.id);assert.equal(record.prompt,args.text);assert.match(record.report,/Knowledge checkpoint settled/);assert.match(record.report,/Implemented module; tests 3, pass 3/);assert.equal(record.proof,'claimed');assert.equal(session.nativeSessionId,'local-native');
   await terminal.close();reloaded=new TerminalService({dataDir:dir});await reloaded.ready();
   store.capturePcTurn(reloaded.state()[0],'first',{...session,title:'Renamed'});assert.equal(notices.length,1);assert.equal(store.list().length,1);
   await assert.rejects(terminal.runCodeTurn({...args,requestId:'wrong',expectedTerminalId:run.id,expectedNativeSessionId:'wrong-native'}),/no longer matches/);

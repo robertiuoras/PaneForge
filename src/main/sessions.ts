@@ -79,7 +79,7 @@ export interface AutoClearArm {
   tokens?: number
 }
 import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from './pipe'
-import { codexAcceptedPrompt, forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeEvidence, resumeIdFor, transcriptPath } from './transcripts'
+import { claimFromCli, codexAcceptedPrompt, forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeEvidence, resumeIdFor, transcriptPath } from './transcripts'
 import { recordPromptReview } from './promptReview'
 import { liveModelFor } from './paneModel'
 import { backgroundAgentsFor, forgetBackgroundAgents, noteBackgroundAgents } from './runningAgents'
@@ -1320,7 +1320,7 @@ export class SessionManager extends EventEmitter {
     // ledger or process tree changes: a pane without an exact answered conversation
     // remains running until its own conversation can be identified. Shell panes have no
     // conversation state and retain their deliberate fresh-shell sleep behavior.
-    const resumeId = resumeIdFor(id)
+    const resumeId = resumeIdFor(id) ?? (claimFromCli(id, live.proc?.pid) ? resumeIdFor(id) : undefined)
     const resumeCwd = live.req.resumeCwd ?? live.meta.cwd
     const resumable = Boolean(resumeId && resumableTranscript(resumeCwd, resumeId, live.meta.agent))
     if (live.meta.agent !== 'shell' && !resumable) {

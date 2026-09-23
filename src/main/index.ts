@@ -23,6 +23,7 @@ import {
 import { startMainWatch, stopMainWatch } from './mainWatch'
 import { SessionManager, setSilenceAlert, type WriteOrigin } from './sessions'
 import { acknowledgeReview, listReviews, noteReviewClose, recordReview, reviewCloseArmAction, reviewOpenTarget, type ReviewCloseArm } from './reviews'
+import { ComputeReviews, computeResult } from './computeReviews'
 import { mayNotify, noticesDir, sweepDoneClose } from './doneClose'
 import { DataPump } from './dataPump'
 import { DiscordPresence } from './discordPresence'
@@ -71,10 +72,8 @@ import { diffFiles, diffPatch } from './diff'
 import { withDefaultModel } from '../shared/startModel'
 import type { ClientNamed, DiffScope, EffortChoice, PhoneState , LaneBoard} from '../shared/types'
 import { detectLane, laneExtras, resolveLane } from './lanes'
-import { inspectLaneFolders, laneWork, mergeLaneBack, repoOf, returnToBase, sweepLanes, trackTyped } from './laneWork'
-import { sweepDue } from '../shared/gitGate'
-import { attachLaneOwners, laneBoards, laneReclaim, laneRetry, markGone } from './laneBoard'
-import { listLaneTimeline, onLaneTimelineChange, watchLaneTimeline } from './laneTimeline'
+import { inspectLaneFolders, laneWork, returnToBase, trackTyped } from './laneWork'
+import { attachLaneOwners, laneBoards, laneEngine, laneReclaim, laneRetry, ledgerRepos, mainCheckout, markGone } from './laneBoard'
 import type { LanePane } from './laneBoard'
 import { resolveRevealTarget } from './revealPath'
 import { which } from './which'
@@ -1189,7 +1188,9 @@ const remote = new Remote({
   // in one repo must not share a checkout just because one of them is remote.
   sendPrompt: (id, text) => manager.sendPrompt(id, text),
   startSession: async (req) => {
-    return manager.start(withDefaultModel(await laneFor(req), getConfig().defaultModels))
+    // A request that named no model starts on the configured default, as the New Session
+    // dialog always did (`shared/startModel.ts`), same as the other start path below.
+    return startComputeAware(withDefaultModel(await laneFor(req), getConfig().defaultModels))
   },
   // A pane handed here from another device: pull its branch, drop its transcript
   // where the CLI will look, start it as an ordinary local pane. The lane split
@@ -1521,6 +1522,54 @@ ipcMain.handle('projects:route', (_e, text: string) => routeText(text))
 ipcMain.handle('agents:list', (_e, force?: boolean) => listAgents(force))
 ipcMain.handle('sessions:list', () => allSessions())
 ipcMain.handle('reviews:list', () => ({ reviews: listReviews(history.list()), persistent: true as const }))
+let computeReviews: ComputeReviews | undefined
+async function startComputeAware(req: StartSessionRequest): Promise<Session> {
+  const capturedAt = new Date().toISOString()
+  if (req.computeJob) {
+    if (req.agent !== 'shell' || req.closeWhenDone || req.prompt) throw new Error('Compute observers require a shell without a command or idle-based closure; submit the job first')
+    if (!/^[a-zA-Z0-9_-]{8,80}$/.test(req.computeJob.id)) throw new Error('Invalid compute job ID')
+    computeResult(join(homedir(), '.claude', 'guarddeck', 'compute'), { pane: '', job: req.computeJob.id, owner: req.computeJob.owner, capturedAt, title: '', cwd: req.cwd })
+  }
+  const session = await manager.start(req)
+  if (req.computeJob) computeReviewWatcher().bind({ pane: session.id, job: req.computeJob.id, owner: req.computeJob.owner, title: session.title, cwd: session.cwd, capturedAt })
+  return session
+}
+function computeReviewWatcher(): ComputeReviews {
+  return computeReviews ??= new ComputeReviews(
+    join(homedir(), '.claude', 'guarddeck', 'compute'),
+    join(app.getPath('userData'), 'compute-review-bindings.json'),
+    (binding, result, evidence) => {
+      const session = manager.list().find(s => s.id === binding.pane)
+      if (!session) return false // restore may not have populated the desk yet
+      if (session.agent !== 'shell') return true // never close a repurposed agent pane
+      const review = recordReview({
+        id: `compute-${Date.parse(binding.attempt!.submittedAt)}-${binding.pane}-${binding.job}`.slice(0, 120),
+        sessionId: binding.pane, nativeSessionId: binding.pane, kind: 'result', proof: 'measured',
+        report: `${binding.title}: ${result.status}. Exit code: ${result.exitCode ?? 'not available'}.`,
+        prompt: `Run PC compute job ${binding.job}`,
+        evidence: [evidence, `Owner: ${binding.owner}; containment: ${result.containment}`],
+        links: [{ label: 'Worker completion receipt', url: pathToFileURL(evidence).href }],
+        capturedAt: binding.capturedAt, completedAt: result.finishedAt,
+        workPreserved: true, noRemainingWork: true, notify: true
+      }, { title: binding.title, cwd: binding.cwd, provider: 'shell', nativeSessionId: binding.pane })
+      if (review.closedAt) return true
+      if (continuationOwnsSource(session.id) || preparingContinuations.has(session.id) || handoffQueue.pending().some(q => q.id === session.id) || backJobOf(session.id)) {
+        noteReviewClose(review.id, 'pending work retained the shell')
+        return true
+      }
+      const close = manager.closeAfterResult(session.id, Date.parse(binding.capturedAt))
+      if (close.closed) noteReviewClose(review.id, undefined, new Date().toISOString())
+      else if (close.reason !== 'session is busy or has a background job') noteReviewClose(review.id, close.reason)
+      return close.closed || close.reason !== 'session is busy or has a background job'
+    }
+  )
+}
+ipcMain.handle('sessions:watchCompute', (_e, id: string, job: string, owner: string) => {
+  const session = manager.list().find(s => s.id === id)
+  if (!session || session.agent !== 'shell') throw new Error('Compute completion must be attached on the owning device to an exact shell pane')
+  computeReviewWatcher().bind({ pane: id, job, owner, title: session.title, cwd: session.cwd, capturedAt: new Date().toISOString() })
+  return { watching: true, pane: id, job }
+})
 ipcMain.handle('reviews:ack', (_e, id: string, reviewed: boolean) => acknowledgeReview(String(id), reviewed === true))
 ipcMain.handle('reviews:open', async (_e, id: string, index: number) => {
   const target = reviewOpenTarget(String(id), Number(index), history.list())
@@ -1818,7 +1867,7 @@ async function startOrSend(
     // A request that named no model starts on the configured default, as the New Session
     // dialog always did (`shared/startModel.ts`). Here, not at the top of `startOrSend`:
     // a pane handed to the other desk takes THAT desk's defaults.
-    const session = await manager.start(withDefaultModel(lane, getConfig().defaultModels))
+    const session = await startComputeAware(withDefaultModel(lane, getConfig().defaultModels))
     logOffload({ event: 'started', id: session.id, cwd: lane.cwd, decidedMs: decided, openMs: Date.now() - began })
     return session
   }
@@ -2315,7 +2364,7 @@ async function laneWentQuiet(id: string): Promise<void> {
   send('lane:moved', id, `Cleared, and lane ${lane} was empty - this pane is back in ${basename(home)}`)
   // The pane has left, so the folder is free to go. Anything that was in it would have
   // stopped returnToBase() above.
-  void sweepLanes(repo, busyDirs())
+  sweepCopies([repo], COPIES_SOON_MS)
 }
 /**
  * A mirrored pane is never resized from here.
@@ -2709,8 +2758,6 @@ const boardsNow = (): LaneBoard[] => {
 }
 
 ipcMain.handle('lanes:board', () => boardsNow())
-// The readings are taken in main, on a timer, for the reason above.
-watchLaneTimeline(boardsNow)
 
 // What the agent in a folder has actually changed. Read-only, and the file list and the
 // patches are separate calls on purpose - a 300-file diff is 300 patches nobody opened.
@@ -2721,54 +2768,45 @@ ipcMain.handle(
     diffPatch(cwd, scope, path, untracked)
 )
 
-// A worktree lane of the user's own project: what is in it, and putting it back.
+// A worktree lane of the user's own project: what is in it.
 ipcMain.handle('lanes:work', (_e, cwd: string) => laneWork(cwd))
 // Physical worktrees are read separately from the ledger. A forgotten ledger claim must
 // never make an on-disk copy invisible to the Issues safety check.
 ipcMain.handle('lanes:folders', (_e, repo: string) => inspectLaneFolders(repo))
-ipcMain.handle('lanes:merge', async (_e, cwd: string) => {
-  const result = await mergeLaneBack(cwd, { busy: busyDirs() })
-  // A lane that merged while its own pane was still in it is now empty, and will be
-  // swept the moment that pane closes or is cleared.
-  if (result.ok) send('sessions:changed', allSessions())
-  return result
-})
 
 /**
- * Delete the lanes that hold nothing, everywhere the desk is currently working.
+ * Remove the copies of a project whose work is all in it and that nothing is using.
  *
- * Lanes are created without being asked, so they have to disappear the same way. A lane
- * whose commits went back into main passes the "holds nothing" test by itself, which
- * makes this the auto-delete for merged lanes as well as for the ones that were never
- * used. Anything with a commit, an uncommitted file or a session in it is skipped, so
- * the worst case is a folder that lives one sweep longer than it needed to.
+ * The deciding is scripts/lane.mjs `sweep` (keepReason): nothing unmerged, nothing unsaved,
+ * no chat holding it, no pane or program in it. It used to be done here as well, by
+ * reading every copy of every project with ~9 git calls each on a five-minute clock
+ * (laneWork's sweepLanes, 2026-09-23 - with the lookups around it, 1083 git processes in
+ * two minutes from the installed app), and it almost never removed anything: it waited a
+ * day, and refused a copy with any ignored file in it, which is every copy (`.env`,
+ * `node_modules`). Now this only starts the engine, at the moments a copy can become
+ * removable - a pane ending, a pane leaving its copy after /clear - and on a six-hour
+ * clock. The engine also starts one itself after work lands (ready, release, ship).
+ * Not detached: execFile reaps it, and a sweep cut short by a quit is re-checked next time.
  */
-// One sweep at a time, and never on a clock the machine cannot keep up with (`sweepDue`,
-// `shared/gitGate.ts`). This used to reset its throttle on every `sessions` event and had
-// no guard against overlapping itself: on 2026-09-22 that was 270 concurrent git children
-// of this process and a load average of 400.
-const sweep = { startedAt: 0, tookMs: 0, running: false, soon: false }
-async function sweepEmptyLanes(): Promise<void> {
+const COPIES_SOON_MS = 60_000
+const COPIES_EVERY_MS = 6 * 60 * 60 * 1000
+const COPIES_TIMEOUT_MS = 20 * 60 * 1000
+const copiesSweptAt = new Map<string, number>()
+function sweepCopies(repos: string[], gap: number): void {
   const now = Date.now()
-  if (!sweepDue({ now, ...sweep, loadPerCore: loadPerCore() })) return
-  sweep.running = true
-  sweep.soon = false
-  sweep.startedAt = now
-  try {
-    const busy = busyDirs()
-    for (const repo of await knownRepos()) {
-      try {
-        // A pane that ended in a lane keeps the folder on screen after the folder is
-        // gone, and restarting it would fail on a path the user never typed. So each
-        // removed lane hands its card back to the project it belongs to.
-        for (const dir of await sweepLanes(repo, busy)) manager.relocate(dir, repo)
-      } catch {
-        /* a repo that vanished under us is not worth a crash on a tidy-up */
+  for (const repo of new Set(repos)) {
+    if (now - (copiesSweptAt.get(repo) ?? 0) < gap) continue
+    const engine = laneEngine(repo)
+    if (!engine) continue
+    copiesSweptAt.set(repo, now)
+    execFile(
+      process.execPath,
+      [engine, 'sweep', '--repo', repo],
+      { cwd: repo, windowsHide: true, timeout: COPIES_TIMEOUT_MS, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } },
+      () => {
+        /* what it removed is in the ledger's `swept`, which doctor prints */
       }
-    }
-  } finally {
-    sweep.running = false
-    sweep.tookMs = Date.now() - now
+    )
   }
 }
 // A stuck lane is retried on a clock rather than only when some chat happens to run a
@@ -2780,50 +2818,22 @@ setInterval(() => {
   // And the lanes held by chats that are not here any more: a killed pane never runs its
   // SessionEnd hook, so its lane sat held - and blocking the release - for twelve hours.
   laneReclaim(lanePanes())
-  // Same clock, different lanes: the user's own worktree lanes, tidied when they are
-  // empty. Paced by `sweepDue` inside, and a no-op for a repo with no lanes.
-  void sweepEmptyLanes()
+  // Same clock, and the copies nothing has freed up since: no git here, the list of
+  // projects with copies is read off disk, and each is swept at most every six hours.
+  sweepCopies(ledgerRepos(lanePanes()), COPIES_EVERY_MS)
 }, 60_000).unref()
 
-/**
- * Every project this window knows about, as repository roots: the panes on screen, the
- * workspaces, and the projects folder itself. A lane is created beside a repo and can
- * outlive every pane that ever opened it, so the sweep below cannot only look at what
- * is open right now or a project's last lane would never be cleared.
- */
-async function knownRepos(): Promise<string[]> {
-  const folders = [
-    ...manager.list().map((s) => s.cwd),
-    ...getConfig().presets.flatMap((p) => p.items.map((i) => i.path)),
-    ...listProjects().map((p) => p.path)
-  ]
-  // One `git rev-parse` per folder, and a desk with every project open has plenty of
-  // them. They do not depend on each other, so they go out together rather than one
-  // after another - this used to be the front half of an eight-second freeze.
-  const found = await Promise.all([...new Set(folders.filter(Boolean))].map((f) => repoOf(f)))
-  return [...new Set(found.filter((r): r is string => Boolean(r)))]
-}
-
-// A pane ending is when a lane most often stops being needed, and waiting up to five
-// minutes to notice leaves a folder on screen that has nothing in it. Only a pane ENDING
-// asks - `sessions` fires on every status change of every pane - and it asks for the
-// shorter gap, not for a sweep now: a sweep it cannot have yet is picked up by the
-// minute clock above. Deferred so the sweep's git calls are never on the path of the pane
-// list redrawing.
+// A pane ending is when a copy most often stops being needed: its chat let go, and nothing
+// else may be in it. Only the projects of the panes that ended are swept, and not at once -
+// the CLI's own SessionEnd hook frees the chat's hold in the seconds after the pane goes.
 manager.on('sessions', () => {
-  const live = manager.list().filter((s) => s.status !== 'exited').length
-  const ended = live < paneCountAtSweepAsk
-  paneCountAtSweepAsk = live
-  if (!ended || laneSweepQueued) return
-  sweep.soon = true
-  laneSweepQueued = true
-  setTimeout(() => {
-    laneSweepQueued = false
-    void sweepEmptyLanes()
-  }, 3000).unref()
+  const live = new Set(manager.list().filter((s) => s.status !== 'exited').map((s) => s.id))
+  const ended = [...liveCwds].filter(([id]) => !live.has(id)).map(([, cwd]) => cwd)
+  liveCwds = new Map(manager.list().filter((s) => live.has(s.id)).map((s) => [s.id, s.cwd]))
+  const repos = ended.map((cwd) => mainCheckout(cwd)).filter((r): r is string => Boolean(r))
+  if (repos.length) setTimeout(() => sweepCopies(repos, COPIES_SOON_MS), 15_000).unref()
 })
-let laneSweepQueued = false
-let paneCountAtSweepAsk = 0
+let liveCwds = new Map<string, string>()
 
 // Other devices. Every one of these answers with the whole state, so the dialog never
 // has to guess what a change did - it just redraws what it is handed.
@@ -3211,6 +3221,7 @@ const handoffQueue = new HandoffQueue({
 // or permanently cancels the requested close with the retained report still available.
 const reviewCloseArms = new Map<string, ReviewCloseArm>()
 manager.on('sessions', () => queueMicrotask(() => {
+  computeReviews?.check()
   for (const [reviewId, arm] of reviewCloseArms) {
     const session = manager.list().find((s) => s.id === arm.sessionId)
     const action = reviewCloseArmAction(arm, session && {
@@ -3946,9 +3957,6 @@ ipcMain.on('reclaim:log', (_e, entry: Record<string, unknown>) => {
 
 // --- what the app did on its own -------------------------------------------
 
-ipcMain.handle('lanes:timeline', () => listLaneTimeline())
-onLaneTimelineChange((items) => send('lanes:timeline-changed', items))
-
 ipcMain.handle('activity:list', () => listActivity())
 ipcMain.on('activity:seen', () => markActivitySeen())
 onActivityChange((s) => send('activity:changed', s))
@@ -3964,11 +3972,6 @@ ipcMain.handle('vault:graph', (_e, vault: string) => vaultGraph(vault))
 ipcMain.handle('vault:open', (_e, vault: string, note?: string) => vaultOpen(vault, note))
 
 ipcMain.handle('history:list', () => history.list())
-// Prompt records are local and cheap to read. Token recounting may need to scan thousands of
-// transcript tails, so start that existing background refresh without holding the whole Review
-// dialog at “Reading local prompt and token records…”. The next normal refresh supplies a newer
-// total; the prompts and history are always current.
-ipcMain.handle('review:daily', () => promptReview(tokenSpend(), Date.now(), history.list()))
 ipcMain.handle('sessions:prompts', (_e, id: string) => promptsForSession(id))
 ipcMain.handle('history:search', (_e, q: string) => history.search(q))
 ipcMain.handle('history:read', (_e, id: string) => history.read(id))
@@ -4516,6 +4519,7 @@ ipcMain.on('restore:answer', (_e, answer: RestoreAnswer) => {
 })
 
 app.whenReady().then(() => {
+  computeReviewWatcher().check()
   // The watchdog marks a stalled desk as an update, following the same restore settings.
   // Its child is outside the main thread and can still act during disk I/O.
   startMainWatch()
@@ -4563,7 +4567,7 @@ app.whenReady().then(() => {
   // here is what makes several chats safe to run against one project for anybody else -
   // and repoints them when an upgrade moves the app. It never throws and never overrides
   // a registration somebody made themselves.
-  updateLog('lanes', installLaneHooks())
+  updateLog('lanes', installLaneHooks(app.isPackaged && !profileName()))
   // Whatever the runs before this one left running. Delayed inside, and a no-op on a
   // machine that has never leaked one. See consoles.ts.
   sweepOldConsoles(rememberAppPid())

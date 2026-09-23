@@ -3,7 +3,8 @@
 // Why this exists. `lane.mjs retry` is the sweep that unsticks everything: it re-tries
 // conflicts that have stopped being conflicts, marks orphaned lanes ready, clears a release
 // lock left by a killed chat, and calls autoship so work that arrived during the release
-// cooldown actually goes out. Until now the only clock driving it was a setInterval inside
+// cooldown actually goes out. Every six hours it also starts `lane.mjs sweep`, which
+// removes checkout folders nobody has used (their work saved first) - see lane.mjs. Until now the only clock driving it was a setInterval inside
 // the Electron app (src/main/index.ts). That has two holes, both measured on 2026-08-01:
 //
 //   - PaneForge closed means no retry at all. The retry log has a gap from 00:33 to 08:29

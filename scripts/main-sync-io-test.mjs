@@ -34,8 +34,7 @@ const FILES = [
   'src/main/queuedPrompts.ts',
   'src/main/remoteLogin.ts',
   'src/main/updater.ts',
-  'src/main/activity.ts',
-  'src/main/laneTimeline.ts'
+  'src/main/activity.ts'
 ]
 
 /** A call, not an import: `import { writeFileSync } from 'node:fs'` has no paren after it. */
@@ -124,8 +123,7 @@ for (const [rel, fn] of [
   ['src/main/queuedPrompts.ts', 'appendLog'],
   ['src/main/remoteLogin.ts', 'appendLog'],
   ['src/main/updater.ts', 'appendLog'],
-  ['src/main/activity.ts', 'writeLatest'],
-  ['src/main/laneTimeline.ts', 'writeLatest']
+  ['src/main/activity.ts', 'writeLatest']
 ]) {
   ok(`${rel} writes through logWrite.ts`, new RegExp(`\\b${fn}\\(`).test(read(rel)))
 }

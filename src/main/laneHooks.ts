@@ -93,10 +93,18 @@ const isOurs = (command: string): boolean => command.includes(OURS)
  * Put the three hooks in place, or explain why not. Never throws: a bad settings file is
  * the user's, and breaking the app over it would be a worse bug than lanes being off.
  *
+ * `stable` is true only for the installed app (packaged, no test profile). A dev or `npm
+ * run try` copy resolves hookScript() inside the checkout it was built in, and that is
+ * usually a lane folder: on 2026-09-23 every Claude session on the Mac ran its hooks from
+ * PaneForge-d/scripts, so a sweep of that folder, or a half-saved edit in it, would have
+ * broken every chat at once. Such a copy never writes; the installed app's next start
+ * puts the entries back on its own resources/ path, which only an update changes.
+ *
  * Returns a line worth logging - callers log it, this stays quiet on its own.
  */
-export function installLaneHooks(): string {
+export function installLaneHooks(stable: boolean): string {
   if (process.env.PANEFORGE_NO_LANE_HOOKS) return 'lane hooks: skipped (PANEFORGE_NO_LANE_HOOKS)'
+  if (!stable) return 'lane hooks: skipped - a dev or test copy never rewires the machine'
 
   const script = hookScript()
   if (!existsSync(script)) return `lane hooks: not installed - no ${TAG} at ${script}`

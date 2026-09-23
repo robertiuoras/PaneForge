@@ -190,7 +190,7 @@ let kills = 0
 let ledgerChanges = 0
 const reclaimEvents = []
 const deps = {
-  canSleep, sleepRefusal, resumeIdFor: () => resumeIdNow,
+  canSleep, sleepRefusal, resumeIdFor: () => resumeIdNow, claimFromCli: () => false,
   resumableTranscript: () => verified ? '/fixture/rollout.jsonl' : null,
   // The refusal says WHICH failure it was, so the fixture has to answer that too. It
   // decides nothing - `resumableTranscript` above is still the gate.

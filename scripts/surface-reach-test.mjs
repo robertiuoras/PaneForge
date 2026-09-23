@@ -36,8 +36,6 @@ const surfaceFile = path.join(root, 'src', 'shared', 'surface.ts')
  */
 const DESK_SIDE = {
   recordReview: 'pf-ctl review - explicit agent result publishing, guarded phone invoke',
-  acknowledgeReview: 'Next Review host POST /api/reviews/:id/ack - retained result read state only',
-  openReview: 'Next Review host POST /api/reviews/:id/open - guarded saved report opening',
   tellPane: 'pf tell <pane> "..." - how the far desk says "signed in" to the pane that asked',
   // A pane says of ITSELF that it should go once it is done. The person who would press a
   // button for this is the person who would simply close the pane; the caller that cannot
@@ -64,6 +62,7 @@ const DESK_SIDE = {
   // on every submitted line and is still the answer to "have I asked this", so the lookup
   // stays reachable from outside the window.
   priorPrompt: 'pf-ctl call prompt:prior - the recall skill, no chip in the window',
+  watchCompute: 'pf-ctl watch-job - a compute job binds its shell pane, no control in the window',
   paneComposer: 'pf-ctl call sessions:composer - reads what is typed into a pane and not sent, no control in the window (db22552a)',
   // What is typed into a pane and not sent. The window already SHOWS it - it is the
   // composer on screen - so the only caller that needs asking is another chat:
