@@ -698,7 +698,10 @@ function createWindow(): void {
   win.on('close', rememberBounds)
   // Without this the module keeps a destroyed BrowserWindow, and every later
   // `win?.` call throws "Object has been destroyed" instead of no-opping.
+  const self = win
   win.on('closed', () => {
+    // A rebuilt window is already `win` by the time the dead one closes: leave it alone.
+    if (win !== self) return
     win = null
     stopRenderWatch()
     // Output batched for a window that no longer exists has nowhere to go. send()
@@ -711,15 +714,19 @@ function createWindow(): void {
   // the only way out was killing PaneForge by hand (2026-08-28, ~14 min of renderer CPU
   // with the main thread parked in mach_msg). Reloading is safe here because a pane is
   // restored from desk.json and `--resume`, the same path a restart uses.
+  //
+  // The new window is made BEFORE the dead one is destroyed. Destroying first left the app
+  // with no window for a moment, `window-all-closed` ran, and the rebuild quit the whole app
+  // with every pane in it (2026-09-23 06:45:52Z: renderer SIGTERMed, `recreate`, then
+  // "quit the last window was closed 13 pane(s) open" 89 ms later).
   watchRenderer(win, () => {
     const dead = win
-    win = null
+    createWindow()
     try {
       dead?.destroy()
     } catch {
       /* it is already gone; the point was to stop referencing it */
     }
-    createWindow()
   })
   win.webContents.setWindowOpenHandler(({ url }) => {
     // `about:blank` is xterm's own OSC 8 link handler: `window.open()` with no URL, then
