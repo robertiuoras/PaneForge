@@ -142,6 +142,8 @@ import { briefAnchor, clearCommandFor, hasFreshPaneHandoff, readAsk as readAutoC
 import { handoffFor, verifiedPaneHandoff } from './handoffSteps'
 import { briefForTask } from './backlogStore'
 import { startAutoClearWatch, stopAutoClearWatch } from './autoclearWatch'
+import { startAutoClearRequests, stopAutoClearRequests } from './autoclearRequests'
+import { installAutoClearHooks } from './autoclearHooks'
 import { handoffReceiverCanQuit, INTERRUPT_WAIT_MS, type HandoffItem, type HandoffRequest } from '../shared/handoff'
 import { HandoffQueue } from './handoffQueue'
 import { devServersOf, listRunningDevs, localDevCommand, stopDevServer } from './devServers'
@@ -186,6 +188,7 @@ import { listActivity, markActivitySeen, noteActivity, onActivityChange } from '
 import { activityFromReclaim, entry as activityEntry } from '../shared/activity'
 import { hookDenyNames } from './hookDeny'
 import { ensurePrereq, onPath, refreshPath, runCommand, runOnce, stopInstalls } from './install'
+import { checkSetup } from './setupCheck'
 import { swapAndRelaunch } from './macUpdate'
 import {
   checkForUpdates,
@@ -3264,7 +3267,8 @@ ipcMain.handle('remote:handoffCancel', (_e, id: string) => handoffQueue.drop(Str
 // is the Stop hook's (`claude-config/autoclear.mjs`); this end owns the countdown, which is
 // the only part a person can stop. Payload is re-read here because the phone server reaches
 // this channel too - see `readAutoClearAsk`.
-ipcMain.handle('autoclear:ask', (_e, raw: unknown) => {
+// The same body answers a request FILE from the shipped hook (`autoclearRequests.ts`).
+function autoClearAsk(raw: unknown): { ok: boolean; reason?: string } {
   const ask = readAutoClearAsk(raw)
   if (!ask) return { ok: false, reason: 'that is not an autoclear request' }
   if (remote.owns(ask.paneId)) return { ok: false, reason: 'that pane lives on another device' }
@@ -3301,7 +3305,8 @@ ipcMain.handle('autoclear:ask', (_e, raw: unknown) => {
     }
   }
   return manager.armAutoClear(ask.paneId, { ...ask, prompt: resumeBrief(ask, briefAnchor(ask, handoff?.path ?? null, (p) => existsSync(p))), command })
-})
+}
+ipcMain.handle('autoclear:ask', (_e, raw: unknown) => autoClearAsk(raw))
 ipcMain.handle('autoclear:cancel', (_e, id: string) => manager.cancelAutoClear(String(id), 'cancelled'))
 ipcMain.handle('autoclear:takeover', (_e, id: string) => manager.takeOver(String(id)))
 // The renderer runs from file:// in production, which is not a secure context, so
@@ -3572,6 +3577,38 @@ ipcMain.on('app:relaunchAsAdmin', () => {
 
 /** One install at a time per agent, so a double-click cannot run npm twice. */
 const installing = new Set<string>()
+
+ipcMain.handle('setup:check', () => checkSetup())
+
+/**
+ * Git for Windows, for the Welcome checklist's Windows-only row. Not an agent CLI, so
+ * it does not belong in `agents.ts`'s catalogue - but it streams to the same
+ * `agents:install-event` bus (agentId `'git'`) so `InstallConsole.tsx` needs no change
+ * to show its progress.
+ */
+ipcMain.handle('setup:installGit', async () => {
+  const id = 'git'
+  if (installing.has(id)) return
+  const say = (chunk: string): void => send('agents:install-event', { agentId: id, chunk })
+  installing.add(id)
+  try {
+    const command = 'winget install --id Git.Git -e --source winget'
+    say(`> ${command}\r\n\r\n`)
+    const code = await runOnce(command, say)
+    refreshPath()
+    const found = onPath('git')
+    send('agents:install-event', {
+      agentId: id,
+      chunk: found
+        ? '\r\nGit is ready.\r\n'
+        : `\r\nInstaller exited with code ${code} and git is still not on PATH.\r\n`,
+      done: true,
+      ok: found
+    })
+  } finally {
+    installing.delete(id)
+  }
+})
 
 ipcMain.handle('agents:install', async (_e, id: string) => {
   if (installing.has(id)) return
@@ -4045,6 +4082,31 @@ ipcMain.handle('voice:install', async () => {
   send('agents:install-event', {
     agentId: '__voice__',
     chunk: ok ? '\r\nVoice is ready.\r\n' : '\r\nStill no whisper binary on PATH.\r\n',
+    done: true,
+    ok
+  })
+})
+
+// Two machines on different networks only reach each other through Tailscale - see
+// `src/shared/tailnet.ts`. Windows has no equivalent of "open the download page and drag
+// it to Applications", so the Devices dialog's button runs winget the same way Settings
+// installs an agent; on macOS the button just opens the download page (`shell.openExternal`
+// from the renderer), which needs no handler here.
+ipcMain.handle('remote:installTailscale', async () => {
+  const say = (chunk: string): void => send('agents:install-event', { agentId: '__tailscale__', chunk })
+  if (process.platform !== 'win32') {
+    say('\r\nInstall Tailscale from https://tailscale.com/download\r\n')
+    send('agents:install-event', { agentId: '__tailscale__', chunk: '', done: true, ok: false })
+    return
+  }
+  const command = 'winget install --id Tailscale.Tailscale -e --source winget'
+  say(`> ${command}\r\n\r\n`)
+  const code = await runOnce(command, say)
+  refreshPath()
+  const ok = code === 0
+  send('agents:install-event', {
+    agentId: '__tailscale__',
+    chunk: ok ? '\r\nTailscale is installed. Sign in, then pair as usual.\r\n' : '\r\nInstall did not finish.\r\n',
     done: true,
     ok
   })
@@ -4541,6 +4603,7 @@ app.whenReady().then(() => {
   // and repoints them when an upgrade moves the app. It never throws and never overrides
   // a registration somebody made themselves.
   updateLog('lanes', installLaneHooks(app.isPackaged && !profileName()))
+  updateLog('autoclear', installAutoClearHooks(app.isPackaged && !profileName()))
   // Whatever the runs before this one left running. Delayed inside, and a no-op on a
   // machine that has never leaked one. See consoles.ts.
   sweepOldConsoles(rememberAppPid())
@@ -4569,6 +4632,7 @@ app.whenReady().then(() => {
   // the antigravity statusline tee is put in place, which is a no-op unless that CLI is
   // installed here. See autoclearWatch.ts.
   startAutoClearWatch(manager)
+  startAutoClearRequests(join(app.getPath('userData'), 'autoclear-requests'), autoClearAsk)
   createWindow()
   applyVoiceHotkey(cfg)
   crashTestHook()
@@ -4772,6 +4836,7 @@ app.on('will-quit', (e) => {
   stopPressure()
   stopAway()
   stopAutoClearWatch()
+  stopAutoClearRequests()
   stopUsage()
   removeTestClipboard()
   hardExit()

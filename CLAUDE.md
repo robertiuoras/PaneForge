@@ -550,12 +550,12 @@ shell undrawn (`fleet.ts` `idleShell`) till pressed/run; idle countdown still ta
 
 ## A session that clears itself asks first
 
-`claude-config/autoclear.mjs` (Stop) -> `pane-clear.mjs` -> `autoclear:ask`; `Keep this
-session`/`Clear now`; unattended proceeds (`test:autoclear`). `shared/autoclear.ts` refusals,
-`main/autoclear.ts` clock re-checked each tick (turn started, typed, exited, gone, no open
-steps; old PaneForge = no instant fallback). `## Next steps: None` respected. Resume via
-`queuePrompt` on IDLE COMPOSER (`CLEAR_SETTLE_MS`, `SUBMIT_RETRIES_MS`). `armclear` ->
-`pane:armClear` -> `keep.arm()` `ARM_CLEAR_LEAD_MS` 120ms.
+`scripts/autoclear-hook.mjs` (Stop/SessionStart; installer `main/autoclearHooks.ts`, a
+foreign autoclear left alone) -> `<userData>/autoclear-requests/<pane>.json` ->
+`main/autoclearRequests.ts` -> `autoClearAsk` = `autoclear:ask` (`test:autoclearhook`).
+`Keep this session`/`Clear now`; unattended proceeds (`test:autoclear`).
+`shared/autoclear.ts` refusals; `main/autoclear.ts` re-checks each tick. `## Next steps:
+None` respected. Resume: `queuePrompt` on IDLE COMPOSER; `keep.arm()` 120ms.
 
 ## The screen stays on while a pane works
 
