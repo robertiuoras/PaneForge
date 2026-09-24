@@ -75,7 +75,9 @@ import { projectRoot } from './projectRoot'
 import { diffFiles, diffPatch } from './diff'
 import { withDefaultModel } from '../shared/startModel'
 import type { ClientNamed, DiffScope, EffortChoice, PhoneState , LaneBoard} from '../shared/types'
-import { detectLane, laneExtras, resolveLane } from './lanes'
+import { detectLane, isWorktreeOf, laneExtras, LANE_LABELS, resolveLane, seedLane } from './lanes'
+import { hideCopyFolder } from './hideCopy'
+import { gitRun, isRead } from './gitRun'
 import { inspectLaneFolders, laneWork, returnToBase, trackTyped } from './laneWork'
 import { attachLaneOwners, laneBoards, laneEngine, laneReclaim, laneRetry, ledgerRepos, mainCheckout, markGone } from './laneBoard'
 import type { LanePane } from './laneBoard'
@@ -144,7 +146,7 @@ import { codexContextUsage, receivedContinuation } from './contextUsage'
 import { rolloutTurn } from './effort'
 import { startContinuation } from './continuation'
 import { handoffCandidates } from '../shared/handoffSteps'
-import { receiveHandoff, sendHandoff, shareable } from './handoff'
+import { receiveHandoff, sendHandoff, shareable, type LandedCopy } from './handoff'
 import { RESUME_CONFIRM_MS } from '../shared/resumeCheck'
 import { briefAnchor, clearCommandFor, hasFreshPaneHandoff, readAsk as readAutoClearAsk, resumeBrief } from '../shared/autoclear'
 import { handoffFor, verifiedPaneHandoff } from './handoffSteps'
@@ -153,6 +155,7 @@ import { startAutoClearWatch, stopAutoClearWatch } from './autoclearWatch'
 import { startAutoClearRequests, stopAutoClearRequests } from './autoclearRequests'
 import { installAutoClearHooks } from './autoclearHooks'
 import { handoffReceiverCanQuit, INTERRUPT_WAIT_MS, type HandoffItem, type HandoffRequest } from '../shared/handoff'
+import { handoffReceiverCanQuit, INTERRUPT_WAIT_MS, landingCopy, type CopyState, type HandoffItem, type HandoffRepo, type HandoffRequest } from '../shared/handoff'
 import { HandoffQueue } from './handoffQueue'
 import { devServersOf, listRunningDevs, localDevCommand, stopDevServer } from './devServers'
 import { keepDevServer, stopNow, watchDeadDevs } from './deadDev'
@@ -1204,7 +1207,8 @@ const remote = new Remote({
     receiveHandoff(
       {
         root: projectsRoot,
-        place: (req) => laneFor(req),
+        place: (req, extraTaken) => laneFor(req, extraTaken),
+        landOn,
         start: (req) => manager.start(req),
         historyDir: () => join(app.getPath('userData'), 'history'),
         noteTailCols: (id, cols) => history.noteCols(id, cols),
@@ -1768,6 +1772,105 @@ const holdOver = (pane: string): boolean => holdIsOver(pane, manager.list(), his
  *
  * A swarm is deliberately exempt: its roles are briefed to share one checkout.
  */
+/** Run git without blocking the window - same gate `lanes.ts` and `handoff.ts` use. */
+function landGit(cwd: string, args: string[], timeout = 60_000): Promise<{ ok: boolean; out: string }> {
+  return gitRun(cwd, args, { timeout, read: isRead(args) }).then((r) => ({
+    ok: r.ok,
+    out: r.stdout.trim() || r.stderr.trim()
+  }))
+}
+
+/**
+ * A blocked handoff (`ensureRepo` said the same-named checkout here is dirty or has
+ * unpushed commits) tries every lane copy of that repo before giving up: the first clean,
+ * merged, free one is reused, or the first missing label becomes a fresh one. See
+ * `shared/handoff.ts` `landingCopy` for the decision itself - this only gathers the facts
+ * it decides from and carries out what it returns.
+ */
+async function landOn(target: string, repo: HandoffRepo, blocked: string): Promise<LandedCopy | string> {
+  let labels: readonly string[] = LANE_LABELS
+  let trunk = 'main'
+  try {
+    const config = JSON.parse(readFileSync(join(target, '.lanes.json'), 'utf8')) as {
+      pool?: unknown
+      branch?: unknown
+    }
+    if (Array.isArray(config.pool)) {
+      const pool = config.pool.filter((l): l is string => typeof l === 'string' && /^[a-z]$/.test(l))
+      if (pool.length) labels = pool
+    }
+    if (typeof config.branch === 'string' && config.branch) trunk = config.branch
+    else throw new Error('no configured trunk')
+  } catch {
+    const originHead = await landGit(target, ['rev-parse', '--verify', 'origin/master'])
+    trunk = originHead.ok ? 'master' : 'main'
+  }
+
+  const taken = new Set([...takenFolders(manager.list()), ...ledgerTakenFolders('')])
+  const copies: CopyState[] = []
+  for (const label of labels) {
+    const path = `${target}-${label}`
+    const exists = existsSync(path)
+    let isCopy = false
+    let dirty = false
+    let unmerged = -1
+    if (exists) {
+      isCopy = await isWorktreeOf(path, target)
+      if (isCopy) {
+        const status = await landGit(path, ['status', '--porcelain'])
+        dirty = status.ok ? status.out.length > 0 : true
+        const ahead = await landGit(path, ['rev-list', '--count', `origin/${trunk}..HEAD`])
+        unmerged = ahead.ok && /^\d+$/.test(ahead.out) ? Number(ahead.out) : -1
+      }
+    }
+    copies.push({ path, label, exists, isCopy, dirty, unmerged, inUse: taken.has(path) })
+  }
+
+  const landing = landingCopy(blocked, copies)
+  if ('refusal' in landing) return landing.refusal
+
+  const { path, label, make } = landing
+  if (!repo.sha) {
+    // The copies share `target`'s `.git`, so fetching once there makes the branch
+    // reachable from every worktree of it.
+    const fetched = await landGit(target, ['fetch', 'origin', repo.branch])
+    if (!fetched.ok) return `Could not fetch ${repo.branch}: ${fetched.out}`
+  }
+  const ref = repo.sha || `origin/${repo.branch}`
+  try {
+    if (!make) {
+      let checkout = await landGit(path, ['checkout', '-B', `lane-${label}`, ref])
+      if (!checkout.ok && repo.sha) {
+        // The sha may never have reached this repo's objects (ensureRepo refused before
+        // fetching anything, on this very target). One more try, the object fetched directly.
+        await landGit(target, ['fetch', 'origin', repo.sha])
+        checkout = await landGit(path, ['checkout', '-B', `lane-${label}`, ref])
+      }
+      if (!checkout.ok) return `Could not land in copy ${copyNumber(label) ?? label}: ${checkout.out}`
+    } else {
+      let made = await landGit(target, ['worktree', 'add', '-b', `lane-${label}`, path, ref])
+      if (!made.ok && repo.sha) {
+        await landGit(target, ['fetch', 'origin', repo.sha])
+        made = await landGit(target, ['worktree', 'add', '-b', `lane-${label}`, path, ref])
+      }
+      if (!made.ok) {
+        made = await landGit(target, ['worktree', 'add', path, `lane-${label}`])
+        if (made.ok) await landGit(path, ['checkout', '-B', `lane-${label}`, ref])
+      }
+      if (!made.ok) return `Could not create copy ${copyNumber(label) ?? label}: ${made.out}`
+    }
+  } catch (err) {
+    return `Could not land in copy ${copyNumber(label) ?? label}: ${(err as Error).message}`
+  }
+  seedLane(target, path)
+  hideCopyFolder(path)
+  return {
+    cwd: path,
+    lane: label,
+    note: `${basename(target)} here already has other work in progress, so this pane opened in copy ${copyNumber(label) ?? label} of it`
+  }
+}
+
 async function laneFor(
   req: StartSessionRequest,
   extraTaken: string[] = [],
@@ -3326,8 +3429,9 @@ function runHandoff(device: string, request: HandoffRequest): Promise<HandoffIte
       log: logHandoff,
       devServersOf: (id, cwd) => {
         const root = manager.roots().find((r) => r.id === id)
-        return root ? devServersOf(root.pid, cwd) : Promise.resolve({ servers: [], notes: [] })
-      }
+        return root ? devServersOf(root.pid, cwd) : Promise.resolve({ servers: [], notes: [], strays: [] })
+      },
+      stopDev: (pid) => stopDevServer(pid)
     },
     device,
     request

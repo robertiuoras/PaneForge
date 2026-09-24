@@ -145,6 +145,8 @@ import { deskNow } from '../../shared/away'
 import {
   autoHandoffPlan,
   SLEEPS_SOON_LEAD_MS,
+  TURNS_BEFORE_MOVE,
+  turnsPlan,
   idleOffloadPlan,
   offloadMinutes,
   movable as handoffMovable,
@@ -2705,7 +2707,14 @@ export default function App(): JSX.Element {
         // What it is actually costing. `undefined` when the sampler has no answer - it
         // does not read the process table behind a hidden window - and `expensive` reads
         // that as small, so an unmeasured pane is never moved for a number nobody took.
-        memMb: usageRef.current?.panes[s.id]?.rssMb,
+        // ...plus the dev server it started that is no longer in its tree (`next dev` on
+        // ppid 1 once npm exited) - `PaneUsage.devMb`. Four of those held ~1.3 GB on
+        // 2026-09-23 while every pane read ~200 MB, so the pane that owned the 642 MB one
+        // must be the first moved, and the move carries the server.
+        memMb:
+          usageRef.current?.panes[s.id] === undefined
+            ? undefined
+            : usageRef.current.panes[s.id].rssMb + (usageRef.current.panes[s.id].devMb ?? 0),
         cpuPct: usageRef.current?.panes[s.id]?.cpuPct ?? undefined,
         // A shell pane's live command (`shared/paneJob.ts`): a dev server that has just
         // started holds nothing yet and is still the pane worth moving.
@@ -2729,7 +2738,9 @@ export default function App(): JSX.Element {
         ask: s.gist,
         cwd: s.cwd,
         // The sleep rung has this one. See `AutoPane.sleepsSoon`.
-        sleepsSoon: sleepingSoon.has(s.id)
+        sleepsSoon: sleepingSoon.has(s.id),
+        // Turns finished on this desk, for the turn-count rung. See `AutoPane.turnsHere`.
+        turnsHere: s.turnsHere
       }))
   }, [])
   handoffPanesRef.current = handoffPanes
@@ -2840,6 +2851,52 @@ export default function App(): JSX.Element {
     // interval re-armed on every change is an interval that never fires. The reading
     // (`capacity`) re-arms it, and everything else is read fresh through `sessionsRef`.
   }, [sweepHandoff])
+
+  /**
+   * The turn-count rung, on the one event a busy desk produces: a turn ending.
+   *
+   * Neither sweep above could fire on the desk of 2026-09-23 (eight panes all working, four
+   * dev servers, 139M unused): the budget rung wants a pane quiet two minutes, the pressure
+   * rung wants one off screen and idle ten. `turnsPlan` wants a pane that has finished
+   * `TURNS_BEFORE_MOVE` turns here while the desk reads `warn`, and this effect runs it the
+   * moment any pane's count goes up - read off `Session.turnsHere`, compared against the
+   * last count seen, so a desk printing bytes runs no plan. The countdown it arms is the
+   * same card as every other move, `Keep it here` and all.
+   */
+  const turnsSeen = useRef<Record<string, number>>({})
+  useEffect(() => {
+    const cfg = config?.autoHandoff ?? DEFAULT_AUTO_HANDOFF
+    let ended = false
+    const seen = turnsSeen.current
+    const live = new Set<string>()
+    for (const s of sessions) {
+      live.add(s.id)
+      const n = s.turnsHere ?? 0
+      if (n > (seen[s.id] ?? 0)) ended = true
+      seen[s.id] = n
+    }
+    for (const id of Object.keys(seen)) if (!live.has(id)) delete seen[id]
+    if (!ended || !capacity || !cfg.enabled || capacity.level === 'ok') return
+    const panes = handoffPanes()
+    const now = Date.now()
+    // Same pre-check as the sweeps above: the peers are only asked when a pane could go.
+    const worthAsking = panes.some(
+      (p) =>
+        (p.turnsHere ?? 0) >= TURNS_BEFORE_MOVE &&
+        !p.focused &&
+        !p.remote &&
+        !p.handingOff &&
+        handoffQueueable(p) &&
+        !((handoffBlocked.current[p.id] ?? 0) > now)
+    )
+    if (!worthAsking) return
+    runHandoffs(
+      panes,
+      (candidates, at) => turnsPlan(panes, capacity, candidates, cfg, handoffBlocked.current, at),
+      `turns: ${TURNS_BEFORE_MOVE} finished here at ${capacity.level}`,
+      cfg.cooldownMinutes
+    )
+  }, [sessions, capacity, config?.autoHandoff, handoffPanes, runHandoffs])
 
   /**
    * The same move on a clock, and the only sweep that can fire on a single-window desk.

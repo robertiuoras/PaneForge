@@ -4999,6 +4999,72 @@ are different questions. Nothing is offered while the machine reads `ok`, and a 
 mid-turn is never picked - so a desk of five working panes at `warn` shows no countdown
 until one of them goes quiet, which is the rule working.
 
+## ...and before it closes one, it tries to move it — after three turns, on a desk the flag calls fine (2026-09-23)
+
+Robert, from his phone, 05:35Z: "do u see taskdriver sessions running/memory going up now
+shouldve been suggested to move session to pc already since doesnt evn need to be on this
+laptop right? ... automatically after a few turns if it should?" - and earlier the same
+day, "dont ever force at a new session open randomly to pc. i said during the session not at
+start". Start stays local (36d23570); this is the move DURING a session.
+
+What the desk read: 8 agent panes, 5 of them taskdriver.ai, all `working`, each claude
+150-265 MB; four `next dev` servers (ports 3006-3009) at 56-642 MB, ~1.3 GB together.
+`top`: 15G used, 6470M in the compressor, 139M unused. And
+`kern.memorystatus_vm_pressure_level` = 1. The hook had read 2 a few minutes earlier. At
+`ok` `autoHandoffPlan` returns [], and even at `warn` `budgetPlan` takes only a pane quiet
+for `BUDGET_QUIET_MS` - a desk of constantly busy panes never has one. `handoff.log`
+since 04:44Z held only `subagent` refusals.
+
+Four things changed, each with a pure test:
+
+- **The compressor is read beside the flag** (`compressorLevel`, `COMPRESSOR_WARN_FRAC`
+  0.35, `UNUSED_WARN_FRAC` 0.02, `parseVmStat` in `main/memory.ts`). The 2026-08-14 reading
+  at the top of `capacity.ts` (6321M / 122M) was level 2; the 05:35Z one (6470M / 139M)
+  was level 1. Both read `warn` now, and only when BOTH the compressor is over a third and
+  under two percent is unused - a big compressor with room is a machine that recovered.
+  Never `critical`: that stays the kernel's. A failed `vm_stat` keeps the last verdict.
+- **A third rung keyed on turns, not idleness** (`turnsPlan`, `TURNS_BEFORE_MOVE` 3,
+  `Session.turnsHere` counted at `endRun`). Fires when the ladder is on, the verdict is not
+  `ok`, this desk runs more agent panes than `keepLocal`, and a pane has finished three
+  turns here and is `queueable` (out of its turn; no question, background job, subagent,
+  bound browser, unshareable code, `stayHere`, `keepHere`, `pinnedByPrompt`). Never
+  mid-turn, never the focused pane, never back to `arrivedFrom`. Dearest first by
+  `paneCost`, ONE per sweep, through the same countdown as every move (`Keep it here` once
+  = `handoffBlocked`). The renderer runs it the moment any `turnsHere` goes up, off the
+  same `handoffPanes` reading - a desk printing bytes runs no plan.
+- **The dev server is part of the pane's cost** (`PaneUsage.devMb`, `strayDevMb` in
+  `shared/devList.ts`): a `next dev` on ppid 1 whose npm parent exited is attributed by the
+  path in its command line, its subtree summed, only when it is not already in the pane's
+  tree. `roots()` now carries the folder. The move already carried the server
+  (`payload.dev`); the sender now STOPS the stray it left here (`devServersOf().strays`,
+  `deps.stopDev`), only after the far end is proven running. `devserver-reaper.mjs
+  --cap-only` on the Mac did nothing at 05:35Z and could not have: it manages launchd-plist
+  servers only (`com.robert.taskdriver-dev-*`), with a 5000 MB restart cap; its log has no
+  2026-09-23 line at all.
+- **The receiver lands in a clean copy instead of refusing** (`landingCopy` in
+  `shared/handoff.ts`, `ensureRepo` now answers `blocked`, `landOn` in `main/index.ts`).
+  03:08-03:38Z three moves reached the PC and were refused there: `taskdriver.ai-a has 2
+  unpushed commit(s) on lane-a here`, `assistant-c has uncommitted work`, `claude-memory has
+  uncommitted work`. Now a same-named checkout with work in it sends the pane to the first
+  lane copy that is a worktree of the repo, clean, 0 ahead of `origin/<trunk>` and held by
+  nobody, or makes the first missing one off the pool, checks out the handed-over commit
+  on `lane-<label>` there, and the same-named folder is passed as taken so `returnToBase`
+  cannot walk the pane back into the dirty one. Refused only when no copy can be had, and
+  the refusal names each copy and why.
+
+And the overlap warning reads the other desk: `overlap()` in `scripts/lane.mjs` now diffs
+`refs/remotes/origin/lane-*` too (fetched at most once per `OVERLAP_SAID_MS`), skipping a
+remote branch whose sha is this desk's own lane HEAD, and names a hit `lane b on the other
+machine (origin/lane-b, not yet merged)`. Lane claims need nothing new: the ledger is per
+machine, the moved pane's first prompt claims its copy on the PC through the lane hook, and
+the Mac's hold goes with the closed pane.
+
+Not proved live from this pane: a Mac -> PC move armed by the turn rung. The lines that
+would prove it are `reclaim.log` `move-armed` with `why` starting `turns:`, then
+`handoff.log` `<id> -> PC: running there after N ms`, then on the PC `handoff.log`
+`<- <mac>: repo ready` followed by a `landOn` line naming the copy when the same-named
+checkout was dirty.
+
 ## A card answers a right-click, and can say what it is — a right-click is not a wake (2026-09-10)
 
 The sidebar row wakes a sleeping pane on pointerdown (2026-08-29, "click it, then find

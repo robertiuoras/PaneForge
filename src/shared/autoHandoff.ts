@@ -40,7 +40,7 @@
 //
 // Pure. `npm run test:autohandoff`.
 
-import type { OffloadCandidate, Verdict } from './capacity'
+import { keepLocalOf, type OffloadCandidate, type Verdict } from './capacity'
 import { copySuffixOf } from './place'
 export { keepLocalOf } from './capacity'
 import type { FleetState } from './fleet'
@@ -397,6 +397,11 @@ export interface AutoPane {
    * sleep sweep runs, so the two readings cannot disagree.
    */
   sleepsSoon?: boolean
+  /**
+   * Turns this pane has finished on this machine (`Session.turnsHere`). The turn-count rung
+   * (`turnsPlan`) needs `TURNS_BEFORE_MOVE` of them; absent reads as none.
+   */
+  turnsHere?: number
 }
 
 export interface AutoHandoff {
@@ -703,6 +708,73 @@ export function budgetPlan(
     out.push({ id: p.id, ...host, idleMs: now - quietSince(p) })
   }
   return out
+}
+
+/**
+ * How many turns a pane must have finished on this machine before the turn-count rung may
+ * offer it to the other one.
+ *
+ * Robert, 2026-09-23, watching five taskdriver panes hold the Mac at 15G used: "automatically
+ * after a few turns if it should". Three, because one turn is a question being answered and
+ * two is a follow-up; a pane on its third is a session, and a session that has not needed
+ * the laptop for three turns (no browser driven here, no Mac-only ask - `queueable` checks
+ * both) is the shape that never will.
+ */
+export const TURNS_BEFORE_MOVE = 3
+
+/**
+ * The turn-count rung: a long session on a desk that is short moves at the end of a turn.
+ *
+ * The other two sweeps could not fire on the desk this was written for (2026-09-23 ~05:35Z,
+ * 8 agent panes all `working`, 4 dev servers, 139M unused): `autoHandoffPlan` is off at `ok`
+ * and the kernel's flag read `ok`; and at `warn` `budgetPlan` takes only a pane quiet for
+ * `BUDGET_QUIET_MS`, which a desk of constantly busy panes never has. This rung keys on the
+ * one event every busy pane produces - its turn ending - and asks nothing about idleness.
+ *
+ * Fires when ALL of: the ladder is on; the memory verdict is `warn` or worse (`Verdict.level`
+ * not `ok` - the compressor reading in `capacity.ts` is part of that now); this desk runs
+ * more agent panes than `keepLocal`; and a pane has finished `TURNS_BEFORE_MOVE` turns here,
+ * can travel, and is out of its turn with nothing running (`queueable`: no question, no
+ * background job or agent, not machine-bound, code shareable, not `stayHere`, not
+ * `pinnedByPrompt`). Never mid-turn - a pane `working` is not `queueable`. `keepHere`
+ * projects and blocked ids are refused as in every rung. The dearest pane goes first
+ * (`paneCost`, which now carries the dev server the pane started), ONE per sweep, and the
+ * caller arms the same countdown as every other move (`Keep it here` once = blocked).
+ *
+ * Deliberately not gated on the pane being off screen or on the budget's cost floor:
+ * the point is a session that does not need this machine, not a pane that is idle or
+ * measured expensive, and the countdown is the person's veto.
+ */
+export function turnsPlan(
+  panes: AutoPane[],
+  v: Pick<Verdict, 'level'>,
+  peers: OffloadCandidate[],
+  cfg: AutoHandoffConfig = DEFAULT_AUTO_HANDOFF,
+  blocked: Record<string, number> = {},
+  now = 0
+): AutoHandoff[] {
+  if (!cfg.enabled) return []
+  if (v.level === 'ok') return []
+  const budget = keepLocalOf(cfg.keepLocal)
+  const agentsHere = panes.filter((p) => !p.remote && p.agent !== 'shell' && p.state !== 'exited').length
+  if (agentsHere <= budget) return []
+  const eligible = panes
+    .filter((p) => (p.turnsHere ?? 0) >= TURNS_BEFORE_MOVE)
+    .filter((p) => travels(p) && !p.focused && !p.remote && !p.handingOff && queueable(p))
+    .filter((p) => !staysHere(cfg, p.projectName))
+    .filter((p) => !((blocked[p.id] ?? 0) > now))
+    // The sleep rung is about to take it, and sleeping is the cheaper way to give the same
+    // memory back. See `AutoPane.sleepsSoon`.
+    .filter((p) => !p.sleepsSoon)
+    .sort((a, b) => paneCost(b) - paneCost(a) || quietSince(a) - quietSince(b))
+  // Never the last pane, exactly as above: a desk with nothing on it has not been helped.
+  if (panes.length < 2) return []
+  for (const p of eligible) {
+    const host = hostFor(peers, p.projectName, p.arrivedFrom)
+    if (!host) continue
+    return [{ id: p.id, ...host, idleMs: now - quietSince(p) }]
+  }
+  return []
 }
 
 /**

@@ -22,7 +22,7 @@
 import { execFile } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { cpus, freemem, loadavg, totalmem, platform } from 'node:os'
-import { lagLevel, type Pressure } from '../shared/capacity'
+import { compressorLevel, lagLevel, worstPressure, type MemoryShape, type Pressure } from '../shared/capacity'
 
 /** How often the level is re-read. Cheap on every platform; a sysctl is microseconds. */
 export const SAMPLE_MS = 15_000
@@ -44,6 +44,13 @@ const CRIT_FREE = 0.08
 let darwinLevel: Pressure = 'normal'
 let darwinAskedAt = 0
 let darwinAsking = false
+/**
+ * The compressor's verdict, read beside the kernel's flag and combined with it by
+ * `worstPressure`. The flag flips (see `compressorLevel`): the desk at 05:35Z on
+ * 2026-09-23 read level 1 with 6470M compressed and 139M unused, and the ladder stayed off.
+ */
+let darwinCompressor: Pressure = 'normal'
+let darwinStatAsking = false
 function darwinPressure(): Pressure {
   const now = Date.now()
   if (!darwinAsking && now - darwinAskedAt >= SAMPLE_MS / 2) {
@@ -56,8 +63,39 @@ function darwinPressure(): Pressure {
       const out = err ? '' : stdout.trim()
       darwinLevel = out === '4' ? 'critical' : out === '2' ? 'warn' : 'normal'
     })
+    if (!darwinStatAsking) {
+      darwinStatAsking = true
+      execFile('/usr/bin/vm_stat', [], { encoding: 'utf8', timeout: 5000 }, (err, stdout) => {
+        darwinStatAsking = false
+        const shape = err ? null : parseVmStat(stdout, totalmem())
+        // A failed or unparseable read leaves the LAST verdict rather than resetting it: a
+        // fork that timed out on a thrashing machine is not evidence the machine recovered.
+        if (shape) darwinCompressor = compressorLevel(shape)
+      })
+    }
   }
-  return darwinLevel
+  return worstPressure(darwinLevel, darwinCompressor)
+}
+
+/**
+ * `vm_stat`'s free and compressor pages as MB, or null when either line is missing.
+ *
+ *   Mach Virtual Memory Statistics: (page size of 16384 bytes)
+ *   Pages free:                                8901.
+ *   Pages occupied by compressor:            414080.
+ *
+ * Page size is read off the header rather than assumed: Apple silicon is 16 KB, Intel Macs
+ * are 4 KB, and the same number of pages is a fourfold different amount of memory.
+ */
+export function parseVmStat(text: string, totalBytes: number): MemoryShape | null {
+  const size = /page size of (\d+) bytes/.exec(text)
+  const free = /^Pages free:\s+(\d+)\./m.exec(text)
+  const comp = /^Pages occupied by compressor:\s+(\d+)\./m.exec(text)
+  if (!size || !free || !comp) return null
+  const page = Number(size[1])
+  if (!Number.isFinite(page) || page <= 0) return null
+  const mb = (pages: string): number => Math.round((Number(pages) * page) / 1048576)
+  return { totalMb: Math.round(totalBytes / 1048576), unusedMb: mb(free[1]), compressorMb: mb(comp[1]) }
 }
 
 function linuxAvailable(): number | null {

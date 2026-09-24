@@ -51,7 +51,7 @@ function bundle() {
       `export { RemoteClient } from ${p('src/main/remote/client.ts')}`,
       `export { newCode } from ${p('src/main/remote/wire.ts')}`,
       `export { sendHandoff, receiveHandoff, writeConversation } from ${p('src/main/handoff.ts')}`,
-      `export { handoffReceiverCanQuit, mapCwd, handoffReport, handoffConversationError } from ${p('src/shared/handoff.ts')}`
+      `export { handoffReceiverCanQuit, mapCwd, handoffReport, handoffConversationError, landingCopy } from ${p('src/shared/handoff.ts')}`
     ].join('\n'),
     'utf8'
   )
@@ -96,7 +96,54 @@ function inertBackend() {
 }
 
 const mod = await import(pathToFileURL(bundle()).href)
-const { RemoteHost, RemoteClient, newCode, sendHandoff, receiveHandoff, writeConversation, mapCwd, handoffReceiverCanQuit, handoffReport, handoffConversationError } = mod
+const { RemoteHost, RemoteClient, newCode, sendHandoff, receiveHandoff, writeConversation, mapCwd, handoffReceiverCanQuit, handoffReport, handoffConversationError, landingCopy } = mod
+
+// ---------------------------------------------------------------- landingCopy
+// Pure decision, no git and no disk: a blocked handoff must land in the first clean
+// merged free copy, or make the first missing label, or refuse by name - see
+// src/shared/handoff.ts. `handoff.log` 2026-09-23 is the incident this replaces: three
+// panes refused outright because the same-named checkout was busy, with clean lane
+// copies sitting right beside it unused.
+console.log('landingCopy')
+{
+  const copy = (label, over = {}) => ({
+    path: `/repo-${label}`,
+    label,
+    exists: true,
+    isCopy: true,
+    dirty: false,
+    unmerged: 0,
+    inUse: false,
+    ...over
+  })
+  const blocked = 'repo here has uncommitted work on this machine - not touching it'
+
+  // (a) same-named checkout dirty, -a exists clean merged free -> lands -a, make false.
+  const a = landingCopy(blocked, [copy('a')])
+  ok('a clean free copy is reused, not made', 'path' in a && a.path === '/repo-a' && a.make === false, JSON.stringify(a))
+
+  // (b) -a dirty, -b in use, -c missing -> make -c.
+  const b = landingCopy(blocked, [
+    copy('a', { dirty: true }),
+    copy('b', { inUse: true }),
+    { path: '/repo-c', label: 'c', exists: false, isCopy: false, dirty: false, unmerged: -1, inUse: false }
+  ])
+  ok('the first missing label is made when every existing one is busy', 'path' in b && b.path === '/repo-c' && b.label === 'c' && b.make === true, JSON.stringify(b))
+
+  // (c) every copy dirty or in use, none missing -> refusal names the blocked sentence
+  // and every copy with its reason.
+  const c = landingCopy(blocked, [copy('a', { dirty: true }), copy('b', { inUse: true })])
+  ok(
+    'no free copy at all refuses, naming the original reason',
+    'refusal' in c && c.refusal.includes(blocked),
+    JSON.stringify(c)
+  )
+  ok('...and names each copy and its own reason', /repo-a has uncommitted work/.test(c.refusal) && /repo-b is in use/.test(c.refusal), c.refusal)
+
+  // (d) unmerged: -1 (could not be told) is never treated as clean.
+  const d = landingCopy(blocked, [copy('a', { unmerged: -1 })])
+  ok('an unmerged reading that could not be checked is not clean', 'refusal' in d, JSON.stringify(d))
+}
 
 // ---------------------------------------------------------------- mapCwd
 console.log('mapCwd')

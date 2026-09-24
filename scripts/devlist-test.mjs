@@ -221,5 +221,39 @@ ok('a failed read resolves null, never a guess', /resolve\(null\)/.test(mainSrc)
 ok('refuses on Windows rather than pretend', /WIN.*resolve\(null\)|if \(WIN/.test(mainSrc))
 ok('one bad pid does not cost the others', /Promise\.all/.test(mainSrc))
 
+
+// What a pane's STRAY dev server costs (2026-09-23): four taskdriver `next dev` servers on
+// ppid 1 held ~1.3 GB (next-server 56-642 MB each) while every pane's own tree read a
+// ~200 MB claude, so the pane owning the 642 MB one looked cheapest to the move.
+{
+  const { strayDevMb } = bundle('src/shared/devList.ts', 'devlist.bundle.cjs')
+  const desk = [
+    { id: 'td', pane: 1, name: 'taskdriver', cwd: '/Users/r/Projects/taskdriver', pid: 100 },
+    { id: 'pf', pane: 2, name: 'PaneForge', cwd: '/Users/r/Projects/PaneForge', pid: 600 }
+  ]
+  const table = [
+    { pid: 100, ppid: 1, cmd: 'claude' },
+    // In the tree, so already in rssMb: never counted here.
+    { pid: 101, ppid: 100, cmd: 'npm run dev' },
+    { pid: 102, ppid: 101, cmd: 'node /Users/r/Projects/taskdriver/node_modules/next/dist/bin/next dev -p 3006' },
+    // The reparented one, with the worker it forked - next-server 642 MB on 2026-09-23.
+    { pid: 300, ppid: 1, cmd: 'node /Users/r/Projects/taskdriver/node_modules/next/dist/bin/next dev -p 3009' },
+    { pid: 301, ppid: 300, cmd: 'next-server (v15.5.0)' },
+    { pid: 600, ppid: 1, cmd: 'claude' },
+    // Nobody's: a server in a project no pane has open.
+    { pid: 400, ppid: 1, cmd: 'node /Users/r/other/node_modules/vite/bin/vite.js --port 5173' }
+  ]
+  const rss = new Map([[100, 265 * 1024], [101, 40 * 1024], [102, 300 * 1024], [300, 90 * 1024], [301, 552 * 1024], [600, 250 * 1024], [400, 500 * 1024]])
+  const cost = strayDevMb(table, desk, (pid) => rss.get(pid) ?? 0)
+  eq('the reparented server and its worker are the pane\'s cost', cost, { td: 642 })
+  eq('a server inside the tree is not counted twice', strayDevMb(table.filter((p) => p.pid < 300 || p.pid === 600), desk, (pid) => rss.get(pid) ?? 0), {})
+  eq('a server nobody owns costs nobody', strayDevMb([table[6]], desk, (pid) => rss.get(pid) ?? 0), {})
+  eq('no command lines, no attribution', strayDevMb([], desk, () => 999), {})
+  // ...and the sampler wires it: the folder rides on roots, the cost lands on the pane.
+  const usageMain = readFileSync(join(root, 'src/main/usage.ts'), 'utf8')
+  ok('main/usage.ts attributes stray servers off the same sample', /strayDevMb\(/.test(usageMain) && /\.devMb = mb/.test(usageMain))
+  const sessionsMain = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
+  ok('roots() carries the pane folder', /roots\(\): \{ id: string; pid: number; cwd: string \}\[\]/.test(sessionsMain))
+}
 rmSync(work, { recursive: true, force: true })
 console.log(`devlist: ${n} checks passed`)

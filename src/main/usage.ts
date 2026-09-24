@@ -20,6 +20,7 @@ import { app, BrowserWindow } from 'electron'
 import { paneBackJobs } from '../shared/paneBackJobs'
 import { machineBound } from '../shared/paneBound'
 import { report, summarise, treeOf, type UsageReport, type UsageRow } from '../shared/usage'
+import { strayDevMb } from '../shared/devList'
 
 /**
  * How often the panes are re-measured.
@@ -355,7 +356,7 @@ export function backJobInfo(id: string): { label: string; since: number } | null
 }
 
 export function trackUsage(
-  roots: () => { id: string; pid: number }[],
+  roots: () => { id: string; pid: number; cwd?: string }[],
   onReport: (r: UsageReport) => void
 ): () => void {
   let previous = new Map<number, number>()
@@ -418,6 +419,20 @@ export function trackUsage(
             ? { label: top.label, since: at - (top.elapsed ?? 0) * 1000, waiting: pane.jobs.every((j) => j.waiting) }
             : null
         )
+      }
+      // ...and the dev server each pane started that has since left its tree, off the same
+      // sample - see `PaneUsage.devMb`. Only where the table carried command lines and the
+      // panes carried folders; otherwise nothing is attributed and nothing is claimed.
+      const procs = rows.filter((r): r is UsageRow & { cmd: string } => typeof r.cmd === 'string' && r.cmd.length > 0)
+      const withCwd = live.filter((l): l is { id: string; pid: number; cwd: string } => typeof l.cwd === 'string' && l.cwd.length > 0)
+      if (procs.length && withCwd.length) {
+        const rssOf = new Map(rows.map((r) => [r.pid, r.rssKb]))
+        const stray = strayDevMb(
+          procs,
+          withCwd.map((l, i) => ({ id: l.id, pid: l.pid, cwd: l.cwd, pane: i + 1, name: '' })),
+          (pid) => rssOf.get(pid) ?? 0
+        )
+        for (const [id, mb] of Object.entries(stray)) if (panes[id]) panes[id].devMb = mb
       }
       for (const id of lastJobs.keys()) if (!live.some((l) => l.id === id)) lastJobs.delete(id)
       previous = cpuNow

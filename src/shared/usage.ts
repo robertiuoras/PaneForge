@@ -92,6 +92,19 @@ export interface PaneUsage {
    * nothing in this file has to import the rule.
    */
   bound?: string
+  /**
+   * Resident memory of the dev server this pane started that is NOT in its tree any more,
+   * in MB - a `next dev` on ppid 1 whose npm parent exited, attributed by its command line
+   * naming a path inside the pane's folder (`shared/devList.ts` `runningDevs`, the same
+   * reading the Servers list draws). Absent when there is none or the table carried no
+   * command lines.
+   *
+   * NOT cosmetic: the automatic move ranks panes by cost (`paneCost`), and on 2026-09-23
+   * four such servers held ~1.3 GB beside eight panes reading ~200 MB each - without this
+   * the pane that owned the 642 MB one was the cheapest-looking on the desk. Attached by
+   * `main/usage.ts` after this summary, so nothing in this file has to import the rule.
+   */
+  devMb?: number
 }
 
 export interface UsageReport {

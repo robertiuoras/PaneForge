@@ -45,6 +45,8 @@ const {
   staysHere,
   suggestMove,
   budgetPlan,
+  turnsPlan,
+  TURNS_BEFORE_MOVE,
   endsOnArrival,
   travels,
   BUDGET_QUIET_MS,
@@ -970,4 +972,116 @@ checks += 3
   checks += 3
 }
 
+
+// ---------------------------------------------------------------------------------------
+// The turn-count rung, replaying the desk of 2026-09-23 ~05:35Z (Mac, installed 0.8.222):
+// 8 agent panes, 5 of them taskdriver.ai (`taskdriver.ai`, `-a`, `-b`, `-c`, `-d`), all
+// `working`, each claude 150-265 MB; four `next dev` servers for taskdriver (ports
+// 3006-3009), next-server 56-642 MB each. `top`: 15G used, 6470M in the compressor, 139M
+// unused - and `kern.memorystatus_vm_pressure_level` = 1. `autoHandoffPlan` returned []
+// at `ok`; `budgetPlan` wanted a pane quiet BUDGET_QUIET_MS, which none ever was.
+{
+  const capOut = join(work, 'capacity.bundle.cjs')
+  buildSync({ absWorkingDir: root, entryPoints: ['src/shared/capacity.ts'], bundle: true, format: 'cjs', platform: 'node', outfile: capOut })
+  const cap = createRequire(import.meta.url)(capOut)
+
+  // 1. The memory verdict, read honestly: the compressor beside the flag.
+  const measured = cap.compressorLevel({ totalMb: 16384, unusedMb: 139, compressorMb: 6470 })
+  assert.equal(measured, 'warn', '6470M compressed / 139M unused of 16384M reads warn whatever the flag said')
+  const pressure = cap.worstPressure('normal', measured)
+  const desk0535 = cap.assess({ totalMb: 16384, pressure, localPanes: 8, keepLocal: 2, peerAvailable: true, willMove: true })
+  assert.notEqual(desk0535.level, 'ok', 'the 05:35Z desk is not ok')
+  const lowUse = cap.assess({
+    totalMb: 16384,
+    pressure: cap.worstPressure('normal', cap.compressorLevel({ totalMb: 16384, unusedMb: 6000, compressorMb: 900 })),
+    localPanes: 8,
+    keepLocal: 2,
+    peerAvailable: true,
+    willMove: true
+  })
+  assert.equal(lowUse.level, 'ok', 'the same eight panes at genuinely low use read ok')
+
+  const pcProjects = ['taskdriver.ai', 'assistant', 'PaneForge', 'claude-memory'].map((name) => ({ name, path: `C:/Users/Gamer/Desktop/Projects/${name}` }))
+  const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: pcProjects }]
+  const now = 1_758_600_000_000
+  const pane = (id, projectName, memMb, extra = {}) => ({
+    id,
+    agent: 'claude',
+    resumeId: `conv-${id}`,
+    state: 'working',
+    lastKeyboard: now - 30_000,
+    lastOutput: now - 1_000,
+    focused: false,
+    visible: true,
+    remote: false,
+    handingOff: false,
+    asking: false,
+    projectName,
+    memMb,
+    cpuPct: 12,
+    turnsHere: 0,
+    ...extra
+  })
+  // memMb = the claude's own RSS + the next-server it started (`PaneUsage.devMb`).
+  const desk = [
+    pane('td', 'taskdriver.ai', 265 + 642, { turnsHere: 3 }),
+    pane('td-a', 'taskdriver.ai', 210 + 56, { turnsHere: 3 }),
+    pane('td-b', 'taskdriver.ai', 190 + 300, { turnsHere: 2 }),
+    pane('td-c', 'taskdriver.ai', 150 + 310, { turnsHere: 5 }),
+    pane('td-d', 'taskdriver.ai', 180, { turnsHere: 1 }),
+    pane('as', 'assistant', 220, { turnsHere: 4 }),
+    pane('pf', 'PaneForge', 250, { turnsHere: 6, focused: true }),
+    pane('cm', 'claude-memory', 160, { turnsHere: 3 })
+  ]
+  const plan = (panes, v = desk0535, blocked = {}, cfg = DEFAULT_AUTO_HANDOFF) => turnsPlan(panes, v, peers, cfg, blocked, now)
+  const ready = (panes, ...ids) => panes.map((p) => (ids.includes(p.id) ? { ...p, state: 'ready' } : p))
+  const withTd = (panes, extra) => ready(panes, 'td').map((p) => (p.id === 'td' ? { ...p, ...extra } : p))
+
+  // 2. Every pane mid-turn: nothing, and nothing mid-turn is ever picked.
+  assert.deepEqual(plan(desk), [], 'eight working panes arm nothing')
+  // 3. taskdriver.ai finishes its 3rd turn: armed for the PC.
+  const one = plan(ready(desk, 'td'))
+  assert.equal(one.length, 1, 'one pane armed')
+  assert.equal(one[0].id, 'td')
+  assert.equal(one[0].device, 'pc')
+  assert.equal(one[0].cwd, 'C:/Users/Gamer/Desktop/Projects/taskdriver.ai')
+  // 4. Two finish together: the one owning the bigger server goes, ONE per sweep.
+  const two = plan(ready(desk, 'td-a', 'td-c'))
+  assert.deepEqual(two.map((p) => p.id), ['td-c'], 'dearest first (150+310 over 210+56), one per sweep')
+  // 5. A pane on its 2nd turn is not a session yet.
+  assert.deepEqual(plan(ready(desk, 'td-b')), [], 'two turns is not enough')
+  assert.equal(TURNS_BEFORE_MOVE, 3)
+  // 6. The same desk at genuinely low use arms nothing, however many turns.
+  assert.deepEqual(plan(ready(desk, 'td', 'td-c', 'as'), lowUse), [], 'low use: nothing')
+  // 7. Refusals every rung keeps.
+  assert.deepEqual(plan(ready(desk, 'pf')), [], 'the focused pane is never taken')
+  assert.deepEqual(plan(ready(desk, 'td'), desk0535, { td: now + 60_000 }), [], 'Keep it here (blocked) holds')
+  assert.deepEqual(plan(ready(desk, 'td'), desk0535, {}, { ...DEFAULT_AUTO_HANDOFF, keepHere: ['taskdriver.ai'] }), [], 'a kept project stays')
+  assert.deepEqual(plan(withTd(desk, { subagent: 'a background agent' })), [], 'a running subagent holds it')
+  assert.deepEqual(plan(withTd(desk, { backJob: 'npm run build' })), [], 'a background job holds it')
+  assert.deepEqual(plan(withTd(desk, { machineBound: 'chrome --remote-debugging-port=9333' })), [], 'machine-bound work stays')
+  assert.deepEqual(plan(withTd(desk, { shareable: false })), [], 'code that cannot get there stays')
+  assert.deepEqual(plan(withTd(desk, { stayHere: true })), [], 'a pane the person pinned stays')
+  assert.deepEqual(plan(withTd(desk, { asking: true })), [], 'a question is never moved')
+  assert.deepEqual(plan(withTd(desk, { arrivedFrom: 'pc' })), [], 'never back where it came from')
+  assert.deepEqual(plan(withTd(desk, { resumeId: undefined })), [], 'no conversation to resume, no move')
+  assert.deepEqual(plan(withTd(desk, { ask: 'remove onedrive from my mac' })), [], 'a Mac-only ask stays')
+  assert.deepEqual(plan(ready(desk, 'td'), desk0535, {}, { ...DEFAULT_AUTO_HANDOFF, enabled: false }), [], 'switched off')
+  // 8. Within the budget there is nothing to give back: two agents on a keepLocal of 2.
+  assert.deepEqual(plan(ready(desk.slice(0, 2), 'td')), [], 'two agents within keepLocal 2 arm nothing')
+  assert.deepEqual(plan(ready(desk.slice(0, 1), 'td')), [], 'never the last pane')
+  checks += 26
+
+  // Wiring the renderer and main must keep.
+  const { readFileSync } = await import('node:fs')
+  const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
+  assert.match(app, /turnsHere: s\.turnsHere/, 'handoffPanes carries Session.turnsHere onto AutoPane')
+  assert.match(app, /turnsPlan\(panes, capacity, candidates, cfg, handoffBlocked\.current, at\)/, 'the turn-end effect runs turnsPlan through the same countdown')
+  assert.match(app, /\.devMb \?\? 0\)/, 'the dev server the pane started is part of its cost')
+  const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
+  assert.match(sessions, /live\.meta\.turnsHere = \(live\.meta\.turnsHere \?\? 0\) \+ 1/, 'endRun counts the turn')
+  const memory = readFileSync(join(root, 'src/main/memory.ts'), 'utf8')
+  assert.match(memory, /worstPressure\(darwinLevel, darwinCompressor\)/, 'the Mac verdict is the worse of the flag and the compressor')
+  checks += 5
+}
 console.log(`autohandoff: ${checks} checks passed`)
