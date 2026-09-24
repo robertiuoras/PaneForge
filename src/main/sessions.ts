@@ -130,7 +130,7 @@ import { anchoredStart, readsBusy, composerHeld, type BusyReason } from '../shar
 import { promptStillInBox } from '../shared/promptLanded'
 import { resumeVerdict, RESUME_POLL_MS } from '../shared/resumeCheck'
 import { exitPlan, exitWords } from '../shared/exitClose'
-import { readsCloudWork, cloudHeld } from '../shared/cloudWork'
+import { holdAfterFinish, cloudHeld } from '../shared/cloudWork'
 import { outputIsWork } from '../shared/fleet'
 import { nextCwdGone, reapForMissingCwd } from '../shared/cwdGone'
 import {
@@ -2759,14 +2759,12 @@ export class SessionManager extends EventEmitter {
     // running off this machine. Only on a `false`: that is the frame the finished footer
     // is drawn in, and it is the only one this process is sent. A sighting REFRESHES the
     // stamp rather than only setting it, so a pane that keeps reprinting the line keeps
-    // its hold; the absence of the line clears nothing, because the CLI never rewrites
-    // that footer when the cloud session ends. `cloudHeld` is what expires it.
+    // its hold. A later finished footer without the line ends a SHELL hold; a cloud
+    // session's is only ended by `cloudHeld` running out. `holdAfterFinish` has both.
     if (!busy && tail) {
-      const cloud = readsCloudWork(tail)
-      if (cloud) {
-        s.cloudWork = cloud
-        s.cloudSince = now
-      }
+      const hold = holdAfterFinish({ work: s.cloudWork, since: s.cloudSince }, tail, now)
+      s.cloudWork = hold.work
+      s.cloudSince = hold.since
     }
     // A question and a running agent are never on screen together - ASK_PROMPT outranks
     // every busy footer in `readsBusy` - so a busy pane has no question by construction

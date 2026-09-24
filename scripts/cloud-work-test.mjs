@@ -29,7 +29,7 @@ buildSync({
   platform: 'node',
   outfile: out
 })
-const { readsCloudWork, cloudHeld, CLOUD_HOLD_MS } = createRequire(import.meta.url)(out)
+const { readsCloudWork, cloudHeld, holdAfterFinish, CLOUD_HOLD_MS } = createRequire(import.meta.url)(out)
 
 let bad = 0
 const check = (name, got, want) => {
@@ -96,6 +96,79 @@ check('re-seen', cloudHeld(t0 + CLOUD_HOLD_MS - 1000, t0 + CLOUD_HOLD_MS + 1000)
 // Long enough to outlast the idle clock it competes with (5 minutes), and under an hour.
 check('the hold outlasts the idle clock', CLOUD_HOLD_MS > 5 * 60_000, true)
 check('the hold is under an hour', CLOUD_HOLD_MS <= 60 * 60_000, true)
+
+// ------------------------------------------------------------------ a later footer ends a shell hold
+//
+// Pane s91, 2026-09-24. Both frames are the bottom of what main was actually sent with
+// the `false` busy reading, replayed out of the pane's own pty log (history/s91-*.log)
+// and matched to the busy-flip audit by the statusline numbers. 08:50:09Z: the turn ended
+// with a `run_in_background` shell going. The shell ended 08:51:19Z, the next turn ended
+// 08:51:54Z with the same footer and no running line - and the pane still wore `1 shell`
+// until 09:35Z, so the idle close, sleep and handoff all refused a pane doing nothing.
+const bar = (n) => '─'.repeat(n)
+const s91Running = [
+  "⏺ Still running; I'll pick it up on the completion notice.",
+  '',
+  '✻ Crunched for 13m 2s · done 6:50 PM · 1 shell still running',
+  '',
+  bar(120),
+  '❯ ',
+  bar(120),
+  '  ◆ Opus 5.5 | assistant-c |  lane-c | ✓ synced | █░░░░░░░░░ 17% 172.1k | +126/-39 | ⬢ dev: taskdriver (PC)',
+  '  5h 37% · wk 18% · Fable 0% · Σ 6.7M · $3.52 api (97% cached)',
+  '  ⏵⏵ bypass permissions on · 1 shell · ← for agents',
+  ''
+].join('\n')
+const s91Ended = [
+  '✻ Baked for 32s · done 6:51 PM',
+  '',
+  '※ recap: I reviewed the TikTok and used it to improve our video workflow: new pacing, caption and loudness data in video-director, plus',
+  '  five video-watch fixes, all committed. Nothing is left to do; the next step is just reading the review above. (disable recaps in /config)',
+  '',
+  bar(139),
+  '❯ ',
+  bar(139),
+  '  ◆ Opus 5.5 | assistant-c |  lane-c | ✓ synced | █░░░░░░░░░ 18% 177.2k | +126/-39 | ⬢ dev: taskdriver (PC)',
+  '  5h 37% · wk 19% · Fable 0% · Σ 7.4M · $3.68 api (97% cached)',
+  '  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents',
+  ''
+].join('\n')
+const t1 = t0 + 70_000
+check('s91: the running footer', readsCloudWork(s91Running), '1 shell')
+check('s91: the running footer starts a hold', holdAfterFinish({}, s91Running, t0), { work: '1 shell', since: t0 })
+check('s91: the next footer, no running line, ends it', holdAfterFinish({ work: '1 shell', since: t0 }, s91Ended, t1), {})
+check('plural shells end the same way', holdAfterFinish({ work: '2 shells', since: t0 }, s91Ended, t1), {})
+// A frame with no finished footer in it says nothing about the shells: an interrupted
+// turn, a question, a frame drawn mid-repaint. The hold stays.
+const noFooter = s91Ended.replace('✻ Baked for 32s · done 6:51 PM', '')
+check('no footer in the frame keeps the hold', holdAfterFinish({ work: '1 shell', since: t0 }, noFooter, t1), {
+  work: '1 shell',
+  since: t0
+})
+// The busy spinner wears the same glyph and is not a finished footer.
+check(
+  'a spinner is not a finished footer',
+  holdAfterFinish({ work: '1 shell', since: t0 }, '✻ Cooking… (30s · ↓ 1.8k tokens)\n❯ ', t1),
+  { work: '1 shell', since: t0 }
+)
+// A cloud session keeps its full hold: nobody has measured the CLI reprinting THAT line
+// on every finished footer, so a footer without it is not yet evidence it ended.
+check(
+  'a cloud session hold survives a plain footer',
+  holdAfterFinish({ work: '1 cloud session', since: t0 }, s91Ended, t1),
+  { work: '1 cloud session', since: t0 }
+)
+// The newest footer is the one that counts. An older footer still in the frame with its
+// running line on it must not re-arm a hold the newer one ended.
+const staleAbove = s91Running.split('\n').slice(0, 4).join('\n') + '\n' + s91Ended
+check('an older running footer above a newer plain one reads as nothing', readsCloudWork(staleAbove), null)
+check('...and ends the hold', holdAfterFinish({ work: '1 shell', since: t0 }, staleAbove, t1), {})
+// ...and the other way round: the newest footer still says a shell is running.
+check(
+  'a newer running footer refreshes the hold',
+  holdAfterFinish({ work: '1 shell', since: t0 }, s91Ended.replace('done 6:51 PM', 'done 6:51 PM · 1 shell still running'), t1),
+  { work: '1 shell', since: t1 }
+)
 
 rmSync(work, { recursive: true, force: true })
 if (bad) {
