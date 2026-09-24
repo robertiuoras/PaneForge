@@ -34,6 +34,7 @@ import { tokenSpend, tokenSpendFresh } from './tokenUsage'
 import { promptReview, promptsForSession, recordPromptReview, removePromptReview } from './promptReview'
 import { readPulls } from './pulls'
 import { quitWhere } from '../shared/quitWords'
+import { pidAlive, waitForExit } from '../shared/installWedge'
 import { mayReturnLane } from '../shared/laneReturn'
 import { revealTarget, within } from '../shared/reveal'
 import { revealTargetFor } from '../shared/revealPane'
@@ -57,7 +58,8 @@ import { type AttachIn, type AttachResult } from '../shared/attach'
 import { CHOOSE_GAP_MS, keysForChoice, sameAsk, stampMatches } from '../shared/choices'
 import { Remote } from './remote'
 import { readInvite } from './remote/invite'
-import { PhoneServer, newPhoneCode } from './phone'
+import { LOCAL_ONLY, PhoneServer, newPhoneCode } from './phone'
+import { installPf } from './pfAccess'
 import { ownerAccess, ownerStats } from './ownerStats'
 import { Tunnel } from './tunnel'
 import { callInvoke, callSend, tapIpc } from './ipcTap'
@@ -2974,7 +2976,8 @@ ipcMain.handle('phone:serve', async (_e, on: boolean) => {
     // The tunnel points at a port that is about to stop answering; leaving it up would
     // publish an address that 502s, which reads as a broken app rather than a closed door.
     await tunnel.stop()
-    await phone.stop()
+    // Back to answering this machine only, for `pf` (`PhoneServer.localOnly`).
+    await phone.start(port, LOCAL_ONLY)
     return phoneState()
   }
   await phone.start(port)
@@ -2990,7 +2993,7 @@ ipcMain.handle('phone:port', async (_e, port: number) => {
   const cfg = getConfig()
   setConfig({ phone: { ...cfg.phone!, port: next } })
   if (!phone.running) return phoneState()
-  await phone.start(next)
+  await phone.start(next, phone.localOnly ? LOCAL_ONLY : undefined)
   // The tunnel is bound to the OLD port, so it is restarted rather than left pointing at
   // a door that moved. A new quick tunnel means a new address, which the panel redraws.
   if (tunnel.running) void tunnel.start(next)
@@ -3013,7 +3016,7 @@ ipcMain.handle('phone:tunnel', async (_e, on: boolean) => {
   ensureCodeFor(true)
   send('phone:changed', phoneState())
   const port = cfg.phone?.port ?? DEFAULT_PHONE_PORT
-  if (!phone.running) await phone.start(port)
+  if (!phone.running || phone.localOnly) await phone.start(port)
   void tunnel.start(port)
   return phoneState()
 })
@@ -3961,6 +3964,9 @@ ipcMain.handle('update:install', async (): Promise<InstallOutcome> => {
   return { status: 'installing' }
 })
 
+/** How long a Windows update waits for the panes' processes to exit before the installer. */
+const PANE_EXIT_WAIT_MS = 5_000
+
 function doInstall(): void {
   if (installStarted) return
   if (getUpdateState().phase !== 'ready') return
@@ -4003,7 +4009,33 @@ function doInstall(): void {
   )
   // Flushes transcripts, ends their metadata in one pass and hard-kills every agent
   // tree in a single taskkill instead of one blocking ConPTY teardown per pane.
-  manager.shutdown()
+  void handOverToInstaller(manager.shutdown()).catch((e: unknown) => {
+    // Hidden window, panes gone: a throw here would otherwise leave an invisible app.
+    updateLog('install', `hand-over failed: ${e instanceof Error ? e.message : String(e)}`)
+    installStarted = false
+    markQuietRelaunch(false)
+    if (alive()) whenClear('update-failed-reveal', restoreAfterFailedInstall)
+  })
+}
+
+/**
+ * The second half of `doInstall`: wait for the panes, start the installer, leave.
+ *
+ * Both kills in `shutdown()` return before anything has died, and a pane process still
+ * alive when the installer starts copying is one way an update comes back as the old
+ * version (2026-09-24, see shared/installWedge.ts). The window is already hidden, so the
+ * wait costs nobody anything to look at; past the budget the installer stops them itself.
+ */
+async function handOverToInstaller(pids: number[]): Promise<void> {
+  if (process.platform === 'win32' && pids.length) {
+    const { left, ms } = await waitForExit(pids, { alive: (pid) => pidAlive(pid), budgetMs: PANE_EXIT_WAIT_MS })
+    updateLog(
+      'install',
+      left.length
+        ? `${left.length} of ${pids.length} pane process(es) still running after ${ms}ms - installing anyway`
+        : `${pids.length} pane process(es) gone in ${ms}ms`
+    )
+  }
   // Set before the installer starts, because once quitAndInstall() runs this process can
   // be gone before the next line. The new exe reads it and comes back without activating.
   markQuietRelaunch()
@@ -4778,6 +4810,8 @@ app.whenReady().then(() => {
   // The other half of autoclear: the CLIs with no Stop hook of their own. Also the moment
   // the antigravity statusline tee is put in place, which is a no-op unless that CLI is
   // installed here. See autoclearWatch.ts.
+  // Before any pane starts, so the first one already has `pf` (`main/pfAccess.ts`).
+  installPf()
   startAutoClearWatch(manager)
   startAutoClearRequests(join(app.getPath('userData'), 'autoclear-requests'), autoClearAsk)
   createWindow()
@@ -4794,7 +4828,7 @@ app.whenReady().then(() => {
       // answering yet publishes an address that 502s for its first few seconds.
       if (cfg.phone?.tunnel) void tunnel.start(cfg.phone.port)
     })
-  }
+  } else void phone.start(cfg.phone?.port ?? DEFAULT_PHONE_PORT, LOCAL_ONLY)
   setDevChannel(!!cfg.devUpdates)
   initUpdater((s: UpdateState) => {
     send('update:changed', s)

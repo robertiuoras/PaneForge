@@ -563,6 +563,12 @@ export interface Session {
    */
   watched?: boolean
   /**
+   * The pane this window last said is on screen (`sessions:active`), stamped by
+   * `SessionManager.list()` at read time. For `pf tidy`, which cannot see the window:
+   * the pane a person is looking at is never an idle duplicate to close.
+   */
+  focused?: boolean
+  /**
    * How many steps this pane's handoff still lists as open, or undefined when it has no
    * handoff at all.
    *
@@ -1149,6 +1155,12 @@ export interface UpdateState {
    * "up to date" - see `stalledHint` in shared/updateStale.ts.
    */
   stalled?: boolean
+  /**
+   * The version the last run started installing, when this run came back older - the
+   * install did not go in. The card says so and offers that version's installer instead of
+   * asking for the same restart again (`shared/installWedge.ts`).
+   */
+  installFailed?: string
 }
 
 /**
@@ -1911,6 +1923,12 @@ export interface Config {
    * first card anybody ever sees is a real one.
    */
   seenVersion?: string
+  /**
+   * This profile has opened a pane at least once, so the first-run setup card never
+   * shows again. Absent on a fresh install; `shared/firstRun.ts` also reads past
+   * sessions, so a profile from before this field existed never sees the card either.
+   */
+  firstChatStarted?: boolean
   /** folder scanned for projects */
   root: string
   presets: Preset[]

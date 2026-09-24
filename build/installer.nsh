@@ -21,6 +21,20 @@
   Sleep 400
 !macroend
 
+!macro freeInstallDir
+  ; killRunning names one exe. Everything else that runs out of the install folder - node-pty's
+  ; OpenConsole.exe, elevate.exe, a stray PaneForge helper - can still hold a file; then
+  ; the old version's uninstall can fail, and the stock app-running check quits a SILENT install
+  ; without a word: the update never happens (2026-09-24, a friend stuck on v0.8.179). So stop
+  ; every process whose exe lives under $INSTDIR or the portable folder, and wait (10s at most)
+  ; until they are gone. This runs from the NEW release's installer, so it also rescues builds
+  ; that shipped before it. The script is `scripts/win-free-install-dir.ps1`, tested on its own.
+  InitPluginsDir
+  File "/oname=$PLUGINSDIR\pf-free-install-dir.ps1" "${PROJECT_DIR}\scripts\win-free-install-dir.ps1"
+  nsExec::Exec '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\pf-free-install-dir.ps1" -Dir "$INSTDIR" -Also "$LOCALAPPDATA\Programs\PaneForge" -Seconds 10'
+  Pop $0
+!macroend
+
 !macro removePortableOnly
   ; Remove only the portable directory, not the shortcut. This runs during customUnInstall
   ; (uninstall / update). If we delete the shortcut during uninstall-for-update, it would
@@ -53,6 +67,7 @@
 
 !macro customInit
   !insertmacro killRunning
+  !insertmacro freeInstallDir
   !insertmacro removePortableAndShortcut
 !macroend
 

@@ -5159,3 +5159,30 @@ html.login-open .panes { padding-right: calc(var(--login-w, 50vw) + 6px); }
 .screen-fit.on { color: var(--accent-text); }
 .screen-quality { flex: 1; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .screen-control { margin-left: auto; }
+
+/* ---- First-run card (FirstRunCard.tsx) ---------------------------------------------
+   Welcome's own recipe, one level in: the `.setup-card` surface and hairline
+   (design-vault/linear.app.md, "Card (feature)"), no shadow, no gradient, tokens only so
+   both themes come from paletteFor. It lives in the sidebar, so every row wraps its words
+   instead of widening the rail. */
+.fr-card {
+  display: flex; flex-direction: column; gap: 8px; width: 100%; margin-top: 2px;
+  padding: 12px 13px; border: 1px solid var(--line); border-radius: var(--r);
+  background: var(--surface-2);
+}
+.fr-h { font-size: 13px; font-weight: 600; color: var(--text); letter-spacing: -0.01em; }
+.fr-sub { margin: -3px 0 2px; font-size: 12px; line-height: 1.45; color: var(--muted); }
+.fr-row { display: flex; align-items: flex-start; gap: 9px; }
+.fr-row > .pill { flex: none; margin-top: 1px; }
+.fr-mark {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; margin-top: 1px; border-radius: 50%;
+  border: 1px solid var(--line-strong); color: var(--ok);
+}
+.fr-row.done .fr-mark { border-color: var(--ok); }
+.fr-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.fr-name { font-size: 12.5px; font-weight: 550; color: var(--text); line-height: 1.35; }
+.fr-what { font-weight: 400; color: var(--muted); }
+.fr-note { font-size: 11.5px; line-height: 1.4; color: var(--muted); overflow-wrap: anywhere; }
+.fr-go { align-self: flex-start; margin-top: 4px; }
+/* ---- end first-run card ------------------------------------------------------------- */

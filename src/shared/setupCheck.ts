@@ -14,15 +14,25 @@ export interface SetupFacts {
   gitInstalled: boolean
   /** `~/.claude.json` has an `oauthAccount`, or `ANTHROPIC_API_KEY` is set. */
   signedIn: boolean
+  /** `codex` resolves to a real file on PATH. */
+  codexInstalled: boolean
+  /** Codex's `auth.json` holds a ChatGPT sign-in or an API key. */
+  codexSignedIn: boolean
 }
 
-export type SetupRowId = 'git' | 'claude' | 'signin'
+export type SetupRowId = 'git' | 'claude' | 'signin' | 'codex' | 'codex-signin'
 
 export interface SetupRow {
   id: SetupRowId
   /** Plain English, read by someone who has never used a terminal. */
   text: string
   button: string
+  /**
+   * Codex is a second choice, not something missing: somebody who only ever uses Claude
+   * must not carry an "Install Codex" row forever. The Welcome checklist leaves these
+   * out; only the first-run card (`FirstRunCard.tsx`) reads them.
+   */
+  optional?: boolean
 }
 
 /**
@@ -40,6 +50,11 @@ export function setupRows(facts: SetupFacts): SetupRow[] {
   }
   if (!facts.signedIn) {
     rows.push({ id: 'signin', text: 'Sign in to Claude', button: 'Sign in' })
+  }
+  if (!facts.codexInstalled) {
+    rows.push({ id: 'codex', text: 'Install Codex', button: 'Install', optional: true })
+  } else if (!facts.codexSignedIn) {
+    rows.push({ id: 'codex-signin', text: 'Sign in to Codex', button: 'Sign in', optional: true })
   }
   return rows
 }

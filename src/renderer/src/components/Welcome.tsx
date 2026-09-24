@@ -7,7 +7,10 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import type { SetupRow, SetupRowId } from '@shared/setupCheck'
+import type { StartSessionRequest } from '@shared/types'
+import { showFirstRun } from '@shared/firstRun'
 import InstallConsole from './InstallConsole'
+import FirstRunCard from './FirstRunCard'
 
 const api = window.api
 
@@ -18,14 +21,40 @@ interface WelcomeProps {
   onSearch: () => void
   /** Attention, project board, swarm, shortcuts. */
   onTools: () => void
+  /** Opens one pane straight away, the way New session does - the first-run card's button. */
+  onLaunch: (req: StartSessionRequest) => Promise<'local' | 'remote' | null>
 }
 
-export default function Welcome({ onStart, onSearch, onTools }: WelcomeProps): JSX.Element {
+export default function Welcome({ onStart, onSearch, onTools, onLaunch }: WelcomeProps): JSX.Element {
+  // null while the first read is out, so neither card flashes up and gets swapped.
+  const [firstRun, setFirstRun] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    let live = true
+    api
+      .getConfig()
+      .then(async (config) => {
+        // The flag alone settles it; past sessions are only read for a profile without it.
+        const past = config.firstChatStarted ? 0 : (await api.listHistory()).length
+        const show = showFirstRun(config.firstChatStarted, past)
+        // Somebody who has used this profile before gets the flag now, so the past-session
+        // list is read once per profile rather than every time the desk empties.
+        if (!show && !config.firstChatStarted) api.setConfig({ firstChatStarted: true }).catch(() => undefined)
+        return show
+      })
+      .catch(() => false)
+      .then((show) => live && setFirstRun(show))
+    return () => {
+      live = false
+    }
+  }, [])
+
   return (
     <div className="welcome">
       <h2 className="welcome-h">What are we building today?</h2>
       <p className="welcome-sub">Open a project and it starts here, on this screen.</p>
-      <button className="primary welcome-start" onClick={onStart}>
+      {firstRun && <FirstRunCard onLaunch={onLaunch} />}
+      <button className={firstRun ? 'welcome-chip' : 'primary welcome-start'} onClick={onStart}>
         <span className="plus">+</span> Open a project
       </button>
       <div className="welcome-row">
@@ -46,7 +75,7 @@ export default function Welcome({ onStart, onSearch, onTools }: WelcomeProps): J
           See what needs you
         </button>
       </div>
-      <SetupCard onSignIn={onStart} />
+      {firstRun === false && <SetupCard onSignIn={onStart} />}
     </div>
   )
 }
@@ -67,7 +96,11 @@ function SetupCard({ onSignIn }: { onSignIn: () => void }): JSX.Element | null {
   const [attempt, setAttempt] = useState(0)
 
   const refresh = useCallback(() => {
-    api.checkSetup().then(setRows).catch(() => setRows([]))
+    // Codex rows are the first-run card's; here they would nag a Claude-only person forever.
+    api
+      .checkSetup()
+      .then((all) => setRows(all.filter((r) => !r.optional)))
+      .catch(() => setRows([]))
   }, [])
 
   useEffect(() => {

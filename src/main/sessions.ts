@@ -14,6 +14,7 @@ import { ensureTrusted } from './claudeTrust'
 import { ensureLaneFolder } from './lanes'
 import { which } from './which'
 import { specFor } from './agents'
+import { pfEnv, pfPrimerArgs } from './pfAccess'
 import { memoryPrelude } from './board'
 import { endAll, gistFor, noteCols, recordData, recordEnd, recordStart, sizeOf, tail } from './history'
 import { jobTable } from './backJobs'
@@ -696,7 +697,7 @@ export class SessionManager extends EventEmitter {
   }
 
   list(): Session[] {
-    return [...this.sessions.values()].map((s) => s.meta)
+    return [...this.sessions.values()].map((s) => (s.meta.id === this.activeId ? { ...s.meta, focused: true } : s.meta))
   }
 
   /** The pane a person is looking at, as the window last said (`sessions:active`). */
@@ -3419,9 +3420,12 @@ export class SessionManager extends EventEmitter {
    * `claude` processes holding locks on the files it had just replaced. /T takes the
    * grandchildren too: an agent CLI is node, which spawns ripgrep, git and its own
    * subagents.
+   *
+   * Returns the pids it asked to die, so an update can wait for them to be gone before the
+   * installer starts copying (see `shared/installWedge.ts`).
    */
-  shutdown(): void {
-    if (this.down) return
+  shutdown(): number[] {
+    if (this.down) return []
     this.down = true
     const live = [...this.sessions.values()]
     const ids = [...this.sessions.keys()]
@@ -3434,14 +3438,12 @@ export class SessionManager extends EventEmitter {
     // Before the early return: a pane that was teed and then closed by hand is gone
     // from the map, but its stream is only closed here if anything went wrong above.
     stopAllPipes()
-    if (!live.length) return
+    if (!live.length) return []
     endAll(ids, resumeIdFor)
+    const pids = live.map((s) => s.proc?.pid ?? 0).filter((pid) => typeof pid === 'number' && pid > 0)
 
     if (process.platform === 'win32') {
-      const args = live
-        .map((s) => s.proc?.pid ?? 0)
-        .filter((pid) => typeof pid === 'number' && pid > 0)
-        .flatMap((pid) => ['/PID', String(pid)])
+      const args = pids.flatMap((pid) => ['/PID', String(pid)])
       if (args.length) {
         // No taskkill on PATH - the pty kill below is still the real one. `spawnQuiet`
         // for the same reason as everywhere else: the failure this comment names is an
@@ -3463,6 +3465,7 @@ export class SessionManager extends EventEmitter {
         /* already dead */
       }
     }
+    return pids
   }
 
   private spawn(
@@ -3482,12 +3485,16 @@ export class SessionManager extends EventEmitter {
     // `effort` only reaches a Codex spec, and only when the pane was opened with the
     // reading on: it is a `-c` override for THIS process, so the person's own
     // config.toml is never read, written or consulted.
-    const args = buildArgs(spec, {
-      resume: req.resume,
-      resumeId: req.resumeId,
-      model: req.model,
-      effort: req.effort ? EFFORT_START : undefined
-    })
+    // Plus one line telling the agent `pf` is how it drives PaneForge (`shared/pfAccess.ts`).
+    const args = [
+      ...buildArgs(spec, {
+        resume: req.resume,
+        resumeId: req.resumeId,
+        model: req.model,
+        effort: req.effort ? EFFORT_START : undefined
+      }),
+      ...pfPrimerArgs(spec.id)
+    ]
     // Antigravity opens on `Yes, I trust this folder` in any folder it has not seen, and
     // a pane this app was asked to open is not a question anybody wants to answer twice.
     // No-op for every other agent and on a desk where that CLI is not installed.
@@ -3503,7 +3510,8 @@ export class SessionManager extends EventEmitter {
       // The agent's own env sits between the two: it is what makes this agent this
       // agent (the OpenRouter base URL and key), so it beats whatever the app was
       // launched with, and a lane's variables still beat it.
-      env: {
+      // `pf` on the PATH's tail and pointed at this app (`main/pfAccess.ts`).
+      env: pfEnv({
         ...scrubForeignKeys(agentEnv(), spec),
         ...resolveEnv(spec, agentKeys()),
         // Which pane this is. `pf open --report-to` defaults to it, so an agent that opens
@@ -3514,7 +3522,7 @@ export class SessionManager extends EventEmitter {
         // desk: browser work stops being a reason to keep a pane here. `shared/peerChrome.ts`.
         ...(chromeCdpFor(req.fromAddress) ? { PF_CHROME_CDP: chromeCdpFor(req.fromAddress)! } : {}),
         ...(req.laneEnv ?? {})
-      }
+      }) as Record<string, string>
     })
   }
 
