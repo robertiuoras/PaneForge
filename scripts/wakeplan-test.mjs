@@ -93,6 +93,23 @@ ok(
   ok('maxPerSweep caps the wake batch', plan.length === 2)
 }
 
+// The budget, not only the kernel (2026-09-24: s27-muezyz7e slept and woke four times in
+// twenty minutes - the kernel read normal while the budget the sleep clock reads was full).
+{
+  const sleeper = (id, asleep) => ({ id, asleep, asleepReason: 'pressure', createdAt: 0 })
+  ok('no pressure wake into a full budget', wakePlan([sleeper('a', 1)], { pressure: 'normal', room: 0 }).length === 0)
+  ok('...nor into its last slot', wakePlan([sleeper('a', 1)], { pressure: 'normal', room: 1 }).length === 0)
+  ok('one wakes with a slot to spare after it', wakePlan([sleeper('a', 1), sleeper('b', 2)], { pressure: 'normal', room: 2 }).join() === 'a')
+  ok('...and each wake uses a slot', wakePlan([sleeper('a', 1), sleeper('b', 2)], { pressure: 'normal', room: 3 }).join() === 'a,b')
+  ok('a queued pane may take the last slot', wakePlan([sleeper('a', 1), { id: 'q', asleep: 0, asleepReason: 'queued', createdAt: 5 }], { pressure: 'normal', room: 1 }).join() === 'q')
+  ok('no budget reading keeps the old behaviour', wakePlan([sleeper('a', 1)], { pressure: 'normal' }).join() === 'a')
+  const wiring = readFileSync(new URL('../src/main/wakeQueue.ts', import.meta.url), 'utf8')
+  ok('the wake queue passes the budget in', /wakePlan\(panes, \{ pressure, room: deps\.room\?\.\(\) \?\? undefined \}, now\)/.test(wiring))
+  const main = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+  ok('...read off the same verdict the strip and the sleep clock get', /room: \(\) => capacityVerdict\(\)\.roomFor/.test(main) &&
+    /send\('capacity:changed', capacityVerdict\(\)\)/.test(main))
+}
+
 // pressureSleepPlan -------------------------------------------------------
 
 ok(

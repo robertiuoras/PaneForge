@@ -252,7 +252,12 @@ startWakeQueue({
   // The same reading the budget rung takes (`autoHandoff` below): the memory verdict OR
   // the lag band, whichever is worse. A machine that is not lagging and not short of
   // memory is a machine with room, and that is when a queued pane may start.
-  pressure: () => worstPressure(lastPressure, lagLevel(loadPerCore()))
+  pressure: () => worstPressure(lastPressure, lagLevel(loadPerCore())),
+  // ...and the budget the sleep clock reads. The kernel said `normal` while the verdict said
+  // the desk was full, so a pane the idle sweep had just slept for room was woken, filled
+  // the budget again and was slept a minute later: s27-muezyz7e slept and woke four times
+  // in twenty minutes on 2026-09-24. See `wakePlan`.
+  room: () => capacityVerdict().roomFor
 })
 /** Keeps userData/desk.json in step with the panes on screen. See restore.ts. */
 const noteDesk = startDeskAutosave(() => manager.snapshot())
@@ -1311,30 +1316,32 @@ remote.on('changed', (state: RemoteState) => {
  * run on a paired device, which is the real answer when a machine is full, so the
  * verdict says when to offer it.
  */
-function publishCapacity(): void {
+/** The verdict itself - what the strip shows, and what the wake queue asks for room. */
+function capacityVerdict(): ReturnType<typeof assess> {
   const mirrored = remote.sessions().length
   const peers = remote.state().peers.filter((p) => p.status === 'online').length
-  send(
-    'capacity:changed',
-    assess({
-      totalMb: totalMb(),
-      pressure: lastPressure,
-      // What a person calls lagging, and it moves minutes before the memory verdict does.
-      load: loadPerCore(),
-      // Panes with an AGENT in them. A sleeping pane (`shared/sleep.ts`) has given its
-      // process back, so counting it says this machine is running work it is not - which
-      // reaches the budget rung as an overshoot and the card as "7 panes hold ~1.3 GB".
-      localPanes: manager.list().filter((s) => !s.asleep).length,
-      remotePanes: mirrored,
-      peerAvailable: peers > 0,
-      // How many agents this desk agreed to run itself. Read live rather than captured:
-      // changing it in Settings has to reach the next reading, which is this one.
-      keepLocal: (getConfig().autoHandoff ?? DEFAULT_AUTO_HANDOFF).keepLocal,
-      // Whether the ladder is going to answer this reading itself. Only decides whether the
-      // strip SAYS it - see `Verdict.say`.
-      willMove: (getConfig().autoHandoff ?? DEFAULT_AUTO_HANDOFF).enabled === true
-    })
-  )
+  return assess({
+    totalMb: totalMb(),
+    pressure: lastPressure,
+    // What a person calls lagging, and it moves minutes before the memory verdict does.
+    load: loadPerCore(),
+    // Panes with an AGENT in them. A sleeping pane (`shared/sleep.ts`) has given its
+    // process back, so counting it says this machine is running work it is not - which
+    // reaches the budget rung as an overshoot and the card as "7 panes hold ~1.3 GB".
+    localPanes: manager.list().filter((s) => !s.asleep).length,
+    remotePanes: mirrored,
+    peerAvailable: peers > 0,
+    // How many agents this desk agreed to run itself. Read live rather than captured:
+    // changing it in Settings has to reach the next reading, which is this one.
+    keepLocal: (getConfig().autoHandoff ?? DEFAULT_AUTO_HANDOFF).keepLocal,
+    // Whether the ladder is going to answer this reading itself. Only decides whether the
+    // strip SAYS it - see `Verdict.say`.
+    willMove: (getConfig().autoHandoff ?? DEFAULT_AUTO_HANDOFF).enabled === true
+  })
+}
+
+function publishCapacity(): void {
+  send('capacity:changed', capacityVerdict())
 }
 
 /**
