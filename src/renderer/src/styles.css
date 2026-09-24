@@ -4965,51 +4965,22 @@ html.handheld .card-x { width: 44px; height: 44px; top: 0; right: 0; font-size: 
 .lane-row.readable { cursor: pointer; }
 .lane-row.readable:hover { border-color: var(--line-strong); }
 
-/* ---- signing in to a browser on another machine ----------------------------
-   The chat keeps the left half of the pane column and the far machine's browser
-   takes the right. `.panes` is PADDED rather than covered, so the pane you are
-   talking to is still a whole pane - drawing a picture on top of it is the thing
-   this feature exists to avoid.
-
+/* ---- a job that cannot sign in -----------------------------------------------
+   The card, in `.corner-stack` with everything else the app puts in that corner.
    Surfaces follow design-vault/linear.app.md, the same ladder the pane header and
-   `.copy-menu` already use here: one hairline `--line`, `--surface` under the
-   header, `--bg` behind the picture, and no card shadow. */
-html.login-open .panes { padding-right: calc(var(--login-w, 50vw) + 6px); }
-.login-split {
-  position: fixed; top: 0; right: 0; width: var(--login-w, 50vw); height: 100vh;
-  z-index: 50;
-  display: flex; flex-direction: column;
-  background: var(--bg);
-  border-left: 1px solid var(--line);
+   `.copy-menu` already use here: one hairline `--line` on `--surface`, no shadow. */
+.login-card {
+  width: 300px; padding: 10px 12px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg);
+  pointer-events: auto;
 }
-.login-head {
-  /* Wrapping is load-bearing, not a nicety: measured 2026-09-07 the row was 32px wider
-     than the column at every window size, so Close sat off the right edge with nothing
-     to scroll it back. */
-  display: flex; align-items: center; flex-wrap: wrap; gap: 8px; row-gap: 5px;
-  padding: 7px 9px;
-  background: var(--surface);
-  border-bottom: 1px solid var(--line);
-  font-size: 12px;
-}
-.login-site, .login-where, .login-who { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.login-who { color: var(--muted); }
-.login-typing {
-  padding: 0 7px; border-radius: 99px;
-  border: 1px solid var(--accent); color: var(--accent-text); background: var(--accent-dim);
-}
-.login-site { font-weight: 600; color: var(--text); text-transform: capitalize; }
-.login-where { color: var(--muted); }
-.login-hint { color: var(--ok); }
-.login-badge {
-  margin-left: auto; padding: 0 6px; border-radius: 99px;
-  border: 1px solid var(--line); color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-/* Only the first badge is pushed to the right; the rest sit beside it. */
-.login-badge ~ .login-badge { margin-left: 0; }
-.login-badge.slow { color: var(--warn); border-color: var(--warn); }
-.login-badge.bad { color: var(--danger); border-color: var(--danger); }
+.login-card-title { font-size: 13px; font-weight: 600; color: var(--text); }
+.login-card-who { margin-top: 3px; font-size: 12px; color: var(--text); }
+/* The body carries the sign-in address, and a real one is hundreds of characters with
+   no space in it (Keap's Thryv page, 2026-09-25): it has to be allowed to break. */
+.login-card-body { margin: 5px 0 9px; font-size: 12px; color: var(--muted); line-height: 1.45; overflow-wrap: anywhere; }
+.login-card-why { margin: -5px 0 9px; font-size: 12px; color: var(--muted); line-height: 1.45; }
+.login-card-row { display: flex; gap: 7px; }
 .login-btn {
   padding: 3px 10px; border-radius: var(--r-sm);
   border: 1px solid var(--line); background: transparent; color: var(--text);
@@ -5018,52 +4989,6 @@ html.login-open .panes { padding-right: calc(var(--login-w, 50vw) + 6px); }
 }
 .login-btn:hover { border-color: var(--accent); }
 .login-btn.primary { border-color: var(--accent); color: var(--accent-text); background: var(--accent-dim); }
-/* The edge you drag to make the column wider. A hairline that answers a 8px reach,
-   the same trick the pane splitter uses: the border is what is seen, the padding is
-   what is hit. */
-.login-grip {
-  position: absolute; left: -4px; top: 0; bottom: 0; width: 9px;
-  cursor: col-resize; z-index: 1;
-  touch-action: none;
-}
-.login-grip:hover, .login-grip:active { background: var(--accent-dim); }
-.login-zoom { display: flex; gap: 4px; align-items: center; }
-.login-zoom .login-btn { min-width: 30px; padding: 3px 7px; text-align: center; }
-.login-screen { position: relative; flex: 1; min-height: 0; overflow: hidden; cursor: default; }
-.login-canvas { display: block; width: 100%; height: 100%; object-fit: fill; }
-/* The pointer, drawn here the instant the mouse moves so it never waits on a frame. */
-.login-spot {
-  position: absolute; width: 12px; height: 12px; margin: -6px 0 0 -6px;
-  border: 1px solid var(--accent); border-radius: 99px;
-  pointer-events: none;
-}
-.login-tip {
-  position: absolute; left: 0; right: 0; bottom: 0;
-  padding: 6px 9px; font-size: 12px; color: var(--muted);
-  background: var(--surface); border-top: 1px solid var(--line);
-}
-.login-screen.typing { outline: 1px solid var(--accent); outline-offset: -1px; }
-.login-failed { padding: 14px; color: var(--text); font-size: 12px; overflow: auto; }
-.login-failed pre { white-space: pre-wrap; color: var(--muted); }
-
-/* The card, in `.corner-stack` with everything else the app puts in that corner. */
-.login-card {
-  width: 300px; padding: 10px 12px;
-  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg);
-  pointer-events: auto;
-}
-.login-card-title { font-size: 13px; font-weight: 600; color: var(--text); }
-.login-card-who { margin-top: 3px; font-size: 12px; color: var(--text); }
-.login-card-body { margin: 5px 0 9px; font-size: 12px; color: var(--muted); line-height: 1.45; }
-.login-card-why { margin: -5px 0 9px; font-size: 12px; color: var(--muted); line-height: 1.45; }
-.login-card-row { display: flex; gap: 7px; }
-
-/* A phone is not a second desk here: the picture is a desk-sized browser and the
-   keyboard is a desk keyboard. The card still shows, so the request is not lost. */
-@media (max-width: 720px) {
-  html.login-open .panes { padding-right: 6px; }
-  .login-split { display: none; }
-}
 
 /* What the card can SEE of the step it just showed - the half no node suite can answer.
    Same row shape as a check verdict, one step quieter. */

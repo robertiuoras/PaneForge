@@ -172,21 +172,13 @@ export const COMMANDS = [
   },
   {
     name: 'needs-login',
-    summary: 'Put a sign-in card on screen asking a person to sign in to a site for you.',
-    usage:
-      'pf needs-login <site> --url <url> [--why TEXT] [--host user@ip] [--port N] [--machine WORDS] [--open]\n' +
-      '        [--desk user@ip] [--me user@ip] [--report-to PANE]',
-    example: 'pf needs-login github --url https://github.com/login --why "push the release branch"',
+    summary: 'Say a job cannot sign in: a "needs you" card names the site, and the pane is marked.',
+    usage: 'pf needs-login <site> --url <url> [--why TEXT] [--machine WORDS]',
+    example: 'pf needs-login keap --url https://keap.com/login --why "finish the footer check"',
     detail: [
-      '--desk user@ip puts the card on another computer (over ssh) - where the person is.',
-      'The pane that asked is told once the person has signed in.'
+      'Opens nothing and connects to nothing: the person signs in themselves, then presses the card.',
+      'Pressing Signed in tells the pane that asked to carry on. --machine names the computer if it is not this one.'
     ]
-  },
-  {
-    name: 'login',
-    summary: 'Reopen the sign-in this pane asked for last, straight to the picture.',
-    usage: 'pf login [url] [--site NAME] [--host user@ip] [--port N] [--machine WORDS]',
-    example: 'pf login'
   },
   {
     name: 'hold',

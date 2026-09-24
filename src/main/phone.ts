@@ -141,14 +141,9 @@ const DESK_ONLY = new Set([
 const GATED_SEND = new Set([
   // Reviewed 2026-09-07. Both end in a line arriving in a pane's composer: `pane:tell`
   // hands one to a named pane, and `login:done` tells whichever pane asked for the
-  // sign-in that the wall is down - over ssh, when that pane is on the other desk. The
-  // sign-in picture is a desk surface (a phone never draws it), so gating these costs a
-  // phone nothing it could have used.
+  // sign-in that the wall is down.
   'pane:tell',
   'login:done',
-  // It types into a browser that is signed in to somebody's accounts, on a machine the
-  // person holding the phone may not be near. Strictly worse than `pty:write`.
-  'login:input',
   // It kills a process: the countdown card's `Close now`. The invoke half, `devs:stop`,
   // is gated for the same reason.
   'devs:stopNow',
@@ -174,10 +169,8 @@ const GATED_INVOKE = new Set([
   'reviews:open',
   // Binds a compute job to a shell pane, which is then CLOSED when the job's result lands.
   'sessions:watchCompute',
-  // `login:need` puts a card on the desk that offers to open a browser; `login:open`
-  // opens an ssh forward and drives a browser through it. Both start something.
+  // `login:need` puts a card on the desk and marks a pane as needing a person.
   'login:need',
-  'login:open',
   // Reviewed 2026-08-31. `projects:create` writes a directory into the projects root from
   // a name somebody typed. `shared/projectName.ts` refuses every name that could mean a
   // folder somewhere else, so the worst case is an empty folder with an odd name - but it

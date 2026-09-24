@@ -219,21 +219,13 @@ export const SURFACE: Surface = {
   // A queued move's own countdown - it started once the turn ended, separate from the
   // idle/pressure countdowns `MoveSoon.tsx` already draws. See handoffQueue.ts `soon`.
   onHandoffSoon: ['on', 'remote:handoffSoon'],
-  // Signing in to a browser on another machine - see shared/remoteLogin.ts. The frames
-  // are an `on`, so a phone watching the same desk gets the picture for free; the ack
-  // that asks for the NEXT one is a send, and ordered with respect to the input, which
-  // is what keeps a keystroke from overtaking the frame it was typed into.
+  // A job that cannot sign in - see shared/signIn.ts. A card and a mark on the pane that
+  // asked; nothing is opened.
   loginRequests: ['invoke', 'login:list'],
   needsLogin: ['invoke', 'login:need'],
-  openLogin: ['invoke', 'login:open'],
-  closeLogin: ['send', 'login:close'],
   doneLogin: ['send', 'login:done'],
   tellPane: ['send', 'pane:tell'],
   dismissLogin: ['send', 'login:dismiss'],
-  loginInput: ['send', 'login:input'],
-  loginPainted: ['send', 'login:ack'],
-  loginSize: ['send', 'login:size'],
-  onLoginFrame: ['on', 'login:frame'],
   onLogins: ['on', 'login:changed'],
   askAutoClear: ['invoke', 'autoclear:ask'],
   cancelAutoClear: ['invoke', 'autoclear:cancel'],

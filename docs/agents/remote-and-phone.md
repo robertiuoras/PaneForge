@@ -1,4 +1,4 @@
-# Two machines, remote login, offload, the phone surface
+# Two machines, sign-in requests, offload, the phone surface
 
 Verbatim sections moved out of the repo's always-loaded instructions (`AGENTS.md`),
 same headings as `docs/design-notes.md` (the why). Paths: `shared/` = `src/shared/`, `main/` =
@@ -27,20 +27,17 @@ same headings as `docs/design-notes.md` (the why). Paths: `shared/` = `src/share
   commit, conversation, screen, dev servers; mid-turn queued; sender closes on ack, becomes
   mirror; dirty/unpushed refused by name; paths grafted (`test:handoff`, `test:handofffit`).
 
-## A password gets typed on the machine that needs it
+## A job that cannot sign in says so
 
-`pf needs-login <site> --url <url> [--host user@ip] [--port 9333] [--machine WORDS]` -> card;
-press splits the window, that machine's Chrome right. `shared/remoteLogin.ts`,
-`main/remoteLogin.ts`, `RemoteLoginView.tsx`, `LoginCard.tsx`; `test:remotelogin`. ONE frame
-in flight (`Page.screencastFrame` -> paint -> `login:ack` -> `Page.screencastFrameAck`);
-mid-paint frame REPLACES. `STEPS` 60/40/30 at 1440/960/720; rtt median over `RTT_WINDOW` 20
-past `LAGGY_MS` 250 drops a rung, `SLOW_MS` 600 to last; `GOOD_RUN` 20 under `GOOD_MS` 150
-buys back; `remote-login.log`; `PF_REMOTE_LOGIN_FAKE_LAG_MS`. Tunnel `ssh -N -L
-<free>:127.0.0.1:<port> <host>` `BatchMode=yes` `ExitOnForwardFailure=yes`, port from
-`net.createServer`, 15s then stderr on card. Coordinates in MAIN (`toRemotePoint`);
-`mapMetaToCtrl`; Cmd/Ctrl+W/+Q/+N never forwarded; paste = `Input.insertText`.
-`login:need`/`open`/`input` GATED, `login:list` safe; renderer never speaks CDP. Chrome stays
-up; `shutdownLogins()` on quit. NOT `peerChrome.ts`.
+`pf needs-login <site> --url <url> [--why TEXT] [--machine WORDS]` -> `login:need` ->
+`main/signIn.ts` list -> `LoginCard.tsx` ("<Site> needs you to sign in", address, pane,
+wait) + asking pane's row red with a `sign in` chip (`alarmIds`, `signInFor`). Opens NOTHING:
+no browser, no Chrome connection, no ssh, no other computer. `Signed in` = `login:done` ->
+`tellPane(from, signedInWords)`; `Not now` = `login:dismiss`. Same site+machine = one card.
+`--host/--port/--open/--desk/--me/--pf/--report-to/--report-host` and `pf login` refused by
+name. `sign-in.log`; `test:signin`. The live-picture version (CDP screencast over an ssh
+tunnel, `--desk` relay) was REMOVED 2026-09-25: `docs/specs/remote-login-pane.md` says why
+and names the last commit that has it.
 
 ## A new pane starts where the work can run
 

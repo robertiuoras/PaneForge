@@ -25,11 +25,9 @@
  *                                       [--resume <chat-id> | --continue] [--here | --on <device>]
  *   node scripts/pf-ctl.mjs open-many <plan.json>
  *   node scripts/pf-ctl.mjs devices
- *   node scripts/pf-ctl.mjs needs-login <site> --url <url> [--host user@ip] [--port N] [--machine WORDS]
- *                                        [--why "what it will do once signed in"] [--open]
- *                                        [--desk user@ip] [--me user@ip] [--report-to <pane>]
+ *   node scripts/pf-ctl.mjs needs-login <site> --url <url> [--machine WORDS]
+ *                                        [--why "what it will do once signed in"]
  *   node scripts/pf-ctl.mjs tell <title-or-id> <text...>
- *   node scripts/pf-ctl.mjs login [url] [--site NAME] [--host user@ip] [--port N] [--machine WORDS]
  *   node scripts/pf-ctl.mjs close <title-or-id>
  *   node scripts/pf-ctl.mjs review <review.json>   record an agent completion/decision/blocked result
  *   node scripts/pf-ctl.mjs watch-job <job-id> --owner <native-id> --pane <exact-local-id>
@@ -58,7 +56,6 @@
  *
  * Exit codes: 0 ok · 1 target not found / call failed · 2 phone server unreachable/off.
  */
-import { spawnSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -261,138 +258,63 @@ if (!cmd || cmd === 'help' || cmd === '--help' || cmd === '-h') {
   console.log(one)
   process.exit(0)
 }
+// A command agents were taught and that is gone is answered with what replaced it, rather
+// than with the list of everything. `pf login` opened the sign-in picture until 2026-09-25.
+const RETIRED = {
+  login:
+    'pf login was removed with the sign-in picture. To say a job cannot sign in: pf needs-login <site> --url <url> [--why TEXT]'
+}
+if (Object.hasOwn(RETIRED, cmd)) fail(1, RETIRED[cmd])
 if (!isCommand(cmd))
   fail(
     1,
-    `unknown command "${cmd}" - use: help | list | agents | open | open-many | devices | tell | type | composer | close | close-when-done | tidy | move | rename | review | watch-job | needs-login | login | hold | cost | reload | call | send - run: pf help`
+    `unknown command "${cmd}" - use: help | list | agents | open | open-many | devices | tell | type | composer | close | close-when-done | tidy | move | rename | review | watch-job | needs-login | hold | cost | reload | call | send - run: pf help`
   )
 if (rest[0] === '--help' || rest[0] === '-h') {
   console.log(commandHelp(cmd))
   process.exit(0)
 }
 
-/*
- * A sign-in request is checked BEFORE the app is asked for anything.
- *
- * The whole point of the card is that a person walks over to it and types a password, so
- * an ask that names no site, or an address that is not an address, must cost nobody that
- * walk. It refuses here, where the mistake was made, rather than putting up a card that
- * opens a browser at nothing.
- */
-
-/** One argument, safe inside the single command line ssh hands to a shell. */
+/** One argument, safe to paste into a shell as a single word. */
 function shellQuote(word) {
   if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(word)) return word
   return `'${String(word).replace(/'/g, `'"'"'`)}'`
 }
 
-/** This machine's ssh address, for the other desk to reach back on. */
-function selfAddress() {
-  const who = process.env.USER || process.env.USERNAME
-  if (!who) return undefined
-  const ts = spawnSync('tailscale', ['ip', '-4'], { encoding: 'utf8' })
-  const ip = (ts.stdout ?? '').split(/\r?\n/).map((l) => l.trim()).find(Boolean)
-  return ip ? `${who}@${ip}` : undefined
-}
-
-/**
- * The one command that puts the card on the OTHER desk. Same shape as `relayCommand` in
- * src/shared/remoteLogin.ts, which is where the rules are written down.
+/*
+ * A sign-in request is checked BEFORE the app is asked for anything.
+ *
+ * The whole point of the card is that a person walks over to it and signs in, so an ask
+ * that names no site, or an address that is not an address, must cost nobody that walk.
+ * It refuses here, where the mistake was made, rather than putting up a card that sends
+ * a person to nothing.
  */
-function relayCommand(a) {
-  const desk = (a.desk ?? '').trim()
-  if (!desk) return { ok: false, why: 'Say which computer should show the card, like: --desk robert@100.89.94.66' }
-  const self = (a.me ?? selfAddress() ?? '').trim()
-  if (!self)
-    return {
-      ok: false,
-      why: 'The other desk has to be able to reach this machine back - pass --me user@address (or set PF_SSH_SELF)'
-    }
-  const words = ['needs-login', a.site, '--url', a.url, '--host', self, '--open']
-  if (a.port) words.push('--port', String(a.port))
-  if (a.machine) words.push('--machine', a.machine)
-  if (a.why) words.push('--why', a.why)
-  if (a.reportTo) words.push('--report-to', a.reportTo, '--report-host', self)
-  const args = words.map(shellQuote).join(' ')
-  // An ssh command reads no profile, so neither `pf` nor `node` is on the PATH over
-  // there; a LOGIN shell has the paths a person's own terminal has.
-  // The checkout first, the `pf` link second: running the link through a login shell
-  // printed nothing and exited 0 on this Mac, which looks exactly like success.
-  const inner = `node "$HOME/Projects/PaneForge/scripts/pf-ctl.mjs" ${args} || pf ${args}`
-  const remote = a.pf ? `${a.pf} ${args}` : `bash -lc ${shellQuote(inner)}`
-  return {
-    ok: true,
-    remote,
-    // `-n`: ssh reads its own stdin, and a spawn that hands it a pipe nobody closes hangs.
-    argv: ['-n', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-o', 'StrictHostKeyChecking=accept-new', desk, remote]
-  }
-}
+
+/*
+ * The flags `needs-login` took while it could open a live picture of the automation
+ * browser (removed 2026-09-25, see docs/specs/remote-login-pane.md). Each one promised
+ * something that no longer happens - a tunnel, a picture, a card on the other computer -
+ * so it is refused by name rather than quietly dropped.
+ */
+const REMOVED_LOGIN_FLAGS = ['--host', '--port', '--open', '--desk', '--me', '--pf', '--report-to', '--report-host']
 
 let loginArgs = null
 if (cmd === 'needs-login') {
-  const host = flag(rest, '--host')
-  const port = flag(rest, '--port')
+  const removed = REMOVED_LOGIN_FLAGS.find((f) => rest.includes(f))
+  if (removed)
+    fail(
+      1,
+      `${removed} was removed with the sign-in picture - pf needs-login now only puts a "needs you" card on the computer it runs on. Say which computer the sign-in is for with --machine.`
+    )
   const machine = flag(rest, '--machine')
   const url = flag(rest, '--url')
   const why = flag(rest, '--why')
-  const desk = flag(rest, '--desk')
-  const pf = flag(rest, '--pf')
-  const me = flag(rest, '--me') ?? process.env.PF_SSH_SELF
-  // A pane that asked is the pane to tell, so `--report-to` only has to be typed by
-  // something that is not a pane (a cron job telling a pane on another machine).
-  const reportTo = flag(rest, '--report-to') ?? process.env.PF_PANE
-  const reportHost = flag(rest, '--report-host')
   const site = rest[0]
-  if (!site) fail(1, 'needs-login needs a site: pf-ctl needs-login <site> --url <url> [--host user@ip]')
+  if (!site) fail(1, 'needs-login needs a site: pf needs-login <site> --url <url>')
   if (!url) fail(1, 'needs-login needs --url <address of the sign-in page>')
   if (!/^https?:\/\//i.test(url))
     fail(1, `--url must start with http:// or https:// - got "${url}"`)
-  if (port && !/^\d+$/.test(port)) fail(1, `--port must be a number - got "${port}"`)
-  loginArgs = {
-    site,
-    url,
-    host,
-    port: port ? Number(port) : undefined,
-    machine,
-    why,
-    reportTo,
-    reportHost,
-    open: rest.includes('--open') || undefined,
-    from: process.env.PF_PANE,
-    // Not sent to the app: `--desk` means this ask is not for THIS app at all.
-    desk,
-    me,
-    pf
-  }
-}
-
-/*
- * `pf login` is the same ask, said the short way, by the session that already hit the wall.
- *
- * Robert, 2026-09-03: "allow me to just ask, like that session who wanted it, to open
- * again the login and it knows how to open it." So this names no site and no computer -
- * the app remembers what this pane asked for last (`askAgain` in shared/remoteLogin.ts) -
- * and it does not put a card up to be clicked: the picture opens.
- */
-let reopenArgs = null
-if (cmd === 'login') {
-  const host = flag(rest, '--host')
-  const port = flag(rest, '--port')
-  const machine = flag(rest, '--machine')
-  const site = flag(rest, '--site')
-  const url = rest[0]
-  if (url && !/^https?:\/\//i.test(url))
-    fail(1, `a sign-in page starts with http:// or https:// - got "${url}"`)
-  if (port && !/^\d+$/.test(port)) fail(1, `--port must be a number - got "${port}"`)
-  reopenArgs = {
-    site,
-    url,
-    host,
-    port: port ? Number(port) : undefined,
-    machine,
-    from: process.env.PF_PANE,
-    open: true
-  }
+  loginArgs = { site, url, machine, why, from: process.env.PF_PANE }
 }
 
 /**
@@ -495,35 +417,6 @@ if (cmd === 'move') {
   moveArgs = { ref, to, model }
 }
 
-// The card belongs on the OTHER computer, because that is where the person is - so this
-// ask never reaches the app on this machine, and runs before one is even looked for. The
-// hop is ssh and not the desk-to-desk link on purpose: a scheduled job hits its sign-in
-// wall whether or not the two desks are paired, and often with no PaneForge running on
-// its own machine at all.
-if (cmd === 'needs-login' && loginArgs?.desk) {
-  const relay = relayCommand(loginArgs)
-  if (!relay.ok) fail(1, relay.why)
-  // `PF_SSH` stands in for the ssh binary when this is being tested. Windows has no `echo`
-  // binary to point it at and cannot spawn a `.cmd` without a shell, so the JSON form
-  // `["<binary>", "<leading arg>"]` lets a test name an interpreter and the script it runs.
-  const sshCmd = process.env.PF_SSH ?? 'ssh'
-  const [sshBin, ...sshLead] = sshCmd.startsWith('[') ? JSON.parse(sshCmd) : [sshCmd]
-  const ssh = spawnSync(sshBin, [...sshLead, ...relay.argv], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe']
-  })
-  const said = `${ssh.stdout ?? ''}${ssh.stderr ?? ''}`.trim()
-  if (ssh.status !== 0)
-    fail(1, `could not ask ${loginArgs.desk} to show the sign-in card: ${said || `ssh exited ${ssh.status}`}`)
-  // The far desk answers with the request's own id. Nothing at all is a FAILED ask - a
-  // silent exit 0 is what a missing command over ssh looks like, and reporting that as a
-  // card being up leaves a job waiting on something nobody can see.
-  if (!/login-\S+/.test(said) && !process.env.PF_SSH)
-    fail(1, `${loginArgs.desk} did not put a sign-in card up${said ? `: ${said}` : ' and said nothing'}`)
-  console.log(said || 'asked')
-  process.exit(0)
-}
-
 if (process.env.PF_CTL_NO_APP === '1') process.exit(0)
 
 await pair()
@@ -570,11 +463,11 @@ if (cmd === 'list') {
   const list = await sessions()
   // The number leads, because it is the name on the card. See `resolve`.
   for (const [i, s] of list.entries()) console.log([i + 1, s.id, s.status, s.title, s.cwd].join('\t'))
-  // A sign-in request is not a pane yet - it is a card waiting for somebody - so it is
-  // listed too, and says which computer it is waiting on.
+  // A sign-in request is not a pane - it is a card waiting for somebody - so it is listed
+  // too, and says which computer it is waiting on.
   const logins = (await call('login:list', [])) ?? []
   for (const r of logins)
-    console.log([r.id, r.state, `Sign in to ${r.site} on ${r.machine}`, r.url].join('\t'))
+    console.log([r.id, 'needs you', `Sign in to ${r.site} on ${r.machine}`, r.url].join('\t'))
 } else if (cmd === 'agents') {
   // The running app's own catalogue, so an agent the person added is here too, and
   // "installed" is this computer's answer rather than a list baked into this file.
@@ -805,10 +698,6 @@ if (cmd === 'list') {
   const req = await call('login:need', [loginArgs])
   if (!req?.id) fail(1, 'PaneForge did not accept the sign-in request')
   console.log(req.id)
-} else if (cmd === 'login') {
-  const req = await call('login:need', [reopenArgs])
-  if (!req?.id) fail(1, 'PaneForge did not accept the sign-in request')
-  console.log(`sign in to ${req.site} on ${req.machine} - the picture is on screen now`)
 } else if (cmd === 'open') {
   const title = flag(rest, '--title')
   // A pane opened on a backlog task is briefed FROM the task: the app compiles the prompt

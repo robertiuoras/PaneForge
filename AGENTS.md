@@ -15,8 +15,8 @@ linked below. `test:x` = `npm run test:x`. Paths: `shared/` = `src/shared/`, `ma
 
 - `docs/agents/lanes-and-releases.md`: read when touching `scripts/lane.mjs`, claims/peers, the
   dev-window tour, a version release, the updater, Windows install/feed, or why the app quit.
-- `docs/agents/remote-and-phone.md`: read when touching `src/main/remote/`, pairing, remote
-  login, offload, screen streaming, the phone/web surface, `pf-ctl`, or touch layout.
+- `docs/agents/remote-and-phone.md`: read when touching `src/main/remote/`, pairing,
+  `pf needs-login`, offload, screen streaming, the phone/web surface, `pf-ctl`, or touch layout.
 - `docs/agents/pane-lifecycle.md`: read when touching prompt sending, restore/scrollback,
   `/clear`, booting, pane width, recovery, auto-close into Review, autoclear, keep-awake, stale
   frames, render watchdog, fault notices.

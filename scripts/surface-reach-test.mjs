@@ -36,7 +36,7 @@ const surfaceFile = path.join(root, 'src', 'shared', 'surface.ts')
  */
 const DESK_SIDE = {
   recordReview: 'pf-ctl review - explicit agent result publishing, guarded phone invoke',
-  tellPane: 'pf tell <pane> "..." - how the far desk says "signed in" to the pane that asked',
+  tellPane: 'pf tell <pane> "..." - one line handed to a pane from outside the window',
   // A pane says of ITSELF that it should go once it is done. The person who would press a
   // button for this is the person who would simply close the pane; the caller that cannot
   // is the agent inside it, at the end of its own work.
@@ -70,9 +70,9 @@ const DESK_SIDE = {
   draft: 'pf composer <pane> - another chat reading a composer it cannot see',
   renderCost: 'pf cost [--seconds N] - profiling a window from outside it is the whole point',
   reloadWindow: 'pf reload - handing back a window nobody can reach to press Cmd+R in',
-  // The whole point of it is that the ask comes from OUTSIDE the window: a scheduled job
-  // that hit a login wall. The window only ever answers one - `openLogin` and the card.
-  needsLogin: 'pf needs-login <site> --url <url> - a script that cannot type a password',
+  // The whole point of it is that the ask comes from OUTSIDE the window: a job that hit a
+  // sign-in wall. The window only ever answers one - the card's two buttons.
+  needsLogin: 'pf needs-login <site> --url <url> - a job that cannot sign in by itself',
   taskBrief: 'pf-ctl open --task - the app compiles the brief, no control in the window',
 }
 

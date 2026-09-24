@@ -4662,7 +4662,24 @@ corner, so the commonest desk got a small bubble beside an animal. `MoveSoon` is
 always drawn and the mascot no longer draws the count at all - it still walks to the pane
 and wears `.alert` while one is running.
 
-## A password gets typed on the machine that needs it
+## A job that cannot sign in says so
+
+**2026-09-25: the live picture was removed; the card stays.** `pf needs-login` now puts up
+a card naming the site, the address, the computer and the pane that asked, and marks that
+pane's row red with a `sign in` chip. It opens nothing. What happened: a Claude pane
+working for a client was asked by Robert to set up a morning reminder for a Keap sign-in.
+It read `claude-config/reference/paneforge-panes.md`, which told agents to run `pf login
+<url>` at any sign-in wall, and `pf login` means "open the picture now" - so the picture
+opened on the desk by itself at 05:10, with no person asking for it. Keap bounced to its
+Thryv sign-in page, and because the host changed, `looksSignedIn` marked the request
+"signed in" two seconds later while it was still the sign-in page. Robert: "remove this
+feature paneforge for remote accees its terrible and doesnt work properly will need to
+build another time proerly." The asking half (a job raising its hand, and being told to
+carry on) was the part that worked, so that is what was kept. The notes below are the
+removed picture's, kept for whoever rebuilds it; `docs/specs/remote-login-pane.md` lists
+what a rebuild must do differently.
+
+### What the removed picture was (historical)
 
 Robert's scheduled work runs on the PC so it keeps running while the Mac is asleep. That
 was fine until a sweep hit a login wall: the job stops, nothing says so, and the only way

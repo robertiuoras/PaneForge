@@ -114,8 +114,7 @@
     "test:pulls": "node scripts/pulls-test.mjs",
     "test:tokentally": "node scripts/token-tally-test.mjs",
     "test:discordbrand": "node scripts/discord-brand-test.mjs",
-    "test:remotelogin": "node scripts/remote-login-test.mjs",
-    "test:loginkeys": "node scripts/login-keys-test.mjs",
+    "test:signin": "node scripts/sign-in-test.mjs",
     "test:remote": "node scripts/remote-test.mjs",
     "test:remoteversion": "node scripts/remote-version-test.mjs",
     "test:deadlink": "node scripts/deadlink-test.mjs",
@@ -347,8 +346,7 @@
   },
   "dependencies": {
     "@lydell/node-pty": "1.2.0-beta.12",
-    "electron-updater": "^6.8.9",
-    "ws": "^8.18.0"
+    "electron-updater": "^6.8.9"
   },
   "devDependencies": {
     "@huggingface/transformers": "^4.2.0",

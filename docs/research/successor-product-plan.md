@@ -13,7 +13,7 @@ One shared concept: a **task** is a business commitment with a goal, an owner (a
 | Research a question with sources | Chat or Taskdriver | PaneForge Chat (Research teammate) | Work: accepted brief | task with evidence |
 | Weekly business review | Chat | PaneForge Chat over Taskdriver records | Chat, decisions written back to Taskdriver | saved chat linked to tasks |
 | Engineering change on a repo | PaneForge Code | PaneForge Code (terminal, diff, tests) | Work: ready to review | task linked to a checkout |
-| Sign in to a site for a job on the other machine | `pf needs-login` | PaneForge login view | none | task step, not a task |
+| Sign in to a site for a job on the other machine | `pf needs-login` | PaneForge "needs you" card (live picture removed 2026-09-25) | none | task step, not a task |
 
 Team concept: **Astra** (placeholder name) is the one point of contact. **Persistent teammates** (Research, Sales support, Marketing, Delivery, Engineering) own a responsibility, scoped memory and a results history. **Workers** are execution sessions (a Claude or Codex CLI in a pane, or a headless run) and end when the task step ends. A teammate never equals a running model session; ten identities do not mean ten CLIs.
 
