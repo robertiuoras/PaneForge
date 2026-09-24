@@ -4030,7 +4030,12 @@ const PROMOTE_POLL_MS = Number(process.env.PF_PROMOTE_POLL_MS ?? 60 * 60 * 1000)
  * and the caller should write.
  */
 function autoPromote(state) {
-  if (RELEASE !== 'version') return null
+  // Every mode that releases at all, not only 'version'. In 'merge' mode versions are cut
+  // by hand on Robert's word, and gating this on 'version' froze stable on v0.8.179 for
+  // 24 days (2026-08-31 to 09-24) while 46 dev builds shipped; a friend on the public
+  // build never saw any of them. Robert, 2026-09-24: stable keeps up by itself after the
+  // soak. A hand-cut build still has to soak and pass promote()'s checks.
+  if (RELEASE === 'none') return null
   const repo = githubPublish()
   if (!repo) return null
   if (state.promoteAt && now() < state.promoteAt) return null

@@ -54,11 +54,11 @@ const ok = (name, cond, detail) => {
 
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: 'pipe' }).trim()
 
-function buildRepo(name, extra) {
+function buildRepo(name, extra, release = 'version') {
   const repo = join(root, name)
   mkdirSync(repo, { recursive: true })
   writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'x', version: '0.0.2', ...extra }, null, 2) + '\n')
-  writeFileSync(join(repo, '.lanes.json'), JSON.stringify({ release: 'version' }, null, 2) + '\n')
+  writeFileSync(join(repo, '.lanes.json'), JSON.stringify({ release }, null, 2) + '\n')
   git(repo, 'init', '-q', '-b', 'master')
   git(repo, 'config', 'user.email', 'test@example.com')
   git(repo, 'config', 'user.name', 'test')
@@ -364,6 +364,20 @@ git(repoRetry, 'tag', 'v0.0.2')
   const second = retry(repoThrottle, goodRelease(new Date().toISOString()), poll)
   ok('the first retry looks at the channel', first.looked, JSON.stringify(first.log))
   ok('a second retry inside the poll window does not', !second.looked, JSON.stringify(second.log))
+}
+
+// 11. merge mode (versions cut by hand) still promotes a soaked build; 'none' never looks.
+// Gating this on 'version' alone froze stable on v0.8.179 for 24 days.
+{
+  const publish = { build: { publish: [{ provider: 'github', owner: 'o', repo: 'r' }] } }
+  const repoMerge = buildRepo('retry-merge-mode', publish, 'merge')
+  git(repoMerge, 'tag', 'v0.0.2')
+  const merged = retry(repoMerge, goodRelease(soakedAt))
+  ok('merge mode promotes a soaked build too', merged.edited && /Promoted v0\.0\.2 to stable/.test(merged.out), merged.out)
+  const repoNone = buildRepo('retry-none-mode', publish, 'none')
+  git(repoNone, 'tag', 'v0.0.2')
+  const none = retry(repoNone, goodRelease(soakedAt))
+  ok("release 'none' never looks at the channel", !none.looked && !none.edited, JSON.stringify(none.log))
 }
 
 rmSync(root, { recursive: true, force: true })
