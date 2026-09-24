@@ -1329,13 +1329,23 @@ export class SessionManager extends EventEmitter {
       // background shell does. See `Session.subagent`.
       backJob: live.meta.backJob ?? live.meta.subagent
     }
+    // An idle sweep's reading is taken when its countdown is ARMED, fifteen seconds before
+    // this runs, and that number used to be the one logged: `idleMs 45371 < thresholdMs
+    // 60000` on s17-muexgy28 (2026-09-24), a pane that was a full 60.0s quiet by the time
+    // it slept. So the idle time is measured again here, off the same last-keystroke and
+    // last-output stamps the sweep reads, and the armed reading is kept beside it.
+    const sweep = evidence?.source === 'renderer-idle-sweep'
+    const quietAt = Math.max(live.meta.lastKeyboard ?? 0, live.meta.lastOutput ?? 0)
+    const idleNow = sweep && quietAt ? Date.now() - quietAt : undefined
+    const armedIdleMs = Number.isFinite(evidence?.idleMs) ? evidence!.idleMs : undefined
     // These are measured before killing the process. Explicit fields keep caller-supplied
     // data out of the log: never spread an IPC payload which could contain prompt text.
     const decision = {
       reason,
       source: (SLEEP_SOURCES as readonly string[]).includes(evidence?.source ?? '') ? evidence!.source : 'internal',
       pressure: ['ok', 'tight', 'over'].includes(evidence?.pressure ?? '') ? evidence!.pressure : undefined,
-      idleMs: Number.isFinite(evidence?.idleMs) ? evidence!.idleMs : undefined,
+      idleMs: idleNow ?? armedIdleMs,
+      armedIdleMs: idleNow === undefined ? undefined : armedIdleMs,
       thresholdMs: Number.isFinite(evidence?.thresholdMs) ? evidence!.thresholdMs : undefined,
       status: live.meta.status, processPid: live.proc?.pid, agent: live.meta.agent,
       busy: reading.busy, asking: reading.asking, drafting: reading.drafting,
@@ -1356,6 +1366,14 @@ export class SessionManager extends EventEmitter {
       // and every word about why went to a log file. A refusal of a press is a sentence
       // on screen or it is a broken button.
       this.emit('sleepRefused', id, why)
+      return null
+    }
+    // ...and a pane that printed or was typed into during the count is not the pane the
+    // sweep picked: refused. A second of slack, because the deadline IS the threshold and a
+    // timer landing a millisecond early is not a pane that woke up. Inline for the same
+    // reason as the five minutes below: `sleep-test.mjs` evals this method on its own.
+    if (idleNow !== undefined && decision.thresholdMs !== undefined && idleNow < decision.thresholdMs - 1000) {
+      logReclaim({ action: 'sleep-refused', pane: id, ...decision, refusal: 'under-idle-threshold' })
       return null
     }
     // An unnamed provider resume selects some other conversation. Do this before the

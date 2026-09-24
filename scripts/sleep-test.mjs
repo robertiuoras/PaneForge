@@ -257,6 +257,41 @@ is(decision.resumeId, 'exact-conversation', 'decision identifies the conversatio
 is(decision.processPid, 1, 'decision identifies the process it will stop')
 is(decision.thresholdMs, 30_000, 'decision explains the shortened pressure threshold')
 is(reclaimEvents.at(-1).action, 'sleep', 'successful sleep has a separate completion record')
+// The idle time an idle sweep's sleep is logged under is measured at the DEADLINE, not
+// carried from the arm (s17-muexgy28, 2026-09-24: logged 45371ms against a 60000ms
+// threshold on a pane that was 60.0s quiet) - and a pane that printed during the count
+// is refused rather than slept under it.
+{
+  // A fresh pane each time: a sleep rewrites the meta it was handed. Its own kill count,
+  // because the checks below this block count the fixture pane's.
+  let kills = 0
+  const pane = (id, outputAgo, pid) => ({
+    meta: { id, agent: 'codex', cwd: '/fixture', status: 'idle', lastKeyboard: Date.now() - 300_000, lastOutput: Date.now() - outputAgo },
+    req: {}, busyUntil: 0, buffer: { push() {} }, proc: { pid, kill: () => kills++ }
+  })
+  manager.sessions.set('quiet', pane('quiet', 61_000, 2))
+  const before = 0
+  ok(manager.sleep('quiet', 'pressure', { source: 'renderer-idle-sweep', pressure: 'tight', idleMs: 45_000, thresholdMs: 60_000 })?.asleep,
+    'a pane past its threshold at the deadline sleeps even though it was under it when armed')
+  const slept = reclaimEvents.filter((row) => row.pane === 'quiet' && row.action === 'sleep').at(-1)
+  ok(slept.idleMs >= 61_000 && slept.idleMs < 70_000, `the sleep is logged under the idle time at the deadline (${slept.idleMs})`)
+  is(slept.armedIdleMs, 45_000, '...with the armed reading kept beside it')
+  is(kills, before + 1, 'that sleep really ended the process')
+
+  manager.sessions.set('woke', pane('woke', 5_000, 3))
+  is(manager.sleep('woke', 'pressure', { source: 'renderer-idle-sweep', pressure: 'tight', idleMs: 59_000, thresholdMs: 60_000 }), null,
+    'a pane that printed during the countdown is refused')
+  const refused = reclaimEvents.filter((row) => row.pane === 'woke').at(-1)
+  is(refused.refusal, 'under-idle-threshold', '...and the refusal says why')
+  ok(refused.idleMs < 10_000, '...under the idle time measured now')
+  is(kills, before + 1, 'the refused pane kept its process')
+
+  manager.sessions.set('edge', pane('edge', 59_600, 4))
+  ok(manager.sleep('edge', 'pressure', { source: 'renderer-idle-sweep', pressure: 'tight', idleMs: 45_000, thresholdMs: 60_000 })?.asleep,
+    'a deadline timer landing a moment early is not a pane that woke up')
+  manager.sessions.set('hand', pane('hand', 1_000, 5))
+  ok(manager.sleep('hand', 'manual', { source: 'menu' })?.asleep, 'a press is never held to the sweep threshold')
+}
 is(reclaimEvents.filter(row => row.refusal === 'conversation-unverified').length, 1, 'repeated missing-conversation refusals write one diagnostic')
 // A refusal that names only itself cannot be diagnosed from the log: nineteen of them
 // over two days on this desk said `conversation-unverified` and nothing about which file
