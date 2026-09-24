@@ -154,6 +154,7 @@
     "test:exitedsweep": "node scripts/exited-sweep-test.mjs",
     "test:pfaccess": "node scripts/pf-access-test.mjs",
     "test:pfhelp": "node scripts/pf-ctl-help-test.mjs",
+    "test:firstrun": "node scripts/first-run-test.mjs",
     "test:mascot": "node scripts/mascot-test.mjs",
     "test:effort": "node scripts/effort-test.mjs",
     "test:modeladvice": "node scripts/model-advice-test.mjs",

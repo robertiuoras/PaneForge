@@ -155,6 +155,7 @@ const TESTS = [
   ['exitedsweep', 'exited-sweep-test.mjs'],
   ['pfaccess', 'pf-access-test.mjs'],
   ['pfhelp', 'pf-ctl-help-test.mjs'],
+  ['firstrun', 'first-run-test.mjs'],
   ['sleep', 'sleep-test.mjs'],
   ['wakeplan', 'wakeplan-test.mjs'],
   ['deviceopen', 'device-open-test.mjs'],

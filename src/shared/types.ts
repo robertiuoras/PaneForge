@@ -1917,6 +1917,12 @@ export interface Config {
    * first card anybody ever sees is a real one.
    */
   seenVersion?: string
+  /**
+   * This profile has opened a pane at least once, so the first-run setup card never
+   * shows again. Absent on a fresh install; `shared/firstRun.ts` also reads past
+   * sessions, so a profile from before this field existed never sees the card either.
+   */
+  firstChatStarted?: boolean
   /** folder scanned for projects */
   root: string
   presets: Preset[]

@@ -5886,6 +5886,7 @@ export default function App(): JSX.Element {
               onStart={() => setPicking(true)}
               onSearch={() => setPalette(true)}
               onTools={() => setToolsOpen(true)}
+              onLaunch={(req) => start([req])}
             />
           )}
         </div>

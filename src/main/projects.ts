@@ -40,9 +40,12 @@ export function createProject(typed: string, root = projectsRoot()): Project | n
   const name = folderNameFor(typed)
   if (!name) return null
   try {
-    if (!existsSync(root)) return null
     const path = join(root, name)
-    // `recursive` so an existing folder is a success rather than EEXIST - see above.
+    // `recursive` so an existing folder is a success rather than EEXIST - see above - and
+    // so a projects folder that is not there yet is made with it. On a fresh machine the
+    // root is only `defaultRoot()`'s guess (`~/Projects`), and refusing here left the
+    // first-run card and New session with no way to make ANY folder. A saved root that
+    // vanished never reaches this: `projectsRoot()` has already swapped it for the guess.
     mkdirSync(path, { recursive: true })
     if (!statSync(path).isDirectory()) return null
     return listProjects(root).find((p) => p.path === path) ?? { name, path, lastUsed: 0, isGit: false }
