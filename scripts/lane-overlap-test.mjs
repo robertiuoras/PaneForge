@@ -16,6 +16,11 @@
 //   4. the same session is told once per file, not on every edit
 //   5. work master already carries is not an overlap
 //   6. the main checkout's dirty edit is reported to a lane, named as the main checkout
+//   7. a lane the OTHER machine pushed to origin, with no local checkout, is named as
+//      "on the other machine" (2026-09-23: both desks had lanes open on this repo and
+//      the guard only ever read this desk's own copies)
+//   8. this desk's own lane, once autosync has pushed it under its own name, is not
+//      reported back to itself as the other machine's work
 //
 //   node scripts/lane-overlap-test.mjs
 
@@ -125,6 +130,47 @@ writeFileSync(join(repo, 'quiet.js'), 'export const quiet = false\n')
 const g6 = guard('s1', join(a, 'quiet.js'))
 ok('a dirty main checkout is reported to a lane', /the main checkout/.test(g6.out) && /lines 1\b/.test(g6.out), g6.out)
 
+// 7. a lane the OTHER machine pushed to origin, with no local checkout of it here, is
+// named as "on the other machine" rather than silently missed.
+//
+// The remote's very first read fetches and is not due again for OVERLAP_SAID_MS - added
+// only now, not at the top of the file, so cases 1-6 above (which run with no origin at
+// all) never spend that one fetch before lane b exists on it to be found.
+const origin = join(root, 'origin.git')
+git(root, 'init', '-q', '--bare', '-b', 'master', origin)
+git(repo, 'remote', 'add', 'origin', origin)
+git(repo, 'push', '-q', '-u', 'origin', 'master')
+
+const otherMachine = join(root, 'other-machine')
+git(root, 'clone', '-q', origin, otherMachine)
+git(otherMachine, 'config', 'user.email', 'other@example.com')
+git(otherMachine, 'config', 'user.name', 'other')
+git(otherMachine, 'checkout', '-q', '-b', 'lane-b')
+writeFileSync(join(otherMachine, 'net.js'), 'line 1\nline 2\nline 3\n')
+git(otherMachine, 'add', '-A')
+git(otherMachine, 'commit', '-qm', 'feat: written on the other machine, lane b')
+git(otherMachine, 'push', '-q', 'origin', 'lane-b')
+
+// Nobody here has claimed lane b yet (that happens in case 5 below), so there is no
+// local `demo-b` to confuse this with - the only way to see it is the remote read.
+const g7r = guard('s0', join(repo, 'net.js'))
+ok('a lane pushed by the other machine is named as such', /lane b on the other machine/.test(g7r.out), g7r.out)
+ok('naming the remote ref, not a local folder', /origin\/lane-b/.test(g7r.out), g7r.out)
+ok('and not yet merged', /not yet merged/.test(g7r.out), g7r.out)
+ok('with its line range', /lines 1-3/.test(g7r.out), g7r.out)
+
+// 8. this desk's OWN lane, once autosync has pushed its current branch under its own
+// name, must not come back as if it were the other machine's work - same name, same sha.
+// A fresh file (own.js), never asked about before, so no cache entry from an earlier
+// case can be the reason it is quiet.
+writeFileSync(join(a, 'own.js'), 'export const own = 1\n')
+git(a, 'add', '-A')
+git(a, 'commit', '-qam', 'feat: lane a touches a file of its own')
+git(a, 'push', '-q', 'origin', 'lane-a')
+const g8 = guard('s0', join(repo, 'own.js'))
+ok('this desk\'s own lane is still reported once, locally', /lane a \(/.test(g8.out), g8.out)
+ok('and never as the other machine\'s copy of the same commit', !/on the other machine/.test(g8.out), g8.out)
+
 // 5. once master carries lane a's commit, big.js is no overlap for a fresh session
 git(repo, 'checkout', '-q', '--', 'quiet.js')
 git(repo, 'merge', '-q', '--no-edit', 'lane-a')
@@ -135,8 +181,8 @@ ok('work master already carries is not an overlap', g5.code === 0 && g5.out === 
 
 // the refusal path is untouched: s2 editing lane a (held again by s1) is still refused
 claim('s1', join(root, 'elsewhere'), 'a')
-const g7 = guard('s2', join(a, 'big.js'))
-ok('a refusal is still exit 2 with a reason', g7.code === 2 && /belongs to another chat/.test(g7.out), `${g7.code} ${g7.out}`)
+const g9 = guard('s2', join(a, 'big.js'))
+ok('a refusal is still exit 2 with a reason', g9.code === 2 && /belongs to another chat/.test(g9.out), `${g9.code} ${g9.out}`)
 
 if (!process.env.KEEP) rmSync(root, { recursive: true, force: true })
 if (failed) {

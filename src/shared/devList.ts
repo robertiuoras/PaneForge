@@ -217,6 +217,35 @@ export function runningDevs(
 }
 
 /**
+ * What each pane's STRAY dev server costs: resident MB, by pane id, of the servers
+ * `runningDevs` attributes to a pane by path but that are no longer in the pane's own
+ * process tree - and so are in nobody's `rssMb`.
+ *
+ * `next dev` reparents to pid 1 the moment its npm parent exits, which on the desk of
+ * 2026-09-23 was every one of four taskdriver servers (next-server 56-642 MB, ~1.3 GB
+ * together) while each pane's tree read a ~200 MB claude. A server still inside a tree is
+ * already counted by `treeOf` and is skipped here, so the two never add the same process.
+ * The server's own subtree is summed, because that is what stopping it gives back.
+ */
+export function strayDevMb(
+  procs: ProcLine[],
+  panes: DevPane[],
+  rssKbOf: (pid: number) => number
+): Record<string, number> {
+  const trees = new Map<string, Set<number>>()
+  for (const p of panes) if (p.pid) trees.set(p.id, descendants(procs, p.pid))
+  const out: Record<string, number> = {}
+  for (const d of runningDevs(procs, panes)) {
+    if (!d.paneId || trees.get(d.paneId)?.has(d.pid)) continue
+    let kb = rssKbOf(d.pid)
+    for (const pid of descendants(procs, d.pid)) kb += rssKbOf(pid)
+    const mb = Math.round(kb / 1024)
+    if (mb > 0) out[d.paneId] = (out[d.paneId] ?? 0) + mb
+  }
+  return out
+}
+
+/**
  * One dev server in a sentence. The port is what somebody is actually looking for.
  *
  * A server no pane owns never says "orphan" - the reader has never used git. It says

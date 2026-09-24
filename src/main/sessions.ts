@@ -702,9 +702,11 @@ export class SessionManager extends EventEmitter {
    * pane costs). Both walk the same trees from the same roots, and both must ask per
    * sample rather than hold a list - see strays.ts.
    */
-  roots(): { id: string; pid: number }[] {
+  roots(): { id: string; pid: number; cwd: string }[] {
     return [...this.sessions.entries()]
-      .map(([id, s]) => ({ id, pid: s.proc?.pid ?? 0 }))
+      // The folder rides along so the usage sampler can attribute a dev server that has
+      // left the pane's tree by the path in its command line (`PaneUsage.devMb`).
+      .map(([id, s]) => ({ id, pid: s.proc?.pid ?? 0, cwd: s.meta.cwd }))
       .filter((p) => typeof p.pid === 'number' && p.pid > 0)
   }
 
@@ -2244,6 +2246,10 @@ export class SessionManager extends EventEmitter {
       if (live.workTurn?.startedAt === endedThis) live.workAfter = shot
     })
     live.meta.runSince = undefined
+    // One more turn finished on this machine - the turn-count rung of the automatic move
+    // reads it (`Session.turnsHere`). Counted here and nowhere else, so a turn is whatever
+    // `runSince` was: a submit, a busy footer or a shell command, exactly as `Running` is.
+    live.meta.turnsHere = (live.meta.turnsHere ?? 0) + 1
     // The turn is over, so the CLI has flushed it: this is when the conversation id
     // becomes something another machine could resume (`Session.resumeId`, read by the
     // automatic move). A Map lookup for Claude; Codex checks its claimed rollout file.

@@ -228,6 +228,50 @@ export function worstPressure(a: Pressure, b: Pressure): Pressure {
 }
 
 /**
+ * The compressor's share of RAM, and the unused share, past which a Mac is read as `warn`
+ * whatever `kern.memorystatus_vm_pressure_level` says.
+ *
+ * The kernel's flag flips. Measured 2026-09-23 ~05:35Z on the M4/16 GB, eight agent panes
+ * and four `next dev` servers up: `top` read PhysMem 15G used, 6470M in the compressor,
+ * 139M unused - and the level was 1 (normal), a few minutes after the same desk had read 2.
+ * The reading at the top of this file (15G used / 122M unused / 6321M compressor) WAS level
+ * 2. Two desks in the same state, one of them judged fine, and on the "fine" one nothing
+ * in the ladder was allowed to run: `autoHandoffPlan` returns [] at `ok`, and the desk sat
+ * there thrashing with five taskdriver panes that did not need the laptop at all.
+ *
+ * So the compressor is read beside the flag. 6321M of 16384M is 0.386 and 6470M is 0.395;
+ * 122M unused of 16384M is 0.0074 and 139M is 0.0085. The thresholds sit under both: a
+ * compressor holding more than a third of RAM while under two percent of it is free is a
+ * machine already paying for every page it touches. Both must hold - a big compressor with
+ * plenty unused is a machine that swapped once and recovered, not one in trouble now.
+ */
+export const COMPRESSOR_WARN_FRAC = 0.35
+export const UNUSED_WARN_FRAC = 0.02
+
+export interface MemoryShape {
+  /** physical RAM, MB */
+  totalMb: number
+  /** pages nobody holds, MB (`top`'s "unused", `vm_stat`'s "Pages free") */
+  unusedMb: number
+  /** pages held compressed, MB (`vm_stat`'s "Pages occupied by compressor") */
+  compressorMb: number
+}
+
+/**
+ * `warn` when the compressor and the unused figure both say the machine is short, else
+ * `normal`. Never `critical`: that stays the kernel's own call. A missing or nonsense
+ * figure reads as `normal` on purpose - a probe that failed must not be why panes move.
+ */
+export function compressorLevel(m: MemoryShape): Pressure {
+  const total = Number.isFinite(m.totalMb) && m.totalMb > 0 ? m.totalMb : 0
+  if (!total) return 'normal'
+  const unused = Number.isFinite(m.unusedMb) && m.unusedMb >= 0 ? m.unusedMb : NaN
+  const comp = Number.isFinite(m.compressorMb) && m.compressorMb >= 0 ? m.compressorMb : NaN
+  if (Number.isNaN(unused) || Number.isNaN(comp)) return 'normal'
+  return comp / total >= COMPRESSOR_WARN_FRAC && unused / total <= UNUSED_WARN_FRAC ? 'warn' : 'normal'
+}
+
+/**
  * The local-pane budget, hardened the same way `offloadMinutes` is and for the same reason:
  * this value comes off config.json and, since `pf-ctl call config:set` exists, off a
  * script. `true` is not a budget of one, it is somebody writing a switch where a number

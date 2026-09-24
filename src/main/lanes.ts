@@ -50,7 +50,7 @@ import { basename, dirname, join, relative, resolve } from 'node:path'
  * key), and two digits on one card with nothing to say which is which is the confusion this
  * replaced. It is also the alphabet scripts/lane.mjs has always used for the same folders.
  */
-const LANE_LABELS = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'] as const
+export const LANE_LABELS = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'] as const
 
 /**
  * Dev-server port a lane starts from when the project never names one.
@@ -150,7 +150,7 @@ async function readMainRepo(cwd: string): Promise<string | null> {
 }
 
 /** Is this folder already a checkout of the same repo (ours to reuse)? */
-async function isWorktreeOf(candidate: string, repo: string): Promise<boolean> {
+export async function isWorktreeOf(candidate: string, repo: string): Promise<boolean> {
   if (!existsSync(candidate)) return false
   const root = await mainRepo(candidate)
   return Boolean(root && samePath(root, repo))
@@ -821,7 +821,7 @@ function seedLocalConfig(repo: string, lane: string): void {
 }
 
 /** Everything a fresh checkout needs before an agent is dropped into it. */
-function seedLane(repo: string, lane: string): void {
+export function seedLane(repo: string, lane: string): void {
   seedEnvFiles(repo, lane)
   seedLocalConfig(repo, lane)
   cloneDeps(repo, lane)
