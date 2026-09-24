@@ -1899,7 +1899,11 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
   // A conflicted lane is not spare, whoever is or is not holding it: the last-resort
   // `spare[0]` below skips the chooser entirely, so filtering here is what makes "never
   // hand out a conflict" true on every path rather than on most of them.
-  const spare = order.filter((id) => !state.lanes[id] && !state.conflicts[id])
+  // An absent owner does not make their unfinished edits available to a new task.
+  // Keep explicit recovery (`wanted`) and same-session resumes above, but exclude
+  // dirty orphans from every automatic choice, including last-resort fallbacks.
+  const unfinished = new Set(order.filter((id) => !state.lanes[id] && laneWork(id).dirty))
+  const spare = order.filter((id) => !state.lanes[id] && !state.conflicts[id] && !unfinished.has(id))
   // A lane whose FOLDER another chat is standing in is the last one to hand out.
   //
   // A hold records the chat's own cwd, and that is not always the lane it was given:
@@ -2025,7 +2029,7 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
     if (peerTrunk) {
       // Same chooser as the pool above, so there is one definition of "a lane worth
       // handing out" rather than a second one here that nothing exercises.
-      const spare = pick(order.filter((id) => id !== 'main' && !state.lanes[id]))
+      const spare = pick(order.filter((id) => id !== 'main' && !state.lanes[id] && !unfinished.has(id)))
       // No letter left is not a reason to refuse a chat a checkout: the local ledger is
       // still the authority on this machine, and a shared trunk that is reported is a far
       // smaller problem than a chat that cannot start. The word travels either way -
@@ -2042,7 +2046,11 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
     // conflict reads as "somebody has to run `lane.mjs resolve`" - and a chat refused a
     // checkout with no idea why goes and works somewhere it should not.
     const stuck = Object.keys(state.conflicts).filter((id) => POOL.includes(id))
-    const why = stuck.length ? `${held.join(', ')}; conflicted: ${stuck.join(', ')}` : held.join(', ')
+    const why = [
+      held.join(', '),
+      stuck.length && `conflicted: ${stuck.join(', ')}`,
+      unfinished.size && `uncommitted: ${[...unfinished].join(', ')} (preserved; explicitly claim the original checkout to recover)`
+    ].filter(Boolean).join('; ')
     throw new Error(`all lanes busy: ${why}`)
   }
 

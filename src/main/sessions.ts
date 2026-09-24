@@ -640,10 +640,10 @@ function claudeModelValues(): string[] {
 export class SessionManager extends EventEmitter {
   private sessions = new Map<string, Live>()
   /**
-   * Windows only: what each shell pane's pty had running at the last table read.
-   * Empty on POSIX, where the tty answers the same question for free.
+   * Shell children at the last table read. Also used on POSIX for background jobs
+   * and for distinguishing an interactive Codex wrapper from an ordinary node job.
    */
-  private tableJobs = new Map<string, { name: string; elapsed?: number }>()
+  private tableJobs = new Map<string, NonNullable<ReturnType<typeof jobFromTable>>>()
   /** One armed /clear per pane, cleared by every path that stands one down. */
   private autoClearTimers = new Map<string, NodeJS.Timeout>()
   /**
@@ -4222,10 +4222,10 @@ export class SessionManager extends EventEmitter {
       // The table knows how long it has been alive, so the pane's clock is the command's
       // real age rather than the moment this app noticed it - which matters most for the
       // pane that was already running when the app restarted.
-      return found ? { name: found.name, since: now - (found.elapsed ?? 0) * 1000 } : null
+      return found && !found.turnTracked ? { name: found.name, since: now - (found.elapsed ?? 0) * 1000 } : null
     }
     try {
-      const name = live.proc ? paneJob(live.proc.process, live.runner) : ''
+      const name = live.proc ? paneJob(live.proc.process, live.runner, this.tableJobs.get(live.meta.id)) : ''
       if (name) return { name, since: now }
     } catch {
       // A pane whose pty has just died throws from the tty read, inside a sweep that runs
@@ -4241,7 +4241,7 @@ export class SessionManager extends EventEmitter {
     // background job is invisible for at most TABLE_JOB_MS - which costs a clock that
     // starts a beat late, never a pane that is closed.
     const found = this.tableJobs.get(live.meta.id)
-    return found ? { name: found.name, since: now - (found.elapsed ?? 0) * 1000 } : null
+    return found && !found.turnTracked ? { name: found.name, since: now - (found.elapsed ?? 0) * 1000 } : null
   }
 
   /**
@@ -4262,12 +4262,14 @@ export class SessionManager extends EventEmitter {
     const shells = [...this.sessions.values()].filter((l) => {
       if (l.meta.status === 'exited') return false
       if (!SHELLS.has(programName(l.runner).toLowerCase())) return false
-      // POSIX: the tty already answered, exactly and for free, so do not pay for a table
-      // to repeat it. Only a pane whose foreground IS its own shell has anything left to
-      // find out about.
+      // POSIX: ordinary foreground commands are already named by the tty. A shell
+      // foreground can hide background jobs; node/codex needs command-line identity.
       if (!WIN) {
         try {
-          if (l.proc && paneJob(l.proc.process, l.runner)) return false
+          const foreground = l.proc ? paneJob(l.proc.process, l.runner) : null
+          // node may be Codex launched inside a shell. Read its command line on the
+          // existing four-second sampler; never infer an idle agent from "node" alone.
+          if (foreground && !['node', 'codex'].includes(foreground.toLowerCase())) return false
         } catch {
           // A pty that has just died: let the table have the question.
         }
