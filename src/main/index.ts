@@ -154,7 +154,6 @@ import { briefForTask } from './backlogStore'
 import { startAutoClearWatch, stopAutoClearWatch } from './autoclearWatch'
 import { startAutoClearRequests, stopAutoClearRequests } from './autoclearRequests'
 import { installAutoClearHooks } from './autoclearHooks'
-import { handoffReceiverCanQuit, INTERRUPT_WAIT_MS, type HandoffItem, type HandoffRequest } from '../shared/handoff'
 import { handoffReceiverCanQuit, INTERRUPT_WAIT_MS, landingCopy, type CopyState, type HandoffItem, type HandoffRepo, type HandoffRequest } from '../shared/handoff'
 import { HandoffQueue } from './handoffQueue'
 import { devServersOf, listRunningDevs, localDevCommand, stopDevServer } from './devServers'
@@ -1806,7 +1805,7 @@ async function landOn(target: string, repo: HandoffRepo, blocked: string): Promi
     trunk = originHead.ok ? 'master' : 'main'
   }
 
-  const taken = new Set([...takenFolders(manager.list()), ...ledgerTakenFolders('')])
+  const taken = new Set([...takenFolders(manager.list()), ...ledgerTakenFolders('', holdOver)])
   const copies: CopyState[] = []
   for (const label of labels) {
     const path = `${target}-${label}`
