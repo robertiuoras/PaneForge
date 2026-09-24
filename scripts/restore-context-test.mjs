@@ -78,7 +78,7 @@ assert.match(mainIndex, /const file = req\.resumeId \? resumableTranscript\(req\
 assert.match(mainIndex, /const held = spec\.resumeId \? resumableTranscript\(spec\.resumeCwd \?\? spec\.cwd, spec\.resumeId, spec\.agent\) : null/, 'History restore validates the selected provider transcript')
 assert.match(mainIndex, /const unavailable = req\.agent !== 'shell' && !named/, 'a saved agent pane with no verified id becomes unavailable')
 assert.match(mainIndex, /const asleep = unavailable \|\| req\.asleep/, 'unavailable restore is a process-free asleep placeholder')
-assert.match(mainIndex, /\n\s+asleep,\n/, '...and that is the reading the pane is started with')
+assert.match(mainIndex, /\r?\n\s+asleep,\r?\n/, '...and that is the reading the pane is started with')
 assert.match(mainIndex, /Saved conversation could not be verified\. It remains asleep/, 'the placeholder explains it was preserved instead of replaced')
 
 // ---------------------------------------------------------------- last prompt
