@@ -1039,6 +1039,11 @@ export function buildArgs(
   // person's global Codex preference is untouched.
   if (spec.id === 'codex' && opts.resume)
     argv.push('-c', 'tui.resume_cwd="current"')
+  // Codex opens on an "Update available" chooser whose first answer is "Update now", so
+  // the first Enter a pane receives (a queued prompt, a relay) starts a global install
+  // instead of the task. PaneForge's setup rows run `codex update` on purpose instead.
+  // Process-scoped, like the two overrides around it.
+  if (spec.id === 'codex') argv.push('-c', 'check_for_update_on_startup=false')
   // How hard the pane starts out thinking. Codex only, and only when the pane was opened
   // with that reading switched on: it is a `-c` override of `model_reasoning_effort` for
   // THIS process, so nothing on disk changes and the person's own config.toml is left

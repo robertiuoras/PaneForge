@@ -217,6 +217,7 @@ const TESTS = [
   ['tailnet', 'tailnet-test.mjs'],
   ['panetrust', 'pane-trust-test.mjs'],
   ['agytrust', 'agy-trust-test.mjs'],
+  ['codextrust', 'codex-trust-test.mjs'],
   ['agyconv', 'agy-conversation-test.mjs'],
   ['unreleased', 'unreleased-test.mjs'],
   // Loopback only, ~5s: the full remote suite stays out for being slow, but a device

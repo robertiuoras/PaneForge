@@ -38,6 +38,7 @@ import { execFileSync } from 'node:child_process' // sync-on-purpose: ensureLane
 import { gitRun, isRead } from './gitRun'
 import { createServer } from 'node:net'
 import { hideCopyFolder } from './hideCopy'
+import { codexProjectHeader, codexProjectKey } from '../shared/codexTrust'
 import { homedir } from 'node:os'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 
@@ -713,21 +714,24 @@ function seedCodexTrust(repo: string, lane: string): void {
   const home = process.env.CODEX_HOME?.trim() || join(homedir(), '.codex')
   const path = join(home, 'config.toml')
   if (!existsSync(path)) return
-  // Codex writes these keys lowercased, and a path holding a quote cannot be
-  // expressed in this quoting style at all - both are left alone rather than
-  // guessed at.
-  const key = (p: string): string => resolve(p).toLowerCase()
-  if (key(lane).includes("'") || key(repo).includes("'")) return
+  // Codex's own spelling of the key, which differs by OS: lowercased in single quotes on
+  // Windows, the path as given in double quotes elsewhere. Lowercasing everywhere (the
+  // old rule) never matched a Mac file, so a Mac lane never got its repo's approval.
+  const win = process.platform === 'win32'
+  const header = (p: string): string | null => {
+    const k = codexProjectKey(resolve(p), win)
+    return k ? codexProjectHeader(k, win) : null
+  }
+  if (!header(lane) || !header(repo)) return
 
   try {
     const text = readFileSync(path, 'utf8')
-    const header = (p: string): string => `[projects.'${key(p)}']`
-    if (text.includes(header(lane))) return
-    const at = text.indexOf(header(repo))
+    if (text.includes(header(lane)!)) return
+    const at = text.indexOf(header(repo)!)
     if (at < 0) return
 
     // The section runs to the next header or the end of the file.
-    const rest = text.slice(at + header(repo).length)
+    const rest = text.slice(at + header(repo)!.length)
     const end = rest.search(/\r?\n\[/)
     const body = (end < 0 ? rest : rest.slice(0, end)).replace(/\s+$/, '')
     const next = `${text.replace(/\s+$/, '')}\n\n${header(lane)}${body}\n`

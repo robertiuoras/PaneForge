@@ -84,23 +84,27 @@ is(Object.keys(resolveEnv(codex, { openrouter: 'sk-or-test' })).length, 0, 'an a
 ok(!needsOpenRouterKey(codex), 'and is never reported as blocked on a key')
 assert.deepEqual(
   buildArgs(codex, { resume: true, resumeId: '019c-session-a' }),
-  ['resume', '019c-session-a', '-c', 'tui.resume_cwd="current"'],
+  ['resume', '019c-session-a', '-c', 'tui.resume_cwd="current"', '-c', 'check_for_update_on_startup=false'],
   'Codex named resume passes the exact session id'
 )
 checks++
 assert.deepEqual(
   buildArgs(codex, { resume: true, resumeId: '019c-session-b' }),
-  ['resume', '019c-session-b', '-c', 'tui.resume_cwd="current"'],
+  ['resume', '019c-session-b', '-c', 'tui.resume_cwd="current"', '-c', 'check_for_update_on_startup=false'],
   'a different Codex session id stays distinct'
 )
 checks++
 assert.deepEqual(
   buildArgs(codex, { resume: true }),
-  ['resume', '--last', '-c', 'tui.resume_cwd="current"'],
+  ['resume', '--last', '-c', 'tui.resume_cwd="current"', '-c', 'check_for_update_on_startup=false'],
   'Codex uses --last only without an id and accepts the pane cwd without prompting'
 )
 checks++
-assert.deepEqual(buildArgs(codex, {}), [], 'a fresh Codex pane does not need a resume cwd override')
+assert.deepEqual(
+  buildArgs(codex, {}),
+  ['-c', 'check_for_update_on_startup=false'],
+  'a fresh Codex pane needs no resume cwd override, and never opens on the update chooser'
+)
 checks++
 
 // --- who is actually blocked without a key ------------------------------------

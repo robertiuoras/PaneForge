@@ -485,7 +485,9 @@ assert.deepEqual(A.buildArgs(spec('codex'), { resume: true, resumeId: 'x' }), [
   'resume',
   'x',
   '-c',
-  'tui.resume_cwd="current"'
+  'tui.resume_cwd="current"',
+  '-c',
+  'check_for_update_on_startup=false'
 ])
 // The model still lands after the resume form, whichever one was used.
 assert.deepEqual(

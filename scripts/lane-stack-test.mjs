@@ -173,16 +173,21 @@ ok(
 
 const codexCfg = join(root, 'codex', 'config.toml')
 mkdirSync(dirname(codexCfg), { recursive: true })
+// Codex's own spelling, which differs by OS (real files, Codex 0.156.1): lowercased in
+// single quotes on Windows, the path as given in double quotes on a Mac. A lowercase-only
+// fixture passed here while every real Mac lane was skipped.
+const codexHeader = (p) =>
+  process.platform === 'win32' ? `[projects.'${resolve(p).toLowerCase()}']` : `[projects."${resolve(p)}"]`
 writeFileSync(
   codexCfg,
-  `model = "gpt-5"\n\n[projects.'${resolve(py).toLowerCase()}']\ntrust_level = "trusted"\n\n[history]\npersistence = "save-all"\n`
+  `model = "gpt-5"\n\n${codexHeader(py)}\ntrust_level = "trusted"\n\n[history]\npersistence = "save-all"\n`
 )
 
 const laneB = join(root, 'api-b')
 await resolveLane(py, [py, laneA])
 const after = read(codexCfg)
-ok('a lane inherits the original folder’s Codex trust', after.includes(`[projects.'${resolve(laneB).toLowerCase()}']`))
-ok('...with the trust level it actually had', /\[projects\.'[^']*api-b'\]\s*\r?\ntrust_level = "trusted"/.test(after))
+ok('a lane inherits the original folder’s Codex trust', after.includes(codexHeader(laneB)))
+ok('...with the trust level it actually had', after.includes(`${codexHeader(laneB)}\ntrust_level = "trusted"`))
 ok('...without swallowing the sections after it', after.includes('[history]') && after.includes('persistence'))
 ok('...and without granting the lane anything extra', after.split('trust_level').length === 3)
 

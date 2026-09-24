@@ -24,6 +24,7 @@ import { workShot } from './changedNothing'
 import { changedNothingWhy, changedNothingWords } from '../shared/changedNothing'
 import { clientForCwd, clientForTexts } from './clients'
 import { trustAgyWorkspace } from './agyTrust'
+import { trustCodexFolder } from './codexTrust'
 import {
   clientLabel,
   mayRename,
@@ -3499,6 +3500,9 @@ export class SessionManager extends EventEmitter {
     // a pane this app was asked to open is not a question anybody wants to answer twice.
     // No-op for every other agent and on a desk where that CLI is not installed.
     if (spec.id === 'antigravity') trustAgyWorkspace(req.cwd)
+    // Codex asks the same question, and on a machine it has never run on there is no
+    // config.toml to answer it from - `main/codexTrust.ts` creates one.
+    if (spec.id === 'codex') trustCodexFolder(req.cwd)
     return pty.spawn(which(spec.bin), args, {
       name: 'xterm-256color',
       cols,
