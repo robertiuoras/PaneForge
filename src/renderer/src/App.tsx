@@ -23,7 +23,7 @@ import type {
 import AgentPicker from './components/AgentPicker'
 import AgentLogo, { AppLogo } from './components/AgentLogo'
 import BoardDialog from './components/BoardDialog'
-import CommandPalette, { type Command } from './components/CommandPalette'
+import CommandPalette, { type Chat, type Command } from './components/CommandPalette'
 import ConfirmDialog from './components/ConfirmDialog'
 import DiffDialog from './components/DiffDialog'
 import { PaneMenu } from './components/PaneMenu'
@@ -164,7 +164,8 @@ import { idleQuitVerdict } from '../../shared/idlequit'
 import { formatCpu, formatMb, type UsageReport } from '../../shared/usage'
 import { jobWords } from '../../shared/paneBackJobs'
 import { stepsWord } from '../../shared/handoffSteps'
-import { describePlace } from '@shared/place'
+import { describePlace, placeOf } from '@shared/place'
+import { whenWords } from '@shared/elapsed'
 import { applyTheme, terminalTheme } from './theme'
 import { keyLabel, modKey, isMac } from './platform'
 import MicIcon from './components/MicIcon'
@@ -3477,16 +3478,10 @@ export default function App(): JSX.Element {
     )
     const out: Command[] = []
 
-    for (const s of sessions)
-      out.push({
-        id: `focus:${s.id}`,
-        group: 'Open sessions',
-        title: s.title,
-        hint: s.cwd,
-        icon: logo(s.agent),
-        run: () => setActiveId(s.id)
-      })
-
+    // Open panes are not rows here: they are in `chats` below with the closed ones, found
+    // by what they were asked. Nor is any `Start <project>` row - that is New session's job
+    // (Robert 2026-09-24: "a project shouldnt be in search thats for start project"), and 40
+    // folder rows buried the chats a search is opened to find.
     for (const p of config?.presets ?? [])
       out.push({
         id: `preset:${p.id}`,
@@ -3494,25 +3489,6 @@ export default function App(): JSX.Element {
         title: `Launch ${p.name}`,
         hint: `${p.items.length} projects`,
         run: () => launchPreset(p)
-      })
-
-    // The title carries the VERB. These rows were the bare project name over its path,
-    // which is the same shape as an `Open sessions` row above them - so a folder already
-    // open showed up twice, identically, meaning two different things, and one of them
-    // silently started a second agent. A project already open says so instead of the path,
-    // because that is the fact that decides whether you wanted this row at all.
-    const dflt = config?.defaultAgent ?? 'claude'
-    for (const p of projects.slice(0, 40))
-      out.push({
-        id: `start:${p.path}`,
-        group: 'Start a project',
-        title: `Start ${p.name}`,
-        hint: sessions.some((s) => s.cwd === p.path) ? 'already open - starts another' : p.path,
-        icon: logo(dflt),
-        run: () =>
-          start([
-            { cwd: p.path, title: p.name, agent: dflt, model: config?.defaultModels[dflt] || undefined }
-          ])
       })
 
     if (active)
@@ -3529,8 +3505,7 @@ export default function App(): JSX.Element {
     // There is deliberately no bare `New session` row. It opened the picker DIALOG, so the
     // one thing a palette is for - finish the job on Return - was the one thing it did not
     // do; and the button it duplicates is 40px above the box you typed into, with the same
-    // shortcut printed on it. What replaced it is the `Start a project` group above, which
-    // gets you the same session and names WHICH one.
+    // shortcut printed on it.
     out.push(
       {
         id: 'changes',
@@ -3655,7 +3630,7 @@ export default function App(): JSX.Element {
       {
         id: 'history',
         group: 'Actions',
-        title: 'Search past sessions',
+        title: 'History: search past sessions',
         hint: 'everything every agent has printed',
         keys: 'Ctrl H',
         run: () => setHistory(true)
@@ -3744,12 +3719,10 @@ export default function App(): JSX.Element {
     sessions,
     activeId,
     agents,
-    projects,
     config,
     grid,
     patchConfig,
     launchPreset,
-    start,
     switchAgent,
     close,
     closeAll,
@@ -3763,6 +3736,94 @@ export default function App(): JSX.Element {
     syncTyping,
     toggleSyncTyping
   ])
+
+  /** Words carried from Ctrl K into History, so its search starts where that one was. */
+  const [historyQuery, setHistoryQuery] = useState('')
+  useEffect(() => {
+    if (!history) setHistoryQuery('')
+  }, [history])
+  const searchAll = useCallback((q: string) => {
+    setHistoryQuery(q)
+    setHistory(true)
+  }, [])
+
+  /**
+   * Every chat the Ctrl K box can find: the panes on screen, then every closed one History
+   * kept. Read from disk each time the box opens rather than held, because a chat closed a
+   * minute ago has to be in it and the list is a few hundred small files the History
+   * window already reads the same way.
+   */
+  const [pastChats, setPastChats] = useState<HistoryEntry[]>([])
+  useEffect(() => {
+    if (palette) void api.listHistory().then(setPastChats)
+  }, [palette])
+  const chats = useMemo<Chat[]>(() => {
+    if (!palette) return []
+    const logo = (id: string): JSX.Element => (
+      <AgentLogo id={id} spec={agents.find((a) => a.id === id)} size={15} />
+    )
+    const past = new Map(pastChats.map((e) => [e.id, e]))
+    // An open pane's asks live in its History entry (same id), which is how its row can
+    // say what it is doing NOW rather than the first thing it was ever asked.
+    const out: Chat[] = sessions.map((s) => {
+      const e = past.get(s.id)
+      return {
+        id: s.id,
+        open: true,
+        at: s.createdAt,
+        title: s.title,
+        cwd: s.cwd,
+        gist: s.gist ?? e?.gist,
+        chapters: e?.chapters,
+        askLines: e?.askLines,
+        lastAsk: e?.lastAsk,
+        place: placeOf(s.cwd),
+        when: s.status === 'working' ? 'working now' : 'open',
+        icon: logo(s.agent),
+        run: () => setActiveId(s.id)
+      }
+    })
+    const open = new Set(sessions.map((s) => s.id))
+    // One conversation, one row. Reopening gives the chat a NEW pane id, so its old entry
+    // is still in History: without this it showed green and red at once, and Return on the
+    // red one started a second agent on the conversation already running. `pastChats` is
+    // newest-closed first, so the first entry seen for a conversation is the one kept.
+    const seen = new Set(
+      sessions.map((s) => s.resumeId ?? past.get(s.id)?.resumeId).filter((r): r is string => Boolean(r))
+    )
+    for (const e of pastChats) {
+      if (open.has(e.id)) continue
+      if (e.resumeId) {
+        if (seen.has(e.resumeId)) continue
+        seen.add(e.resumeId)
+      }
+      // No end time: the app went down under it, so all that is known is when it started.
+      const at = e.endedAt ?? e.startedAt
+      const when = `${e.endedAt ? 'closed' : 'started'} ${whenWords(at)}`
+      out.push({
+        id: e.id,
+        open: false,
+        at,
+        title: e.title,
+        cwd: e.cwd,
+        gist: e.gist,
+        chapters: e.chapters,
+        askLines: e.askLines,
+        place: placeOf(e.cwd),
+        when: e.gone ? `${when} · folder gone` : when,
+        icon: logo(e.agent),
+        // The same reopen as History's `Open again`, with the id for the same reason. A
+        // folder that is gone cannot be reopened into, so that row opens it in History to read.
+        run: e.gone
+          ? () => searchAll(e.title)
+          : () =>
+              start([
+                { cwd: e.cwd, title: e.title, agent: e.agent, model: e.model, resume: true, resumeId: e.resumeId, where: 'local' }
+              ])
+      })
+    }
+    return out
+  }, [palette, pastChats, sessions, agents, start, searchAll])
 
 
   /**
@@ -6867,7 +6928,11 @@ export default function App(): JSX.Element {
       )}
       {history && (
         <HistoryDialog
+          // Keyed on the words so a search handed over while History is already open
+          // starts over with them, rather than being ignored by a box that already has text.
+          key={historyQuery}
           agents={agents}
+          initialQuery={historyQuery}
           onResume={(e: HistoryEntry) => {
             setHistory(false)
             // With the id, not just `resume: true`: without one the CLI resumes the newest
@@ -7455,7 +7520,9 @@ export default function App(): JSX.Element {
           onKeys={(keys) => patchConfig({ keys })}
         />
       )}
-      {palette && <CommandPalette commands={commands} onClose={() => setPalette(false)} />}
+      {palette && (
+        <CommandPalette commands={commands} chats={chats} onSearchAll={searchAll} onClose={() => setPalette(false)} />
+      )}
       {/* A device asking to pair arrives while somebody is at the OTHER machine, so this
           is here rather than inside the Devices dialog - that dialog is almost never the
           thing on screen when the request lands. */}

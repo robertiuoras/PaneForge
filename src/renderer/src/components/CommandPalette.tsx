@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { aboutLine, findChats, type ChatRow } from '@shared/chatSearch'
+import { MIN_QUERY } from '@shared/historySearch'
 import { keyLabel } from '../platform'
 
 export interface Command {
@@ -9,11 +11,31 @@ export interface Command {
   group?: string
   icon?: ReactNode
   keys?: string
+  /** a chat row: green for a pane on screen, red for one that was closed */
+  dot?: 'open' | 'closed'
+  /** a chat row's second line: what it is about */
+  about?: string
+  /** a chat row's second hint line, under the folder: `closed 3h ago`, `working now` */
+  when?: string
+  run: () => void
+}
+
+/** A pane on screen or a closed chat, searched by what was asked in it, not just its name. */
+export interface Chat extends ChatRow {
+  title: string
+  /** the folder, in the words every pane uses: `clients · copy 2` */
+  place: string
+  /** `closed 3h ago`, `working now`, `open` */
+  when: string
+  icon?: ReactNode
   run: () => void
 }
 
 interface Props {
   commands: Command[]
+  chats: Chat[]
+  /** hand the typed words to History, which also searches everything agents printed */
+  onSearchAll: (q: string) => void
   onClose: () => void
 }
 
@@ -33,7 +55,7 @@ const FIRST_PER_GROUP = 6
  */
 const EXAMPLES = [
   'settings',
-  'a project name',
+  'a word from something you asked',
   'split a long ask',
   'history',
   'devices',
@@ -52,7 +74,7 @@ const EXAMPLE_MS = 3600
  * Matching is subsequence-based (like an editor's file finder), so "afil" finds
  * "Airtasker filter". Score prefers matches that are earlier and less scattered.
  */
-export default function CommandPalette({ commands, onClose }: Props): JSX.Element {
+export default function CommandPalette({ commands, chats, onSearchAll, onClose }: Props): JSX.Element {
   const [q, setQ] = useState('')
   const [hi, setHi] = useState(0)
   const [ex, setEx] = useState(() => Math.floor(Math.random() * EXAMPLES.length))
@@ -65,10 +87,51 @@ export default function CommandPalette({ commands, onClose }: Props): JSX.Elemen
     const t = setInterval(() => setEx((i) => (i + 1) % EXAMPLES.length), EXAMPLE_MS)
     return () => clearInterval(t)
   }, [q])
-  useEffect(() => setHi(0), [q])
   useEffect(() => {
     list.current?.querySelector<HTMLElement>('.cmd.hi')?.scrollIntoView({ block: 'nearest' })
   }, [hi])
+
+  // Chats lead: finding the one you were in is what this box is opened for most. Typed,
+  // they are one list best match first whether open or closed (the dot says which), and a
+  // last row carries the words on to History for anything only an agent PRINTED - the box
+  // reads what was asked, not half a gigabyte of transcripts.
+  const groups = useMemo(() => {
+    const seen: string[] = []
+    for (const c of commands) if (c.group && !seen.includes(c.group)) seen.push(c.group)
+    return seen
+  }, [commands])
+
+  const found = useMemo((): Command[] => {
+    // A chip types its group's own name, and that is a request for the group, not a chat
+    // that happens to say "actions".
+    if (groups.some((g) => g.toLowerCase() === q.trim().toLowerCase())) return []
+    const typed = q.trim().length >= MIN_QUERY
+    const rows: Command[] = findChats(chats, q).map((c) => ({
+      id: `chat:${c.id}`,
+      group: typed ? 'Chats' : c.open ? 'Open chats' : 'Closed chats',
+      title: c.title,
+      about: aboutLine(c, q),
+      hint: c.place,
+      when: c.when,
+      icon: c.icon,
+      dot: c.open ? 'open' : 'closed',
+      run: c.run
+    }))
+    if (typed)
+      rows.push({
+        id: 'chat:search-all',
+        group: 'Chats',
+        title: `Search everything agents printed for “${q.trim()}”`,
+        hint: 'History',
+        keys: 'Ctrl H',
+        run: () => onSearchAll(q.trim())
+      })
+    return rows
+  }, [chats, groups, q, onSearchAll])
+
+  // History arrives a moment after the box opens and lands ABOVE the actions, so a row
+  // picked with the arrows before then would be a different row by the time Return lands.
+  useEffect(() => setHi(0), [q, found.length])
 
   const shown = useMemo(() => {
     const needle = q.trim().toLowerCase()
@@ -79,20 +142,30 @@ export default function CommandPalette({ commands, onClose }: Props): JSX.Elemen
     // A cap per group is what makes the empty box an INDEX of what is in here.
     if (!needle) {
       const seen = new Map<string, number>()
-      return commands.filter((c) => {
-        const k = c.group ?? ''
-        const n = (seen.get(k) ?? 0) + 1
-        seen.set(k, n)
-        return n <= FIRST_PER_GROUP
-      })
+      return [
+        ...found,
+        ...commands.filter((c) => {
+          const k = c.group ?? ''
+          const n = (seen.get(k) ?? 0) + 1
+          seen.set(k, n)
+          return n <= FIRST_PER_GROUP
+        })
+      ]
     }
-    return commands
+    const ranked = commands
       .map((c) => ({ c, s: score(`${c.title} ${c.hint ?? ''} ${c.group ?? ''}`.toLowerCase(), needle) }))
       .filter((r) => r.s > 0)
       .sort((a, b) => b.s - a.s)
       .slice(0, 60)
       .map((r) => r.c)
-  }, [commands, q])
+    // An action NAMED by the words - `settings`, `history`, `grid` - is what Return should
+    // do, ahead of any chat that merely mentioned them; every other action follows the chats.
+    const named = (c: Command): boolean => {
+      const t = c.title.toLowerCase()
+      return t.startsWith(needle) || t.includes(` ${needle}`)
+    }
+    return [...ranked.filter(named), ...found, ...ranked.filter((c) => !named(c))]
+  }, [commands, found, q])
 
   /**
    * The groups this box actually holds, in the order they were registered.
@@ -104,12 +177,6 @@ export default function CommandPalette({ commands, onClose }: Props): JSX.Elemen
    * the subsequence match already scores against (`c.group` is part of the haystack),
    * so the chip is a real query and not a second filtering mechanism to keep in step.
    */
-  const groups = useMemo(() => {
-    const seen: string[] = []
-    for (const c of commands) if (c.group && !seen.includes(c.group)) seen.push(c.group)
-    return seen
-  }, [commands])
-
   const go = (c?: Command): void => {
     if (!c) return
     onClose()
@@ -176,9 +243,32 @@ export default function CommandPalette({ commands, onClose }: Props): JSX.Elemen
                   onMouseEnter={() => setHi(i)}
                   onClick={() => go(c)}
                 >
+                  {c.dot && (
+                    <span
+                      className={`cmd-dot ${c.dot}`}
+                      role="img"
+                      aria-label={c.dot === 'open' ? 'Open now' : 'Closed'}
+                      title={c.dot === 'open' ? 'Open now - Return goes to it' : 'Closed - Return opens it again'}
+                    />
+                  )}
                   {c.icon}
-                  <span className="cmd-title">{c.title}</span>
-                  {c.hint && <span className="cmd-hint">{c.hint}</span>}
+                  {c.dot ? (
+                    <>
+                      <span className="cmd-chat">
+                        <span className="cmd-title">{c.title}</span>
+                        {c.about && <span className="cmd-about">{c.about}</span>}
+                      </span>
+                      <span className="cmd-where">
+                        <span>{c.hint}</span>
+                        <span>{c.when}</span>
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="cmd-title">{c.title}</span>
+                      {c.hint && <span className="cmd-hint">{c.hint}</span>}
+                    </>
+                  )}
                   {c.keys && <span className="kbd-box">{keyLabel(c.keys)}</span>}
                 </div>
               </div>

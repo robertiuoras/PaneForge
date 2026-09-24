@@ -139,6 +139,20 @@ export function copySuffixOf(name: string): string | null {
 }
 
 /**
+ * Which copy of the project a folder is, in the words every pane uses: `clients-a` reads
+ * `clients · copy 2`, and a project's own folder reads just its own name. Never
+ * lane/worktree/slot - `copySuffixOf` is the same test the sidebar chip uses, so a History
+ * row, a Ctrl K row and a card on screen never disagree about what a folder is.
+ */
+export function placeOf(cwd: string): string {
+  const name = folderName(cwd)
+  const project = copySuffixOf(name)
+  if (!project) return name
+  const n = copyNumber(name.slice(project.length + 1))
+  return n ? `${project} · copy ${n}` : name
+}
+
+/**
  * The word a card wears for a project when it is named beside a SUBJECT rather than as
  * itself - `Dev Window Testing · PF`, `Chasing Invoices · Cars`.
  *

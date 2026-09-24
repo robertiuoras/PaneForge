@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AgentInfo } from '@shared/agents'
 import { summaryFull, summaryOf } from '@shared/gist'
-import { copyNumber, copySuffixOf, folderName } from '@shared/place'
+import { placeOf } from '@shared/place'
 import type { HistoryEntry, HistoryHit } from '@shared/types'
 import { whenWords } from '@shared/elapsed'
 import { rankBy } from '@shared/historySearch'
@@ -14,20 +14,6 @@ import Elapsed, { useNow } from './Elapsed'
 const api = window.api
 
 /**
- * Which copy of the project a row's folder is, in the words `place.ts` already uses on
- * every pane: `clients-a` reads `clients · copy 2`, and a project's own folder reads just
- * its own name. Never lane/worktree/slot - `copySuffixOf` is the same test the sidebar
- * chip uses, so a row here and a card on screen never disagree about what a folder is.
- */
-function placeOf(cwd: string): string {
-  const name = folderName(cwd)
-  const project = copySuffixOf(name)
-  if (!project) return name
-  const n = copyNumber(name.slice(project.length + 1))
-  return n ? `${project} · copy ${n}` : name
-}
-
-/**
  * How much of a session's transcript to read back. The per-session log is capped at 8 MB
  * as it is written, so this is "all of it" for every session there has ever been.
  */
@@ -37,6 +23,8 @@ interface Props {
   agents: AgentInfo[]
   /** relaunch a past session in its old folder with its old agent */
   onResume: (e: HistoryEntry) => void
+  /** words already typed into Ctrl K, carried over so the search starts where it was */
+  initialQuery: string
   onClose: () => void
 }
 
@@ -45,10 +33,10 @@ interface Props {
  * that the useful part of an agent session is usually a sentence it printed an
  * hour ago, and closing the pane used to destroy it.
  */
-export default function HistoryDialog({ agents, onResume, onClose }: Props): JSX.Element {
+export default function HistoryDialog({ agents, onResume, initialQuery, onClose }: Props): JSX.Element {
   const dialog = useDialogFocus()
   const [entries, setEntries] = useState<HistoryEntry[]>([])
-  const [query, setQuery] = useState('')
+  const [query, setQuery] = useState(initialQuery)
   const [hits, setHits] = useState<HistoryHit[] | null>(null)
   /** A transcript search is in flight, so an empty list is not yet an answer. */
   const [searching, setSearching] = useState(false)

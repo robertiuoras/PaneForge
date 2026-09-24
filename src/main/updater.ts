@@ -38,7 +38,7 @@ import {
 } from './macUpdate'
 import { appendLog } from './logWrite'
 import { diagnosticMeta } from './diagnosticMeta'
-import { probeRetryMs, probeStalled } from '../shared/updateRetry'
+import { macReadsAround, probeRetryMs, probeStalled } from '../shared/updateRetry'
 
 type Emit = (s: UpdateState) => void
 
@@ -1009,7 +1009,7 @@ function macFallback(message: string): void {
     .then((version) => {
       noteGood()
       if (newer(version, have())) {
-        log('mac fallback', `${have()} -> ${version} (feed has no mac metadata)`)
+        log('mac fallback', `${have()} -> ${version} (feed read failed: ${message.slice(0, 80)})`)
         offerMac(version)
       } else {
         set({ phase: 'none', version: undefined, percent: undefined, error: undefined })
@@ -1297,7 +1297,7 @@ export function initUpdater(onChange: Emit, enabled: boolean): void {
       // `latest-mac.yml` 404 that will never resolve is what put a permanent
       // "update failed" in the corner of this app on macOS. Only the feed read is
       // rerouted: a checksum or a download failure still says so.
-      if (process.platform === 'darwin' && /\.yml|404/i.test(message)) return macFallback(message)
+      if (process.platform === 'darwin' && macReadsAround(message)) return macFallback(message)
 
       if (isPublishing(message)) {
         // The release tag is on GitHub but its assets are still uploading, so
@@ -1458,17 +1458,26 @@ async function supersede(): Promise<void> {
     await u.downloadUpdate()
   } catch (e) {
     const message = (e as Error)?.message ?? String(e)
-    if (process.platform === 'darwin' && /\.yml|404/i.test(message)) {
+    if (process.platform === 'darwin' && macReadsAround(message)) {
       try {
         const found = await latestMacRelease()
+        // The releases API answered, so this machine is reaching the feed after all.
+        probeFails = 0
+        noteGood()
+        if (state.stalled) set({ stalled: false })
         if (!newer(found, pending)) return
-        log('supersede fallback', `${pending} -> ${found} (feed has no mac metadata)`)
+        log('supersede fallback', `${pending} -> ${found} (feed read failed: ${message.slice(0, 80)})`)
+        noteSuperseded()
         probing = false
         u.autoDownload = restore
         return offerMac(found)
       } catch (fallbackError) {
-        log('probe error', (fallbackError as Error)?.message ?? String(fallbackError))
-        return
+        const second = (fallbackError as Error)?.message ?? String(fallbackError)
+        log('probe error', second)
+        // A missing .yml is the release, not the network. Either read failing on the
+        // network - the first, or the second one behind a missing .yml - is the network,
+        // and must reach the stall count or a Mac with the wifi off never says so.
+        if (!NETWORK_FAILURE.test(message) && !NETWORK_FAILURE.test(second)) return
       }
     }
     probeFails += 1
