@@ -3337,11 +3337,16 @@ export class SessionManager extends EventEmitter {
     this.emitSessions()
   }
 
-  kill(id: string): void {
+  /**
+   * `by` names the part of the app that closed the pane, for the `close-request` line: on
+   * 2026-09-24 the Review auto-close took a pane mid-countdown and nothing on disk said so,
+   * so the countdown was blamed for it.
+   */
+  kill(id: string, by?: string): void {
     const s = this.sessions.get(id)
     if (!s) return
     logReclaim({ action: 'close-request', pane: id, processPid: s.proc?.pid,
-      status: s.meta.status, asleep: Boolean(s.meta.asleep), quitting: this.down })
+      status: s.meta.status, asleep: Boolean(s.meta.asleep), quitting: this.down, by })
     // Before the pty dies, while its pid still names a group and a tree. What the pane
     // started detached is not reachable from either, which is what strays.ts is for.
     if (s.proc) killPaneStrays(id, s.proc.pid)
@@ -3372,7 +3377,7 @@ export class SessionManager extends EventEmitter {
     if (m.status !== 'idle' || m.runSince || live.busyUntil > Date.now() || m.job || m.backJob || m.subagent) return { closed: false, reason: 'session is busy or has a background job' }
     if (m.drafting || m.ask || m.owedPrompt || m.handingOff || m.handoffQueuedAt || m.handoffOpen || (m.handoverUntil ?? 0) > Date.now()) return { closed: false, reason: 'session has a draft, question, queued prompt, or handoff' }
     if (m.lastKeyboard > reportedAt) return { closed: false, reason: 'newer user input exists' }
-    this.kill(id)
+    this.kill(id, 'review')
     return { closed: true }
   }
 

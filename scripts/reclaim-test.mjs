@@ -1105,13 +1105,25 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   check('a skipped close is logged like a closed one', /event: 'skipped'/.test(app))
   check('...and carries the reason, not just the fact', /api\.logReclaim\(\{ event: 'skipped', id, name: [^,]+, reason \}\)/.test(app))
   for (const [what, re] of [
-    ['the pane went back to work at the deadline', /skipClose\(ids, 'it went back to work during the countdown'\)/],
-    ['one pane of a plan was spared', /ids\.filter\(\(id\) => !live\.includes\(id\)\),\s*'it went back to work during the countdown'/],
-    ['the countdown was dropped mid-flight', /'it went back to work while the countdown was running'/],
+    ['the pane went back to work at the deadline', /skipGone\(ids, 'it went back to work during the countdown'\)/],
+    ['one pane of a plan was spared', /skipGone\(\s*ids\.filter\(\(id\) => !live\.includes\(id\)\),\s*'it went back to work during the countdown'/],
+    ['the countdown was dropped mid-flight', /skipGone\(\s*woke\.flatMap[^]*?'it went back to work while the countdown was running'/],
+    ['a sleep card whose pane stopped being sleepable', /skipGone\(\[id\], 'it went back to work during the countdown'\)/],
     ['somebody pressed Keep it open', /skipClose\(ids, 'you kept it open'\)/]
   ]) {
     check(`...for ${what}`, re.test(app))
   }
+  // A pane that is GONE did not go back to work (2026-09-24, s16-mue9dvl3: the Review
+  // auto-close took it 0.4s into a sleep card and the line blamed the countdown).
+  const gone = app.slice(app.indexOf('const skipGone = useCallback'), app.indexOf('const doClose = useCallback'))
+  check('a vanished pane is logged as closed by something else, not as woken',
+    /sessionsRef\.current\.some\(\(x\) => x\.id === id\) \? woke : CLOSED_ELSEWHERE/.test(gone) &&
+    /const CLOSED_ELSEWHERE = 'something else closed it before the countdown ended/.test(app))
+  check('no countdown path writes the woke-up words without asking whether the pane is still there',
+    !/skipClose\([^)]*'it went back to work/.test(app))
+  const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
+  check('the close-request line names who closed the pane', /kill\(id: string, by\?: string\)/.test(sessions) && /quitting: this\.down, by \}/.test(sessions))
+  check('...and the Review auto-close says it was the one', /this\.kill\(id, 'review'\)/.test(sessions))
 }
 // One clock, one predicate. `idleClosePlan` is built from `reclaimPaneOf` in App.tsx,
 // which has never refused a pane for a BELL; `stillCloseable` - the re-check at the

@@ -458,6 +458,8 @@ const VISIBILITY_REFRESH_MS = 30_000
  * becomes furniture - which is the whole complaint the strip it replaces collected.
  */
 const CAPACITY_NOTE_MS = 12_000
+/** A countdown's pane that is not there any more: see `skipGone`. */
+const CLOSED_ELSEWHERE = 'something else closed it before the countdown ended - see the close-request line'
 /**
  * The least time between two memory cards.
  *
@@ -4290,17 +4292,30 @@ export default function App(): JSX.Element {
       api.logReclaim({ event: 'skipped', id, name: paneWordRef.current(id), reason })
     }
   }, [])
+  /**
+   * `skipClose` for a pane a countdown can no longer act on - and a pane that is GONE did
+   * not go back to work. 2026-09-24: the Review auto-close took s16-mue9dvl3 0.4s into
+   * its ten-second sleep card, and this line said "it went back to work", which read as
+   * the countdown closing a working pane. Main's `close-request` line says who closed it.
+   */
+  const skipGone = useCallback(
+    (ids: string[], woke: string) => {
+      for (const id of ids)
+        skipClose([id], sessionsRef.current.some((x) => x.id === id) ? woke : CLOSED_ELSEWHERE)
+    },
+    [skipClose]
+  )
 
   const doClose = useCallback(
     (ids: string[], mb: number) => {
       dropSoon(ids)
       const live = ids.filter((id) => stillCloseable(id))
       if (!live.length) {
-        skipClose(ids, 'it went back to work during the countdown')
+        skipGone(ids, 'it went back to work during the countdown')
         return
       }
       if (live.length !== ids.length) {
-        skipClose(
+        skipGone(
           ids.filter((id) => !live.includes(id)),
           'it went back to work during the countdown'
         )
@@ -4314,7 +4329,7 @@ export default function App(): JSX.Element {
       }
       setActed({ what: 'closed', panes: live.map((id) => paneActedRef.current(id)), mb, at: Date.now() })
     },
-    [stillCloseable, dropSoon, skipClose]
+    [stillCloseable, dropSoon, skipClose, skipGone]
   )
 
   /**
@@ -4513,14 +4528,14 @@ export default function App(): JSX.Element {
   // event loop reaches it: a card sitting at `0s`, nothing happening, and nothing in
   // reclaim.log saying why. What the deadline does is written down (`due`) before it does
   // it, so the next "reached the timer and nothing happened" is answerable from the file.
-  const soonActRef = useRef({ doClose, doMove, dropSoon, skipClose, stillCloseable })
-  soonActRef.current = { doClose, doMove, dropSoon, skipClose, stillCloseable }
+  const soonActRef = useRef({ doClose, doMove, dropSoon, skipClose, skipGone, stillCloseable })
+  soonActRef.current = { doClose, doMove, dropSoon, skipClose, skipGone, stillCloseable }
   useEffect(() => {
     if (!closeSoons.length) return
     const timers = closeSoons.map((soon) => {
       const key = soonKey(soon)
       return window.setTimeout(() => {
-        const { doClose, doMove, dropSoon, skipClose, stillCloseable } = soonActRef.current
+        const { doClose, doMove, dropSoon, skipClose, skipGone, stillCloseable } = soonActRef.current
         if (soon.move) {
           const held = moveSoonRef.current[key]
           delete moveSoonRef.current[key]
@@ -4532,7 +4547,7 @@ export default function App(): JSX.Element {
           dropSoon(soon.ids)
           for (const id of soon.ids) {
             if (!stillCloseable(id)) {
-              skipClose([id], 'it went back to work during the countdown')
+              skipGone([id], 'it went back to work during the countdown')
               continue
             }
             api.logReclaim({ event: 'due', id, name: paneWordRef.current(id), what: 'sleep' })
@@ -4590,13 +4605,13 @@ export default function App(): JSX.Element {
     if (!woke.length) return
     // Named, not counted: this is the line that answers "why was my pane armed twice and
     // never closed" a week later. See `skipClose`.
-    skipClose(
+    skipGone(
       woke.flatMap((s) => s.ids).filter((id) => !stillCloseable(id)),
       'it went back to work while the countdown was running'
     )
     const gone = new Set(woke.map((s) => soonKey(s)))
     setCloseSoons((list) => list.filter((s) => !gone.has(soonKey(s))))
-  }, [closeSoons, sessions, stillCloseable, skipClose])
+  }, [closeSoons, sessions, stillCloseable, skipGone])
 
   /**
    * Put each local pane's closing deadline on the session, where the card reads it.
