@@ -82,6 +82,7 @@
     "test:peerchrome": "node scripts/peer-chrome-test.mjs",
     "test:projectname": "node scripts/project-name-test.mjs",
     "test:historysearch": "node scripts/history-search-test.mjs",
+    "test:chatsearch": "node scripts/chat-search-test.mjs",
     "test:projectroot": "node scripts/projectroot-test.mjs",
     "test:agentenv": "node scripts/agent-env-test.mjs",
     "test:tailnet": "node scripts/tailnet-test.mjs",

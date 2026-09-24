@@ -1269,6 +1269,8 @@ export interface HistoryEntry {
    * command; see `shared/gist.ts`.
    */
   askLines?: string[]
+  /** the newest real ask, past the `askLines` cap - what an open pane is on now */
+  lastAsk?: string
   /** internal: a clear happened, so the next real ask opens a chapter */
   fresh?: boolean
   /**
