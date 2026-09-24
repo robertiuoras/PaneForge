@@ -1125,6 +1125,17 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   check('the close-request line names who closed the pane', /kill\(id: string, by\?: string\)/.test(sessions) && /quitting: this\.down, by \}/.test(sessions))
   check('...and the Review auto-close says it was the one', /this\.kill\(id, 'review'\)/.test(sessions))
 }
+// A pane put to sleep is not armed again off the session list that still says awake
+// (s22-mueyklpl, 2026-09-24: slept 04:35:29.853, armed .896, refused "already asleep").
+{
+  const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
+  const due = app.slice(app.indexOf("what: 'sleep' })"), app.indexOf('const mb = pendingMb.current[key]'))
+  check('a sleep in flight holds its pane off the clock', /sleepHeld\.current\[id\] = Number\.POSITIVE_INFINITY/.test(due) &&
+    due.indexOf('POSITIVE_INFINITY') < due.indexOf('api.sleepSession('))
+  check('...and a pane that slept stays off it while the broadcast lands', /delete sleepRefusals\.current\[id\]\s*sleepHeld\.current\[id\] = Date\.now\(\) \+ SLEPT_SETTLE_MS/.test(due))
+  const arm = app.slice(app.indexOf('armSleepRef.current = (plan, pressure)'), app.indexOf('armCloseRef.current = (plan, why, log)'))
+  check('the sleep arm reads the live pane and skips one asleep or ended', /!s!\.asleep/.test(arm) && /s!\.status !== 'exited'/.test(arm))
+}
 // One clock, one predicate. `idleClosePlan` is built from `reclaimPaneOf` in App.tsx,
 // which has never refused a pane for a BELL; `stillCloseable` - the re-check at the
 // deadline - did. So the sweep armed a belled pane, the effect dropped the card, and the

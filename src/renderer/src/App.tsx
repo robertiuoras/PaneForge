@@ -458,6 +458,11 @@ const VISIBILITY_REFRESH_MS = 30_000
  * becomes furniture - which is the whole complaint the strip it replaces collected.
  */
 const CAPACITY_NOTE_MS = 12_000
+/**
+ * How long a pane just put to sleep stays off the sleep clock. The broadcast saying it is
+ * asleep lands after main's answer does, and the sweep reads the session list.
+ */
+const SLEPT_SETTLE_MS = 30_000
 /** A countdown's pane that is not there any more: see `skipGone`. */
 const CLOSED_ELSEWHERE = 'something else closed it before the countdown ended - see the close-request line'
 /**
@@ -4430,12 +4435,18 @@ export default function App(): JSX.Element {
   armSleepRef.current = (plan, pressure) => {
     const now = Date.now()
     const armed = new Set(closeSoonsRef.current.flatMap((c) => c.ids))
-    const keep = plan.filter(
-      (p) =>
+    const keep = plan.filter((p) => {
+      // The live pane, not the plan's reading of it: a pane asleep or ended is never armed.
+      const s = sessionsRef.current.find((x) => x.id === p.id)
+      return (
+        Boolean(s) &&
+        !s!.asleep &&
+        s!.status !== 'exited' &&
         (keptUntil.current[p.id] ?? 0) <= now &&
         (sleepHeld.current[p.id] ?? 0) <= now &&
         !armed.has(p.id)
-    )
+      )
+    })
     if (!keep.length) return
     const why: 'idle' | 'pressure' = pressure === 'ok' ? 'idle' : 'pressure'
     // The pane's OWN deadline, never now-plus-fifteen: the pane was picked up to a lead
@@ -4551,6 +4562,11 @@ export default function App(): JSX.Element {
               continue
             }
             api.logReclaim({ event: 'due', id, name: paneWordRef.current(id), what: 'sleep' })
+            // Off the clock while main is asked and for a beat after it answers: the card is
+            // already down, and the next sweep reads a session list that still says awake.
+            // s22-mueyklpl slept at 04:35:29.853 (2026-09-24), was armed again at .896 and
+            // refused ten seconds later - "This pane is already asleep."
+            sleepHeld.current[id] = Number.POSITIVE_INFINITY
             void (async () => {
               let slept: unknown = null
               try {
@@ -4565,6 +4581,7 @@ export default function App(): JSX.Element {
               }
               if (slept) {
                 delete sleepRefusals.current[id]
+                sleepHeld.current[id] = Date.now() + SLEPT_SETTLE_MS
                 return
               }
               // Main said no (its own line says why). Not asked again for a while: the
