@@ -74,7 +74,7 @@ export function stagedHours(readyAt: number, now: number): number {
  * learn. See "Every word on screen is read by somebody who has never used git".
  */
 export function stagedWaitingWords(current: string, version: string, hours: number): string {
-  return `PaneForge ${version} has been ready for ${hours} ${hours === 1 ? 'hour' : 'hours'} and you are still on ${current}. It installs when you choose Restart now, or the next time you quit PaneForge - never on its own while you are working.`
+  return `PaneForge ${version} has been ready for ${hours} ${hours === 1 ? 'hour' : 'hours'} and you are still on ${current}. It installs when you choose Restart now, the next time you quit PaneForge, or by itself once this computer has sat untouched for 10 minutes - never while you are working.`
 }
 
 /**

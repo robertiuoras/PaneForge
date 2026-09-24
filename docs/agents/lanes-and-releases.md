@@ -84,9 +84,12 @@ promotes after `PF_PROMOTE_SOAK_MS` 3d (`lane.mjs promote|doctor`, `test:promote
 ## Updates wait for the user to restart
 
 Install once, update from app. Unsupported: skip not retry (`shared/pickRelease.ts`,
-`test:pickrelease`). Background download, then Restart now / Later; only explicit Restart now
-or a normal quit installs; no timed restart/escalation/retry (`test:updatehold`). A STAGED
-BUILD MAY SIT FOR DAYS: the rule working. `src/main` never consumes
+`test:pickrelease`). Background download, then Restart now / Later; installs on Restart now,
+a normal quit, or an IDLE DESK (2026-09-24, Robert): `idleInstallCheck` every 60s asks
+`idleInstallBlocker` (`shared/updateHold.ts`) - nobody touched the computer 10 min, no pane
+printed/typed 10 min, none mid-turn/asking/drafting/back job, restore after update on, no
+game. No countdown/escalation/retry (`test:updatehold`). A staged build on a busy desk may
+still sit for days: the rule working. `src/main` never consumes
 `onUpdateIgnored`/`READY_HOLD_MS`. `phaseAt`; `CHECK_BUDGET_MS` 2min, `DOWNLOAD_BUDGET_MS`
 45min, `PROBE_BUDGET_MS` 5min, `POLL_WATCHDOG_MS` 6min; quit gated `stagedInstallable()`.
 `update-health.json`, 3d = `STALE` (`test:updater`, `test:wedge`). "Never finished" at 10-17

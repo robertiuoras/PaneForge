@@ -35,6 +35,7 @@ import { promptReview, promptsForSession, recordPromptReview, removePromptReview
 import { readPulls } from './pulls'
 import { quitWhere } from '../shared/quitWords'
 import { pidAlive, waitForExit } from '../shared/installWedge'
+import { idleInstallBlocker, shouldLogHold } from '../shared/updateHold'
 import { mayReturnLane } from '../shared/laneReturn'
 import { revealTarget, within } from '../shared/reveal'
 import { revealTargetFor } from '../shared/revealPane'
@@ -4056,6 +4057,46 @@ async function handOverToInstaller(pids: number[]): Promise<void> {
   hardExit()
 }
 
+/** How often a downloaded update asks whether the desk is idle enough to install itself. */
+const IDLE_INSTALL_CHECK_MS = 60_000
+let idleHoldLoggedAt = 0
+
+/**
+ * Install a downloaded update by itself once nobody would notice (`idleInstallBlocker`).
+ * Same path as Restart now: the desk is saved and comes back, and the new version starts
+ * without taking the screen (`markQuietRelaunch`). A held check logs its reason now and
+ * then (`shouldLogHold`) and simply asks again next minute; nothing counts down.
+ */
+function idleInstallCheck(): void {
+  if (installStarted || getUpdateState().phase !== 'ready') {
+    idleHoldLoggedAt = 0
+    return
+  }
+  let personIdleMs: number
+  try {
+    personIdleMs = powerMonitor.getSystemIdleTime() * 1000
+  } catch {
+    return // no reading is not "nobody is here"
+  }
+  const now = Date.now()
+  const why = idleInstallBlocker({
+    sessions: manager.list(),
+    now,
+    personIdleMs,
+    restoreAfterUpdate: getConfig().restoreAfterUpdate,
+    gameActive: isGameActive()
+  })
+  if (why) {
+    if (shouldLogHold(now, idleHoldLoggedAt)) {
+      updateLog('install', `waiting for a quiet desk: ${why}`)
+      idleHoldLoggedAt = now
+    }
+    return
+  }
+  updateLog('install', 'desk quiet for 10 min: installing the downloaded update by itself')
+  doInstall()
+}
+
 /** The update did not happen: put the window back, inactive, once the screen is free. */
 function restoreAfterFailedInstall(): void {
   if (!alive()) return
@@ -4833,6 +4874,7 @@ app.whenReady().then(() => {
   initUpdater((s: UpdateState) => {
     send('update:changed', s)
   }, cfg.autoUpdate)
+  setInterval(idleInstallCheck, IDLE_INSTALL_CHECK_MS).unref()
   offerRestore()
   // Only the copy that owns the window: a launch that lost the lock is on its way out,
   // and starting a pane in it puts an agent in a process that is about to exit.
