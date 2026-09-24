@@ -189,6 +189,7 @@ const TESTS = [
   ['setupcheck', 'setup-check-test.mjs'],
   ['sessioncopies', 'session-copies-test.mjs'],
   ['lanevisitor', 'lane-visitor-test.mjs'],
+  ['laneorphan', 'lane-orphan-test.mjs'],
   ['lanework', 'lane-work-test.mjs'],
   ['lanemergehold', 'lane-mergehold-test.mjs'],
   // A lane whose hooks rewrite its ledger every turn is not dirty forever.

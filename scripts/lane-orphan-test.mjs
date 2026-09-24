@@ -187,5 +187,30 @@ mkdirSync(root, { recursive: true })
   )
 }
 
+// Unowned unfinished work must not become the next unrelated chat's checkout.
+for (const tracked of [true, false]) {
+  const kind = tracked ? 'tracked' : 'untracked'
+  const f = fixture(`allocation-${kind}`)
+  commit(f.repo, '.lanes.json', JSON.stringify({ pool: ['main', 'a', 'b'] }) + '\n', 'limit pool')
+  f.lane('claim', '--session', 'main-owner', '--prefer', 'main')
+  const dir = laneA(f, 'original-owner')
+  const file = join(dir, tracked ? 'app.js' : 'unfinished.txt')
+  const contents = 'unfinished work from original owner\n'
+  writeFileSync(file, contents)
+  const resumed = f.lane('claim', '--session', 'original-owner')
+  ok(`${kind}: the existing owner resumes its dirty lane`, resumed.ok && JSON.parse(resumed.out).lane === 'a', JSON.stringify(resumed))
+  f.patchState((s) => { delete s.lanes.a })
+
+  const next = f.lane('claim', '--session', 'new-task')
+  ok(`${kind}: a new task skips the unowned dirty lane`, next.ok && JSON.parse(next.out).lane === 'b', JSON.stringify(next))
+  const full = f.lane('claim', '--session', 'another-task')
+  ok(`${kind}: exhausted pool explains preserved uncommitted work`, !full.ok && /uncommitted: a/.test(full.err), JSON.stringify(full))
+  ok(`${kind}: allocation leaves the original bytes intact`, readFileSync(file, 'utf8') === contents)
+
+  const recovery = f.lane('claim', '--session', 'recovery', '--prefer', 'a', '--cwd', dir)
+  ok(`${kind}: explicit recovery can still claim the dirty checkout`, recovery.ok && JSON.parse(recovery.out).lane === 'a', JSON.stringify(recovery))
+  ok(`${kind}: recovery preserves unfinished bytes`, readFileSync(file, 'utf8') === contents)
+}
+
 console.log(failed ? `\n${failed} orphan-lane check(s) failed` : '\nall orphan-lane checks passed')
 process.exit(failed ? 1 : 0)
