@@ -12,7 +12,7 @@
 // thing, about to put work on another machine, stoppable while it is drawn.
 
 import React, { useEffect, useState } from 'react'
-import { secondsLeft } from './MoveSoon'
+import { MoveSoonSay, secondsLeft } from './MoveSoon'
 import CardX from './CardX'
 
 const api = window.api
@@ -46,31 +46,28 @@ export default function OffloadSoon(): React.JSX.Element | null {
     return () => window.clearInterval(t)
   }, [asks.length])
   if (!asks.length) return null
-  const answer = (id: string, go: boolean): void => {
-    void api.answerOffload(id, go)
+  const keepHere = (id: string): void => {
+    void api.answerOffload(id, false)
     setAsks((prev) => prev.filter((a) => a.id !== id))
   }
   return (
     <>
       {asks.map((ask) => (
-        <div className="move-soon" role="status" data-testid="offload-soon" key={ask.id}>
-          <CardX onDismiss={() => answer(ask.id, false)} />
-          <div className="move-soon-say">
-            Starting {ask.project} on {ask.deviceName} in{' '}
-            <span className="move-soon-count">{secondsLeft(ask.deadline, now)}s</span>
-          </div>
-          <div className="move-soon-why">
-            {ask.reason.charAt(0).toUpperCase() + ask.reason.slice(1)}. You would watch it and
-            type into it from here.
-          </div>
-          <div className="move-soon-acts">
-            <button type="button" onClick={() => answer(ask.id, false)}>
-              Keep it here
-            </button>
-            <button type="button" className="ghost" onClick={() => answer(ask.id, true)}>
-              Start it there now
-            </button>
-          </div>
+        // Same one line as `MoveSoon`: the reason is the tooltip, and "Start it there now"
+        // went - the countdown already starts it there.
+        <div
+          className="move-soon line"
+          role="status"
+          data-testid="offload-soon"
+          key={ask.id}
+          title={`${ask.reason.charAt(0).toUpperCase() + ask.reason.slice(1)}. You would watch it and type into it from here.`}
+        >
+          <CardX onDismiss={() => keepHere(ask.id)} />
+          <MoveSoonSay words={['Starting', ask.project, `on ${ask.deviceName}`]} />
+          <span className="move-soon-count">{secondsLeft(ask.deadline, now)}s</span>
+          <button type="button" className="primary move-soon-keep" onClick={() => keepHere(ask.id)}>
+            Keep here
+          </button>
         </div>
       ))}
     </>

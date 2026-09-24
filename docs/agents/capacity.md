@@ -71,7 +71,7 @@ working/starting/stalled/mirror. `.cap-pop` on verdict CHANGE, `CAPACITY_NOTE_MS
 `shared/cloudWork.ts` (`N cloud sessions still
 running`/`N shells still running`, `CLOUD_HOLD_MS` 45 min, `test:cloudwork`). `quietSince` =
 keystroke/byte/KEYBOARD LEAVING. `shared/away.ts` `AWAY_AFTER_MS` 60s
-(`getSystemIdleTime()`, `main/away.ts` 15s, `sawPerson`); `unread` holds CLOCK only. `idleSleepPlan` (`reclaim.idleSleepMinutes` 30) stops agent/keeps card, `asleep 3m`.
+(`getSystemIdleTime()`, `main/away.ts` 15s, `sawPerson`); `unread` holds CLOCK only. `idleSleepPlan` runs ONLY under a memory verdict (`pressure` tight/over; `ok` = nothing sleeps, 2026-09-25) and stops agent/keeps card, `asleep 3m`; quiet panes with room close into Review (`sessions:closeIntoReview`). Keep = restart the pane's close clock (`keptUntil` = one close window), no `kept` chip, no bulk Keep-open button (right-click pin stays).
 `reclaim.log` source/reason/quiet-vs-threshold/request/refusal/completion/wake;
 pid/version/seq; shutdown 250ms; `node scripts/sleep-cause-live.mjs`. Person-woken keeps
 clock `WAKE_GRACE_MS` 5 min (`wokeAt`).
@@ -87,7 +87,7 @@ Rungs: trim -> start next pane there -> move finished pane -> close. `shared/aut
 (`rank`); `queueable` > `movable`; refused: focused, question, mirror, moving, cooldown, last
 pane; moved = overshoot. `Session.stayHere` refuses all; `keepHere` matches lane copies. Lag +
 memory, worse wins (`lagLevel`, `worstPressure`: 1 thread/core `warn`, 1.8 `critical`; Windows
-loadavg 0 = unmeasured). `MoveSoon.tsx` 15s (z-index 45); `Keep it here` ONCE
+loadavg 0 = unmeasured). `MoveSoon.tsx` 15s (z-index 45), ONE line: what + seconds + one Keep, reason in the tooltip (`.move-soon.line`, also `OffloadSoon.tsx`); `Keep here` ONCE
 (`handoffBlocked` Infinity, `move-declined`). `AutoPane.ask` via `pinnedByPrompt`.
 `AutoPane.machineBound` (`shared/paneBound.ts`: `--remote-debugging-port`/`-pipe`, `--headless`
 + driver); `AutoPane.shareable` (`main/handoff.ts` 5 min; `false` refuses, `undefined`

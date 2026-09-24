@@ -2728,17 +2728,14 @@ export class SessionManager extends EventEmitter {
    * a pane nobody is going to close. `sessions:closing` is refused for a mirrored id in
    * `index.ts` for exactly the reason `sessions:busy` is.
    */
-  setClosingAt(id: string, at: number | null, kept = false): void {
+  setClosingAt(id: string, at: number | null): void {
     const s = this.sessions.get(id)
     if (!s) return
     const next = at && at > 0 ? at : undefined
-    const heldOpen = next ? kept || undefined : undefined
     // Only when it MOVED: this arrives on every session change, and emitting a fresh list
-    // in response to one would be a loop that never settles. Both halves, or a pane that
-    // stops being held keeps the word `kept` on an ordinary idle countdown.
-    if (s.meta.closingAt === next && s.meta.closeKept === heldOpen) return
+    // in response to one would be a loop that never settles.
+    if (s.meta.closingAt === next) return
     s.meta.closingAt = next
-    s.meta.closeKept = heldOpen
     this.emitSessions()
   }
 

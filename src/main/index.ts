@@ -2216,7 +2216,7 @@ ipcMain.handle('sessions:setEffort', (_e, id: string, choice: EffortChoice) =>
 ipcMain.handle('model:adviceAnswer', (_e, id: string, doSwitch: boolean) =>
   manager.answerModelAdvice(id, !!doSwitch)
 )
-ipcMain.handle('sessions:kill', (_e, id: string) => {
+function closePane(id: string): void {
   if (screenViews.owns(id)) {
     screenViews.close(id)
     return
@@ -2235,8 +2235,8 @@ ipcMain.handle('sessions:kill', (_e, id: string) => {
   const known = allSessions().some((s) => s.id === id)
   manager.kill(id)
   if (!known) send('sessions:changed', allSessions())
-  return
-})
+}
+ipcMain.handle('sessions:kill', (_e, id: string) => closePane(id))
 
 /**
  * A finished pane that closes itself once it has sat dead for a while - see
@@ -2315,6 +2315,18 @@ function removeFinished(removals: { id: string; reason: string }[]): void {
   }
   send('sessions:changed', allSessions())
 }
+// The idle clock's close (the renderer's countdown ran out): the pane goes the way a
+// finished one does, INTO REVIEW, rather than only into History. Robert, 2026-09-25: a
+// quiet pane "just close sessions after a bit of time", with Review as the way back.
+ipcMain.handle('sessions:closeIntoReview', (_e, id: string, reason: string) => {
+  // Only a local agent pane has a conversation to keep; a screen view, a mirror or a stale
+  // id is closed exactly the way `sessions:kill` closes it.
+  if (!remote.owns(id) && !screenViews.owns(id) && manager.list().some((s) => s.id === id)) {
+    logReclaim({ action: 'close-into-review', pane: id, reason })
+    reviewBeforeRemove(id, reason)
+  }
+  closePane(id)
+})
 ipcMain.handle('sessions:clearFinished', () => {
   const removals = clearFinishedNow(exitedFacts())
   removeFinished(removals)
@@ -2665,8 +2677,8 @@ ipcMain.on(
 // The idle clock's deadline, from the window that decides it. Refused for a mirrored id
 // for the same reason the busy footer is: the pane lives on the other machine, and its
 // own desk publishes when it will close it.
-ipcMain.on('sessions:closing', (_e, id: string, at: number | null, kept?: boolean) => {
-  if (!remote.owns(id)) manager.setClosingAt(id, typeof at === 'number' ? at : null, kept === true)
+ipcMain.on('sessions:closing', (_e, id: string, at: number | null) => {
+  if (!remote.owns(id)) manager.setClosingAt(id, typeof at === 'number' ? at : null)
 })
 
 ipcMain.handle('sessions:swarm', (_e, req: SwarmRequest) => manager.startSwarm(req))

@@ -44,8 +44,6 @@ export interface DeskRow extends FleetPane {
    * far end's own number or nothing at all.
    */
   closingAt?: number
-  /** ...and whether that number is that desk's "keep it open" hold, not its idle clock */
-  closeKept?: boolean
 }
 
 export interface DeskGroup {
@@ -72,8 +70,7 @@ function fromSession(s: Session, number: number): DeskRow {
     job: s.job,
     backJob: s.backJob,
     backJobSince: s.backJobSince,
-    closingAt: s.closingAt,
-    closeKept: s.closeKept
+    closingAt: s.closingAt
   }
 }
 
@@ -97,8 +94,7 @@ function fromListed(pane: RemotePaneInfo, device: { id: string; name: string }):
     job: pane.job,
     backJob: pane.backJob,
     backJobSince: pane.backJobSince,
-    closingAt: pane.closingAt,
-    closeKept: pane.closeKept
+    closingAt: pane.closingAt
   }
 }
 

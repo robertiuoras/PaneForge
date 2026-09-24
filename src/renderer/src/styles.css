@@ -630,9 +630,6 @@ html.glass .mascot-icon:hover { background: var(--glass-hi); }
    its 81 at the default 282px sidebar (measured) and read `Ses…`. The badges wrap to a
    second line instead (`.section-tail` above); the title is never clipped. */
 .section-title { flex: none; white-space: nowrap; display: inline-flex; align-items: center; gap: 7px; }
-.keep-open-check { flex: 0 0 16px; width: 16px; height: 16px; margin: 0; accent-color: var(--text); cursor: pointer; }
-.keep-open-check:disabled { cursor: default; opacity: .45; }
-.keep-open-check:focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
 
 /* The memory notice. Amber for tight, red for over - and deliberately quiet type: this
    appears while the machine is already struggling, and a loud banner on a laptop that is
@@ -1019,6 +1016,38 @@ button.row-lane:hover { color: var(--text); }
 .row-title.has-key .row-name {
   white-space: normal; overflow-wrap: anywhere;
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3;
+}
+/* 2026-09-25, "session names breaking when too long / new line split randomly". At a
+   260px sidebar the name had 101px of it: a column of one or two words a line beside the
+   key, cut off at the third line (`Session / lifecycle / research +...`). The flex line
+   gave the key, the tag box and the state word each a column the full height of the name.
+
+   So the title line is TEXT again, the way a mail client sets a subject: the tags and the
+   state word float right of the first line (they come first in the markup for that), the
+   key sits inline, and the name flows from the key across the whole card and wraps under
+   it. Measured the same 7 names: 3 lines at 101px became 2 lines at 190px, no word broken
+   except one longer than the card. The three-line cap moves from the name to the line.
+
+   The close button held a column of its own on every card although it only shows on
+   hover: it floats over the card's bottom-right corner, where the short sub line leaves
+   room. A touch screen keeps its always-drawn 40px button in the flow. */
+.row-title.has-key {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden;
+  white-space: normal; overflow-wrap: anywhere; text-wrap: pretty;
+}
+/* Vertical offsets measured against the name's first line: key centre 0px, remote icon +0.5px. */
+.row-title.has-key .num-wrap { display: inline-flex; vertical-align: 2px; margin: 0 6px 0 0; }
+.row-title.has-key .row-remote { display: inline-flex; vertical-align: -2px; margin: 0 5px 0 0; }
+.row-title.has-key .row-name { display: inline; min-width: 0; -webkit-line-clamp: none; overflow: visible; }
+.row-title.has-key .row-tags,
+.row-title.has-key .row-state { float: right; margin: 1px 0 0 8px; padding-left: 0; }
+/* One line of chips, never a stack: a two-row tag box held a narrow column for two lines. */
+.row-title.has-key .row-tags { flex-wrap: nowrap; justify-content: flex-end; }
+/* An empty tag box would still float its 8px margin and push the state word off the edge. */
+.row-title.has-key .row-tags:empty { display: none; }
+@media (hover: hover) and (pointer: fine) {
+  .row > .row-close { position: absolute; right: 6px; bottom: 6px; }
+  .row > .row-restart { position: absolute; right: 30px; bottom: 6px; }
 }
 .row-place {
   display: flex; align-items: center; gap: 5px; min-width: 0; margin-top: 2px;
@@ -3324,6 +3353,31 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
   min-height: 32px; padding: 6px 10px; font-size: 12px;
   justify-content: center; white-space: nowrap;
 }
+/* The countdowns in front of a move, sleep, close or start-over-there: ONE line - what,
+   the seconds, one Keep - with the reason in the tooltip (Robert 2026-09-25: "too long
+   too much unnecessary info"). The name is what gives way: it ellipsises, the seconds
+   and the button never move. Same surface, hairline and radius as every corner card. */
+.move-soon.line {
+  flex-direction: row; align-items: center; gap: 10px;
+  width: min(440px, calc(100vw - 36px));
+  padding: 7px 36px 7px 12px;
+}
+.move-soon.line .move-soon-say {
+  flex: 1 1 auto; min-width: 0; display: flex; gap: 0.3em; white-space: nowrap;
+}
+.move-soon.line .move-soon-say > span { flex: none; }
+.move-soon.line .move-soon-say > .move-soon-name {
+  flex: 0 1 auto; min-width: 3ch; overflow: hidden; text-overflow: ellipsis; font-weight: 600;
+}
+/* `--accent-text`, not `--accent`: the raw accent on the light theme's card measured 1.8:1;
+   this is the palette's 4.5:1 accent (6.9:1 light, 8.3:1 dark, measured). */
+.move-soon.line .move-soon-count { flex: none; font-size: 13px; color: var(--accent-text); }
+.move-soon.line .move-soon-keep {
+  flex: none; min-height: 28px; padding: 4px 12px; font-size: 12px;
+  justify-content: center; white-space: nowrap;
+}
+.move-soon.line .card-x { top: 50%; transform: translateY(-50%); }
+html.handheld .move-soon.line .card-x { top: 50%; }
 
 /* The dev-copy tour, same card shape and corner as `.move-soon` - it is the same kind
    of thing, a card the app put up on its own that walks alongside the work rather than
@@ -5003,8 +5057,6 @@ html.handheld .card-x { width: 44px; height: 44px; top: 0; right: 0; font-size: 
 .row-tags .elapsed.done { color: var(--text); opacity: 0.76; }
 .row-tags .session-last { color: var(--muted); }
 
-.keep-open-toggle { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; margin: 6px 0; }
-.keep-open-toggle.active { color: var(--text); border-color: var(--text); }
 
 .owner-actions { display: contents; }
 .users-dialog { width: min(760px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); overflow: hidden; }

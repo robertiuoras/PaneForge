@@ -737,32 +737,9 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                       }
                     })
                   }
-                  label="Put a pane nobody has used to sleep"
-                  hint={`On, and on by default. A pane nobody has typed into for ${config.reclaim?.idleSleepMinutes ?? IDLE_SLEEP_MINUTES} minutes has its agent stopped and KEEPS everything else: the card stays where it is, wearing the screen it had, and a press starts the CLI again in the same conversation. Measured on this desk: eight live agents, 1.27 GB, none of them doing anything. The refusals are the close clock's, exactly - never the pane you are in, never one you have not read yet, never one that is working, running a command or holding a question, never another device's, and never one you have said to keep open.`}
+                  label="Put quiet panes to sleep when this machine is low on memory"
+                  hint="Only when memory is short. A quiet pane has its agent stopped and keeps its card, its screen and its conversation - a press wakes it. With room to spare nothing sleeps: a quiet pane closes into Review instead (the switch below). Never the pane you are in, one that is working or running something, or one holding a question."
                 />
-                {(config.reclaim?.idleSleepMinutes ?? IDLE_SLEEP_MINUTES) > 0 && (
-                  <div className="setting">
-                    <label>Sleep after (minutes)</label>
-                    <input
-                      className="search"
-                      type="number"
-                      min={1}
-                      max={1440}
-                      step={1}
-                      value={config.reclaim?.idleSleepMinutes ?? IDLE_SLEEP_MINUTES}
-                      onChange={(e) =>
-                        onChange({
-                          reclaim: {
-                            ...DEFAULT_RECLAIM,
-                            ...config.reclaim,
-                            enabled: true,
-                            idleSleepMinutes: Number(e.target.value)
-                          }
-                        })
-                      }
-                    />
-                  </div>
-                )}
                 <Switch
                   checked={(config.reclaim?.idleCloseMinutes ?? 0) > 0}
                   onChange={(v) =>
@@ -776,7 +753,7 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                     })
                   }
                   label="Close a pane nobody has touched for a while"
-                  hint={`Off, a pane is only ever closed when this machine is genuinely out of memory - which is why a desk with room keeps every pane open for ever, however quiet they are. On, a pane nobody has typed into for ${config.reclaim?.idleCloseMinutes ?? IDLE_CLOSE_MINUTES} minutes is closed whatever the memory says, because an idle agent costs its ~190 MB the whole time it sits there. Nothing is lost: a closed pane keeps its conversation and what was on its screen, and reopening it from History puts both back. The refusals are the same either way - never the pane you are in, never one that is working or starting, never one holding a question, never another device's pane, and never the last one open.`}
+                  hint={`A pane nobody has typed into for ${config.reclaim?.idleCloseMinutes ?? IDLE_CLOSE_MINUTES} minutes closes into Review, because an idle agent costs its ~190 MB the whole time it sits there: its reply stays readable in Review and Continue brings the conversation back. Never the pane you are in, one you have not read yet, one that is working or running something, or one holding a question. Off, a pane only closes when this machine is out of memory.`}
                 />
                 {(config.reclaim?.idleCloseMinutes ?? 0) > 0 && (
                   <div className="setting">

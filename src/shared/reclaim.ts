@@ -175,6 +175,10 @@ export const IDLE_CLOSE_MINUTES = 10
  * memory verdict below is untouched: that is the case where the pane's 190 MB is what the
  * machine is actually short of.
  */
+/*
+ * From 2026-09-25 this clock runs only under a MEMORY verdict (`idleSleepPlan` returns
+ * nothing at `ok`), so the number is a ceiling the pressure clocks below cut to 1 min / 30s.
+ */
 export const IDLE_SLEEP_MINUTES = 30
 /**
  * The idle wait a finished pane gets while the machine is MEASURED short of memory (the
@@ -379,8 +383,8 @@ export interface ReclaimPane {
   /**
    * Somebody has said, on this pane, that it is not to be closed for being idle.
    *
-   * `keptUntil` is the hour-long hold the countdown chip arms, and it is the right answer
-   * for "not now". This is the answer for "not ever": a pane holding a long-running thing
+   * The countdown's Keep restarts the pane's close clock (`keptUntil`), and that is the
+   * answer for "not now". This is the answer for "not ever": a pane holding a long-running thing
    * the app cannot see - a watcher, a session being read a paragraph at a time, a build
    * somebody wants to come back to - has no reading that says so, and an hour later the
    * clock starts again. Robert, 2026-08-24: "if you right click session you can make it so
@@ -741,6 +745,12 @@ export function idleSleepPlan(
   lead = 0
 ): Reclaim[] {
   if (!cfg.enabled) return []
+  // Sleep is for a machine short of MEMORY, and nothing else. Robert, 2026-09-25: "shouldnt
+  // sleep that long just close sessions after a bit of time ... only reserve sleep for
+  // saving memory". With room, a quiet pane is the close clock's (into Review) or stays
+  // because it is waiting on somebody; a sleeping card was a closed pane that still took
+  // a place on the desk.
+  if (pressure === 'ok') return []
   const minutes = Math.max(0, cfg.idleSleepMinutes ?? IDLE_SLEEP_MINUTES)
   if (!minutes) return []
   const shortenedMinIdle = pressureSleepMs(minutes, pressure)
