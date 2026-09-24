@@ -111,6 +111,47 @@ const cases = [
   ['duration quoted in prose', 'The whole run took (2m 14s) end to end.\n' + CHROME, false],
   // A question outranks a spinner: the CLI is mid-turn but nothing moves until you answer.
   ['permission prompt over a spinner', '✢ Smooshing… (8s · ↓ 282 tokens)\nDo you want to proceed?\n❯ 1. Yes\n  2. No\n', false],
+  // Claude Code 2.1.281 AskUserQuestion, cut to the BUSY_ROWS (16) the renderer reads. The
+  // arrowed `❯ 1.` row is 23 rows up, beside the top of an option's preview box, so all
+  // that is left is the footer - and its "Esc to cancel" read as running (chat 13,
+  // 2026-09-24: Working for 14 minutes, every answer refused). Same geometry as that frame.
+  [
+    'question with a preview box, arrow row out of reach',
+    [
+      '                                  │    stays the same.                           │',
+      '                                  │                                              │',
+      '                                  │ 3. Third step of the plan                    │',
+      '                                  │    with a second line.                       │',
+      '                                  │                                              │',
+      '                                  │ Limits stay as they are.                     │',
+      '                                  │ The reason names the rule that moved it.     │',
+      '                                  └──────────────────────────────────────────────┘',
+      '',
+      '                                  Notes: press n to add notes',
+      '',
+      '────────────────────────────────────────────────────────────',
+      '  Chat about this',
+      '',
+      'Enter to select · ↑/↓ to navigate · n to add notes · Tab to switch questions · Esc to cancel'
+    ].join('\n'),
+    false
+  ],
+  // The same chooser with a long typed answer wrapped over the rows above the footer.
+  [
+    'question with a wrapped typed answer',
+    [
+      '     the rest of a long answer typed into the box, wrapped across the width of the pane',
+      '     and still going on the next row',
+      '────────────────────────────────────────────────────────────',
+      '  5. Chat about this',
+      'Enter to select · Tab/Arrow keys to navigate · ctrl+g to edit in Vim · Esc to cancel'
+    ].join('\n'),
+    false
+  ],
+  // A footer torn mid-repaint still names the chooser.
+  ['question footer torn mid-repaint', '  Chat about this\n\nEnter to select · ', false],
+  // Prose saying the words is not a chooser: a running spinner under it still reads busy.
+  ['prose mentioning enter to select', 'Press Enter to select the file.\n✢ Smooshing… (8s · ↓ 282 tokens)\n' + CHROME, true],
 
   // ---- Antigravity CLI (`agy`), captured off this desk's own pane log on 2026-08-26
   // (userData/history/s5-mta1hyqm.log, replayed through a real xterm). Its spinner is

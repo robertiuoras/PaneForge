@@ -54,9 +54,15 @@ const RUNNING_TASK =
  * technically mid-turn, but nothing moves until you answer, and the pane claiming to be
  * working is what makes you leave it sitting there. Numbered-choice lines are matched
  * with their selection arrow only, so a numbered list in an answer cannot trigger it.
+ *
+ * Claude Code's chooser footer ("Enter to select · ↑/↓ to navigate · … · Esc to cancel")
+ * is proof on its own. The arrowed row can sit far above it - a question with a preview
+ * box, or a typed answer that wraps, puts `❯ 1.` 20+ rows up, outside BUSY_ROWS - and the
+ * footer's own "Esc to cancel" then read as a running agent: the pane showed Working, had
+ * no question, and refused every answer sent to it for 14 minutes (chat 13, 2026-09-24).
  */
 export const ASK_PROMPT =
-  /do you want to (proceed|continue|make|create|allow|run)|allow (this )?(command|tool|edit)\?|❯\s*\d+\.\s|\(y\/n\)\s*$|press enter to (confirm|continue)|waiting for your (input|reply)/im
+  /do you want to (proceed|continue|make|create|allow|run)|allow (this )?(command|tool|edit)\?|❯\s*\d+\.\s|^[^\S\n]*enter to select\s+·|\(y\/n\)\s*$|press enter to (confirm|continue)|waiting for your (input|reply)/im
 
 /**
  * COUNTER, the weakest rule, read at the bottom of `busyEvidence`.
