@@ -209,7 +209,7 @@ import {
   bootMs
 } from './updater'
 import * as history from './history'
-import { clashingRestores, takenFolders } from '../shared/laneTaken'
+import { clashingRestores, holdIsOver, takenFolders } from '../shared/laneTaken'
 import { copyNumber } from '../shared/place'
 import { readBoard, writeMemory, writeTasks } from './board'
 import { vaultGraph, vaultInfo, vaultOpen } from './vault'
@@ -1733,6 +1733,12 @@ ipcMain.handle('sessions:continuationStatus', (_e, id: string) => {
   return { received: !!receipt.received, reason: receipt.received ? `Verified: this conversation received its saved handoff. ${recovery}` : receipt.failed ? `Delivery could not be verified. Recover from the saved handoff or source. ${recovery}` : `Delivery is not verified yet. ${recovery}` }
 })
 /**
+ * A lane-ledger hold kept for a pane this app has already closed holds nothing: History's
+ * `Open again` on that very chat was refused by it (`shared/laneTaken.ts` `holdIsOver`).
+ */
+const holdOver = (pane: string): boolean => holdIsOver(pane, manager.list(), history.ended)
+
+/**
  * Move a second session in the same folder into its own git worktree, so two
  * agents in one project cannot overwrite each other's edits or race the index.
  * Folders already held by live sessions are what "in use" means, so a lane freed
@@ -1757,7 +1763,7 @@ async function laneFor(
   // that folder again. Two client chats were restored asleep into `clients` and a
   // third opened from History landed there too, because neither counted (2026-09-04):
   // all three woke into one checkout. A folder with a sleeping pane in it is taken.
-  const taken = [...takenFolders(manager.list(), except), ...ledgerTakenFolders(except ?? ''), ...extraTaken]
+  const taken = [...takenFolders(manager.list(), except), ...ledgerTakenFolders(except ?? '', holdOver), ...extraTaken]
 
   // Reopening a pane that was in a lane, when the lane turned out to hold nothing and
   // the project folder is free again: the lane was only ever there to keep two agents
@@ -2100,7 +2106,7 @@ ipcMain.handle('sessions:wake', async (_e, id: string) => {
   if (continuationOwnsSource(id)) return null
   // A sleeping pane is placed again before it wakes: the folder it slept in may now be
   // another pane's (two client chats restored asleep into one checkout, 2026-09-04).
-  await manager.rehome(id, (req) => laneFor(req, ledgerTakenFolders(id), id))
+  await manager.rehome(id, (req) => laneFor(req, ledgerTakenFolders(id, holdOver), id))
   return manager.wake(id)
 })
 ipcMain.handle('sessions:switchAgent', (_e, id: string, agent: string, model?: string) => {

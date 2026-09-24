@@ -908,7 +908,7 @@ export async function resolveLane(cwd: string, taken: string[]): Promise<Lane> {
       const folder = await git(repo, ['cat-file', '-t', `${existing.ok ? branch : 'HEAD'}:${subfolder.replace(/\\/g, '/')}`])
       if (!folder.ok || folder.out !== 'tree') {
         if (existing.ok) continue
-        throw new Error(`Client or project folder is missing from the lane's commit: ${subfolder}. Commit its current location first.`)
+        throw new Error(notInCopy(cwd, name))
       }
     }
     let made = await git(repo, ['worktree', 'add', '-b', branch, path])
@@ -918,11 +918,22 @@ export async function resolveLane(cwd: string, taken: string[]): Promise<Lane> {
     }
     seedLane(repo, path)
     hideCopyFolder(path)
-    if (!existsSync(target)) throw new Error(`Client or project folder is missing from the new lane: ${target}. Commit its current location first.`)
+    if (!existsSync(target)) throw new Error(notInCopy(cwd, name))
     return { cwd: target, lane: label, branch, ...(await laneExtras(path, label)) }
   }
 
-  throw new Error(`No free lane containing this folder in ${name}. Finish an existing session or expand its lane pool.`)
+  // Read on a toast by somebody who has never used git: "No free lane ... lane pool" had
+  // Robert asking whether the lane was closed (2026-09-24). `test:reopenhold`.
+  throw new Error(
+    `Another chat is already working in ${name}, and there is no spare copy of ${name} with ${basename(cwd)} in it. ` +
+      `Close the other ${name} chat, then open this again.`
+  )
+}
+
+/** A folder that exists only on this disk: git never had it, so no copy of the project can. */
+function notInCopy(cwd: string, name: string): string {
+  return `${basename(cwd)} is new and not saved in ${name} yet, so a second copy of ${name} would not have it. ` +
+    `Close the other ${name} chat, then open this again.`
 }
 
 /**

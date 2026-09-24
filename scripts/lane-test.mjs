@@ -149,13 +149,13 @@ ok('a stale archived-client path is refused instead of becoming a root session',
 writeFileSync(join(repo, '.lanes.json'), JSON.stringify({ pool: ['main', 'a', 'b'] }))
 let fullRefused = false
 try { await resolveLane(archived, [active, activeA, archivedB]) }
-catch (error) { fullRefused = /No free lane/.test(error.message) }
+catch (error) { fullRefused = /no spare copy of demo/.test(error.message) && !/\blane\b/i.test(error.message) }
 ok('the configured full pool refuses to share a checkout or allocate outside the pool', fullRefused)
 writeFileSync(join(repo, '.lanes.json'), JSON.stringify({ pool: ['main', 'a', 'b', 'c'] }))
 mkdirSync(join(repo, 'clients', 'uncommitted'), { recursive: true })
 let uncommittedRefused = false
 try { await resolveLane(join(repo, 'clients', 'uncommitted'), [repo, activeA, archivedB]) }
-catch (error) { uncommittedRefused = /Commit its current location/.test(error.message) }
+catch (error) { uncommittedRefused = /uncommitted is new and not saved in demo yet/.test(error.message) && !/\blane\b/i.test(error.message) }
 ok('an uncommitted client cannot consume an unusable new worktree', uncommittedRefused && !existsSync(join(root, 'demo-c')))
 writeFileSync(join(repo, '.lanes.json'), JSON.stringify({ pool: ['main', 'x'] }))
 const custom = await resolveLane(active, [repo])

@@ -19,6 +19,31 @@ export function takenFolders(
 }
 
 /**
+ * Whether a lane-ledger hold kept for `pane` is over, because this app already closed it.
+ *
+ * The ledger (`scripts/lane.mjs`) outlives the pane: a Codex pane closed by the memory
+ * sweep leaves its hold behind, and the app's gone-sweep (`goneLanes`, `laneBoard.ts`)
+ * only hands it back 15 minutes after the chat last spoke. Until then History's `Open
+ * again` on THAT chat was refused by its own leftover hold - `Eugenie A | clients`,
+ * 2026-09-24: pane closed 06:50, two reopens at 06:56 and 06:57 both toasted "Could not
+ * open", hold released at 07:02. A hold for a pane that is gone keeps nobody apart.
+ *
+ * Over only on proof, the same proof `takenFolders` uses: a pane still on the desk is over
+ * when it exited and is not asleep. A pane NOT on the desk is over only when its History
+ * row says it ended - an id this app never saw may be another running copy's (`npm run
+ * try`), and that copy's hold still counts.
+ */
+export function holdIsOver(
+  pane: string,
+  sessions: ReadonlyArray<{ id?: string; status: string; asleep?: number }>,
+  ended: (pane: string) => boolean
+): boolean {
+  const s = sessions.find((x) => x.id === pane)
+  if (s) return s.status === 'exited' && !s.asleep
+  return ended(pane)
+}
+
+/**
  * Whether a pane about to WAKE has to be moved first.
  *
  * A sleeping pane holds its folder (above), but only against panes opened later. Two
