@@ -99,7 +99,7 @@ function hookTimeout(normal) {
 }
 
 function git(cwd, ...args) {
-  return execFileSync('git', args, {
+  return execFileSync('git', args, { windowsHide: true,
     cwd,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -399,7 +399,7 @@ function hideLane(id) {
   const dir = laneDir(id)
   if (!existsSync(dir)) return
   try {
-    spawnSync('chflags', ['hidden', dir], { stdio: 'ignore', timeout: hookTimeout(10000) })
+    spawnSync('chflags', ['hidden', dir], { windowsHide: true, stdio: 'ignore', timeout: hookTimeout(10000) })
   } catch {
     /* no chflags: the folder stays visible, which is where it was anyway */
   }
@@ -758,7 +758,7 @@ function lockToken() {
   }
   const run = (input, ...args) => {
     try {
-      return execFileSync('git', args, {
+      return execFileSync('git', args, { windowsHide: true,
         cwd: MAIN,
         encoding: 'utf8',
         input,
@@ -1196,7 +1196,7 @@ function machineWrittenPaths(dir) {
   // first path in the list would come back one character short.
   let status
   try {
-    status = execFileSync('git', [...WORK_STATUS, '-z'], {
+    status = execFileSync('git', [...WORK_STATUS, '-z'], { windowsHide: true,
       cwd: dir,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -1226,7 +1226,7 @@ function machineWrittenPaths(dir) {
   // `-z --stdin`: one path per NUL in, `path NUL attr NUL value NUL` out.
   let attr
   try {
-    attr = execFileSync('git', ['check-attr', '-z', '--stdin', 'merge'], {
+    attr = execFileSync('git', ['check-attr', '-z', '--stdin', 'merge'], { windowsHide: true,
       cwd: dir,
       input: paths.join('\0') + '\0',
       encoding: 'utf8',
@@ -2495,7 +2495,7 @@ function dependenciesMissing(pkg) {
  */
 function installDeps() {
   const cmd = existsSync(join(MAIN, 'package-lock.json')) ? 'npm ci' : 'npm install'
-  const r = spawnSync(cmd, { cwd: MAIN, encoding: 'utf8', timeout: 900_000, shell: true })
+  const r = spawnSync(cmd, { windowsHide: true, cwd: MAIN, encoding: 'utf8', timeout: 900_000, shell: true })
   if (r.status === 0) return null
   return (
     `${basename(MAIN)} is missing declared dependencies and \`${cmd}\` could not install them, so nothing was ` +
@@ -2518,7 +2518,7 @@ function remoteTypecheckFailure() {
   const at = process.argv.indexOf('--session')
   const session =
     (at >= 0 && process.argv[at + 1]) || process.env.CLAUDE_SESSION_ID || process.env.CODEX_THREAD_ID || `lane-${hostname()}`
-  const r = spawnSync(process.execPath, [RBUILD, '--repo', MAIN, '--session', session, 'typecheck'], {
+  const r = spawnSync(process.execPath, [RBUILD, '--repo', MAIN, '--session', session, 'typecheck'], { windowsHide: true,
     encoding: 'utf8',
     timeout: 1_200_000
   })
@@ -2580,7 +2580,7 @@ function typecheckFailure(state) {
   const remote = remoteTypecheckFailure()
   if (remote !== undefined) return remote
   // One string + shell: npm on Windows is npm.cmd, which cannot be spawned directly.
-  const r = spawnSync('npm run --silent typecheck', {
+  const r = spawnSync('npm run --silent typecheck', { windowsHide: true,
     cwd: MAIN,
     encoding: 'utf8',
     timeout: 150_000,
@@ -2666,7 +2666,7 @@ function suiteFailure(state) {
   }
   // One string + shell, same as the typecheck above: npm on Windows is npm.cmd.
   const runSuite = () =>
-    spawnSync('npm test --silent', {
+    spawnSync('npm test --silent', { windowsHide: true,
       cwd: MAIN,
       encoding: 'utf8',
       timeout: SUITE_TIMEOUT_MS,
@@ -2759,7 +2759,7 @@ function suiteFailureInLane(dir) {
   const script = pkg.scripts?.test
   if (!script || /no test specified/i.test(script)) return null
   const runSuite = () =>
-    spawnSync('npm test --silent', { cwd: dir, encoding: 'utf8', timeout: SUITE_TIMEOUT_MS, shell: true })
+    spawnSync('npm test --silent', { windowsHide: true, cwd: dir, encoding: 'utf8', timeout: SUITE_TIMEOUT_MS, shell: true })
   let r = runSuite()
   if (r.status === 0) return null
   const first = `${r.stdout ?? ''}${r.stderr ?? ''}`
@@ -4404,7 +4404,7 @@ function openPaneDirs() {
  */
 function processDirs() {
   if (process.platform === 'win32') return []
-  const r = spawnSync('lsof', ['-a', '-d', 'cwd', '-Fn'], { encoding: 'utf8', timeout: 60_000, maxBuffer: 64 * 1024 * 1024 })
+  const r = spawnSync('lsof', ['-a', '-d', 'cwd', '-Fn'], { windowsHide: true, encoding: 'utf8', timeout: 60_000, maxBuffer: 64 * 1024 * 1024 })
   // lsof exits 1 whenever one process could not be read, and still lists every other one.
   if (!r.stdout) return null
   return r.stdout
@@ -4523,7 +4523,7 @@ function workTree(dir, label) {
   const tmpIndex = join(tmpdir(), `lane-sweep-${process.pid}-${label}.index`)
   const env = { ...process.env, GIT_INDEX_FILE: tmpIndex }
   const run = (...args) =>
-    execFileSync('git', args, { cwd: dir, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 10 * 60_000 }).trim()
+    execFileSync('git', args, { windowsHide: true, cwd: dir, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 10 * 60_000 }).trim()
   try {
     copyFileSync(resolve(dir, git(dir, 'rev-parse', '--git-path', 'index')), tmpIndex)
     run('add', '-A')

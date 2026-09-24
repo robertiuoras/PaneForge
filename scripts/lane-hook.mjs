@@ -131,7 +131,7 @@ function writeRegistry(r) {
 // ------------------------------------------------------------------ engine
 
 function lane(repo, ...args) {
-  const r = spawnSync(process.execPath, [ENGINE, ...args, '--repo', repo], {
+  const r = spawnSync(process.execPath, [ENGINE, ...args, '--repo', repo], { windowsHide: true,
     encoding: 'utf8',
     // `release` can end in a real release (merge, tag, two pushes), so it gets room.
     timeout: args[0] === 'release' ? 180_000 : 25_000
