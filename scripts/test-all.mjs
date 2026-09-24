@@ -172,6 +172,7 @@ const TESTS = [
   ['autohandoff', 'autohandoff-test.mjs'],
   ['offloadfirst', 'offloadfirst-test.mjs'],
   ['idlequit', 'idlequit-test.mjs'],
+  ['idlehide', 'idlehide-test.mjs'],
   ['winshortcut', 'winshortcut-test.mjs'],
   ['promptecho', 'promptecho-test.mjs'],
   ['promptpad', 'promptpad-test.mjs'],

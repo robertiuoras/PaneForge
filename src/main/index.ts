@@ -100,6 +100,7 @@ import {
   whenClear
 } from './gameMode'
 import { away, startAway, stopAway } from './away'
+import { idleHideDeskChanged, idleHideShown, startIdleHide } from './idleHide'
 import { onBatteryNow, watchPower } from './power'
 import {
   initProfile,
@@ -645,6 +646,8 @@ function createWindow(): void {
   win.on('restore', pushVisible)
   win.on('show', pushVisible)
   win.on('hide', pushVisible)
+  win.on('show', idleHideShown)
+  win.on('focus', idleHideShown)
   win.webContents.on('did-finish-load', pushVisible)
 
   /**
@@ -953,6 +956,7 @@ manager.on('sessions', () => {
   noteDesk()
   presence.update(presenceCounts())
   closeReceiverWhenClear()
+  idleHideDeskChanged()
 })
 
 // Discord Rich Presence: "3/6 sessions running" on the user's profile, refreshed as
@@ -1538,6 +1542,22 @@ startAway((a) => {
   // is the only thing that ever says otherwise - see `Borrow.person`.
   remote.presenceChanged(a.sawPerson)
 })
+
+// On the PC, an empty desk nobody is using puts its window away after three minutes and
+// keeps running, so the Mac can still start panes here (shared/idleHide.ts). A test copy
+// joins only when it asks for a wait of its own, so an agent's copy never vanishes mid-look.
+{
+  const testWait = Number(process.env.PF_IDLE_HIDE_MS) || undefined
+  if (process.platform === 'win32' && !headlessMode() && (!profileName() || testWait)) {
+    startIdleHide({
+      win: () => (alive() ? win : null),
+      localSessions: () => manager.list(),
+      watching: () => screenViews.sessions().length,
+      log: (line) => updateLog('window', line),
+      waitMs: testWait
+    })
+  }
+}
 
 ipcMain.handle('projects:list', () => listProjects())
 ipcMain.handle('projects:sessionFolders', () => listSessionFolders())
