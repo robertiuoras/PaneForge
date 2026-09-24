@@ -35,7 +35,7 @@ buildSync({
   outfile: out
 })
 const require = createRequire(import.meta.url)
-const { JOB_MIN_SECONDS, isCommandShell, jobLabel, jobWords, paneBackJobs } = require(out)
+const { JOB_MIN_SECONDS, isCommandShell, isWaitScript, jobLabel, jobWords, paneBackJobs } = require(out)
 
 let checks = 0
 const is = (actual, expected, what) => {
@@ -297,5 +297,30 @@ rmSync(work, { recursive: true, force: true })
   ok(jobLabel([envRun], envRun) === 'deploy.sh', 'env/nohup are in front of the job, not instead of it')
 }
 
+// --- isWaitScript: a background shell only waiting on something elsewhere -----------------
+// Shapes measured on the live desk 2026-09-24 (the Claude Code prelude, then `eval '<script>'`).
+{
+  const cc = (script) =>
+    `/bin/zsh -c source /Users/r/.claude/shell-snapshots/snapshot-zsh-1.sh 2>/dev/null || true && eval '${script}' < /dev/null && pwd -P >| /tmp/claude-4975-cwd`
+  const S = 'sleep'
+  ok(isWaitScript(cc(`${S} 600; gh run list -L 3`)), 'a long pause is a wait')
+  ok(isWaitScript(cc('gh run watch 35879171170 -R o/r --exit-status; echo "exit=$?" >> $TMPDIR/rc.log')), 'gh run watch is a wait')
+  ok(isWaitScript(cc(`until git merge-base --is-ancestor 3eb87458 origin/main; do git fetch -q; ${S} 30; done`)), 'a merge poll loop is a wait')
+  ok(isWaitScript(cc(`F=/tmp/x.output; until grep -qE "rbuild: exit|error TS" $F; do ${S} 5; done`)), 'polling a log file is a wait')
+  ok(isWaitScript(cc('tail -f /tmp/dev.log')), 'tail -f is a wait')
+  ok(isWaitScript(cc(`while node ~/.claude/rbuild.mjs --status c901067a | grep -q queued; do ${S} 20; done`)), 'polling a queued job is a wait')
+  ok(!isWaitScript(cc('node ~/.claude/rbuild.mjs --session 49bc --repo /p/secondtonone test')), 'a queued test run is work')
+  ok(!isWaitScript(cc('node lane.mjs ready --repo /p/toolstash --session e97a 2>&1 | tail -8')), 'lane ready is work')
+  ok(!isWaitScript(cc(`for i in 1 2 3; do npm test && break; ${S} 5; done`)), 'a retry loop around tests is work')
+  ok(!isWaitScript(cc('npm run dev')), 'a dev server is work')
+  ok(!isWaitScript(undefined), 'no command line, no claim')
+  const rows = [
+    { pid: 10, ppid: 1, cmd: 'claude', elapsed: 900 },
+    { pid: 11, ppid: 10, cmd: cc(`${S} 600`), elapsed: 300 },
+    { pid: 12, ppid: 11, cmd: `${S} 600`, elapsed: 300 }
+  ]
+  const jobs = paneBackJobs(rows, 10)
+  ok(jobs.length === 1 && jobs[0].waiting === true, 'the job carries its waiting flag')
+}
 
 console.log(`pane-backjobs: ${checks} checks passed`)

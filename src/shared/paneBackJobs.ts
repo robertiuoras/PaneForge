@@ -65,6 +65,8 @@ export interface PaneBackJob {
   label: string
   /** seconds alive, when the table gave one */
   elapsed?: number
+  /** Only waiting on something else - see `isWaitScript`. */
+  waiting?: boolean
 }
 
 /**
@@ -341,7 +343,12 @@ export function paneBackJobs(
       seen.add(kid.pid)
       if (isCommandShell(kid.cmd)) {
         if ((kid.elapsed ?? 0) >= floor) {
-          out.push({ pid: kid.pid, label: jobLabel(rows, kid), elapsed: kid.elapsed })
+          out.push({
+            pid: kid.pid,
+            label: jobLabel(rows, kid),
+            elapsed: kid.elapsed,
+            waiting: isWaitScript(kid.cmd)
+          })
           continue
         }
         // Under the floor: still not walked into. A hook's own children are a hook.
@@ -351,6 +358,40 @@ export function paneBackJobs(
     }
   }
   return out.sort((a, b) => (b.elapsed ?? 0) - (a.elapsed ?? 0))
+}
+
+/** Work a script does that is never "just waiting", even inside a poll loop. */
+const REAL_WORK = /\b(npm (run|test|ci|install)|npx|pnpm|yarn|tsc|electron-builder|git (push|commit|merge(?!-)|rebase)|lane\.mjs (ready|ship)|release|deploy|build)\b/i
+
+/**
+ * Whether a background shell is only WAITING on something else - a CI run, a merge, a
+ * job queued on the other machine - rather than doing work itself.
+ *
+ * An agent that finishes its turn often leaves one of these behind: `sleep 600`, an
+ * `until git merge-base ...; do sleep 30; done`, `gh run watch`, a `tail -f`. It holds
+ * no result that is not also somewhere else (the CI run, the branch, the queue), so it is
+ * not a reason to keep a finished pane on the desk - Robert, 2026-09-24: "sessions showing
+ * as waiting but really they are done ... they should just get closed". Measured that
+ * night: 5 of 6 idle Mac panes were held open by exactly these.
+ *
+ * Read off the shell's own `-c` line, not the process sampled under it: a poll loop is
+ * `sleep` most of the time and `git fetch` for a moment, and a reading that flips with
+ * the sample would close a pane on one tick and not the next. Anything that builds,
+ * tests, pushes or releases is work, loop or not.
+ */
+export function isWaitScript(cmd: string | undefined): boolean {
+  if (!cmd) return false
+  const script = cmd.includes(' eval ') ? cmd.slice(cmd.indexOf(' eval ') + 6) : cmd
+  if (REAL_WORK.test(script)) {
+    // A queued-job poll names the build it is waiting for; `--status` is only asking.
+    if (!/rbuild\.mjs[^|;&]*--status/.test(script) || /\bnpm (run|test)\b/.test(script)) return false
+  }
+  if (/\b(until|while|for)\b[\s\S]*\bsleep\s+\d/.test(script)) return true
+  // A script that opens with a pause is a wait with a check after it.
+  if (/^\W*sleep\s+\d+/.test(script.trim())) return true
+  if (/\bgh run watch\b/.test(script) || /\bgh pr checks\b[^|;&]*--watch/.test(script)) return true
+  if (/\btail\s+-[fF]\b/.test(script)) return true
+  return false
 }
 
 /**

@@ -17,7 +17,7 @@ import { specFor } from './agents'
 import { memoryPrelude } from './board'
 import { endAll, gistFor, noteCols, recordData, recordEnd, recordStart, sizeOf, tail } from './history'
 import { jobTable } from './backJobs'
-import { backJobInfo } from './usage'
+import { backJobInfo, backJobWaitOnly } from './usage'
 import { forgetHandoff, handoffFor } from './handoffSteps'
 import { workShot } from './changedNothing'
 import { changedNothingWhy, changedNothingWords } from '../shared/changedNothing'
@@ -724,6 +724,7 @@ export class SessionManager extends EventEmitter {
         drafting: m.drafting,
         job: m.job,
         backJob: m.backJob,
+        backWaitOnly: backJobWaitOnly(m.id),
         focused: m.id === this.activeId,
         lastKeyboard: m.lastKeyboard,
         turnEndedAt: live.footerEndedAt,
@@ -3369,7 +3370,7 @@ export class SessionManager extends EventEmitter {
     const live = this.sessions.get(id)
     if (!live) return { closed: false, reason: 'session is no longer open' }
     const m = live.meta
-    if (m.status !== 'idle' || m.runSince || live.busyUntil > Date.now() || m.job || m.backJob || m.subagent) return { closed: false, reason: 'session is busy or has a background job' }
+    if (m.status !== 'idle' || m.runSince || live.busyUntil > Date.now() || m.job || (m.backJob && !backJobWaitOnly(id)) || m.subagent) return { closed: false, reason: 'session is busy or has a background job' }
     if (m.drafting || m.ask || m.owedPrompt || m.handingOff || m.handoffQueuedAt || m.handoffOpen || (m.handoverUntil ?? 0) > Date.now()) return { closed: false, reason: 'session has a draft, question, queued prompt, or handoff' }
     if (m.lastKeyboard > reportedAt) return { closed: false, reason: 'newer user input exists' }
     this.kill(id)

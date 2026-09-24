@@ -37,6 +37,13 @@ export interface DoneReading extends DonePane {
    * "get summary in 1 session and leave it open".
    */
   openedOthers?: boolean
+  /**
+   * Everything it left running in the background is only WAITING on something elsewhere
+   * - a CI run, a merge, a queued job (`shared/paneBackJobs.ts` `isWaitScript`). That
+   * holds nothing the CI run or the branch does not also hold, so it does not keep a
+   * finished pane open (Robert, 2026-09-24: "they should just get closed").
+   */
+  backWaitOnly?: boolean
 }
 
 /**
@@ -51,7 +58,8 @@ export type DoneVerdict =
   | { close: false; reason: string }
 
 /** May this pane close itself into Review now? */
-export function doneVerdict(p: DoneReading, now = Date.now()): DoneVerdict {
+export function doneVerdict(reading: DoneReading, now = Date.now()): DoneVerdict {
+  const p = reading.backWaitOnly ? { ...reading, backJob: undefined } : reading
   if (p.agent === 'shell') return { close: false, reason: 'shell pane' }
   if (!p.turnEndedAt) return { close: false, reason: 'no finished turn' }
   if (p.focused) return { close: false, reason: 'somebody is looking at it' }
