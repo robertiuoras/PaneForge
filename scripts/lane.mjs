@@ -3527,6 +3527,8 @@ function ship(kind, session) {
     }
 
     const merged = []
+    // Where master stood before any lane landed: a merged tree that does not compile goes back here.
+    const beforeMerge = gitSafe(MAIN, 'rev-parse', 'HEAD').out
     const conflicts = {}
     // Lanes that could not be merged because git was busy, which is not the same thing as
     // a lane that cannot be merged. They keep their ready mark and nothing is recorded
@@ -3580,6 +3582,19 @@ function ship(kind, session) {
         }
       }
       merged.push({ lane: id, commits: ahead, commit: mark.commit })
+    }
+
+    // The typecheck above read master BEFORE any lane landed. Two lanes that each compile
+    // can still not compile together: faec0266 (2026-09-25) merged lane a, whose new call
+    // passed one argument to a function master had just given a second, and pushed it.
+    // Master stayed red until someone else's queue job tripped over it. So the merged tree
+    // is checked again, and a red one is put back to what origin already has, unpushed.
+    if (merged.length && !TASKDRIVER_PC) {
+      const red = typecheckFailure(state)
+      if (red) {
+        gitSafe(MAIN, 'reset', '--hard', beforeMerge)
+        throw new Error(`the lanes did not compile once merged, so nothing was pushed: ${red}`)
+      }
     }
 
     // A set of individually checked lanes can produce a different merge tree.

@@ -60,16 +60,66 @@ export function mergeImportConflicts(text) {
     if (!both.some((l) => /\b(import|require|use)\b/.test(l))) return null
     // Ours first, theirs after, and a line both sides added only appears once.
     const seen = new Set()
+    const kept = []
     for (const l of both) {
       const key = l.trim()
       if (!key || seen.has(key)) continue
       seen.add(key)
-      out.push(l)
+      kept.push(l)
     }
+    const joined = joinSameSource(kept)
+    if (joined === null) return null
+    out.push(...joined)
     healed++
     i = end + 1
   }
   return healed ? out.join('\n') : null
+}
+
+/** `import { a, type B } from 'x'` on one line - the only shape two sides can be folded in. */
+const BRACE_IMPORT = /^(\s*)import\s+(type\s+)?\{([^}]*)\}\s+from\s+(['"])([^'"]+)\4\s*;?\s*$/
+const SOURCE = /\bfrom\s+['"]([^'"]+)['"]|require\(\s*['"]([^'"]+)['"]\s*\)/
+
+/**
+ * Two lines importing from ONE module are one line each side edited, not two additions.
+ *
+ * 2026-09-25, faec0266 "merge lane a": master had
+ * `import { handoffReceiverCanQuit, INTERRUPT_WAIT_MS, type HandoffItem, type HandoffRequest } from '../shared/handoff'`
+ * and lane a had the same line with three more names. The union kept both, every name
+ * was declared twice, and master stopped compiling (TS2300 Duplicate identifier).
+ * Plain brace imports are folded into one line holding every name either side had;
+ * any other shape importing one module twice is left for a person.
+ */
+function joinSameSource(lines) {
+  const bySource = new Map()
+  for (const l of lines) {
+    const m = SOURCE.exec(l)
+    if (!m) continue
+    const src = m[1] ?? m[2]
+    bySource.set(src, [...(bySource.get(src) ?? []), l])
+  }
+  const out = []
+  const done = new Set()
+  for (const l of lines) {
+    const m = SOURCE.exec(l)
+    const group = m ? bySource.get(m[1] ?? m[2]) : null
+    if (!group || group.length < 2) {
+      out.push(l)
+      continue
+    }
+    if (done.has(group)) continue
+    done.add(group)
+    const parsed = group.map((g) => BRACE_IMPORT.exec(g))
+    if (parsed.some((p) => !p || Boolean(p[2]) !== Boolean(parsed[0][2]))) return null
+    const names = []
+    for (const p of parsed)
+      for (const n of p[3].split(',').map((s) => s.trim()).filter(Boolean))
+        if (!names.includes(n)) names.push(n)
+    const [, indent, typeOnly, , quote, src] = parsed[0]
+    const semi = group[0].trimEnd().endsWith(';') ? ';' : ''
+    out.push(`${indent}import ${typeOnly ?? ''}{ ${names.join(', ')} } from ${quote}${src}${quote}${semi}`)
+  }
+  return out
 }
 
 /**

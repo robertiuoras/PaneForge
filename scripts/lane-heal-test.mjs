@@ -56,11 +56,17 @@ const gitTry = (cwd, ...args) => {
 
 // ---------------------------------------------------------------- a repo with lanes
 
-const repo = join(root, 'demo')
-const laneA = join(root, 'demo-a')
+// A new folder per block: a ship starts a detached sweep whose working folder is the repo, and
+// on Windows a folder something is standing in cannot be deleted (EPERM on the next block).
+let blocks = 0
+let repo = join(root, 'demo')
+let laneA = join(root, 'demo-a')
 
 /** A fresh repo every block, so one failing assertion cannot cascade into the next. */
 function makeRepo({ typecheck = null, deps = null, test = null } = {}) {
+  blocks++
+  repo = join(root, `demo${blocks}`)
+  laneA = `${repo}-a`
   rmSync(repo, { recursive: true, force: true })
   rmSync(laneA, { recursive: true, force: true })
   mkdirSync(join(repo, 'scripts'), { recursive: true })
@@ -265,6 +271,29 @@ workInLaneA()
 const broken = lane('ready', '--session', 's1')
 ok('a real type error is still called a type error', /does not typecheck/i.test(broken), broken)
 ok('and it quotes the error', /TS1005/.test(broken), broken)
+
+// ---------------------------------------------------------------- 8: compiles apart, not together
+
+// faec0266 (2026-09-25): master and lane a each compiled, the merge of the two did not
+// (a call on one side, a new required argument on the other), and ship pushed it.
+makeRepo({ typecheck: 'node -e "const fs=require(\'node:fs\'); if (fs.existsSync(\'caller.txt\') && fs.existsSync(\'callee.txt\')) { console.log(\'x.ts(1,1): error TS2554: Expected 2 arguments, but got 1.\'); process.exit(1) }"' })
+claimLaneA('s1')
+writeFileSync(join(repo, 'callee.txt'), 'two arguments now\n')
+git(repo, 'add', '-A')
+git(repo, 'commit', '-qm', 'master changes the callee')
+const masterBefore = git(repo, 'rev-parse', 'master')
+writeFileSync(join(laneA, 'caller.txt'), 'one argument\n')
+git(laneA, 'add', '-A')
+git(laneA, 'commit', '-qm', 'lane a adds a caller')
+const together = gitTry(repo, 'rev-parse', 'HEAD') && (() => {
+  try {
+    return lane('ready', '--session', 's1')
+  } catch (e) {
+    return String(e.stdout ?? '') + String(e.stderr ?? e.message)
+  }
+})()
+ok('a merge that does not compile is not left on master', git(repo, 'rev-parse', 'master') === masterBefore, `${git(repo, 'log', '--oneline', '-3', 'master')}\n${together}`)
+ok('and the reason names the type error', /TS2554/.test(together), together)
 
 // ----------------------------------------------------------------
 
