@@ -42,6 +42,7 @@
 
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import {
+  appendFileSync,
   copyFileSync,
   existsSync,
   lstatSync,
@@ -511,6 +512,11 @@ const ADOPT_MS = 45 * 60 * 1000
 // already knows the answer to a good few of the rest. Retrying costs one merge attempt
 // that is aborted on failure, so the cheap half of "resolve it permanently" is free.
 const RETRY_MS = 10 * 60 * 1000
+// A resolver chat opened for an abandoned conflict (dispatchResolvers) gets this long to
+// settle it before another is opened, and only DISPATCH_TRIES are ever opened for one
+// conflict: a chat that fails three times is a conflict a person has to read.
+const DISPATCH_AGAIN_MS = 2 * 60 * 60 * 1000
+const DISPATCH_TRIES = 3
 
 // ---------------------------------------------------------------- state file
 // Lives in .git/, which is shared by every worktree and never committed.
@@ -1314,6 +1320,9 @@ function noteConflict(bag, id, detail, previous) {
     detail,
     resolver: was?.resolver ?? null,
     resolverAt: was?.resolverAt ?? null,
+    // The resolver chat this conflict already had opened for it (see dispatchResolvers).
+    // Kept across re-records so a second tick never opens a second pane.
+    dispatch: was?.dispatch ?? null,
     master: gitSafe(MAIN, 'rev-parse', MB).out,
     retryAt: now() + RETRY_MS
   }
@@ -1424,6 +1433,108 @@ function adoptable(state, id) {
   const holder = state.lanes[id]
   if (!holder) return true
   return now() - (holder.seen ?? holder.claimed ?? 0) > ADOPT_MS
+}
+
+/**
+ * Give Claude Code's trust entry for the repo to `dir`, so a pane opened there does not
+ * stop on "Do you trust the files in this folder?" with "No, exit" preselected - the
+ * queued prompt's Enter answers it and the chat exits within seconds (2026-09-12, two
+ * panes lost that way). Nothing is granted the repo did not already have; a folder with
+ * its own entry is left alone. Same idea as seedClaudeProjectSettings in lanes.ts.
+ */
+function seedTrust(dir) {
+  const home = process.env.CLAUDE_CONFIG_DIR?.trim() || join(homedir(), '.claude')
+  const path = [join(home, '.claude.json'), join(homedir(), '.claude.json')].find((p) => existsSync(p))
+  if (!path) return
+  const forms = (p) => [resolve(p), resolve(p).replace(/\\/g, '/')]
+  try {
+    const data = JSON.parse(readFileSync(path, 'utf8'))
+    if (!data.projects || forms(dir).some((k) => data.projects[k])) return
+    const from = forms(MAIN)
+      .map((k) => data.projects[k])
+      .find((e) => e?.hasTrustDialogAccepted === true)
+    if (!from) return
+    const KEEP = ['allowedTools', 'mcpContextUris', 'mcpServers', 'enabledMcpjsonServers', 'disabledMcpjsonServers',
+      'hasTrustDialogAccepted', 'hasCompletedProjectOnboarding', 'projectOnboardingSeenCount',
+      'hasClaudeMdExternalIncludesApproved', 'hasClaudeMdExternalIncludesWarningShown']
+    const entry = {}
+    for (const k of KEEP) if (k in from) entry[k] = from[k]
+    for (const k of forms(dir)) data.projects[k] = { ...entry }
+    const tmp = `${path}.lane.${process.pid}.tmp`
+    writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8')
+    renameSync(tmp, path)
+  } catch {
+    /* unreadable or mid-write by a live CLI - the pane may ask, which is the old behaviour */
+  }
+}
+
+/** What the resolver chat is told: everything it needs, nothing it has to ask for. */
+function resolverBrief(id, c) {
+  const dir = laneDir(id)
+  const engine = join(here, 'lane.mjs')
+  const hours = Math.max(1, Math.round((now() - (c.since ?? now())) / 3600000))
+  const s = '<this chat\'s session id, printed in the lane line at the top of this chat>'
+  return (
+    `Lane ${id} of ${basename(MAIN)} (${dir}) has conflicted with ${MB} for about ${hours}h and the chat that wrote it has stopped answering, ` +
+    `so its finished work is in no release. The automatic merge could not settle it: both sides changed the same lines of ${c.detail}. Settle it yourself, now:\n` +
+    `1. node "${engine}" resolve --repo "${MAIN}" --session ${s} --lane ${id}   (opens the merge in ${dir})\n` +
+    `2. In ${dir}, read what each side meant (git log -p ${MB} -3 -- <file> and git log -p HEAD -3 -- <file>) and rewrite every conflicted file so BOTH changes survive. No conflict markers left.\n` +
+    `3. git add those files, git commit --no-edit, then run the repo's typecheck/tests if it has them.\n` +
+    `4. node "${engine}" ready --repo "${MAIN}" --session ${s} --lane ${id}\n` +
+    `Never cut or publish a release. If the two changes genuinely cannot both be kept, stop and say which lines disagree and why.`
+  )
+}
+
+/**
+ * Open ONE resolver chat for each conflict nobody is going to settle.
+ *
+ * Everything before this - the retry, rerere, autoResolve, adoption - still left a real
+ * disagreement waiting for a person: the prompt hook only tells a chat about it when
+ * somebody next types into that chat, so in practice Robert pasted "lane a is
+ * conflicted ... take it over" by hand, about twenty times between 2026-08-18 and
+ * 2026-09-24. So the timer opens the chat itself.
+ *
+ * Only for a conflict that is adoptable (its chat is quiet or gone and no resolver holds
+ * it), in a lane that is clean or mid-merge (resolve refuses other uncommitted work), with no chat opened for it in
+ * the last DISPATCH_AGAIN_MS, and at most DISPATCH_TRIES times. Runs after
+ * retryConflicts, so anything autoResolve settles is already gone. Needs pf-ctl beside
+ * this file and a PaneForge to answer it; without either it opens nothing and records
+ * nothing, so the next tick tries again. `LANE_DISPATCH_LOG` stands in for the app in
+ * tests: each request is appended to it as one JSON line.
+ */
+function dispatchResolvers(state) {
+  const opened = []
+  const ctl = join(here, 'pf-ctl.mjs')
+  const log = process.env.LANE_DISPATCH_LOG
+  if (!log && (process.env.PF_CTL_NO_APP || !existsSync(ctl))) return opened
+  for (const [id, c] of Object.entries(state.conflicts)) {
+    if (id === 'main' || !existsSync(laneDir(id)) || !adoptable(state, id)) continue
+    const d = c.dispatch
+    if (d && (d.tries >= DISPATCH_TRIES || now() - d.at < DISPATCH_AGAIN_MS)) continue
+    // Uncommitted work is refused by `resolve`; a merge `ready` left open is what it
+    // resumes, so that one is fine.
+    const dir = laneDir(id)
+    if (gitSafe(dir, ...WORK_STATUS).out && !gitSafe(dir, 'rev-parse', '--verify', '--quiet', 'MERGE_HEAD').ok) continue
+    const prompt = resolverBrief(id, c)
+    let pane = null
+    seedTrust(dir)
+    if (log) {
+      appendFileSync(log, JSON.stringify({ lane: id, dir, prompt }) + '\n')
+      pane = 'logged'
+    } else {
+      // Same launch as openPaneDirs: the app's timer runs this under Electron-as-node.
+      const r = spawnSync(
+        process.execPath,
+        [ctl, 'open', dir, '--here', '--close-when-done', '--title', `Settle lane ${id}`, '--prompt', prompt],
+        { encoding: 'utf8', timeout: 60_000, windowsHide: true }
+      )
+      if (r.status !== 0) continue
+      pane = /(?:opened|sent to) (\S+)/.exec(r.stdout ?? '')?.[1] ?? '?'
+    }
+    c.dispatch = { at: now(), pane, tries: (d?.tries ?? 0) + 1 }
+    opened.push({ id, pane })
+  }
+  return opened
 }
 
 // ---------------------------------------------------------------- worktree setup
@@ -4984,6 +5095,12 @@ try {
     const cleared = before.filter((id) => !state.conflicts[id])
     if (cleared.length) console.log(`Lane${cleared.length === 1 ? '' : 's'} ${cleared.join(', ')} merge cleanly now.`)
     else if (before.length) console.log(`Still conflicted: ${before.join(', ')}.`)
+    // What is left is a real disagreement. One nobody is on gets a chat of its own.
+    const sent = dispatchResolvers(state)
+    if (sent.length) {
+      write(state)
+      for (const o of sent) console.log(`Lane ${o.id} still conflicts and nobody is on it - opened a chat to settle it (${o.pane}).`)
+    }
     // And then try the release, every time. Every other trigger is a chat doing something
     // - a `ready`, a session ending - so finished work that arrived during the cooldown
     // window sat on master until somebody typed, which on a quiet evening is the morning.

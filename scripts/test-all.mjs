@@ -324,6 +324,7 @@ const TESTS = [
   ['pairask', 'pair-ask-test.mjs'],
   ['gate', 'release-gate-test.mjs'],
   ['conflict', 'conflict-test.mjs'],
+  ['lanedispatch', 'lane-dispatch-test.mjs'],
   ['queuedprompt', 'queued-prompt-test.mjs']
 ]
 
