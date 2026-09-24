@@ -303,7 +303,7 @@ export function tidyHoldReasons(p, { now = Date.now(), self } = {}) {
   if (isRemote(p)) why.push('it is on another computer - close it there')
   why.push(...busyReasons(p, now))
   if (p.status !== 'idle' && !isBusy(p)) why.push(`it is ${p.asleep ? 'asleep' : p.status}`)
-  if (p.keepOpen || p.closeKept) why.push('it is set to stay open')
+  if (p.keepOpen) why.push('it is set to stay open')
   if (p.focused) why.push('it is the pane open on screen')
   if (p.watched) why.push('somebody is looking at it on a phone')
   const typed = typedAt(p)

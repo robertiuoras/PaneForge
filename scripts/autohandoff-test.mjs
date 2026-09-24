@@ -838,10 +838,11 @@ checks += 3
   const at = app.indexOf('const handoffPanes = useCallback')
   const built = app.slice(at, app.indexOf('handoffPanesRef.current = handoffPanes', at))
   assert.match(built, /idleSleepPlan\(/, 'handoffPanes reads the sleep rung\'s own plan')
+  assert.match(built, /idleClosePlan\(reclaimPanes/, 'handoffPanes also holds back what the close clock is about to take into Review')
   assert.match(built, /SLEEPS_SOON_LEAD_MS/, '...at the move sweep\'s lead')
   assert.match(built, /sleepsSoon: sleepingSoon\.has\(s\.id\)/, '...and puts it on every pane')
   assert.match(built, /sleepPressureRef\.current/, '...under the same pressure reading the sleep sweep uses')
-  checks += 4
+  checks += 5
 }
 
 {

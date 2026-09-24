@@ -267,15 +267,6 @@ export interface Session {
    * and a second machine guessing at it would draw a countdown nobody is going to honour.
    */
   closingAt?: number
-  /**
-   * The deadline above is a HOLD, not the idle clock.
-   *
-   * "Keep it open" parks a pane for an hour, and the publish takes the later of the two
-   * numbers - so a held pane drew `closes 55m` under a sentence saying it had been quiet
-   * and was being closed to give its memory back. Same chip, opposite fact. The card says
-   * `kept 55m` for this and explains the hold instead.
-   */
-  closeKept?: boolean
   /** The owning device's persistent Keep open preference for this pane. */
   keepOpen?: boolean
   /**
@@ -1550,8 +1541,6 @@ export interface RemotePaneInfo {
   backJobSince?: number
   /** when THAT desk's idle clock will close it - its decision, forwarded, never ours */
   closingAt?: number
-  /** ...and whether that number is a "keep it open" hold rather than the idle clock */
-  closeKept?: boolean
   /** Persistent Keep open preference, read and changed on the device that owns the pane. */
   keepOpen?: boolean
 }
@@ -2395,6 +2384,8 @@ export interface Api {
   killSession(id: string): Promise<void>
   /** Removes every finished-and-untouched pane now, same class as `killSession` - see `shared/exitedSweep.ts`. Returns how many were removed. */
   clearFinished(): Promise<number>
+  /** Closes a quiet pane the idle clock picked, keeping its reply as a Review row first - see `main/index.ts` `reviewBeforeRemove`. */
+  closeIntoReview(id: string, reason: string): Promise<void>
   /** A person pressed this pane's card or row. Holds the finished-pane sweep's clock - see `shared/exitedSweep.ts`. */
   touchedSession(id: string): void
   /**
@@ -2498,7 +2489,7 @@ export interface Api {
    * decides it (it holds the focus and the config); the session carries it, so this
    * desk's card and every paired device's listing draw the same number.
    */
-  setClosing(id: string, at: number | null, kept?: boolean): void
+  setClosing(id: string, at: number | null): void
   /**
    * What changed in the build now running, or null for "say nothing".
    *

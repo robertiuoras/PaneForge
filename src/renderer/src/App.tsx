@@ -117,7 +117,6 @@ import {
   countdownEnd,
   DEFAULT_MASCOT,
   KEEP_MINUTES,
-  keepHoldMs,
   paneWord,
   type ActedPane,
   type MascotConfig,
@@ -126,6 +125,7 @@ import {
 import type { RunningDev } from '../../shared/devList'
 import {
   DEFAULT_RECLAIM,
+  IDLE_CLOSE_MINUTES,
   idleClosePlan,
   idleSleepPlan,
   pressureSleepMs,
@@ -382,12 +382,10 @@ function reclaimPaneOf(
 function CloseClock({
   at,
   onKeep,
-  kept,
   sleep
 }: {
   at: number
   onKeep?: () => void
-  kept?: boolean
   /**
    * The armed countdown is a SLEEP, not a close. Same chip, different word: the card
    * beside it said `Putting ... to sleep` while this read `closes 0:09` (2026-09-11), two
@@ -398,32 +396,24 @@ function CloseClock({
   const now = useNow()
   const left = Math.max(0, Math.ceil((at - now) / 1000))
   const mins = Math.floor(left / 60)
-  // Minutes and seconds only where the seconds are worth reading. A pane somebody has just
-  // pressed "keep it open" on is an hour away, and `60:01` ticking down on a card for an
-  // hour is a clock demanding attention it does not need.
+  // Minutes and seconds only where the seconds are worth reading: `25:01` ticking down on
+  // a card for twenty-five minutes is a clock demanding attention it does not need.
   // `now`, not `0:00`. The sweep that does the closing runs on a MINUTE timer, so a pane
   // that is due sits at its deadline for up to a minute before anything happens - measured
   // live at 10+ seconds of `closes 0:00`, which reads as a clock that has jammed. Due is
   // the honest word for it.
   const words =
     left === 0 ? 'now' : mins >= 10 ? `${mins}m` : `${mins}:${String(left % 60).padStart(2, '0')}`
-  // A HELD pane is the opposite fact wearing the same chip: somebody pressed "keep it
-  // open", the publish took the later of the hold and the idle deadline, and the card
-  // then told them the pane had been quiet and was being closed. The number is still
-  // worth drawing - it is when the hold runs out - but not under that sentence.
-  const why = kept
-    ? `Kept open. Nothing will close this pane for ${words}, however quiet it goes; after that the idle clock has it again.${onKeep ? ' Press to start the hour again.' : ''}`
-    : sleep
-      ? `This pane has been quiet, so it is going to sleep in ${words}. Its card, its screen and its conversation all stay - a press wakes it. Press to keep it awake for an hour.`
-      : onKeep
-        ? `This pane has been quiet, so it is being closed to give its memory back in ${words}. Nothing is lost - the conversation and what was on the screen both come back from History. Press to keep it open for an hour.`
-        : `The machine it runs on will close it in ${words} for being idle. Its desk decides that, not this one.`
+  const why = sleep
+    ? `This machine is low on memory, so this quiet pane is going to sleep in ${words}. Its card and conversation stay - a press wakes it. Press to keep it awake.`
+    : onKeep
+      ? `Quiet, so it closes into Review in ${words}. Review keeps its reply, and Continue brings the conversation back. Press to restart its clock.`
+      : `The machine it runs on will close it in ${words} for being idle. Its desk decides that, not this one.`
   // The last minute is RED, on the same argument the card's own glow is: this is the app
   // about to do something to somebody's pane, and the moment it stops being a clock and
   // starts being an alert is the moment it is nearly out of time.
-  // Never the red last-minute alert for a hold: nothing is about to happen to that pane.
-  const cls = 'chip closing' + (!kept && left <= 60 ? ' soon' : '') + (kept ? ' kept' : '')
-  const word = kept ? 'kept' : sleep ? 'sleeps' : 'closes'
+  const cls = 'chip closing' + (left <= 60 ? ' soon' : '')
+  const word = sleep ? 'sleeps' : 'closes'
   if (!onKeep) return <span className={cls} title={why}>{`${word} ${words}`}</span>
   return (
     <button
@@ -742,7 +732,6 @@ export default function App(): JSX.Element {
    * the switch is, and the chip has to go the moment it is pressed.
    */
   const [pinned, setPinned] = useState<Record<string, true>>({})
-  const [selectKeepOpen, setSelectKeepOpen] = useState(false)
   const pinnedRef = useRef(pinned)
   pinnedRef.current = pinned
   /**
@@ -2658,24 +2647,23 @@ export default function App(): JSX.Element {
     // runs - one predicate, so the two rungs cannot disagree about a pane. See
     // `AutoPane.sleepsSoon`.
     const cfg = configRef.current?.reclaim ?? DEFAULT_RECLAIM
-    const sleepingSoon = new Set(
-      idleSleepPlan(
-        sessionsRef.current.map((s) =>
-          reclaimPaneOf(
-            s,
-            activeRef.current,
-            focusLeftAt.current[s.id],
-            pinnedRef.current[s.id],
-            usageRef.current?.panes[s.id]?.jobs?.[0]?.label
-          )
-        ),
-        cfg,
-        deskNow(Date.now(), awayRef.current),
-        personRef.current,
-        sleepPressureRef.current,
-        SLEEPS_SOON_LEAD_MS
-      ).map((p) => p.id)
+    const reclaimPanes = sessionsRef.current.map((s) =>
+      reclaimPaneOf(
+        s,
+        activeRef.current,
+        focusLeftAt.current[s.id],
+        pinnedRef.current[s.id],
+        usageRef.current?.panes[s.id]?.jobs?.[0]?.label
+      )
     )
+    const deskClock = deskNow(Date.now(), awayRef.current)
+    // ...and the panes the CLOSE clock is about to take into Review. With room nothing
+    // sleeps any more (2026-09-25), so without these a quiet pane a minute from closing
+    // was still a pane the budget rung would carry to the other machine first.
+    const sleepingSoon = new Set([
+      ...idleSleepPlan(reclaimPanes, cfg, deskClock, personRef.current, sleepPressureRef.current, SLEEPS_SOON_LEAD_MS),
+      ...idleClosePlan(reclaimPanes, cfg, deskClock, personRef.current, SLEEPS_SOON_LEAD_MS)
+    ].map((p) => p.id))
     return sessionsRef.current.map((s) => ({
         id: s.id,
         agent: s.agent,
@@ -4358,8 +4346,6 @@ export default function App(): JSX.Element {
    * shape that gets a feature switched off.
    */
   const keptUntil = useRef<Record<string, number>>({})
-  /** How many times in a row somebody has kept each pane; the hold grows with it. */
-  const keepPresses = useRef<Record<string, number>>({})
   const mascotOnRef = useRef(DEFAULT_MASCOT.enabled)
   mascotOnRef.current = config?.mascot?.enabled ?? DEFAULT_MASCOT.enabled
 
@@ -4430,7 +4416,7 @@ export default function App(): JSX.Element {
   )
 
   const doClose = useCallback(
-    (ids: string[], mb: number) => {
+    (ids: string[], mb: number, why?: CloseSoon['why']) => {
       dropSoon(ids)
       const live = ids.filter((id) => stillCloseable(id))
       if (!live.length) {
@@ -4448,7 +4434,11 @@ export default function App(): JSX.Element {
         // The line that answers "what closed my pane" after the fact. `armed` says a sweep
         // picked it; this says it actually went.
         api.logReclaim({ event: 'closed', id, name: paneWordRef.current(id) })
-        void api.killSession(id)
+        // Into Review, not only History: its reply stays readable and Continue resumes it.
+        void api.closeIntoReview(
+          id,
+          why === 'pressure' ? 'closed to give this machine its memory back' : why === 'turn' ? 'its turn ended' : 'quiet past its close clock'
+        )
       }
       setActed({ what: 'closed', panes: live.map((id) => paneActedRef.current(id)), mb, at: Date.now() })
     },
@@ -4730,7 +4720,7 @@ export default function App(): JSX.Element {
         }
         const mb = pendingMb.current[key] ?? 0
         delete pendingMb.current[key]
-        doClose(soon.ids, mb)
+        doClose(soon.ids, mb, soon.why)
       }, Math.max(0, soon.deadline - Date.now()))
     })
     return () => timers.forEach((t) => window.clearTimeout(t))
@@ -4773,7 +4763,6 @@ export default function App(): JSX.Element {
    * `setClosingAt` emits one when the number moves.
    */
   const closingRef = useRef<Record<string, number | undefined>>({})
-  const keptRef = useRef<Record<string, boolean>>({})
   const publishClosingRef = useRef<() => void>(() => {})
   useEffect(() => {
     const run = (): void => {
@@ -4805,21 +4794,16 @@ export default function App(): JSX.Element {
           personHere,
           localPanes
         )
-        // A pane somebody pressed "keep it open" on is held by that, not by the clock -
-        // and the card must say so rather than counting down to a close that will not
-        // happen for another hour.
+        // A pane somebody pressed Keep on had its clock restarted, so the chip counts to
+        // the later of the two. It is an ordinary `closes` chip either way: Keep is no
+        // longer a hold with a word of its own (2026-09-25).
         const kept = keptUntil.current[s.id] ?? 0
         const at = due === null ? undefined : Math.max(due, kept)
-        // ...and the card is told WHICH of the two numbers it got. A held pane counted
-        // down under `closes 55m` and a sentence saying it had been quiet and was being
-        // closed - the opposite of what the press it came from promised.
-        const held = at !== undefined && kept > (due ?? 0)
         // `sameDeadline`, not `===`. An overdue pane's deadline IS `now`, and `now` moves
         // every time this runs - so an exact comparison republished on every session
         // broadcast, and `setClosingAt` emitting one in response made that a loop with no
         // floor under it. See shared/reclaim.ts.
-        if (sameDeadline(closingRef.current[s.id], at, now) && keptRef.current[s.id] === held)
-          continue
+        if (sameDeadline(closingRef.current[s.id], at, now)) continue
         // What this publisher actually costs, because nothing else could say. Every write
         // below is a main-process session broadcast to this window and every paired phone,
         // so a number that climbs while the desk is quiet IS the loop `sameDeadline`
@@ -4828,14 +4812,10 @@ export default function App(): JSX.Element {
         const w = window as unknown as { __pfClosePublish?: number }
         w.__pfClosePublish = (w.__pfClosePublish ?? 0) + 1
         closingRef.current[s.id] = at
-        keptRef.current[s.id] = held
-        api.setClosing(s.id, at ?? null, held)
+        api.setClosing(s.id, at ?? null)
       }
       for (const id of Object.keys(closingRef.current))
-        if (!live.has(id)) {
-          delete closingRef.current[id]
-          delete keptRef.current[id]
-        }
+        if (!live.has(id)) delete closingRef.current[id]
     }
     publishClosingRef.current = run
     run()
@@ -4844,7 +4824,7 @@ export default function App(): JSX.Element {
   }, [sessions, config?.reclaim, activeId, pinned, awayAt, personHere])
 
   /**
-   * Hold these panes where they are, for an hour.
+   * Hold these panes where they are, for `KEEP_MINUTES`.
    *
    * Both holds, always together: `keptUntil` is what the two arming functions filter on,
    * and `handoffBlocked` is what the handoff PLANS filter on. Setting one and not the
@@ -4923,7 +4903,7 @@ export default function App(): JSX.Element {
       }
       const mb = pendingMb.current[key] ?? 0
       delete pendingMb.current[key]
-      doClose(ids, mb)
+      doClose(ids, mb, soon?.why)
     },
     [doClose, doMove, dropSoon]
   )
@@ -4931,24 +4911,17 @@ export default function App(): JSX.Element {
   const keepOpen = useCallback((ids: string[]) => {
     // The third way an `armed` line ends without a close, and the only one somebody chose.
     skipClose(ids, 'you kept it open')
-    // Each press on the same pane holds it longer - see `keepHoldMs`. A flat ten minutes
-    // meant the identical card came back at minute ten and took the pane then, which is
-    // the press reading as though it did nothing.
+    // Keep RESTARTS the pane's own quiet clock, nothing more: the pane is left alone for
+    // one close window and is then on the ordinary clock like any other. It used to be an
+    // hour-long hold that grew with each press and wore its own `kept` chip; Robert,
+    // 2026-09-25, "is it even needed we running things through review" - a closed pane is
+    // one Continue away in Review, so there is nothing an hour's hold protects.
     const now = Date.now()
+    const hold = Math.max(1, configRef.current?.reclaim?.idleCloseMinutes || IDLE_CLOSE_MINUTES) * 60_000
     for (const id of ids) {
-      const presses = (keepPresses.current[id] ?? 0) + 1
-      keepPresses.current[id] = presses
-      const hold = keepHoldMs(presses)
       keptUntil.current[id] = now + hold
-      api.logReclaim({
-        event: 'kept',
-        id,
-        name: paneWordRef.current(id),
-        presses,
-        minutes: Math.round(hold / 60_000)
-      })
+      api.logReclaim({ event: 'kept', id, name: paneWordRef.current(id), minutes: Math.round(hold / 60_000) })
     }
-    const until = now + keepHoldMs(Math.max(...ids.map((id) => keepPresses.current[id] ?? 1)))
     // A move called off needs the handoff sweeps' OWN hold as well, or the next minute
     // tick arms the identical countdown again - which is the shape that gets a feature
     // switched off. The sweep lock goes back with it.
@@ -4956,7 +4929,7 @@ export default function App(): JSX.Element {
     // for the life of this window: the person has said where that pane works, and the
     // Handoff button is theirs whenever they change their mind (Robert 2026-09-10: "only
     // offer it once for the move over if i cancel it then i can just move it myself at a
-    // later time"). The ten-minute hold above is for the CLOSE clock only.
+    // later time"). The hold above is for the CLOSE clock only.
     if (closeSoonsRef.current.some((c) => c.move && c.ids.some((id) => ids.includes(id)))) {
       for (const id of ids) {
         handoffBlocked.current[id] = Number.POSITIVE_INFINITY
@@ -4968,7 +4941,7 @@ export default function App(): JSX.Element {
     // counting, which is the whole point of there being two of them.
     setCloseSoons((list) => list.filter((c) => !c.ids.some((id) => ids.includes(id))))
     // `keptUntil` is a ref, so nothing about this reaches the effect that publishes the
-    // deadline. Without this the chip goes on counting down to a close an hour away.
+    // deadline. Without this the chip goes on counting down to the close Keep just moved.
     publishClosingRef.current()
   }, [])
 
@@ -4990,27 +4963,6 @@ export default function App(): JSX.Element {
       keepOpen(ids)
     },
     [keepOpen, stopQueuedMove]
-  )
-  const moveSoonNow = useCallback(
-    (ids: string[]) => {
-      // `Sleep now` is the wait spent early, nothing else - the pane keeps its card, its
-      // screen and its conversation either way.
-      const asleep = closeSoonsRef.current.find((c) => c.sleep && c.ids.some((id) => ids.includes(id)))
-      if (asleep) {
-        setCloseSoons((list) => list.filter((c) => c !== asleep))
-        for (const id of asleep.ids) void api.sleepSession(id, 'manual', { source: 'renderer' })
-        return
-      }
-      const soon = queueSoonsRef.current.find((c) => c.ids.some((id) => ids.includes(id)))
-      if (soon && soon.move) {
-        setQueueSoons((list) => list.filter((c) => c !== soon))
-        const { device } = soon.move
-        for (const id of soon.ids) void api.cancelHandoff(id).then(() => api.handoffToDevice(device, [id], false, true))
-        return
-      }
-      doSoonNow(ids)
-    },
-    [doSoonNow]
   )
 
   /**
@@ -5254,11 +5206,8 @@ export default function App(): JSX.Element {
         <StatusDot status={pane.status} engaged={pane.engaged} />
         <div className="row-text">
           <div className="row-title has-key">
-            <span className="row-remote">
-              <RemoteIcon size={13} />
-            </span>
-            <span className="row-name">{pane.title}</span>
-            {/* One box, for the reason a local card has one - see `.row-tags`. */}
+            {/* One box, for the reason a local card has one - see `.row-tags`. First, so it
+                floats right of the name's first line. */}
             <span className="row-tags">
               {pane.asking ? (
                 <span
@@ -5272,8 +5221,13 @@ export default function App(): JSX.Element {
               ) : null}
               {/* That desk's own number, forwarded. No press: this window does not own the
                   pty and cannot call the close off. */}
-              {row.closingAt ? <CloseClock at={row.closingAt} kept={row.closeKept} /> : null}
+              {row.closingAt ? <CloseClock at={row.closingAt} /> : null}
             </span>
+            <span className="row-remote">
+              <RemoteIcon size={13} />
+            </span>
+            <wbr />
+            <span className="row-name">{pane.title}</span>
           </div>
           <div className="row-sub">
             <AgentLogo id={pane.agent} spec={agent} size={12} />
@@ -5360,19 +5314,6 @@ export default function App(): JSX.Element {
                 setCardMenu({ id: s.id, x: e.clientX, y: e.clientY })
               }}
             >
-              {selectKeepOpen && <input
-                className="keep-open-check"
-                type="checkbox"
-                aria-label={`Keep ${s.title} open`}
-                title={s.remote ? `Set keep-open on ${s.remote.name}, where this session runs` : 'Keep this session open and its agent running until unchecked. Only a machine short of memory sleeps it.'}
-                disabled={savingPins}
-                checked={s.remote ? Boolean(s.keepOpen) : Boolean(pinned[s.id])}
-                onChange={() => togglePin(s.id)}
-                onClick={e => e.stopPropagation()}
-                onPointerDown={e => e.stopPropagation()}
-                onDoubleClick={e => e.stopPropagation()}
-                onContextMenu={e => e.stopPropagation()}
-              />}
               <StatusDot status={s.status} engaged={s.engaged} />
               <div className="row-text">
                 {renaming === s.id ? (
@@ -5403,67 +5344,9 @@ export default function App(): JSX.Element {
                   />
                 ) : (
                   <div className="row-title has-key">
-                    {/* The switch key, and the fastest place to read the pane's state:
-                        lit green while its agent is running, amber when a turn finished
-                        while you were looking somewhere else. */}
-                    {/* Every pane wears its number - the tenth pane onward used to wear
-                        none, so a desk of fourteen read as numbered 1-9 and then nothing
-                        (Robert 2026-09-10: "we lost numbering on sessions"). Only 1-9
-                        are Ctrl keys; past that the number is a plain label. */}
-                    {paneNumber > 0 && (
-                      /* The wrapper exists only to carry the breathing halo. The key
-                         itself is `overflow: hidden` so its sheen stays inside the
-                         pill, and that clips a pseudo-element halo too - so the halo
-                         has to hang off something outside the key. It is here rather
-                         than on the key because the alternative, animating the key's
-                         own box-shadow, re-rasters a blurred shadow every frame:
-                         measured at 64% of a core on its own (styles.css, `.num-wrap`). */
-                      <span className="num-wrap">
-                        <span
-                          className={
-                            'num' +
-                            (s.status === 'working' ? ' live' : s.attention ? ' attn' : '') +
-                            (paneNumber > 9 ? ' far' : '')
-                          }
-                          title={paneNumber <= 9 ? keyLabel(`Ctrl ${paneNumber}`) : `Pane ${paneNumber}`}
-                        >
-                          {paneNumber}
-                        </span>
-                      </span>
-                    )}
-                    {/* Which MACHINE this pane's agent is running on, when it is not this
-                        one. The pane header has said so since mirroring shipped, and that
-                        is one click too far: the list is where you decide which pane to
-                        open, so the list is where "this one is not on this laptop" has to
-                        be readable.
-
-                        An icon and not a chip, and up here rather than on the line below.
-                        The sub-line is 190px and is already one fact short of what it is
-                        asked to carry - measured with card-fit-test at that width, the
-                        place chip and a lane chip together squeezed `.row-agent` to 0px
-                        and the card stopped saying which agent it was running. A device
-                        NAME is the longest string on either line (`DESKTOP-CMSUCM1`), so
-                        putting it there would cost the same fact again. The title line
-                        holds a key, a name and a right-aligned clock, and 14px between the
-                        key and the name is room it already has. The name is on the hover,
-                        with what mirroring does and does not move. */}
-                    {s.remote && (
-                      <span
-                        className="row-remote"
-                        title={`Running on ${s.remote.name}. Keystrokes go there; the agent, the folder and the transcript stay there too.`}
-                      >
-                        <RemoteIcon size={13} />
-                      </span>
-                    )}
-                    {/* The whole place, on the name, so hiding the chip below (when it
-                        would only repeat this name) loses no fact - the folder, the
-                        branch and the pane number are all still one hover away. */}
-                    <span
-                      className="row-name"
-                      title={describePlace({ cwd: s.cwd, lane: s.lane, pane: paneNumber }).full}
-                    >
-                      {s.title}
-                    </span>
+                    {/* FIRST in the line, floated right (2026-09-25): the name then flows
+                        from the key across the whole card width and wraps under the key
+                        rather than in a narrow column beside it. */}
                     {/* The clock lives up HERE, at the far end of the name, because this
                         line has spare room and the line below it has none: a lane card's
                         sub-line wanted 214px of the 190px it has, and every arrangement
@@ -5483,6 +5366,25 @@ export default function App(): JSX.Element {
                         On the TITLE line, not the sub-line: the sub-line already wanted
                         214px of 190px on a lane card (card-fit-test.mjs) and this line has
                         room to spare. */}
+                    {/* Plain words, not a box, at the far end of the title line: one state
+                        per card, and a running turn's word IS its clock. What the last turn
+                        took and whether it wrote anything are on the hover (Robert
+                        2026-09-23: too much info). */}
+                    {!s.ask && s.status !== 'exited' && !s.handingOff && !(alarmAt(s.id) ?? s.closingAt) && (
+                      <span
+                        className={'row-state ' + s.status}
+                        title={[
+                          s.lastRunMs !== undefined && !s.runSince ? `Last turn took ${formatElapsed(s.lastRunMs)}.` : '',
+                          s.changedNothing ? `${s.changedNothing}${s.changedNothingWhy ? ` - ${s.changedNothingWhy}` : ''}` : ''
+                        ].filter(Boolean).join('\n') || undefined}
+                      >
+                        {s.status === 'working' && s.runSince ? (
+                          <Elapsed since={s.runSince} title="This turn" />
+                        ) : s.status === 'idle'
+                          ? (s.engaged !== false ? 'waiting' : 'ready')
+                          : s.status === 'working' ? 'running' : s.status}
+                      </span>
+                    )}
                     {/* Everything the title line says about STATE, in one box.
                         They were separate flex items each taking `margin-left: auto`, so a
                         line that wrapped stranded the clock alone at the far right with
@@ -5541,10 +5443,8 @@ export default function App(): JSX.Element {
                         // armed countdown is the one that is about to act, so it wins.
                         <CloseClock
                           at={alarmAt(s.id) ?? (s.closingAt as number)}
-                          // A countdown card naming this pane is a live plan to close it,
-                          // whatever hold the publish had on it a moment ago.
-                          kept={alarmAt(s.id) === undefined && s.closeKept}
-                          // ...or to SLEEP it, and the chip says which.
+                          // A countdown card naming this pane may be a plan to SLEEP it,
+                          // and the chip says which.
                           sleep={alarmSleeps(s.id)}
                           onKeep={() => keepOpen([s.id])}
                         />
@@ -5642,25 +5542,70 @@ export default function App(): JSX.Element {
                           there IS something, which on an ordinary card is never.
                           Cosmetic: `shared/paneBackJobs.ts` feeds no busy reading. */}
                     </span>
-                    {/* Plain words, not a box, at the far end of the title line: one state
-                        per card, and a running turn's word IS its clock. What the last turn
-                        took and whether it wrote anything are on the hover (Robert
-                        2026-09-23: too much info). */}
-                    {!s.ask && s.status !== 'exited' && !s.handingOff && !(alarmAt(s.id) ?? s.closingAt) && (
-                      <span
-                        className={'row-state ' + s.status}
-                        title={[
-                          s.lastRunMs !== undefined && !s.runSince ? `Last turn took ${formatElapsed(s.lastRunMs)}.` : '',
-                          s.changedNothing ? `${s.changedNothing}${s.changedNothingWhy ? ` - ${s.changedNothingWhy}` : ''}` : ''
-                        ].filter(Boolean).join('\n') || undefined}
-                      >
-                        {s.status === 'working' && s.runSince ? (
-                          <Elapsed since={s.runSince} title="This turn" />
-                        ) : s.status === 'idle'
-                          ? (s.engaged !== false ? 'waiting' : 'ready')
-                          : s.status === 'working' ? 'running' : s.status}
+                    {/* The switch key, and the fastest place to read the pane's state:
+                        lit green while its agent is running, amber when a turn finished
+                        while you were looking somewhere else. */}
+                    {/* Every pane wears its number - the tenth pane onward used to wear
+                        none, so a desk of fourteen read as numbered 1-9 and then nothing
+                        (Robert 2026-09-10: "we lost numbering on sessions"). Only 1-9
+                        are Ctrl keys; past that the number is a plain label. */}
+                    {paneNumber > 0 && (
+                      /* The wrapper exists only to carry the breathing halo. The key
+                         itself is `overflow: hidden` so its sheen stays inside the
+                         pill, and that clips a pseudo-element halo too - so the halo
+                         has to hang off something outside the key. It is here rather
+                         than on the key because the alternative, animating the key's
+                         own box-shadow, re-rasters a blurred shadow every frame:
+                         measured at 64% of a core on its own (styles.css, `.num-wrap`). */
+                      <span className="num-wrap">
+                        <span
+                          className={
+                            'num' +
+                            (s.status === 'working' ? ' live' : s.attention ? ' attn' : '') +
+                            (paneNumber > 9 ? ' far' : '')
+                          }
+                          title={paneNumber <= 9 ? keyLabel(`Ctrl ${paneNumber}`) : `Pane ${paneNumber}`}
+                        >
+                          {paneNumber}
+                        </span>
                       </span>
                     )}
+                    {/* Which MACHINE this pane's agent is running on, when it is not this
+                        one. The pane header has said so since mirroring shipped, and that
+                        is one click too far: the list is where you decide which pane to
+                        open, so the list is where "this one is not on this laptop" has to
+                        be readable.
+
+                        An icon and not a chip, and up here rather than on the line below.
+                        The sub-line is 190px and is already one fact short of what it is
+                        asked to carry - measured with card-fit-test at that width, the
+                        place chip and a lane chip together squeezed `.row-agent` to 0px
+                        and the card stopped saying which agent it was running. A device
+                        NAME is the longest string on either line (`DESKTOP-CMSUCM1`), so
+                        putting it there would cost the same fact again. The title line
+                        holds a key, a name and a right-aligned clock, and 14px between the
+                        key and the name is room it already has. The name is on the hover,
+                        with what mirroring does and does not move. */}
+                    {s.remote && (
+                      <span
+                        className="row-remote"
+                        title={`Running on ${s.remote.name}. Keystrokes go there; the agent, the folder and the transcript stay there too.`}
+                      >
+                        <RemoteIcon size={13} />
+                      </span>
+                    )}
+                    {/* The whole place, on the name, so hiding the chip below (when it
+                        would only repeat this name) loses no fact - the folder, the
+                        branch and the pane number are all still one hover away. */}
+                    {/* A break point between the key and the name: with none, a first line the
+                        floated chips had nearly filled split the name's first WORD to fit. */}
+                    <wbr />
+                    <span
+                      className="row-name"
+                      title={describePlace({ cwd: s.cwd, lane: s.lane, pane: paneNumber }).full}
+                    >
+                      {s.title}
+                    </span>
                   </div>
                 )}
                 {/* Line two: WHICH PROJECT, always, and which copy of it. The name above
@@ -5723,7 +5668,7 @@ export default function App(): JSX.Element {
               </div>
               {s.status === 'exited' && (
                 <button
-                  className="x"
+                  className="x row-restart"
                   title="Restart"
                   aria-label="Restart agent"
                   // Same reason as the close button below: the ROW's `onPointerDown` picks
@@ -5738,7 +5683,7 @@ export default function App(): JSX.Element {
                 </button>
               )}
               <button
-                className="x"
+                className="x row-close"
                 title={keyLabel('Close session (Ctrl W)')}
                 // The row picks - and WAKES - the session on `onPointerDown`, which fires
                 // before this button's click, so closing a sleeping session from the
@@ -5937,20 +5882,6 @@ export default function App(): JSX.Element {
         <div className="section">
           {/* "Running" read as "these are all busy" on a list of idle panes. */}
           <span className="section-title">
-            {selectKeepOpen && <input
-              className="keep-open-check"
-              type="checkbox"
-              aria-label="Keep all sessions on this device open"
-              title="Keep all sessions on this device open until unchecked"
-              disabled={savingPins || !sessions.some(s => !s.remote)}
-              checked={sessions.some(s => !s.remote) && sessions.filter(s => !s.remote).every(s => Boolean(pinned[s.id]))}
-              ref={el => {
-                const local = sessions.filter(s => !s.remote)
-                if (el) el.indeterminate = local.some(s => pinned[s.id]) && !local.every(s => pinned[s.id])
-              }}
-              onChange={e => { void savePins(sessions.filter(s => !s.remote).map(s => s.id), e.target.checked) }}
-              onClick={e => e.stopPropagation()}
-            />}
             Sessions ({shownSessions.length}{shownSessions.length === sessions.length ? '' : `/${sessions.length}`})
           </span>
           {/* Badges and the empty-everything button travel together, hard right. One
@@ -6008,7 +5939,7 @@ export default function App(): JSX.Element {
             )}
           </span>
         </div>
-        {(deviceChoices.length > 0 || selectKeepOpen) && (
+        {deviceChoices.length > 0 && (
           <label className="device-filter">
             <span>Show</span>
             <select value={deviceFilter} onChange={(e) => setDeviceFilter(e.target.value)}>
@@ -6053,18 +5984,6 @@ export default function App(): JSX.Element {
           )}
         </div>
 
-        <button
-          className={'ghost small keep-open-toggle' + (selectKeepOpen ? ' active' : '')}
-          aria-pressed={selectKeepOpen}
-          onClick={() => {
-            setSelectKeepOpen(value => !value)
-            if (!selectKeepOpen) setDeviceFilter('all')
-          }}
-          title="Choose sessions to keep open; checked sessions stay protected when these boxes are hidden"
-        >
-          <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M5 2h6v5l2 2H9v5H7V9H3l2-2z" fill="none" stroke="currentColor" strokeWidth="1.3" /></svg>
-          <span>{selectKeepOpen ? 'Done selecting' : 'Keep open'}</span>
-        </button>
         <div className="foot">
           <Segmented
             value={grid ? 'grid' : 'single'}
@@ -7693,7 +7612,6 @@ export default function App(): JSX.Element {
       <MoveSoon
         soons={[...closeSoons, ...queueSoons]}
         onKeep={moveSoonKeep}
-        onNow={moveSoonNow}
       />
       {/* A new pane the app decided to start on the other machine, before it does. */}
       <OffloadSoon />

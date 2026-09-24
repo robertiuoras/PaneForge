@@ -59,6 +59,7 @@ export const SURFACE: Surface = {
   setEffort: ['invoke', 'sessions:setEffort'],
   killSession: ['invoke', 'sessions:kill'],
   clearFinished: ['invoke', 'sessions:clearFinished'],
+  closeIntoReview: ['invoke', 'sessions:closeIntoReview'],
   touchedSession: ['send', 'sessions:touched'],
   armCloseWhenDone: ['invoke', 'sessions:closeWhenDone'],
   watchCompute: ['invoke', 'sessions:watchCompute'],
