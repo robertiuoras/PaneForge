@@ -171,6 +171,16 @@ const g8 = guard('s0', join(repo, 'own.js'))
 ok('this desk\'s own lane is still reported once, locally', /lane a \(/.test(g8.out), g8.out)
 ok('and never as the other machine\'s copy of the same commit', !/on the other machine/.test(g8.out), g8.out)
 
+// A GATE THAT CANNOT DECIDE REFUSES. An unheld copy is claimed for the writer on the spot,
+// and when that claim threw (here: lane b's folder is a plain folder with a file in it, so
+// no worktree can be built there) the guard said nothing and exited 0 - the write went
+// ahead into a copy nobody held. A chat wrote into the main copy that way on 2026-09-25.
+mkdirSync(laneDir('b'), { recursive: true })
+writeFileSync(join(laneDir('b'), 'stray.txt'), 'not a checkout\n')
+const g10 = guard('s3', join(laneDir('b'), 'big.js'))
+ok('a copy that cannot be claimed is refused, not waved through', g10.code === 2 && /not a git worktree/.test(g10.out), `${g10.code} ${g10.out}`)
+rmSync(laneDir('b'), { recursive: true, force: true })
+
 // 5. once master carries lane a's commit, big.js is no overlap for a fresh session
 git(repo, 'checkout', '-q', '--', 'quiet.js')
 git(repo, 'merge', '-q', '--no-edit', 'lane-a')

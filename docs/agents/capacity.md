@@ -101,3 +101,8 @@ MID-TURN never picked; `main/handoffQueue.ts` moves at turn end, expires `waitMi
 Dev server travels (`shared/devServers.ts`, `test:devservers`): tree OR repo-path command ->
 script name, rebuilt from receiver lockfile, never argv; `SCRIPT_NAME`; ambiguous dropped;
 only `DEV_SCRIPT` (`dev|start|serve|watch|preview[:x]`).
+
+Turn rung `turnsPlan` (3 turns here, verdict not `ok`, past `keepLocal`, `queueable`): same countdown,
+ONE per sweep. Mac verdict adds `compressorLevel`, stray `next dev` = `PaneUsage.devMb`
+in `paneCost`, dirty same-name copy -> `landingCopy` takes a clean free one. `overlap()` reads
+`origin/lane-*`.
