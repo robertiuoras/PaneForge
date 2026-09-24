@@ -54,7 +54,7 @@ import { START_COLS, START_ROWS } from '../shared/paneGrid'
 import { paintedWidth, RESTORE_MARK_TEXT } from '../shared/replayWidth'
 import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, SUBMIT_GAP_MS, armDecision, clearChunks, hasFreshPaneHandoff, resumeOf, dropFor, dropWords, expiryDecision, queuedPromptDecision, quietEnoughToArm, standDownFor, type DropReason, type QueuedPromptVerdict } from '../shared/autoclear'
 import { acLog } from './autoclearLog'
-import { dropAllFor, noteAccepted, noteNativeAccepted, noteDropped, noteSubmitted, owedAfterRestore } from './queuedPrompts'
+import { dropAllFor, noteAccepted, noteNativeAccepted, noteDropped, noteSubmitted, owedAfterRestore, stillOwed } from './queuedPrompts'
 import type { QueueDrop } from '../shared/queuedPrompts'
 import { logReclaim } from './activationLog'
 import { ledgerSleep, ledgerWake } from './laneLedger'
@@ -81,7 +81,7 @@ export interface AutoClearArm {
   tokens?: number
 }
 import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from './pipe'
-import { claimFromCli, codexAcceptedPrompt, forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeEvidence, resumeIdFor, transcriptPath } from './transcripts'
+import { claimFromCli, claudeStartup, codexAcceptedPrompt, forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeEvidence, resumeIdFor, transcriptPath } from './transcripts'
 import { recordPromptReview } from './promptReview'
 import { liveModelFor } from './paneModel'
 import { backgroundAgentsFor, forgetBackgroundAgents, noteBackgroundAgents } from './runningAgents'
@@ -165,6 +165,8 @@ import { SLOW_WAKE_MS, wokeSlowly } from '../shared/wakePlan'
 
 /** When each pty process was first seen by the sweep - see `backgroundAgentsFor`'s `since`. */
 const procBorn = new WeakMap<object, number>()
+/** When each pty process was spawned (`attach`) - how young a CLI is, for `claudeStartup`. */
+const procStarted = new WeakMap<object, number>()
 
 /** How long output must stay quiet before the pane's dot stops saying "working". */
 const IDLE_AFTER_MS = 4000
@@ -256,6 +258,15 @@ const PROMPT_CONFIRM_MS = ms('PF_PROMPT_CONFIRM_MS', 4000)
  * Robert found the prompt sitting in the box and submitted it himself.
  */
 const PROMPT_ENTER_TRIES = ms('PF_PROMPT_ENTER_TRIES', 6)
+/**
+ * How long a prompt for a fresh Claude Code waits for its SessionStart hooks to finish
+ * before it is typed (`claudeStartup`), and how long for the CLI's pid file to appear at
+ * all - both counted from the process's own start, so a pane older than that is never
+ * held. Measured 2026-09-25, five panes opened at once: pid files at +2-5s, hooks done at
+ * +9-15s, and 12-45s on a loaded desk. Past either, the prompt is typed as before.
+ */
+const PROMPT_STARTUP_MS = ms('PF_PROMPT_STARTUP_MS', 60_000)
+const PROMPT_PIDFILE_MS = ms('PF_PROMPT_PIDFILE_MS', 10_000)
 /**
  * The wait budget for the resume prompt after an automatic `/clear`, which is not the
  * budget an ordinary launch prompt gets.
@@ -3542,6 +3553,7 @@ export class SessionManager extends EventEmitter {
     const proc = live.proc
     // A pane with no process: `wake()` calls this again once there is one.
     if (!proc) return
+    procStarted.set(proc, Date.now())
     const processIdentity = { pane: id, processPid: proc.pid, agent: meta.agent,
       resumeId: live.req.resumeId, folder: basename(meta.cwd) }
     logReclaim({ action: 'process-start', ...processIdentity })
@@ -3803,7 +3815,7 @@ export class SessionManager extends EventEmitter {
       this.setOwedPrompt(id, false)
       onSettled?.()
     }
-    const deadline = Date.now() + Math.max(0, budgetMs) + Math.max(0, extraDelay)
+    let deadline = Date.now() + Math.max(0, budgetMs) + Math.max(0, extraDelay)
     // `lastKeyboard` as it stands NOW, which is after whatever write queued this prompt -
     // an autoclear's own `/clear\r` goes through `write` and bumps it. Anything later is a
     // person submitting into the pane, and `queuedPromptDecision` drops the queued prompt
@@ -4021,9 +4033,48 @@ export class SessionManager extends EventEmitter {
     }
 
     let saidWaiting = false
+    // NOT WHILE CLAUDE CODE IS STILL STARTING. An idle-looking composer is not a ready one
+    // until its SessionStart hooks are done - text typed before that was lost outright
+    // (s113-mufldnmu), drawn seconds late, or held unsent past the confirm; see
+    // `claudeStartup`. Only a process younger than PROMPT_STARTUP_MS is held, never past
+    // that age (a CLI with no SessionStart hook at all waits the whole of it), and no longer
+    // than PROMPT_PIDFILE_MS for a pid file that never appears. Once open it stays open.
+    let gateOpen = false
+    let startWait: string | null = null
+    const starting = (live: Live): boolean => {
+      if (gateOpen) return false
+      const born = live.proc ? procStarted.get(live.proc) : undefined
+      const age = born === undefined ? Infinity : Date.now() - born
+      const now = live.meta.agent === 'claude' && age < PROMPT_STARTUP_MS ? claudeStartup(live.proc?.pid) : 'none'
+      const hold = now === 'starting' || (now === 'unknown' && age < PROMPT_PIDFILE_MS)
+      if (hold) {
+        if (!startWait) {
+          startWait = now
+          acLog(`${id} queued prompt waiting for Claude Code to finish starting (${now === 'unknown' ? 'no pid file yet' : 'SessionStart hooks running'})`)
+        }
+        return true
+      }
+      gateOpen = true
+      if (startWait) {
+        acLog(`${id} Claude Code ${now === 'started' ? 'finished starting' : 'still starting - typing anyway'} after ${(age / 1000).toFixed(1)}s`)
+        // The idle-composer wait starts now: its budget was never meant to be spent here.
+        deadline = Date.now() + Math.max(0, budgetMs)
+      }
+      return false
+    }
     const tick = (): void => {
       const live = this.sessions.get(id)
       if (!live) return settle('gone')
+      // A restart or wake re-queued this row under a new key while it waited: that wait
+      // types it, this one must not type it a second time.
+      if (!stillOwed(key)) {
+        acLog(`${id} queued prompt handed to the pane's new process - not typed from here`)
+        return settle('replaced')
+      }
+      if (starting(live)) {
+        setTimeout(tick, PROMPT_POLL_MS)
+        return
+      }
       const what = verdict(live, idle(live))
       if (what === 'wait') {
         // Somebody is typing in there. The curtain says "Keys are held" and they are

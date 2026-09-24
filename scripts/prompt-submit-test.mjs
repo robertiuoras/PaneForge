@@ -18,7 +18,7 @@
 //   node scripts/prompt-submit-test.mjs
 
 import { readFileSync } from 'node:fs'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { buildSync } from 'esbuild'
 import { tmpdir } from 'node:os'
@@ -39,10 +39,17 @@ process.env.PF_PROMPT_STALE_BUSY_MS ??= '1500'
 // Pinned here rather than read from the module: the SHIPPED budget is 6, and the cap
 // assertion below is about the cap existing at all, not about the number.
 process.env.PF_PROMPT_ENTER_TRIES ??= '3'
+// A fresh Claude Code is waited for until its SessionStart hooks are done (`claudeStartup`):
+// the real ceilings are a minute and ten seconds, these keep the cases below short.
+process.env.PF_PROMPT_STARTUP_MS ??= '1500'
+process.env.PF_PROMPT_PIDFILE_MS ??= '800'
+process.env.PF_CLAUDE_SETTLE_MS ??= '200'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const work = mkdtempSync(join(tmpdir(), 'pf-prompt-submit-'))
 mkdirSync(join(work, 'userData'), { recursive: true })
+// The CLI's own pid files and transcripts, off the real ~/.claude.
+process.env.PF_CLAUDE_HOME = join(work, 'claude-home')
 
 writeFileSync(
   join(work, 'electron-stub.cjs'),
@@ -469,6 +476,133 @@ const ANSWERING =
   ok(/UNSENT/.test(mine), 'a prompt still sitting in the composer is still called UNSENT', mine)
   ok(sDone === 1, 'and that settles once too', String(sDone))
   manager.kill(stuck.id)
+}
+
+// NOT INTO A CLAUDE CODE THAT IS STILL STARTING.
+//
+// 2026-09-24 13:53, pane s113-mufldnmu (Claude Code 2.1.281, ~/Projects/research-lab: an
+// AGENTS.md and no CLAUDE.md). The 3797-char brief was typed 2.5s after the process started,
+// while the CLI's SessionStart hooks ran until +13s. Replayed through @xterm/headless, no
+// frame of `history/s113-mufldnmu.log` ever drew it; six bare returns went into an empty
+// composer and it was lost. Five panes opened at once on 2026-09-25 showed the rest of it:
+// typed at +1s, their submits waited for the hooks (12-45s) past the confirm, and typing the
+// prompt again into a box that LOOKED empty sent it 2-3 times in one message. So the prompt
+// waits for the CLI to say its start is over: the SessionStart record in its transcript.
+//
+// The fake CLI here is the pid file and the transcript the real one writes, under
+// PF_CLAUDE_HOME, plus the idle composer it paints long before either is done. The panes
+// sit in `root`, as every case here does: Windows cannot remove a folder a pane was in.
+{
+  const home = process.env.PF_CLAUDE_HOME
+  const proj = join(home, 'projects', root.replace(/[^A-Za-z0-9]/g, '-'))
+  mkdirSync(join(home, 'sessions'), { recursive: true })
+  mkdirSync(proj, { recursive: true })
+  const RULE = '─'.repeat(60)
+  const IDLE = '\x1b[2J\x1b[H ▐▛███▜▌   Claude Code v2.1.281\r\n\r\n' + RULE + '\r\n❯ \r\n' + RULE +
+    '\r\n  ⏵⏵ bypass permissions on (shift+tab to cycle)\r\n'
+  const BRIEF = 'RESEARCH QUESTION: is an always-loaded CLAUDE.md still the right place for the rules?\n' +
+    'METHOD: primary sources first.'
+  const pidFile = join(home, 'sessions', '4242.json') // the stub pty's pid
+  const cli = (sessionId) =>
+    writeFileSync(pidFile, JSON.stringify({ pid: 4242, sessionId, cwd: root, startedAt: Date.now(), status: 'idle' }))
+  const hooksDone = (sessionId, agoMs = 0) => {
+    const file = join(proj, `${sessionId}.jsonl`)
+    writeFileSync(file, JSON.stringify({ type: 'attachment',
+      attachment: { type: 'hook_success', hookName: 'SessionStart:startup' }, timestamp: new Date().toISOString() }) + '\n')
+    if (agoMs) utimesSync(file, new Date(Date.now() - agoMs), new Date(Date.now() - agoMs))
+  }
+  const typings = (...procs) => procs.flatMap((p) => p.writes).filter((w) => w.includes('RESEARCH QUESTION')).length
+  const typedAt = async (p, waitMs) => {
+    const until = Date.now() + waitMs
+    while (Date.now() < until) {
+      if (typings(p)) return Date.now()
+      await sleep(20)
+    }
+    return 0
+  }
+  const open = () => {
+    const pane = manager.start({ cwd: root, agent: 'claude' })
+    const p = manager.sessions.get(pane.id).proc
+    manager.queuePrompt(pane.id, BRIEF, 0, 40, undefined, 5000)
+    p.say(IDLE)
+    return { pane, p, at: Date.now() }
+  }
+  const acPath = join(work, 'userData', 'autoclear-app.log')
+  const logOf = (id) => readFileSync(acPath, 'utf8').split('\n').filter((l) => l.includes(id)).join('\n')
+  // The durable log is appended off the typing path; on the PC a line can land after the
+  // keystrokes it describes, so a reading waits for it rather than racing it.
+  const logSays = async (id, re) => {
+    const until = Date.now() + 2000
+    while (Date.now() < until && !re.test(logOf(id))) await sleep(40)
+    return re.test(logOf(id))
+  }
+
+  // s113: the pid file is there, the hooks are not done. The composer is idle the whole time.
+  cli('sess-running')
+  const a = open()
+  const early = await typedAt(a.p, 900)
+  ok(!early, 'a prompt is not typed while Claude Code is still running its SessionStart hooks',
+    `typed ${early ? early - a.at : '-'}ms in\n${logOf(a.pane.id)}`)
+  hooksDone('sess-running')
+  const late = await typedAt(a.p, 1000)
+  ok(late > 0, 'and it is typed once the SessionStart record is in the transcript and it has gone quiet', logOf(a.pane.id))
+  ok(typings(a.p) === 1, 'exactly once')
+  ok(await logSays(a.pane.id, /finished starting/), 'the wait and its end are written down', logOf(a.pane.id))
+  manager.kill(a.pane.id)
+
+  // A CLI whose start is long over (the record written, the file quiet): nothing to wait for.
+  cli('sess-done')
+  hooksDone('sess-done', 60_000)
+  const b = open()
+  const bAt = await typedAt(b.p, 1200)
+  ok(bAt > 0 && bAt - b.at < 700, 'a CLI that has finished starting is typed into at once', `${bAt ? bAt - b.at : '-'}ms`)
+  manager.kill(b.pane.id)
+
+  // The record never comes (hooks stuck, or none configured): held only until the process is
+  // PF_PROMPT_STARTUP_MS old, then typed as it always was.
+  cli('sess-stuck')
+  const c = open()
+  const cAt = await typedAt(c.p, 3000)
+  ok(cAt > 0 && cAt - c.at >= 1200, 'a record that never comes holds the prompt only up to the ceiling',
+    `${cAt ? cAt - c.at : '-'}ms\n${logOf(c.pane.id)}`)
+  ok(await logSays(c.pane.id, /typing anyway/), 'and the log says it was typed without the record', logOf(c.pane.id))
+  manager.kill(c.pane.id)
+
+  // No pid file at all (a CLI that writes none): the short wait, then as before.
+  rmSync(pidFile, { force: true })
+  const d = open()
+  const dAt = await typedAt(d.p, 2500)
+  ok(dAt - d.at >= 600 && dAt - d.at < 1400, 'a CLI with no pid file costs only the short wait', `${dAt ? dAt - d.at : '-'}ms`)
+  manager.kill(d.pane.id)
+
+  // Restarted while it waited: `restart` re-keys the owed row and queues it again, so the
+  // first wait stands down and the prompt goes into the new process ONCE. Before this, both
+  // waits typed it - and the gate made that window seconds long instead of a blink.
+  cli('sess-restart')
+  const e = open()
+  await sleep(300)
+  manager.restart(e.pane.id)
+  const e2 = manager.sessions.get(e.pane.id).proc
+  e2.say(IDLE)
+  cli('sess-restart-2')
+  hooksDone('sess-restart-2')
+  await typedAt(e2, 1500)
+  await sleep(600)
+  ok(typings(e.p, e2) === 1, 'a pane restarted while its prompt waited gets it once, in the new process',
+    `${typings(e.p)} in the old, ${typings(e2)} in the new\n${logOf(e.pane.id)}`)
+  manager.kill(e.pane.id)
+
+  // Only Claude Code is waited for: a shell pane is typed into on its idle composer alone.
+  cli('sess-shell')
+  const shell = manager.start({ cwd: root, agent: 'shell' })
+  const sp = manager.sessions.get(shell.id).proc
+  const sAt0 = Date.now()
+  manager.queuePrompt(shell.id, BRIEF, 0, 40, undefined, 5000)
+  sp.say(IDLE)
+  const sAt = await typedAt(sp, 1200)
+  ok(sAt > 0 && sAt - sAt0 < 700, 'a pane that is not Claude Code is not held', `${sAt ? sAt - sAt0 : '-'}ms`)
+  manager.kill(shell.id)
+  rmSync(pidFile, { force: true })
 }
 
 // The reading itself, on the frames it has to tell apart.

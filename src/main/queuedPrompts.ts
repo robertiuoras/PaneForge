@@ -118,6 +118,15 @@ export function noteDropped(key: string, why: QueueDrop): void {
 }
 
 /**
+ * Is this row still owed under this key? A restart, wake or restore re-keys what a pane is
+ * owed and queues it again (`owedAfterRestore`), so a wait still holding the OLD key has
+ * been handed on and must not type it as well.
+ */
+export function stillOwed(key: string): boolean {
+  return Boolean(load()[key])
+}
+
+/**
  * The prompts a restored pane is still owed, moved onto the id it came back as.
  *
  * Called once per restored pane, with the id the desk saved (`scrollbackId`) and the id the
