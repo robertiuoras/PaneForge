@@ -53,6 +53,17 @@ export interface DoneReading extends DonePane {
  */
 export const AUTO_CLOSE_QUIET_MS = 3 * 60_000
 
+/**
+ * Is a person looking at this pane? The window's selected pane alone is not that: there
+ * is always one, so on a desk of four panes the one last typed into was "looked at" for
+ * ever and never closed (PC, 2026-09-24: a finished pane sat 14 minutes with its window
+ * behind another app). Selected, in a window that has the keyboard, at a desk somebody
+ * is at (`deskWatched`: present per `away.ts`, window shown and not minimised).
+ */
+export function personLooking(selected: boolean, windowFocused: boolean, deskWatched: boolean): boolean {
+  return selected && windowFocused && deskWatched
+}
+
 export type DoneVerdict =
   | { close: true; personSteps: string[] }
   | { close: false; reason: string }

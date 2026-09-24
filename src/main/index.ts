@@ -1,4 +1,4 @@
-import { flushLogsOnExit } from './logWrite'
+import { appendLog, flushLogsOnExit } from './logWrite'
 import { profileRenderer, reloadRenderer } from './renderCost'
 import { execFile, spawn } from 'node:child_process'
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -1529,6 +1529,7 @@ manager.deskWatched = (): boolean => {
   if (!a.sawPerson || a.awaySince !== null) return false
   return !!win && !win.isDestroyed() && win.isVisible() && !win.isMinimized()
 }
+manager.windowFocused = (): boolean => focused
 startAway((a) => {
   send('system:away', a)
   manager.presenceChanged()
@@ -1645,7 +1646,8 @@ setInterval(() => {
         writeFileSync(tmp, body, { mode: 0o600 })
         renameSync(tmp, path)
       },
-      activity: (what, why) => noteActivity(activityEntry('closed', what, why))
+      activity: (what, why) => noteActivity(activityEntry('closed', what, why)),
+      log: (line) => appendLog(join(app.getPath('userData'), 'done-close.log'), `[${new Date().toISOString()}] ${line}\n`, { rotateAt: 64 * 1024 })
     })
   } catch (e) {
     console.warn(`done-close: sweep failed - ${(e as Error).message}`)

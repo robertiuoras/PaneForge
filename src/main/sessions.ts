@@ -47,7 +47,7 @@ export const NOTHING_OPEN = 'the handoff lists nothing still open'
 import { jobFromTable, paneJob, programName, SHELLS } from '../shared/paneJob'
 import { canSleep, sleepRefusal } from '../shared/sleep'
 import { doneEnough } from '../shared/closeWhenDone'
-import type { DoneReading } from '../shared/doneClose'
+import { personLooking, type DoneReading } from '../shared/doneClose'
 import { folderName, laneOfCheckout, projectOf } from '../shared/place'
 import { dropStale, lentGrid, watchedBorrow, type Borrow } from '../shared/paneSize'
 import { START_COLS, START_ROWS } from '../shared/paneGrid'
@@ -706,6 +706,8 @@ export class SessionManager extends EventEmitter {
   setActive(id: string | null): void {
     this.activeId = id
   }
+  /** Whether this app's window has the keyboard - set by main/index.ts. */
+  windowFocused: () => boolean = () => false
 
   /**
    * What `shared/doneClose.ts` needs to know about every live pane. The manager reads,
@@ -727,7 +729,7 @@ export class SessionManager extends EventEmitter {
         job: m.job,
         backJob: m.backJob,
         backWaitOnly: backJobWaitOnly(m.id),
-        focused: m.id === this.activeId,
+        focused: personLooking(m.id === this.activeId, this.windowFocused(), this.deskWatched()),
         lastKeyboard: m.lastKeyboard,
         turnEndedAt: live.footerEndedAt,
         openedOthers: this.openers.has(m.id) || this.openChildrenOf(m.id) > 0

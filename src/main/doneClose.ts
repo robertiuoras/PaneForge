@@ -121,37 +121,59 @@ export interface DoneCloseDeps {
   /** Leave a note for that opener (`shared/finishedDigest.ts`). */
   finished?: (opener: string, note: FinishedNote) => void
   now?: () => number
+  /**
+   * `done-close.log`: why each finished pane stayed, written when the reason CHANGES. The
+   * console alone kept nothing, so "why didn't it close" could only be guessed at.
+   */
+  log?: (line: string) => void
 }
 
 /** Panes with a review row already written this turn, so a refused close is not re-recorded every tick. */
 const recorded = new Map<string, string>()
+/** The last thing logged per pane, so a pane that stays for an hour is one line, not 240. */
+const said = new Map<string, string>()
 
 /** One pass over the desk. Returns what it closed, for the log and the test. */
 export function sweepDoneClose(d: DoneCloseDeps): string[] {
   if (!d.enabled()) return []
   const now = d.now?.() ?? Date.now()
   const closed: string[] = []
+  const say = (id: string, what: string): void => {
+    if (said.get(id) === what) return
+    said.set(id, what)
+    console.info(`done-close: ${id} ${what}`)
+    d.log?.(`${id} ${what}`)
+  }
   for (const r of d.readings()) {
     const id = (r as DoneReading & { id: string }).id
     if (!id) continue
     // Cheap gates first; the transcript is read only for a pane that is otherwise done.
     let verdict = doneVerdict({ ...r, reply: undefined }, now)
-    if (!verdict.close && verdict.reason !== 'reply not read') continue
+    if (!verdict.close && verdict.reason !== 'reply not read') {
+      if (r.turnEndedAt && verdict.reason !== 'not quiet long enough' && verdict.reason !== 'shell pane') say(id, `stays - ${verdict.reason}`)
+      continue
+    }
     const agent = r.agent
     const file = d.transcriptFor(id)
     const reply = file ? readReply(agent, file, now) : undefined
     verdict = doneVerdict({ ...r, reply: reply?.text, runningAgents: reply?.runningAgents }, now)
     if (!verdict.close) {
-      if (verdict.reason !== 'reply not read') console.info(`done-close: ${id} stays - ${verdict.reason}`)
+      say(id, `stays - ${verdict.reason}`)
       continue
     }
-    if (!reply?.text.trim()) continue
+    if (!reply?.text.trim()) {
+      say(id, 'stays - the reply is empty')
+      continue
+    }
     const resumeId = d.resumeIdFor(id)
     const native = d.titleOf(id)
-    if (!resumeId || !native) continue
+    if (!resumeId || !native) {
+      say(id, `stays - ${resumeId ? 'no pane to name' : 'no conversation id to reopen it with'}`)
+      continue
+    }
     const busy = d.otherwiseBusy(id)
     if (busy) {
-      console.info(`done-close: ${id} stays - ${busy}`)
+      say(id, `stays - ${busy}`)
       continue
     }
     const reviewId = doneReviewId(id, r.turnEndedAt)
@@ -203,12 +225,13 @@ export function sweepDoneClose(d: DoneCloseDeps): string[] {
         })
       d.noteClose(reviewId, undefined, new Date(now).toISOString())
       d.activity(native.title, verdict.personSteps.length ? `finished, ${verdict.personSteps.length} thing${verdict.personSteps.length === 1 ? '' : 's'} left for you` : 'finished')
-      console.info(`done-close: ${id} finished and closed itself into Review (${reviewId})`)
+      say(id, `finished and closed itself into Review (${reviewId})`)
       closed.push(id)
       recorded.delete(id)
+      said.delete(id)
     } else {
       d.noteClose(reviewId, res.reason)
-      console.info(`done-close: ${id} stays - ${res.reason}`)
+      say(id, `stays - ${res.reason}`)
     }
   }
   return closed

@@ -36,7 +36,7 @@ async function bundle(entry, name) {
   await build({ absWorkingDir: root, entryPoints: [entry], outfile: out, bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent', plugins: [stubs] })
   return require(out)
 }
-const { doneVerdict, doneReviewId, AUTO_CLOSE_QUIET_MS } = await bundle('src/shared/doneClose.ts', 'shared.cjs')
+const { doneVerdict, doneReviewId, personLooking, AUTO_CLOSE_QUIET_MS } = await bundle('src/shared/doneClose.ts', 'shared.cjs')
 const digest = await bundle('src/shared/finishedDigest.ts', 'digest.cjs')
 const main = await bundle('src/main/doneClose.ts', 'main.cjs')
 
@@ -162,6 +162,36 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
   console.log('done-close: sweep records, notices, closes ok')
 }
 
+// 4b. "Somebody is looking at it" needs a person, not just a selected pane. PC 2026-09-24:
+// the selected pane of a four-pane desk sat finished for 14 minutes with the window behind
+// another app, because there is always a selected pane.
+{
+  assert.equal(personLooking(true, true, true), true, 'selected, window has the keyboard, person at the desk')
+  assert.equal(personLooking(true, false, true), false, 'window behind another app')
+  assert.equal(personLooking(true, true, false), false, 'nobody at the desk, or the window minimised')
+  assert.equal(personLooking(false, true, true), false, 'a different pane is selected')
+  console.log('done-close: looking needs a person ok')
+}
+
+// 4c. Why a pane stayed lands in a log, once per change of reason.
+{
+  const lines = []
+  const readings = [{ id: 'sel', ...finished({ focused: true }) }, { id: 'mid', ...finished({ turnEndedAt: 0 }) }]
+  const deps = {
+    enabled: () => true, readings: () => readings, transcriptFor: () => null, resumeIdFor: () => undefined,
+    history: () => [], titleOf: () => undefined, otherwiseBusy: () => null, record: () => { throw new Error('no') },
+    close: () => ({ closed: false }), noteClose: () => {}, writeNotice: () => {}, activity: () => {},
+    now: () => NOW, log: (line) => lines.push(line)
+  }
+  main.sweepDoneClose(deps)
+  main.sweepDoneClose(deps)
+  assert.deepEqual(lines, ['sel stays - somebody is looking at it'], 'one line per reason; a pane mid-turn says nothing')
+  readings[0] = { id: 'sel', ...finished({ focused: false }) }
+  main.sweepDoneClose(deps)
+  assert.equal(lines.at(-1), 'sel stays - reply not read', 'a new reason is a new line')
+  console.log('done-close: stay reasons are logged ok')
+}
+
 // 5. A reply longer than the read window still reads its tail.
 {
   const big = join(work, 'big.jsonl')
@@ -179,6 +209,9 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
   assert.ok(index.includes("ipcMain.on('sessions:active'"), 'index.ts hears the active pane')
   const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
   assert.ok(sessions.includes('doneReadings()'), 'the manager supplies readings')
+  assert.ok(sessions.includes('focused: personLooking(m.id === this.activeId, this.windowFocused(), this.deskWatched())'), 'focused means a person is looking')
+  assert.ok(index.includes('manager.windowFocused = (): boolean => focused'), 'index.ts says when the window has the keyboard')
+  assert.ok(index.includes("'done-close.log'"), 'stay reasons are written to disk')
   const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
   assert.ok(app.includes('window.api.activePane(activeId)'), 'the window reports the active pane')
   const settings = readFileSync(join(root, 'src/renderer/src/components/SettingsDialog.tsx'), 'utf8')
