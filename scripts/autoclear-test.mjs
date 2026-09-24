@@ -537,7 +537,8 @@ console.log('the resume prompt is forged, so it names the handoff and what done 
   ok('the handoff path is the anchor', brief.includes('/handoffs/session.md'))
   ok('the hook words survive', brief.includes('Continue the handoff'))
   ok('every open step becomes a done line', brief.includes('- Ship the offload switch.') && brief.includes('- Run npm run test:settingsearch.'))
-  ok('no work beyond the handoff is invited', brief.includes('add no work it does not name'))
+  ok('no feature beyond the handoff is invited', brief.includes('start no new feature it does not name'))
+  ok('a defect found on the way is fixed, not parked', brief.includes('fix it this turn') && !brief.includes('add no work'))
 
   const noPath = resumeBrief(ask, null)
   ok('an unknown handoff draws no anchor', !noPath.includes('Start from:'))

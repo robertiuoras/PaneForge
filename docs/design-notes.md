@@ -2985,6 +2985,7 @@ runs) stays there.
 | `npm run test:theme` | palette derivation + contrast (358 assertions) |
 | `npm run test:contrast` | that every word DRAWN in the window reaches its ratio, in both themes - the backdrop sampled out of a screenshot rather than walked, so a gradient cannot report as the solid colour three ancestors up |
 | `npm run test:autoclear` | the countdown in front of an automatic /clear, every refusal, and that Cancel types NOTHING |
+| `npm run test:devkeep` | that closing test copies never takes the window a person is watching, and that `try --close` only says "closed" once the copy is gone - a copy that ignores the ask (a headless one used to refuse the quit over a mid-turn pane) is killed and reported as such |
 | `npm run test:awake` | holding the display awake, letting go, and the CAP on one busy stretch |
 | `npm run test:stashtheme` | that the Stash picks no colour of its own and asks the theme, not the OS |
 | `npm run test:sounds` | the alert catalogue: nothing silent, nothing clipping, uploads |
