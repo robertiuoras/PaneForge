@@ -29,7 +29,7 @@ buildSync({
   format: 'esm',
   platform: 'node'
 })
-const { DESK_QUIET_MS, HOLD_LOG_INTERVAL_MS, agentsMidTurn, deskBusy, decideInstall, shouldLogHold } =
+const { DESK_QUIET_MS, HOLD_LOG_INTERVAL_MS, agentsMidTurn, deskBusy, decideInstall, shouldLogHold, idleInstallBlocker } =
   await import(pathToFileURL(outfile).href)
 
 let failures = 0
@@ -166,15 +166,43 @@ ok(HOLD_LOG_INTERVAL_MS === 30 * 60_000, 'the interval is named, not written int
   ok(teardown === 1, 'an explicit ready restart reaches the install boundary regardless of pane state')
 }
 
-// A ready build may be downloaded in the background, but the installer may only start
-// from the explicit IPC handler. These source assertions protect against quietly adding
-// another timer, stale-build listener, or failed-install retry to the main process.
+// Installing by itself: only when nobody would notice (Robert, 2026-09-24). Each hold is
+// one real way a restart would be noticed; the quiet desk is the only yes.
 {
-  const main = readFileSync(join(ROOT, 'src/main/index.ts'), 'utf8')
+  const T = Date.parse('2026-09-24T12:00:00Z')
+  const quiet = { status: 'idle', engaged: true, lastOutput: T - DESK_QUIET_MS - 1000, lastKeyboard: T - DESK_QUIET_MS - 5000 }
+  const base = { sessions: [quiet, { status: 'exited', runSince: T - 5000, lastOutput: T }], now: T, personIdleMs: DESK_QUIET_MS + 1000, restoreAfterUpdate: true, gameActive: false }
+  const why = (patch) => idleInstallBlocker({ ...base, ...patch })
+  ok(why({}) === null, 'a quiet desk with an open, finished conversation installs (exited panes do not count)')
+  ok(why({ sessions: [] }) === null, 'an empty desk installs')
+  ok(/computer/.test(why({ personIdleMs: DESK_QUIET_MS - 1000 })), 'someone at the computer in the last 10 min holds it')
+  ok(/restore/.test(why({ restoreAfterUpdate: false })), 'restore after update off holds it: the panes would not come back')
+  ok(/game/.test(why({ gameActive: true })), 'a game on screen holds it')
+  ok(/mid-turn/.test(why({ sessions: [{ ...quiet, runSince: T - 20 * 60_000 }] })), 'a pane mid-turn holds it, however long the turn')
+  ok(/mid-turn/.test(why({ sessions: [{ ...quiet, status: 'starting' }] })), 'a pane still starting holds it')
+  ok(/question/.test(why({ sessions: [{ ...quiet, ask: { kind: 'choice' } }] })), 'a pane waiting on a question holds it')
+  ok(/half-typed/.test(why({ sessions: [{ ...quiet, drafting: true }] })), 'a half-typed prompt holds it')
+  ok(/background/.test(why({ sessions: [{ ...quiet, backJob: 'npm test' }] })), 'a background job holds it')
+  ok(/active/.test(why({ sessions: [{ ...quiet, lastOutput: T - 60_000 }] })), 'a pane that printed a minute ago holds it')
+  ok(/active/.test(why({ sessions: [{ ...quiet, lastKeyboard: T - 60_000 }] })), 'a pane typed into a minute ago holds it')
+}
+
+// A ready build installs from exactly two places: Restart now, and the idle check gated on
+// idleInstallBlocker. These source assertions protect against quietly adding another
+// timer, stale-build listener, or failed-install retry to the main process.
+{
+  const main = readFileSync(join(ROOT, 'src/main/index.ts'), 'utf8').replace(/\r\n/g, '\n')
   const handler = main.slice(main.indexOf("ipcMain.handle('update:install'"), main.indexOf('\n})', main.indexOf("ipcMain.handle('update:install'")))
   ok(handler.includes('doInstall()'), 'Restart now directly starts the explicit install')
   ok(!handler.includes('whenClear'), 'Restart now is never silently queued for later')
-  ok(!/function autoInstall|readyTick|consumeInstallRetry|onUpdateIgnored/.test(main), 'no timer, stale-build listener, or failed-install retry can start an update')
+  ok(!/function autoInstall|readyTick|consumeInstallRetry|onUpdateIgnored/.test(main), 'no stale-build listener or failed-install retry can start an update')
+  const idle = main.slice(main.indexOf('function idleInstallCheck('), main.indexOf('\n}\n', main.indexOf('function idleInstallCheck(')))
+  ok(idle.length > 0 && idle.indexOf('idleInstallBlocker(') > 0 && idle.indexOf('idleInstallBlocker(') < idle.indexOf('doInstall()'), 'the idle install asks idleInstallBlocker before it installs')
+  ok(/phase !== 'ready'/.test(idle) && /installStarted/.test(idle), 'the idle install only acts on a ready build that is not already installing')
+  // Restart now, "Restart now anyway" (game:installAnyway, also a click) and the idle check.
+  const callers = main.split('\n').filter((l) => /doInstall\(\)/.test(l) && !/function doInstall/.test(l))
+  ok(callers.length === 3, `doInstall() has exactly its three callers: two clicks and the idle check (found ${callers.length})`)
+  ok(main.includes("ipcMain.on('game:installAnyway', () => {\n  doInstall()"), 'the other click is Restart now anyway')
 }
 
 console.log(failures ? `\n${failures} failed` : '\nall passed')

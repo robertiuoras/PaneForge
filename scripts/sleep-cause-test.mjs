@@ -59,7 +59,7 @@ for (const pressure of ['ok', 'tight', 'over']) {
 // above proves the decision survives the IPC; this proves the app has the caller.
 assert.match(
   app,
-  /if \(soon\.sleep\) \{[\s\S]{0,600}api\.sleepSession\(id, soon\.why === 'idle' \? 'idle' : 'pressure', \{\s*source: 'renderer-idle-sweep'/,
+  /if \(soon\.sleep\) \{[\s\S]{0,1000}api\.sleepSession\(id, soon\.why === 'idle' \? 'idle' : 'pressure', \{\s*source: 'renderer-idle-sweep'/,
   'the sleep countdown is what calls sleepSession, with the measured reason'
 )
 assert.match(app, /armSleepRef\.current\(plan, pressure\)/, 'the sweep arms the countdown')

@@ -1105,13 +1105,48 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   check('a skipped close is logged like a closed one', /event: 'skipped'/.test(app))
   check('...and carries the reason, not just the fact', /api\.logReclaim\(\{ event: 'skipped', id, name: [^,]+, reason \}\)/.test(app))
   for (const [what, re] of [
-    ['the pane went back to work at the deadline', /skipClose\(ids, 'it went back to work during the countdown'\)/],
-    ['one pane of a plan was spared', /ids\.filter\(\(id\) => !live\.includes\(id\)\),\s*'it went back to work during the countdown'/],
-    ['the countdown was dropped mid-flight', /'it went back to work while the countdown was running'/],
+    ['the pane went back to work at the deadline', /skipGone\(ids, 'it went back to work during the countdown'\)/],
+    ['one pane of a plan was spared', /skipGone\(\s*ids\.filter\(\(id\) => !live\.includes\(id\)\),\s*'it went back to work during the countdown'/],
+    ['the countdown was dropped mid-flight', /skipGone\(\s*woke\.flatMap[^]*?'it went back to work while the countdown was running'/],
+    ['a sleep card whose pane stopped being sleepable', /skipGone\(\[id\], 'it went back to work during the countdown'\)/],
     ['somebody pressed Keep it open', /skipClose\(ids, 'you kept it open'\)/]
   ]) {
     check(`...for ${what}`, re.test(app))
   }
+  // A pane that is GONE did not go back to work (2026-09-24, s16-mue9dvl3: the Review
+  // auto-close took it 0.4s into a sleep card and the line blamed the countdown).
+  const gone = app.slice(app.indexOf('const skipGone = useCallback'), app.indexOf('const doClose = useCallback'))
+  check('a vanished pane is logged as closed by something else, not as woken',
+    /sessionsRef\.current\.some\(\(x\) => x\.id === id\) \? woke : CLOSED_ELSEWHERE/.test(gone) &&
+    /const CLOSED_ELSEWHERE = 'something else closed it before the countdown ended/.test(app))
+  check('no countdown path writes the woke-up words without asking whether the pane is still there',
+    !/skipClose\([^)]*'it went back to work/.test(app))
+  const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
+  check('the close-request line names who closed the pane', /kill\(id: string, by\?: string\)/.test(sessions) && /quitting: this\.down, by \}/.test(sessions))
+  check('...and the Review auto-close says it was the one', /this\.kill\(id, 'review'\)/.test(sessions))
+}
+// A pane put to sleep is not armed again off the session list that still says awake
+// (s22-mueyklpl, 2026-09-24: slept 04:35:29.853, armed .896, refused "already asleep").
+{
+  const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
+  const due = app.slice(app.indexOf("what: 'sleep' })"), app.indexOf('const mb = pendingMb.current[key]'))
+  check('a sleep in flight holds its pane off the clock', /sleepHeld\.current\[id\] = Number\.POSITIVE_INFINITY/.test(due) &&
+    due.indexOf('POSITIVE_INFINITY') < due.indexOf('api.sleepSession('))
+  check('...and a pane that slept stays off it while the broadcast lands', /delete sleepRefusals\.current\[id\]\s*sleepHeld\.current\[id\] = Date\.now\(\) \+ SLEPT_SETTLE_MS/.test(due))
+  const arm = app.slice(app.indexOf('armSleepRef.current = (plan, pressure)'), app.indexOf('armCloseRef.current = (plan, why, log)'))
+  check('the sleep arm reads the live pane and skips one asleep or ended', /!s!\.asleep/.test(arm) && /s!\.status !== 'exited'/.test(arm))
+}
+// Every `move-armed` ends in a line of its own (2026-09-24: s17, s20, s29 armed, then
+// closed, nothing between - they had moved, and only handoff.log said so).
+{
+  const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
+  const move = app.slice(app.indexOf('const doMove = useCallback'), app.indexOf('armMoveRef.current = (plan, why, cooldownMinutes)'))
+  check('a move that went or was queued says so', /event: item\?\.ok \? 'moved' : 'move-queued'/.test(move))
+  check('a move that failed says so', /event: 'move-failed'/.test(move))
+  check('a pane gone or mirrored by the deadline says so', /event: 'move-skipped'/.test(move) && !/if \(!live \|\| live\.remote\) continue/.test(move))
+  check('a move card whose plan is gone at the deadline says so', /move-skipped', id, reason: 'the move it was armed with was already gone/.test(app))
+  const main = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
+  check('the handoff names itself on the close it makes', /kill: \(id\) => manager\.kill\(id, 'handoff'\)/.test(main))
 }
 // One clock, one predicate. `idleClosePlan` is built from `reclaimPaneOf` in App.tsx,
 // which has never refused a pane for a BELL; `stillCloseable` - the re-check at the

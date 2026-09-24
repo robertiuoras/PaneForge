@@ -38,6 +38,7 @@ import { execFileSync } from 'node:child_process' // sync-on-purpose: ensureLane
 import { gitRun, isRead } from './gitRun'
 import { createServer } from 'node:net'
 import { hideCopyFolder } from './hideCopy'
+import { codexProjectHeader, codexProjectKey } from '../shared/codexTrust'
 import { homedir } from 'node:os'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 
@@ -713,21 +714,24 @@ function seedCodexTrust(repo: string, lane: string): void {
   const home = process.env.CODEX_HOME?.trim() || join(homedir(), '.codex')
   const path = join(home, 'config.toml')
   if (!existsSync(path)) return
-  // Codex writes these keys lowercased, and a path holding a quote cannot be
-  // expressed in this quoting style at all - both are left alone rather than
-  // guessed at.
-  const key = (p: string): string => resolve(p).toLowerCase()
-  if (key(lane).includes("'") || key(repo).includes("'")) return
+  // Codex's own spelling of the key, which differs by OS: lowercased in single quotes on
+  // Windows, the path as given in double quotes elsewhere. Lowercasing everywhere (the
+  // old rule) never matched a Mac file, so a Mac lane never got its repo's approval.
+  const win = process.platform === 'win32'
+  const header = (p: string): string | null => {
+    const k = codexProjectKey(resolve(p), win)
+    return k ? codexProjectHeader(k, win) : null
+  }
+  if (!header(lane) || !header(repo)) return
 
   try {
     const text = readFileSync(path, 'utf8')
-    const header = (p: string): string => `[projects.'${key(p)}']`
-    if (text.includes(header(lane))) return
-    const at = text.indexOf(header(repo))
+    if (text.includes(header(lane)!)) return
+    const at = text.indexOf(header(repo)!)
     if (at < 0) return
 
     // The section runs to the next header or the end of the file.
-    const rest = text.slice(at + header(repo).length)
+    const rest = text.slice(at + header(repo)!.length)
     const end = rest.search(/\r?\n\[/)
     const body = (end < 0 ? rest : rest.slice(0, end)).replace(/\s+$/, '')
     const next = `${text.replace(/\s+$/, '')}\n\n${header(lane)}${body}\n`
@@ -904,7 +908,7 @@ export async function resolveLane(cwd: string, taken: string[]): Promise<Lane> {
       const folder = await git(repo, ['cat-file', '-t', `${existing.ok ? branch : 'HEAD'}:${subfolder.replace(/\\/g, '/')}`])
       if (!folder.ok || folder.out !== 'tree') {
         if (existing.ok) continue
-        throw new Error(`Client or project folder is missing from the lane's commit: ${subfolder}. Commit its current location first.`)
+        throw new Error(notInCopy(cwd, name))
       }
     }
     let made = await git(repo, ['worktree', 'add', '-b', branch, path])
@@ -914,11 +918,22 @@ export async function resolveLane(cwd: string, taken: string[]): Promise<Lane> {
     }
     seedLane(repo, path)
     hideCopyFolder(path)
-    if (!existsSync(target)) throw new Error(`Client or project folder is missing from the new lane: ${target}. Commit its current location first.`)
+    if (!existsSync(target)) throw new Error(notInCopy(cwd, name))
     return { cwd: target, lane: label, branch, ...(await laneExtras(path, label)) }
   }
 
-  throw new Error(`No free lane containing this folder in ${name}. Finish an existing session or expand its lane pool.`)
+  // Read on a toast by somebody who has never used git: "No free lane ... lane pool" had
+  // Robert asking whether the lane was closed (2026-09-24). `test:reopenhold`.
+  throw new Error(
+    `Another chat is already working in ${name}, and there is no spare copy of ${name} with ${basename(cwd)} in it. ` +
+      `Close the other ${name} chat, then open this again.`
+  )
+}
+
+/** A folder that exists only on this disk: git never had it, so no copy of the project can. */
+function notInCopy(cwd: string, name: string): string {
+  return `${basename(cwd)} is new and not saved in ${name} yet, so a second copy of ${name} would not have it. ` +
+    `Close the other ${name} chat, then open this again.`
 }
 
 /**

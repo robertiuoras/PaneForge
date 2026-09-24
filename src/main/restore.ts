@@ -35,7 +35,13 @@ export interface Desk {
 
 /** Older than this and those panes are not the desk you remember leaving. */
 export const MAX_DESK_AGE_MS = 7 * 24 * 60 * 60 * 1000
-/** Twelve CLIs starting at once on a cold boot pegs the machine. */
+/**
+ * Twelve CLIs starting at once on a cold boot pegs the machine - so at most this many
+ * restored panes come back with their agent RUNNING. Every other pane still comes back,
+ * asleep: a card with no process costs nothing, and a press wakes it in its conversation.
+ * It used to cap the panes themselves, and the thirteenth was simply lost (2026-09-23
+ * 06:46: "desk offered 12 pane(s) (+1 more not offered)" after a crash with 13 open).
+ */
 export const MAX_RESTORE = 12
 /** A burst of pane changes settles for this long before it costs a write. */
 const DEBOUNCE_MS = 1500

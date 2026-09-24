@@ -202,6 +202,7 @@ const TESTS = [
   // A copy of a project is out of Finder, and a project that merely ends in `-a` is not.
   ['lanehidden', 'lane-hidden-test.mjs'],
   ['lanetaken', 'lane-taken-test.mjs'],
+  ['reopenhold', 'reopen-hold-test.mjs'],
   // Both folder buttons on a pane open the project, never the copy the pane runs in.
   ['projectfolder', 'project-folder-test.mjs'],
   ['clientname', 'client-name-test.mjs'],
@@ -217,6 +218,7 @@ const TESTS = [
   ['tailnet', 'tailnet-test.mjs'],
   ['panetrust', 'pane-trust-test.mjs'],
   ['agytrust', 'agy-trust-test.mjs'],
+  ['codextrust', 'codex-trust-test.mjs'],
   ['agyconv', 'agy-conversation-test.mjs'],
   ['unreleased', 'unreleased-test.mjs'],
   // Loopback only, ~5s: the full remote suite stays out for being slow, but a device

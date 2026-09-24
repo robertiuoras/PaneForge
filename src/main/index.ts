@@ -35,6 +35,7 @@ import { promptReview, promptsForSession, recordPromptReview, removePromptReview
 import { readPulls } from './pulls'
 import { quitWhere } from '../shared/quitWords'
 import { pidAlive, waitForExit } from '../shared/installWedge'
+import { idleInstallBlocker, shouldLogHold } from '../shared/updateHold'
 import { mayReturnLane } from '../shared/laneReturn'
 import { revealTarget, within } from '../shared/reveal'
 import { revealTargetFor } from '../shared/revealPane'
@@ -208,7 +209,7 @@ import {
   bootMs
 } from './updater'
 import * as history from './history'
-import { clashingRestores, takenFolders } from '../shared/laneTaken'
+import { clashingRestores, holdIsOver, takenFolders } from '../shared/laneTaken'
 import { copyNumber } from '../shared/place'
 import { readBoard, writeMemory, writeTasks } from './board'
 import { vaultGraph, vaultInfo, vaultOpen } from './vault'
@@ -255,7 +256,12 @@ startWakeQueue({
   // The same reading the budget rung takes (`autoHandoff` below): the memory verdict OR
   // the lag band, whichever is worse. A machine that is not lagging and not short of
   // memory is a machine with room, and that is when a queued pane may start.
-  pressure: () => worstPressure(lastPressure, lagLevel(loadPerCore()))
+  pressure: () => worstPressure(lastPressure, lagLevel(loadPerCore())),
+  // ...and the budget the sleep clock reads. The kernel said `normal` while the verdict said
+  // the desk was full, so a pane the idle sweep had just slept for room was woken, filled
+  // the budget again and was slept a minute later: s27-muezyz7e slept and woke four times
+  // in twenty minutes on 2026-09-24. See `wakePlan`.
+  room: () => capacityVerdict().roomFor
 })
 /** Keeps userData/desk.json in step with the panes on screen. See restore.ts. */
 const noteDesk = startDeskAutosave(() => manager.snapshot())
@@ -1314,30 +1320,32 @@ remote.on('changed', (state: RemoteState) => {
  * run on a paired device, which is the real answer when a machine is full, so the
  * verdict says when to offer it.
  */
-function publishCapacity(): void {
+/** The verdict itself - what the strip shows, and what the wake queue asks for room. */
+function capacityVerdict(): ReturnType<typeof assess> {
   const mirrored = remote.sessions().length
   const peers = remote.state().peers.filter((p) => p.status === 'online').length
-  send(
-    'capacity:changed',
-    assess({
-      totalMb: totalMb(),
-      pressure: lastPressure,
-      // What a person calls lagging, and it moves minutes before the memory verdict does.
-      load: loadPerCore(),
-      // Panes with an AGENT in them. A sleeping pane (`shared/sleep.ts`) has given its
-      // process back, so counting it says this machine is running work it is not - which
-      // reaches the budget rung as an overshoot and the card as "7 panes hold ~1.3 GB".
-      localPanes: manager.list().filter((s) => !s.asleep).length,
-      remotePanes: mirrored,
-      peerAvailable: peers > 0,
-      // How many agents this desk agreed to run itself. Read live rather than captured:
-      // changing it in Settings has to reach the next reading, which is this one.
-      keepLocal: (getConfig().autoHandoff ?? DEFAULT_AUTO_HANDOFF).keepLocal,
-      // Whether the ladder is going to answer this reading itself. Only decides whether the
-      // strip SAYS it - see `Verdict.say`.
-      willMove: (getConfig().autoHandoff ?? DEFAULT_AUTO_HANDOFF).enabled === true
-    })
-  )
+  return assess({
+    totalMb: totalMb(),
+    pressure: lastPressure,
+    // What a person calls lagging, and it moves minutes before the memory verdict does.
+    load: loadPerCore(),
+    // Panes with an AGENT in them. A sleeping pane (`shared/sleep.ts`) has given its
+    // process back, so counting it says this machine is running work it is not - which
+    // reaches the budget rung as an overshoot and the card as "7 panes hold ~1.3 GB".
+    localPanes: manager.list().filter((s) => !s.asleep).length,
+    remotePanes: mirrored,
+    peerAvailable: peers > 0,
+    // How many agents this desk agreed to run itself. Read live rather than captured:
+    // changing it in Settings has to reach the next reading, which is this one.
+    keepLocal: (getConfig().autoHandoff ?? DEFAULT_AUTO_HANDOFF).keepLocal,
+    // Whether the ladder is going to answer this reading itself. Only decides whether the
+    // strip SAYS it - see `Verdict.say`.
+    willMove: (getConfig().autoHandoff ?? DEFAULT_AUTO_HANDOFF).enabled === true
+  })
+}
+
+function publishCapacity(): void {
+  send('capacity:changed', capacityVerdict())
 }
 
 /**
@@ -1725,6 +1733,12 @@ ipcMain.handle('sessions:continuationStatus', (_e, id: string) => {
   return { received: !!receipt.received, reason: receipt.received ? `Verified: this conversation received its saved handoff. ${recovery}` : receipt.failed ? `Delivery could not be verified. Recover from the saved handoff or source. ${recovery}` : `Delivery is not verified yet. ${recovery}` }
 })
 /**
+ * A lane-ledger hold kept for a pane this app has already closed holds nothing: History's
+ * `Open again` on that very chat was refused by it (`shared/laneTaken.ts` `holdIsOver`).
+ */
+const holdOver = (pane: string): boolean => holdIsOver(pane, manager.list(), history.ended)
+
+/**
  * Move a second session in the same folder into its own git worktree, so two
  * agents in one project cannot overwrite each other's edits or race the index.
  * Folders already held by live sessions are what "in use" means, so a lane freed
@@ -1749,7 +1763,7 @@ async function laneFor(
   // that folder again. Two client chats were restored asleep into `clients` and a
   // third opened from History landed there too, because neither counted (2026-09-04):
   // all three woke into one checkout. A folder with a sleeping pane in it is taken.
-  const taken = [...takenFolders(manager.list(), except), ...ledgerTakenFolders(except ?? ''), ...extraTaken]
+  const taken = [...takenFolders(manager.list(), except), ...ledgerTakenFolders(except ?? '', holdOver), ...extraTaken]
 
   // Reopening a pane that was in a lane, when the lane turned out to hold nothing and
   // the project folder is free again: the lane was only ever there to keep two agents
@@ -2092,7 +2106,7 @@ ipcMain.handle('sessions:wake', async (_e, id: string) => {
   if (continuationOwnsSource(id)) return null
   // A sleeping pane is placed again before it wakes: the folder it slept in may now be
   // another pane's (two client chats restored asleep into one checkout, 2026-09-04).
-  await manager.rehome(id, (req) => laneFor(req, ledgerTakenFolders(id), id))
+  await manager.rehome(id, (req) => laneFor(req, ledgerTakenFolders(id, holdOver), id))
   return manager.wake(id)
 })
 ipcMain.handle('sessions:switchAgent', (_e, id: string, agent: string, model?: string) => {
@@ -3270,7 +3284,8 @@ function runHandoff(device: string, request: HandoffRequest): Promise<HandoffIte
       root: projectsRoot,
       list: () => manager.list(),
       snapshot: () => manager.snapshot(),
-      kill: (id) => manager.kill(id),
+      // Only after the far end has confirmed the resume - the close IS the move's result.
+      kill: (id) => manager.kill(id, 'handoff'),
       sleep: (id) => {
         manager.sleep(id, 'handoff', { source: 'handoff' })
       },
@@ -4048,6 +4063,46 @@ async function handOverToInstaller(pids: number[]): Promise<void> {
   hardExit()
 }
 
+/** How often a downloaded update asks whether the desk is idle enough to install itself. */
+const IDLE_INSTALL_CHECK_MS = 60_000
+let idleHoldLoggedAt = 0
+
+/**
+ * Install a downloaded update by itself once nobody would notice (`idleInstallBlocker`).
+ * Same path as Restart now: the desk is saved and comes back, and the new version starts
+ * without taking the screen (`markQuietRelaunch`). A held check logs its reason now and
+ * then (`shouldLogHold`) and simply asks again next minute; nothing counts down.
+ */
+function idleInstallCheck(): void {
+  if (installStarted || getUpdateState().phase !== 'ready') {
+    idleHoldLoggedAt = 0
+    return
+  }
+  let personIdleMs: number
+  try {
+    personIdleMs = powerMonitor.getSystemIdleTime() * 1000
+  } catch {
+    return // no reading is not "nobody is here"
+  }
+  const now = Date.now()
+  const why = idleInstallBlocker({
+    sessions: manager.list(),
+    now,
+    personIdleMs,
+    restoreAfterUpdate: getConfig().restoreAfterUpdate,
+    gameActive: isGameActive()
+  })
+  if (why) {
+    if (shouldLogHold(now, idleHoldLoggedAt)) {
+      updateLog('install', `waiting for a quiet desk: ${why}`)
+      idleHoldLoggedAt = now
+    }
+    return
+  }
+  updateLog('install', 'desk quiet for 10 min: installing the downloaded update by itself')
+  doInstall()
+}
+
 /** The update did not happen: put the window back, inactive, once the screen is free. */
 function restoreAfterFailedInstall(): void {
   if (!alive()) return
@@ -4418,7 +4473,9 @@ function restorePanes(specs: StartSessionRequest[], previous = false): void {
   // A previous desk may overlap with panes that survived the failed restore. Keep the
   // current cards and skip only the exact conversation or screen already represented.
   const openIds = new Set(manager.snapshot().flatMap((s) => [s.resumeId, s.scrollbackId].filter(Boolean)))
-  const opening = specs.filter((s) => !openIds.has(s.resumeId) && !openIds.has(s.scrollbackId)).slice(0, MAX_RESTORE)
+  const opening = specs.filter((s) => !openIds.has(s.resumeId) && !openIds.has(s.scrollbackId))
+  // How many have come back with an agent running - see `MAX_RESTORE`.
+  let awake = 0
   let remaining = [...opening]
   if (remaining.length) setDeskHold({ specs: remaining, at: Date.now(), clean: false, reason: 'live' })
   // Two cards can be saved pointing at ONE folder - the desk is written per pane and
@@ -4455,6 +4512,8 @@ function restorePanes(specs: StartSessionRequest[], previous = false): void {
         // only a verified conversation; explicit sleep remains authoritative below.
         const restored = { ...req, wasWorking: named && req.agent === 'codex'
           ? rolloutTurn(file).inProgress ?? req.wasWorking : req.wasWorking }
+        const asleep = unavailable || req.asleep || clash[i] || restoreAsleep(restored, i, recoverOn) || awake >= MAX_RESTORE
+        if (!asleep) awake++
         const meta = manager.start({
           ...restored,
           // An asleep placeholder must keep the exact id even when it cannot be checked
@@ -4466,7 +4525,7 @@ function restorePanes(specs: StartSessionRequest[], previous = false): void {
           // Everything but the pane being looked at comes back with no agent in it. The
           // card, its place and its screen are all there; a press starts the CLI in the
           // conversation it was in. See `shared/restoreTurn.ts` for the measurement.
-          asleep: unavailable || req.asleep || clash[i] || restoreAsleep(restored, i, recoverOn),
+          asleep,
           laneNote: unavailable
             ? 'Saved conversation could not be verified. It remains asleep; start a new session only if you want to replace it.'
             : clash[i]
@@ -4574,8 +4633,8 @@ function describe(spec: StartSessionRequest, i: number): RestorePane {
 
 function makeRestoreOffer(desk: { specs: StartSessionRequest[]; at: number; clean: boolean }, previous = false): RestoreOffer {
   offeredSpecs = desk.specs.map((spec) => ({ ...spec }))
-  const all = offeredSpecs.map(describe)
-  const panes = all.slice(0, MAX_RESTORE)
+  // Every pane, however many: past `MAX_RESTORE` they come back asleep, not left behind.
+  const panes = offeredSpecs.map(describe)
   const plan = restorePlan(panes.filter((p) => !p.gone).length, {
     totalMb: totalMb(),
     pressure: readPressure(),
@@ -4583,7 +4642,6 @@ function makeRestoreOffer(desk: { specs: StartSessionRequest[]; at: number; clea
   })
   return {
     panes,
-    extra: all.slice(MAX_RESTORE),
     at: desk.at,
     clean: desk.clean,
     fits: plan.fits,
@@ -4677,7 +4735,7 @@ function offerRestore(): void {
   // over it, and a mis-click that closes the dialog. `saveDesk` writes these panes in
   // front of the live ones until `setDeskHold(null)`.
   setDeskHold(desk)
-  updateLog('desk', `offered ${offer.panes.length} pane(s)${offer.extra.length ? ` (+${offer.extra.length} more not offered)` : ''}`)
+  updateLog('desk', `offered ${offer.panes.length} pane(s)`)
 }
 
 ipcMain.handle('restore:pending', () => offer)
@@ -4822,6 +4880,7 @@ app.whenReady().then(() => {
   initUpdater((s: UpdateState) => {
     send('update:changed', s)
   }, cfg.autoUpdate)
+  setInterval(idleInstallCheck, IDLE_INSTALL_CHECK_MS).unref()
   offerRestore()
   // Only the copy that owns the window: a launch that lost the lock is on its way out,
   // and starting a pane in it puts an agent in a process that is about to exit.

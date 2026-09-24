@@ -242,7 +242,7 @@ try {
     'and says none of it to somebody who has never used git'
   )
   ok(
-    /never on its own while you are working/.test(words),
+    /never while you are working/.test(words),
     'it also says what the app will NOT do, because that is the promise being kept'
   )
 }

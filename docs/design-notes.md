@@ -4941,6 +4941,16 @@ checks`. The evidence is exact - staged ready at 2026-09-08T02:28:31, superseded
 at 01:43:37 the next morning, installed at the 02:30:34 launch - and the conclusion it
 invites (wire an auto-restart) is the one thing this app may not do.
 
+2026-09-24 update: Robert approved a staged build installing ITSELF on an idle desk ("of
+course u can shoudnt ask me"), because on a desk where some pane always holds an open
+conversation nobody presses Restart now (the PC sat on 0.8.177 with 0.8.190 ready). Idle is
+`idleInstallBlocker` in `shared/updateHold.ts`: nobody has touched the computer (OS idle
+time) and no pane has printed or been typed into for `DESK_QUIET_MS`, nothing is mid-turn,
+asking, drafting or running a back job, restore after update is on so the panes come back,
+and no game is up. `idleInstallCheck` asks once a minute; a hold just waits for the next
+check, nothing counts down or escalates. It goes through `doInstall`, so the relaunch is
+quiet (`markQuietRelaunch`). The paragraphs below describe the rule before that change.
+
 Only the explicit Restart now action or an ordinary user quit installs a staged build.
 `npm run test:updatehold` asserts it from the source side: no timer, no stale-build
 listener, no failed-install retry may start an update. Robert asked for that on 2026-09-04

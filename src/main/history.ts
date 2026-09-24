@@ -329,6 +329,19 @@ export function recordEnd(id: string, resumeId?: string): void {
 }
 
 /**
+ * Whether this pane's History row says it ended. Only half a proof on its own - quitting
+ * stamps every open pane, and restore brings them back under the same id - so it is read
+ * only for a pane that is no longer on the desk (`holdIsOver`, `shared/laneTaken.ts`).
+ */
+export function ended(id: string): boolean {
+  try {
+    return typeof (JSON.parse(readFileSync(metaFile(id), 'utf8')) as HistoryEntry).endedAt === 'number'
+  } catch {
+    return false
+  }
+}
+
+/**
  * Close out every session in one pass.
  *
  * recordEnd() flushes the pending buffers before each write, so tearing eight panes

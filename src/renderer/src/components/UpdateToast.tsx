@@ -98,7 +98,7 @@ export default function UpdateToast(): JSX.Element | null {
           {waited && state.readyAt
             ? stagedWaitingWords(state.current, state.version, stagedHours(state.readyAt, now))
             : ready
-              ? `You are on ${state.current}. Choose Restart now when you are ready, or Later to install it the next time you quit.`
+              ? `You are on ${state.current}. Choose Restart now when you are ready, or Later: it installs the next time you quit, or by itself once this computer has sat untouched for 10 minutes.`
               : `You are on ${state.current}. Download it and drag it over the old app.`}
         </span>
       </div>

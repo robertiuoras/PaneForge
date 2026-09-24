@@ -18,7 +18,7 @@ import { get } from 'node:https'
 import { join } from 'node:path'
 import { BrowserWindow, app, net } from 'electron'
 import { stagedTooLong, updateIgnored } from '../shared/updateStale'
-import { freshRun, noteAnswer, noteTimeout, probeStuck, stuckWords, type ProbeRun } from '../shared/updateProbe'
+import { freshRun, healthWords, noteAnswer, noteTimeout, probeStuck, stuckWords, type ProbeRun } from '../shared/updateProbe'
 import { applyAtLaunch } from '../shared/launchInstall'
 import { failedInstall } from '../shared/installWedge'
 import { pickRelease } from '../shared/pickRelease'
@@ -488,14 +488,8 @@ function installAtLaunch(version: string): boolean {
 
 /** At launch, say how long it has been since the feed last answered this machine. */
 function logHealth(): void {
-  const h = readHealth()
-  const slept = h.sleeps ? `, ${h.sleeps} check(s) lost to the machine sleeping` : ''
-  if (!h.lastGood) return log('health', `no good update check on record yet (${h.wedges} wedge(s) recovered${slept})`)
-  const hours = Math.round((Date.now() - h.lastGood) / 3_600_000)
-  const line = `last good update check ${hours}h ago, ${h.wedges} wedge(s) recovered${h.lastWedge ? `, last ${h.lastWedge}` : ''}${slept}`
-  // Three days without the feed answering is not a slow week - something is wrong that no
-  // single failure reported, and this is the line to search for when it is noticed later.
-  log(hours >= 72 ? 'health STALE' : 'health', line)
+  const { stale, line } = healthWords(readHealth(), Date.now())
+  log(stale ? 'health STALE' : 'health', line)
 }
 
 // --- did the last install actually happen? ---------------------------------
@@ -1193,7 +1187,15 @@ export function initUpdater(onChange: Emit, enabled: boolean): void {
     // ignoring it. On a Mac the install is refused anyway (see autoDownload above).
     u.autoInstallOnAppQuit = true
     u.logger = {
-      info: (m: unknown) => log('info', m),
+      // While a build is staged the feed is asked only whether something NEWER is out, and
+      // electron-updater wrote "Checking for update" + "Found version <the staged one>"
+      // for every ask: ~26 identical lines between 02:56 and 05:06 on 2026-09-24, read as
+      // an updater stuck in a loop. A newer version writes its own `supersede` line, a
+      // failure its `supersede failed`, and every answer reaches update-health.json.
+      info: (m: unknown) => {
+        if (probing && /^(Checking for update|Found version )/.test(String(m))) return
+        log('info', m)
+      },
       warn: (m: unknown) => log('warn', m),
       error: (m: unknown) => log('error', m),
       debug: () => undefined
@@ -1435,9 +1437,12 @@ async function supersede(): Promise<void> {
     const result = (await failFast(u.checkForUpdates(), CHECK_BUDGET_MS, 'the update probe')) as {
       updateInfo?: { version?: string }
     } | null
-    // A feed answer clears both the fast-retry backoff and the timeout health run.
+    // A feed answer clears both the fast-retry backoff and the timeout health run - and it
+    // IS a good check. With a build staged every check comes through here, so leaving
+    // `lastGood` to the ordinary events had the launch line read "last good update check
+    // 6h ago" at 14:03 on 2026-09-23 with answers logged at 13:48 and 13:58.
     probeFails = 0
-    probeRun = noteAnswer()
+    noteGood()
     // ...and it takes the badge off 'cannot check': the feed answered.
     if (state.stalled) set({ stalled: false })
     const found = result?.updateInfo?.version

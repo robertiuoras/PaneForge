@@ -104,7 +104,9 @@ Row = FIRST ask + count (`shared/gist.ts`, `test:gist`) from relayed keystrokes.
 top (`endedAt ?? startedAt`); `closed 5 min ago`/date; green `open since`, red `closed …`.
 `View all` = `summaryFull`. Closed before recording = archive line or none. `/clear` ends a
 job (`noteAskInto`); three shown, WORK asks counted, twelve chapters; `recordStart` reruns.
-Transcript RENDERED (`renderer/src/termRender.ts`).
+Transcript RENDERED (`renderer/src/termRender.ts`). `Open again` is never refused by the closed
+pane's own leftover ledger hold: `holdIsOver` (`shared/laneTaken.ts`) = off the desk + History
+`endedAt`, or on the desk exited-not-asleep; unknown pane keeps it (`test:reopenhold`).
 
 ## The app remembers what has been asked
 

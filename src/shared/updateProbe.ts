@@ -62,3 +62,32 @@ export function stuckWords(r: ProbeRun, now: number): string {
   const mins = Math.max(1, Math.round((now - r.firstAt) / 60_000))
   return `${r.timeouts} update probes in a row timed out over ${mins} min - this machine is not seeing the feed, and a staged build will sit where it is`
 }
+
+/** What update-health.json holds that the launch line reads. */
+export interface HealthReading {
+  lastGood: number
+  wedges: number
+  lastWedge?: string
+  sleeps: number
+}
+
+/**
+ * The launch line about the update path.
+ *
+ * A wedge is news until the feed answers again, and history after that. Printed for ever,
+ * the same "3 update probes timed out over 51 min ... last 2026-09-18" headed every launch
+ * of 2026-09-23 (04:44, 06:46, 14:03), five days after the feed had last failed. So the
+ * wedge half is said only while the last wedge is NEWER than the last good answer.
+ */
+export function healthWords(h: HealthReading, now: number): { stale: boolean; line: string } {
+  const slept = h.sleeps ? `, ${h.sleeps} check(s) lost to the machine sleeping` : ''
+  if (!h.lastGood) return { stale: false, line: `no good update check on record yet (${h.wedges} wedge(s) recovered${slept})` }
+  const hours = Math.round((now - h.lastGood) / 3_600_000)
+  // `lastWedge` is "<ISO time> <what>", as `noteWedge` writes it.
+  const wedgeAt = h.lastWedge ? Date.parse(h.lastWedge.split(' ')[0]) : NaN
+  const open = Number.isFinite(wedgeAt) && wedgeAt > h.lastGood
+  const wedge = open ? `, ${h.wedges} wedge(s) recovered, last ${h.lastWedge}` : ''
+  // Three days without the feed answering is not a slow week - something is wrong that no
+  // single failure reported, and this is the line to search for when it is noticed later.
+  return { stale: hours >= 72, line: `last good update check ${hours}h ago${wedge}${slept}` }
+}
