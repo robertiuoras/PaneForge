@@ -25,6 +25,7 @@ import { SessionManager, setSilenceAlert, type WriteOrigin } from './sessions'
 import { acknowledgeReview, listReviews, noteReviewClose, recordReview, reviewCloseArmAction, reviewOpenTarget, type ReviewCloseArm } from './reviews'
 import { ComputeReviews, computeResult } from './computeReviews'
 import { mayNotify, noticesDir, readReply, sweepDoneClose } from './doneClose'
+import { doneReviewId } from '../shared/doneClose'
 import { FinishedDigest, summaryOf } from '../shared/finishedDigest'
 import { DataPump } from './dataPump'
 import { DiscordPresence } from './discordPresence'
@@ -166,7 +167,7 @@ import {
 } from './remoteLogin'
 import { shellQuote, type LoginInput } from '../shared/remoteLogin'
 import { DEFAULT_DEAD_DEV } from '../shared/deadDev'
-import { clearFinishedNow, exitedSweep, finishedCount, type ExitedFact } from '../shared/exitedSweep'
+import { asleepSweep, clearFinishedNow, exitedSweep, finishedCount, type ExitedFact } from '../shared/exitedSweep'
 import { listBackJobs, type BackJob } from './backJobs'
 import { DEFAULT_AUTO_HANDOFF } from '../shared/autoHandoff'
 import {
@@ -217,7 +218,7 @@ import { restoreAsleep } from '../shared/restoreTurn'
 import { DEFAULT_RECOVER } from '../shared/recover'
 import type { UsageReport } from '../shared/usage'
 import { loadPerCore, readPressure, totalMb, watchPressure } from './memory'
-import { backJobOf, trackUsage } from './usage'
+import { backJobOf, backJobWaitOnly, trackUsage } from './usage'
 import type {
   Config,
   GameModeStatus,
@@ -1628,7 +1629,7 @@ setInterval(() => {
         return s ? { title: s.title, cwd: s.cwd, agent: s.agent } : undefined
       },
       otherwiseBusy: (id) =>
-        continuationOwnsSource(id) || preparingContinuations.has(id) || handoffQueue.pending().some((q) => q.id === id) || backJobOf(id)
+        continuationOwnsSource(id) || preparingContinuations.has(id) || handoffQueue.pending().some((q) => q.id === id) || (backJobOf(id) && !backJobWaitOnly(id))
           ? 'session has a pending continuation, handoff, or background job'
           : null,
       record: recordReview,
@@ -2166,14 +2167,57 @@ function exitedFacts(): ExitedFact[] {
     exitedAt: s.exitedAt,
     ask: s.ask,
     handingOff: s.handingOff,
-    lastKeyboard: Math.max(s.lastKeyboard ?? 0, touchedAt.get(s.id) ?? 0) || undefined
+    lastKeyboard: Math.max(s.lastKeyboard ?? 0, touchedAt.get(s.id) ?? 0) || undefined,
+    keepOpen: s.keepOpen
   }))
+}
+/**
+ * Keep what a finished pane did in Review before its card goes: its last reply, the ask
+ * it was working on, and the conversation id Review's Reopen resumes in the same folder.
+ * Robert, 2026-09-24: finished chats leave the card list "and of course easily can see in
+ * review what it did ... if we want to continue later". A pane with no conversation to
+ * resume (a shell, a CLI that never wrote a transcript) has nothing to continue and is
+ * still in History.
+ */
+function reviewBeforeRemove(id: string, reason: string): void {
+  const s = manager.list().find((x) => x.id === id)
+  if (!s || s.agent === 'shell') return
+  const h = history.list().find((e) => e.id === id)
+  const resume = resumeIdFor(id) ?? s.resumeId ?? h?.resumeId
+  if (!resume) return
+  const file = s.agent === 'codex' ? codexTranscriptPath(s.cwd, resume) : transcriptPath(s.cwd, resume)
+  const reply = file ? readReply(s.agent, file) : undefined
+  const now = Date.now()
+  const ended = Math.min(now, s.exitedAt || (typeof s.asleep === 'number' ? s.asleep : 0) || now)
+  try {
+    const review = recordReview(
+      {
+        id: doneReviewId(id, ended),
+        sessionId: id,
+        nativeSessionId: resume,
+        kind: 'result',
+        proof: 'unverified',
+        report: reply?.text?.trim() || `No reply was recorded - the card left because it was ${reason}.`,
+        prompt: h?.askLines?.[0] || h?.gist || reply?.prompt || '(nothing typed - the pane was opened with a prompt)',
+        evidence: [],
+        completedAt: new Date(ended).toISOString(),
+        capturedAt: new Date(now).toISOString(),
+        closeSession: true,
+        workPreserved: true
+      },
+      { title: s.title, provider: s.agent, cwd: s.cwd, nativeSessionId: resume }
+    )
+    noteReviewClose(review.id, undefined, new Date(now).toISOString())
+  } catch (e) {
+    console.warn(`exited-sweep: ${id} not kept in Review - ${(e as Error).message}`)
+  }
 }
 function removeFinished(removals: { id: string; reason: string }[]): void {
   if (removals.length === 0) return
   for (const r of removals) {
     const s = manager.list().find((x) => x.id === r.id)
     logReclaim({ action: 'exited-sweep-close', pane: r.id, reason: r.reason })
+    reviewBeforeRemove(r.id, r.reason)
     manager.kill(r.id)
     noteActivity(activityEntry('closed', s?.title || s?.cwd || 'A finished pane', r.reason))
   }
@@ -2187,8 +2231,11 @@ ipcMain.handle('sessions:clearFinished', () => {
 // The automatic half: the same facts the button reads, checked on its own clock so a
 // pane nobody presses the button on still leaves the sidebar ten minutes after it dies.
 setInterval(() => {
-  const removals = exitedSweep(exitedFacts(), Date.now())
-  removeFinished(removals)
+  const facts = exitedFacts()
+  const now = Date.now()
+  // Sleeping panes only when finished panes close themselves at all (Settings).
+  const asleep = getConfig().autoCloseDone !== false ? asleepSweep(facts, now) : []
+  removeFinished([...exitedSweep(facts, now), ...asleep])
 }, 30_000).unref()
 ipcMain.handle('sessions:buffer', (_e, id: string) =>
   remote.owns(id) ? remote.buffer(id) : manager.buffer(id)

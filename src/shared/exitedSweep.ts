@@ -45,6 +45,8 @@ export interface ExitedFact {
   handingOff?: boolean
   /** Epoch ms of the most recent keystroke/click into this pane. */
   lastKeyboard?: number
+  /** The person asked for this pane to stay (the card's Keep open). */
+  keepOpen?: boolean
 }
 
 export interface ExitedRemoval {
@@ -87,6 +89,35 @@ export function exitedSweep(panes: ExitedFact[], now: number): ExitedRemoval[] {
     // inheriting a clock from before it was ever touched.
     if (now - p.exitedAt! < EXITED_REMOVE_MS) continue
     out.push({ id: p.id, reason: `finished ${Math.round((now - p.exitedAt!) / 60_000)} min ago, nobody touched it` })
+  }
+  return out
+}
+
+/**
+ * How long a SLEEPING pane nobody has touched sits before it leaves the card list too.
+ *
+ * Robert, 2026-09-24: finished chats should "remove from paneforge and of course easily
+ * can see in review what it did ... just if we want to continue later". Three had to be
+ * closed by hand that night - all asleep, two of them put to sleep by the restart itself
+ * and never looked at again. A sleeping pane holds no process; the card is the only thing
+ * it costs, and the Review row the caller writes first keeps the reply and a Continue.
+ * Long enough that a pane put to sleep for memory while its owner is at lunch is still
+ * there when they are back.
+ */
+export const ASLEEP_REMOVE_MS = 30 * 60_000
+
+/**
+ * Sleeping panes old enough to leave the card list. Same refusals as a dead pane (remote,
+ * a question on screen, mid-handoff, touched since), plus the card's own Keep open.
+ */
+export function asleepSweep(panes: ExitedFact[], now: number): ExitedRemoval[] {
+  const out: ExitedRemoval[] = []
+  for (const p of panes) {
+    if (p.remote || !p.asleep || p.keepOpen || p.ask || p.handingOff) continue
+    const since = typeof p.asleep === 'number' ? p.asleep : 0
+    if (!since || now - since < ASLEEP_REMOVE_MS) continue
+    if (p.lastKeyboard && p.lastKeyboard > since) continue
+    out.push({ id: p.id, reason: `asleep ${Math.round((now - since) / 60_000)} min, nobody touched it` })
   }
   return out
 }

@@ -27,7 +27,7 @@ buildSync({
   platform: 'node',
   outfile
 })
-const { EXITED_REMOVE_MS, exitedSweep, clearFinishedNow, finishedCount } =
+const { EXITED_REMOVE_MS, ASLEEP_REMOVE_MS, asleepSweep, exitedSweep, clearFinishedNow, finishedCount } =
   createRequire(import.meta.url)(outfile)
 
 let pass = 0
@@ -149,6 +149,21 @@ function dead(overrides = {}) {
 {
   const panes = [dead({ id: 'a' }), dead({ id: 'b', asleep: NOW }), dead({ id: 'c', remote: true })]
   check('finishedCount matches', finishedCount(panes) === 1)
+}
+
+// --- asleepSweep: a sleeping pane nobody touched leaves the card list too (2026-09-24) ---
+{
+  const T = 10_000_000
+  const old = T - ASLEEP_REMOVE_MS - 1
+  const nap = (over) => ({ id: 'z', status: 'exited', asleep: old, lastKeyboard: old - 5000, ...over })
+  check('an untouched pane asleep 30+ min leaves', asleepSweep([nap({})], T).length === 1)
+  check('asleep under 30 min stays', asleepSweep([nap({ asleep: T - 60_000 })], T).length === 0)
+  check('Keep open stays', asleepSweep([nap({ keepOpen: true })], T).length === 0)
+  check('touched since it fell asleep stays', asleepSweep([nap({ lastKeyboard: old + 1000 })], T).length === 0)
+  check('a remote pane is not ours to remove', asleepSweep([nap({ remote: true })], T).length === 0)
+  check('a question on screen stays', asleepSweep([nap({ ask: { q: 'x' } })], T).length === 0)
+  check('an awake pane is not this rule', asleepSweep([nap({ asleep: undefined, status: 'idle' })], T).length === 0)
+  check('the dead-pane sweep still never takes a sleeping one', exitedSweep([nap({ exitedAt: 1 })], T).length === 0)
 }
 
 console.log(`exited-sweep-test: ${pass} passed`)

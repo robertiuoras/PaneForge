@@ -328,7 +328,15 @@ function watched(): boolean {
  * have no renderer report to read. Empty until the first sample, which reads as "nothing
  * running": a refusal that has not measured anything yet must not block a clear for ever.
  */
-const lastJobs = new Map<string, { label: string; since: number } | null>()
+const lastJobs = new Map<string, { label: string; since: number; waiting: boolean } | null>()
+
+/**
+ * Everything this pane still runs is only waiting on something elsewhere
+ * (`shared/paneBackJobs.ts` `isWaitScript`) - which is no reason to keep a finished pane.
+ */
+export function backJobWaitOnly(id: string): boolean {
+  return lastJobs.get(id)?.waiting === true
+}
 
 /** The label of something this pane is still running, or null. */
 export function backJobOf(id: string): string | null {
@@ -404,7 +412,12 @@ export function trackUsage(
         // The list is sorted oldest first, so [0] is the longest-running - the one worth
         // naming and the one whose clock says how long this pane has been busy.
         const top = pane.jobs[0]
-        lastJobs.set(id, top ? { label: top.label, since: at - (top.elapsed ?? 0) * 1000 } : null)
+        lastJobs.set(
+          id,
+          top
+            ? { label: top.label, since: at - (top.elapsed ?? 0) * 1000, waiting: pane.jobs.every((j) => j.waiting) }
+            : null
+        )
       }
       for (const id of lastJobs.keys()) if (!live.some((l) => l.id === id)) lastJobs.delete(id)
       previous = cpuNow

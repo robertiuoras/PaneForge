@@ -152,7 +152,7 @@ export default function ReviewDialog({ onHistory, onReopen, onClose }: Props): J
                         </div>
                       )}
                       <div className="review-actions">
-                        <button className="primary small" onClick={() => onReopen(r)}>Reopen</button>
+                        <button className="primary small" onClick={() => onReopen(r)} title="Opens this chat again in its folder, where it left off">Continue</button>
                         <button
                           className="ghost small"
                           onClick={() => {
