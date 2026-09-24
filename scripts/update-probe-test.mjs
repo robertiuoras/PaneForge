@@ -86,6 +86,11 @@ ok('a probe answer while a build is staged counts as a good check',
   ok('three days without an answer reads STALE', healthWords(old, good + 72 * 3_600_000).stale)
   ok('no answer on record says so', /no good update check on record yet \(2 wedge/.test(healthWords({ lastGood: 0, wedges: 2, sleeps: 0 }, good).line))
   ok('logHealth prints the shared words', /healthWords\(readHealth\(\), Date\.now\(\)\)/.test(updater))
+  // ...and the staged re-check stops writing the same two lines every ten minutes, while
+  // a newer version still says so on its own line.
+  ok('a staged probe does not re-log the feed\'s ordinary answer',
+    /if \(probing && \/\^\(Checking for update\|Found version \)\/\.test\(String\(m\)\)\) return/.test(updater))
+  ok('...a newer build still writes its supersede line', /log\('supersede', `\$\{pending\} -> \$\{found\}`\)/.test(updater))
 }
 
 console.log(failed ? `\n${failed} failed` : '\nupdate probe: all good')

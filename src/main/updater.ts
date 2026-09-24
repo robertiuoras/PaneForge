@@ -1182,7 +1182,15 @@ export function initUpdater(onChange: Emit, enabled: boolean): void {
     // ignoring it. On a Mac the install is refused anyway (see autoDownload above).
     u.autoInstallOnAppQuit = true
     u.logger = {
-      info: (m: unknown) => log('info', m),
+      // While a build is staged the feed is asked only whether something NEWER is out, and
+      // electron-updater wrote "Checking for update" + "Found version <the staged one>"
+      // for every ask: ~26 identical lines between 02:56 and 05:06 on 2026-09-24, read as
+      // an updater stuck in a loop. A newer version writes its own `supersede` line, a
+      // failure its `supersede failed`, and every answer reaches update-health.json.
+      info: (m: unknown) => {
+        if (probing && /^(Checking for update|Found version )/.test(String(m))) return
+        log('info', m)
+      },
       warn: (m: unknown) => log('warn', m),
       error: (m: unknown) => log('error', m),
       debug: () => undefined
