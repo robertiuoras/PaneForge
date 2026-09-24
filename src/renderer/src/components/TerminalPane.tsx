@@ -45,6 +45,7 @@ import {
 import { dropReplay, queueReplay } from '../replayQueue'
 import { keepScrollback, keptRows, mayClearScreen } from '../../../shared/keepScrollback'
 import { realignCursorUp } from '../../../shared/cursorUpRealign'
+import { keepPushedOffRows } from '../../../shared/pushedOffTop'
 import { fileRows, lostRows, screenLost } from '../../../shared/screenLoss'
 import { forceKeys } from '../../../shared/forceSelect'
 import {
@@ -2079,8 +2080,18 @@ function TerminalPane({
     })
     // Before any byte is written: Claude Code paints word gaps as cursor jumps over cells it
     // believes are blank, and one cursor-up past the top put a whole repaint a row too high
-    // - stale letters in every gap. See shared/cursorUpRealign.ts.
-    if (agent === 'claude') realignCursorUp(t)
+    // - stale letters in every gap. See shared/cursorUpRealign.ts. And a repaint from the top
+    // paints over the rows it moves off the screen instead of scrolling them away - a hole in
+    // a finished reply (shared/pushedOffTop.ts). In this order: xterm runs the handler
+    // installed LAST first, and the realign has to land before the screen is copied.
+    if (agent === 'claude') {
+      // Rows it put back are rows the wipe check below would otherwise file a second time.
+      keepPushedOffRows(t, () => {
+        wipeSnap = null
+        window.clearTimeout(wipeTimer)
+      })
+      realignCursorUp(t)
+    }
     /**
      * Everything an agent writes goes through here first, so that `/clear` stops taking
      * the previous turn with it - `CSI 2 J` plus `CSI 3 J` in the CLIs that still send

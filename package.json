@@ -176,6 +176,7 @@
     "test:anim": "node scripts/anim-cost-test.mjs",
     "test:scrollclear": "node scripts/scroll-clear-test.mjs",
     "test:cursorup": "node scripts/cursor-up-realign-test.mjs",
+    "test:pushedoff": "node scripts/pushed-off-test.mjs",
     "test:replaywidth": "node scripts/replay-width-test.mjs",
     "test:panegrid": "node scripts/pane-grid-test.mjs",
     "test:markanchor": "node scripts/mark-anchor-test.mjs",

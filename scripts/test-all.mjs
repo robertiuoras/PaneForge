@@ -125,6 +125,7 @@ const TESTS = [
   ['anim', 'anim-cost-test.mjs'],
   ['scrollclear', 'scroll-clear-test.mjs'],
   ['cursorup', 'cursor-up-realign-test.mjs'],
+  ['pushedoff', 'pushed-off-test.mjs'],
   ['replaywidth', 'replay-width-test.mjs'],
   ['panegrid', 'pane-grid-test.mjs'],
   ['markanchor', 'mark-anchor-test.mjs'],
