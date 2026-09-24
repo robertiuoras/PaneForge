@@ -775,6 +775,20 @@ function movedTo(
   return cand.file
 }
 
+/** The row a live Claude Code keeps at `~/.claude/sessions/<pid>.json`, when it is this pid's. */
+function cliSession(pid: number | undefined): { sessionId: string; cwd: string } | null {
+  if (!pid) return null
+  let row: { pid?: unknown; sessionId?: unknown; cwd?: unknown }
+  try {
+    const base = process.env.PF_CLAUDE_HOME || join(homedir(), '.claude')
+    row = JSON.parse(readFileSync(join(base, 'sessions', `${pid}.json`), 'utf8'))
+  } catch {
+    return null
+  }
+  if (row.pid !== pid || typeof row.sessionId !== 'string' || typeof row.cwd !== 'string') return null
+  return { sessionId: row.sessionId, cwd: row.cwd }
+}
+
 /**
  * Claim the conversation Claude Code itself says this pane's process is in.
  *
@@ -790,16 +804,9 @@ function movedTo(
  */
 export function claimFromCli(id: string, pid: number | undefined): boolean {
   const s = started.get(id)
-  if (!s || s.agent !== 'claude' || !pid) return false
-  let row: { pid?: unknown; sessionId?: unknown; cwd?: unknown }
-  try {
-    const base = process.env.PF_CLAUDE_HOME || join(homedir(), '.claude')
-    row = JSON.parse(readFileSync(join(base, 'sessions', `${pid}.json`), 'utf8'))
-  } catch {
-    return false
-  }
-  if (row.pid !== pid || typeof row.sessionId !== 'string' || typeof row.cwd !== 'string') return false
-  if (!sameCwd(row.cwd, s.cwd)) return false
+  if (!s || s.agent !== 'claude') return false
+  const row = cliSession(pid)
+  if (!row || !sameCwd(row.cwd, s.cwd)) return false
   const file = transcriptPath(s.cwd, row.sessionId)
   if (!file) return false
   claimed.set(id, file)
@@ -832,15 +839,8 @@ export function claimFromCli(id: string, pid: number | undefined): boolean {
  */
 const STARTUP_SETTLE_MS = Number(process.env.PF_CLAUDE_SETTLE_MS ?? 2_500)
 export function claudeStartup(pid: number | undefined): 'started' | 'starting' | 'unknown' {
-  if (!pid) return 'unknown'
-  let row: { pid?: unknown; sessionId?: unknown; cwd?: unknown }
-  try {
-    const base = process.env.PF_CLAUDE_HOME || join(homedir(), '.claude')
-    row = JSON.parse(readFileSync(join(base, 'sessions', `${pid}.json`), 'utf8'))
-  } catch {
-    return 'unknown'
-  }
-  if (row.pid !== pid || typeof row.sessionId !== 'string' || typeof row.cwd !== 'string') return 'unknown'
+  const row = cliSession(pid)
+  if (!row) return 'unknown'
   const file = transcriptPath(row.cwd, row.sessionId)
   if (!file || !/"hookName":"SessionStart:/.test(readHead(file) ?? '')) return 'starting'
   try {
@@ -897,8 +897,8 @@ interface CodexMeta {
 const CODEX_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 /** Opening metadata can carry a large native rollout payload, but never needs an unbounded read. */
 const CODEX_META_LINE_BYTES = 64 * 1024
-/** A fresh prompt receipt is near the rollout tail; keep the proof bounded on long chats. */
-const CODEX_PROMPT_RECEIPT_BYTES = 2 * 1024 * 1024
+/** A fresh prompt receipt is near the transcript's tail; keep the proof bounded on long chats. */
+const PROMPT_RECEIPT_BYTES = 2 * 1024 * 1024
 
 /** Direct validation of an already uniquely claimed local rollout. */
 function codexMatches(file: string, cwd: string, id: string): boolean {
@@ -1022,38 +1022,84 @@ export function codexTranscriptPath(cwd: string, resumeId: string): string | nul
 export function codexAcceptedPrompt(id: string, prompt: string, since: number): boolean {
   const file = transcriptFor(id)
   if (!file || !prompt) return false
+  for (const line of tailLines(file, PROMPT_RECEIPT_BYTES)) {
+    let row: { timestamp?: string | number; type?: string; payload?: { type?: string; role?: string; content?: unknown } }
+    try {
+      row = JSON.parse(line) as typeof row
+    } catch {
+      continue
+    }
+    const at = typeof row.timestamp === 'number' ? row.timestamp : typeof row.timestamp === 'string' ? Date.parse(row.timestamp) : NaN
+    if (!Number.isFinite(at) || at < since) continue
+    if (row.type !== 'response_item' || row.payload?.type !== 'message' || row.payload.role !== 'user') continue
+    const content = row.payload.content
+    if (!Array.isArray(content)) continue
+    if (content.some((part) => typeof part === 'object' && part !== null &&
+      (part as { type?: string }).type === 'input_text' && (part as { text?: string }).text === prompt)) return true
+  }
+  return false
+}
+
+/** The whole lines in the last `bytes` of a file (a cut first line dropped); none when unreadable. */
+function tailLines(file: string, bytes: number): string[] {
   let fd = -1
   try {
     const size = statSync(file).size
-    const start = Math.max(0, size - CODEX_PROMPT_RECEIPT_BYTES)
+    const start = Math.max(0, size - bytes)
     const buf = Buffer.alloc(size - start)
     fd = openSync(file, 'r')
     const read = readSync(fd, buf, 0, buf.length, start)
     let text = buf.toString('utf8', 0, read)
     if (start > 0) {
       const firstLine = text.indexOf('\n')
-      if (firstLine < 0) return false
+      if (firstLine < 0) return []
       text = text.slice(firstLine + 1)
     }
-    for (const line of text.split('\n')) {
-      let row: { timestamp?: string | number; type?: string; payload?: { type?: string; role?: string; content?: unknown } }
-      try {
-        row = JSON.parse(line) as typeof row
-      } catch {
-        continue
-      }
-      const at = typeof row.timestamp === 'number' ? row.timestamp : typeof row.timestamp === 'string' ? Date.parse(row.timestamp) : NaN
-      if (!Number.isFinite(at) || at < since) continue
-      if (row.type !== 'response_item' || row.payload?.type !== 'message' || row.payload.role !== 'user') continue
-      const content = row.payload.content
-      if (!Array.isArray(content)) continue
-      if (content.some((part) => typeof part === 'object' && part !== null &&
-        (part as { type?: string }).type === 'input_text' && (part as { text?: string }).text === prompt)) return true
-    }
+    return text.split('\n')
   } catch {
-    return false
+    return []
   } finally {
     if (fd >= 0) closeSync(fd)
+  }
+}
+
+/**
+ * Did the Claude Code behind this pid take this prompt as a message after `since`?
+ *
+ * The screen cannot always say. An idle box after the return, or a pane still painting
+ * with no composer on screen, looks the same whether the return went in or was eaten, and
+ * the confirm read both as eaten: 2026-09-24 13:26:18.630Z, pane s105, the resume prompt is
+ * a user row in its transcript and the app logged it LOST; five fresh panes on 2026-09-25
+ * logged 5/5 and then 3/5 LOST while every one was answered. The CLI's own user row is the
+ * receipt, found the way `claudeStartup` finds the transcript (the pid file names it).
+ *
+ * Matched on the prompt's first non-blank line, not the whole text: a paste is stored
+ * wrapped in `<pasted_content id=..>` tags, and split across several when long.
+ */
+const RECEIPT_MATCH_CHARS = 60
+export function claudeAcceptedPrompt(pid: number | undefined, prompt: string, since: number): boolean {
+  const first = prompt.split('\n').map((line) => line.trim()).find(Boolean)?.slice(0, RECEIPT_MATCH_CHARS)
+  const row = first ? cliSession(pid) : null
+  const file = row && transcriptPath(row.cwd, row.sessionId)
+  if (!first || !file) return false
+  for (const line of tailLines(file, PROMPT_RECEIPT_BYTES)) {
+    if (!line.includes('"user"')) continue
+    let rec: { type?: string; isMeta?: boolean; toolUseResult?: unknown; timestamp?: string; message?: { content?: unknown } }
+    try {
+      rec = JSON.parse(line) as typeof rec
+    } catch {
+      continue
+    }
+    if (rec.type !== 'user' || rec.isMeta || rec.toolUseResult !== undefined) continue
+    const at = typeof rec.timestamp === 'string' ? Date.parse(rec.timestamp) : NaN
+    if (!Number.isFinite(at) || at < since) continue
+    const content = rec.message?.content
+    const text = typeof content === 'string'
+      ? content
+      : Array.isArray(content)
+        ? content.map((part) => (typeof part === 'object' && part !== null && typeof (part as { text?: unknown }).text === 'string' ? (part as { text: string }).text : '')).join('\n')
+        : ''
+    if (text.includes(first)) return true
   }
   return false
 }

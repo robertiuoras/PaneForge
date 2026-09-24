@@ -81,7 +81,7 @@ export interface AutoClearArm {
   tokens?: number
 }
 import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from './pipe'
-import { claimFromCli, claudeStartup, codexAcceptedPrompt, forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeEvidence, resumeIdFor, transcriptPath } from './transcripts'
+import { claimFromCli, claudeAcceptedPrompt, claudeStartup, codexAcceptedPrompt, forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeEvidence, resumeIdFor, transcriptPath } from './transcripts'
 import { recordPromptReview } from './promptReview'
 import { liveModelFor } from './paneModel'
 import { backgroundAgentsFor, forgetBackgroundAgents, noteBackgroundAgents } from './runningAgents'
@@ -3898,6 +3898,14 @@ export class SessionManager extends EventEmitter {
     // echo of a different message - 2026-09-22 19:16:25 s21-muczy2r3 logged "no longer in
     // the composer" over a composer still holding the whole prompt.
     let typedIntoTurn = false
+    // WHAT THE SCREEN CANNOT SAY, CLAUDE CODE'S TRANSCRIPT CAN. An idle box after the return,
+    // or a pane still painting with no composer on screen, looks the same whether the return
+    // went in or was eaten; read as eaten, a prompt Claude answered was fed more returns and
+    // logged LOST (s105 2026-09-24, 5/5 and 3/5 fresh panes 2026-09-25). Its user row is the
+    // receipt - see `claudeAcceptedPrompt`. A command (proof 'idle') writes no such row.
+    let firstReturnAt = 0
+    const claudeTook = (live: Live): boolean =>
+      proof !== 'idle' && live.meta.agent === 'claude' && claudeAcceptedPrompt(live.proc?.pid, prompt, firstReturnAt - 1000)
     const submit = (tries: number): void => {
       const live = this.sessions.get(id)
       if (!live) return settle('gone')
@@ -3928,6 +3936,7 @@ export class SessionManager extends EventEmitter {
       // `lastOutput` is the pty's own stamp, so it cannot be moved by the return this sends.
 
       if (!confirmUntil) confirmUntil = typedAt + PROMPT_CONFIRM_MS * PROMPT_ENTER_TRIES
+      if (!firstReturnAt) firstReturnAt = typedAt
       const confirm = (): void => {
         setTimeout(() => {
           const still = this.sessions.get(id)
@@ -4009,6 +4018,10 @@ export class SessionManager extends EventEmitter {
                 acLog(`${id} prompt submitted - native Codex receipt`)
                 return settle('sent')
               }
+              if (claudeTook(still)) {
+                acLog(`${id} prompt submitted - Claude transcript receipt`)
+                return settle('sent')
+              }
               if (box === false && !typedIntoTurn) {
                 acLog(`${id} prompt submitted - it is no longer in the composer`)
                 return settle('sent')
@@ -4021,7 +4034,13 @@ export class SessionManager extends EventEmitter {
             }
             return confirm()
           }
-          // Idle at the composer with no turn behind it: the return was eaten. Send another.
+          // Idle at the composer with no turn behind it: the return was eaten - unless Claude
+          // Code wrote the message down, and then another return is a stray keystroke.
+          if (claudeTook(still)) {
+            acLog(`${id} prompt submitted - Claude transcript receipt`)
+            return settle('sent')
+          }
+          // Otherwise the return was eaten. Send another.
           if (tries + 1 >= PROMPT_ENTER_TRIES) {
             acLog(`${id} prompt left UNSENT: ${PROMPT_ENTER_TRIES} returns were swallowed`)
             return settle('unsent')

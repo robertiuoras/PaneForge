@@ -18,7 +18,7 @@
 //   node scripts/prompt-submit-test.mjs
 
 import { readFileSync } from 'node:fs'
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { buildSync } from 'esbuild'
 import { tmpdir } from 'node:os'
@@ -602,6 +602,66 @@ const ANSWERING =
   const sAt = await typedAt(sp, 1200)
   ok(sAt > 0 && sAt - sAt0 < 700, 'a pane that is not Claude Code is not held', `${sAt ? sAt - sAt0 : '-'}ms`)
   manager.kill(shell.id)
+
+  // THE PROMPT WENT IN AND THE APP CALLED IT LOST. 2026-09-24 13:26:18.630Z, pane s105: the
+  // resume prompt is a user row in its transcript (taskdriver.ai-c, 69ec86bb-...), and the
+  // app logged it LOST; five fresh panes on 2026-09-25 logged 5/5 and then 3/5 LOST while
+  // every one was answered. The screen could not tell - an idle box, or a pane still
+  // painting with no composer to read - so the confirm fed it more returns and gave up. The
+  // CLI's own record of the message is the receipt; a paste lands wrapped in its tags.
+  const budget = Number(process.env.PF_PROMPT_CONFIRM_MS) * Number(process.env.PF_PROMPT_ENTER_TRIES)
+  const received = (sessionId) =>
+    appendFileSync(join(proj, `${sessionId}.jsonl`), JSON.stringify({ type: 'user', message: { role: 'user',
+      content: '\n\n<pasted_content id="7c1e">\n' + BRIEF + '\n</pasted_content id="7c1e">' },
+    timestamp: new Date().toISOString(), sessionId }) + '\n')
+  const receipt = async (name, paint) => {
+    cli(name)
+    hooksDone(name, 60_000)
+    const pane = manager.start({ cwd: root, agent: 'claude' })
+    const p = manager.sessions.get(pane.id).proc
+    let settles = 0
+    manager.queuePrompt(pane.id, BRIEF, 0, 40, () => settles++, 5000)
+    p.say(IDLE)
+    await sentReturnAt(p)
+    received(name)
+    const until = Date.now() + budget + 600
+    while (Date.now() < until) {
+      if (paint) p.say(paint)
+      await sleep(50)
+    }
+    await logSays(pane.id, /prompt submitted|UNSENT/)
+    manager.kill(pane.id)
+    return { log: logOf(pane.id), settles, returns: returnsOf(p) }
+  }
+
+  // The box stays empty and quiet, as it does while Claude Code finishes a submit it took.
+  const quiet = await receipt('sess-receipt-idle')
+  ok(!/UNSENT/.test(quiet.log) && /Claude transcript receipt/.test(quiet.log),
+    'a prompt Claude Code wrote into its transcript is submitted, not UNSENT, on an idle box', quiet.log)
+  ok(quiet.returns === 1, 'and no bare return is sent after it', `${quiet.returns} returns`)
+  ok(quiet.settles === 1, 'it settles once', String(quiet.settles))
+
+  // The pane keeps painting with no composer anywhere on screen, past the whole confirm.
+  const busy = await receipt('sess-receipt-painting', '\r\n  ⎿  SessionStart:startup hook running\r\n')
+  ok(!/UNSENT/.test(busy.log) && /Claude transcript receipt/.test(busy.log),
+    'a prompt Claude Code wrote into its transcript is submitted while the pane still paints', busy.log)
+  ok(busy.settles === 1, 'that settles once too', String(busy.settles))
+
+  // ...and a transcript without it is still no receipt: the empty box gets its returns.
+  cli('sess-receipt-none')
+  hooksDone('sess-receipt-none', 60_000)
+  {
+    const pane = manager.start({ cwd: root, agent: 'claude' })
+    const p = manager.sessions.get(pane.id).proc
+    manager.queuePrompt(pane.id, BRIEF, 0, 40, undefined, 5000)
+    p.say(IDLE)
+    await sentReturnAt(p)
+    await sleep(budget + 600)
+    await logSays(pane.id, /UNSENT/)
+    ok(/UNSENT/.test(logOf(pane.id)) && returnsOf(p) > 1,
+      'with no user row in the transcript it is still called UNSENT', `${returnsOf(p)} returns\n${logOf(pane.id)}`)
+    manager.kill(pane.id)
+  }
   rmSync(pidFile, { force: true })
 }
 
