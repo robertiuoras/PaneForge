@@ -23,7 +23,7 @@ buildSync({
   format: 'esm',
   platform: 'node'
 })
-const { STUCK_AFTER, TIMEOUT_WINDOW_MS, freshRun, noteAnswer, noteTimeout, probeStuck, stuckWords } =
+const { STUCK_AFTER, TIMEOUT_WINDOW_MS, freshRun, healthWords, noteAnswer, noteTimeout, probeStuck, stuckWords } =
   await import(pathToFileURL(outfile).href)
 
 let failed = 0
@@ -70,6 +70,23 @@ ok('the probe failure path counts the timeout', /did not answer within\/\.test\(
 ok('...and a stuck run reaches the log at its own severity', /log\('probe STUCK'/.test(updater))
 ok('...and update-health.json, which is what logHealth reads at launch', /probeStuck\(probeRun\)[\s\S]{0,220}noteWedge\(/.test(updater))
 ok('a probe that answers clears the run', /probeRun = noteAnswer\(\)/.test(updater))
+
+// The launch health line (2026-09-23: "last good update check 6h ago" with a build staged
+// and answers at 13:48 and 13:58, and a 2026-09-18 wedge re-printed at every launch).
+ok('a probe answer while a build is staged counts as a good check',
+  /probeFails = 0\s*noteGood\(\)/.test(updater.slice(updater.indexOf('async function supersede('))))
+{
+  const good = Date.parse('2026-09-23T13:58:00Z')
+  const old = { lastGood: good, wedges: 189, lastWedge: '2026-09-18T01:34:48.738Z 3 update probes timed out over 51 min', sleeps: 0 }
+  const line = healthWords(old, good + 5 * MIN).line
+  ok('a wedge the feed has answered since is not re-printed', line === 'last good update check 0h ago', line)
+  const open = { ...old, lastGood: Date.parse('2026-09-18T01:00:00Z') }
+  const still = healthWords(open, Date.parse('2026-09-18T02:00:00Z')).line
+  ok('...a wedge with no good answer after it still is', /189 wedge\(s\) recovered, last 2026-09-18T01:34:48\.738Z 3 update probes/.test(still), still)
+  ok('three days without an answer reads STALE', healthWords(old, good + 72 * 3_600_000).stale)
+  ok('no answer on record says so', /no good update check on record yet \(2 wedge/.test(healthWords({ lastGood: 0, wedges: 2, sleeps: 0 }, good).line))
+  ok('logHealth prints the shared words', /healthWords\(readHealth\(\), Date\.now\(\)\)/.test(updater))
+}
 
 console.log(failed ? `\n${failed} failed` : '\nupdate probe: all good')
 process.exit(failed ? 1 : 0)
