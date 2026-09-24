@@ -23,7 +23,9 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-const yml = readFileSync(join(root, '.github/workflows/release.yml'), 'utf8')
+// A Windows checkout can hand the workflow over with CRLF endings; the step parsing below
+// splits on '\n', so normalise first.
+const yml = readFileSync(join(root, '.github/workflows/release.yml'), 'utf8').replace(/\r\n/g, '\n')
 
 let failed = 0
 const ok = (name, cond, detail = '') => {
