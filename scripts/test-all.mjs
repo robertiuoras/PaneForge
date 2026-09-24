@@ -153,6 +153,8 @@ const TESTS = [
   ['hookdeny', 'hookdeny-test.mjs'],
   ['deaddev', 'deaddev-test.mjs'],
   ['exitedsweep', 'exited-sweep-test.mjs'],
+  ['pfaccess', 'pf-access-test.mjs'],
+  ['pfhelp', 'pf-ctl-help-test.mjs'],
   ['sleep', 'sleep-test.mjs'],
   ['wakeplan', 'wakeplan-test.mjs'],
   ['deviceopen', 'device-open-test.mjs'],

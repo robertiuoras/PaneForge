@@ -422,6 +422,12 @@ function askView(a: PhoneAsk & { token?: string }): PhoneAsk {
   return { id, sas, address, kind, origin, at }
 }
 
+/**
+ * `start()`'s bind for the listener `pf` uses while phone access is off: loopback only, and
+ * reported as off. A marker, not an address - tests bind 127.0.0.1 for a server that is on.
+ */
+export const LOCAL_ONLY = 'local-only'
+
 export class PhoneServer {
   private server: Server | null = null
   private clients = new Set<Client>()
@@ -441,6 +447,8 @@ export class PhoneServer {
   private keepalive: NodeJS.Timeout | null = null
   private lastError = ''
   private listening = 0
+  /** The address the listener was asked for: LOCAL_ONLY when phone access is switched off. */
+  private bound = ''
   private nextPeer = 1
   private native: NativeAuth
 
@@ -489,6 +497,7 @@ export class PhoneServer {
     await this.stop()
     this.tidyDevices()
     this.lastError = ''
+    this.bound = bind
     const server = createServer((req, res) => {
       void this.route(req, res).catch((err) => {
         this.plain(res, 500, String(err instanceof Error ? err.message : err))
@@ -503,7 +512,7 @@ export class PhoneServer {
         this.server = null
         resolve()
       })
-      server.listen(port, bind, () => {
+      server.listen(port, bind === LOCAL_ONLY ? '127.0.0.1' : bind, () => {
         this.server = server
         this.listening = port
         resolve()
@@ -553,6 +562,17 @@ export class PhoneServer {
   }
 
   /**
+   * Answering this machine only: phone access is off, and the listener is up for `pf`
+   * (`scripts/pf-ctl.mjs`) alone. It still wants the pairing code from config.json, which
+   * only this user can read. Robert, 2026-09-24: an agent concluded "PaneForge's local
+   * control API appears disabled" - on every install that never switched phone access on,
+   * it was: `phone.on` defaults to false, and `pf` rode the phone server.
+   */
+  get localOnly(): boolean {
+    return !!this.server && this.bound === LOCAL_ONLY
+  }
+
+  /**
    * Everything this server knows. NOT the tunnel: that is a separate child process with a
    * separate switch, and `main/index.ts` merges the two into the one `PhoneState` the
    * panel redraws - so a server that has never heard of cloudflared stays testable on its
@@ -561,11 +581,14 @@ export class PhoneServer {
   state(): Omit<PhoneState, 'tunnel' | 'typeGate' | 'keys'> {
     const port = this.listening || 0
     const live = new Set([...this.clients].map((c) => c.device).filter(Boolean))
+    // The local-only listener is not "phone access on": the panel keeps saying off, lists
+    // no address to scan, and its own port clash is not the panel's error to show.
+    const open = !!this.server && !this.localOnly
     return {
-      on: !!this.server,
-      port,
+      on: open,
+      port: open ? port : 0,
       code: this.deps.code(),
-      urls: this.server ? phoneUrls(port) : [],
+      urls: open ? phoneUrls(port) : [],
       clients: this.clients.size,
       peers: [...this.clients].map(({ id, address, kind, origin, since }) => ({
         id,
@@ -582,7 +605,7 @@ export class PhoneServer {
       })),
       ask: this.asking && !this.asking.answered ? askView(this.asking) : null,
       asking: this.deps.canAsk?.() ?? true,
-      error: this.lastError || undefined
+      error: (this.bound !== LOCAL_ONLY && this.lastError) || undefined
     }
   }
 

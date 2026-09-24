@@ -152,6 +152,8 @@
     "test:hookdeny": "node scripts/hookdeny-test.mjs",
     "test:deaddev": "node scripts/deaddev-test.mjs",
     "test:exitedsweep": "node scripts/exited-sweep-test.mjs",
+    "test:pfaccess": "node scripts/pf-access-test.mjs",
+    "test:pfhelp": "node scripts/pf-ctl-help-test.mjs",
     "test:mascot": "node scripts/mascot-test.mjs",
     "test:effort": "node scripts/effort-test.mjs",
     "test:modeladvice": "node scripts/model-advice-test.mjs",
@@ -394,7 +396,10 @@
           "dev-profile.mjs",
           "release-notes.mjs",
           "pf-telegram.mjs",
-          "ask-stamp.mjs"
+          "ask-stamp.mjs",
+          "pf-ctl.mjs",
+          "pf-ctl-*.mjs",
+          "!pf-ctl-*-test.mjs"
         ]
       }
     ],

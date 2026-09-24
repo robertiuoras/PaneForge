@@ -563,6 +563,12 @@ export interface Session {
    */
   watched?: boolean
   /**
+   * The pane this window last said is on screen (`sessions:active`), stamped by
+   * `SessionManager.list()` at read time. For `pf tidy`, which cannot see the window:
+   * the pane a person is looking at is never an idle duplicate to close.
+   */
+  focused?: boolean
+  /**
    * How many steps this pane's handoff still lists as open, or undefined when it has no
    * handoff at all.
    *
