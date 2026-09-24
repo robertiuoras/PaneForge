@@ -3220,7 +3220,8 @@ function runHandoff(device: string, request: HandoffRequest): Promise<HandoffIte
       root: projectsRoot,
       list: () => manager.list(),
       snapshot: () => manager.snapshot(),
-      kill: (id) => manager.kill(id),
+      // Only after the far end has confirmed the resume - the close IS the move's result.
+      kill: (id) => manager.kill(id, 'handoff'),
       sleep: (id) => {
         manager.sleep(id, 'handoff', { source: 'handoff' })
       },

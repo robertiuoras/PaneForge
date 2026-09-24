@@ -4360,8 +4360,16 @@ export default function App(): JSX.Element {
     void (async () => {
       try {
         for (const move of plan) {
+          // Every `move-armed` line ends in one of `moved`, `move-queued`, `move-failed` or
+          // `move-skipped`. On 2026-09-24 s17, s20 and s29 were armed and then closed with
+          // nothing in reclaim.log between - they had MOVED (handoff.log: "resume confirmed"),
+          // and the close was the handoff taking the copy here down, but this file never
+          // said so.
           const live = sessionsRef.current.find((x) => x.id === move.id)
-          if (!live || live.remote) continue
+          if (!live || live.remote) {
+            api.logReclaim({ event: 'move-skipped', id: move.id, device: move.deviceName, reason: live ? 'it is already on another machine' : 'the pane was gone by the deadline' })
+            continue
+          }
           const items = await api.handoffToDevice(move.device, [move.id], false, true).catch((error) => [{
             id: move.id,
             title: live.title,
@@ -4376,6 +4384,7 @@ export default function App(): JSX.Element {
           // it already holds. `Session.movedTo` carries the same refusal into main.
           if (item?.ok && 'sourceKept' in item && item.sourceKept === true) handoffBlocked.current[move.id] = Number.POSITIVE_INFINITY
           if (item?.ok || item?.pending) {
+            api.logReclaim({ event: item?.ok ? 'moved' : 'move-queued', id: move.id, device: move.deviceName })
             setActed({
               what: 'moved',
               panes: [paneActedRef.current(move.id)],
@@ -4551,7 +4560,10 @@ export default function App(): JSX.Element {
           const held = moveSoonRef.current[key]
           delete moveSoonRef.current[key]
           if (held) doMove(held.plan, held.cooldownMinutes)
-          else dropSoon(soon.ids)
+          else {
+            dropSoon(soon.ids)
+            for (const id of soon.ids) api.logReclaim({ event: 'move-skipped', id, reason: 'the move it was armed with was already gone at the deadline' })
+          }
           return
         }
         if (soon.sleep) {

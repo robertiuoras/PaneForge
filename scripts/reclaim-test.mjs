@@ -1136,6 +1136,18 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   const arm = app.slice(app.indexOf('armSleepRef.current = (plan, pressure)'), app.indexOf('armCloseRef.current = (plan, why, log)'))
   check('the sleep arm reads the live pane and skips one asleep or ended', /!s!\.asleep/.test(arm) && /s!\.status !== 'exited'/.test(arm))
 }
+// Every `move-armed` ends in a line of its own (2026-09-24: s17, s20, s29 armed, then
+// closed, nothing between - they had moved, and only handoff.log said so).
+{
+  const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
+  const move = app.slice(app.indexOf('const doMove = useCallback'), app.indexOf('armMoveRef.current = (plan, why, cooldownMinutes)'))
+  check('a move that went or was queued says so', /event: item\?\.ok \? 'moved' : 'move-queued'/.test(move))
+  check('a move that failed says so', /event: 'move-failed'/.test(move))
+  check('a pane gone or mirrored by the deadline says so', /event: 'move-skipped'/.test(move) && !/if \(!live \|\| live\.remote\) continue/.test(move))
+  check('a move card whose plan is gone at the deadline says so', /move-skipped', id, reason: 'the move it was armed with was already gone/.test(app))
+  const main = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
+  check('the handoff names itself on the close it makes', /kill: \(id\) => manager\.kill\(id, 'handoff'\)/.test(main))
+}
 // One clock, one predicate. `idleClosePlan` is built from `reclaimPaneOf` in App.tsx,
 // which has never refused a pane for a BELL; `stillCloseable` - the re-check at the
 // deadline - did. So the sweep armed a belled pane, the effect dropped the card, and the
