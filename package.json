@@ -155,6 +155,7 @@
     "test:pfaccess": "node scripts/pf-access-test.mjs",
     "test:pfhelp": "node scripts/pf-ctl-help-test.mjs",
     "test:firstrun": "node scripts/first-run-test.mjs",
+    "test:installwedge": "node scripts/install-wedge-test.mjs",
     "test:mascot": "node scripts/mascot-test.mjs",
     "test:effort": "node scripts/effort-test.mjs",
     "test:modeladvice": "node scripts/model-advice-test.mjs",
@@ -399,8 +400,7 @@
           "pf-telegram.mjs",
           "ask-stamp.mjs",
           "pf-ctl.mjs",
-          "pf-ctl-*.mjs",
-          "!pf-ctl-*-test.mjs"
+          "pf-ctl-lib.mjs"
         ]
       }
     ],

@@ -1155,6 +1155,12 @@ export interface UpdateState {
    * "up to date" - see `stalledHint` in shared/updateStale.ts.
    */
   stalled?: boolean
+  /**
+   * The version the last run started installing, when this run came back older - the
+   * install did not go in. The card says so and offers that version's installer instead of
+   * asking for the same restart again (`shared/installWedge.ts`).
+   */
+  installFailed?: string
 }
 
 /**

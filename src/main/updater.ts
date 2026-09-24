@@ -20,6 +20,7 @@ import { BrowserWindow, app, net } from 'electron'
 import { stagedTooLong, updateIgnored } from '../shared/updateStale'
 import { freshRun, noteAnswer, noteTimeout, probeStuck, stuckWords, type ProbeRun } from '../shared/updateProbe'
 import { applyAtLaunch } from '../shared/launchInstall'
+import { failedInstall } from '../shared/installWedge'
 import { pickRelease } from '../shared/pickRelease'
 import { pickWinTag } from '../shared/winFeed'
 import { TICK_MS, WAKE_SETTLE_MS, WakeWatch } from '../shared/wakeWatch'
@@ -553,8 +554,12 @@ function checkLastAttempt(): void {
   } catch {
     /* unreadable marker is as good as none */
   }
-  if (newer(a.version, app.getVersion())) {
-    log('install', `v${a.version} did not apply (still v${app.getVersion()}) - waiting for the user to restart or quit`)
+  const failed = failedInstall(a, app.getVersion())
+  if (failed) {
+    log('install', `v${failed} did not apply (still v${app.getVersion()}) - the card says so and offers the installer`)
+    // Never silent: the same "ready" card again is exactly what left a friend on v0.8.179
+    // pressing Restart now to no effect (2026-09-24).
+    set({ installFailed: failed })
   }
 }
 

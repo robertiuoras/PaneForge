@@ -156,6 +156,7 @@ const TESTS = [
   ['pfaccess', 'pf-access-test.mjs'],
   ['pfhelp', 'pf-ctl-help-test.mjs'],
   ['firstrun', 'first-run-test.mjs'],
+  ['installwedge', 'install-wedge-test.mjs'],
   ['sleep', 'sleep-test.mjs'],
   ['wakeplan', 'wakeplan-test.mjs'],
   ['deviceopen', 'device-open-test.mjs'],

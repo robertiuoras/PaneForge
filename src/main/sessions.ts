@@ -3397,9 +3397,12 @@ export class SessionManager extends EventEmitter {
    * `claude` processes holding locks on the files it had just replaced. /T takes the
    * grandchildren too: an agent CLI is node, which spawns ripgrep, git and its own
    * subagents.
+   *
+   * Returns the pids it asked to die, so an update can wait for them to be gone before the
+   * installer starts copying (see `shared/installWedge.ts`).
    */
-  shutdown(): void {
-    if (this.down) return
+  shutdown(): number[] {
+    if (this.down) return []
     this.down = true
     const live = [...this.sessions.values()]
     const ids = [...this.sessions.keys()]
@@ -3412,14 +3415,12 @@ export class SessionManager extends EventEmitter {
     // Before the early return: a pane that was teed and then closed by hand is gone
     // from the map, but its stream is only closed here if anything went wrong above.
     stopAllPipes()
-    if (!live.length) return
+    if (!live.length) return []
     endAll(ids, resumeIdFor)
+    const pids = live.map((s) => s.proc?.pid ?? 0).filter((pid) => typeof pid === 'number' && pid > 0)
 
     if (process.platform === 'win32') {
-      const args = live
-        .map((s) => s.proc?.pid ?? 0)
-        .filter((pid) => typeof pid === 'number' && pid > 0)
-        .flatMap((pid) => ['/PID', String(pid)])
+      const args = pids.flatMap((pid) => ['/PID', String(pid)])
       if (args.length) {
         // No taskkill on PATH - the pty kill below is still the real one. `spawnQuiet`
         // for the same reason as everywhere else: the failure this comment names is an
@@ -3441,6 +3442,7 @@ export class SessionManager extends EventEmitter {
         /* already dead */
       }
     }
+    return pids
   }
 
   private spawn(

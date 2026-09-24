@@ -92,6 +92,11 @@ BUILD MAY SIT FOR DAYS: the rule working. `src/main` never consumes
 `update-health.json`, 3d = `STALE` (`test:updater`, `test:wedge`). "Never finished" at 10-17
 min = laptop ASLEEP: `shared/wakeWatch.ts` (5s tick, >30s gap) writes `slept`,
 `health.sleeps`, defers `WAKE_SETTLE_MS` 20s; `net::ERR_TIMED_OUT` = one `late answer` line.
+An install that came back on the old version is never silent: `install-attempt.json` older
+than `app.getVersion()` = `UpdateState.installFailed`, card with that version's installer +
+Try again. Windows install waits for pane pids (5s) and the installer stops everything run
+from `$INSTDIR` (`scripts/win-free-install-dir.ps1`, 10s) - `shared/installWedge.ts`,
+`test:installwedge` (2026-09-24, friend stuck on v0.8.179).
 
 ## A restart onto a new build says what changed
 

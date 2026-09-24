@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import type { UpdateState } from '@shared/types'
 import { stagedHours, stagedTooLong, stagedWaitingWords } from '@shared/updateStale'
+import { installFailedWords, installerUrl } from '@shared/installWedge'
 import CardX from './CardX'
 import { useNow } from './Elapsed'
+import { isMac } from '../platform'
 
 const api = window.api
 
@@ -52,6 +54,33 @@ export default function UpdateToast(): JSX.Element | null {
   const now = useNow(60_000)
   const waited = state?.phase === 'ready' && stagedTooLong(state.readyAt, now)
   const ready = state?.phase === 'ready'
+  // The last restart came back on the old version. Before this card the relaunch showed the
+  // same "ready" card again, and pressing it again did the same nothing (2026-09-24), so it
+  // says what happened and hands over the installer for that exact version. Try again only
+  // appears once the download is back in place, since it is the same install as Restart now.
+  const failed = state?.installFailed
+  if (state && failed && dismissed?.version !== failed) {
+    const platform = isMac ? 'darwin' : 'win32'
+    return (
+      <div className="update-toast">
+        <CardX onDismiss={() => setDismissed({ version: failed, waited: false })} />
+        <div className="ut-text">
+          <strong>PaneForge {failed} did not install</strong>
+          <span className="hint">{installFailedWords(state.current, failed, platform)}</span>
+        </div>
+        <div className="ut-actions">
+          <button className={ready ? 'ghost small' : 'primary small'} onClick={() => api.openExternal(installerUrl(failed, platform))}>
+            {isMac ? 'Download it' : 'Download the installer'}
+          </button>
+          {ready && (
+            <button className="primary small" disabled={restarting} onClick={restart}>
+              {restarting ? 'Restarting…' : 'Try again'}
+            </button>
+          )}
+        </div>
+      </div>
+    )
+  }
   // On macOS the app cannot replace itself (unsigned build), so the card offers the
   // download page instead of a restart. Same prompt, honest button.
   const manual = state?.phase === 'available'

@@ -34,6 +34,7 @@ import { tokenSpend, tokenSpendFresh } from './tokenUsage'
 import { promptReview, promptsForSession, recordPromptReview, removePromptReview } from './promptReview'
 import { readPulls } from './pulls'
 import { quitWhere } from '../shared/quitWords'
+import { pidAlive, waitForExit } from '../shared/installWedge'
 import { mayReturnLane } from '../shared/laneReturn'
 import { revealTarget, within } from '../shared/reveal'
 import { revealTargetFor } from '../shared/revealPane'
@@ -3955,6 +3956,9 @@ ipcMain.handle('update:install', async (): Promise<InstallOutcome> => {
   return { status: 'installing' }
 })
 
+/** How long a Windows update waits for the panes' processes to exit before the installer. */
+const PANE_EXIT_WAIT_MS = 5_000
+
 function doInstall(): void {
   if (installStarted) return
   if (getUpdateState().phase !== 'ready') return
@@ -3997,7 +4001,33 @@ function doInstall(): void {
   )
   // Flushes transcripts, ends their metadata in one pass and hard-kills every agent
   // tree in a single taskkill instead of one blocking ConPTY teardown per pane.
-  manager.shutdown()
+  void handOverToInstaller(manager.shutdown()).catch((e: unknown) => {
+    // Hidden window, panes gone: a throw here would otherwise leave an invisible app.
+    updateLog('install', `hand-over failed: ${e instanceof Error ? e.message : String(e)}`)
+    installStarted = false
+    markQuietRelaunch(false)
+    if (alive()) whenClear('update-failed-reveal', restoreAfterFailedInstall)
+  })
+}
+
+/**
+ * The second half of `doInstall`: wait for the panes, start the installer, leave.
+ *
+ * Both kills in `shutdown()` return before anything has died, and a pane process still
+ * alive when the installer starts copying is one way an update comes back as the old
+ * version (2026-09-24, see shared/installWedge.ts). The window is already hidden, so the
+ * wait costs nobody anything to look at; past the budget the installer stops them itself.
+ */
+async function handOverToInstaller(pids: number[]): Promise<void> {
+  if (process.platform === 'win32' && pids.length) {
+    const { left, ms } = await waitForExit(pids, { alive: (pid) => pidAlive(pid), budgetMs: PANE_EXIT_WAIT_MS })
+    updateLog(
+      'install',
+      left.length
+        ? `${left.length} of ${pids.length} pane process(es) still running after ${ms}ms - installing anyway`
+        : `${pids.length} pane process(es) gone in ${ms}ms`
+    )
+  }
   // Set before the installer starts, because once quitAndInstall() runs this process can
   // be gone before the next line. The new exe reads it and comes back without activating.
   markQuietRelaunch()
