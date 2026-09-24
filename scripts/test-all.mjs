@@ -214,6 +214,7 @@ const TESTS = [
   ['loginkeys', 'login-keys-test.mjs'],
   ['projectname', 'project-name-test.mjs'],
   ['historysearch', 'history-search-test.mjs'],
+  ['chatsearch', 'chat-search-test.mjs'],
   ['projectroot', 'projectroot-test.mjs'],
   ['agentenv', 'agent-env-test.mjs'],
   ['tailnet', 'tailnet-test.mjs'],

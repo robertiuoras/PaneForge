@@ -2985,6 +2985,21 @@ input[type='range']::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px var(--ac
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl;
 }
 .cmd .kbd-box { min-width: 0; flex: none; }
+/* A chat row: its name over what it is about, the dot saying open (green) or closed (red).
+   The name column may shrink so a long ask ellipsizes instead of pushing the place off. */
+.cmd-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.cmd-dot.open { background: var(--ok); }
+.cmd-dot.closed { background: var(--danger); }
+.cmd-chat { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 0 1 auto; max-width: 68%; }
+.cmd-chat .cmd-title { overflow: hidden; text-overflow: ellipsis; }
+.cmd-about { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Folder over when, right-aligned: one line clipped from the left read `...y 5 · closed 1h`,
+   which lost the folder name - the half that says WHICH copy. */
+.cmd-where {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 2px;
+  color: var(--muted); font-size: 11px;
+}
+.cmd-where > span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
