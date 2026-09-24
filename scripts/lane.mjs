@@ -2148,8 +2148,11 @@ function guard(session, path) {
       const got = claim(session, dirname(target), lane.id)
       if (got.lane === lane.id) return null
       return `${basename(MAIN)}: this session's lane is ${got.dir}. Make the change there, not in ${lane.dir}.`
-    } catch {
-      return null
+    } catch (e) {
+      // A guard that cannot decide refuses: `return null` here waved a write into a copy
+      // nobody held whenever the claim threw, and a chat wrote into the main copy that way
+      // on 2026-09-25 (`test:laneoverlap`).
+      return `${basename(MAIN)}: ${lane.dir} could not be given to this chat, so the write is refused: ${e?.message ?? e}`
     }
   }
   const mine = Object.entries(state.lanes).find(([, c]) => c.session === session)
