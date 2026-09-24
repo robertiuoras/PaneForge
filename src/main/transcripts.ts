@@ -808,6 +808,48 @@ export function claimFromCli(id: string, pid: number | undefined): boolean {
   return true
 }
 
+/**
+ * Has the Claude Code behind this pid finished starting - its SessionStart hooks run?
+ *
+ * Text typed while they run is not safe, and all three ways it goes wrong were measured
+ * (Claude Code 2.1.281, a folder with AGENTS.md and no CLAUDE.md):
+ * - s113-mufldnmu, 2026-09-24: a brief typed 2.5s in, hooks done at +13s, never drawn in
+ *   the composer and never sent - six returns went into an empty box and it was lost.
+ * - five panes opened at once, 2026-09-25: typed at +1s, drawn at once, but the submit
+ *   waited for the hooks (the transcript's first record came 12-45s in), past the app's
+ *   24s confirm - all five logged LOST while all five were answered.
+ * - the same five with the prompt typed again whenever the box read empty: the first
+ *   copy was still undrawn 4s after it was typed, so four of five went in as ONE message
+ *   holding the prompt 2-3 times. An empty-looking box proves nothing while this runs.
+ *
+ * The CLI writes its SessionStart records to the transcript when its hooks are done
+ * (measured on five fresh panes: file born at +9-15s, the records within a second of it;
+ * its pid file's own `status` already says `idle` at +2s, so that cannot tell), and
+ * `~/.claude/sessions/<pid>.json` names that transcript. The records of one start carry
+ * stamps up to ~4s apart, so the file must also have gone quiet for `STARTUP_SETTLE_MS`.
+ * `started` - both; `starting` - the pid file is there and they are not (yet); `unknown` -
+ * no pid file for this pid, nothing to read.
+ */
+const STARTUP_SETTLE_MS = Number(process.env.PF_CLAUDE_SETTLE_MS ?? 2_500)
+export function claudeStartup(pid: number | undefined): 'started' | 'starting' | 'unknown' {
+  if (!pid) return 'unknown'
+  let row: { pid?: unknown; sessionId?: unknown; cwd?: unknown }
+  try {
+    const base = process.env.PF_CLAUDE_HOME || join(homedir(), '.claude')
+    row = JSON.parse(readFileSync(join(base, 'sessions', `${pid}.json`), 'utf8'))
+  } catch {
+    return 'unknown'
+  }
+  if (row.pid !== pid || typeof row.sessionId !== 'string' || typeof row.cwd !== 'string') return 'unknown'
+  const file = transcriptPath(row.cwd, row.sessionId)
+  if (!file || !/"hookName":"SessionStart:/.test(readHead(file) ?? '')) return 'starting'
+  try {
+    return Date.now() - statSync(file).mtimeMs >= STARTUP_SETTLE_MS ? 'started' : 'starting'
+  } catch {
+    return 'starting'
+  }
+}
+
 /** The conversation id to resume this pane with - the transcript's own file name. */
 export function resumeIdFor(id: string): string | undefined {
   const s = started.get(id)
