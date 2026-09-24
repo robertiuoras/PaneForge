@@ -39,9 +39,8 @@ import OffloadSoon from './components/OffloadSoon'
 import ModelAdvice from './components/ModelAdvice'
 import QuitGuard from './components/QuitGuard'
 import StopServer from './components/StopServer'
-import { chordAllowed, raiseLogin, type LoginRequest } from '../../shared/remoteLogin'
+import { paneChipTitle, type LoginRequest } from '../../shared/signIn'
 import LoginCard from './components/LoginCard'
-import RemoteLoginView from './components/RemoteLoginView'
 import UsersDialog from './components/UsersDialog'
 import ToolsDialog from './components/ToolsDialog'
 import PullsDialog from './components/PullsDialog'
@@ -826,7 +825,6 @@ export default function App(): JSX.Element {
   /* A job somewhere cannot get past a login. The list is main's, the choice is a
      person's: nothing opens a browser until the card is pressed. */
   const [logins, setLogins] = useState<LoginRequest[]>([])
-  const [loginOpen, setLoginOpen] = useState<string | null>(null)
   // The dev server the app is about to close, published by main every sweep.
   const [stopSoon, setStopSoon] = useState<StopSoon | null>(null)
   const [devices, setDevices] = useState(false)
@@ -1097,10 +1095,7 @@ export default function App(): JSX.Element {
     if (el && (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable)) return
     // The prompt disclosure and its summary retain keyboard navigation after a jump.
     if (el?.closest('.prompt-index')) return
-    // `.login-screen.typing` is the far machine's picture with the keyboard: a click on
-    // it must not hand the caret straight back to the pane, or every letter is typed twice
-    // - once on the other computer and once at the local prompt.
-    if (document.querySelector('.overlay, .act-fly, .select-menu, .login-screen.typing')) return
+    if (document.querySelector('.overlay, .act-fly, .select-menu')) return
     const id = activeRef.current
     if (id) paneFocus.get(id)?.()
   }, [])
@@ -1749,27 +1744,7 @@ export default function App(): JSX.Element {
     void api.loginRequests().then(setLogins)
     return api.onLogins(setLogins)
   }, [])
-  /* A request that has gone - dismissed, or finished - must not leave the view open on
-     nothing, and one that failed while open puts its reason on screen rather than a
-     blank rectangle. */
-  useEffect(() => {
-    if (loginOpen && !logins.some((r) => r.id === loginOpen)) setLoginOpen(null)
-    // A pane that asked for the picture itself gets it without anybody clicking the card:
-    // `pf login` is the session saying "open the sign-in again", so the window opens it.
-    const raise = raiseLogin(logins, loginOpen)
-    if (raise) {
-      setLoginOpen(raise)
-      void api.openLogin(raise).then((r) => {
-        if (!r.ok && r.error) flash(r.error)
-      })
-    }
-  }, [logins, loginOpen])
   useEffect(() => api.onCapacity(setCapacity), [])
-  /* One class, so the CSS owns the geometry: the pane column is padded, not covered. */
-  useEffect(() => {
-    document.documentElement.classList.toggle('login-open', Boolean(loginOpen))
-    return () => document.documentElement.classList.remove('login-open')
-  }, [loginOpen])
 
   /**
    * Since when nobody has been at this machine, or null while somebody is.
@@ -3264,22 +3239,6 @@ export default function App(): JSX.Element {
   // them as terminal input.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      // The other machine's picture has the keyboard: every key belongs to it except the
-      // ones it is never sent (see `chordAllowed`). This listener is on the window in the
-      // capture phase and was registered when the window opened, so it runs BEFORE the
-      // view's own listener and cannot be stopped by it - the view has to be asked about
-      // instead. Without this, Cmd+F while typing a password opened this app's Find box.
-      if (
-        !chordAllowed(Boolean(document.querySelector('.login-screen.typing')), {
-          key: e.key,
-          code: e.code,
-          ctrl: e.ctrlKey,
-          meta: e.metaKey,
-          shift: e.shiftKey,
-          alt: e.altKey
-        })
-      )
-        return
       const typing = /^(INPUT|TEXTAREA|SELECT)$/.test((e.target as HTMLElement)?.tagName ?? '')
       if (e.key === 'Escape') {
         // An open dropdown owns Escape: closing the dialog under it would be a
@@ -4330,10 +4289,15 @@ export default function App(): JSX.Element {
     () =>
       new Set([
         ...closeSoons.flatMap((s) => s.ids),
-        ...sessions.filter((s) => s.autoClearAt).map((s) => s.id)
+        ...sessions.filter((s) => s.autoClearAt).map((s) => s.id),
+        // A job in this pane cannot sign in by itself (`pf needs-login`): the pane waits
+        // on a person exactly as a question does, so its row says so until the card goes.
+        ...logins.flatMap((r) => (r.from ? [r.from] : []))
       ]),
-    [closeSoons, sessions]
+    [closeSoons, sessions, logins]
   )
+  /** The sign-in this pane is waiting on, if any - the row's "sign in" chip reads it. */
+  const signInFor = useCallback((id: string) => logins.find((r) => r.from === id), [logins])
   /**
    * Panes main REFUSED to sleep, and until when the sleep clock leaves them alone.
    *
@@ -5491,6 +5455,14 @@ export default function App(): JSX.Element {
                         row). One box wraps whole, keeps its chips together, and is the
                         only thing on the line that may be pushed to the right. */}
                     <span className="row-tags">
+                      {/* The red glow a waiting sign-in gives this row, in a word: a ring
+                          never travels without one. The site and the address are on hover
+                          and on the card. */}
+                      {!s.ask && signInFor(s.id) && (
+                        <span className="chip asks" title={paneChipTitle(signInFor(s.id) as LoginRequest)}>
+                          sign in
+                        </span>
+                      )}
                       {/* The dot gives the state its quickest possible scan, but it cannot
                           be the only reading. Keep the word beside the actual timers so a
                           green dot never has to be decoded from memory. A question already
@@ -6847,33 +6819,6 @@ export default function App(): JSX.Element {
         )}
       </main>
 
-      {/* The split: the chat keeps the left half of the pane column, the far machine's
-          browser takes the right. Not an overlay - `html.login-open` pads `.panes` out of
-          the way - because a picture drawn ON TOP of the pane you are talking to is the
-          thing this feature exists to avoid. */}
-      {loginOpen &&
-        (() => {
-          const req = logins.find((r) => r.id === loginOpen)
-          if (!req) return null
-          return (
-            <RemoteLoginView
-              req={req}
-              onToast={flash}
-              onDone={() => {
-                // Done is not Close: main tells the pane that asked - on this desk or the
-                // other one - that the wall is down, and closes the view itself.
-                api.doneLogin(req.id)
-                setLoginOpen(null)
-                flash(`Signed in on ${req.machine}. The job can carry on.`)
-              }}
-              onClose={() => {
-                api.closeLogin(req.id)
-                setLoginOpen(null)
-              }}
-            />
-          )
-        })()}
-
       {note && <div className="toast">{note}</div>}
 
       {picking && config && (
@@ -7674,21 +7619,13 @@ export default function App(): JSX.Element {
           setStopSoon(null)
         }}
       />
-      {/* A person has to type a password on another computer before a job can go on.
-          It sits with the countdowns because it is the same kind of thing - something
-          is waiting on the hand - and it is dismissable for as long as it is drawn. */}
+      {/* A person has to sign in before a job can go on. It sits with the countdowns
+          because it is the same kind of thing - something is waiting on the hand - and
+          it is dismissable for as long as it is drawn. */}
       <LoginCard
         reqs={logins}
-        onOpen={(id) => {
-          setLoginOpen(id)
-          void api.openLogin(id).then((r) => {
-            if (!r.ok && r.error) flash(r.error)
-          })
-        }}
-        onDismiss={(id) => {
-          api.dismissLogin(id)
-          if (loginOpen === id) setLoginOpen(null)
-        }}
+        onDone={(id) => api.doneLogin(id)}
+        onDismiss={(id) => api.dismissLogin(id)}
       />
       <MoveSoon
         soons={[...closeSoons, ...queueSoons]}

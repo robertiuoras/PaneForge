@@ -1,6 +1,6 @@
 import { appendLog, flushLogsOnExit } from './logWrite'
 import { profileRenderer, reloadRenderer } from './renderCost'
-import { execFile, spawn } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
 import { basename, dirname, join, resolve, sep } from 'node:path'
@@ -158,20 +158,7 @@ import { handoffReceiverCanQuit, INTERRUPT_WAIT_MS, landingCopy, type CopyState,
 import { HandoffQueue } from './handoffQueue'
 import { devServersOf, listRunningDevs, localDevCommand, stopDevServer } from './devServers'
 import { keepDevServer, stopNow, watchDeadDevs } from './deadDev'
-import {
-  closeLogin,
-  dismissLogin,
-  doneLogin,
-  initRemoteLogin,
-  listLogins,
-  loginInput,
-  openLogin,
-  paintedFrame,
-  requestLogin,
-  resizeLogin,
-  shutdownLogins
-} from './remoteLogin'
-import { shellQuote, type LoginInput } from '../shared/remoteLogin'
+import { dismissLogin, doneLogin, initSignIn, listLogins, requestLogin } from './signIn'
 import { DEFAULT_DEAD_DEV } from '../shared/deadDev'
 import { asleepSweep, clearFinishedNow, exitedSweep, finishedCount, type ExitedFact } from '../shared/exitedSweep'
 import { listBackJobs, type BackJob } from './backJobs'
@@ -1395,54 +1382,26 @@ ipcMain.handle('owner:stats', (e) => {
 // has never had it. Every FACT is read here: the folder off the pane's own record and the
 // pty's pid off the manager, so a caller cannot point this at a folder it does not own.
 /*
- * Signing in to a browser on another machine - src/main/remoteLogin.ts.
+ * A job that cannot sign in - src/main/signIn.ts.
  *
- * A scheduled job on the PC cannot type a password, so it says so and a card goes up
- * here. Everything that touches CDP or ssh lives in that file; these are the six lines
- * the window is allowed to say. The frames go out on `login:frame` rather than being
- * answered to a caller, because the renderer does not ASK for a frame - it acknowledges
- * the one it painted, and that acknowledgement is what asks Chrome for the next.
+ * `pf needs-login` puts a card up and marks the pane that asked. Nothing here opens a
+ * browser or reaches another computer: the person signs in themselves and presses the
+ * card, and the pane that asked is told on the ordinary prompt queue.
  */
-initRemoteLogin({
+initSignIn({
   publish: (reqs) => send('login:changed', reqs),
-  frame: (id, data, meta, ack) => send('login:frame', { id, data, meta, ack }),
   paneName: (id) => allSessions().find((s) => s.id === id || s.title === id)?.title,
-  // Telling the pane that asked is the only half of this feature that can cross a
-  // machine boundary without a picture: on this desk it is the ordinary prompt queue,
-  // and on the other one it is the same `pf tell` over the ssh the asker named.
-  tell: (req, text) => {
-    if (!req.reportTo) return
-    if (req.reportHost) {
-      const remote = ['pf', 'tell', req.reportTo, text].map(shellQuote).join(' ')
-      const ssh = spawn('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', req.reportHost, remote], {
-        windowsHide: true,
-        stdio: 'ignore'
-      })
-      ssh.on('error', () => {
-        /* the far desk is unreachable; the sign-in still happened */
-      })
-      ssh.unref()
-      return
-    }
-    manager.tellPane(req.reportTo, text)
-  }
+  tell: (paneId, text) => manager.tellPane(paneId, text)
 })
 ipcMain.handle('login:list', () => listLogins())
 ipcMain.handle('login:need', (_e, req: Parameters<typeof requestLogin>[0]) => requestLogin(req))
-ipcMain.handle('login:open', (_e, id: string) => openLogin(String(id)))
-ipcMain.on('login:close', (_e, id: string) => closeLogin(String(id)))
 ipcMain.on('login:done', (_e, id: string) => doneLogin(String(id)))
 // Anything that can reach the app can hand a pane one line, queued for the gap between
-// its turns - which is how the far desk says "signed in" to the pane that asked.
+// its turns - `pf tell`.
 ipcMain.on('pane:tell', (_e, ref: string, text: string) => {
   manager.tellPane(String(ref), String(text))
 })
 ipcMain.on('login:dismiss', (_e, id: string) => dismissLogin(String(id)))
-ipcMain.on('login:input', (_e, id: string, ev: LoginInput) => loginInput(String(id), ev))
-ipcMain.on('login:ack', (_e, id: string, ack: number) => paintedFrame(String(id), Number(ack)))
-ipcMain.on('login:size', (_e, id: string, w: number, h: number, boxW?: number, boxH?: number) =>
-  resizeLogin(String(id), Number(w), Number(h), Number(boxW) || 0, Number(boxH) || 0)
-)
 
 ipcMain.handle('devs:list', async (_e, panes: Array<{ id: string; pane: number; name: string }>) => {
   const roots = manager.roots()
@@ -5170,9 +5129,6 @@ app.on('before-quit', (e) => {
   // Not a pty, so `strays.ts` has never heard of it: without this line the app leaves a
   // cloudflared holding a public address open with nothing behind it.
   void tunnel.stop()
-  // An ssh child holding a forward open is not a pty either, and it outlives this process
-  // exactly as cloudflared does.
-  shutdownLogins()
   // A viewer on the other machine hears the view ended rather than watching it freeze.
   screenViews.shutdown()
   // shutdown() also flushes buffered transcript output, which would otherwise lose the

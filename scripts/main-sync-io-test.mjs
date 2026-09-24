@@ -32,7 +32,7 @@ const FILES = [
   'src/main/activationLog.ts',
   'src/main/promptArchive.ts',
   'src/main/queuedPrompts.ts',
-  'src/main/remoteLogin.ts',
+  'src/main/signIn.ts',
   'src/main/updater.ts',
   'src/main/activity.ts'
 ]
@@ -121,7 +121,7 @@ for (const [rel, fn] of [
   ['src/main/activationLog.ts', 'appendLog'],
   ['src/main/promptArchive.ts', 'appendLog'],
   ['src/main/queuedPrompts.ts', 'appendLog'],
-  ['src/main/remoteLogin.ts', 'appendLog'],
+  ['src/main/signIn.ts', 'appendLog'],
   ['src/main/updater.ts', 'appendLog'],
   ['src/main/activity.ts', 'writeLatest']
 ]) {

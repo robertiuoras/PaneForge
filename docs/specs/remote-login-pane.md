@@ -1,3 +1,56 @@
+# REMOVED 2026-09-25 - the live sign-in picture
+
+The picture (a CDP screencast of the automation Chrome beside the chat, over an ssh tunnel,
+plus the `--desk` relay and `pf login`) was removed on Robert's word: "remove this feature
+paneforge for remote accees its terrible and doesnt work properly will need to build another
+time proerly." `pf needs-login <site> --url <url>` stays, as a "needs you" card that names the
+site, the address and the pane, and marks that pane's row. It opens nothing
+(`src/shared/signIn.ts`, `src/main/signIn.ts`, `LoginCard.tsx`, `npm run test:signin`).
+
+**Last commit that still has the whole feature: `68f2b51e`** (lane-c, 2026-09-25). Restore
+with `git checkout 68f2b51e -- src/shared/remoteLogin.ts src/main/remoteLogin.ts
+src/renderer/src/components/RemoteLoginView.tsx scripts/remote-login-test.mjs
+scripts/login-keys-test.mjs` and re-wire from the removal commit's diff.
+
+## What it did in real use (remote-login.log, 2026-09-03 to 2026-09-25)
+
+29 asks. 6 never connected (4 "the browser closed the connection", 1 tunnel timeout to the
+PC, 1 "the automation Chrome is not running on this machine"). 14 cards were closed while
+still waiting, never opened. 4 Done presses, all on 2026-09-13, and 3 of them came while the
+picture was still `opening`. 4 requests closed as "signed in" because of the URL guess
+below. Not one Done was pressed on a picture that was connected and showing.
+
+## What went wrong on 2026-09-25 (the Angie pane)
+
+A Claude pane was asked for a morning reminder to sign in to Keap. It read
+`claude-config/reference/paneforge-panes.md` ("Browser login from a pane": run `pf login
+<url>`) and ran `pf login "https://hs700.infusionsoft.com" --site Keap`. `pf login` means
+"open the picture now", so the picture opened on the desk at 05:10 with no person asking for
+it. The first try failed because the Mac's automation Chrome was not running; the pane
+started it and tried again. Keap then sent the page to Thryv's sign-in
+(`login.labs.thryv.com/u/login/identifier`), and `looksSignedIn` treats a host change as a
+sign-in, so the request read "signed in" 2 s later while it was still the sign-in page.
+
+## A rebuild must do differently
+
+1. Only a person opens it. No agent flag (`--open`, `pf login`) puts a live browser on the
+   desk; the agent raises the card, the person presses it.
+2. Never guess "signed in" from the URL. Sign-in flows hop hosts (Keap to Thryv, OAuth, SSO)
+   and then ask for a 2FA code. Leave it to the person, or check a signed-in marker the site
+   actually sets.
+3. Own the browser. The first ask on 2026-09-25 failed because Chrome was not running on
+   :9333, and 4 earlier asks died with "the browser closed the connection". The rebuild
+   starts, checks and keeps the automation browser up itself.
+4. Cross machines over the paired-device link, not ad-hoc ssh. The `--desk` relay ran
+   `bash -lc` with a hard-coded `$HOME/Projects/PaneForge` path and needed three fixes for
+   silent no-ops (2026-09-07).
+5. Prove it in real use before agents are told about it. The agent-facing doc sent every
+   pane to `pf login` while the feature had no working end-to-end use on record.
+
+---
+
+Original spec, kept for the rebuild:
+
 # Remote login pane — sign in to the PC's automation Chrome from inside PaneForge
 
 Date: 2026-09-03. Owner: Robert (approved: "build this out fully for me set a goal and just build it

@@ -1,6 +1,6 @@
 export interface ContextUsage { used: number; window: number; at: number; model: string; percent: number; advisory?: 'prepare' | 'boundary' }
 
-import type { FrameMeta, LoginInput, LoginRequest } from './remoteLogin'
+import type { LoginRequest } from './signIn'
 
 import type { AutoClearAsk } from './autoclear'
 import type { SplitAnswer } from './splitPlan'
@@ -2745,35 +2745,16 @@ export interface Api {
    * Ask for a pane to be /clear'd after a countdown the desk can stop. The caller is the
    * `autoclear` Stop hook, never the window - see shared/autoclear.ts.
    */
-  /** Every sign-in a script is waiting on, newest first. */
+  /** Every sign-in a job is waiting on, newest first. */
   loginRequests(): Promise<LoginRequest[]>
-  /** A script hit a login wall. Puts a card up; opens nothing. */
-  needsLogin(req: {
-    site: string
-    url: string
-    host?: string
-    port?: number
-    machine?: string
-    from?: string
-  }): Promise<LoginRequest>
-  /** Somebody pressed the card: open the tunnel, the browser and the picture. */
-  openLogin(id: string): Promise<{ ok: boolean; error?: string }>
-  /** Done, or Close. The sign-in stays on the machine it was typed into. */
-  closeLogin(id: string): void
-  /** Signed in: tell the pane that asked, then close the view. */
+  /** A job cannot sign in. Puts a card up and marks the pane that asked; opens nothing. */
+  needsLogin(req: { site: string; url: string; machine?: string; from?: string; why?: string }): Promise<LoginRequest>
+  /** Signed in: tell the pane that asked, then take the card down. */
   doneLogin(id: string): void
   /** Hand one line to a pane, queued for the gap between its own turns. */
   tellPane(ref: string, text: string): void
   /** Not now. */
   dismissLogin(id: string): void
-  /** A pointer or a key, on the remote page. */
-  loginInput(id: string, ev: LoginInput): void
-  /** This frame is on screen - send the next one. */
-  loginPainted(id: string, ack: number): void
-  /** The view's size in CSS pixels; the remote page is made this shape. */
-  /** The far page's viewport, and the box it is drawn into on this screen. */
-  loginSize(id: string, w: number, h: number, boxW?: number, boxH?: number): void
-  onLoginFrame(cb: (f: { id: string; data: string; meta: FrameMeta; ack: number }) => void): () => void
   onLogins(cb: (reqs: LoginRequest[]) => void): () => void
   askAutoClear(req: AutoClearAsk): Promise<{ ok: boolean; reason?: string; dueAt?: number }>
   /** The two buttons on that card. */
