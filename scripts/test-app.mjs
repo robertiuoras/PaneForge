@@ -205,9 +205,32 @@ export async function waitTestAppsGone(root, ms = 8000) {
  * watching: see `KEEP_FILE` above.
  */
 export function closeTestApps(root, { force = false } = {}) {
-  const { rx, like } = markers(root)
   const kept = force ? 0 : keptTestApp()
   if (force) dropTestAppKeep()
+  signalTestApps(root, kept, 'SIGTERM')
+}
+
+/**
+ * Close the test copy AND see it gone, which `closeTestApps` alone never did.
+ *
+ * SIGTERM only asks: it reaches the app's quit path, and PaneForge refuses a quit while a
+ * pane is mid-turn and puts up a card to confirm. With nobody to press it the copy stays,
+ * holding its port and its profile's lock - while `--close` printed "Test copy closed"
+ * (2026-09-25: a headless copy with a Claude pane kept :9446 through two closes, its
+ * updater.log `quit refused - 1 pane(s) still working; asked`, and the next launch was
+ * refused on the port and tested the OLD build). A copy still there after the grace period
+ * is killed outright. Answers 'closed', 'killed' or 'still running'.
+ */
+export async function closeTestAppsNow(root, { force = false, ms = 8000 } = {}) {
+  closeTestApps(root, { force })
+  if (await waitTestAppsGone(root, ms)) return 'closed'
+  signalTestApps(root, keptTestApp(), 'SIGKILL')
+  return (await waitTestAppsGone(root, 3000)) ? 'killed' : 'still running'
+}
+
+/** Every test copy under this repo's checkouts, except the kept window and its helpers. */
+function signalTestApps(root, kept, signal) {
+  const { rx, like } = markers(root)
   try {
     if (process.platform === 'win32') {
       // The kept window's helper processes are its own children, so both are spared by
@@ -228,7 +251,7 @@ export function closeTestApps(root, { force = false } = {}) {
         { stdio: 'ignore', timeout: 15000 }
       )
     } else if (!kept) {
-      spawnSync('pkill', ['-f', rx], { stdio: 'ignore', timeout: 15000 })
+      spawnSync('pkill', [`-${signal.replace(/^SIG/, '')}`, '-f', rx], { stdio: 'ignore', timeout: 15000 })
     } else {
       // One kept window means the kill stops being a pattern and becomes a list: every
       // matching pid except that process and the helpers it owns.
@@ -238,7 +261,7 @@ export function closeTestApps(root, { force = false } = {}) {
         const pid = Number(raw.trim())
         if (!pid || ofKept(pid)) continue
         try {
-          process.kill(pid, 'SIGTERM')
+          process.kill(pid, signal)
         } catch {
           /* already gone */
         }

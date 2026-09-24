@@ -31,7 +31,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { devProfile } from './dev-profile.mjs'
-import { closeTestApps, dropTestAppKeep, keepTestApp, keptTestAppInfo, launchTakesKept, waitTestAppsGone } from './test-app.mjs'
+import { closeTestAppsNow, dropTestAppKeep, keepTestApp, keptTestAppInfo, launchTakesKept } from './test-app.mjs'
 import { report } from './try-diff.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -50,8 +50,16 @@ const pull = args.includes('--pull')
 if (close) {
   // Only this profile's window is asked to go; a shown window of another profile stays.
   const verdict = launchTakesKept(keptTestAppInfo(), profileOf(args, root))
-  closeTestApps(root, { force: verdict !== 'spare' })
-  console.log('Test copy closed. Your live app is untouched.')
+  const gone = await closeTestAppsNow(root, { force: verdict !== 'spare' })
+  if (gone === 'still running') {
+    console.error('The test copy is STILL running after being asked to close and then killed. Find it: pgrep -fl node_modules/electron')
+    process.exit(1)
+  }
+  console.log(
+    gone === 'killed'
+      ? 'Test copy closed - it did not quit when asked, so it was stopped outright. Your live app is untouched.'
+      : 'Test copy closed. Your live app is untouched.'
+  )
   process.exit(0)
 }
 
@@ -201,11 +209,12 @@ if (verdict === 'refuse') {
   )
   process.exit(1)
 }
-closeTestApps(root, { force: verdict !== 'spare' })
 // And wait for it to be gone rather than only asked to go: the lock outlives the ask by a
-// moment, and a launch into that moment exits silently with no window and no message.
-if (!(await waitTestAppsGone(root)))
-  console.log('(the previous test copy is taking its time closing - launching anyway)')
+// moment, and a launch into that moment exits silently with no window and no message. A
+// copy that refuses the ask is killed (see closeTestAppsNow).
+const gone = await closeTestAppsNow(root, { force: verdict !== 'spare' })
+if (gone === 'killed') console.log('(the previous test copy did not quit when asked, so it was stopped outright)')
+if (gone === 'still running') console.log('(the previous test copy is still running - launching anyway)')
 // Detached: the test app must outlive this command, and the agent pane that ran it
 // must not sit there attached to its output waiting for it to exit.
 //

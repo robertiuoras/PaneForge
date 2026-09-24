@@ -31,7 +31,7 @@ const root = join(box, 'PaneForge-fake')
 mkdirSync(join(root, 'node_modules', 'electron', 'dist'), { recursive: true })
 process.env.PF_KEEP_FILE = join(box, 'keep.json')
 
-const { closeTestApps, dropTestAppKeep, keepTestApp, keptTestApp, keptTestAppInfo, launchTakesKept } = await import('./test-app.mjs')
+const { closeTestApps, closeTestAppsNow, dropTestAppKeep, keepTestApp, keptTestApp, keptTestAppInfo, launchTakesKept } = await import('./test-app.mjs')
 let failed = 0
 function ok(what, cond) {
   console.log(`${cond ? 'ok' : 'FAIL'}  ${what}`)
@@ -53,10 +53,10 @@ const alive = (pid) => {
 }
 
 /** A process that looks like a test copy to `closeTestApps`: the match is its command line. */
-function fakeCopy() {
+function fakeCopy(code = 'setTimeout(() => {}, 30000)') {
   const child = spawn(
     process.execPath,
-    ['-e', 'setTimeout(() => {}, 30000)', join(root, 'node_modules', 'electron', 'dist', 'x')],
+    ['-e', code, join(root, 'node_modules', 'electron', 'dist', 'x')],
     { stdio: 'ignore', detached: true }
   )
   child.unref()
@@ -107,8 +107,38 @@ ok('a quiet launch on another profile is not', launchTakesKept(keptTestAppInfo()
 ok('nothing kept means nothing to decide', launchTakesKept(null, 'dev') === 'none')
 ok('a marker naming no profile is spared, never taken', launchTakesKept({ pid: 1, profile: '' }, 'dev') === 'spare')
 process.kill(shown, 'SIGKILL')
+dropTestAppKeep()
 
-for (const pid of [watched, leftover, dead]) {
+// `--close` printed "Test copy closed" over a copy that refused to quit: SIGTERM reaches the
+// app's quit path, and a pane mid-turn makes PaneForge refuse it and wait for a card nobody
+// can press (2026-09-25, :9446 held through two closes). A copy that ignores the ask like
+// that one did is killed, and the answer says so.
+// The fakes are this process's children, so a dead one stays a zombie until node reaps it:
+// the pause before each `alive` is that, not the close being slow.
+const polite = fakeCopy()
+await wait(300)
+const asked = await closeTestAppsNow(root, { force: true, ms: 1500 })
+await wait(300)
+ok('a copy that quits when asked is reported closed', asked === 'closed' && !alive(polite))
+const stubborn = fakeCopy("process.on('SIGTERM', () => {}); setTimeout(() => {}, 30000)")
+await wait(300)
+const forced = await closeTestAppsNow(root, { force: true, ms: 800 })
+await wait(300)
+ok('a copy that refuses the ask is killed, and the answer says so', forced === 'killed' && !alive(stubborn))
+
+// The kill that follows a refused ask must spare the watched window exactly as the ask did:
+// a launch on another profile closes with force off while somebody's window is kept.
+const kept = fakeCopy("process.on('SIGTERM', () => {}); setTimeout(() => {}, 30000)")
+const refuser = fakeCopy("process.on('SIGTERM', () => {}); setTimeout(() => {}, 30000)")
+await wait(300)
+keepTestApp(kept, 'dev')
+const spared = await closeTestAppsNow(root, { ms: 800 })
+await wait(300)
+ok('the kill after a refused ask still spares the watched window', spared === 'killed' && alive(kept) && !alive(refuser))
+process.kill(kept, 'SIGKILL')
+dropTestAppKeep()
+
+for (const pid of [watched, leftover, dead, polite, stubborn, kept, refuser]) {
   try {
     process.kill(pid, 'SIGKILL')
   } catch {

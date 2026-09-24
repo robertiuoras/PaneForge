@@ -5155,7 +5155,10 @@ app.on('before-quit', (e) => {
   // least one pane is mid-turn or holding a job: the quit is refused ONCE and a corner
   // card asks. `Quit anyway` comes back through `app:quitAnswer` with the guard lowered.
   // The card is the whole point - a silent refusal would read as Cmd-Q being broken.
-  if (!quitCause && !quitConfirmed) {
+  // A headless copy has no screen to show the card on, so its refusal is permanent:
+  // `npm run try -- --close` printed "closed" while the copy kept its port and a Claude pane
+  // (2026-09-25, updater.log `quit refused - 1 pane(s) still working; asked`).
+  if (!quitCause && !quitConfirmed && !headlessMode()) {
     const running = manager.list().filter((s) => s.status !== 'exited' && !s.asleep && (s.status === 'working' || s.runSince || s.backJob || s.ask))
     if (running.length) {
       e.preventDefault()

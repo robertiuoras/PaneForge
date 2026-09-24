@@ -44,6 +44,7 @@ import {
 } from '../../../shared/cursorMove'
 import { dropReplay, queueReplay } from '../replayQueue'
 import { keepScrollback, keptRows, mayClearScreen } from '../../../shared/keepScrollback'
+import { realignCursorUp } from '../../../shared/cursorUpRealign'
 import { fileRows, lostRows, screenLost } from '../../../shared/screenLoss'
 import { forceKeys } from '../../../shared/forceSelect'
 import {
@@ -2076,6 +2077,10 @@ function TerminalPane({
         selectionBackground: '#2f5d8a'
       }
     })
+    // Before any byte is written: Claude Code paints word gaps as cursor jumps over cells it
+    // believes are blank, and one cursor-up past the top put a whole repaint a row too high
+    // - stale letters in every gap. See shared/cursorUpRealign.ts.
+    if (agent === 'claude') realignCursorUp(t)
     /**
      * Everything an agent writes goes through here first, so that `/clear` stops taking
      * the previous turn with it - `CSI 2 J` plus `CSI 3 J` in the CLIs that still send
