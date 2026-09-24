@@ -101,14 +101,6 @@ export default function RestoreDialog({ offer, onRestore, onFresh, onDismiss }: 
 
         {offer.memoryNote && <div className="confirm-body">{offer.memoryNote}</div>}
 
-        {offer.extra.length > 0 && (
-          <div className="confirm-body">
-            {offer.extra.length} more pane{offer.extra.length === 1 ? '' : 's'} will not be
-            restored - {offer.extra.map((p) => p.title).join(', ')}. Starting more than{' '}
-            {offer.panes.length} agents at once takes the machine out for a minute.
-          </div>
-        )}
-
         <div className="dialog-row">
           <Checkbox
             checked={always}

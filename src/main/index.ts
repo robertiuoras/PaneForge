@@ -4340,7 +4340,9 @@ function restorePanes(specs: StartSessionRequest[], previous = false): void {
   // A previous desk may overlap with panes that survived the failed restore. Keep the
   // current cards and skip only the exact conversation or screen already represented.
   const openIds = new Set(manager.snapshot().flatMap((s) => [s.resumeId, s.scrollbackId].filter(Boolean)))
-  const opening = specs.filter((s) => !openIds.has(s.resumeId) && !openIds.has(s.scrollbackId)).slice(0, MAX_RESTORE)
+  const opening = specs.filter((s) => !openIds.has(s.resumeId) && !openIds.has(s.scrollbackId))
+  // How many have come back with an agent running - see `MAX_RESTORE`.
+  let awake = 0
   let remaining = [...opening]
   if (remaining.length) setDeskHold({ specs: remaining, at: Date.now(), clean: false, reason: 'live' })
   // Two cards can be saved pointing at ONE folder - the desk is written per pane and
@@ -4377,6 +4379,8 @@ function restorePanes(specs: StartSessionRequest[], previous = false): void {
         // only a verified conversation; explicit sleep remains authoritative below.
         const restored = { ...req, wasWorking: named && req.agent === 'codex'
           ? rolloutTurn(file).inProgress ?? req.wasWorking : req.wasWorking }
+        const asleep = unavailable || req.asleep || clash[i] || restoreAsleep(restored, i, recoverOn) || awake >= MAX_RESTORE
+        if (!asleep) awake++
         const meta = manager.start({
           ...restored,
           // An asleep placeholder must keep the exact id even when it cannot be checked
@@ -4388,7 +4392,7 @@ function restorePanes(specs: StartSessionRequest[], previous = false): void {
           // Everything but the pane being looked at comes back with no agent in it. The
           // card, its place and its screen are all there; a press starts the CLI in the
           // conversation it was in. See `shared/restoreTurn.ts` for the measurement.
-          asleep: unavailable || req.asleep || clash[i] || restoreAsleep(restored, i, recoverOn),
+          asleep,
           laneNote: unavailable
             ? 'Saved conversation could not be verified. It remains asleep; start a new session only if you want to replace it.'
             : clash[i]
@@ -4496,8 +4500,8 @@ function describe(spec: StartSessionRequest, i: number): RestorePane {
 
 function makeRestoreOffer(desk: { specs: StartSessionRequest[]; at: number; clean: boolean }, previous = false): RestoreOffer {
   offeredSpecs = desk.specs.map((spec) => ({ ...spec }))
-  const all = offeredSpecs.map(describe)
-  const panes = all.slice(0, MAX_RESTORE)
+  // Every pane, however many: past `MAX_RESTORE` they come back asleep, not left behind.
+  const panes = offeredSpecs.map(describe)
   const plan = restorePlan(panes.filter((p) => !p.gone).length, {
     totalMb: totalMb(),
     pressure: readPressure(),
@@ -4505,7 +4509,6 @@ function makeRestoreOffer(desk: { specs: StartSessionRequest[]; at: number; clea
   })
   return {
     panes,
-    extra: all.slice(MAX_RESTORE),
     at: desk.at,
     clean: desk.clean,
     fits: plan.fits,
@@ -4599,7 +4602,7 @@ function offerRestore(): void {
   // over it, and a mis-click that closes the dialog. `saveDesk` writes these panes in
   // front of the live ones until `setDeskHold(null)`.
   setDeskHold(desk)
-  updateLog('desk', `offered ${offer.panes.length} pane(s)${offer.extra.length ? ` (+${offer.extra.length} more not offered)` : ''}`)
+  updateLog('desk', `offered ${offer.panes.length} pane(s)`)
 }
 
 ipcMain.handle('restore:pending', () => offer)

@@ -2258,9 +2258,8 @@ export interface RestorePane {
 
 /** The "restore your last session?" question, as the renderer receives it. */
 export interface RestoreOffer {
+  /** every pane the desk held; past `MAX_RESTORE` they come back asleep */
   panes: RestorePane[]
-  /** panes past the launch cap: listed as not restored rather than silently dropped */
-  extra: RestorePane[]
   /** when the desk was written */
   at: number
   /** false means the last run ended in a crash or a power cut */
