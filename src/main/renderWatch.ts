@@ -17,6 +17,7 @@ import {
   fresh,
   noteWedge,
   noteRecovered,
+  goneWhy,
   type Watch
 } from '../shared/renderWatch'
 
@@ -31,6 +32,13 @@ let killing = false
  */
 let giveUpRebuilds = 0
 let lastGiveUpAt = 0
+/**
+ * The renderer's pid while it was alive. A dead renderer's `getOSProcessId()` is 0, which
+ * is how the recreate line came to read `pid 0 (no metrics)` (2026-09-23, 2026-09-24).
+ */
+let lastPid = 0
+/** Why it went, from `render-process-gone`, for the recreate line. */
+let goneDetail = ''
 
 /** What the renderer's own OS process is costing, for the log line that names the spin. */
 function metricsFor(pid: number): string {
@@ -83,6 +91,8 @@ export function watchRenderer(win: BrowserWindow, recreate: () => void): void {
   stopRenderWatch()
   state = fresh()
   killing = false
+  lastPid = 0
+  goneDetail = ''
   const wc = win.webContents
 
   wc.on('unresponsive', () => {
@@ -123,12 +133,15 @@ export function watchRenderer(win: BrowserWindow, recreate: () => void): void {
       }
       return
     }
+    goneDetail = goneWhy(details.reason, details.exitCode, process.platform)
     state.gone = true
   })
 
   timer = setInterval(() => {
     if (win.isDestroyed()) return stopRenderWatch()
     const now = Date.now()
+    const alivePid = state.gone ? 0 : pidOf(win)
+    if (alivePid > 0) lastPid = alivePid
     const act = decide(state, now)
     if (act === 'wait') {
       // Only ever one probe outstanding: the point of the reading is how long the OLDEST
@@ -175,15 +188,15 @@ export function watchRenderer(win: BrowserWindow, recreate: () => void): void {
       return stopRenderWatch()
     }
     const why = state.gone
-      ? 'process gone'
+      ? `process gone${goneDetail ? ` - ${goneDetail}` : ''}`
       : state.unresponsiveSince
         ? `unresponsive for ${now - state.unresponsiveSince}ms`
         : state.probeSentAt
           ? `no answer to the liveness probe for ${now - state.probeSentAt}ms`
           : `${state.spins} spins it recovered from by itself in ${Math.round((now - state.firstSpinAt) / 1000)}s`
-    const pid = pidOf(win)
-    logProblem('renderer', `${act} (${why}) - ${metricsFor(pid)}`)
-    logCpuTime(pid)
+    const pid = state.gone ? lastPid : pidOf(win)
+    logProblem('renderer', `${act} (${why}) - ${state.gone ? `pid ${pid || '?'}, already exited` : metricsFor(pid)}`)
+    if (!state.gone) logCpuTime(pid)
     state = afterAct(state, now)
     if (act === 'recreate') {
       stopRenderWatch()

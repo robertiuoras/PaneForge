@@ -24,7 +24,8 @@ const {
   afterGiveUp,
   noteWedge,
   MAX_GIVE_UP_REBUILDS,
-  noteRecovered
+  noteRecovered,
+  goneWhy
 } = await import('../src/shared/renderWatch.ts')
 
 let failed = 0
@@ -258,6 +259,16 @@ ok(
   ok('one reload clears both incident histories', s.wedges === 0 && s.lastWedgeAt === 0 && s.spins === 0 && s.firstSpinAt === 0)
 }
 
+// ---- why the renderer went, in words (2026-09-24: `pkill -f "cat"` in another chat) ----
+// A renderer ended by a signal from outside is not a window that "stopped answering", and
+// the notice said it was. The exit code Chromium hands over is the signal number.
+ok('SIGTERM from outside is named as another program', /another program/.test(goneWhy('killed', 15, 'darwin')) && /SIGTERM/.test(goneWhy('killed', 15, 'darwin')), goneWhy('killed', 15, 'darwin'))
+ok('SIGKILL names the system too (jetsam kills with it)', /SIGKILL/.test(goneWhy('killed', 9, 'darwin')) && /system/.test(goneWhy('killed', 9, 'darwin')), goneWhy('killed', 9, 'darwin'))
+ok('out of memory says so', /out of memory/.test(goneWhy('oom', 0, 'darwin')), goneWhy('oom', 0, 'darwin'))
+ok('a crash keeps its exit code', /crashed/.test(goneWhy('crashed', 11, 'linux')) && /11/.test(goneWhy('crashed', 11, 'linux')), goneWhy('crashed', 11, 'linux'))
+ok('on Windows an exit code is not a signal name', !/SIG/.test(goneWhy('killed', 15, 'win32')), goneWhy('killed', 15, 'win32'))
+ok('an unknown reason is passed through, not dropped', /launch-failed/.test(goneWhy('launch-failed', 1, 'darwin')), goneWhy('launch-failed', 1, 'darwin'))
+
 const main2 = readFileSync(new URL('../src/main/renderWatch.ts', import.meta.url), 'utf8')
 ok(
   "the 'responsive' handler is what counts a spin - nothing else sees one end",
@@ -274,6 +285,11 @@ ok(
   activate !== '' && /if \(!alive\(\)\) return createWindow\(\)/.test(activate),
   JSON.stringify(activate.slice(0, 90))
 )
+
+// The recreate line was `pid 0 (no metrics)` (2026-09-23, 2026-09-24): a dead renderer's
+// getOSProcessId() is 0, so the pid has to be the one remembered while it was alive.
+ok('the pid is remembered while the renderer is alive', /lastPid = /.test(main2))
+ok("a gone renderer's line names that pid, not 0", /already exited/.test(main2) && /goneWhy\(/.test(main2))
 
 console.log(failed ? `\n${failed} failed` : '\nrender watch: all good')
 process.exit(failed ? 1 : 0)
