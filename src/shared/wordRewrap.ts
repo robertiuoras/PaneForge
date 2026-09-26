@@ -279,13 +279,19 @@ export function rewrapScrollback(term: ResizableTerminal, oldCols = 0): number {
   return done
 }
 
-/** Install on a pane: every time it gets narrower, re-break its scrollback between words. */
-export function rewrapOnShrink(term: ResizableTerminal): { dispose(): void } {
+/**
+ * Install on a pane: every time it gets narrower, re-break its scrollback between words.
+ *
+ * `allow` says whether THIS shrink is one to rewrap. A rewrap is permanent - the soft wraps
+ * xterm would undo on widening become hard breaks - so a temporary shrink (a replay put
+ * back, a hidden pane sized) must be left to xterm's own reversible reflow.
+ */
+export function rewrapOnShrink(term: ResizableTerminal, allow: () => boolean = () => true): { dispose(): void } {
   let cols = term.cols
   return term.onResize((size) => {
     const was = cols
     cols = size.cols
-    if (size.cols >= was) return
+    if (size.cols >= was || !allow()) return
     try {
       rewrapScrollback(term, was)
     } catch {

@@ -757,6 +757,9 @@ export class SessionManager extends EventEmitter {
    */
   private openers = new Set<string>()
 
+  /** The grid the desk last fitted a pane to - the size a new pane is born at. See `start`. */
+  private deskSize: { cols: number; rows: number } | null = null
+
   /** The live pane `ref` names, by id or by title - the two ways `--report-to` spells it. */
   private paneFor(ref: string): Live | undefined {
     return this.sessions.get(ref) ?? [...this.sessions.values()].find((l) => l.meta.title === ref)
@@ -904,6 +907,17 @@ export class SessionManager extends EventEmitter {
     const id = `s${++this.seq}-${Date.now().toString(36)}`
     const clock = restoredClock(req, Date.now())
 
+    // What this pane had on screen last time, if it is coming back - read first, because
+    // its shape is also the grid the new process is born at.
+    const back = restoredTail(req.scrollbackId)
+    // Born at the grid it will be drawn at, not at 120x30. A pane the window is not showing
+    // is never fitted, so a START-sized birth kept it at 120 columns - under a desk of 133 -
+    // for as long as it stayed hidden, and every show/hide re-flowed its screen 133 -> 120
+    // -> 133 (fix.log, 2026-09-26: s68 held at 120x30 for 18 minutes; 6 of 17 Claude logs
+    // narrowed 133 -> 120 at least once). A restored pane is born at the size its old
+    // screen was painted at; a new one at the size the desk last fitted a pane to.
+    const startCols = back.cols > 0 ? back.cols : (this.deskSize?.cols ?? START_COLS)
+    const startRows = back.rows > 0 ? back.rows : (this.deskSize?.rows ?? START_ROWS)
     const meta: Session = {
       id,
       // The PROJECT, never the folder: a pane opened in the `PaneForge-a` worktree is
@@ -943,8 +957,8 @@ export class SessionManager extends EventEmitter {
       // first turn ended, and a second prompt in that window opened a second pane on the
       // same conversation. `wake()` stamps it the same way.
       resumeId: req.resume ? req.resumeId : undefined,
-      cols: START_COLS,
-      rows: START_ROWS
+      cols: startCols,
+      rows: startRows
     }
     // A pane the restore is bringing back with no agent in it. The card, its place and
     // its screen are all built below exactly as an awake pane's are; the only difference
@@ -964,13 +978,13 @@ export class SessionManager extends EventEmitter {
     }
     const live: Live = {
       meta,
-      proc: born ? null : this.spawn(req, agent, START_COLS, START_ROWS, id),
+      proc: born ? null : this.spawn(req, agent, startCols, startRows, id),
       buffer: new OutBuffer(BUFFER_LIMIT),
       req,
-      cols: START_COLS,
-      rows: START_ROWS,
-      deskCols: START_COLS,
-      deskRows: START_ROWS,
+      cols: startCols,
+      rows: startRows,
+      deskCols: startCols,
+      deskRows: startRows,
       runner: specFor(agent).bin,
       jobName: null,
       effort: effortStart(req, agent),
@@ -1001,7 +1015,6 @@ export class SessionManager extends EventEmitter {
     }
     // What this pane had on screen last time, put back before the new process says
     // anything. It is the previous session's transcript, replayed raw - see `restoredTail`.
-    const back = restoredTail(req.scrollbackId)
     if (back.text) {
       live.buffer.set(back.text)
       if (back.cols > 0) meta.replayCols = back.cols
@@ -2468,6 +2481,7 @@ export class SessionManager extends EventEmitter {
     if (!s.meta.deskHeld) s.borrows?.clear()
     s.deskCols = Math.max(cols, 20)
     s.deskRows = Math.max(rows, 5)
+    this.deskSize = { cols: s.deskCols, rows: s.deskRows }
     this.applyGrid(id, s.deskCols, s.deskRows, false)
   }
 

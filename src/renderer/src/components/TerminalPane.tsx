@@ -981,6 +981,8 @@ function TerminalPane({
    * is the bug this exists to fix, arriving from the other side.
    */
   const replaying = useRef(false)
+  /** The app itself is putting this terminal back to its size (not a layout change) - see `rewrapOnShrink`. */
+  const appResizing = useRef(false)
   /**
    * The question this pane is sitting on, where the mouse handlers can see it.
    *
@@ -2049,8 +2051,12 @@ function TerminalPane({
       // 80, and every byte a resumed CLI prints before the first fit is drawn at the
       // PTY's width - into whatever grid this terminal happens to be. Clamped, and no
       // repaint can undo it.
-      cols: START_COLS,
-      rows: START_ROWS,
+      // ...so it opens at the pty's own grid when main has one on record (a pane spawned
+      // at the desk's size, or a restored one at the size it was painted at), and only
+      // falls back to START when it has not. A terminal born at 120x30 under a 133x55
+      // pty re-flowed every restored or hidden pane twice on its way to its real size.
+      cols: ptyRef.current?.cols || START_COLS,
+      rows: ptyRef.current?.rows || START_ROWS,
       // An OSC 8 hyperlink - the kind Claude Code prints around a path or a URL - has no
       // handler of its own in xterm 5: its fallback is `window.open()` with no URL and
       // the address set on the blank page after, and this app denies every window a
@@ -2095,7 +2101,13 @@ function TerminalPane({
       // A pane that gets narrower (a pane opened beside it) breaks the reply lines above
       // the screen between words, and joins a paragraph back up, instead of xterm's cut
       // through the middle of a word. See shared/wordRewrap.ts.
-      rewrapOnShrink(t)
+      //
+      // Only for a shrink a person can see: a pane on screen, narrowed by the layout. The
+      // app's own resizes - a restore or Fix replaying history wide and putting it back,
+      // a hidden pane being sized - are temporary, and a rewrap turns xterm's reversible
+      // soft wraps into hard breaks for good (s7-muig449b, 2026-09-26: 133 -> 120 -> 133
+      // left 1810 rows different from a straight render; plain xterm left 0).
+      rewrapOnShrink(t, () => !replaying.current && !appResizing.current && Boolean(host.current?.offsetParent))
     }
     /**
      * Everything an agent writes goes through here first, so that `/clear` stops taking
@@ -3821,7 +3833,7 @@ function TerminalPane({
       // own schedule, so a resize issued straight after `write` can land before the bytes
       // it is meant to be wider than.
       t.write(prep(split.before), () => {
-        t.resize(back, backRows)
+        t.resize(back, backRows) // still `replaying`: not a narrowing to rewrap
         replaying.current = false
         // ...and a fit, because a resize that arrived while `replaying` was set was
         // refused, and because a pane put back by hand is only right until the next one.
@@ -4365,7 +4377,14 @@ function TerminalPane({
         redrawingHistory = false
         replaying.current = false
         if (!dead) {
-          if (wide !== back) t.resize(back, t.rows)
+          if (wide !== back) {
+            appResizing.current = true
+            try {
+              t.resize(back, t.rows)
+            } finally {
+              appResizing.current = false
+            }
+          }
           reshape(t, f)
         }
       }

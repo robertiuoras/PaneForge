@@ -114,6 +114,29 @@ await check('narrowed, the scrollback breaks between words and hangs', async () 
     'screen'
   ])
 })
+// A shrink the app makes and undoes (a restore or Fix replaying wide and putting it back, a
+// hidden pane sized) must round-trip like plain xterm: a rewrap there is permanent.
+// s7-muig449b, 2026-09-26: 133 -> 120 -> 133 left 1810 rows different, plain xterm 0.
+const roundTrip = async (allow) => {
+  const t = new Terminal({ cols: 60, rows: 6, scrollback: 1000, allowProposedApi: true })
+  if (allow) rewrapOnShrink(t, allow)
+  await write(t, reply.join('\r\n') + '\r\n' + 'screen\r\n'.repeat(6))
+  t.resize(44, 6)
+  t.resize(60, 6)
+  return scrollback(t)
+}
+await check('an app resize (allow = false) round-trips exactly like plain xterm', async () => {
+  assert.deepEqual(await roundTrip(() => false), await roundTrip(null))
+})
+await check('the control: an allowed rewrap does not round-trip', async () => {
+  assert.notDeepEqual(await roundTrip(() => true), await roundTrip(null))
+})
+await check('TerminalPane only rewraps a visible, layout-made shrink', async () => {
+  const src = (await import('node:fs')).readFileSync(new URL('../src/renderer/src/components/TerminalPane.tsx', import.meta.url), 'utf8')
+  assert.match(src, /rewrapOnShrink\(t, \(\) => !replaying\.current && !appResizing\.current && Boolean\(host\.current\?\.offsetParent\)\)/)
+  assert.equal((src.match(/appResizing\.current = true/g) || []).length, 1, "Fix's put-back resize is marked")
+  assert.match(src, /t\.resize\(back, backRows\)[^\n]*\n\s*replaying\.current = false/, "the restore's put-back runs while still replaying")
+})
 await check('a wrapped list item joins its own continuation, not the next item', async () => {
   const t = new Terminal({ cols: 60, rows: 3, scrollback: 100, allowProposedApi: true })
   rewrapOnShrink(t)

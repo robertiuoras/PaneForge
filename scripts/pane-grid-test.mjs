@@ -74,10 +74,15 @@ check('the starting grid is declared once', /export const START_COLS = \d+/.test
 // The call carries the pane's own id now (`PF_PANE`), and a pane can be born asleep with
 // no spawn at all, so this looks for the SIZE the pty is opened at rather than the whole
 // call - which is what this line has always been about.
-check('main spawns the pty on it', /this\.spawn\(req, agent, START_COLS, START_ROWS[,)]/.test(sessions))
-check('and records the session at it', sessions.includes('cols: START_COLS'))
-check('the renderer opens its terminal on the same one', pane.includes('cols: START_COLS'))
-check('...rows too', pane.includes('rows: START_ROWS'))
+// A pane is born at the grid it will be drawn at (restored size, else the desk's last
+// fitted size), START only when neither is known - and the terminal opens on the pty's
+// recorded grid, so the two ends still start equal (2026-09-27: hidden panes sat at
+// 120x30 under a 133x55 desk and re-flowed on every show).
+check('main spawns the pty on it', /this\.spawn\(req, agent, startCols, startRows[,)]/.test(sessions))
+check('...falling back to START only when no size is known', sessions.includes('(this.deskSize?.cols ?? START_COLS)') && sessions.includes('(this.deskSize?.rows ?? START_ROWS)'))
+check('and records the session at it', sessions.includes('cols: startCols'))
+check('the renderer opens its terminal on the same one', pane.includes('cols: ptyRef.current?.cols || START_COLS'))
+check('...rows too', pane.includes('rows: ptyRef.current?.rows || START_ROWS'))
 check('no literal 120 left in the pane size the pty is spawned at', !/this\.spawn\(req, agent, 120/.test(sessions))
 
 // --- Fix repairs the scrollback, not only the live frame ----------------------------
