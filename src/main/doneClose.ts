@@ -195,7 +195,11 @@ export function sweepDoneClose(d: DoneCloseDeps): string[] {
           capturedAt: new Date(now).toISOString(),
           closeSession: true,
           workPreserved: true,
-          noRemainingWork: verdict.personSteps.length === 0
+          noRemainingWork: verdict.personSteps.length === 0,
+          // Robert, 2026-09-26: "finished chats should close, the review pops up in
+          // GuardDeck" - with a box for the next prompt, which reaches this conversation
+          // through `pf continue`. Same production gate as every notice (`spoolNotice`).
+          notify: true
         },
         { title: native.title, provider: native.agent, cwd: native.cwd, nativeSessionId: resumeId }
       )

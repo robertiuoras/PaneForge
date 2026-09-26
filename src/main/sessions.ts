@@ -935,6 +935,12 @@ export class SessionManager extends EventEmitter {
       stayHere: req.stayHere ? true : undefined,
       lane: req.lane,
       laneNote: req.laneNote,
+      // Started ON a conversation (History's Open again, `pf continue`, a restored desk):
+      // its id is known before the first turn, and `startOrSend` has already checked the
+      // transcript is on disk. Without it `pf continue` could not find this pane until its
+      // first turn ended, and a second prompt in that window opened a second pane on the
+      // same conversation. `wake()` stamps it the same way.
+      resumeId: req.resume ? req.resumeId : undefined,
       cols: START_COLS,
       rows: START_ROWS
     }
@@ -3900,9 +3906,19 @@ export class SessionManager extends EventEmitter {
     // went in or was eaten; read as eaten, a prompt Claude answered was fed more returns and
     // logged LOST (s105 2026-09-24, 5/5 and 3/5 fresh panes 2026-09-25). Its user row is the
     // receipt - see `claudeAcceptedPrompt`. A command (proof 'idle') writes no such row.
+    //
+    // The window opens when the TEXT went in, not at the first return. Measured 2026-09-26
+    // in a dev copy on a Mac under memory pressure: the first return was written 1.2s,
+    // 9.3s and 4.8s after the text (350ms asked), and Claude's user row was stamped 0.6s,
+    // 7.4s and 1.4s BEFORE it - why the row came first is not known. A window opened at
+    // the return missed two of those receipts and logged s3-muhsr8eu's prompt LOST while
+    // Claude answered it.
     let firstReturnAt = 0
+    let typedTextAt = 0
     const claudeTook = (live: Live): boolean =>
-      proof !== 'idle' && live.meta.agent === 'claude' && claudeAcceptedPrompt(live.proc?.pid, prompt, firstReturnAt - 1000)
+      proof !== 'idle' &&
+      live.meta.agent === 'claude' &&
+      claudeAcceptedPrompt(live.proc?.pid, prompt, (typedTextAt || firstReturnAt) - 1000)
     const submit = (tries: number): void => {
       const live = this.sessions.get(id)
       if (!live) return settle('gone')
@@ -4120,6 +4136,7 @@ export class SessionManager extends EventEmitter {
       // `runSince`, and that is not somebody else's turn.
       typedIntoTurn =
         (live.meta.lastKeyboard ?? 0) > mark && (Boolean(live.meta.runSince) || live.busyUntil > Date.now())
+      if (!typedTextAt) typedTextAt = Date.now()
       ourWrite(prompt)
       acLog(`${id} prompt typed (${prompt.length} chars), return in ${PROMPT_ENTER_MS}ms${typedIntoTurn ? ' (a turn is running)' : ''}`)
       setTimeout(() => this.sessions.get(id) && submit(0), PROMPT_ENTER_MS)

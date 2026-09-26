@@ -610,11 +610,11 @@ const ANSWERING =
   // painting with no composer to read - so the confirm fed it more returns and gave up. The
   // CLI's own record of the message is the receipt; a paste lands wrapped in its tags.
   const budget = Number(process.env.PF_PROMPT_CONFIRM_MS) * Number(process.env.PF_PROMPT_ENTER_TRIES)
-  const received = (sessionId) =>
+  const received = (sessionId, at = new Date()) =>
     appendFileSync(join(proj, `${sessionId}.jsonl`), JSON.stringify({ type: 'user', message: { role: 'user',
       content: '\n\n<pasted_content id="7c1e">\n' + BRIEF + '\n</pasted_content id="7c1e">' },
-    timestamp: new Date().toISOString(), sessionId }) + '\n')
-  const receipt = async (name, paint) => {
+    timestamp: at.toISOString(), sessionId }) + '\n')
+  const receipt = async (name, paint, stallMs = 0) => {
     cli(name)
     hooksDone(name, 60_000)
     const pane = manager.start({ cwd: root, agent: 'claude' })
@@ -622,8 +622,15 @@ const ANSWERING =
     let settles = 0
     manager.queuePrompt(pane.id, BRIEF, 0, 40, () => settles++, 5000)
     p.say(IDLE)
+    if (stallMs) {
+      // The row lands once the text is in, and then the app's main thread stalls, so its
+      // return timer fires late - the order measured on 2026-09-26.
+      for (const until = Date.now() + 3000; Date.now() < until && !p.writes.some((w) => w.includes(BRIEF)); ) await sleep(5)
+      received(name)
+      for (const until = Date.now() + stallMs; Date.now() < until; );
+    }
     await sentReturnAt(p)
-    received(name)
+    if (!stallMs) received(name)
     const until = Date.now() + budget + 600
     while (Date.now() < until) {
       if (paint) p.say(paint)
@@ -646,6 +653,13 @@ const ANSWERING =
   ok(!/UNSENT/.test(busy.log) && /Claude transcript receipt/.test(busy.log),
     'a prompt Claude Code wrote into its transcript is submitted while the pane still paints', busy.log)
   ok(busy.settles === 1, 'that settles once too', String(busy.settles))
+
+  // Claude's row stamped BEFORE the app's first return, after the text went in: measured
+  // 2026-09-26 in 3 of 3 prompts to a dev copy (the return timer fired seconds late), and
+  // a window opened at the return logged one of them LOST (s3-muhsr8eu).
+  const lateReturn = await receipt('sess-receipt-early', undefined, 1500)
+  ok(!/UNSENT/.test(lateReturn.log) && /Claude transcript receipt/.test(lateReturn.log),
+    'a receipt stamped after the text went in but before the return still counts', lateReturn.log)
 
   // ...and a transcript without it is still no receipt: the empty box gets its returns.
   cli('sess-receipt-none')

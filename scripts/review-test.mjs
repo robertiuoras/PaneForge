@@ -130,7 +130,18 @@ const prod = await reviewApi('production', { production: true })
 const sent = prod.recordReview({ ...input, id: 'notice_1', notify: true }, native)
 const notice = join(temp, '.claude', 'guarddeck', 'notices', 'paneforge-review-notice_1.json')
 assert.ok(existsSync(notice), 'production notifications are spooled once')
+// What GuardDeck's next-prompt box hands to `pf continue`; the older four fields stay.
+const spooled = JSON.parse(readFileSync(notice, 'utf8')).result
+assert.deepEqual(spooled, {
+  id: 'notice_1', kind: 'result', reportPath: sent.reportPath,
+  sessionId: 'pane_1', resumeId: 'native_1', cwd: temp, agent: 'codex', machine: 'mac'
+})
 assert.equal(prod.recordReview({ ...input, id: 'notice_1', notify: true }, native).noticeSentAt, sent.noticeSentAt)
+// A shell (a compute job's observer) has no conversation, so no id to continue it by.
+prod.recordReview({ ...input, id: 'notice_shell', notify: true }, { ...native, provider: 'shell' })
+const shellNotice = JSON.parse(readFileSync(join(temp, '.claude', 'guarddeck', 'notices', 'paneforge-review-notice_shell.json'), 'utf8')).result
+assert.equal(shellNotice.resumeId, undefined)
+assert.equal(shellNotice.agent, 'shell')
 
 rmSync(temp, { recursive: true, force: true })
 console.log('review store and close-arm behaviour: ok')

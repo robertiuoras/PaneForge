@@ -136,6 +136,7 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
   assert.match(rec.report, /Fixed the login/)
   assert.equal(rec.noRemainingWork, false)
   assert.equal(rec.closeSession, true)
+  assert.equal(rec.notify, true, 'a chat that closes itself asks GuardDeck for a result card')
   const [path, notice] = written[0]
   // `noticesDir()` joins with the platform separator, so on Windows this is
   // `...\guarddeck\notices\...`; normalize before matching against the posix-style pattern.

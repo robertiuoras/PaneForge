@@ -157,6 +157,7 @@ const TESTS = [
   ['exitedsweep', 'exited-sweep-test.mjs'],
   ['pfaccess', 'pf-access-test.mjs'],
   ['pfhelp', 'pf-ctl-help-test.mjs'],
+  ['pfcontinue', 'pf-continue-test.mjs'],
   ['firstrun', 'first-run-test.mjs'],
   ['installwedge', 'install-wedge-test.mjs'],
   ['sleep', 'sleep-test.mjs'],

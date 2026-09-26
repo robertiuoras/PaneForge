@@ -28,6 +28,7 @@
  *   node scripts/pf-ctl.mjs needs-login <site> --url <url> [--machine WORDS]
  *                                        [--why "what it will do once signed in"]
  *   node scripts/pf-ctl.mjs tell <title-or-id> <text...>
+ *   node scripts/pf-ctl.mjs continue <chat-id> --prompt-file <file> [--json]   next prompt to one conversation, reopening it if closed
  *   node scripts/pf-ctl.mjs close <title-or-id>
  *   node scripts/pf-ctl.mjs review <review.json>   record an agent completion/decision/blocked result
  *   node scripts/pf-ctl.mjs watch-job <job-id> --owner <native-id> --pane <exact-local-id>
@@ -64,6 +65,7 @@ import {
   buildHandoffBrief,
   claimHolder,
   commandHelp,
+  continueTarget,
   findDuplicates,
   findTranscript,
   folderRefusal,
@@ -108,9 +110,18 @@ function phoneConfig() {
   return { port: phone.port ?? 7312, code: phone.code ?? '' }
 }
 
+/** Thrown by `fail` and caught around `main`: the refusal is already printed. */
+class Refused extends Error {}
+
 function fail(codeNum, msg) {
   console.error(`pf-ctl: ${msg}`)
-  process.exit(codeNum)
+  // Not process.exit(): on Windows, exiting while fetch's keep-alive socket is still being
+  // closed aborts inside libuv (`Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)`)
+  // and the exit code becomes 3221226505 instead of this one - measured 2026-09-26 on every
+  // `pf continue` refusal made after the app had been asked something. The process ends on
+  // its own once the socket is closed, with this code.
+  process.exitCode = codeNum
+  throw new Refused(msg)
 }
 
 let cookie = ''
@@ -233,7 +244,10 @@ export function readOpenManyPlan(path) {
 // so every `pf ...` call silently did nothing and exited 0 (2026-09-07).
 const isMain = import.meta.url === pathToFileURL(realpathSync(process.argv[1] ?? "/")).href
 const [cmd, ...rest] = isMain ? process.argv.slice(2) : []
-if (isMain) await main()
+if (isMain)
+  await main().catch((e) => {
+    if (!(e instanceof Refused)) throw e
+  })
 
 async function main() {
 
@@ -268,7 +282,7 @@ if (Object.hasOwn(RETIRED, cmd)) fail(1, RETIRED[cmd])
 if (!isCommand(cmd))
   fail(
     1,
-    `unknown command "${cmd}" - use: help | list | agents | open | open-many | devices | tell | type | composer | close | close-when-done | tidy | move | rename | review | watch-job | needs-login | hold | cost | reload | call | send - run: pf help`
+    `unknown command "${cmd}" - use: help | list | agents | open | open-many | devices | tell | continue | type | composer | close | close-when-done | tidy | move | rename | review | watch-job | needs-login | hold | cost | reload | call | send - run: pf help`
   )
 if (rest[0] === '--help' || rest[0] === '-h') {
   console.log(commandHelp(cmd))
@@ -399,6 +413,28 @@ if (cmd === 'hold') {
 if (cmd === 'tell') {
   if (rest.length < 2 || !rest[0] || !rest.slice(1).join(' ').trim())
     fail(1, 'tell needs a pane and one line: pf-ctl tell <title-or-id> <text...>')
+}
+// `pf continue` too: GuardDeck shows whatever this says to a person who typed a prompt and
+// pressed Send, so a bad id or an empty file is refused here, before any pane is touched.
+let continueArgs = null
+if (cmd === 'continue') {
+  const promptFile = flag(rest, '--prompt-file')
+  const json = rest.includes('--json')
+  const [resumeId, ...stray] = rest.filter((a) => a !== '--json')
+  if (!resumeId || !promptFile)
+    fail(1, 'continue needs a chat id and a prompt file: pf continue <chat-id> --prompt-file <file> - run: pf help continue')
+  if (stray.length) fail(1, `continue takes one chat id, --prompt-file and --json, not: ${stray.join(' ')}`)
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$/.test(resumeId))
+    fail(1, `"${resumeId}" is not a chat id - use the resumeId from the review notice, not a pane number or name`)
+  let prompt
+  try {
+    prompt = readFileSync(promptFile, 'utf8')
+  } catch (e) {
+    fail(1, `could not read the prompt file ${promptFile} - ${e instanceof Error ? e.message : e}`)
+  }
+  if (!prompt.trim()) fail(1, `the prompt file ${promptFile} is empty - nothing to send`)
+  if (prompt.length > 64000) fail(1, `the prompt is ${prompt.length} characters; the most one prompt can carry is 64000`)
+  continueArgs = { resumeId, prompt: prompt.replace(/\s+$/, ''), json }
 }
 // So do `tidy` and `move`: a flag that is not theirs is a mistake, never a silent no-op.
 let tidyArgs = null
@@ -901,7 +937,8 @@ if (cmd === 'list') {
           ? `pane ${pane.id} has nothing unsent that this app relayed - its window could not be asked, so a line typed before the app started would not show here`
           : `pane ${pane.id} has nothing the app can vouch for - it relayed no keystrokes for the current line`
     )
-    process.exit(screen || draft.certain ? 0 : 1)
+    process.exitCode = screen || draft.certain ? 0 : 1
+    return
   }
   if (!screen && !draft.certain)
     console.error(`(uncertain - the line was edited in a way the app could not follow, so this may be incomplete)`)
@@ -919,6 +956,52 @@ if (cmd === 'list') {
   if (!s) fail(1, `no pane named "${ref}"`)
   await send('pane:tell', [s.id, text])
   console.log(`told ${s.id} (${s.title})`)
+} else if (cmd === 'continue') {
+  // GuardDeck's "next prompt" box (Robert, 2026-09-26): a finished chat closes itself, its
+  // result shows in GuardDeck, and what he types there has to reach THAT conversation -
+  // open, asleep, or closed. `continueTarget` decides which; this only carries it out.
+  const { resumeId, prompt, json } = continueArgs
+  const target = continueTarget(resumeId, await sessions(), (await call('history:list', [])) ?? [])
+  if (target.error) fail(1, target.error)
+  let paneId
+  const reopened = target.action === 'reopen'
+  if (target.action === 'tell') paneId = target.pane.id
+  else if (target.action === 'wake') {
+    const woke = await tryCall('sessions:wake', [target.pane.id])
+    if (!woke.value?.id) fail(1, `pane ${target.pane.id} has chat ${resumeId} but would not wake${woke.error ? ` - ${woke.error}` : ''}; nothing was sent`)
+    // `wake()` starts a NEW conversation when the saved one is gone, and says so by
+    // dropping the id. The prompt was written for the old one.
+    if (woke.value.resumeId !== resumeId)
+      fail(1, `pane ${target.pane.id} woke into a new chat because the saved conversation ${resumeId} could not be resumed; nothing was sent`)
+    paneId = target.pane.id
+  } else {
+    // History's own "Open again" request: BOTH resume and resumeId, or the CLI starts an
+    // empty chat in that folder (`buildArgs` spells `--resume <id>` only with both). No
+    // prompt on the start: a pane that has to be restarted below would be handed it twice.
+    const h = target.entry
+    const opened = await tryCall('sessions:start', [
+      { cwd: h.cwd, title: h.title, agent: h.agent, model: h.model, resume: true, resumeId, where: 'local' }
+    ])
+    const pane = opened.value
+    if (!pane?.id) fail(1, `could not reopen chat ${resumeId} in ${h.cwd} - ${opened.error ?? 'the app opened nothing'}; nothing was sent`)
+    // The app opens a conversation it cannot find on disk ASLEEP rather than as an empty
+    // chat (`startOrSend`). That pane holds nothing, so it goes, and the answer says why.
+    if (pane.asleep || pane.status === 'exited') {
+      await tryCall('sessions:kill', [pane.id])
+      fail(1, `the saved conversation for chat ${resumeId} is no longer on this computer (${pane.laneNote ?? 'it could not be resumed'}); nothing was sent`)
+    }
+    // Claude reads a conversation out of the folder it runs in, and a busy folder gets its
+    // own copy - see `pf open --resume`.
+    const landed = pane.cwd ?? h.cwd
+    if (h.agent === 'claude' && placeTranscript(landed, resumeId)) await call('sessions:restart', [pane.id])
+    paneId = pane.id
+  }
+  await send('pane:tell', [paneId, prompt])
+  const list = await sessions()
+  const number = list.findIndex((x) => x.id === paneId) + 1
+  if (!number) fail(1, `pane ${paneId} disappeared before the prompt could be handed to it`)
+  if (json) console.log(JSON.stringify({ paneId, number, reopened }))
+  else console.log(`sent to pane ${number} (${paneId})${reopened ? ' - reopened from History' : target.action === 'wake' ? ' - woken first' : ''}`)
 } else if (cmd === 'type') {
   const ref = rest.shift()
   const text = rest.join(' ')

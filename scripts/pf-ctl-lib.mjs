@@ -88,6 +88,19 @@ export const COMMANDS = [
     detail: ['<pane> is a number from `pf list`, an exact pane name, or an id. Panes on another computer cannot be told.']
   },
   {
+    name: 'continue',
+    summary: 'Send the next prompt to one exact conversation, reopening it first if its pane has closed.',
+    usage: 'pf continue <chat-id> --prompt-file <file> [--json]',
+    example: 'pf continue 6f1c2a4e-0b3d-4c5e-9f70-1a2b3c4d5e6f --prompt-file /tmp/next.txt --json',
+    detail: [
+      '<chat-id> is the conversation id (`resumeId` in a GuardDeck review notice), never a pane number or a folder.',
+      'Its pane is open: the prompt is delivered between its turns, like `pf tell`. A sleeping pane is woken first.',
+      'Its pane has closed: the conversation is reopened on this computer from History with its earlier messages, then the prompt is sent.',
+      'An id this computer has no record of is refused; nothing is ever sent to the newest chat instead.',
+      '--json prints {"paneId","number","reopened"}; errors are one line on stderr with exit 1.'
+    ]
+  },
+  {
     name: 'type',
     summary: 'Type text into a pane\'s prompt box and press Enter right now (even mid-turn). Prefer `tell`.',
     usage: 'pf type <pane> <text...>',
@@ -668,4 +681,37 @@ export function buildHandoffBrief({ pane, number, to, model, transcript, exchang
 
 export function movePrompt(briefPath) {
   return `Continue this work. Handoff brief: ${briefPath}. Read it first.`
+}
+
+/*
+ * `pf continue` - which pane gets the next prompt for one conversation.
+ *
+ * GuardDeck's result card knows a conversation, not a pane: the pane may still be open, be
+ * asleep, or have closed itself once its work was done (`main/doneClose.ts`). Exactly one
+ * of those is true for a given id, and the answer is taken from the app's own records -
+ * a live pane's `resumeId` first, then History - never from "the newest chat in the
+ * folder", which is a different conversation as soon as anything else ran there.
+ */
+export function continueTarget(resumeId, panes, history) {
+  const mine = (panes ?? []).filter((p) => p.resumeId === resumeId)
+  const local = mine.filter((p) => !String(p.id).startsWith('@'))
+  const live = local.find((p) => !p.asleep && p.status !== 'exited')
+  if (live) return { action: 'tell', pane: live }
+  const asleep = local.find((p) => p.asleep)
+  if (asleep) return { action: 'wake', pane: asleep }
+  const dead = local.find((p) => p.status === 'exited')
+  if (dead)
+    return {
+      error: `chat ${resumeId} is open in pane ${dead.id} ("${dead.title}") but its agent has stopped - press Restart on that pane, then send again`
+    }
+  if (mine.length)
+    return { error: `chat ${resumeId} is open on another computer - run pf continue on that computer` }
+  const saved = (history ?? [])
+    .filter((h) => h.resumeId === resumeId && h.agent !== 'shell' && h.cwd)
+    .sort((a, b) => (b.endedAt ?? b.startedAt ?? 0) - (a.endedAt ?? a.startedAt ?? 0))[0]
+  if (!saved)
+    return {
+      error: `no chat ${resumeId} on this computer - it is not open and History has no record of it, so nothing was sent`
+    }
+  return { action: 'reopen', entry: saved }
 }

@@ -155,9 +155,10 @@ export interface Session {
   agent: Agent
   /**
    * The conversation this pane can be resumed into, once known. Stamped by main when a
-   * turn ends (the transcript is flushed by then) and when a pane sleeps or wakes; absent
-   * until the CLI has written one. Read by the automatic move (`shared/autoHandoff.ts`
-   * `travels`): an agent pane with no id has nothing another machine could resume.
+   * turn ends (the transcript is flushed by then), when a pane sleeps or wakes, and at the
+   * start of a pane opened on a saved conversation; absent until the CLI has written one.
+   * Read by the automatic move (`shared/autoHandoff.ts` `travels`): an agent pane with no
+   * id has nothing another machine could resume. `pf continue` finds a pane by it.
    */
   resumeId?: string
   /** model passed to the agent, empty/undefined = the CLI's own default */

@@ -204,11 +204,23 @@ function spoolNotice(record: ReviewRecord): ReviewRecord {
           actor: "paneforge",
           title: record.title,
           detail: record.report,
+          // Everything GuardDeck needs to hand the next prompt back to THIS conversation:
+          // `pf continue <resumeId> --prompt-file <file>` on the `machine` that wrote it.
+          // Added fields only - older readers keep reading id/lane/kind/reportPath.
           result: {
             id: record.id,
             lane: record.lane,
             kind: record.kind,
             reportPath: record.reportPath,
+            sessionId: record.sessionId,
+            // A shell (a compute job's observer) has no conversation to continue: its
+            // `nativeSessionId` is the pane id, which `pf continue` would only refuse.
+            resumeId: record.provider === "shell" ? undefined : record.nativeSessionId,
+            cwd: record.cwd,
+            agent: record.provider,
+            // The gate above lets only the Mac app write notices; the field is here so a
+            // PC notice, when there is one, needs no new reader.
+            machine: "mac",
           },
         },
         null,
