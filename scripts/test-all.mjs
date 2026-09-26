@@ -126,6 +126,7 @@ const TESTS = [
   ['scrollclear', 'scroll-clear-test.mjs'],
   ['cursorup', 'cursor-up-realign-test.mjs'],
   ['pushedoff', 'pushed-off-test.mjs'],
+  ['wordrewrap', 'word-rewrap-test.mjs'],
   ['replaywidth', 'replay-width-test.mjs'],
   ['panegrid', 'pane-grid-test.mjs'],
   ['markanchor', 'mark-anchor-test.mjs'],

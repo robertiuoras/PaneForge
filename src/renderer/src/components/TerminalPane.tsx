@@ -46,6 +46,7 @@ import { dropReplay, queueReplay } from '../replayQueue'
 import { keepScrollback, keptRows, mayClearScreen } from '../../../shared/keepScrollback'
 import { realignCursorUp } from '../../../shared/cursorUpRealign'
 import { keepPushedOffRows } from '../../../shared/pushedOffTop'
+import { rewrapOnShrink } from '../../../shared/wordRewrap'
 import { fileRows, lostRows, screenLost } from '../../../shared/screenLoss'
 import { forceKeys } from '../../../shared/forceSelect'
 import {
@@ -2091,6 +2092,10 @@ function TerminalPane({
         window.clearTimeout(wipeTimer)
       })
       realignCursorUp(t)
+      // A pane that gets narrower (a pane opened beside it) breaks the reply lines above
+      // the screen between words, and joins a paragraph back up, instead of xterm's cut
+      // through the middle of a word. See shared/wordRewrap.ts.
+      rewrapOnShrink(t)
     }
     /**
      * Everything an agent writes goes through here first, so that `/clear` stops taking
