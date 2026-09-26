@@ -47,7 +47,7 @@ export const NOTHING_OPEN = 'the handoff lists nothing still open'
 import { jobFromTable, paneJob, programName, SHELLS } from '../shared/paneJob'
 import { canSleep, sleepRefusal } from '../shared/sleep'
 import { doneEnough } from '../shared/closeWhenDone'
-import { personLooking, type DoneReading } from '../shared/doneClose'
+import { personLooking, replyFinished, type DoneReading } from '../shared/doneClose'
 import { folderName, laneOfCheckout, projectOf } from '../shared/place'
 import { dropStale, lentGrid, watchedBorrow, type Borrow } from '../shared/paneSize'
 import { START_COLS, START_ROWS } from '../shared/paneGrid'
@@ -786,6 +786,8 @@ export class SessionManager extends EventEmitter {
    * the old one-line notice.
    */
   onFinished: ((meta: Session, opener: string) => void) | null = null
+  /** The last reply in a pane's transcript, for `Session.finished`. Set by index.ts, which knows where transcripts live. */
+  replyFor: ((id: string, agent: string) => { text: string; runningAgents?: number } | undefined) | null = null
 
   resumeOrigin(id: string): string | undefined {
     const live = this.sessions.get(id)
@@ -4472,6 +4474,22 @@ export class SessionManager extends EventEmitter {
       const open = hand.path ? hand.open : undefined
       if (open !== meta.handoffOpen) {
         meta.handoffOpen = open
+        changed = true
+      }
+      // ...and whether the turn that ended left anything for anybody: the card says `done`
+      // rather than `waiting` when its reply asked nothing and listed no step an agent
+      // could take (`shared/doneClose.ts` `replyFinished`). The reply is the transcript,
+      // read through `replyFor` (index.ts, cached on size+mtime), and only for an idle
+      // agent pane whose footer has said the turn is over.
+      const fin =
+        meta.agent !== 'shell' && meta.status === 'idle' && live.footerEndedAt && !meta.ask && this.replyFor
+          ? (() => {
+              const r = this.replyFor!(meta.id, meta.agent)
+              return replyFinished({ agent: meta.agent, status: meta.status, ask: meta.ask, turnEndedAt: live.footerEndedAt, reply: r?.text, runningAgents: r?.runningAgents })
+            })()
+          : undefined
+      if (fin !== meta.finished) {
+        meta.finished = fin
         changed = true
       }
       // ...and whether the turn that just ended changed anything at all in this pane's

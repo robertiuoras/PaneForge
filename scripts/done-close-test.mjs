@@ -36,7 +36,7 @@ async function bundle(entry, name) {
   await build({ absWorkingDir: root, entryPoints: [entry], outfile: out, bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent', plugins: [stubs] })
   return require(out)
 }
-const { doneVerdict, doneReviewId, personLooking, AUTO_CLOSE_QUIET_MS } = await bundle('src/shared/doneClose.ts', 'shared.cjs')
+const { doneVerdict, doneReviewId, personLooking, replyFinished, AUTO_CLOSE_QUIET_MS } = await bundle('src/shared/doneClose.ts', 'shared.cjs')
 const digest = await bundle('src/shared/finishedDigest.ts', 'digest.cjs')
 const main = await bundle('src/main/doneClose.ts', 'main.cjs')
 
@@ -257,4 +257,25 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
   const ctl = readFileSync(join(root, 'scripts/pf-ctl.mjs'), 'utf8')
   assert.doesNotMatch(ctl, /reportTo: closeWhenDone \? reportTo/, 'pf open always says who opened the pane')
   console.log('done-close: one summary back to the opener ok')
+}
+
+{
+  // The card's `done` word: s9-muig454z's real last reply (2026-09-26), which the card
+  // called `waiting` though it left nothing for anybody.
+  const s9 = 'I saved the stuck-command lesson to the knowledge vault as a draft: a command cut off when its chat dies never records that it finished, so checks now ask whether anything is still writing its output. The auto-close fix it describes is pushed (`58283556a`).\n\nCard 11 is still working on the "waiting" label.\n\nNext steps: None'
+  const base = { agent: 'claude', status: 'idle', turnEndedAt: 1, reply: s9 }
+  assert.equal(replyFinished(base), true, 'Next steps: None = finished')
+  assert.equal(replyFinished({ ...base, reply: 'Done. Want me to ship it?' }), false, 'a question is not finished')
+  assert.equal(replyFinished({ ...base, reply: 'Built it.\n\n## Next steps\n1. Run the PC suite and fix what fails' }), false, 'an agent step is not finished')
+  assert.equal(replyFinished({ ...base, runningAgents: 1 }), false, 'a subagent still out is not finished')
+  assert.equal(replyFinished({ ...base, status: 'working' }), undefined, 'mid-turn: unknown')
+  assert.equal(replyFinished({ ...base, ask: { q: 1 } }), undefined, 'a question card: unknown, the ask draws')
+  assert.equal(replyFinished({ ...base, agent: 'shell' }), undefined)
+  assert.equal(replyFinished({ ...base, turnEndedAt: 0 }), undefined, 'no ended turn: unknown')
+  assert.equal(replyFinished({ ...base, reply: '  ' }), undefined, 'empty reply: unknown')
+  const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
+  assert.match(sessions, /meta\.finished = fin/, 'the sweep sets Session.finished')
+  const index = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
+  assert.match(index, /manager\.replyFor = /, 'index.ts gives the sweep the transcript')
+  console.log('done-close: finished card word ok')
 }

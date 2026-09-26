@@ -64,6 +64,13 @@ export interface FleetPane {
   backJob?: string
   /** epoch ms that job started, so a `working` row's clock counts it */
   backJobSince?: number
+  /**
+   * The turn is over and its reply left nothing - no question, no step an agent could
+   * take (`Session.finished`). Such a pane is NOT waiting for anybody, so it says `done`
+   * and is not counted as wanting a person. It stays `needsYou` to every rule about
+   * closing, sleeping or handing off, which only care that the turn is over.
+   */
+  finished?: boolean
 }
 
 export type FleetState =
@@ -183,8 +190,19 @@ export function fleetState(s: FleetPane): FleetState {
   return s.engaged ? 'needsYou' : 'ready'
 }
 
+/**
+ * A finished turn that left nothing to do. `fleetState` still says `needsYou` - the turn
+ * is over, which is all closing and sleeping ask - but the row, the count and the card
+ * must not say it is waiting (Robert, 2026-09-27: "why does it say its waiting when
+ * clearly its not"). A question on screen always wins: `asking` is checked first.
+ */
+export function finishedTurn(s: FleetPane): boolean {
+  return s.finished === true && !s.asking && fleetState(s) === 'needsYou'
+}
+
 export function fleetRow(s: FleetPane): FleetRow {
   const state = fleetState(s)
+  if (finishedTurn(s)) return { state, label: 'done', motion: 'still', since: s.lastOutput, rank: RANK.ready }
   const since =
     state === 'stalled'
       ? s.stalledSince
@@ -287,7 +305,7 @@ export function fleetSections<T extends FleetPane & { id: string }>(sessions: T[
     title: SECTION_TITLE[key],
     sessions: []
   }))
-  for (const s of ordered) out.find((g) => g.key === SECTION_OF[fleetState(s)])!.sessions.push(s)
+  for (const s of ordered) out.find((g) => g.key === (finishedTurn(s) ? 'idle' : SECTION_OF[fleetState(s)]))!.sessions.push(s)
   return out.filter((g) => g.sessions.length > 0)
 }
 
@@ -319,7 +337,7 @@ export function previewFrom(lines: string[]): string | null {
 export function fleetWaiting(sessions: FleetPane[]): number {
   return sessions.filter((s) => {
     const st = fleetState(s)
-    return st === 'needsYou' || st === 'stalled'
+    return (st === 'needsYou' && !finishedTurn(s)) || st === 'stalled'
   }).length
 }
 

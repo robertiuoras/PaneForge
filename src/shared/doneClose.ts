@@ -79,11 +79,37 @@ export function doneVerdict(reading: DoneReading, now = Date.now()): DoneVerdict
   if (quiet < AUTO_CLOSE_QUIET_MS) return { close: false, reason: 'not quiet long enough' }
   if (!doneEnough(p, quiet, now)) return { close: false, reason: 'busy, asking, drafting or running something' }
   if (p.reply === undefined) return { close: false, reason: 'reply not read' }
-  if (p.runningAgents) return { close: false, reason: `${p.runningAgents} subagent${p.runningAgents === 1 ? '' : 's'} still running` }
-  if (/\?\s*$/.test(p.reply.trim())) return { close: false, reason: 'the reply ends in a question' }
-  const open = actionableNextSteps(p.reply)
-  if (open.length) return { close: false, reason: `${open.length} step${open.length === 1 ? '' : 's'} an agent could take` }
+  const left = replyLeaves(p.reply, p.runningAgents)
+  if (left) return { close: false, reason: left }
   return { close: true, personSteps: personOwnedSteps(p.reply) }
+}
+
+/**
+ * What the last reply leaves for somebody to do next, in words, or null when it leaves
+ * nothing: no question, no step an agent could take, no subagent still out.
+ *
+ * The reply half of `doneVerdict`, on its own because the CARD reads it too. Robert,
+ * 2026-09-27: "why does it say its waiting when clearly its not" - a finished chat whose
+ * reply said `Next steps: None` read `waiting` beside chats that really had asked him
+ * something, because an idle pane's word only knew the turn was over.
+ */
+export function replyLeaves(reply: string, runningAgents?: number): string | null {
+  if (runningAgents) return `${runningAgents} subagent${runningAgents === 1 ? '' : 's'} still running`
+  if (/\?\s*$/.test(reply.trim())) return 'the reply ends in a question'
+  const open = actionableNextSteps(reply)
+  if (open.length) return `${open.length} step${open.length === 1 ? '' : 's'} an agent could take`
+  return null
+}
+
+/**
+ * Did this pane's last turn finish with nothing left for anyone - the card says `done`
+ * rather than `waiting`. Undefined when that cannot be known (mid-turn, a question on
+ * screen, a shell, the reply not read or empty), which the card draws as before.
+ */
+export function replyFinished(p: { agent: string; status: string; ask?: unknown; turnEndedAt: number; reply?: string; runningAgents?: number }): boolean | undefined {
+  if (p.agent === 'shell' || p.status !== 'idle' || p.ask || !p.turnEndedAt) return undefined
+  if (!p.reply?.trim()) return undefined
+  return replyLeaves(p.reply, p.runningAgents) === null
 }
 
 /** One id per finished turn, so a retry of the same close is idempotent. */

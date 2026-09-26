@@ -1589,6 +1589,10 @@ ipcMain.on('sessions:active', (_e, id: unknown) => manager.setActive(typeof id =
 // The panes a chat opened report back to it ONCE, when the last of them has closed
 // (`shared/finishedDigest.ts`). Flushed on the same 15s tick as the sweep that feeds it.
 const finishedDigest = new FinishedDigest()
+manager.replyFor = (id, agent) => {
+  const file = transcriptFor(id)
+  return file ? readReply(agent, file) : undefined
+}
 manager.onFinished = (meta, opener) => {
   const file = transcriptFor(meta.id)
   const reply = file ? readReply(meta.agent, file) : undefined

@@ -585,6 +585,13 @@ export interface Session {
    */
   handoffOpen?: number
   /**
+   * The last turn is over and its reply left nothing: no question, no step an agent could
+   * take, no subagent still out (`shared/doneClose.ts` `replyFinished`). The card says
+   * `done` instead of `waiting`, and the pane is not counted as wanting a person.
+   * Undefined = not known, drawn as before. Decorates only; reaches no busy reading.
+   */
+  finished?: boolean
+  /**
    * How hard this Codex pane is thinking, and why - the card's reading of it.
    *
    * The full state (what is in flight, how long High is held for) stays in main; this is
@@ -1540,6 +1547,8 @@ export interface RemotePaneInfo {
   /** what that pane is still running with its turn over - see `Session.backJob` */
   backJob?: string
   backJobSince?: number
+  /** that pane's last reply left nothing to do - see `Session.finished` */
+  finished?: boolean
   /** when THAT desk's idle clock will close it - its decision, forwarded, never ours */
   closingAt?: number
   /** Persistent Keep open preference, read and changed on the device that owns the pane. */

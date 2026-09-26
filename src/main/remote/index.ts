@@ -468,6 +468,7 @@ export class Remote extends EventEmitter {
             job: s.job,
             backJob: s.backJob,
             backJobSince: s.backJobSince,
+            finished: s.finished,
             closingAt: s.closingAt,
             keepOpen: s.keepOpen
           })),

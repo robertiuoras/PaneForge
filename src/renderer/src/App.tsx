@@ -55,7 +55,7 @@ import Elapsed, { formatElapsed, kb, useNow } from './components/Elapsed'
 import GitBadge from './components/GitBadge'
 import HistoryDialog from './components/HistoryDialog'
 import ReviewDialog from './components/ReviewDialog'
-import { fleetRow, fleetWaiting, idleShell } from '@shared/fleet'
+import { finishedTurn, fleetRow, fleetWaiting, idleShell } from '@shared/fleet'
 import { deskGroups, deskRows as buildDeskRows, type DeskRow } from '@shared/desk'
 import {
   ToolsIcon,
@@ -5109,7 +5109,7 @@ export default function App(): JSX.Element {
    */
   const needsYou = fleetWaiting(deskRows)
   const attentionRows = useMemo(() => buildDeskRows(sessions, sessions, remote?.peers ?? [], 'all')
-    .filter(row => ['needsYou', 'stalled'].includes(fleetState(row))), [sessions, remote])
+    .filter(row => ['needsYou', 'stalled'].includes(fleetState(row)) && !finishedTurn(row)), [sessions, remote])
 
   /**
    * Open a pane that is running on another machine: mirror it, then switch to it.
@@ -5278,7 +5278,7 @@ export default function App(): JSX.Element {
                 setCardMenu({ id: s.id, x: e.clientX, y: e.clientY })
               }}
             >
-              <StatusDot status={s.status} engaged={s.engaged} />
+              <StatusDot status={s.status} engaged={s.engaged} finished={s.finished && !s.ask} />
               <div className="row-text">
                 {renaming === s.id ? (
                   <input
@@ -5345,7 +5345,7 @@ export default function App(): JSX.Element {
                         {s.status === 'working' && s.runSince ? (
                           <Elapsed since={s.runSince} title="This turn" />
                         ) : s.status === 'idle'
-                          ? (s.engaged !== false ? 'waiting' : 'ready')
+                          ? (s.engaged === false ? 'ready' : s.finished ? 'done' : 'waiting')
                           : s.status === 'working' ? 'running' : s.status}
                       </span>
                     )}
@@ -6207,7 +6207,7 @@ export default function App(): JSX.Element {
                   </span>
                 </>
               ) : (<>
-              <StatusDot status={s.status} engaged={s.engaged} />
+              <StatusDot status={s.status} engaged={s.engaged} finished={s.finished && !s.ask} />
               <AgentLogo id={s.agent} spec={agents.find((a) => a.id === s.agent)} size={14} />
               <span className="pt-name">
                 {s.title}

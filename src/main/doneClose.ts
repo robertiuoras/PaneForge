@@ -16,12 +16,13 @@ import type { HistoryEntry } from '../shared/types'
 
 /** Enough of a transcript to hold the last turn; a reply longer than this is truncated to its tail. */
 const READ_BYTES = 512 * 1024
-/** How often one pane's transcript is re-read while it sits finished. */
-export const REREAD_MS = 30_000
 
 const cache = new Map<string, { size: number; mtimeMs: number; at: number; read: ReplyRead }>()
 
-/** The last reply in this transcript, re-read only when the file or the clock moved. */
+/**
+ * The last reply in this transcript, re-read only when the file moved. The card's `done`
+ * word asks every second (`sessions.ts` sweep), so an unchanged file is never parsed twice.
+ */
 export function readReply(agent: string, file: string, now = Date.now()): ReplyRead | undefined {
   let st: { size: number; mtimeMs: number }
   try {
@@ -30,7 +31,7 @@ export function readReply(agent: string, file: string, now = Date.now()): ReplyR
     return undefined
   }
   const hit = cache.get(file)
-  if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs && now - hit.at < REREAD_MS) return hit.read
+  if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs) return hit.read
   let text = ''
   try {
     const fd = openSync(file, 'r')
