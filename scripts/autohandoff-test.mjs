@@ -867,6 +867,16 @@ checks += 3
   eq('...said in plain words', words, 'a background agent (Visual review Design 4 pages)')
   eq('its task-notification ends it', runningAgentsIn(lines.join('\n'), opts), [])
   eq('...already on the queue-operation line, before the notification is delivered', runningAgentsIn(lines.slice(0, 3).join('\n'), opts), [])
+  {
+    // A Workflow graph (real result text, 2026-09-27) is out until its notification.
+    const wf = [
+      JSON.stringify({ type: 'assistant', timestamp: new Date(opts.now - 60_000).toISOString(), message: { content: [{ type: 'tool_use', id: 'toolu_wf', name: 'Workflow', input: { scriptPath: '/x/research-verify.mjs' } }] } }),
+      JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_wf', content: "Workflow launched in background. Task ID: wtzhrpsxe\nSummary: Breadth-first research: parallel lanes, adversarial verification, sourced synthesis\nRun ID: wf_c14fc25e-2b0" }] } })
+    ]
+    eq('a background workflow is running', runningAgentsIn(wf.join('\n'), opts).map((a) => [a.id, a.via, a.label]), [['wtzhrpsxe', 'Workflow', 'workflow research-verify']])
+    wf.push(JSON.stringify({ type: 'queue-operation', content: '<task-notification>\n<task-id>wtzhrpsxe</task-id>\n<tool-use-id>toolu_wf</tool-use-id>\n</task-notification>' }))
+    eq('...until its notification', runningAgentsIn(wf.join('\n'), opts), [])
+  }
   const scan = newAgentScan()
   scanAgentLines(scan, lines[0] + '\n')
   scanAgentLines(scan, lines[1] + '\n')

@@ -156,6 +156,17 @@ const withAgent = (done) => {
   return out
 }
 say('parser: a launched background agent with no report is running, a foreground one never', JSON.stringify(hook.runningAgents(withAgent(false))) === '["a1b2c3"]' && hook.runningAgents(withAgent(true)).length === 0)
+const withWorkflow = () => {
+  const f = transcript(250_000)
+  const rows = [
+    { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'toolu_wf1', name: 'Workflow', input: { scriptPath: '/x/research-verify.mjs' } }] } },
+    { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_wf1', content: "Workflow launched in background. Task ID: wtzhrpsxe\nSummary: Breadth-first research: parallel lanes, adversarial verification, sourced synthesis\nRun ID: wf_c14fc25e-2b0" }] } }
+  ]
+  const out = f.replace(/\.jsonl$/, '-workflow.jsonl')
+  writeFileSync(out, rows.map((r) => JSON.stringify(r)).join('\n') + '\n' + readFileSync(f, 'utf8'))
+  return out
+}
+say('parser: a background workflow graph is running too', JSON.stringify(hook.runningAgents(withWorkflow())) === '["wtzhrpsxe"]')
 const busy = runHook('stop', { session_id: 'sess-7', transcript_path: withAgent(false) })
 say('a running background agent: no request', busy.code === 0 && requests().length === 0 && !busy.err, JSON.stringify(busy))
 const freed = runHook('stop', { session_id: 'sess-7', transcript_path: withAgent(true) })

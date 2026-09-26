@@ -9,8 +9,10 @@
 //
 // The running-subagent reading is a MIRROR of `claude-config/handoff-state.mjs`
 // `runningAgentsOf`, the way `shared/handoffSteps.ts` mirrors `autoclear.mjs`: an
-// `Agent`/`SendMessage` tool_use whose result said `Async agent launched` and whose
-// `<task-notification>` has not arrived yet. Closing a pane on that would kill the build
+// `Agent`/`SendMessage` tool_use whose result said `Async agent launched` (or a `Workflow`
+// whose result said `Workflow launched in background`) and whose `<task-notification>` has
+// not arrived yet. A workflow runs inside the CLI process like a subagent: 2026-09-27 a
+// pane closed on a running research graph and killed it (it was not counted). Closing a pane on that would kill the build
 // the agent is running (2026-09-19: a `/clear` did exactly that).
 
 /** One reply as the Review list wants it. */
@@ -69,7 +71,7 @@ export function readClaudeReply(jsonl: string): ReplyRead {
       if (t.trim()) text = t
       if (Array.isArray(content))
         for (const c of content as Array<{ type?: string; id?: string; name?: string }>)
-          if (c.type === 'tool_use' && c.id && (c.name === 'Agent' || c.name === 'SendMessage')) launched.add(c.id)
+          if (c.type === 'tool_use' && c.id && (c.name === 'Agent' || c.name === 'SendMessage' || c.name === 'Workflow')) launched.add(c.id)
     } else if (j.type === 'user') {
       if (Array.isArray(content)) {
         let plain = false
@@ -77,7 +79,7 @@ export function readClaudeReply(jsonl: string): ReplyRead {
           if (c.type === 'tool_result' && c.tool_use_id && launched.has(c.tool_use_id)) {
             const r = textOf(c.content)
             if (c.is_error) launched.delete(c.tool_use_id)
-            else if (/Async agent launched|"resumedAgentId"/.test(r)) answered.add(c.tool_use_id)
+            else if (/Async agent launched|"resumedAgentId"|Workflow launched in background/.test(r)) answered.add(c.tool_use_id)
             else launched.delete(c.tool_use_id) // foreground: its result IS the report
           } else if (c.type === 'text') plain = true
         }

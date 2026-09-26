@@ -50,6 +50,20 @@ const asyncResult = (toolUseId) => user([{ tool_use_id: toolUseId, type: 'tool_r
   console.log('reply-read: last reply, prompt, running agent ok')
 }
 
+// 1b. A background Workflow graph is out the same way (2026-09-27: pane s5 closed on a
+// running research graph because only Agent/SendMessage counted; result text is the real one).
+{
+  const lines = [
+    assistant([{ type: 'tool_use', id: 'toolu_01MZ', name: 'Workflow', input: { scriptPath: '/x/research-verify.mjs', args: {} } }]),
+    user([{ tool_use_id: 'toolu_01MZ', type: 'tool_result', content: "Workflow launched in background. Task ID: wtzhrpsxe\nSummary: Breadth-first research: parallel lanes, adversarial verification, sourced synthesis\nRun ID: wf_c14fc25e-2b0" }]),
+    assistant([{ type: 'text', text: 'Research is running.\n\nNext steps:\n1. Waiting on the research run.' }])
+  ]
+  assert.equal(readClaudeReply(lines.join('\n')).runningAgents, 1, 'a launched workflow with no notification is running')
+  const note = row({ type: 'queue-operation', operation: 'enqueue', content: '<task-notification>\n<task-id>wtzhrpsxe</task-id>\n<tool-use-id>toolu_01MZ</tool-use-id>\n<status>completed</status>\n</task-notification>' })
+  assert.equal(readClaudeReply([...lines, note].join('\n')).runningAgents, 0, 'its notification ends it')
+  console.log('reply-read: background workflow ok')
+}
+
 // 2. A foreground agent's result IS its report; an errored launch is nothing.
 {
   const fg = [

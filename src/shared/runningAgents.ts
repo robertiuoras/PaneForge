@@ -36,7 +36,7 @@ export interface RunningAgent {
   /** the agent id Claude Code gave it */
   id: string
   toolUseId: string
-  /** `Agent` or `SendMessage` */
+  /** `Agent`, `SendMessage` or `Workflow` */
   via: string
   /** epoch ms of the launch, when the line carried a timestamp */
   at: number | null
@@ -58,6 +58,8 @@ export function newAgentScan(): AgentScan {
 const NOTIFIED = /<tool-use-id>([^<]+)<\/tool-use-id>/g
 const ASYNC = /Async agent launched[\s\S]*?agentId:\s*([A-Za-z0-9_-]+)/
 const RESUMED = /"resumedAgentId"\s*:\s*"([^"]+)"/
+/** A `Workflow` graph runs in-process like a subagent and ends in the same task-notification. */
+const WORKFLOW = /Workflow launched in background\.\s*Task ID:\s*([A-Za-z0-9_-]+)/
 
 function textOf(content: unknown): string {
   if (typeof content === 'string') return content
@@ -93,13 +95,14 @@ export function scanAgentLines(scan: AgentScan, text: string): void {
     if (!Array.isArray(content)) continue
     for (const c of content as Array<Record<string, unknown>>) {
       if (!c || typeof c !== 'object') continue
-      if (c.type === 'tool_use' && (c.name === 'Agent' || c.name === 'SendMessage') && typeof c.id === 'string') {
-        const input = (c.input ?? {}) as { description?: unknown }
+      if (c.type === 'tool_use' && (c.name === 'Agent' || c.name === 'SendMessage' || c.name === 'Workflow') && typeof c.id === 'string') {
+        const input = (c.input ?? {}) as { description?: unknown; scriptPath?: unknown; name?: unknown }
+        const graph = c.name === 'Workflow' ? `workflow ${String(input.name ?? input.scriptPath ?? '').split('/').pop()?.replace(/\.m?js$/, '') ?? ''}`.trim() : undefined
         const at = j.timestamp ? Date.parse(j.timestamp) : NaN
         scan.launched.set(c.id, {
           via: c.name as string,
           at: Number.isFinite(at) ? at : null,
-          label: typeof input.description === 'string' && input.description.trim() ? input.description.trim().slice(0, 80) : undefined
+          label: graph ?? (typeof input.description === 'string' && input.description.trim() ? input.description.trim().slice(0, 80) : undefined)
         })
       } else if (c.type === 'tool_result' && typeof c.tool_use_id === 'string' && scan.launched.has(c.tool_use_id)) {
         const id = c.tool_use_id
@@ -110,7 +113,9 @@ export function scanAgentLines(scan: AgentScan, text: string): void {
         const t = textOf(c.content)
         const bg = ASYNC.exec(t)
         const resumed = RESUMED.exec(t)
+        const graph = WORKFLOW.exec(t)
         if (bg) scan.answered.set(id, bg[1])
+        else if (graph) scan.answered.set(id, graph[1])
         else if (resumed) scan.answered.set(id, resumed[1])
         // A foreground agent: its result is the report, so it is finished.
         else scan.launched.delete(id)
