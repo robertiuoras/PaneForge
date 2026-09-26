@@ -25,8 +25,9 @@
 // including the ones with nothing to do with any of this. Nothing below throws.
 
 import { spawn, spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { closeSync, existsSync, openSync, readFileSync, readSync, renameSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -438,7 +439,24 @@ if (event === 'prompt') {
       ? `Every ${name} checkout in use right now (same table in every chat):\n${roster.join('\n')}`
       : `No chat holds a ${name} lane right now.`
   )
-  console.log([...lines, stuck, orphan].filter(Boolean).join('\n'))
+  const text = [...lines, stuck, orphan].filter(Boolean).join('\n')
+  // The same ~1,900 chars were injected on every prompt of a lane chat, task notifications
+  // included (agent setup audit 2026-09-26). Print when the text changes, or again after
+  // 30 minutes so a compacted chat gets it back; otherwise stay silent.
+  const seenFile = join(tmpdir(), `pf-lane-hook-${createHash('sha1').update(session + repo).digest('hex').slice(0, 16)}`)
+  const hash = createHash('sha1').update(text).digest('hex')
+  try {
+    const [h, at] = readFileSync(seenFile, 'utf8').split(' ')
+    if (h === hash && Date.now() - Number(at) < 30 * 60000) process.exit(0)
+  } catch {
+    /* first prompt of this chat */
+  }
+  try {
+    writeFileSync(seenFile, `${hash} ${Date.now()}`)
+  } catch {
+    /* a failed write only means the table prints again */
+  }
+  console.log(text)
   process.exit(0)
 }
 
