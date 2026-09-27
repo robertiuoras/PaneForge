@@ -20,6 +20,7 @@ import { endAll, gistFor, noteCols, recordData, recordEnd, recordStart, sizeOf, 
 import { jobTable } from './backJobs'
 import { backJobInfo, backJobWaitOnly } from './usage'
 import { forgetHandoff, handoffFor } from './handoffSteps'
+import { handoffOpenAfter } from '../shared/handoffSteps'
 import { workShot } from './changedNothing'
 import { changedNothingWhy, changedNothingWords } from '../shared/changedNothing'
 import { clientForCwd, clientForTexts } from './clients'
@@ -47,7 +48,7 @@ export const NOTHING_OPEN = 'the handoff lists nothing still open'
 import { jobFromTable, paneJob, programName, SHELLS } from '../shared/paneJob'
 import { canSleep, sleepRefusal } from '../shared/sleep'
 import { doneEnough } from '../shared/closeWhenDone'
-import { personLooking, replyFinished, type DoneReading } from '../shared/doneClose'
+import { closeHeldBy, personLooking, replyFinished, wasRead, type DoneReading } from '../shared/doneClose'
 import { folderName, laneOfCheckout, projectOf } from '../shared/place'
 import { dropStale, lentGrid, watchedBorrow, type Borrow } from '../shared/paneSize'
 import { START_COLS, START_ROWS } from '../shared/paneGrid'
@@ -327,6 +328,15 @@ const RESTORE_MARK = `\x1b[0m\r\n\x1b[2m${RESTORE_MARK_TEXT}\x1b[0m\r\n`
 const SLEEP_MARK = '\x1b[0m\r\n\x1b[2m\u00b7 asleep \u00b7\x1b[0m\r\n'
 
 /**
+ * A pty write as its SHAPE for a log: keys and escape sequences as they are, printable text
+ * only as a length (`"<12>\r"`), so the log can tell a bare return from a pasted line
+ * without holding anything a person typed.
+ */
+function writeShape(data: string): string {
+  return JSON.stringify(data.replace(/(\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b.|[\x00-\x1f\x7f])|[^\x00-\x1f\x7f]+/g, (m, key?: string) => key ?? `<${m.length}>`))
+}
+
+/**
  * What a restored pane replays, or '' when there is nothing honest to put back.
  *
  * The bytes are already on disk - `history.ts` has appended every pane's raw output to
@@ -423,6 +433,8 @@ function effortStart(req: StartSessionRequest, agent: Agent): EffortState | unde
 
 interface Live {
   meta: Session
+  /** When the newest prompt its transcript holds was written - see the handoff read in the sweep. */
+  promptAt?: number
   /** A refused idle sweep may retry, but must not keep printing into the terminal. */
   sleepRefusalShown?: boolean
   /** When the unverified-conversation refusal was last written to reclaim.log. */
@@ -543,6 +555,11 @@ interface Live {
    * is what selects the slower backstop wait instead.
    */
   footerEndedAt: number
+  /**
+   * The last second a person was looking at this pane (`personLooking`) while its turn was
+   * over - `DoneReading.lookedAt`. Older than `footerEndedAt` means an earlier turn's.
+   */
+  lookedAt: number
   /**
    * Has this pane's footer EVER been readable for this session? Once it has, silence
    * from the pane means the pane stopped talking - not that the turn ended - so the
@@ -753,17 +770,33 @@ export class SessionManager extends EventEmitter {
         focused: personLooking(m.id === this.activeId, this.windowFocused(), this.deskWatched()),
         lastKeyboard: m.lastKeyboard,
         turnEndedAt: live.footerEndedAt,
-        openedOthers: this.openers.has(m.id) || this.openChildrenOf(m.id) > 0
+        // Only while a pane it opened is still open or their summary is still on its way.
+        // This was a Set kept for the pane's whole life, and done-close.log (27 Sep, from
+        // 08:00Z) had it holding 8 finished panes for good - 27 lines, more than any other
+        // reason. Once the summary has landed and been answered, the opener is a pane
+        // like any other.
+        openedOthers: this.openChildrenOf(m.id) > 0 || this.digestPending(m.id),
+        owedPrompt: Boolean(m.owedPrompt) || (m.handoverUntil ?? 0) > Date.now(),
+        lookedAt: live.lookedAt || undefined
       }
     })
   }
 
   /**
-   * Panes that opened other panes. Kept after those panes close, so the opener stays
-   * open to receive their summary (`shared/finishedDigest.ts`) rather than being taken
-   * by the auto-close in the gap between its last child closing and the summary arriving.
+   * When this pane's last turn ended and whether a person has looked at it since
+   * (`shared/doneClose.ts` `wasRead`) - undefined for a pane that is not open here.
    */
-  private openers = new Set<string>()
+  turnRead(id: string): { endedAt: number; read: boolean } | undefined {
+    const live = this.sessions.get(id)
+    if (!live) return undefined
+    return { endedAt: live.footerEndedAt, read: wasRead({ lookedAt: live.lookedAt, turnEndedAt: live.footerEndedAt }) }
+  }
+
+  /**
+   * A summary of the panes this one opened is waiting to be told to it
+   * (`FinishedDigest.has`). Set by index.ts, which owns the digest.
+   */
+  digestPending: (id: string) => boolean = () => false
 
   /** The grid the desk last fitted a pane to - the size a new pane is born at. See `start`. */
   private deskSize: { cols: number; rows: number } | null = null
@@ -784,10 +817,7 @@ export class SessionManager extends EventEmitter {
   openChildrenOf(openerId: string): number {
     let n = 0
     for (const live of this.sessions.values())
-      if (live.meta.id !== openerId && this.openerOf(live.meta.id) === openerId) {
-        n++
-        this.openers.add(openerId)
-      }
+      if (live.meta.id !== openerId && this.openerOf(live.meta.id) === openerId) n++
     return n
   }
 
@@ -798,7 +828,7 @@ export class SessionManager extends EventEmitter {
    */
   onFinished: ((meta: Session, opener: string) => void) | null = null
   /** The last reply in a pane's transcript, for `Session.finished`. Set by index.ts, which knows where transcripts live. */
-  replyFor: ((id: string, agent: string) => { text: string; runningAgents?: number } | undefined) | null = null
+  replyFor: ((id: string, agent: string) => { text: string; runningAgents?: number; promptAt?: number } | undefined) | null = null
 
   resumeOrigin(id: string): string | undefined {
     const live = this.sessions.get(id)
@@ -1002,6 +1032,7 @@ export class SessionManager extends EventEmitter {
       wokeAt: 0,
       turnPending: false,
       footerEndedAt: 0,
+      lookedAt: 0,
       sawFooter: false,
       recoverSeen: 0,
       handleSeen: 0,
@@ -2079,6 +2110,14 @@ export class SessionManager extends EventEmitter {
     // client reading needs the words, and by the time the block ends they are gone.
     const asked = submitted ? live.typed : ''
     if (submitted) {
+      // WHO SENT A LINE WHILE THIS APP WAS DELIVERING ONE. Every "typed into by hand while
+      // confirming" on 2026-09-27 (s75, s77, s78, s73, s81) has a counted intervention
+      // 0.4-1.7s after the app's own return, four of them with nobody at the desk - so
+      // something other than a person writes a submitted line there, and the logs never
+      // said what. The shape of the bytes and the origin say it next time - control keys as
+      // they are, words only as a length, so nothing a person typed reaches the log.
+      if (origin !== 'app' && live.meta.owedPrompt)
+        acLog(`${id} a ${origin} write submitted while a prompt is owed: ${writeShape(data)} (${data.length} bytes, line of ${asked.length} chars)`)
       live.meta.lastKeyboard = Date.now()
       // A card left over from the pane's FIRST ask has nothing to say about this one -
       // it leaves the moment the next turn boundary arrives, whether it was pressed or
@@ -2353,7 +2392,6 @@ export class SessionManager extends EventEmitter {
     const told = live.req.reportTo
     const opener = this.openerOf(meta.id)
     if (opener) {
-      this.openers.add(opener)
       if (this.onFinished) this.onFinished(meta, opener)
       else this.queuePrompt(opener, `The pane you opened for "${meta.title}" (${meta.cwd}) has finished and closed itself.`)
     }
@@ -3427,7 +3465,6 @@ export class SessionManager extends EventEmitter {
     forgetSession(id)
     forgetBackgroundAgents(id)
     this.sessions.delete(id)
-    this.openers.delete(id)
     forgetHandoff(id)
     this.emitSessions()
   }
@@ -3438,7 +3475,8 @@ export class SessionManager extends EventEmitter {
     if (!live) return { closed: false, reason: 'session is no longer open' }
     const m = live.meta
     if (m.status !== 'idle' || m.runSince || live.busyUntil > Date.now() || m.job || (m.backJob && !backJobWaitOnly(id)) || m.subagent) return { closed: false, reason: 'session is busy or has a background job' }
-    if (m.drafting || m.ask || m.owedPrompt || m.handingOff || m.handoffQueuedAt || m.handoffOpen || (m.handoverUntil ?? 0) > Date.now()) return { closed: false, reason: 'session has a draft, question, queued prompt, or handoff' }
+    const held = closeHeldBy(m)
+    if (held.length) return { closed: false, reason: `session has ${held.join(', ')}` }
     if (m.lastKeyboard > reportedAt) return { closed: false, reason: 'newer user input exists' }
     this.kill(id, 'review')
     return { closed: true }
@@ -3938,6 +3976,7 @@ export class SessionManager extends EventEmitter {
     // Claude answered it.
     let firstReturnAt = 0
     let typedTextAt = 0
+    let askedAgain = false
     const claudeTook = (live: Live): boolean =>
       proof !== 'idle' &&
       live.meta.agent === 'claude' &&
@@ -4020,10 +4059,24 @@ export class SessionManager extends EventEmitter {
           // s27-mujdy58r: the launch prompt is a user row in its transcript at 05:37:06.4, a
           // `pf type` re-send landed at 05:37:13.8, and the next tick called it UNSENT and
           // queued-prompts.log said LOST - the receipt was never asked on this branch.
+          // ...AND ONE LOOK IS NOT THE ANSWER. The receipt can land late (the row is written
+          // when Claude Code gets to it) and a line written into the pane moved nothing about
+          // the prompt already sent, so the receipt is asked again every tick until the
+          // confirm window closes - never another return, which would land on that line.
+          // 2026-09-27 16:31, s81: return at 51.902, another write at 52.455, one look at
+          // 55.926 said UNSENT and queued-prompts.log said LOST over a prompt Claude had.
           if ((still.meta.lastKeyboard ?? 0) > mark) {
             if (claudeTook(still)) {
               acLog(`${id} prompt submitted - Claude transcript receipt (then the pane was typed into by hand)`)
               return settle('sent')
+            }
+            // The first look always asks again, whatever the clock says: a lagging timer can
+            // bring that look in after the window has closed (1.4s late on the PC, where the
+            // test's 600ms window ended before it), and one look is still not the answer.
+            if (proof !== 'idle' && still.meta.agent === 'claude' && (!askedAgain || Date.now() < confirmUntil)) {
+              if (!askedAgain) acLog(`${id} no receipt yet after a line from outside - asking again until the confirm ends`)
+              askedAgain = true
+              return confirm()
             }
             acLog(`${id} prompt left UNSENT: the pane was typed into by hand while confirming`)
             return settle('unsent')
@@ -4456,6 +4509,10 @@ export class SessionManager extends EventEmitter {
   private sweepIdle(): void {
     let changed = false
     const now = Date.now()
+    // Who has read what: the pane a person is looking at, stamped every second while its
+    // turn is over, so a finished reply they read closes 30 s after they look away.
+    const seen = this.activeId ? this.sessions.get(this.activeId) : undefined
+    if (seen?.footerEndedAt && personLooking(true, this.windowFocused(), this.deskWatched())) seen.lookedAt = now
     const reap: string[] = []
     for (const live of this.sessions.values()) {
       const { meta } = live
@@ -4534,24 +4591,32 @@ export class SessionManager extends EventEmitter {
       // `backJob`: it decorates and ranks nothing that could close a pane. It is cached for
       // CACHE_MS inside `handoffFor`, so the sweep is a Map lookup on all but one tick in
       // thirty. A pane with no handoff answers `undefined`, which is not `0`.
+      //
+      // The reply is the transcript, read through `replyFor` (index.ts, cached on
+      // size+mtime), and only for an idle agent pane whose footer has said the turn is over.
+      const reply =
+        meta.agent !== 'shell' && meta.status === 'idle' && live.footerEndedAt && !meta.ask && this.replyFor
+          ? this.replyFor(meta.id, meta.agent)
+          : undefined
+      // A HANDOFF OLDER THAN THE PANE'S LAST PROMPT HAS BEEN READ. `handoffFor` falls back to
+      // the project's unscoped handoff, so on 27 Sep s78 and s81 - panes born hours after it
+      // - both read `session-handoff.md` written 26 Sep 04:41Z and carried "1 step open",
+      // and `closeAfterResult` refuses any pane with one. After a later prompt the reply is
+      // the pane's word on what is left. Kept as the newest seen so a working pane, which
+      // is not read, does not flicker back.
+      if (reply?.promptAt && reply.promptAt > (live.promptAt ?? 0)) live.promptAt = reply.promptAt
       const hand = handoffFor(meta.cwd, meta.id, now)
-      const open = hand.path ? hand.open : undefined
+      const open = handoffOpenAfter(hand, live.promptAt)
       if (open !== meta.handoffOpen) {
         meta.handoffOpen = open
         changed = true
       }
       // ...and whether the turn that ended left anything for anybody: the card says `done`
       // rather than `waiting` when its reply asked nothing and listed no step an agent
-      // could take (`shared/doneClose.ts` `replyFinished`). The reply is the transcript,
-      // read through `replyFor` (index.ts, cached on size+mtime), and only for an idle
-      // agent pane whose footer has said the turn is over.
-      const fin =
-        meta.agent !== 'shell' && meta.status === 'idle' && live.footerEndedAt && !meta.ask && this.replyFor
-          ? (() => {
-              const r = this.replyFor!(meta.id, meta.agent)
-              return replyFinished({ agent: meta.agent, status: meta.status, ask: meta.ask, turnEndedAt: live.footerEndedAt, reply: r?.text, runningAgents: r?.runningAgents })
-            })()
-          : undefined
+      // could take (`shared/doneClose.ts` `replyFinished`).
+      const fin = reply
+        ? replyFinished({ agent: meta.agent, status: meta.status, ask: meta.ask, turnEndedAt: live.footerEndedAt, reply: reply.text, runningAgents: reply.runningAgents })
+        : undefined
       if (fin !== meta.finished) {
         meta.finished = fin
         changed = true

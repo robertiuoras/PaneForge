@@ -36,7 +36,8 @@ async function bundle(entry, name) {
   await build({ absWorkingDir: root, entryPoints: [entry], outfile: out, bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent', plugins: [stubs] })
   return require(out)
 }
-const { doneVerdict, doneReviewId, personLooking, replyFinished, AUTO_CLOSE_QUIET_MS } = await bundle('src/shared/doneClose.ts', 'shared.cjs')
+const { doneVerdict, doneReviewId, doneQuietMs, personLooking, replyFinished, closeHeldBy, finishedCard, wasRead, AUTO_CLOSE_QUIET_MS, READ_QUIET_MS } = await bundle('src/shared/doneClose.ts', 'shared.cjs')
+const { handoffOpenAfter } = await bundle('src/shared/handoffSteps.ts', 'handoffsteps.cjs')
 const digest = await bundle('src/shared/finishedDigest.ts', 'digest.cjs')
 const main = await bundle('src/main/doneClose.ts', 'main.cjs')
 
@@ -49,7 +50,7 @@ const finished = (over = {}) => ({
 // 1. The one shape that closes, and its person-only steps.
 {
   const v = doneVerdict(finished(), NOW)
-  assert.deepEqual(v, { close: true, personSteps: [] })
+  assert.deepEqual(v, { close: true, personSteps: [], read: false })
   const steps = doneVerdict(finished({ reply: 'Done.\n\n## Next steps\n- Robert: run /login on the PC\n- After that lands, nothing' }), NOW)
   assert.equal(steps.close, true)
   assert.deepEqual(steps.personSteps, ['Robert: run /login on the PC'])
@@ -84,6 +85,79 @@ const finished = (over = {}) => ({
   console.log('done-close: refusals ok')
 }
 
+// 2a. A machine short of memory waits less. Robert 2026-09-28: "id rather they close than
+// sleep" - the pressure sleep's own clocks (1 min tight, 30 s over) move to the close.
+{
+  assert.equal(doneQuietMs('ok'), AUTO_CLOSE_QUIET_MS)
+  assert.equal(doneQuietMs('tight'), 60_000)
+  assert.equal(doneQuietMs('over'), 30_000)
+  const ninety = finished({ turnEndedAt: NOW - 90_000 })
+  assert.equal(doneVerdict(ninety, NOW).reason, 'not quiet long enough', 'the default wait is three minutes')
+  assert.equal(doneVerdict(ninety, NOW, doneQuietMs('ok')).close, false, 'room to spare: still three minutes')
+  assert.equal(doneVerdict(ninety, NOW, doneQuietMs('tight')).close, true, 'tight: ninety seconds is enough')
+  assert.equal(doneVerdict(finished({ turnEndedAt: NOW - 40_000 }), NOW, doneQuietMs('tight')).close, false, 'tight: forty seconds is not')
+  assert.equal(doneVerdict(finished({ turnEndedAt: NOW - 40_000 }), NOW, doneQuietMs('over')).close, true, 'over: forty seconds is')
+  assert.equal(doneVerdict(finished({ turnEndedAt: NOW - 90_000, focused: true }), NOW, doneQuietMs('over')).close, false, 'pressure never closes the pane somebody is looking at')
+  // The sweep passes its dep through to both verdicts; unset is the default wait.
+  const transcript = join(work, 'quiet.jsonl')
+  writeFileSync(transcript, JSON.stringify({ type: 'assistant', isSidechain: false, message: { role: 'assistant', content: [{ type: 'text', text: 'Done.\n\n## Next steps\n- None' }] } }))
+  const shut = []
+  const deps = (quietMs) => ({
+    enabled: () => true,
+    readings: () => [{ id: 'q1', ...finished({ turnEndedAt: NOW - 90_000, reply: undefined, runningAgents: undefined }) }],
+    transcriptFor: () => transcript, resumeIdFor: () => 'native-q', history: () => [],
+    titleOf: () => ({ title: 'quiet', cwd: '/Users/r/Projects/site', agent: 'claude' }), otherwiseBusy: () => null,
+    record: (input, native) => ({ ...input, ...native, provider: 'claude', reportPath: '/x', createdAt: 'now', attention: false }),
+    close: (id) => { shut.push(id); return { closed: true } }, noteClose: () => {}, writeNotice: () => {}, activity: () => {},
+    now: () => NOW, ...(quietMs ? { quietMs } : {})
+  })
+  assert.deepEqual(main.sweepDoneClose(deps()), [], 'no quietMs dep: three minutes')
+  assert.deepEqual(main.sweepDoneClose(deps(() => doneQuietMs('tight'))), ['q1'], 'the sweep uses the dep')
+  console.log('done-close: a short machine waits less ok')
+}
+
+// 2b. Finished means a clean, pushed folder too (Robert's brief, 2026-09-28: "no open ask,
+// clean tree/pushed, no live background job"). The read is the badge's cached one.
+{
+  const v = (folder) => doneVerdict(finished({ folder }), NOW)
+  assert.equal(v(undefined).close, true, 'not asked: nothing checked')
+  assert.equal(v(null).close, true, 'not a repo: nothing to lose')
+  assert.equal(v({ dirty: 0, ahead: 0 }).close, true, 'clean and pushed closes')
+  assert.equal(v({ dirty: 3, ahead: 0 }).reason, 'its folder has uncommitted or unpushed work')
+  assert.equal(v({ dirty: 0, ahead: 2 }).reason, 'its folder has uncommitted or unpushed work')
+  assert.equal(v('unread').reason, 'its folder has not been read yet')
+  assert.equal(doneVerdict(finished({ folder: { dirty: 3, ahead: 0 }, reply: 'Which port?' }), NOW).reason, 'the reply ends in a question', 'the reply speaks first')
+  // The sweep asks for the folder only for a pane past every cheap gate.
+  const transcript = join(work, 'folder.jsonl')
+  writeFileSync(transcript, JSON.stringify({ type: 'assistant', isSidechain: false, message: { role: 'assistant', content: [{ type: 'text', text: 'Done.\n\n## Next steps\n- None' }] } }))
+  const asked = []
+  const lines = []
+  let folder = { dirty: 1, ahead: 0 }
+  const deps = {
+    enabled: () => true,
+    readings: () => [{ id: 'f1', ...finished({ reply: undefined, runningAgents: undefined }) }, { id: 'f2', ...finished({ turnEndedAt: NOW - 10_000 }) }, { id: 'f3', ...finished({ focused: true }) }],
+    folderOf: (id) => { asked.push(id); return folder },
+    transcriptFor: () => transcript, resumeIdFor: () => 'native-f', history: () => [],
+    titleOf: () => ({ title: 'folder', cwd: '/Users/r/Projects/site', agent: 'claude' }), otherwiseBusy: () => null,
+    record: (input, native) => ({ ...input, ...native, provider: 'claude', reportPath: '/x', createdAt: 'now', attention: false }),
+    close: () => ({ closed: true }), noteClose: () => {}, writeNotice: () => {}, activity: () => {},
+    now: () => NOW, log: (l) => lines.push(l)
+  }
+  assert.deepEqual(main.sweepDoneClose(deps), [])
+  assert.deepEqual(asked, ['f1'], 'a pane mid-quiet or looked at never costs a folder read')
+  assert.equal(lines.find((l) => l.startsWith('f1')), 'f1 stays - its folder has uncommitted or unpushed work')
+  folder = { dirty: 0, ahead: 0 }
+  assert.deepEqual(main.sweepDoneClose(deps), ['f1'], 'committed and pushed: it goes')
+  const git = readFileSync(join(root, 'src/main/git.ts'), 'utf8')
+  assert.match(git, /export function gitCached\(/, 'the cached read exists')
+  const index = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
+  assert.match(index, /folderOf: \(id, since\) => \{[\s\S]{0,160}gitCached\(cwd, since\)/, 'index.ts feeds the sweep the cached read, never a spawn, no older than the turn')
+  const since = []
+  main.sweepDoneClose({ ...deps, folderOf: (id, t) => { since.push([id, t]); return folder } })
+  assert.deepEqual(since, [['f1', deps.readings()[0].turnEndedAt]], 'the sweep hands the folder read its turn end')
+  console.log('done-close: a folder with work left keeps its pane ok')
+}
+
 // 3. One id per finished turn.
 assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000')
 
@@ -114,20 +188,27 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
     close: (id, at) => { closes.push([id, at]); return closeAnswer },
     noteClose: (id, reason, at) => notes.push([id, reason, at]),
     writeNotice: (path, body) => written.push([path, JSON.parse(body)]),
+    notify: (id) => cards.push(id),
+    markRead: (id) => reads.push(id),
     activity: (what, why) => activity.push([what, why]),
     openerOf: (id) => (id === 'p1' ? 'boss' : undefined),
     finished: (opener, note) => told.push([opener, note]),
     now: () => NOW
   }
   const told = []
+  const cards = []
+  const reads = []
   closeAnswer = { closed: false, reason: 'session is busy or has a background job' }
   assert.deepEqual(main.sweepDoneClose(deps), [])
   main.sweepDoneClose(deps)
   assert.equal(records.length, 2, 'the record call is idempotent upstream, so it is made each tick')
-  assert.equal(written.length, 2, 'notices are written once per turn, not per tick')
+  assert.equal(written.length + cards.length, 0, 'a refused close sends nothing to GuardDeck: no to-do, no card (s93)')
   assert.equal(notes.filter((n) => n[1]).length, 2, 'each refused close is noted')
   closeAnswer = { closed: true }
   assert.deepEqual(main.sweepDoneClose(deps), ['p1'])
+  assert.equal(written.length, 2, 'the to-dos go once the pane has closed')
+  assert.deepEqual(cards, [doneReviewId('p1', readings[0].turnEndedAt)], 'steps left and nobody read it: one result card, after the close')
+  assert.deepEqual(reads, [], 'unread stays unread in Review')
   const rec = records[0]
   assert.equal(rec.id, doneReviewId('p1', readings[0].turnEndedAt))
   assert.equal(rec.kind, 'result')
@@ -136,7 +217,7 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
   assert.match(rec.report, /Fixed the login/)
   assert.equal(rec.noRemainingWork, false)
   assert.equal(rec.closeSession, true)
-  assert.equal(rec.notify, true, 'a chat that closes itself asks GuardDeck for a result card')
+  assert.equal(rec.notify, true, 'the row carries the card; `record` holds it (index.ts) until `notify` sends it')
   const [path, notice] = written[0]
   // `noticesDir()` joins with the platform separator, so on Windows this is
   // `...\guarddeck\notices\...`; normalize before matching against the posix-style pattern.
@@ -161,6 +242,102 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
   // Off means off, before any disk is touched.
   assert.deepEqual(main.sweepDoneClose({ ...deps, enabled: () => false, transcriptFor: () => { throw new Error('read') } }), [])
   console.log('done-close: sweep records, notices, closes ok')
+}
+
+// 4a. Read, then close (guarddeck chat s94's brief, 2026-09-28). Robert, 3:54am: "shouldn't
+// have shown me report ... that had no manual things that i needed to see ... i already
+// reviewed the session ... should've closed that session automatically after like 30secs
+// after i read it".
+{
+  // (c) A read pane closes READ_QUIET_MS after the look ended; an unread one waits as before.
+  assert.equal(READ_QUIET_MS, 30_000)
+  const ended = NOW - 60_000
+  const lookEnded = NOW - 40_000
+  const read = (at) => doneVerdict(finished({ turnEndedAt: ended, lastKeyboard: ended - 5_000, lookedAt: lookEnded }), lookEnded + at)
+  assert.equal(read(29_000).close, false, 'read: 29 s after looking away it stays')
+  assert.equal(read(29_000).reason, 'not quiet long enough')
+  assert.equal(read(31_000).close, true, 'read: 31 s after looking away it closes')
+  assert.equal(read(31_000).read, true, 'and the verdict says it was read')
+  const unread = (at) => doneVerdict(finished({ turnEndedAt: ended, lastKeyboard: ended - 5_000 }), lookEnded + at)
+  assert.equal(unread(31_000).close, false, 'unread: 31 s is nothing, the normal wait holds')
+  assert.equal(unread(AUTO_CLOSE_QUIET_MS - 20_000).close, true, 'unread: closes once three minutes since the turn ended')
+  assert.equal(doneVerdict(finished({ turnEndedAt: ended, lookedAt: ended - 1 }), lookEnded + 31_000).close, false, 'a look from before this turn ended is an earlier turn\'s')
+  assert.equal(wasRead({ turnEndedAt: ended, lookedAt: ended - 1 }), false)
+  assert.equal(wasRead({ turnEndedAt: ended, lookedAt: ended }), true, 'watching it finish is reading it')
+  const typed = doneVerdict(finished({ turnEndedAt: ended, lookedAt: lookEnded, lastKeyboard: lookEnded + 10_000 }), lookEnded + 31_000)
+  assert.equal(typed.close, false, 'typing after the look restarts the 30 s')
+  assert.equal(doneVerdict(finished({ turnEndedAt: ended, lookedAt: lookEnded, focused: true }), lookEnded + 31_000).reason, 'somebody is looking at it')
+  assert.equal(doneVerdict(finished({ turnEndedAt: ended, lookedAt: lookEnded, reply: 'Which port?' }), lookEnded + 31_000).reason, 'the reply ends in a question', 'read never excuses a question')
+  assert.equal(doneVerdict(finished({ turnEndedAt: NOW - 90_000, lookedAt: NOW - 85_000 }), NOW, doneQuietMs('tight')).close, true, 'whichever wait ends first: tight pressure')
+  // (a) The card: only something left for a person who has not read it.
+  assert.equal(finishedCard(0, false), false, 'no person steps: no card')
+  assert.equal(finishedCard(2, false), true, 'person steps, unread: card')
+  assert.equal(finishedCard(2, true), false, 'person steps, read: no card')
+
+  // The sweep end to end: three panes, each closing.
+  const transcript = (name, text) => {
+    const f = join(work, `${name}.jsonl`)
+    writeFileSync(f, JSON.stringify({ type: 'assistant', isSidechain: false, message: { role: 'assistant', content: [{ type: 'text', text }] } }))
+    return f
+  }
+  const files = {
+    none: transcript('none', "That icon is uBlock Origin Lite, the ad blocker. The number is how many requests it has blocked."),
+    steps: transcript('steps', 'Built it.\n\n## Next steps\n- Robert: approve the Vercel build'),
+    stepsRead: transcript('stepsRead', 'Built it.\n\n## Next steps\n- Robert: approve the Vercel build')
+  }
+  const at = NOW
+  const readings = [
+    { id: 'none', ...finished({ reply: undefined, runningAgents: undefined }) },
+    { id: 'steps', ...finished({ reply: undefined, runningAgents: undefined }) },
+    { id: 'stepsRead', ...finished({ reply: undefined, runningAgents: undefined, turnEndedAt: at - 60_000, lookedAt: at - 31_000 }) }
+  ]
+  const cards = []
+  const reads = []
+  const todos = []
+  const shut = []
+  const lines = []
+  const deps = {
+    enabled: () => true,
+    readings: () => readings,
+    transcriptFor: (id) => files[id], resumeIdFor: (id) => `native-${id}`, history: () => [],
+    titleOf: (id) => ({ title: id, cwd: '/Users/r/Projects/assistant', agent: 'claude' }), otherwiseBusy: () => null,
+    record: (input, native) => ({ ...input, ...native, provider: 'claude', reportPath: '/x', createdAt: 'now', attention: false }),
+    close: (id) => { shut.push(id); return { closed: true } }, noteClose: () => {},
+    writeNotice: (path) => todos.push(path), notify: (id) => cards.push(id), markRead: (id) => reads.push(id),
+    activity: () => {}, now: () => at, log: (l) => lines.push(l)
+  }
+  // `dry` (pf tidy --dry-run): the same answer, nothing touched.
+  const recordsBefore = []
+  const dry = main.sweepDoneClose({ ...deps, dry: true, record: (i) => { recordsBefore.push(i); throw new Error('dry run wrote a row') } })
+  assert.deepEqual(dry, ['none', 'steps', 'stepsRead'], 'dry: what would close')
+  assert.equal(shut.length + cards.length + reads.length + todos.length + lines.length + recordsBefore.length, 0, 'dry: no row, no close, no notice, no log line')
+  // `quietMs: 0` is pf tidy's real run: the same refusals, no wait.
+  assert.deepEqual(main.sweepDoneClose({ ...deps, dry: true, readings: () => [{ id: 'none', ...finished({ turnEndedAt: at - 20_000 }) }] }), [], 'not quiet: stays')
+  assert.deepEqual(main.sweepDoneClose({ ...deps, dry: true, quietMs: () => 0, readings: () => [{ id: 'none', ...finished({ turnEndedAt: at - 20_000 }) }] }), ['none'], 'tidy asks without the quiet wait')
+  assert.deepEqual(main.sweepDoneClose({ ...deps, dry: true, quietMs: () => 0, readings: () => [{ id: 'none', ...finished({ turnEndedAt: at - 20_000, reply: 'Which port?' }) }], transcriptFor: () => transcript('q', 'Which port?') }), [], 'and keeps every refusal')
+  assert.deepEqual(main.sweepDoneClose(deps), ['none', 'steps', 'stepsRead'])
+  assert.deepEqual(cards, [doneReviewId('steps', readings[1].turnEndedAt)], 'one card: the unread pane with a step left for the person')
+  assert.deepEqual(reads, [doneReviewId('stepsRead', readings[2].turnEndedAt)], 'the read pane is written as read')
+  assert.equal(todos.length, 2, 'both panes with a person step still send their to-do')
+  assert.ok(lines.some((l) => l === `stepsRead finished and closed itself into Review (${doneReviewId('stepsRead', readings[2].turnEndedAt)}), read`))
+
+  // (d) What held s93-muk43els at 17:52:44Z on 27 Sep (done-close.log 258): `handoffOpen` -
+  // /Users/robertiuoras/Projects/assistant's session-handoff.md, another chat's, five steps
+  // open, written 16:06:40Z; the pane's prompt was 17:48. Now named, and ignored as stale.
+  assert.deepEqual(closeHeldBy({ handoffOpen: 5 }), ['a handoff with open steps'])
+  assert.deepEqual(closeHeldBy({ drafting: true, owedPrompt: 'queued', handoverUntil: NOW + 1 }, NOW), ['a draft', 'a queued prompt', 'a prompt being handed over'])
+  assert.deepEqual(closeHeldBy({ handoverUntil: NOW - 1 }, NOW), [], 'a hand-over that has ended holds nothing')
+  const s93Hand = { path: '/Users/robertiuoras/.claude/projects/-Users-robertiuoras-Projects-assistant/memory/session-handoff.md', open: 5, mtimeMs: Date.parse('2026-09-27T16:06:40Z') }
+  assert.equal(handoffOpenAfter(s93Hand, Date.parse('2026-09-27T17:48:01Z')), undefined, 's93: a handoff older than the prompt holds nothing')
+  assert.deepEqual(closeHeldBy({ handoffOpen: handoffOpenAfter(s93Hand, Date.parse('2026-09-27T17:48:01Z')) }), [], 's93 closes')
+  const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
+  assert.match(sessions, /const held = closeHeldBy\(m\)\r?\n\s+if \(held\.length\) return \{ closed: false, reason: `session has \$\{held\.join\(', '\)\}` \}/, 'closeAfterResult names the flags')
+  assert.match(sessions, /personLooking\(true, this\.windowFocused\(\), this\.deskWatched\(\)\)\) seen\.lookedAt = now/, 'the sweep stamps who is looking')
+  assert.match(sessions, /lookedAt: live\.lookedAt \|\| undefined/, 'and the reading carries it')
+  const index = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
+  assert.match(index, /record: \(input, native\) => recordReview\(input, native, true\)/, 'the sweep writes its row without the card')
+  assert.match(index, /const card = cardAfterClose\(session\.id\)\r?\n\s+close = manager\.closeAfterResult/, 'autoclose rows: the card waits for the close')
+  console.log('done-close: read then close, card only when something is left ok')
 }
 
 // 4b. "Somebody is looking at it" needs a person, not just a selected pane. PC 2026-09-24:
@@ -257,6 +434,54 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
   const ctl = readFileSync(join(root, 'scripts/pf-ctl.mjs'), 'utf8')
   assert.doesNotMatch(ctl, /reportTo: closeWhenDone \? reportTo/, 'pf open always says who opened the pane')
   console.log('done-close: one summary back to the opener ok')
+}
+
+// 5b. ...and only until then. done-close.log from 08:00Z 27 Sep: a Set kept for the pane's
+// whole life held 8 finished openers for good (s26, s68, s63, s59, s73, s58, s44, s72) -
+// 27 lines, more than any other reason. Now it holds while a pane it opened is open or
+// their summary is waiting, and the summary's own delivery holds it (`owedPrompt`).
+{
+  const d = new digest.FinishedDigest()
+  assert.equal(d.has('boss'), false)
+  d.add('boss', { id: 'a', title: 't', project: 'p', summary: 's', personSteps: [] }, NOW)
+  assert.equal(d.has('boss'), true, 'a summary waiting holds the opener')
+  d.flush(() => 0, () => true, NOW)
+  assert.equal(d.has('boss'), false, 'told: it holds no longer')
+  assert.equal(doneVerdict(finished({ owedPrompt: true }), NOW).reason, 'a prompt is on its way to it', 'the summary on its way holds it')
+  assert.equal(doneVerdict(finished({ openedOthers: false, owedPrompt: false }), NOW).close, true, 'after that it closes like any finished pane')
+  const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
+  assert.doesNotMatch(sessions, /private openers = new Set/, 'no life-long set of openers')
+  assert.match(sessions, /openedOthers: this\.openChildrenOf\(m\.id\) > 0 \|\| this\.digestPending\(m\.id\)/, 'open children or a waiting summary')
+  assert.match(sessions, /owedPrompt: Boolean\(m\.owedPrompt\) \|\| \(m\.handoverUntil \?\? 0\) > Date\.now\(\)/, 'a prompt being delivered is in the reading')
+  const index = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
+  assert.match(index, /manager\.digestPending = \(id\) => finishedDigest\.has\(id\)/, 'index.ts says when a summary is waiting')
+  // The real opener: s44-mujgi828 on 27 Sep (`desk-2026-09-28-sessions.json`), finished,
+  // every pane it opened long closed and told. Its reading no longer names the opener rule.
+  const fixture = JSON.parse(readFileSync(join(root, 'scripts/fixtures/desk-2026-09-28-sessions.json'), 'utf8'))
+  const s44 = fixture.sessions.find((x) => x.id.startsWith('s44-'))
+  const at = s44.lastOutput + 10 * 60_000
+  const reading = { agent: s44.agent, printed: s44.printed, status: s44.status, lastKeyboard: s44.lastKeyboard, turnEndedAt: s44.lastOutput, openedOthers: false, reply: 'Done.\n\nNext steps: None', runningAgents: 0 }
+  assert.equal(doneVerdict(reading, at).close, true, 's44 as it stood, with no pane of its own open, closes')
+  console.log('done-close: an opener holds only until its summary lands ok')
+}
+
+{
+  // 5c. s77-mujwno51 on 27 Sep (`desk-2026-09-28-sessions.json`): finished, `backJob:
+  // bg-wait.mjs`, its shell waiting on a CI run under `--label release-check-4dd8e6bd`.
+  // `backWaitOnly` is `isWaitScript` over that shell's line (`main/usage.ts`), so the real
+  // line goes through the real reader here.
+  const { isWaitScript } = await bundle('src/shared/paneBackJobs.ts', 'backjobs.cjs')
+  const fixture = JSON.parse(readFileSync(join(root, 'scripts/fixtures/desk-2026-09-28-sessions.json'), 'utf8'))
+  const s77 = fixture.sessions.find((x) => x.id.startsWith('s77-'))
+  assert.equal(s77.backJob, 'bg-wait.mjs')
+  assert.equal(s77.finished, true)
+  const script = String.raw`node ~/Projects/claude-memory/claude-config/bg-wait.mjs --probe 'gh run view 36332652272 --repo robertiuoras/taskdriver.ai --json status,conclusion,jobs -q "\"\(.status) \(.conclusion) \([.jobs[].steps[]? | select(.status==\"in_progress\") | .name] | join(\",\"))\""' --done '^completed success' --fail '^completed (failure|cancelled|timed_out|action_required|startup_failure)' --stale 3000 --deadline 5400 --every 30 --label release-check-4dd8e6bd`
+  const shell = `/bin/zsh -c source /Users/r/.claude/shell-snapshots/snapshot-zsh-1.sh 2>/dev/null || true && eval '${script.replace(/'/g, `'"'"'`)}' < /dev/null && pwd -P >| /tmp/claude-4419-cwd`
+  const at = s77.lastOutput + 10 * 60_000
+  const reading = { agent: s77.agent, printed: s77.printed, status: s77.status, lastKeyboard: s77.lastKeyboard, turnEndedAt: s77.lastOutput, backJob: s77.backJob, backWaitOnly: isWaitScript(shell), reply: 'Merged.\n\nNext steps: None', runningAgents: 0 }
+  assert.equal(doneVerdict(reading, at).close, true, 's77 waiting on CI through bg-wait closes')
+  assert.match(doneVerdict({ ...reading, backWaitOnly: false }, at).reason, /busy/, 'the same pane running real work stays')
+  console.log('done-close: a pane only waiting through bg-wait closes (s77) ok')
 }
 
 {

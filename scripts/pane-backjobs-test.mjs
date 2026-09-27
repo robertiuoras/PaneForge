@@ -314,6 +314,26 @@ rmSync(work, { recursive: true, force: true })
   ok(!isWaitScript(cc(`for i in 1 2 3; do npm test && break; ${S} 5; done`)), 'a retry loop around tests is work')
   ok(!isWaitScript(cc('npm run dev')), 'a dev server is work')
   ok(!isWaitScript(undefined), 'no command line, no claim')
+
+  // bg-wait.mjs, the waiter every chat is told to use. Real lines, quoted the way a live
+  // Claude Code shell carries them (27-28 Sep: prelude, then `eval '...'` with each inner
+  // quote as '"'"').
+  const live = (script) =>
+    `/bin/zsh -c source /Users/r/.claude/shell-snapshots/snapshot-zsh-1790530045115-1t1v06.sh 2>/dev/null || true && setopt NO_EXTENDED_GLOB NO_BARE_GLOB_QUAL 2>/dev/null || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval '${script.replace(/'/g, `'"'"'`)}' < /dev/null && pwd -P >| /tmp/claude-4419-cwd`
+  const BG = 'node ~/Projects/claude-memory/claude-config/bg-wait.mjs'
+  // s77-mujwno51, 27 Sep 16:23Z: finished, held on the desk by this. `release` is its label.
+  const s77 = String.raw`${BG} --probe 'gh run view 36332652272 --repo robertiuoras/taskdriver.ai --json status,conclusion,jobs -q "\"\(.status) \(.conclusion) \([.jobs[].steps[]? | select(.status==\"in_progress\") | .name] | join(\",\"))\""' --done '^completed success' --fail '^completed (failure|cancelled|timed_out|action_required|startup_failure)' --stale 3000 --deadline 5400 --every 30 --label release-check-4dd8e6bd`
+  ok(isWaitScript(live(s77)), 's77: a bg-wait on a CI run is a wait, whatever its label says')
+  ok(isWaitScript(live(s77.replace('--label release-check-4dd8e6bd', "--label 'release check'"))), 'a quoted label is only a label')
+  // s58's until-loop on three rbuild logs (session 21b47890 scratchpad, s58-cmd.txt).
+  const s58 = `cd /private/tmp/claude-501/-Users-robertiuoras-Projects-taskdriver-ai/982198f3-4bc3-4356-b04b-39ae556eacea/tasks && until [ -n "$(grep -l -E 'rbuild: (exit|done|finished|failed|job .* (ended|exited))|exit code' bmk62yac9.output beqv2lyzs.output br82uve6w.output 2>/dev/null | wc -l | grep -v '^ *[0-2]$')" ]; do ${S} 5; done; tail -3 bmk62yac9.output beqv2lyzs.output br82uve6w.output`
+  ok(isWaitScript(live(s58)), 's58: an until-loop over rbuild logs is a wait')
+  // Live 28 Sep: a probe that is itself a shell loop, and a wait that pushes once CI is green.
+  ok(isWaitScript(live(`${BG} --probe 'n=0; for id in a b c; do [ -s ~/.cache/v/$id/digest.md ] && n=$((n+1)); done; echo "digests=$n"' --done 'digests=3' --stale 900 --deadline 1500 --every 10 --label klaassen`)), 'a probe that loops is still only a probe')
+  ok(!isWaitScript(live(`${BG} --label release-check --probe "gh run list --workflow release-check.yml --limit 1 --json status,conclusion -q '.[0] | \\"\\(.status) \\(.conclusion)\\"'" --done '^completed success' --every 30 && { git fetch -q origin; git merge-base --is-ancestor origin/main main || git rebase origin/main; git push origin main 2>&1 | tail -6; }`)), 'a wait that pushes once CI is green is work')
+  const T = ['npm', 'test'].join(' ')
+  ok(!isWaitScript(live(`${BG} --probe '${T} 2>&1 | tail -1' --done 'passed' --label tests`)), 'a probe that runs the tests is work')
+  ok(!isWaitScript(live(`npm run build && ${BG} --probe 'ls dist' --done 'app'`)), 'a build before the wait is work')
   const rows = [
     { pid: 10, ppid: 1, cmd: 'claude', elapsed: 900 },
     { pid: 11, ppid: 10, cmd: cc(`${S} 600`), elapsed: 300 },

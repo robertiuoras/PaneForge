@@ -730,7 +730,7 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                   hint="A small card in the bottom-right corner, about once every forty minutes, naming one thing that is genuinely hard to find - deleting a highlighted prompt, driving this desk from a phone, handing a pane to another machine mid-turn. It costs nothing: every line is a fixed sentence, there is no model and no request. It stays quiet while a dialog is open, while an update card is up and while any pane is holding a question, and every few tips it carries its own off switch."
                 />
                 <Switch
-                  checked={(config.reclaim?.idleSleepMinutes ?? IDLE_SLEEP_MINUTES) > 0}
+                  checked={(config.reclaim?.idleSleepMinutes ?? 0) > 0}
                   onChange={(v) =>
                     onChange({
                       reclaim: {
@@ -742,7 +742,7 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                     })
                   }
                   label="Put quiet panes to sleep when this machine is low on memory"
-                  hint="Only when memory is short. A quiet pane has its agent stopped and keeps its card, its screen and its conversation - a press wakes it. With room to spare nothing sleeps: a quiet pane closes into Review instead (the switch below). Never the pane you are in, one that is working or running something, or one holding a question."
+                  hint="Off: a finished pane closes into Review instead, and one that is not finished stays awake. Turn on to rest quiet panes when memory is short - a resting pane has its agent stopped and keeps its card, its screen and its conversation, and a press wakes it. Never the pane you are in, one that is working or running something, or one holding a question."
                 />
                 <Switch
                   checked={(config.reclaim?.idleCloseMinutes ?? 0) > 0}

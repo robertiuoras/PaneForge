@@ -71,7 +71,7 @@ working/starting/stalled/mirror. `.cap-pop` on verdict CHANGE, `CAPACITY_NOTE_MS
 `shared/cloudWork.ts` (`N cloud sessions still
 running`/`N shells still running`, `CLOUD_HOLD_MS` 45 min, `test:cloudwork`). `quietSince` =
 keystroke/byte/KEYBOARD LEAVING. `shared/away.ts` `AWAY_AFTER_MS` 60s
-(`getSystemIdleTime()`, `main/away.ts` 15s, `sawPerson`); `unread` holds CLOCK only. `idleSleepPlan` runs ONLY under a memory verdict (`pressure` tight/over; `ok` = nothing sleeps, 2026-09-25) and stops agent/keeps card, `asleep 3m`; quiet panes with room close into Review (`sessions:closeIntoReview`). Keep = restart the pane's close clock (`keptUntil` = one close window), no `kept` chip, no bulk Keep-open button (right-click pin stays).
+(`getSystemIdleTime()`, `main/away.ts` 15s, `sawPerson`); `unread` holds CLOCK only. Sleep is OFF by default (2026-09-28: `idleSleepMinutes` 0, `migrateReclaimV5` once per desk; Settings switch turns it back on at `IDLE_SLEEP_MINUTES`): a finished pane closes into Review instead, sooner under pressure (`doneQuietMs` 3m/1m tight/30s over, `docs/agents/pane-lifecycle.md`); `pf tidy` closes them now (`sessions:closeDone`). When on, `idleSleepPlan` runs ONLY under a memory verdict (`pressure` tight/over; `ok` = nothing sleeps, 2026-09-25) and stops agent/keeps card, `asleep 3m`; quiet panes with room close into Review (`sessions:closeIntoReview`). Keep = restart the pane's close clock (`keptUntil` = one close window), no `kept` chip, no bulk Keep-open button (right-click pin stays).
 `reclaim.log` source/reason/quiet-vs-threshold/request/refusal/completion/wake;
 pid/version/seq; shutdown 250ms; `node scripts/sleep-cause-live.mjs`. Person-woken keeps
 clock `WAKE_GRACE_MS` 5 min (`wokeAt`).

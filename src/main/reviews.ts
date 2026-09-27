@@ -410,9 +410,15 @@ function sessionFacts(
   }
   return out;
 }
+/**
+ * `hold`: write the row but not its GuardDeck card - a finished chat's card goes out only
+ * once its pane has really closed, through `sendReviewNotice` (s93, 27 Sep: a card for a
+ * pane whose close was then refused).
+ */
 export function recordReview(
   input: ReviewInput,
   native: Pick<ReviewRecord, "title" | "provider" | "cwd" | "nativeSessionId">,
+  hold = false,
 ): ReviewRecord {
   if (
     !validId(input.id) ||
@@ -472,13 +478,18 @@ export function recordReview(
     if ((prior.payloadHash ?? digest(prior)) !== digest(base))
       throw new Error("Conflicting duplicate review ID");
     atomic(prior.reportPath, page(prior));
-    return spoolNotice(prior);
+    return hold ? prior : spoolNotice(prior);
   }
   Object.assign(base, sessionFacts(input.sessionId, base));
   atomic(base.reportPath, page(base));
   base.payloadHash = digest(base);
   atomic(jsonPath(base.id), JSON.stringify(base, null, 2));
-  return spoolNotice(base);
+  return hold ? base : spoolNotice(base);
+}
+/** The GuardDeck card of a row recorded with `hold`, under the row's own `notify` and gate. */
+export function sendReviewNotice(id: string): void {
+  const r = validId(id) ? read(id) : null;
+  if (r) spoolNotice(r);
 }
 export function listReviews(history: HistoryEntry[] = []): ReviewRecord[] {
   const saved = existsSync(root())

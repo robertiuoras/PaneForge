@@ -364,6 +364,18 @@ export function paneBackJobs(
 const REAL_WORK = /\b(npm (run|test|ci|install)|npx|pnpm|yarn|tsc|electron-builder|git (push|commit|merge(?!-)|rebase)|lane\.mjs (ready|ship)|release|deploy|build)\b/i
 
 /**
+ * `claude-config/bg-wait.mjs`, the waiter every chat is told to use (it re-runs one probe
+ * and ends on a named outcome), and the words it only MATCHES or PRINTS: `--label`,
+ * `--done`, `--fail` take a value in any of the quotings a Claude Code shell line carries
+ * (`'"'"'...'"'"'` inside its `eval '...'`, `"..."`, `'...'`, bare). Measured 27 Sep: s77
+ * sat on the desk finished behind `--label release-check-4dd8e6bd`, whose `release` read
+ * as work. The probe and anything chained before or after it (a `git push` once CI is
+ * green) are still judged.
+ */
+const BG_WAIT = /\bbg-wait\.mjs\b/
+const BG_WAIT_WORDS = /\s--(?:label|done|fail)\s+(?:'"'"'[\s\S]*?'"'"'|'\\''[\s\S]*?'\\''|"(?:\\.|[^"\\])*"|'[^']*'|\S+)/g
+
+/**
  * Whether a background shell is only WAITING on something else - a CI run, a merge, a
  * job queued on the other machine - rather than doing work itself.
  *
@@ -381,11 +393,14 @@ const REAL_WORK = /\b(npm (run|test|ci|install)|npx|pnpm|yarn|tsc|electron-build
  */
 export function isWaitScript(cmd: string | undefined): boolean {
   if (!cmd) return false
-  const script = cmd.includes(' eval ') ? cmd.slice(cmd.indexOf(' eval ') + 6) : cmd
+  const evaled = cmd.includes(' eval ') ? cmd.slice(cmd.indexOf(' eval ') + 6) : cmd
+  const bgWait = BG_WAIT.test(evaled)
+  const script = bgWait ? evaled.replace(BG_WAIT_WORDS, ' ') : evaled
   if (REAL_WORK.test(script)) {
     // A queued-job poll names the build it is waiting for; `--status` is only asking.
     if (!/rbuild\.mjs[^|;&]*--status/.test(script) || /\bnpm (run|test)\b/.test(script)) return false
   }
+  if (bgWait) return true
   if (/\b(until|while|for)\b[\s\S]*\bsleep\s+\d/.test(script)) return true
   // A script that opens with a pause is a wait with a check after it.
   if (/^\W*sleep\s+\d+/.test(script.trim())) return true

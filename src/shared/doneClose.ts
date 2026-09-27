@@ -32,11 +32,18 @@ export interface DoneReading extends DonePane {
   /** Subagents launched in the background and not yet reported back. */
   runningAgents?: number
   /**
-   * This pane opened other panes (`pf open` from inside it). It is where their one
-   * summary lands (`shared/finishedDigest.ts`), so it stays open - Robert, 2026-09-23:
-   * "get summary in 1 session and leave it open".
+   * A pane this one opened (`pf open` from inside it) is still open, or their one summary
+   * (`shared/finishedDigest.ts`) has not been handed to it yet. It is where that summary
+   * lands, so it stays open until then - Robert, 2026-09-23: "get summary in 1 session and
+   * leave it open". Only until then: kept for life, it held 8 finished panes on 27 Sep.
    */
   openedOthers?: boolean
+  /**
+   * This app is still delivering a prompt to it (`Session.owedPrompt`, or an autoclear
+   * hand-over): the opener's summary between the digest's flush and its landing, a
+   * `pf tell`, a restore. The reply read now is the one BEFORE that prompt.
+   */
+  owedPrompt?: boolean
   /**
    * Everything it left running in the background is only WAITING on something elsewhere
    * - a CI run, a merge, a queued job (`shared/paneBackJobs.ts` `isWaitScript`). That
@@ -44,6 +51,73 @@ export interface DoneReading extends DonePane {
    * finished pane open (Robert, 2026-09-24: "they should just get closed").
    */
   backWaitOnly?: boolean
+  /**
+   * Its folder's git state, from the badge's cached read (`main/git.ts` `gitCached`):
+   * changed files and commits not pushed. `null` = not a repo; `'unread'` = no fresh read
+   * yet (one has been started); unset = not asked, which checks nothing.
+   *
+   * Robert's brief, 2026-09-28: finished is "no open ask, clean tree/pushed, no live
+   * background job". Work left uncommitted or unpushed is work a closed card would hide.
+   */
+  folder?: { dirty: number; ahead: number } | null | 'unread'
+  /**
+   * The last moment a person was looking at this pane (`personLooking`) since its turn
+   * ended; unset when nobody has since. A value older than `turnEndedAt` is an earlier
+   * turn's and counts as unset, so a new turn resets it without anybody clearing it.
+   */
+  lookedAt?: number
+}
+
+/**
+ * How long a pane somebody has READ waits after they look away. Robert, 2026-09-28 (s93, a
+ * one-line answer he read and left): "should've closed that session automatically after
+ * like 30secs after i read it".
+ */
+export const READ_QUIET_MS = 30_000
+
+/** Has somebody looked at this turn's reply since it ended? */
+export function wasRead(p: Pick<DoneReading, 'lookedAt' | 'turnEndedAt'>): boolean {
+  return Boolean(p.turnEndedAt && p.lookedAt && p.lookedAt >= p.turnEndedAt)
+}
+
+/**
+ * Does a finished chat that closed get a GuardDeck card? Only when something is left for
+ * the person and they have not already read it. Robert, 2026-09-28: "shouldn't have shown
+ * me report ... that had no manual things that i needed to see ... i already reviewed the
+ * session". Its person-only steps still go out as their own to-dos either way.
+ */
+export function finishedCard(personSteps: number, read: boolean): boolean {
+  return personSteps > 0 && !read
+}
+
+/** What `closeAfterResult` (`main/sessions.ts`) checks beyond busy, as `Session` has it. */
+export interface CloseHolds {
+  drafting?: unknown
+  ask?: unknown
+  owedPrompt?: unknown
+  handingOff?: unknown
+  handoffQueuedAt?: unknown
+  handoffOpen?: number
+  handoverUntil?: number
+}
+
+/**
+ * Each flag that holds a finished pane open, in words - empty when none does. It was one
+ * sentence for all seven, so done-close.log could not say which held s93 on 27 Sep (it was
+ * `handoffOpen`: another chat's handoff in the same folder, five steps open, written 1h40m
+ * before the pane's prompt - `handoffOpenAfter` now ignores that). claude-config's
+ * autoclose.mjs reads these words: `handoff with open steps`.
+ */
+export function closeHeldBy(m: CloseHolds, now = Date.now()): string[] {
+  const out: string[] = []
+  if (m.drafting) out.push('a draft')
+  if (m.ask) out.push('a question')
+  if (m.owedPrompt) out.push('a queued prompt')
+  if (m.handingOff) out.push('a handoff under way')
+  if (m.handoffQueuedAt) out.push('a queued handoff')
+  if (m.handoffOpen) out.push('a handoff with open steps')
+  if ((m.handoverUntil ?? 0) > now) out.push('a prompt being handed over')
+  return out
 }
 
 /**
@@ -52,6 +126,17 @@ export interface DoneReading extends DonePane {
  * one press from being a pane again.
  */
 export const AUTO_CLOSE_QUIET_MS = 3 * 60_000
+
+/**
+ * The same wait on a machine MEASURED short of memory (`sleepPressureOf` over the capacity
+ * verdict): one minute when tight, thirty seconds when over - the clocks the pressure
+ * sleep used, which this close replaced (Robert, 2026-09-28: "id rather they close than
+ * sleep"). A finished pane's ~190 MB is exactly what a short machine lacks, and it is one
+ * press from Review either way.
+ */
+export function doneQuietMs(pressure: 'ok' | 'tight' | 'over'): number {
+  return pressure === 'over' ? 30_000 : pressure === 'tight' ? 60_000 : AUTO_CLOSE_QUIET_MS
+}
 
 /**
  * Is a person looking at this pane? The window's selected pane alone is not that: there
@@ -65,23 +150,29 @@ export function personLooking(selected: boolean, windowFocused: boolean, deskWat
 }
 
 export type DoneVerdict =
-  | { close: true; personSteps: string[] }
+  | { close: true; personSteps: string[]; read: boolean }
   | { close: false; reason: string }
 
-/** May this pane close itself into Review now? */
-export function doneVerdict(reading: DoneReading, now = Date.now()): DoneVerdict {
+/** May this pane close itself into Review now? `quietMs` is the wait, `doneQuietMs`. */
+export function doneVerdict(reading: DoneReading, now = Date.now(), quietMs = AUTO_CLOSE_QUIET_MS): DoneVerdict {
   const p = reading.backWaitOnly ? { ...reading, backJob: undefined } : reading
   if (p.agent === 'shell') return { close: false, reason: 'shell pane' }
   if (!p.turnEndedAt) return { close: false, reason: 'no finished turn' }
   if (p.focused) return { close: false, reason: 'somebody is looking at it' }
   if (p.openedOthers) return { close: false, reason: 'it opened other panes and collects their summary' }
+  if (p.owedPrompt) return { close: false, reason: 'a prompt is on its way to it' }
   const quiet = now - Math.max(p.turnEndedAt, p.lastKeyboard)
-  if (quiet < AUTO_CLOSE_QUIET_MS) return { close: false, reason: 'not quiet long enough' }
+  // A read pane waits READ_QUIET_MS from when they looked away; whichever wait ends first.
+  const read = wasRead(p)
+  const readQuiet = read ? now - Math.max(p.lookedAt ?? 0, p.lastKeyboard) >= READ_QUIET_MS : false
+  if (quiet < quietMs && !readQuiet) return { close: false, reason: 'not quiet long enough' }
   if (!doneEnough(p, quiet, now)) return { close: false, reason: 'busy, asking, drafting or running something' }
   if (p.reply === undefined) return { close: false, reason: 'reply not read' }
   const left = replyLeaves(p.reply, p.runningAgents)
   if (left) return { close: false, reason: left }
-  return { close: true, personSteps: personOwnedSteps(p.reply) }
+  if (p.folder === 'unread') return { close: false, reason: 'its folder has not been read yet' }
+  if (p.folder && (p.folder.dirty > 0 || p.folder.ahead > 0)) return { close: false, reason: 'its folder has uncommitted or unpushed work' }
+  return { close: true, personSteps: personOwnedSteps(p.reply), read }
 }
 
 /**
