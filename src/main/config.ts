@@ -194,6 +194,7 @@ function defaults(): Config {
     hiddenBlurbs: [],
     discordPresence: true,
     discordStyle: migrateRows(DEFAULT_DISCORD_STYLE),
+    discordSettingsAt: 0,
     grid: false,
     gridSizes: {},
     gridLayout: 'tiled',

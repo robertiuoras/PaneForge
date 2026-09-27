@@ -165,7 +165,25 @@ export function countPresence(sessions: PresenceSession[], appStart: number): Pr
 }
 
 /** A desk's own numbers, as it tells the machines linked to it. */
-export type DeskCounts = Pick<PresenceCounts, 'running' | 'total' | 'asleep' | 'names' | 'oldestRunSince'>
+export type DeskCounts = Pick<
+  PresenceCounts,
+  'running' | 'total' | 'asleep' | 'names' | 'oldestRunSince' | 'tokensToday' | 'tokensWeek'
+>
+
+/**
+ * The Discord switch and the card's look, stamped with when a person last changed them.
+ *
+ * They travel with the desk report because the machine that speaks is often not the one
+ * somebody is sitting at: a switch flipped on the Mac has to reach the card the PC is
+ * sending. Every machine takes the newest it hears of, so a change made anywhere is the
+ * setting everywhere.
+ */
+export interface DiscordSettings {
+  on: boolean
+  style: DiscordStyle
+  /** epoch ms a person last changed them; 0 = never, which every change beats */
+  at: number
+}
 
 /**
  * What one machine tells every machine linked to it about itself: its OWN panes only, and
@@ -176,6 +194,8 @@ export interface DeskReport {
   counts: DeskCounts
   /** PaneForge there is connected to a running Discord */
   discord: boolean
+  /** its Discord settings; absent from a build older than settings that travel */
+  settings?: DiscordSettings
 }
 
 /** This machine, as the presence sees it. */
@@ -184,9 +204,8 @@ export interface DeskSelf {
   id: string
   /** PaneForge here is connected to a running Discord */
   discord: boolean
-  /** the panes this machine runs itself - never the ones it mirrors from another */
-  local: PresenceSession[]
-  appStart: number
+  /** this machine's own panes, counted - never the ones it mirrors from another */
+  own: PresenceCounts
 }
 
 /** Another machine linked to this one, either way round. */
@@ -212,16 +231,37 @@ export function readDeskReport(raw: unknown): DeskReport | undefined {
   const running = n(c.running)
   const total = n(c.total)
   if (running === undefined || total === undefined) return undefined
+  const s = (r as { settings?: Record<string, unknown> }).settings
+  const style = readStyle(s?.style)
   return {
     counts: {
       running: Math.min(running, total),
       total,
       asleep: Math.min(n(c.asleep) ?? 0, total),
       names: Array.isArray(c.names) ? c.names.filter((x): x is string => typeof x === 'string').slice(0, 50) : [],
-      oldestRunSince: n(c.oldestRunSince) || undefined
+      oldestRunSince: n(c.oldestRunSince) || undefined,
+      tokensToday: n(c.tokensToday),
+      tokensWeek: n(c.tokensWeek)
     },
-    discord: r?.discord === true
+    discord: r?.discord === true,
+    ...(style && typeof s?.on === 'boolean' && n(s?.at) !== undefined
+      ? { settings: { on: s.on, style, at: n(s.at) as number } }
+      : {})
   }
+}
+
+/**
+ * Settings a linked machine has that a person changed more recently than the ones here,
+ * or nothing. Newest wins and a tie keeps what is here, so two machines settle on one
+ * answer and stay there.
+ */
+export function newerSettings(own: DiscordSettings, links: DeskLink[]): DiscordSettings | undefined {
+  let best: DiscordSettings | undefined
+  for (const l of links) {
+    const theirs = l.report?.settings
+    if (theirs && theirs.at > (best ?? own).at) best = theirs
+  }
+  return best
 }
 
 /**
@@ -243,7 +283,7 @@ export function readDeskReport(raw: unknown): DeskReport | undefined {
  * machine it is open on.
  */
 export function wholeDesk(self: DeskSelf, links: DeskLink[]): PresenceCounts {
-  const counts = countPresence(self.local, self.appStart)
+  const counts: PresenceCounts = { ...self.own, names: [...self.own.names] }
   const heard = new Map<string, DeskLink>()
   for (const l of links) {
     if (!l.id || l.id === self.id) continue
@@ -262,6 +302,9 @@ export function wholeDesk(self: DeskSelf, links: DeskLink[]): PresenceCounts {
       for (const name of theirs.names) if (!counts.names.includes(name)) counts.names.push(name)
       if (theirs.oldestRunSince)
         counts.oldestRunSince = Math.min(counts.oldestRunSince ?? theirs.oldestRunSince, theirs.oldestRunSince)
+      // Tokens are spent on the machine the agent runs on, so the day's total is a sum too.
+      if (theirs.tokensToday !== undefined) counts.tokensToday = (counts.tokensToday ?? 0) + theirs.tokensToday
+      if (theirs.tokensWeek !== undefined) counts.tokensWeek = (counts.tokensWeek ?? 0) + theirs.tokensWeek
     }
     if (l.report?.discord) speakers.push({ id: l.id, name: l.name })
   }
@@ -371,6 +414,16 @@ export interface DiscordButton {
  * existed has them and nothing else; `migrateRows` is the only thing that reads them.
  */
 export interface DiscordStyle {
+  /**
+   * The ready-made look the lines are built from, or `custom` for lines written by hand
+   * under Advanced. Anything but `custom` REBUILDS `rows` (`presetRows`), so the look
+   * and the two switches below are the whole of what a person picks.
+   */
+  preset: DiscordPresetId
+  /** say how many chats are waiting, not just how many are working */
+  idle: boolean
+  /** say how many tokens every agent spent today */
+  tokens: boolean
   /** the whole card's wording, in the order the user put it */
   rows: DiscordRow[]
   /** show Discord's elapsed clock under the lines */
@@ -401,19 +454,85 @@ export const DEFAULT_IDLE_DETAILS = '{total} {sessions} idle'
 export const DEFAULT_LINK_LABEL = 'toolstash.xyz/paneforge'
 export const DEFAULT_LINK_URL = 'https://toolstash.xyz/paneforge'
 
+/**
+ * The lines every card had before the ready-made looks: "3/6 sessions running", the
+ * project folders under it, "6 sessions idle" while nothing runs. Still the starting
+ * point a hand-written card is migrated from, and how an untouched old config is told
+ * apart from one somebody wrote.
+ */
 export const DEFAULT_ROWS: DiscordRow[] = [
   { id: 'running', text: DEFAULT_DETAILS, when: 'running', on: true },
   { id: 'projects', text: DEFAULT_STATE, when: 'running', on: true },
   { id: 'idle', text: DEFAULT_IDLE_DETAILS, when: 'idle', on: true }
 ]
 
+export type DiscordPresetId = 'counts' | 'fraction' | 'projects' | 'custom'
+
+/**
+ * The looks a person picks from, in the order the settings tab offers them. Counts only
+ * unless the look says otherwise: a Discord profile is public, so the folder names are a
+ * look somebody chooses, never the default (Robert, 2026-09-27).
+ */
+export const DISCORD_PRESETS: ReadonlyArray<{
+  id: Exclude<DiscordPresetId, 'custom'>
+  label: string
+  hint: string
+}> = [
+  { id: 'counts', label: 'Working and waiting', hint: 'How many chats are working, and how many are waiting.' },
+  { id: 'fraction', label: 'Out of all', hint: 'How many chats are working, out of every chat you have open.' },
+  {
+    id: 'projects',
+    label: 'With project names',
+    hint: 'Also names the folders being worked on. Anyone who can see your profile can read them.'
+  }
+]
+
+/**
+ * The lines a look is made of. Line one is always the numbers; line two is the project
+ * names for that look, otherwise today's tokens when that switch is on. A row that has
+ * nothing to say takes no line, so the order below is also the order they are drawn in.
+ */
+export function presetRows(preset: Exclude<DiscordPresetId, 'custom'>, idle: boolean, tokens: boolean): DiscordRow[] {
+  const spent = '{tokens} tokens today'
+  const rows: DiscordRow[] = [
+    {
+      id: 'running',
+      text: (preset === 'fraction' ? '{running}/{total} {sessions} running' : '{running} running') + (idle ? ' · {idle} idle' : ''),
+      when: 'running',
+      on: true
+    }
+  ]
+  if (preset === 'projects')
+    rows.push({ id: 'projects', text: tokens ? `on {projects} · ${spent}` : 'on {projects}', when: 'running', on: true })
+  rows.push({ id: 'idle', text: idle ? '{total} {sessions} idle' : '{total} {sessions} open', when: 'idle', on: true })
+  if (tokens) rows.push({ id: 'tokens', text: spent, when: preset === 'projects' ? 'idle' : 'always', on: true })
+  return rows
+}
+
+/**
+ * A style with a new look or switch, its lines rebuilt to match. A hand-written card
+ * keeps its lines: the switches that change wording belong to the looks.
+ */
+export function withLook(
+  style: DiscordStyle,
+  patch: Partial<Pick<DiscordStyle, 'preset' | 'idle' | 'tokens'>>
+): DiscordStyle {
+  const next = { ...style, ...patch }
+  return next.preset === 'custom' ? next : { ...next, rows: presetRows(next.preset, next.idle, next.tokens) }
+}
+
 export const DEFAULT_DISCORD_STYLE: DiscordStyle = {
-  rows: DEFAULT_ROWS.map((r) => ({ ...r })),
+  preset: 'counts',
+  idle: true,
+  tokens: false,
+  rows: presetRows('counts', true, false),
   elapsed: true,
   buttons: [
     { id: 'link', label: DEFAULT_LINK_LABEL, url: DEFAULT_LINK_URL, on: true }
   ]
 }
+
+const PRESET_IDS: ReadonlyArray<string> = [...DISCORD_PRESETS.map((p) => p.id), 'custom']
 
 /** A row id nothing else on the card is using. */
 export function newRowId(taken: ReadonlyArray<{ id: string }>): string {
@@ -431,6 +550,21 @@ export function newRowId(taken: ReadonlyArray<{ id: string }>): string {
  */
 export function migrateRows(raw: Partial<DiscordStyle> | undefined): DiscordStyle {
   const base = raw ?? {}
+  const style = migrateWording(base)
+  // A look is a look: its lines are rebuilt from it every time, so a wording change in a
+  // later version reaches everyone on that look rather than living on in their config.
+  if (base.preset && PRESET_IDS.includes(base.preset))
+    return withLook(style, { preset: base.preset, idle: base.idle !== false, tokens: base.tokens === true })
+  // Written before the looks existed. Lines nobody ever changed are the old default,
+  // which named project folders on a public profile - they become the new default. Lines
+  // somebody wrote are theirs, kept exactly, as a hand-written card.
+  const untouched = JSON.stringify(style.rows) === JSON.stringify(DEFAULT_ROWS)
+  return untouched
+    ? withLook(style, { preset: DEFAULT_DISCORD_STYLE.preset, idle: true, tokens: false })
+    : { ...style, preset: 'custom', idle: true, tokens: needsTokens(style) }
+}
+
+function migrateWording(base: Partial<DiscordStyle>): Omit<DiscordStyle, 'preset' | 'idle' | 'tokens'> {
   if (Array.isArray(base.rows) && base.rows.length) {
     return {
       rows: base.rows.map((r) => ({ ...r })),
@@ -572,6 +706,41 @@ export function togglePhrase(text: string, phrase: string): string {
     parts.push(phrase)
   }
   return parts.join(' · ')
+}
+
+/**
+ * A style as it came off the device link, or nothing if it is not one. Every field is
+ * rebuilt from checked parts, so a malformed row can never reach the card - Discord
+ * throws the WHOLE presence away over one bad field.
+ */
+export function readStyle(raw: unknown): DiscordStyle | undefined {
+  const r = raw as Record<string, unknown> | null
+  if (!r || typeof r !== 'object' || !Array.isArray(r.rows)) return undefined
+  const str = (v: unknown, max: number): string | undefined => (typeof v === 'string' ? v.slice(0, max) : undefined)
+  const rows: DiscordRow[] = []
+  for (const x of r.rows.slice(0, 20) as Array<Record<string, unknown> | null>) {
+    const id = str(x?.id, 40)
+    const text = str(x?.text, 300)
+    if (!id || text === undefined) continue
+    const when = x?.when === 'running' || x?.when === 'idle' ? x.when : 'always'
+    rows.push({ id, text, when, on: x?.on !== false })
+  }
+  if (!rows.length) return undefined
+  const buttons: DiscordButton[] = []
+  for (const x of (Array.isArray(r.buttons) ? r.buttons : []).slice(0, MAX_BUTTONS) as Array<Record<string, unknown> | null>) {
+    const id = str(x?.id, 40)
+    const label = str(x?.label, LABEL_MAX)
+    const url = str(x?.url, URL_MAX)
+    if (id && label !== undefined && url !== undefined) buttons.push({ id, label, url, on: x?.on !== false })
+  }
+  return migrateRows({
+    preset: typeof r.preset === 'string' && PRESET_IDS.includes(r.preset) ? (r.preset as DiscordPresetId) : 'custom',
+    idle: r.idle !== false,
+    tokens: r.tokens === true,
+    rows,
+    elapsed: r.elapsed !== false,
+    buttons
+  })
 }
 
 /** Whether anything on the card asks for the token numbers, which cost a disk walk. */

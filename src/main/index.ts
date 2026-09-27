@@ -29,7 +29,7 @@ import { doneReviewId } from '../shared/doneClose'
 import { FinishedDigest, summaryOf } from '../shared/finishedDigest'
 import { DataPump } from './dataPump'
 import { DiscordPresence } from './discordPresence'
-import { countPresence, needsTokens, wholeDesk, type PresenceCounts } from '../shared/discordRpc'
+import { countPresence, needsTokens, newerSettings, wholeDesk, type PresenceCounts } from '../shared/discordRpc'
 import { tokenSpend, tokenSpendFresh } from './tokenUsage'
 import { promptReview, promptsForSession, recordPromptReview, removePromptReview } from './promptReview'
 import { readPulls } from './pulls'
@@ -975,26 +975,43 @@ const presence = new DiscordPresence({
   }
 })
 function presenceCounts(): PresenceCounts {
+  const cfg = getConfig()
   // This machine's own panes: not the ones mirrored from another machine, which that
   // machine reports itself, and not a screen view, which is a picture of a machine.
-  const local = manager.list()
-  const discord = presence.status().connected
-  const own = countPresence(local, appStartedAt)
-  remote.tellDesk({
-    counts: { running: own.running, total: own.total, asleep: own.asleep, names: own.names, oldestRunSince: own.oldestRunSince },
-    discord
-  })
-  const counts = wholeDesk({ id: getConfig().remote.id, discord, local, appStart: appStartedAt }, remote.deskLinks())
+  const own = countPresence(manager.list(), appStartedAt)
   // The token numbers cost a walk of every transcript written this week (7.6s of async
   // I/O on this Mac, 7,546 files), so they are counted only while a row on the card
   // actually says one. `tokenSpend` answers from its own cache and refreshes behind
   // itself; nothing here waits on the disk.
-  if (needsTokens(getConfig().discordStyle)) {
+  if (needsTokens(cfg.discordStyle)) {
     const spend = tokenSpend()
-    counts.tokensToday = spend.today
-    counts.tokensWeek = spend.week
+    own.tokensToday = spend.today
+    own.tokensWeek = spend.week
   }
-  return counts
+  const discord = presence.status().connected
+  const { running, total, asleep, names, oldestRunSince, tokensToday, tokensWeek } = own
+  remote.tellDesk({
+    counts: { running, total, asleep, names, oldestRunSince, tokensToday, tokensWeek },
+    discord,
+    settings: { on: cfg.discordPresence, style: cfg.discordStyle, at: cfg.discordSettingsAt }
+  })
+  return wholeDesk({ id: cfg.remote.id, discord, own }, remote.deskLinks())
+}
+/**
+ * Take Discord settings a person changed more recently on a linked machine. The machine
+ * that speaks is often not the one being sat at, so without this a switch flipped here
+ * never reached the card the other machine sends.
+ */
+function adoptDiscordSettings(): void {
+  const cfg = getConfig()
+  const newer = newerSettings(
+    { on: cfg.discordPresence, style: cfg.discordStyle, at: cfg.discordSettingsAt },
+    remote.deskLinks()
+  )
+  if (!newer) return
+  const next = setConfig({ discordPresence: newer.on, discordStyle: newer.style, discordSettingsAt: newer.at })
+  presence.configure(next.discordPresence, next.discordStyle)
+  send('config:changed', next)
 }
 // A card that goes on its own is a row in the list, never a pane that just vanished:
 // `shared/exitClose.ts` decides, and this is the one place that says it happened.
@@ -1307,7 +1324,10 @@ remote.on('sessions', () => {
 })
 remote.on('attention', (s: Session) => raiseAttention(s))
 // Another machine said something new about its own panes or its Discord.
-remote.on('desk', () => presence.update(presenceCounts()))
+remote.on('desk', () => {
+  adoptDiscordSettings()
+  presence.update(presenceCounts())
+})
 remote.on('changed', (state: RemoteState) => {
   send('remote:changed', state)
   // A desk connecting or leaving decides whether this machine speaks for the profile.
@@ -2705,6 +2725,13 @@ ipcMain.handle('sessions:swarm', (_e, req: SwarmRequest) => manager.startSwarm(r
 
 ipcMain.handle('config:get', () => getConfig())
 ipcMain.handle('config:set', (_e, patch: Partial<Config>) => {
+  // A person changed what Discord shows: stamped, so linked machines take it too.
+  const was = getConfig()
+  if (
+    (patch.discordPresence !== undefined && patch.discordPresence !== was.discordPresence) ||
+    (patch.discordStyle !== undefined && JSON.stringify(patch.discordStyle) !== JSON.stringify(was.discordStyle))
+  )
+    patch = { ...patch, discordSettingsAt: Date.now() }
   const next = setConfig(patch)
   // An edited custom agent changes what is launchable, so the availability cache
   // must not outlive the edit.
