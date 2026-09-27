@@ -15,6 +15,8 @@
 // the pane snapshots the screen when a wipe starts, waits for the output to go quiet, and
 // asks this.
 
+import { keptRows, type ScreenReader } from './keepScrollback'
+
 /**
  * A row worth comparing.
  *
@@ -106,4 +108,51 @@ export function fileRows(rows: string[], height: number): string {
     '\r\n'.repeat(keep.length) +
     '\x1b[H\x1b[J'
   )
+}
+
+/**
+ * Claude Code's working line: a spinner glyph, a verb ending in an ellipsis, then its
+ * timer in brackets - `✻ Drizzling… (33s · ↓ 2.3k tokens · thinking with xhigh effort)`,
+ * `✳ Drizzling… (running Stop hooks… 0/2 · 33s …)`. Live UI redrawn every tick, never
+ * history. The line a finished turn leaves (`✻ Cooked for 53s · done 3:31 PM`) has no
+ * ellipsis and stays history, and a tool line (`⏺ Bash(…)`) has its bracket first.
+ */
+export const WORKING = /^\s*\S\s+[^\s(][^(]*…\s*\(/u
+
+/**
+ * What a wipe really destroyed, or nothing: the rows the pane files into the scrollback.
+ *
+ * `before` is the screen when the wipe started and `cursor` the caret's row on it;
+ * `after` is every line of the buffer from the row that screen's top was on to the end,
+ * read once the output went quiet - so rows the CLI scrolled into the scrollback the
+ * ordinary way since the wipe count as kept, not lost.
+ *
+ * Judged against the screen alone, that was wrong every time a Claude turn kept going
+ * after one of its full repaints. Measured 2026-09-27 on pane s19 (143x55, Claude Code
+ * 2.1.283): a repaint at 3:31:22pm started the check, a Stop hook made Claude carry on
+ * for 20s, and when the output finally paused the finished reply had scrolled up the
+ * ordinary way - so the check found none of the screen it remembered, called it lost and
+ * printed it back: the frozen `Drizzling… (33s …)` line, both status-line rows and the
+ * reply's tail, above the reply they had scrolled off with (fix.log `why: wipe`, 3:31:42pm).
+ *
+ * And the composer, the hint and status lines under it and the working line above it are
+ * never filed: the CLI draws them again on every frame, so a wipe cannot lose them.
+ */
+export function rowsToFile(before: string[], cursor: number, after: string[]): string[] {
+  const reader: ScreenReader = {
+    rows: before.length,
+    buffer: { active: { baseY: 0, cursorY: cursor, getLine: (y) => ({ translateToString: () => before[y] ?? '' }) } }
+  }
+  const history = before.slice(0, keptRows(reader)).filter((r) => !WORKING.test(r))
+  const was = meaningful(history)
+  if (was.length < LOST_ENOUGH) return []
+  // Exact rows anywhere since the wipe, and the old substring test on the screen itself:
+  // a row the redraw re-wrapped can come back inside a longer one.
+  const seen = new Set(meaningful(after))
+  const screen = meaningful(after.slice(-before.length)).join('\n')
+  const lost = history.filter((r) => {
+    const t = r.trim()
+    return t.length >= MEANINGFUL && !seen.has(t) && !screen.includes(t)
+  })
+  return lost.length >= LOST_ENOUGH && lost.length / was.length >= LOST_SHARE ? lost : []
 }

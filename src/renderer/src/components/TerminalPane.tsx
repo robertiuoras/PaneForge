@@ -47,7 +47,7 @@ import { keepScrollback, keptRows, mayClearScreen } from '../../../shared/keepSc
 import { realignCursorUp } from '../../../shared/cursorUpRealign'
 import { keepPushedOffRows } from '../../../shared/pushedOffTop'
 import { rewrapOnShrink } from '../../../shared/wordRewrap'
-import { fileRows, lostRows, screenLost } from '../../../shared/screenLoss'
+import { fileRows, rowsToFile } from '../../../shared/screenLoss'
 import { forceKeys } from '../../../shared/forceSelect'
 import {
   anchorMark,
@@ -2093,10 +2093,7 @@ function TerminalPane({
     // installed LAST first, and the realign has to land before the screen is copied.
     if (agent === 'claude') {
       // Rows it put back are rows the wipe check below would otherwise file a second time.
-      keepPushedOffRows(t, () => {
-        wipeSnap = null
-        window.clearTimeout(wipeTimer)
-      })
+      keepPushedOffRows(t, dropWipeSnap)
       realignCursorUp(t)
       // A pane that gets narrower (a pane opened beside it) breaks the reply lines above
       // the screen between words, and joins a paragraph back up, instead of xterm's cut
@@ -2127,9 +2124,16 @@ function TerminalPane({
       return out
     }
     // The screen as it was when a wipe started, held until the redraw that follows has
-    // settled and can be compared with it. See `wipeSettled`.
-    let wipeSnap: string[] | null = null
+    // settled and can be compared with it: its rows, the caret's row, and a marker on the
+    // line its top row was on, so rows scrolled away since are found where they went.
+    // See `wipeSettled`.
+    let wipeSnap: { rows: string[]; cursor: number; top: IMarker | undefined } | null = null
     let wipeTimer: number | undefined
+    function dropWipeSnap(): void {
+      window.clearTimeout(wipeTimer)
+      wipeSnap?.top?.dispose()
+      wipeSnap = null
+    }
     /**
      * The redraw after a wipe has gone quiet: decide whether it was a repaint or a clear.
      *
@@ -2147,12 +2151,17 @@ function TerminalPane({
       wipeSnap = null
       wipeTimer = undefined
       if (!snap || dead) return
-      // What is filed is what the redraw did NOT put back. A repaint hands every row back
-      // and this is empty; a clear hands none back and this is the whole screen; a CLI
-      // re-rendering its view a line or two further on hands back everything except the
-      // lines that fell off the top - which are the ones nothing else would have kept.
-      const lost = lostRows(snap, screenNow())
-      if (!screenLost(snap, screenNow())) return
+      const top = snap.top && !snap.top.isDisposed ? snap.top.line : 0
+      snap.top?.dispose()
+      // What is filed is what the redraw did NOT put back, anywhere from the old screen's
+      // top down: a repaint hands every row back and this is empty, a clear hands none back
+      // and this is the screen above the composer, and a turn that kept going scrolled its
+      // rows up the ordinary way and they are found there. See shared/screenLoss.ts.
+      const b = t.buffer.active
+      const after: string[] = []
+      for (let y = top; y < b.length; y++) after.push(b.getLine(y)?.translateToString(true) ?? '')
+      const lost = rowsToFile(snap.rows, snap.cursor, after)
+      if (!lost.length) return
       // The bytes are built in the shared file so the test drives the shipped ones against
       // a real terminal rather than a copy of them.
       const bytes = fileRows(lost, t.rows)
@@ -2183,7 +2192,8 @@ function TerminalPane({
       // find out - see `wipeSettled`.
       () => {
         if (readingSnapshot || wipeSnap) return
-        wipeSnap = screenNow()
+        const cursor = t.buffer.active.cursorY
+        wipeSnap = { rows: screenNow(), cursor, top: t.registerMarker(-cursor) }
         armWipeCheck()
       }
     )
@@ -4106,8 +4116,7 @@ function TerminalPane({
         }
         for (const m of list.splice(0)) m.marker.dispose()
         publish()
-        window.clearTimeout(wipeTimer)
-        wipeSnap = null
+        dropWipeSnap()
         keep = makeKeeper()
         replayEvents = []
         pendingDataWrites++
@@ -4147,8 +4156,7 @@ function TerminalPane({
       // Queue the reset with its exact snapshot. An imperative reset can run
       // before old queued writes, and an async buffer read can include new deltas
       // that onData already wrote. RIS goes through xterm's ordered write queue.
-      window.clearTimeout(wipeTimer)
-      wipeSnap = null
+      dropWipeSnap()
       keep = makeKeeper()
       readingSnapshot = true
       let bytes: string
