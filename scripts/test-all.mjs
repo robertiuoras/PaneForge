@@ -199,6 +199,11 @@ const TESTS = [
   ['laneorphan', 'lane-orphan-test.mjs'],
   ['lanework', 'lane-work-test.mjs'],
   ['lanemergehold', 'lane-mergehold-test.mjs'],
+  // A cleared pane keeps its lane; an unrecorded open merge can be resolved; identical
+  // dirt in main does not hold a merge (2026-09-28).
+  ['lanecleared', 'lane-cleared-test.mjs'],
+  // taskdriver.ai's PC-proof gate; a ready lane's own check is what `ready` reports (macOS only).
+  ['lanetaskdriver', 'lane-taskdriver-pc-test.mjs'],
   // A lane whose hooks rewrite its ledger every turn is not dirty forever.
   ['laneledger', 'lane-ledger-test.mjs'],
   ['issues', 'issues-dialog-test.mjs'],

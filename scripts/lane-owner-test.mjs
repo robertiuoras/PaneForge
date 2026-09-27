@@ -245,9 +245,10 @@ const twoDead = {
 
   // A new inventory has no evidence about any other copy until a later heartbeat reads
   // the established file. The first sweep writes it and deliberately cannot reclaim.
-  laneReclaim(panes)
+  // Async since 055652c4; un-awaited, the second read found no inventory file yet.
+  await laneReclaim(panes)
   check('the first inventory write is conservative before reclaiming', !existsSync(calls))
-  laneReclaim(panes)
+  await laneReclaim(panes)
 
   check('the repo that wins the vote is told what this copy hosts', chatsIn(repo).includes(CHAT_A))
   check(

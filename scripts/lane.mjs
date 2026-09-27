@@ -935,7 +935,7 @@ function holdGivenUp(c) {
  * claim may conclude: a parked `main` is handed over in minutes (PARK_STEAL_MS, or at
  * once for a visitor) instead of the hour the silence sweep needs.
  */
-function park(session) {
+function park(session, { ended = false } = {}) {
   if (!session) throw new Error('park needs --session')
   const state = reap(read())
   const parked = []
@@ -949,17 +949,24 @@ function park(session) {
   // A Stop hook is a chat finishing a turn: it was heard from, and it is not asleep. Not
   // bumping `seen` here is what let a hold read "last heard from 64h ago" under a pane
   // that had parked two minutes earlier.
+  // `ended` (the SessionEnd hook, before its detached release): this session is over for
+  // good - the one sign that a hold under an older session id in the same pane is that
+  // pane's previous chat and not a live parent (see `claim`).
+  // A sleeping pane's agent is stopped on purpose and comes back as the same session, so
+  // its SessionEnd neither ends the hold nor wakes it (`releaseClaim` keeps asleep holds).
   for (const c of Object.values(state.lanes)) {
     if (c.session !== session) continue
     c.seen = now()
-    delete c.asleep
+    if (!ended) delete c.asleep
+    else if (!c.asleep) c.ended = now()
   }
   // A turn ending is the heartbeat. Only the trunk is ever published, and only once the
   // last thing we said is old enough that the other desk is about to stop believing it -
   // so an ordinary turn pushes nothing and a chat that works all afternoon keeps its
   // claim alive without anybody typing a command.
   const holdsTrunk = state.lanes.main?.session === session
-  if (holdsTrunk && needsRefresh(state.peer?.slot === 'main' ? state.peer : null, { now: now() }))
+  // An ending chat publishes nothing: its release, right behind, drops the claim anyway.
+  if (!ended && holdsTrunk && needsRefresh(state.peer?.slot === 'main' ? state.peer : null, { now: now() }))
     publishClaim(state, 'main', session)
   else if (!holdsTrunk && state.peer?.slot === 'main' && state.peer.session === session) dropPublished(state, session)
   write(state)
@@ -1039,8 +1046,16 @@ function reap(state) {
   // itself: it made `status` report a lane as conflicted long after the conflict was
   // resolved, and left chats resolving something that had already gone out. Usually
   // zero iterations - this only walks lanes that are actually flagged.
+  // Except while a merge is still open in the lane's folder: the record is what lets its
+  // resolver write and commit there, and what lets retryConflicts drop an abandoned one.
+  // Dropped anyway, `resolve --lane c` recorded the resolver and the next `status` erased
+  // it, so the guard refused the very commit that finishes the merge (card 2, 2026-09-28).
+  // (aheadOf is 0 for a lane whose only work of its own is a merge commit - cherry skips
+  // merges - so this is not only the ownsNothing case, which `resolve` settles itself.)
   for (const id of Object.keys(state.conflicts)) {
-    if (id !== 'main' && aheadOf(laneBranch(id)) === 0) delete state.conflicts[id]
+    if (id === 'main' || aheadOf(laneBranch(id)) !== 0) continue
+    if (existsSync(laneDir(id)) && gitSafe(laneDir(id), 'rev-parse', '--verify', '--quiet', 'MERGE_HEAD').ok) continue
+    delete state.conflicts[id]
   }
   for (const id of Object.keys(state.ready)) {
     if (id !== 'main' && aheadOf(laneBranch(id)) === 0) {
@@ -1123,6 +1138,21 @@ function autoResolve(dir, files) {
 }
 
 /**
+ * Nothing checked out in `dir` that master lacks, asked strictly enough to throw a branch
+ * away on: every commit `git cherry` lists is '-' (master has the same patch under another
+ * sha) and there is no merge commit, because cherry never lists merges and a merge can
+ * carry content of its own (a resolution, an evil merge). A git that fails to answer is
+ * "not nothing" - `aheadOf` reads a failure as 0, which is fine for a count and wrong for
+ * a reset. Reads HEAD, so mid-merge it asks about the lane's own side.
+ */
+function ownsNothing(dir) {
+  const cherry = gitSafe(dir, 'cherry', MB, 'HEAD')
+  if (!cherry.ok || cherry.out.split('\n').some((l) => l.startsWith('+'))) return false
+  const merges = gitSafe(dir, 'rev-list', '--merges', '-n1', `${MB}..HEAD`)
+  return merges.ok && !merges.out
+}
+
+/**
  * Bring one lane up to master.
  *
  * Conflicts are cheap here and expensive later: in the lane, the chat that wrote the code is
@@ -1172,6 +1202,15 @@ function catchUp(id, { keepConflict = false } = {}) {
     }
     conflicts = left
   }
+  // A lane whose every commit master already has under another sha (`git cherry` '-': its
+  // work was rebased or cherry-picked onto master) has nothing of its own to keep, and
+  // master's later edits to those files make the catch-up merge conflict with a stale copy
+  // of its own work. It was called "finished but conflicts" on every release with nothing
+  // to ship (taskdriver.ai 2026-09-28, lanes c/d). The folder is clean (checked above), so
+  // the lane simply moves to master (a hard reset also drops the open merge); the old tip
+  // stays in the branch's reflog. Asked strictly (ownsNothing), never through aheadOf.
+  if (conflicts.length && ownsNothing(dir) && gitSafe(dir, 'reset', '--hard', '-q', MB).ok)
+    return { moved: true, conflicts: [], dirty: false, nothingOwn: true }
   // The half-merge is only left in the tree for the chat that asked to finish this lane
   // (`ready`), which is the one moment someone is there to resolve it. Every other caller
   // gets the lane back the way it found it - a conflicted checkout nobody owns is what
@@ -1794,11 +1833,42 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
   // hold with no pane id - claimed by hand, or from a terminal outside the app - is left
   // alone: it belongs to nobody this can identify.
   //
-  // Narrow on purpose: the hold is only dropped when it has ALSO been given up - parked by
-  // its own Stop hook, or still tentative - and its lane holds no uncommitted work and no
-  // commits of its own. A chat that was cleared mid-edit keeps its lane, because the edit
-  // is worth more than the tidy ledger, and nothing here can lose work.
-  if (PANE)
+  // Dropping alone stranded work (2026-09-28, taskdriver.ai): a hold with a finished commit
+  // or an uncommitted edit was never given up, so it stayed on the dead session id and the
+  // pane's NEW chat was handed a different lane - every write into its own folder refused,
+  // `resolve` saying "not conflicted", no sanctioned way back. So the earlier chat's hold is
+  // CARRIED to this one, work or no work: when this chat holds nothing, or holds only an
+  // empty lane while the earlier hold has work (the empty one is then let go).
+  //
+  // Carried only from a session that has ENDED (`ended`, stamped by the SessionEnd hook
+  // before the release it spawns; that release can lose the race with this claim, which is
+  // how the hold survived its session). A turn being over is not enough: `PF_PANE` is
+  // inherited, so a `claude -p` or `codex exec` a chat runs inside the repo claims under the
+  // same pane, and its parent - parked between turns, still alive - is not the pane's
+  // previous chat (a pre-ship review reproduced a child taking a parked parent's lane).
+  //
+  // What is not carried is dropped only when it has ALSO been given up - parked by its own
+  // Stop hook, or still tentative - and its lane holds no uncommitted work and no commits
+  // of its own. Nothing here can lose work.
+  if (PANE) {
+    const hasWork = (id) => {
+      const w = laneWork(id)
+      return w.dirty || w.ahead > 0 || Boolean(state.ready[id]) || Boolean(state.conflicts[id])
+    }
+    const earlier = Object.entries(state.lanes)
+      .filter(([, c]) => c.pane === PANE && c.session !== session && c.ended)
+      .map(([id, c]) => ({ id, c, work: hasWork(id) }))
+      // Work first, then the most recently heard from.
+      .sort((x, y) => y.work - x.work || (y.c.seen ?? 0) - (x.c.seen ?? 0))
+    const held = Object.keys(state.lanes).find((id) => state.lanes[id].session === session)
+    const carry = earlier[0]
+    if (carry && (!held || (carry.work && !hasWork(held)))) {
+      if (held) delete state.lanes[held]
+      // The same-session branch below does the rest of what a live claim does: parked,
+      // asleep, ended and (for a real claim) tentative cleared, pane recorded.
+      carry.c.session = session
+      if (cwd) carry.c.cwd = cwd
+    }
     for (const [id, c] of Object.entries(state.lanes)) {
       if (c.pane !== PANE || c.session === session) continue
       // A sleeping hold is not given up just because it also reads parked/tentative -
@@ -1809,6 +1879,7 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
       if (w.dirty || w.ahead > 0) continue
       delete state.lanes[id]
     }
+  }
 
   for (const [id, c] of Object.entries(state.lanes)) {
     if (c.session === session) {
@@ -1818,6 +1889,7 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
       // decides that from where the chat LIVES, so a home chat is never marked down for
       // one prompt sent from somewhere else.
       delete c.parked
+      delete c.ended
       // A chat that is TALKING is awake, whatever the app said. `wake` is run by pane id
       // from the app's own resume path, and a pane that came back some other way (a
       // relaunch that restored the desk, a resume from outside the app) never gets it -
@@ -2143,6 +2215,7 @@ function guard(session, path) {
     // that is writing has plainly not finished its turn, whatever `park` recorded.
     delete holder.tentative
     delete holder.parked
+    delete holder.ended
     write(state)
     return null
   }
@@ -2760,20 +2833,32 @@ function taskdriverProofFailure(dir, ref) {
   return `Taskdriver PC verification for ${ref.slice(0, 8)} is required before release - ${firstLine(`${r.stderr ?? ''}\n${r.stdout ?? ''}`)}.`
 }
 
+/** The proof has a GitHub run under way for the tree: waiting is the answer, not a fix. */
+const PROOF_PENDING = /release-check is still running|started GitHub release-check/i
+
 function taskdriverPreflightFailure(state) {
   const head = gitSafe(MAIN, 'rev-parse', 'HEAD')
   if (!head.ok) return 'Taskdriver PC verification could not identify main HEAD, so nothing was released.'
   // A ready lane has already merged main. Its verified tree may repair a red main,
   // but only the actual combined tree is accepted below before any push.
+  let laneFailure = null
   for (const [id, mark] of Object.entries(state.ready)) {
     if (id === 'main') continue
     const dir = laneDir(id)
     const tip = gitSafe(dir, 'rev-parse', 'HEAD')
     if (!tip.ok || tip.out !== mark.commit ||
         !gitSafe(dir, 'merge-base', '--is-ancestor', head.out, tip.out).ok) continue
-    if (!taskdriverProofFailure(dir, tip.out)) return null
+    const failed = taskdriverProofFailure(dir, tip.out)
+    if (!failed) return null
+    if (!laneFailure || (PROOF_PENDING.test(failed) && !PROOF_PENDING.test(laneFailure))) laneFailure = failed
   }
-  return taskdriverProofFailure(MAIN, head.out)
+  // That lane's tree is main plus its repair, so its answer is the one the release waits
+  // on. Quoting main's instead told a lane whose check had just started that main's tests
+  // (which the lane fixes) were red (taskdriver.ai 2026-09-28, run 36353863879); and main's
+  // proof is not worth running while the lane's is under way.
+  if (laneFailure && PROOF_PENDING.test(laneFailure)) return laneFailure
+  const mainFailure = taskdriverProofFailure(MAIN, head.out)
+  return mainFailure && (laneFailure ?? mainFailure)
 }
 
 function typecheckFailure(state) {
@@ -3187,6 +3272,26 @@ function resolveConflict(session, wanted) {
   if (retryConflicts(state)) write(state)
   const id = wanted ?? Object.keys(state.conflicts).find((l) => adoptable(state, l) || state.lanes[l]?.session === session)
   if (!id) throw new Error(Object.keys(state.conflicts).length ? 'the conflicted lanes still have active chats in them' : 'no lane is conflicted')
+  // A merge left open in the worktree with nothing in the ledger saying so - a chat that
+  // ran `git merge` itself and went away, or a record a lost write dropped. It is a
+  // conflict all the same, and "not conflicted" left it with no way to be finished
+  // (2026-09-28, taskdriver.ai). With no live chat on the lane it is recorded here and
+  // adopted like any other; the guard then lets this chat write there.
+  if (!state.conflicts[id] && POOL.includes(id) && id !== 'main' && existsSync(laneDir(id))) {
+    const holder = state.lanes[id]
+    const unowned = !holder || holder.session === session || now() - (holder.seen ?? holder.claimed ?? 0) > ADOPT_MS
+    const open = gitSafe(laneDir(id), 'rev-parse', '--verify', '--quiet', 'MERGE_HEAD').ok
+    const files = open ? gitSafe(laneDir(id), 'diff', '--name-only', '--diff-filter=U').out.split('\n').filter(Boolean) : []
+    if (unowned && files.length) noteConflict(state.conflicts, id, files.join(', '))
+    // A live chat's own merge is its to finish; say so rather than "not conflicted".
+    else if (files.length) {
+      const idle = Math.round((now() - (holder.seen ?? holder.claimed ?? 0)) / 60000)
+      throw new Error(
+        `lane ${id} has a merge open that its chat, active ${idle}m ago, is still finishing. ` +
+          `Adoptable after ${Math.round(ADOPT_MS / 60000)}m of silence.`
+      )
+    }
+  }
   if (!state.conflicts[id]) throw new Error(`lane ${id} is not conflicted`)
 
   const holder = state.lanes[id]
@@ -3203,7 +3308,18 @@ function resolveConflict(session, wanted) {
   // A merge left open by an earlier attempt is the state we want; do not abort it.
   const open = gitSafe(dir, 'rev-parse', '--verify', '--quiet', 'MERGE_HEAD').ok
   let files = []
-  if (open) {
+  let nothingOwn = false
+  if (open && ownsNothing(dir)) {
+    // The lane's own side has nothing master lacks, so the merge only pits a stale copy of
+    // master's own work against master: whatever a resolver chose, the best answer is
+    // master's, and a stale pick would undo master's later edit once the lane shipped.
+    // Put the lane on master instead of handing the merge over (card 2, 2026-09-28: lane
+    // c, 165c40d2 patch-identical to main, two add/add files).
+    gitSafe(dir, 'merge', '--abort')
+    if (gitSafe(dir, ...WORK_STATUS).out || !gitSafe(dir, 'reset', '--hard', '-q', MB).ok)
+      throw new Error(`lane ${id} has uncommitted changes in ${dir} - commit or discard them first`)
+    nothingOwn = true
+  } else if (open) {
     files = gitSafe(dir, 'diff', '--name-only', '--diff-filter=U').out.split('\n').filter(Boolean)
   } else {
     const caught = catchUp(id, { keepConflict: true })
@@ -3211,6 +3327,13 @@ function resolveConflict(session, wanted) {
     // lane's chat is alive after all.
     if (caught.dirty) throw new Error(`lane ${id} has uncommitted changes in ${dir} - commit or discard them first`)
     files = caught.conflicts
+    nothingOwn = Boolean(caught.nothingOwn)
+  }
+
+  if (nothingOwn) {
+    delete state.conflicts[id]
+    write(state)
+    return { lane: id, dir, resolved: true, nothingOwn: true, marked: null, release: null }
   }
 
   if (!open && !files.length) {
@@ -3443,25 +3566,71 @@ function beatRelease(session) {
  * unrelated x-agent work, and eight finished lanes had waited 43-113 minutes behind it.
  */
 function mainBlockers(state) {
+  return mainDirt(state).blockers
+}
+
+/**
+ * What in the main folder would stop a merge, and what only looks as if it would.
+ *
+ * `same` is an uncommitted file whose working-tree bytes are exactly what a ready lane
+ * brings (`git hash-object` of it === the lane's blob for it). That is not somebody's
+ * unsaved work - the bytes are already on the lane's branch - and counting it held every
+ * merge (2026-09-28, taskdriver.ai: a package.json edit the lane itself had committed).
+ * `ship` puts those files back just before merging (`restoreSame`). Anything whose bytes
+ * differ, even by one, is still a blocker; a staged one only counts when the index agrees too.
+ */
+function mainDirt(state) {
   const porcelain = git(MAIN, ...WORK_STATUS)
-  if (!porcelain) return ''
-  const lines = porcelain.split('\n').filter(Boolean)
-  const tracked = lines.filter((l) => !l.startsWith('??'))
-  if (tracked.length && RELEASE !== 'merge') return tracked.join('\n')
+  if (!porcelain) return { blockers: '', same: [] }
   // Asked by name, not read off the porcelain columns: `git()` trims, so the first line's
   // leading space (the "unstaged" column) is gone and ` M app.js` reads as staged `M app.js`.
   const names = (...args) => git(MAIN, ...args).split('\n').filter(Boolean)
   const staged = names('diff', '--cached', '--name-only')
-  if (staged.length) return staged.map((f) => `${f} (staged)`).join('\n')
-  const dirty = new Set([...names('diff', '--name-only'), ...names('ls-files', '--others', '--exclude-standard')])
-  const blocked = []
+  const dirty = new Set([...staged, ...names('diff', '--name-only'), ...names('ls-files', '--others', '--exclude-standard')])
+  const brings = new Map()
   for (const id of Object.keys(state.ready)) {
     if (id === 'main') continue
     const r = gitSafe(MAIN, 'diff', '--name-only', `${MB}...${laneBranch(id)}`)
     if (!r.ok) continue
-    for (const f of r.out.split('\n')) if (f && dirty.has(f)) blocked.push(`${f} (lane ${id} brings this file)`)
+    for (const f of r.out.split('\n')) if (f) brings.set(f, [...(brings.get(f) ?? []), id])
   }
-  return blocked.join('\n')
+  const same = []
+  for (const f of dirty) {
+    if (!brings.has(f)) continue
+    const here = gitSafe(MAIN, 'hash-object', '--', f)
+    if (!here.ok || !here.out) continue
+    if (staged.includes(f) && gitSafe(MAIN, 'rev-parse', `:${f}`).out !== here.out) continue
+    if (brings.get(f).some((id) => gitSafe(MAIN, 'rev-parse', '--verify', '--quiet', `${laneBranch(id)}:${f}`).out === here.out))
+      same.push({ file: f, blob: here.out })
+  }
+  const isSame = (f) => same.some((x) => x.file === f)
+  const tracked = porcelain.split('\n').filter((l) => l && !l.startsWith('??'))
+  if (RELEASE !== 'merge') {
+    const left = tracked.filter((l) => !isSame(l.trim().replace(/^\S+\s+/, '').split(' -> ').pop()))
+    if (left.length) return { blockers: left.join('\n'), same }
+  }
+  const stagedLeft = staged.filter((f) => !isSame(f))
+  if (stagedLeft.length) return { blockers: stagedLeft.map((f) => `${f} (staged)`).join('\n'), same }
+  const blocked = []
+  for (const [f, ids] of brings) if (dirty.has(f) && !isSame(f)) blocked.push(`${f} (lane ${ids[0]} brings this file)`)
+  return { blockers: blocked.join('\n'), same }
+}
+
+/** Put back the files `mainDirt` found identical to a ready lane's, so its merge applies.
+ * Re-hashed first: a file edited since it was read is left alone for the merge to refuse. */
+function restoreSame(same) {
+  for (const { file, blob } of same) {
+    if (gitSafe(MAIN, 'hash-object', '--', file).out !== blob) continue
+    if (gitSafe(MAIN, 'cat-file', '-e', `HEAD:${file}`).ok) gitSafe(MAIN, 'checkout', 'HEAD', '--', file)
+    else {
+      gitSafe(MAIN, 'rm', '--cached', '-q', '--ignore-unmatch', '--', file)
+      try {
+        unlinkSync(join(MAIN, file))
+      } catch {
+        /* already gone */
+      }
+    }
+  }
 }
 
 function ship(kind, session) {
@@ -3498,8 +3667,9 @@ function ship(kind, session) {
     // First: every merge below lands on whatever the main folder has checked out.
     const offTrunk = trunkHome(state)
     if (offTrunk) throw new Error(offTrunk)
-    const dirty = mainBlockers(state)
+    const { blockers: dirty, same } = mainDirt(state)
     if (dirty) throw new Error(`main checkout is dirty, commit first:\n${dirty}`)
+    restoreSame(same)
     // Read before anything merges: a merge-mode release no longer waits for these, so it
     // must not reach into them either (see `finish`).
     const working = new Set(busyLanes(state))
@@ -3531,7 +3701,11 @@ function ship(kind, session) {
       // fast-forward: a genuinely DIVERGED trunk still falls through to the refusal
       // below, because that one does need a person.
       fastForwardMain()
-      const origin = gitSafe(MAIN, 'push', '--dry-run')
+      // --no-verify: this probe is about credentials and fast-forward only. With the hook,
+      // taskdriver.ai's pre-push proof judged main's UNMERGED head, so a red main whose
+      // ready lane was the repair was refused on every try (2026-09-28, 6cf7e0b8 red, lane
+      // tip green in run 36354812354). The real push after the merge still runs the hook.
+      const origin = gitSafe(MAIN, 'push', '--dry-run', '--no-verify')
       if (!origin.ok)
         throw new Error(`origin will not take a push, releasing would strand: ${origin.out.slice(0, 200)}`)
     }
@@ -5114,7 +5288,9 @@ try {
     if (r.release?.shipped) sweepSoon()
   } else if (cmd === 'resolve') {
     const r = resolveConflict(session, arg('lane'))
-    if (r.resolved) {
+    if (r.nothingOwn) {
+      console.log(`Lane ${r.lane} had nothing ${MB} does not already have, so it now matches ${MB} - nothing to resolve and nothing to ship.`)
+    } else if (r.resolved) {
       console.log(`Lane ${r.lane} merges cleanly now - nothing to resolve, it goes out with the next release.`)
       sayRelease(r.release)
     } else {
@@ -5139,7 +5315,7 @@ try {
   } else if (cmd === 'park') {
     // The Stop hook: this chat's turn ended. Holds on clean lanes are marked parked so a
     // chat that needs one takes it in minutes; the mark clears itself on the next claim.
-    const r = park(session)
+    const r = park(session, { ended: argv.includes('--ended') })
     console.log(JSON.stringify(r))
   } else if (cmd === 'autoship') sayRelease(autoship((argv[1] && !argv[1].startsWith('--') ? argv[1] : 'auto').toLowerCase(), session ?? 'auto'))
   else if (cmd === 'ship') {

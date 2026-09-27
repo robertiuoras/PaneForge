@@ -584,6 +584,10 @@ if (event === 'end') {
   // running app retries every minute if this process dies early.
   for (const repo of reg.sessions[session] ?? []) {
     if (!existsSync(repo)) continue
+    // Mark the holds ended FIRST, in-line and quick: the detached release below races the
+    // next session's first claim (no ledger lock), and a hold it fails to drop must still
+    // read as a finished chat, so the pane's new chat is handed it (`claim`, PF_PANE).
+    lane(repo, 'park', '--session', session, '--ended')
     try {
       // windowsHide is NOT enough on Win11 with Windows Terminal as default terminal:
       // a detached console spawn is delegated to a VISIBLE Terminal window regardless

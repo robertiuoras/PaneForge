@@ -248,9 +248,12 @@ makeRepo({
   typecheck: 'node -e "process.exit(require(\'node:fs\').existsSync(\'node_modules/installed-by-stub\') ? 0 : 1)"',
   deps: { typescript: '^5.5.0', '@types/react-test-renderer': '18.3.1' }
 })
+// After the claims: before the first worktree adds node_modules to info/exclude, this
+// fixture (no .gitignore) shows it as untracked work in main, and since 1fb8af72 an
+// unowned dirty main is not handed out, so s1 was given main instead of lane a.
+claimLaneA('s1')
 mkdirSync(join(repo, 'node_modules', 'typescript'), { recursive: true })
 writeFileSync(join(repo, 'node_modules', 'typescript', 'package.json'), '{}')
-claimLaneA('s1')
 workInLaneA()
 const partial = lane('ready', '--session', 's1')
 ok('a partially installed dependency tree is repaired', existsSync(join(repo, 'node_modules', 'installed-by-stub')), partial)
