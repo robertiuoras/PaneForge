@@ -53,6 +53,9 @@ the SESSION. RED: `.row.asking`; stop/waiting sounds only with `soundOnIdle` (OF
 `quietIdleSounds` moved saved `true` once, `test:sounds`);
 Questions: desk + GuardDeck, NEVER Telegram; `askNotify.ts` = stopping ERRORS
 (`telegramAsk`). Click types NOTHING (`askRef`; `test:askclick`, `test:choices`).
+A stop = the CLI's OWN sentence anchored at the row start (`paneError.ts` `REPORT_SHAPES`,
+real wording only), never a bare 401/403/429 in prose; ONE message per stop per pane until
+a line is submitted (`nextStop`; `test:paneerror`).
 
 ## Arrowing through a question may not cost the whole desk
 
