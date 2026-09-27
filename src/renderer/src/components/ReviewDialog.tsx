@@ -118,7 +118,7 @@ export default function ReviewDialog({ onHistory, onReopen, onClose }: Props): J
                   >
                     {/* The number the chat's card had when it finished - the name Robert
                         uses for a chat ("add 10 etc in front so i know what session it is"). */}
-                    <span className="review-num" style={{ fontWeight: 700, color: 'var(--text)' }} title={r.paneNumber ? `Chat ${r.paneNumber} on the desk when it finished` : undefined}>
+                    <span className="review-num" style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }} title={r.paneNumber ? `Chat ${r.paneNumber} on the desk when it finished` : undefined}>
                       {r.paneNumber ?? ''}
                     </span>
                     <strong className="review-project">{folderName(r.cwd)}</strong>
