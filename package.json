@@ -275,6 +275,7 @@
     "test:gitgate": "node scripts/git-gate-test.mjs",
     "test:devkeep": "node scripts/devkeep-test.mjs",
     "test:exitclose": "node scripts/exitclose-test.mjs",
+    "test:closedpipe": "node scripts/closedpipe-test.mjs",
     "test:headerfit": "node scripts/header-fit-test.mjs",
     "test:promptseed": "node scripts/promptseed-test.mjs",
     "test:trimloss": "node scripts/trim-loss-test.mjs",

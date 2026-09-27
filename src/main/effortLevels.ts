@@ -14,6 +14,7 @@
 import { spawn } from 'node:child_process'
 import { ladderFromModelList } from '../shared/effort'
 import { logEffort } from './activationLog'
+import { tolerateClosedPipe } from './closedPipe'
 
 /** Long enough for a cold binary on a busy machine, short enough to give up on. */
 const ASK_TIMEOUT_MS = 20_000
@@ -107,6 +108,9 @@ export function codexLadders(bin: string, onNew?: () => void): Record<string, st
   })
   child.on('error', (err) => done(`could not run: ${err.message}`))
   child.on('exit', () => done('exited before answering'))
+  // A Codex that exits before reading its input turns these writes into an EPIPE with no
+  // listener - an uncaughtException in main (`closedPipe.ts`). The exit above says why.
+  tolerateClosedPipe(child.stdin, (code) => logEffort({ ladders: 'none', why: `input closed: ${code}` }))
   try {
     child.stdin?.write(
       JSON.stringify({

@@ -57,6 +57,7 @@ import { acLog } from './autoclearLog'
 import { dropAllFor, noteAccepted, noteNativeAccepted, noteDropped, noteSubmitted, noteWithheld, owedAfterRestore, stillOwed } from './queuedPrompts'
 import type { QueueDrop } from '../shared/queuedPrompts'
 import { logReclaim } from './activationLog'
+import { guardPtyPipes } from './closedPipe'
 import { ledgerSleep, ledgerWake } from './laneLedger'
 import type { SleepReason } from '../shared/types'
 import { SLEEP_REASONS, SLEEP_SOURCES } from '../shared/types'
@@ -3545,7 +3546,7 @@ export class SessionManager extends EventEmitter {
     // Codex asks the same question, and on a machine it has never run on there is no
     // config.toml to answer it from - `main/codexTrust.ts` creates one.
     if (spec.id === 'codex') trustCodexFolder(req.cwd)
-    return pty.spawn(which(spec.bin), args, {
+    const proc = pty.spawn(which(spec.bin), args, {
       name: 'xterm-256color',
       cols,
       rows,
@@ -3570,6 +3571,12 @@ export class SessionManager extends EventEmitter {
         ...(req.laneEnv ?? {})
       }) as Record<string, string>
     })
+    // A keystroke written after the console behind this pane went away is an EPIPE with no
+    // listener, which used to reach `crash.ts` as an uncaughtException naming nothing
+    // (2026-09-22). One line per pipe, per pane, naming both. See `closedPipe.ts`.
+    guardPtyPipes(proc, (side, code) =>
+      logReclaim({ action: 'pipe-error', pane: id, side, code, agent: spec.id, folder: basename(req.cwd) }))
+    return proc
   }
 
   private attach(live: Live): void {
