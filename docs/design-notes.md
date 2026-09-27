@@ -3725,13 +3725,54 @@ disk. `npm run test:clientname`.
   read out of a prompt must match EXACTLY ONE client, on a word boundary, with `MIN_ALIAS`
   characters. A word is an alias only when it is unique across the whole roster - computed,
   not stop-listed - and is not in the small `GENERIC` set of business furniture.
-- **A pane in a client tree doing something else gets the SUBJECT of its first ask**
-  (`topicTitle`). A client identified later may replace that guess; nothing replaces a
-  client, and nothing at all replaces a title a person typed (`mayRename`).
+- **A pane in a client tree doing something else is named by its chat** (2026-09-28: was
+  the SUBJECT of its first ask, `topicTitle`; see the section below). A client identified
+  later may replace the chat's title; nothing replaces a client, and nothing at all
+  replaces a title a person typed (`mayRename`).
 - **The rename is SILENT** (2026-09-23). The three-second `ClientToast` card with a `Cancel`
   was removed: Robert found a card on every rename to be noise. The rename is written to the
   Activity list only; a wrong name is fixed by renaming the pane by hand. `clientOff` stays
   readable on old saved panes. `test:activity` pins the absence.
+
+## A pane is called what its chat is called (2026-09-28)
+
+Robert, 2026-09-28: "review all previous naming/renaming of sessions its terrible and doesnt
+work wel e.g. vverify course helped". For a year the app named panes off the words typed at
+them - a lexicon, a typo table, "two of the last four asks agree on a word", a pointing ask
+named off the reply. The Activity `named` rows on both desks were counted that day: about 3
+of ~33 word-picker names were usable. `Vverify Course Helped` (research-lab: "of course"
+twice), `Prompt Anyways Delted`, `Cards Time Way Zoomed`, `Connect Fro Mac`, `Delete Later`,
+and one Mac pane renamed five times in ninety minutes. Robert types fast and loosely, with
+typos; no word-picker reads that. Every good name on either desk had come from
+`pf open --title` (an agent writing a real title).
+
+- **The CLI already titles every chat.** Claude Code 2.1.283 appends
+  `{"type":"ai-title","aiTitle":...}` to the transcript, generated once by its own model from
+  the first real ask (the title its `/resume` list shows), re-appended on saves, last wins;
+  `/rename` appends `{"type":"custom-title","customTitle":...}`. On the Mac 163 of 239
+  transcripts from one day had one. Reading it costs a string search over new bytes, and the
+  model that wrote it read the whole ask. So the app reads, never guesses: the word-picker
+  (`topicTitle`, `repeatedTopic`, `topicReading`, `topicWords.ts`, `resolvedName.ts`) is gone.
+- **Ranking:** person (app rename, `pf rename`, CLI `/rename`) > opener (`pf open --title`)
+  > client roster > CLI title > project name. A CLI `/rename` read on the FIRST look since
+  the pane started may be older than a name typed into the app since, so it only lands on an
+  app-chosen name; one that changes after that is a person acting now and wins over anything.
+- **At most once per conversation.** The CLI writes its title once, so a card changes name
+  at most once per `/clear` that starts new work, never mid-chat.
+- **Housekeeping is not the work.** About a third of one day's titles were about the desk's
+  own resume prompts (`Car handoff continuation`, `PaneForge handoff next steps`). Those
+  words are cut; what is left names the pane only if it says more than the project, and a
+  continuation never replaces a name the pane already earned.
+- **Who named it is saved.** `autoTitled` was never written to desk.json or a handoff, so
+  after a restart an automatic name looked person-typed and could never be replaced (the Mac
+  desk wore `Prompt Anyways Delted` that way). It is saved now; an old save wearing a title
+  the Activity list says the app gave (`appNamedTitle`), with no `autoTitled`, goes back to
+  the project name so the chat's own title can land - on a desk or handoff restore only, never
+  a History reopen or a continuation, which carry a name on purpose. A `| clients` label is
+  kept.
+- **Lane copies were never renamed.** A new pane in `PaneForge-a` is titled `projectOf`
+  (`PaneForge`), but `mayRename` compared the folder basename (`PaneForge-a`), so client
+  naming never ran there. `appDefault()` accepts either.
 
 ## A pane says how long it has been open (full rules, moved out of CLAUDE.md 2026-08-31)
 

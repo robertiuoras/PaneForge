@@ -32,7 +32,7 @@ export function startContinuation(deps: ContinuationDeps, id: string, now = Date
     // The original conversation and its recovery file remain available.
     asleep = !!deps.sleep(id)?.asleep
     if (!asleep) return { ok: false, reason: 'Could not safely save the source conversation; no new pane was opened.' }
-    const next = deps.start({ cwd: source.cwd, title: source.title, agent: source.agent,
+    const next = deps.start({ cwd: source.cwd, title: source.title, autoTitled: source.autoTitled, agent: source.agent,
       model: source.model, role: source.role, lane: source.lane, laneEnv: spec.laneEnv,
       prompt: bytes.toString('utf8') })
     return { ok: true, id: next.id, digest: createHash('sha256').update(bytes.toString('utf8').trim()).digest('hex') }

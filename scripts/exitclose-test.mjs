@@ -37,6 +37,25 @@ console.log('...and the four times it stays')
   const never = exitPlan({ printed: false, exitCode: 1 })
   ok('a pane that never printed a byte stays', !never.close)
   ok('and says it never started', never.why === 'it never started', never.why)
+  ok('which is a failed start', never.failedStart === true)
+}
+
+// Claude answering its own folder-trust question with "No, exit" prints a screen and then
+// exits 1 within seconds: printed, failed, still starting. Closing that six seconds later
+// made a broken start look like nothing happened.
+console.log('an agent that printed and died before it was ready stays too')
+{
+  const early = exitPlan({ ...ran, exitCode: 1, starting: true })
+  ok('printed + failed + still starting keeps the card', !early.close)
+  ok('and it is a failed start', early.failedStart === true)
+  ok('and the sentence says it was not ready, with the number', /before it was ready \(code 1\)/.test(early.why), early.why)
+
+  const later = exitPlan({ ...ran, exitCode: 1, starting: false })
+  ok('the same failure after it was ready still closes', later.close && !later.failedStart)
+
+  // `/exit` typed before the first idle: nothing went wrong.
+  const clean = exitPlan({ ...ran, exitCode: 0, starting: true })
+  ok('a clean exit while starting still closes', clean.close && !clean.failedStart)
 }
 
 console.log('the list says what went')

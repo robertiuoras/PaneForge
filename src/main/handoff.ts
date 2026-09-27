@@ -693,6 +693,7 @@ export async function receiveHandoff(
     {
       cwd: mapped,
       title: spec.title,
+      autoTitled: spec.autoTitled,
       agent: spec.agent,
       model: spec.model,
       role: spec.role,

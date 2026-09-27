@@ -291,6 +291,21 @@ function AsleepChip({
 }
 
 /**
+ * The chip a pane whose process has ended wears. Most of them close within seconds
+ * (`shared/exitClose.ts`); the one that stays on purpose is an agent that never got going,
+ * and "exited 1" does not say that.
+ */
+function ExitedChip({ s }: { s: { exitCode?: number; startFailed?: boolean } }): React.ReactElement {
+  return s.startFailed ? (
+    <span className="chip dead" title="It stopped before it was ready. What it printed is still in the pane.">
+      couldn't start {s.exitCode ?? ''}
+    </span>
+  ) : (
+    <span className="chip dead">exited {s.exitCode ?? ''}</span>
+  )
+}
+
+/**
  * One pane as the reclaim sweeps read it.
  *
  * Extracted so the sweep that CLOSES a pane and the chip that says when it will are built
@@ -5479,7 +5494,7 @@ export default function App(): JSX.Element {
                         // anybody wants to do to it is the press that gives it back.
                         <AsleepChip at={s.asleep} id={s.id} reason={s.asleepReason} />
                       ) : s.status === 'exited' ? (
-                        <span className="chip dead">exited {s.exitCode ?? ''}</span>
+                        <ExitedChip s={s} />
                       ) : null}
                       {/* What the pane is still RUNNING with its turn over. This is the one
                           card state Robert reported as a lie: an agent that started work in
@@ -6327,7 +6342,7 @@ export default function App(): JSX.Element {
               {s.asleep ? (
                 <AsleepChip at={s.asleep} id={s.id} reason={s.asleepReason} />
               ) : s.status === 'exited' ? (
-                <span className="chip dead">exited {s.exitCode ?? ''}</span>
+                <ExitedChip s={s} />
               ) : s.runSince ? (
                 <span className="session-clock pt-clock">turn <Elapsed since={s.runSince} title="This turn" /></span>
               ) : s.lastRunMs !== undefined ? (
