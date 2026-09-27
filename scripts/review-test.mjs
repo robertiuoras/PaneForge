@@ -167,10 +167,18 @@ assert.equal(shared.contextWindowFor('claude-opus-4-8[1m]', 1), 1_000_000)
 assert.equal(shared.contextWindowFor('claude-opus-5-5', 1), 1_000_000)
 assert.equal(shared.contextWindowFor('claude-opus-4-8', 1), 200_000)
 assert.equal(shared.contextWindowFor(undefined, 1), 200_000)
-assert.equal(shared.contextLevel({ used: 99_999, window: 200_000 }), 'ok')
-assert.equal(shared.contextLevel({ used: 100_000, window: 200_000 }), 'warn')
-assert.equal(shared.contextLevel({ used: 160_000, window: 200_000 }), 'warn')
-assert.equal(shared.contextLevel({ used: 160_001, window: 200_000 }), 'danger')
+// The colour follows the percent the label shows: 49.5% reads "50% full" and is amber,
+// 80.4% reads "80% full" and is amber, never red.
+assert.equal(shared.contextLevel({ used: 98_999, window: 200_000 }), 'ok')
+assert.equal(shared.contextLevel({ used: 99_000, window: 200_000 }), 'warn')
+assert.equal(shared.contextLevel({ used: 160_999, window: 200_000 }), 'warn')
+assert.equal(shared.contextPercent({ used: 160_999, window: 200_000 }), 80)
+assert.equal(shared.contextLevel({ used: 161_000, window: 200_000 }), 'danger')
+for (let used = 90_000; used <= 170_000; used += 250) {
+  const c = { used, window: 200_000 }
+  assert.equal(shared.contextLevel(c) === 'danger', shared.contextPercent(c) > 80, `${used}: red only past "80% full"`)
+  assert.equal(shared.contextLevel(c) === 'ok', shared.contextPercent(c) < 50, `${used}: green only under "50% full"`)
+}
 assert.equal(shared.contextWords({ context: { used: 142_000, window: 200_000 }, sessionTokens: 3_400_000 }), '142k of 200k context used (71%) · 3.4M tokens this session')
 assert.equal(shared.contextWords({}), '')
 
@@ -219,6 +227,53 @@ assert.deepEqual([unreadable.paneNumber, unreadable.context, unreadable.sessionT
 api.setReviewDesk(() => { throw new Error('desk unreadable') })
 assert.equal(api.recordReview({ ...input, id: 'ctx_nodesk', sessionId: 'pane_ctx', nativeSessionId: 'chat_ctx_1' }, claudeNative).paneNumber, undefined)
 assert.ok(existsSync(join(temp, 'reviews', 'ctx_nodesk.json')))
+// A Codex rollout reaches 128MB; its last token_count is the running total, so only the
+// last 2MB is read, and the whole file only when that end has no token count.
+process.env.CODEX_HOME = join(temp, '.codex')
+const rollouts = join(temp, '.codex', 'sessions', '2026', '09', '27')
+mkdirSync(rollouts, { recursive: true })
+const codexRows = fixture('review-tokens-codex.jsonl').split('\n').filter(Boolean)
+const codexTokenRows = codexRows.filter((l) => l.includes('"token_count"'))
+const padRow = JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'x'.repeat(4000) }] } })
+const pad = (bytes) => {
+  const rows = []
+  for (let left = bytes; left > 0;) {
+    const row = left > padRow.length + 1 + 200 ? padRow : JSON.stringify({ type: 'response_item', pad: 'y'.repeat(Math.max(0, left - 21)) }).slice(0, left - 1)
+    rows.push(row)
+    left -= row.length + 1
+  }
+  return rows.join('\n') + '\n'
+}
+const codexNative = (id) => ({ title: 'Codex chat', provider: 'codex', cwd: temp, nativeSessionId: id })
+const meta = (id) => JSON.stringify({ type: 'session_meta', payload: { id, timestamp: '2026-09-27T01:00:00.000Z', cwd: temp } }) + '\n'
+const earlyCount = JSON.stringify({ type: 'event_msg', payload: { type: 'token_count', info: { last_token_usage: { total_tokens: 7 }, total_token_usage: { input_tokens: 9, output_tokens: 1 }, model_context_window: 258400 } } })
+// Long: the fixture's real token rows after 12MB of reply, so the end is all that is read.
+const longId = '01a0ba4d-1ca3-7a01-97bd-4cbabdf30001'
+writeFileSync(join(rollouts, `rollout-long-${longId}.jsonl`), meta(longId) + earlyCount + '\n' + pad(12 << 20) + codexTokenRows.join('\n') + '\n')
+const nodeFs = require('node:fs')
+const realReadSync = nodeFs.readSync
+let readBytes = 0
+nodeFs.readSync = (...a) => { const n = realReadSync(...a); readBytes += n; return n }
+let long
+try {
+  long = api.recordReview({ ...input, id: 'codex_long', sessionId: 'pane_codex', nativeSessionId: longId }, codexNative(longId))
+} finally {
+  nodeFs.readSync = realReadSync
+}
+assert.deepEqual([long.context, long.sessionTokens], [{ used: 44229, window: 258400 }, 48436], 'the end of a long rollout has the final numbers')
+assert.ok(readBytes < 3 << 20, `a 12MB rollout costs its last 2MB, not all of it (${readBytes} bytes read)`)
+// Quiet end: the only token count is 3MB back, and the line cut in half at the 2MB mark
+// ends in a whole-looking fake count. The fragment is skipped; the whole file is read.
+const quietId = '01a0ba4d-1ca3-7a01-97bd-4cbabdf30002'
+const fake = JSON.stringify({ type: 'event_msg', payload: { type: 'token_count', info: { last_token_usage: { total_tokens: 99 }, total_token_usage: { input_tokens: 999, output_tokens: 9 }, model_context_window: 258400 } } })
+const quietEnd = pad((2 << 20) - fake.length - 1)
+const quiet = meta(quietId) + earlyCount + '\n' + pad(3 << 20) + '{"type":"response_item"}' + fake + '\n' + quietEnd
+assert.equal(Buffer.byteLength(quiet) - Buffer.byteLength(quiet.slice(0, quiet.lastIndexOf(fake))), 2 << 20, 'the 2MB mark falls on the fake count')
+writeFileSync(join(rollouts, `rollout-quiet-${quietId}.jsonl`), quiet)
+const quietReview = api.recordReview({ ...input, id: 'codex_quiet', sessionId: 'pane_codex', nativeSessionId: quietId }, codexNative(quietId))
+assert.deepEqual([quietReview.context, quietReview.sessionTokens], [{ used: 7, window: 258400 }, 10], 'no count in the end reads the whole rollout, never a fragment')
+delete process.env.CODEX_HOME
+
 const oldPage = readFileSync(join(temp, 'reviews', 'done_1.html'), 'utf8')
 assert.ok(!oldPage.includes('class="num"') && !oldPage.includes('class="ctx"'), 'a report with none of them draws neither')
 

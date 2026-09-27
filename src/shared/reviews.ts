@@ -154,13 +154,16 @@ export function transcriptTokens(
   return out;
 }
 
-/** GuardDeck's colours for the same number: green under half, amber to 80%, red past it. */
+export const contextPercent = (c: ReviewContext): number => Math.round((c.used / c.window) * 100);
+/**
+ * GuardDeck's colours for the same number: green under half, amber to 80%, red past it.
+ * Judged on the percent the label shows, so "80% full" is never drawn red.
+ */
 export type ContextLevel = "ok" | "warn" | "danger";
 export function contextLevel(c: ReviewContext): ContextLevel {
-  const pct = (c.used / c.window) * 100;
+  const pct = contextPercent(c);
   return pct > 80 ? "danger" : pct >= 50 ? "warn" : "ok";
 }
-export const contextPercent = (c: ReviewContext): number => Math.round((c.used / c.window) * 100);
 
 /** "142k of 200k context used (71%) · 316k tokens this session", in words a person reads. */
 export function contextWords(r: Pick<ReviewRecord, "context" | "sessionTokens">): string {
