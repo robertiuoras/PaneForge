@@ -105,6 +105,7 @@ const { SessionManager } = req('./sessions.bundle.cjs')
 const fail = []
 const ok = (c, n, detail) => {
   console.log((c ? 'ok   ' : 'FAIL ') + n)
+  if (process.env.PROBE_ALL && c && detail !== undefined) console.log("      ", String(detail).split("\n")[0].slice(0, 80))
   if (!c) {
     if (detail !== undefined) console.log('     ', detail)
     fail.push(n)
