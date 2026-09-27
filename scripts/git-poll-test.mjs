@@ -22,14 +22,21 @@ const js = tsc.transpileModule(readFileSync(join(root, 'src/main/git.ts'), 'utf8
 
 // What the fake git says, and how many times it was asked.
 let status = '## main...origin/main\n M src/main/git.ts\n'
+// `git status` failing (its stderr), and what `rev-list --count HEAD --not --remotes` says.
+let statusErr = null
+let unpushed = '0\n'
+let revFails = false
 let runs = 0
 let now = 0
 
 const child_process = {
-  execFile(_bin, _args, _opts, cb) {
+  execFile(_bin, args, _opts, cb) {
     runs++
     // Asynchronously, like the real one: the module is allowed to depend on that.
-    setImmediate(() => cb(null, status))
+    setImmediate(() => {
+      if (args[0] === 'rev-list') return revFails ? cb(new Error('rev-list'), '', 'fatal: bad revision') : cb(null, unpushed, '')
+      return statusErr === null ? cb(null, status, '') : cb(new Error('status'), '', statusErr)
+    })
   }
 }
 // A Date the test drives. Everything in the module reads the clock through this.
@@ -49,8 +56,8 @@ new Function('require', 'module', 'exports', 'Date', js)(
             // The real gate is `scripts/git-gate-test.mjs`'s; here it is a straight call.
             gitRun: (_cwd, args, opts) =>
               new Promise((done) =>
-                child_process.execFile('git', args, opts, (err, stdout) =>
-                  done({ ok: !err, status: err ? 1 : 0, stdout: stdout ?? '', stderr: '' })
+                child_process.execFile('git', args, opts, (err, stdout, stderr) =>
+                  done({ ok: !err, status: err ? 1 : 0, stdout: stdout ?? '', stderr: stderr ?? '' })
                 )
               )
           }
@@ -59,7 +66,7 @@ new Function('require', 'module', 'exports', 'Date', js)(
   mod.exports,
   FakeDate
 )
-const { gitInfo } = mod.exports
+const { gitInfo, gitCached } = mod.exports
 const REPO = 'C:/repo'
 
 const at = async (t, busy = false) => {
@@ -114,5 +121,53 @@ now = 200_000
 const [a, b] = await Promise.all([gitInfo(REPO), gitInfo(REPO)])
 assert.equal(runs, 8, 'two panes on one repo ran two git processes')
 assert.deepEqual(a, b)
+
+// 8. `gitCached`, the finished-pane close's read (`main/doneClose.ts`): it may only say
+//    "nothing to lose" about a folder it really read, after the turn it is judging.
+//    A branch with no upstream counts what no remote has - `## lane-a` alone read ahead 0,
+//    and a pane whose commits were never pushed closed as if they had been.
+const LANE = 'C:/lane'
+status = '## lane-a\n'
+unpushed = '3\n'
+now = 300_000
+assert.equal(gitCached(LANE, 0, now), 'unread', 'never read: unread, and it starts one')
+await gitInfo(LANE)
+assert.equal(gitCached(LANE, 0, now).ahead, 3, 'no upstream: the commits no remote has are counted')
+// ...and a branch that has an upstream still takes the count from `git status` alone.
+status = '## main...origin/main [ahead 2]\n'
+now = 400_000
+let before = runs
+await gitInfo(LANE, true)
+assert.equal(runs - before, 1, 'an upstream costs no second process')
+assert.equal(gitCached(LANE, 0, now).ahead, 2)
+// A read STARTED before the turn ended may predate the agent's last edit.
+assert.equal(gitCached(LANE, now + 1, now + 2), 'unread', 'a read from before the turn ended is not trusted')
+assert.equal(gitCached(LANE, now, now + 2).ahead, 2, 'a read started at or after it is')
+// A status that timed out is not a folder with nothing in it.
+const SLOW = 'C:/slow'
+statusErr = ''
+now = 500_000
+assert.equal(await gitInfo(SLOW), null, 'the badge still just draws nothing')
+assert.equal(gitCached(SLOW, 0, now), 'unread', 'a failed read counts as unread, never as "not a repo"')
+// Not a repo IS an answer.
+const PLAIN = 'C:/plain'
+statusErr = 'fatal: not a git repository (or any of the parent directories): .git\n'
+await gitInfo(PLAIN)
+assert.equal(gitCached(PLAIN, 0, now), null, 'a folder that is not a repo has nothing to lose')
+// The unpushed count failing is a failed read too.
+const BROKEN = 'C:/broken'
+statusErr = null
+status = '## lane-b\n'
+revFails = true
+await gitInfo(BROKEN)
+assert.equal(gitCached(BROKEN, 0, now), 'unread', 'an unpushed count that failed is unread')
+// A brand-new repo has no HEAD to count from: no second process, nothing ahead.
+const NEW = 'C:/new'
+status = '## No commits yet on main\n?? a.txt\n'
+before = runs
+await gitInfo(NEW)
+assert.equal(runs - before, 1)
+assert.equal(gitCached(NEW, 0, now).ahead, 0)
+assert.equal(gitCached(NEW, 0, now).dirty, 1)
 
 console.log('git-poll-test: OK')

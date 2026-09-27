@@ -8,7 +8,7 @@ import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { app } from 'electron'
 import { profileName } from './profile'
-import { doneReviewId, doneVerdict, type DoneReading } from '../shared/doneClose'
+import { doneReviewId, doneVerdict, finishedCard, type DoneReading } from '../shared/doneClose'
 import { machineOf, readClaudeReply, readCodexReply, type ReplyRead } from '../shared/replyRead'
 import { summaryOf, type FinishedNote } from '../shared/finishedDigest'
 import type { ReviewInput, ReviewRecord } from '../shared/reviews'
@@ -112,7 +112,12 @@ export interface DoneCloseDeps {
   titleOf: (id: string) => { title: string; cwd: string; agent: string } | undefined
   /** index.ts's own refusals: continuation, queued handoff, background job. */
   otherwiseBusy: (id: string) => string | null
+  /** Writes the Review row WITHOUT its GuardDeck card; `notify` sends that once the pane is gone. */
   record: (input: ReviewInput, native: { title: string; provider: string; cwd: string; nativeSessionId: string }) => ReviewRecord
+  /** The row's GuardDeck card (`reviews.ts` `sendReviewNotice`). */
+  notify: (reviewId: string) => void
+  /** The row as Review's "Mark as read" leaves it (`acknowledgeReview`). */
+  markRead: (reviewId: string) => void
   close: (id: string, reportedAt: number) => { closed: boolean; reason?: string }
   noteClose: (reviewId: string, reason?: string, closedAt?: string) => void
   writeNotice: (path: string, body: string) => void
@@ -123,24 +128,35 @@ export interface DoneCloseDeps {
   finished?: (opener: string, note: FinishedNote) => void
   now?: () => number
   /**
+   * The pane's folder as `DoneReading.folder` has it (`gitCached`). Asked only for a pane
+   * past every cheap gate, so an idle desk reads no git at all.
+   */
+  folderOf?: (id: string, since: number) => DoneReading['folder']
+  /** How long a finished reply sits first (`doneQuietMs`); unset, `AUTO_CLOSE_QUIET_MS`. */
+  quietMs?: () => number
+  /**
    * `done-close.log`: why each finished pane stayed, written when the reason CHANGES. The
    * console alone kept nothing, so "why didn't it close" could only be guessed at.
    */
   log?: (line: string) => void
+  /**
+   * Decide only: return what WOULD close and touch nothing - no row, no close, no log
+   * line. `pf tidy --dry-run`.
+   */
+  dry?: boolean
 }
 
-/** Panes with a review row already written this turn, so a refused close is not re-recorded every tick. */
-const recorded = new Map<string, string>()
 /** The last thing logged per pane, so a pane that stays for an hour is one line, not 240. */
 const said = new Map<string, string>()
 
-/** One pass over the desk. Returns what it closed, for the log and the test. */
+/** One pass over the desk. Returns what it closed (with `dry`, would close), for the log and the test. */
 export function sweepDoneClose(d: DoneCloseDeps): string[] {
   if (!d.enabled()) return []
   const now = d.now?.() ?? Date.now()
+  const quietMs = d.quietMs?.()
   const closed: string[] = []
   const say = (id: string, what: string): void => {
-    if (said.get(id) === what) return
+    if (d.dry || said.get(id) === what) return
     said.set(id, what)
     console.info(`done-close: ${id} ${what}`)
     d.log?.(`${id} ${what}`)
@@ -149,7 +165,7 @@ export function sweepDoneClose(d: DoneCloseDeps): string[] {
     const id = (r as DoneReading & { id: string }).id
     if (!id) continue
     // Cheap gates first; the transcript is read only for a pane that is otherwise done.
-    let verdict = doneVerdict({ ...r, reply: undefined }, now)
+    let verdict = doneVerdict({ ...r, reply: undefined }, now, quietMs)
     if (!verdict.close && verdict.reason !== 'reply not read') {
       if (r.turnEndedAt && verdict.reason !== 'not quiet long enough' && verdict.reason !== 'shell pane') say(id, `stays - ${verdict.reason}`)
       continue
@@ -157,7 +173,7 @@ export function sweepDoneClose(d: DoneCloseDeps): string[] {
     const agent = r.agent
     const file = d.transcriptFor(id)
     const reply = file ? readReply(agent, file, now) : undefined
-    verdict = doneVerdict({ ...r, reply: reply?.text, runningAgents: reply?.runningAgents }, now)
+    verdict = doneVerdict({ ...r, reply: reply?.text, runningAgents: reply?.runningAgents, folder: d.folderOf?.(id, r.turnEndedAt) }, now, quietMs)
     if (!verdict.close) {
       say(id, `stays - ${verdict.reason}`)
       continue
@@ -175,6 +191,10 @@ export function sweepDoneClose(d: DoneCloseDeps): string[] {
     const busy = d.otherwiseBusy(id)
     if (busy) {
       say(id, `stays - ${busy}`)
+      continue
+    }
+    if (d.dry) {
+      closed.push(id)
       continue
     }
     const reviewId = doneReviewId(id, r.turnEndedAt)
@@ -200,6 +220,7 @@ export function sweepDoneClose(d: DoneCloseDeps): string[] {
           // Robert, 2026-09-26: "finished chats should close, the review pops up in
           // GuardDeck" - with a box for the next prompt, which reaches this conversation
           // through `pf continue`. Same production gate as every notice (`spoolNotice`).
+          // Sent below only once the pane has closed, and only when `finishedCard` says.
           notify: true
         },
         { title: native.title, provider: native.agent, cwd: native.cwd, nativeSessionId: resumeId }
@@ -208,18 +229,21 @@ export function sweepDoneClose(d: DoneCloseDeps): string[] {
       console.warn(`done-close: ${id} not recorded - ${(e as Error).message}`)
       continue
     }
-    if (recorded.get(id) !== reviewId) {
-      recorded.set(id, reviewId)
+    const opener = d.openerOf?.(id)
+    const res = d.close(id, now)
+    if (res.closed) {
+      // Nothing reaches GuardDeck before this line: a close refused after its card went out
+      // left a card for a pane still on the desk (s93, 27 Sep). The to-dos go either way;
+      // the result card only when something is left for a person who has not read it
+      // (Robert, 2026-09-28: "i already reviewed the session").
       let n = 0
       for (const step of verdict.personSteps) {
         const notice = stepNotice(record, step, ++n, thisMachine(), new Date(now))
         const path = join(noticesDir(), `${notice.id}.json`)
         if (!existsSync(path)) d.writeNotice(path, JSON.stringify(notice, null, 2))
       }
-    }
-    const opener = d.openerOf?.(id)
-    const res = d.close(id, now)
-    if (res.closed) {
+      if (verdict.read) d.markRead(reviewId)
+      if (finishedCard(verdict.personSteps.length, verdict.read)) d.notify(reviewId)
       if (opener)
         d.finished?.(opener, {
           id,
@@ -230,9 +254,8 @@ export function sweepDoneClose(d: DoneCloseDeps): string[] {
         })
       d.noteClose(reviewId, undefined, new Date(now).toISOString())
       d.activity(native.title, verdict.personSteps.length ? `finished, ${verdict.personSteps.length} thing${verdict.personSteps.length === 1 ? '' : 's'} left for you` : 'finished')
-      say(id, `finished and closed itself into Review (${reviewId})`)
+      say(id, `finished and closed itself into Review (${reviewId})${verdict.read ? ', read' : ''}`)
       closed.push(id)
-      recorded.delete(id)
       said.delete(id)
     } else {
       d.noteClose(reviewId, res.reason)

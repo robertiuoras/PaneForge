@@ -5218,6 +5218,30 @@ on a subagent that already finished. Each `personOwnedSteps` step writes
 from `machineOf` else this one, `reopen` = cwd/agent/resumeId/prompt), through the same gate
 as `spoolNotice`.
 
+### ...no resting, sooner when short, 30 s after he read it, and a card only when he is owed one (2026-09-28)
+
+Robert, ~2:20am: "its all saying resting to free memory why? ... id rather they close than
+sleep" and "close those that are actually finished that i dont need to review". reclaim.log
+had 13 pressure sleeps and 13 wakes in 35 minutes; a slept pane is refused by this close, so
+under pressure the sleep always won. Sleep went off (`migrateReclaimV5`) and this close took
+its clocks (`doneQuietMs`). His definition of finished - "no open ask, clean tree/pushed, no
+live background job" - added the folder check (the badge's cached read, never a spawn per
+sweep) and the prompt-owed check; the opener rule stopped holding for life (27 Sep: 8 finished
+openers held). A handoff written before the pane's last prompt no longer counts
+(`handoffOpenAfter`). `bg-wait.mjs` is the waiter every chat is told to use, and its
+`--label release-check` read as release work: s77 sat finished behind it.
+
+~3:54am via the guarddeck chat (s93, a one-line ad-blocker answer he read and left): "shouldn't
+have shown me report ... no manual things that i needed to see ... i already reviewed the
+session ... should've closed that session automatically after like 30secs after i read it".
+Its record went out with `notify: true` at 17:52:44Z and then `closeAfterResult` refused it,
+so a card popped for a pane that stayed. The refusal was one sentence for seven flags; the
+flag was `handoffOpen` from another chat's handoff in `/Users/robertiuoras/Projects/assistant`
+(five steps, written 1h40m before the prompt) - a false positive the stale-handoff rule
+already removes, and the refusal now names each flag. Rows are written first and held; the
+card, the to-dos and the read mark go only after the pane really closed. `pf tidy` asks the
+same sweep without the wait: somebody asking to tidy is the wait.
+
 ### ...and the chat that opened them hears once
 
 Robert, 2026-09-23: "once all sessions consolidate if theres multiple running and they close

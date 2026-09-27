@@ -7,8 +7,9 @@
 // no word of what it did. Now every pane that knows who opened it (`reportTo`, which
 // `pf open` fills from the opener's `PF_PANE`) leaves a note here as it closes, and the
 // opener is told once, when the LAST of its panes has closed - one prompt, every
-// summary. The opener itself is never auto-closed (`openedOthers` in doneClose.ts): it is
-// where the summary lands.
+// summary. The opener is not auto-closed while any of its panes is open or their summary
+// is still waiting here or on its way to it (`openedOthers`, `owedPrompt` in doneClose.ts):
+// it is where the summary lands. After that it closes like any finished pane.
 //
 // A pane that never finishes (a question nobody answers) must not hold the others'
 // summaries for ever, so the digest also goes after `DIGEST_MAX_HOLD_MS`, saying how
@@ -80,6 +81,11 @@ export class FinishedDigest {
       if (tell(opener, digestText(p.notes, open))) told.push(opener)
     }
     return told
+  }
+
+  /** A summary is waiting for this opener. */
+  has(opener: string): boolean {
+    return this.pending.has(opener)
   }
 
   size(): number {

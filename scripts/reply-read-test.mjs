@@ -119,7 +119,25 @@ const asyncResult = (toolUseId) => user([{ tool_use_id: toolUseId, type: 'tool_r
   assert.equal(r.text, 'Done: two fixes.')
   assert.equal(r.prompt, 'audit the last week')
   assert.equal(r.runningAgents, 0)
+  assert.equal(r.promptAt, Date.parse('2026-09-22T11:35:51.060Z'), 'the prompt carries its row time')
   console.log('reply-read: codex rollout ok')
+}
+
+// 5b. A PASTED prompt is the person, and its row time is when the pane was last asked.
+// The real row (s81-muk0ypqg, transcript 21b47890, 2026-09-27 16:31:51.955Z): a string
+// opening `\n\n<pasted_content id="05c9">`, with no closing tag in that row.
+{
+  const pasted = row({ parentUuid: 'p', isSidechain: false, promptId: 'q', type: 'user', message: { role: 'user', content: '\n\n<pasted_content id="05c9">\nGoal: finished PaneForge chats CLOSE themselves instead of "resting to free memory".\nnever kill the running PaneForge.' }, uuid: 'u2', timestamp: '2026-09-27T16:31:51.955Z', promptSource: 'typed', cwd: '/x', sessionId: 's', version: '2.1.0' })
+  const r = readClaudeReply([user('first ask'), assistant([{ type: 'text', text: 'first answer' }]), pasted, assistant([{ type: 'text', text: 'second answer' }])].join('\n'))
+  assert.match(r.prompt, /^Goal: finished PaneForge chats CLOSE themselves/, 'the tags are gone, the words kept')
+  assert.equal(r.promptAt, Date.parse('2026-09-27T16:31:51.955Z'), 'the pasted row is the newest prompt')
+  const closed = readClaudeReply(user('<pasted_content id="1">\nfix it\n</pasted_content id="1">'))
+  assert.equal(closed.prompt, 'fix it', 'a closed paste reads as its words')
+  const harness = readClaudeReply([user('real ask'), user('<command-name>/clear</command-name>')].join('\n'))
+  assert.equal(harness.prompt, 'real ask', 'every other < is still the harness')
+  assert.equal(harness.promptAt, Date.parse('2026-09-22T20:29:53.697Z'))
+  assert.equal(readClaudeReply(assistant([{ type: 'text', text: 'x' }])).promptAt, undefined, 'no prompt in the tail: no time')
+  console.log('reply-read: pasted prompts and their time ok')
 }
 
 // 6. Which machine a step names.

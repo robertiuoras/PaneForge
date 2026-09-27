@@ -89,12 +89,8 @@ export interface ReclaimConfig {
   idleCloseMinutes: number
   /**
    * Stop the agent in a pane nobody has typed into for this many minutes, and keep the
-   * card - see `IDLE_SLEEP_MINUTES` and `shared/sleep.ts`. 0 is off.
-   *
-   * A NEW key, so an existing config.json simply does not have it and `?? IDLE_SLEEP_MINUTES`
-   * gives every desk the default: none of the `defaultsVN` machinery is needed, because
-   * that exists for a default that was already WRITTEN as a number somebody could have
-   * chosen. Missing is missing.
+   * card - see `IDLE_SLEEP_MINUTES` and `shared/sleep.ts`. 0 is off, and off is the
+   * default from 2026-09-28 (`migrateReclaimV5`); missing reads as off too.
    */
   idleSleepMinutes?: number
   /**
@@ -118,6 +114,8 @@ export interface ReclaimConfig {
   defaultsV3?: boolean
   /** The same again, ten minutes becoming five - see `migrateReclaimV4`. */
   defaultsV4?: boolean
+  /** The sleep switch going OFF on every desk, once - see `migrateReclaimV5`. */
+  defaultsV5?: boolean
 }
 
 /**
@@ -178,6 +176,9 @@ export const IDLE_CLOSE_MINUTES = 10
 /*
  * From 2026-09-25 this clock runs only under a MEMORY verdict (`idleSleepPlan` returns
  * nothing at `ok`), so the number is a ceiling the pressure clocks below cut to 1 min / 30s.
+ *
+ * From 2026-09-28 it is only what the Settings switch sets when somebody turns sleep ON:
+ * the default is off (`DEFAULT_RECLAIM`, `migrateReclaimV5`).
  */
 export const IDLE_SLEEP_MINUTES = 30
 /**
@@ -253,10 +254,31 @@ export const DEFAULT_RECLAIM: ReclaimConfig = {
   minIdleMinutes: 15,
   maxPerSweep: 2,
   idleCloseMinutes: IDLE_CLOSE_MINUTES,
-  idleSleepMinutes: IDLE_SLEEP_MINUTES,
+  idleSleepMinutes: 0,
   defaultsV2: true,
   defaultsV3: true,
-  defaultsV4: true
+  defaultsV4: true,
+  defaultsV5: true
+}
+
+/**
+ * The sleep switch going OFF, once, on every desk that has it on.
+ *
+ * Robert, 2026-09-28: "its all saying resting to free memory why? and not working properly
+ * id rather they close than sleep". Measured in reclaim.log (27 Sep, 35 min): 13 pressure
+ * sleeps and 13 wakes over 7 panes, one pane slept three times, six wakes of 1.3-3.2s. A
+ * slept pane is refused by the finished-pane close (`doneEnough` refuses `asleep`), so
+ * under memory pressure the sleep always won and a finished pane never went to Review; the
+ * wake queue then brought it back at normal pressure. Off, a finished pane closes into
+ * Review (`shared/doneClose.ts`, quicker under pressure) and an unfinished one stays awake.
+ *
+ * The switch stays - turning it back on sets `IDLE_SLEEP_MINUTES`. Keyed on the SAVED
+ * config's marker for the reason every `defaultsVN` is: `DEFAULT_RECLAIM` carries it, so
+ * the merge answers yes for every config in existence.
+ */
+export function migrateReclaimV5(merged: ReclaimConfig, raw: ReclaimConfig | undefined): ReclaimConfig {
+  if (raw?.defaultsV5) return merged
+  return { ...merged, idleSleepMinutes: 0, defaultsV5: true }
 }
 
 export interface ReclaimPane {
@@ -751,7 +773,7 @@ export function idleSleepPlan(
   // because it is waiting on somebody; a sleeping card was a closed pane that still took
   // a place on the desk.
   if (pressure === 'ok') return []
-  const minutes = Math.max(0, cfg.idleSleepMinutes ?? IDLE_SLEEP_MINUTES)
+  const minutes = Math.max(0, cfg.idleSleepMinutes ?? 0)
   if (!minutes) return []
   const shortenedMinIdle = pressureSleepMs(minutes, pressure)
   const plainMinIdle = minutes * 60_000

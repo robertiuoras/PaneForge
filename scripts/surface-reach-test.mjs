@@ -41,6 +41,9 @@ const DESK_SIDE = {
   // button for this is the person who would simply close the pane; the caller that cannot
   // is the agent inside it, at the end of its own work.
   armCloseWhenDone: 'pf close-when-done [pane] - a chat arming its own pane from inside it',
+  // The window closes finished panes by itself; `pf tidy` asks for the same sweep now,
+  // from a chat or the desk-sweep skill, with a dry run that names what it would close.
+  closeDone: 'pf tidy [--dry-run] - clears finished panes into Review from outside the window',
   // Armed by the `autoclear` Stop hook through the phone server (`pane-clear.mjs`), never
   // from this window: the decision needs the transcript's token count and the handoff on
   // disk, neither of which the renderer has. Its CANCEL half is a real button on the card.

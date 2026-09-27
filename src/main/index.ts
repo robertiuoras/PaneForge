@@ -22,10 +22,10 @@ import {
   shell } from 'electron'
 import { startMainWatch, stopMainWatch } from './mainWatch'
 import { SessionManager, setSilenceAlert, type WriteOrigin } from './sessions'
-import { acknowledgeReview, listReviews, noteReviewClose, recordReview, reviewCloseArmAction, reviewOpenTarget, setReviewDesk, type ReviewCloseArm } from './reviews'
+import { acknowledgeReview, listReviews, noteReviewClose, recordReview, reviewCloseArmAction, reviewOpenTarget, sendReviewNotice, setReviewDesk, type ReviewCloseArm } from './reviews'
 import { ComputeReviews, computeResult } from './computeReviews'
-import { mayNotify, noticesDir, readReply, sweepDoneClose } from './doneClose'
-import { doneReviewId } from '../shared/doneClose'
+import { mayNotify, noticesDir, readReply, sweepDoneClose, type DoneCloseDeps } from './doneClose'
+import { doneQuietMs, doneReviewId, finishedCard } from '../shared/doneClose'
 import { FinishedDigest, summaryOf } from '../shared/finishedDigest'
 import { DataPump } from './dataPump'
 import { DiscordPresence } from './discordPresence'
@@ -70,7 +70,7 @@ import { attachGlass, glassSupported } from './glass'
 import { invalidateAgents, listAgents, specFor } from './agents'
 import { codexInstalledVersion, codexLatest, forgetCodexVersion } from './codexModels'
 import { isOutdated, versionOf } from '../shared/codexCatalogue'
-import { gitInfo } from './git'
+import { gitCached, gitInfo } from './git'
 import { projectRoot } from './projectRoot'
 import { diffFiles, diffPatch } from './diff'
 import { withDefaultModel } from '../shared/startModel'
@@ -145,7 +145,7 @@ import {
 import { codexContextUsage, receivedContinuation } from './contextUsage'
 import { rolloutTurn } from './effort'
 import { startContinuation } from './continuation'
-import { handoffCandidates } from '../shared/handoffSteps'
+import { handoffCandidates, personOwnedSteps } from '../shared/handoffSteps'
 import { receiveHandoff, sendHandoff, shareable, type LandedCopy } from './handoff'
 import { RESUME_CONFIRM_MS } from '../shared/resumeCheck'
 import { briefAnchor, clearCommandFor, hasFreshPaneHandoff, readAsk as readAutoClearAsk, resumeBrief } from '../shared/autoclear'
@@ -206,6 +206,7 @@ import * as voice from './voice'
 import { installCommand, uninstallCommand, updateCommand } from '../shared/agents'
 import { installLaneHooks } from './laneHooks'
 import { assess, lagLevel, restorePlan, worstPressure, type Pressure } from '../shared/capacity'
+import { sleepPressureOf } from '../shared/reclaim'
 import { restoreAsleep } from '../shared/restoreTurn'
 import { DEFAULT_RECOVER } from '../shared/recover'
 import type { UsageReport } from '../shared/usage'
@@ -1622,6 +1623,7 @@ ipcMain.on('sessions:active', (_e, id: unknown) => manager.setActive(typeof id =
 // The panes a chat opened report back to it ONCE, when the last of them has closed
 // (`shared/finishedDigest.ts`). Flushed on the same 15s tick as the sweep that feeds it.
 const finishedDigest = new FinishedDigest()
+manager.digestPending = (id) => finishedDigest.has(id)
 manager.replyFor = (id, agent) => {
   const file = transcriptFor(id)
   return file ? readReply(agent, file) : undefined
@@ -1637,49 +1639,105 @@ manager.onFinished = (meta, opener) => {
     personSteps: []
   })
 }
+function doneCloseDeps(): DoneCloseDeps {
+  return {
+    openerOf: (id) => manager.openerOf(id),
+    finished: (opener, note) => finishedDigest.add(opener, note),
+    enabled: () => getConfig().autoCloseDone !== false,
+    // Quicker on a machine measured short of memory: 3 min, 1 min tight, 30 s over.
+    quietMs: () => {
+      const v = capacityVerdict()
+      return doneQuietMs(sleepPressureOf(v.level, v.why))
+    },
+    readings: () => manager.doneReadings(),
+    folderOf: (id, since) => {
+      const cwd = manager.list().find((x) => x.id === id)?.cwd
+      return cwd ? gitCached(cwd, since) : null
+    },
+    transcriptFor,
+    resumeIdFor,
+    history: () => history.list(),
+    titleOf: (id) => {
+      const s = manager.list().find((x) => x.id === id)
+      return s ? { title: s.title, cwd: s.cwd, agent: s.agent } : undefined
+    },
+    otherwiseBusy: (id) =>
+      continuationOwnsSource(id) || preparingContinuations.has(id) || handoffQueue.pending().some((q) => q.id === id) || (backJobOf(id) && !backJobWaitOnly(id))
+        ? 'session has a pending continuation, handoff, or background job'
+        : null,
+    record: (input, native) => recordReview(input, native, true),
+    notify: sendReviewNotice,
+    markRead: (id) => void acknowledgeReview(id, true),
+    close: (id, at) => manager.closeAfterResult(id, at),
+    noteClose: noteReviewClose,
+    writeNotice: (path, body) => {
+      if (!mayNotify()) return
+      mkdirSync(noticesDir(), { recursive: true, mode: 0o700 })
+      const tmp = `${path}.${process.pid}.tmp`
+      writeFileSync(tmp, body, { mode: 0o600 })
+      renameSync(tmp, path)
+    },
+    activity: (what, why) => noteActivity(activityEntry('closed', what, why)),
+    log: (line) => appendLog(join(app.getPath('userData'), 'done-close.log'), `[${new Date().toISOString()}] ${line}\n`, { rotateAt: 64 * 1024 })
+  }
+}
 setInterval(() => {
   try {
-    sweepDoneClose({
-      openerOf: (id) => manager.openerOf(id),
-      finished: (opener, note) => finishedDigest.add(opener, note),
-      enabled: () => getConfig().autoCloseDone !== false,
-      readings: () => manager.doneReadings(),
-      transcriptFor,
-      resumeIdFor,
-      history: () => history.list(),
-      titleOf: (id) => {
-        const s = manager.list().find((x) => x.id === id)
-        return s ? { title: s.title, cwd: s.cwd, agent: s.agent } : undefined
-      },
-      otherwiseBusy: (id) =>
-        continuationOwnsSource(id) || preparingContinuations.has(id) || handoffQueue.pending().some((q) => q.id === id) || (backJobOf(id) && !backJobWaitOnly(id))
-          ? 'session has a pending continuation, handoff, or background job'
-          : null,
-      record: recordReview,
-      close: (id, at) => manager.closeAfterResult(id, at),
-      noteClose: noteReviewClose,
-      writeNotice: (path, body) => {
-        if (!mayNotify()) return
-        mkdirSync(noticesDir(), { recursive: true, mode: 0o700 })
-        const tmp = `${path}.${process.pid}.tmp`
-        writeFileSync(tmp, body, { mode: 0o600 })
-        renameSync(tmp, path)
-      },
-      activity: (what, why) => noteActivity(activityEntry('closed', what, why)),
-      log: (line) => appendLog(join(app.getPath('userData'), 'done-close.log'), `[${new Date().toISOString()}] ${line}\n`, { rotateAt: 64 * 1024 })
-    })
+    sweepDoneClose(doneCloseDeps())
   } catch (e) {
     console.warn(`done-close: sweep failed - ${(e as Error).message}`)
   }
   for (const opener of finishedDigest.flush((o) => manager.openChildrenOf(o), (o, text) => manager.tellPane(o, text)))
     console.info(`done-close: told ${opener} what the panes it opened did`)
 }, 15_000).unref()
+/**
+ * `pf tidy`: every pane whose card says finished (`Session.finished`) that the sweep above
+ * would close - the same refusals, only not the quiet wait, because somebody asking to
+ * tidy IS the wait. `dry` answers without closing anything. Returns the pane ids.
+ */
+ipcMain.handle('sessions:closeDone', async (_e, dry: unknown) => {
+  const panes = manager.list().filter((s) => s.finished === true)
+  const finished = new Set(panes.map((s) => s.id))
+  // The sweep reads git from the cache only; asked by hand, the answer is worth one read.
+  await Promise.all([...new Set(panes.map((s) => s.cwd))].map((cwd) => gitInfo(cwd, true).catch(() => null)))
+  return sweepDoneClose({
+    ...doneCloseDeps(),
+    enabled: () => true,
+    quietMs: () => 0,
+    readings: () => manager.doneReadings().filter((r) => finished.has(r.id)),
+    dry: dry === true
+  })
+})
+/**
+ * A finished chat's GuardDeck card, held until its pane has really closed - the rule the
+ * done-close sweep keeps (`main/doneClose.ts`), for the rows that arrive through
+ * `reviews:record` instead: claude-config's autoclose (`autoclose_*`). Its close is tried
+ * there, retried on an arm, or done by its own `sessions:kill` fallback, so all three ask.
+ */
+const heldCards = new Map<string, { reviewId: string; steps: number; turn: number }>()
+/**
+ * Read BEFORE the pane closes (whether the person saw this turn goes with it); call the
+ * answer with whether it closed. A card held for an earlier turn is dropped unsent.
+ */
+function cardAfterClose(paneId: string): (closed: boolean) => void {
+  const held = heldCards.get(paneId)
+  const turn = manager.turnRead(paneId)
+  return (closed) => {
+    if (!held || !closed) return
+    heldCards.delete(paneId)
+    if (!turn || turn.endedAt !== held.turn) return
+    if (turn.read) acknowledgeReview(held.reviewId, true)
+    if (finishedCard(held.steps, turn.read)) sendReviewNotice(held.reviewId)
+  }
+}
 ipcMain.handle('reviews:record', (_e, input: import('../shared/reviews').ReviewInput) => {
   const session = manager.list().find((s) => s.id === input?.sessionId)
   const old = !session && input?.nativeSessionId ? history.list().find((h) => h.id === input.sessionId && h.resumeId === input.nativeSessionId) : undefined
   if (!session && !old) throw new Error('Review session does not exist')
   const native = session ? { title: session.title, provider: session.agent, cwd: session.cwd, nativeSessionId: resumeIdFor(session.id) ?? session.id } : { title: old!.title, provider: old!.agent, cwd: old!.cwd, nativeSessionId: old!.resumeId ?? old!.id }
-  const review = recordReview(input, native)
+  const chat = session && session.agent !== 'shell' && input.notify === true && input.closeSession === true ? session : undefined
+  const review = recordReview(input, native, Boolean(chat))
+  if (chat) heldCards.set(chat.id, { reviewId: review.id, steps: personOwnedSteps(input.report).length, turn: manager.turnRead(chat.id)?.endedAt ?? 0 })
   if (old?.endedAt) noteReviewClose(review.id, undefined, new Date(old.endedAt).toISOString())
   let close: { closed: boolean; reason?: string } = { closed: false }
   if (input.closeSession === true) {
@@ -1690,7 +1748,9 @@ ipcMain.handle('reviews:record', (_e, input: import('../shared/reviews').ReviewI
     else if (Date.parse(input.capturedAt) > Date.now()) close.reason = 'captured timestamp is in the future'
     else if (continuationOwnsSource(session.id) || preparingContinuations.has(session.id) || handoffQueue.pending().some((q) => q.id === session.id) || backJobOf(session.id)) close.reason = 'session has a pending continuation, handoff, or background job'
     else {
+      const card = cardAfterClose(session.id)
       close = manager.closeAfterResult(session.id, Date.parse(input.capturedAt))
+      card(close.closed)
       if (!close.closed && close.reason === 'session is busy or has a background job' && !review.closedAt && !review.closeBlocked) reviewCloseArms.set(review.id, { sessionId: session.id, nativeSessionId: resumeIdFor(session.id)!, capturedAt: Date.parse(input.capturedAt) })
     }
   }
@@ -2270,7 +2330,9 @@ function closePane(id: string): void {
   // could never go: the pane looked stuck and the button looked broken. Answer a stale
   // ask with the truth.
   const known = allSessions().some((s) => s.id === id)
+  const card = cardAfterClose(id)
   manager.kill(id)
+  card(known)
   if (!known) send('sessions:changed', allSessions())
 }
 ipcMain.handle('sessions:kill', (_e, id: string) => closePane(id))
@@ -3503,13 +3565,16 @@ manager.on('sessions', () => queueMicrotask(() => {
     })
     if (action === 'cancel') {
       reviewCloseArms.delete(reviewId)
+      heldCards.delete(arm.sessionId)
       if (session) noteReviewClose(reviewId, 'newer input or pending work cancelled the requested close')
       continue
     }
     if (action === 'wait') continue
     if (!session) continue
     reviewCloseArms.delete(reviewId)
+    const card = cardAfterClose(session.id)
     const close = manager.closeAfterResult(session.id, arm.capturedAt)
+    card(close.closed)
     if (close.closed) noteReviewClose(reviewId, undefined, new Date().toISOString())
     else noteReviewClose(reviewId, close.reason)
   }

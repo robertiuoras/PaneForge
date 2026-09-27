@@ -136,6 +136,9 @@ export const COMMANDS = [
     detail: [
       'Always: clears finished panes - ones that exited on their own, asked nothing and were not touched since.',
       '  Same as the window\'s "Clear finished" button; their last reply stays in Review.',
+      'Also closes panes still open whose turn is over with nothing left: no question, no step an agent could',
+      '  take, nothing uncommitted or unpushed, nothing running but a wait. Their last reply goes to Review.',
+      '  The same rule the app closes them by after a few quiet minutes, without the wait.',
       'Then lists duplicates: 2+ panes on the same folder AND the same agent. The most recently active one is kept;',
       '  each idle extra is printed as a `pf close <id>` line you can run.',
       '--dupes also closes those idle extras.',

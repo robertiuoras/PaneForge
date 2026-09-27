@@ -101,6 +101,7 @@ console.log('2. help answers with no app; a wrong word points at it')
   }
   const one = pf(['help', 'tidy'])
   check('pf help tidy prints that command', one.code === 0 && one.out.startsWith('pf tidy - ') && one.out.includes('--dupes'))
+  check('pf help tidy says finished open panes close into Review too', /turn is over with nothing left/.test(one.out) && /last reply goes to Review/.test(one.out), one.out)
   const flagged = pf(['move', '--help'])
   check('pf move --help prints that command', flagged.code === 0 && flagged.out.startsWith('pf move - '))
   const bad = pf(['bogus'])
@@ -122,6 +123,15 @@ console.log('2. help answers with no app; a wrong word points at it')
   check('a well-formed move gets past the checks', moveOk.code === 0, `exit ${moveOk.code} ${moveOk.err}`)
 }
 
+{
+  // `pf tidy` also asks the app's done-close rule (`sessions:closeDone`), dry and real, and
+  // names what goes to Review; an app without the channel is carried past, not fatal.
+  const src = readFileSync(CTL, 'utf8')
+  check('tidy asks sessions:closeDone', /tryCall\('sessions:closeDone', \[asDry\]\)/.test(src))
+  check('a dry run says what would go to Review', src.includes('finished; its last reply goes to Review'))
+  const surface = readFileSync(join(import.meta.dirname, '..', 'src/shared/surface.ts'), 'utf8')
+  check('the channel is on the surface pf reaches', /closeDone: \['invoke', 'sessions:closeDone'\]/.test(surface))
+}
 // ----------------------------------------------------------------- tidy
 console.log('3. tidy: which duplicates close, which stay')
 const T = Date.UTC(2026, 8, 24, 12, 0, 0)

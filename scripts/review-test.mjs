@@ -18,7 +18,8 @@ function closeAfterResultFromSource() {
     /closeAfterResult\(id: string, reportedAt: number\): \{ closed: boolean; reason\?: string \} \{/,
     'function closeAfterResult(id, reportedAt) {'
   )
-  return Function(`${method}; return closeAfterResult`)()
+  // The flags it names come from `shared/doneClose.ts`, handed in as the one free name.
+  return Function('closeHeldBy', `${method}; return closeAfterResult`)(doneClose.closeHeldBy)
 }
 
 function fakeManager(meta, busyUntil = 0) {
@@ -99,13 +100,19 @@ assert.equal(old.prompt, 'original ask')
 assert.equal(old.proof, 'unverified')
 assert.equal(old.completedAt, undefined)
 
+const doneCloseOut = join(temp, 'doneclose.cjs')
+await build({ entryPoints: [join(repo, 'src/shared/doneClose.ts')], outfile: doneCloseOut, bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent' })
+const doneClose = require(doneCloseOut)
 const closeAfterResult = closeAfterResultFromSource()
 const reportedAt = Date.now()
 const safeMeta = { status: 'idle', lastKeyboard: reportedAt, drafting: false, ask: undefined, owedPrompt: false, handingOff: false }
 for (const [patch, reason] of [
   [{ status: 'busy' }, /busy/], [{ job: 'job' }, /busy/], [{ drafting: true }, /draft/],
   [{ ask: { text: 'answer' } }, /question/], [{ owedPrompt: true }, /queued prompt/],
-  [{ handingOff: true }, /handoff/], [{ lastKeyboard: reportedAt + 1 }, /newer user input/]
+  [{ handingOff: true }, /handoff/], [{ lastKeyboard: reportedAt + 1 }, /newer user input/],
+  // Each flag by name (s93, 27 Sep: one sentence for seven flags hid which one held it).
+  [{ handoffOpen: 5 }, /^session has a handoff with open steps$/],
+  [{ drafting: true, owedPrompt: true }, /^session has a draft, a queued prompt$/]
 ]) {
   const manager = fakeManager({ ...safeMeta, ...patch })
   assert.match(closeAfterResult.call(manager, 'pane_1', reportedAt).reason, reason)
@@ -144,6 +151,17 @@ prod.recordReview({ ...input, id: 'notice_shell', notify: true }, { ...native, p
 const shellNotice = JSON.parse(readFileSync(join(temp, '.claude', 'guarddeck', 'notices', 'paneforge-review-notice_shell.json'), 'utf8')).result
 assert.equal(shellNotice.resumeId, undefined)
 assert.equal(shellNotice.agent, 'shell')
+// `hold`: a finished chat's row is written before its pane closes, its card only after
+// (s93, 27 Sep: a card for a pane whose close was then refused). A retry holds too.
+const heldPath = join(temp, '.claude', 'guarddeck', 'notices', 'paneforge-review-notice_held.json')
+const held = prod.recordReview({ ...input, id: 'notice_held', notify: true }, native, true)
+prod.recordReview({ ...input, id: 'notice_held', notify: true }, native, true)
+assert.ok(!existsSync(heldPath) && !held.noticeSentAt, 'held: the row, no card')
+prod.sendReviewNotice('notice_held')
+assert.ok(existsSync(heldPath), 'sent once the pane has closed')
+prod.recordReview({ ...input, id: 'notice_quiet', notify: false }, native, true)
+prod.sendReviewNotice('notice_quiet')
+assert.ok(!existsSync(join(temp, '.claude', 'guarddeck', 'notices', 'paneforge-review-notice_quiet.json')), 'a row that asked for no card gets none')
 
 // ---- finished-chat report contract v1: card number, app, context, session tokens ----------
 // The maths on its own, over transcripts copied from real ones (every word redacted). The

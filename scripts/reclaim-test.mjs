@@ -30,7 +30,7 @@ buildSync({
   platform: 'node',
   outfile
 })
-const { reclaimPlan, idleClosePlan, idleSleepPlan, idleCloseAt, sameDeadline, unread, readStamp, reclaimedMb, pressureSleepMs, sleepPressureOf, sleepHoldMs, SLEEP_HOLD_MS, SLEEP_HOLD_MAX_MS, DEFAULT_RECLAIM, IDLE_CLOSE_MINUTES, IDLE_SLEEP_MINUTES } = createRequire(import.meta.url)(outfile)
+const { reclaimPlan, idleClosePlan, idleSleepPlan, idleCloseAt, sameDeadline, unread, readStamp, reclaimedMb, pressureSleepMs, sleepPressureOf, sleepHoldMs, SLEEP_HOLD_MS, SLEEP_HOLD_MAX_MS, DEFAULT_RECLAIM, IDLE_CLOSE_MINUTES, IDLE_SLEEP_MINUTES, migrateReclaimV5 } = createRequire(import.meta.url)(outfile)
 
 let checks = 0
 function check(what, ok, detail) {
@@ -857,14 +857,29 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
 }
 
 // ------------------------------------------------ the rung above closing: sleeping
-// A pane nobody has used gives its agent back and keeps its card. It is ON by default,
-// which is only defensible because being wrong is cheap: the card, its place, its screen
-// and its conversation all survive, so the weight here is that it refuses everything the
-// close clock refuses - and, unlike that one, that it does NOT keep a pane back or cap
-// the sweep, because it empties nothing.
+// A pane nobody has used gives its agent back and keeps its card - when the switch is on.
+// It refuses everything the close clock refuses and, unlike that one, does NOT keep a pane
+// back or cap the sweep, because it empties nothing.
+//
+// OFF by default from 2026-09-28. Robert: "its all saying resting to free memory why? ...
+// id rather they close than sleep". reclaim.log 27 Sep: 13 pressure sleeps + 13 wakes over
+// 7 panes in 35 min, and a slept pane is one the finished-pane close refuses.
 {
   const SLEEPY = { ...DEFAULT_RECLAIM, idleSleepMinutes: 30 }
-  eq('on by default', DEFAULT_RECLAIM.idleSleepMinutes, IDLE_SLEEP_MINUTES)
+  eq('off by default', DEFAULT_RECLAIM.idleSleepMinutes, 0)
+  eq('...so a tight desk sleeps nothing on the default config', idleSleepPlan([pane({ id: 'q', lastKeyboard: NOW - 9 * HOUR })], DEFAULT_RECLAIM, NOW, true, 'over').length, 0)
+  // The one-time move: every desk that had it on (Robert's: 10) gets it off, once. After
+  // that the saved marker is set and a switch turned back on stays on.
+  {
+    const robert = { enabled: true, minIdleMinutes: 60, maxPerSweep: 2, idleCloseMinutes: 10, idleSleepMinutes: 10, defaultsV2: true, defaultsV3: true, defaultsV4: true }
+    const moved = migrateReclaimV5({ ...DEFAULT_RECLAIM, ...robert }, robert)
+    eq('a desk with sleep on is moved off once', moved.idleSleepMinutes, 0)
+    eq('...and carries the marker', moved.defaultsV5, true)
+    eq('...and nothing else moves', [moved.idleCloseMinutes, moved.minIdleMinutes].join(), '10,60')
+    const chosen = { ...moved, idleSleepMinutes: IDLE_SLEEP_MINUTES }
+    eq('a switch turned back on after the move stays on', migrateReclaimV5({ ...DEFAULT_RECLAIM, ...chosen }, chosen).idleSleepMinutes, IDLE_SLEEP_MINUTES)
+    eq('a config with no reclaim block at all comes out off', migrateReclaimV5({ ...DEFAULT_RECLAIM }, undefined).idleSleepMinutes, 0)
+  }
   // Thirty from 2026-09-10, back up from five: a sleep is NOT free after all - a pane
   // slept and woken three times in six minutes spawned a fresh ~550 MB CLI each time, so
   // the churn cost more than the sleep freed. Robert that morning: "make it sleep after a
@@ -882,15 +897,15 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
     eq('...and IS named with one', ids(early), 'nearly')
     eq('and the card ends where the clock ends', early[0].dueAt, nearly.lastKeyboard + 60_000)
   }
-  // A config written by an older build has no such field at all, and that must read as the
-  // default rather than as "never" (undefined) or "immediately" (0). 'tight' throughout
-  // this block: sleep only fires under measured memory pressure now, never with room.
+  // A config written by an older build has no such field at all, and that reads as the
+  // default - off since 2026-09-28 - never as "immediately". 'tight' throughout this
+  // block: sleep only fires under measured memory pressure, never with room.
   const older = { ...DEFAULT_RECLAIM }
   delete older.idleSleepMinutes
   eq(
-    'a config from before this existed gets the default, not silence',
+    'a config from before this existed gets the default, which is off',
     ids(idleSleepPlan([pane({ id: 'old', lastKeyboard: NOW - 9 * HOUR }), pane({ id: 'pad', lastKeyboard: NOW })], older, NOW, true, 'tight')),
-    'old'
+    ''
   )
   eq('off when the number is zero', idleSleepPlan([pane({ id: 'a', lastKeyboard: NOW - 9 * HOUR })], { ...SLEEPY, idleSleepMinutes: 0 }, NOW, true, 'tight').length, 0)
   eq('and off when reclaim itself is off', idleSleepPlan([pane({ id: 'a', lastKeyboard: NOW - 9 * HOUR })], { ...SLEEPY, enabled: false }, NOW, true, 'tight').length, 0)

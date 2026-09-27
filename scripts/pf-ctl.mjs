@@ -504,15 +504,28 @@ if (cmd === 'list') {
   // ones are gone - either way the number printed is the one on the card at that moment.
   // `findDuplicates` skips exited panes, so a dry run can hand it the desk as it stands.
   let desk = before
+  // Then panes still running whose turn is over with nothing left (`sessions:closeDone`):
+  // the app's own done-close rule, asked now instead of after its quiet wait. An app from
+  // before that channel answers with an error, and tidy carries on without it.
+  const closeDone = async (asDry) => {
+    const out = await tryCall('sessions:closeDone', [asDry])
+    return new Set(out.error ? [] : out.value ?? [])
+  }
   if (dry) {
     const finished = before.filter(isFinishedPane)
     for (const p of finished) console.log(`would clear ${at(before, p)} - finished; its last reply stays in Review`)
     closed += finished.length
+    const done = await closeDone(true)
+    const going = before.filter((p) => done.has(p.id))
+    for (const p of going) console.log(`would clear ${at(before, p)} - finished; its last reply goes to Review`)
+    closed += going.length
+    desk = before.filter((p) => !done.has(p.id))
   } else {
     await call('sessions:clearFinished', [])
+    const done = await closeDone(false)
     desk = await sessions()
     for (const p of before.filter((p) => !desk.some((x) => x.id === p.id))) {
-      console.log(`cleared ${at(before, p)} - finished; its last reply stays in Review`)
+      console.log(`cleared ${at(before, p)} - finished; its last reply ${done.has(p.id) ? 'goes to' : 'stays in'} Review`)
       closed++
     }
   }

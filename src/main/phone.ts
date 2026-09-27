@@ -193,6 +193,8 @@ const GATED_INVOKE = new Set([
   // Several kills at once, picked by the app rather than named by the caller - same
   // class as `sessions:kill`, gated the same way.
   'sessions:clearFinished',
+  // `pf tidy`'s close of finished panes into Review: the done-close sweep, asked now.
+  'sessions:closeDone',
   // The idle clock's close, into Review. Still a kill.
   'sessions:closeIntoReview',
   // Arms the same kill for later: `shared/closeWhenDone.ts` closes the pane once nothing

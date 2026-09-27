@@ -133,6 +133,13 @@ const logSays = async (id, re) => {
   while (Date.now() < until && !re.test(logOf(id))) await sleep(40)
   return re.test(logOf(id))
 }
+// How long a held launch prompt waited, in seconds from the spawn, as the app logged it
+// (`still starting - typing anyway after 0.8s`, short wait or ceiling); -1 when it never said.
+const shortWaitOf = async (id) => {
+  const re = /still starting - typing anyway after ([\d.]+)s/
+  if (!(await logSays(id, re))) return -1
+  return Number(logOf(id).match(re)[1])
+}
 
 const PROMPT = 'first line of the ask\nsecond line: do the thing'
 // What Codex really prints while its MCP servers come up. `esc to interrupt` is the
@@ -622,8 +629,11 @@ const ANSWERING =
   hooksPending('sess-stuck')
   const c = open()
   const cAt = await typedAt(c.p, 4500)
-  ok(cAt > 0 && cAt - c.at >= 2700, 'a record that never comes holds the prompt only up to the ceiling',
-    `${cAt ? cAt - c.at : '-'}ms\n${logOf(c.pane.id)}`)
+  // The logged age from the spawn, as for the short waits below: a stopwatch from `c.at`
+  // loses the PC's slow spawn and read 2700-less on 2026-09-28.
+  const cWaited = await shortWaitOf(c.pane.id)
+  ok(cAt > 0 && cWaited >= 3, 'a record that never comes holds the prompt only up to the ceiling',
+    `${cWaited}s waited\n${logOf(c.pane.id)}`)
   ok(await logSays(c.pane.id, /typing anyway/), 'and the log says it was typed without the record', logOf(c.pane.id))
   manager.kill(c.pane.id)
 
@@ -633,12 +643,15 @@ const ANSWERING =
   // at +62-67s after the app typed anyway. The pid file alone gets the short wait.
   cli('sess-deferred')
   const f = open()
-  // The short wait is 800ms and the ceiling 3000: under 2400 is the short one even with the
-  // PC pool's 300-650ms timer lag (a 1400 limit failed there, 2026-09-28).
+  // The short wait is 800ms and the ceiling 3000, both counted from the spawn. Which one it
+  // was is the age the app logged, not a stopwatch started after `open()` returned: on the
+  // PC the spawn itself took 300-500ms, so the prompt went in 488ms after `f.at` having
+  // waited the full 800 (2026-09-28, 2 of 3 runs red with a 600ms floor).
   const fAt = await typedAt(f.p, 2500)
-  ok(fAt - f.at >= 600 && fAt - f.at < 2400,
+  const fWaited = await shortWaitOf(f.pane.id)
+  ok(fAt > 0 && fWaited >= 0.8 && fWaited < 2.4,
     'a pid file whose transcript is not on disk yet costs only the short wait, not the ceiling',
-    `${fAt ? fAt - f.at : '-'}ms\n${logOf(f.pane.id)}`)
+    `${fWaited}s waited\n${logOf(f.pane.id)}`)
   ok(await logSays(f.pane.id, /no pid file or transcript yet/), 'and the log says what it was waiting for', logOf(f.pane.id))
   manager.kill(f.pane.id)
 
@@ -676,7 +689,8 @@ const ANSWERING =
   rmSync(pidFile, { force: true })
   const d = open()
   const dAt = await typedAt(d.p, 2500)
-  ok(dAt - d.at >= 600 && dAt - d.at < 2400, 'a CLI with no pid file costs only the short wait', `${dAt ? dAt - d.at : '-'}ms`)
+  const dWaited = await shortWaitOf(d.pane.id)
+  ok(dAt > 0 && dWaited >= 0.8 && dWaited < 2.4, 'a CLI with no pid file costs only the short wait', `${dWaited}s waited\n${logOf(d.pane.id)}`)
   manager.kill(d.pane.id)
 
   // Restarted while it waited: `restart` re-keys the owed row and queues it again, so the
@@ -795,6 +809,44 @@ const ANSWERING =
       'a prompt Claude wrote down is submitted even when the pane is typed into afterwards', logOf(pane.id))
     ok(!/LOST/.test(qpLog) && /queued prompt submitted/.test(qpLog), 'and queued-prompts.log says submitted, not LOST', qpLog)
     ok(settles === 1, 'it settles once', String(settles))
+    manager.kill(pane.id)
+  }
+
+  // ...AND ONE LOOK IS NOT THE ANSWER. 2026-09-27 16:31, pane s81-muk0ypqg: prompt typed
+  // 51.545, return 51.902, a submitted line from outside 52.455, the confirm's first look at
+  // 55.926 found no receipt and said UNSENT; the transcript's user row is stamped 51.955.
+  // Here the receipt cannot be read at the first look (no pid file yet, as when the CLI had
+  // not written it) and becomes readable one tick later: it is asked again, and no return
+  // goes in on top of the line that was written.
+  {
+    const name = 'sess-receipt-late-after-hand'
+    hooksDone(name, 60_000)
+    cli(name)
+    const pane = manager.start({ cwd: root, agent: 'claude' })
+    const p = manager.sessions.get(pane.id).proc
+    let settles = 0
+    manager.queuePrompt(pane.id, BRIEF, 0, 40, () => settles++, 5000)
+    p.say(IDLE)
+    const ret = await sentReturnAt(p)
+    rmSync(pidFile, { force: true })
+    manager.write(pane.id, 'x\r', 'phone')
+    // The PC's timers ran 1.4s late here (2026-09-28): its first look came after the whole
+    // confirm window had closed and said UNSENT. Holding the loop past the window makes that
+    // the case on every machine.
+    for (const spin = Date.now() + budget + 200; Date.now() < spin; );
+    await logSays(pane.id, /asking again|UNSENT/)
+    const firstLook = logOf(pane.id)
+    received(name, new Date(ret + 53))
+    cli(name)
+    const until = Date.now() + budget + 600
+    while (Date.now() < until && !settles) await sleep(50)
+    await logSays(pane.id, /prompt submitted|UNSENT/)
+    ok(!/UNSENT/.test(firstLook), 'the first look without a receipt does not settle it', firstLook)
+    ok(/Claude transcript receipt \(then the pane was typed into by hand\)/.test(logOf(pane.id)) && !/UNSENT/.test(logOf(pane.id)),
+      'a receipt readable a tick later still counts after a line from outside', logOf(pane.id))
+    ok(returnsOf(p) === 1, 'and no return went in on top of that line', `${returnsOf(p)} returns`)
+    ok(settles === 1, 'it settles once', String(settles))
+    ok(/a phone write submitted while a prompt is owed: "<1>\\r" \(2 bytes, line of \d+ chars\)/.test(logOf(pane.id)), 'the outside line is logged with its shape and origin, never its words', logOf(pane.id))
     manager.kill(pane.id)
   }
 

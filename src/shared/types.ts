@@ -2406,6 +2406,8 @@ export interface Api {
   killSession(id: string): Promise<void>
   /** Removes every finished-and-untouched pane now, same class as `killSession` - see `shared/exitedSweep.ts`. Returns how many were removed. */
   clearFinished(): Promise<number>
+  /** `pf tidy`: closes into Review every finished pane the done-close sweep would, without its quiet wait - see `main/index.ts`. `dry` closes nothing. Returns the pane ids. */
+  closeDone(dry: boolean): Promise<string[]>
   /** Closes a quiet pane the idle clock picked, keeping its reply as a Review row first - see `main/index.ts` `reviewBeforeRemove`. */
   closeIntoReview(id: string, reason: string): Promise<void>
   /** A person pressed this pane's card or row. Holds the finished-pane sweep's clock - see `shared/exitedSweep.ts`. */
