@@ -1311,6 +1311,7 @@ export class SessionManager extends EventEmitter {
     live.meta.printed = undefined
     live.meta.exitCode = undefined
     live.meta.exitedAt = undefined
+    live.meta.startFailed = undefined
     live.meta.attention = false
     live.meta.bell = false
     live.meta.stalledSince = undefined
@@ -1621,6 +1622,7 @@ export class SessionManager extends EventEmitter {
     live.meta.printed = undefined
     live.meta.exitCode = undefined
     live.meta.exitedAt = undefined
+    live.meta.startFailed = undefined
     live.meta.engaged = false
     live.busyUntil = 0
     live.ackedAt = 0
@@ -3676,9 +3678,17 @@ export class SessionManager extends EventEmitter {
     })
 
     proc.onExit(({ exitCode }) => {
+      // Read before anything below overwrites it: a pane that dies while still `starting`
+      // never got going, which `shared/exitClose` keeps on the desk.
+      const wasStarting = meta.status === 'starting'
+      // `kill()` takes the pane out of the list before its process is gone, so a missing
+      // pane here means the app or a person closed it and this exit is the answer. The
+      // 2026-09-23 log review read eleven of those as crashes; this says so on the line.
+      const closedFirst = !this.sessions.has(id)
       logReclaim({ action: 'process-exit', ...processIdentity, exitCode,
         superseded: live.proc !== proc, asleep: Boolean(meta.asleep),
-        sleepReason: meta.asleepReason, quitting: this.down, currentStatus: meta.status })
+        sleepReason: meta.asleepReason, quitting: this.down, currentStatus: meta.status,
+        closedFirst: closedFirst || undefined })
       if (live.proc !== proc) return
       meta.status = 'exited'
       // A pane put to sleep killed this process itself and has already said everything
@@ -3701,7 +3711,6 @@ export class SessionManager extends EventEmitter {
       // now: a row that never arrives because the pane closed first is the same as no
       // reading at all.
       endHookDeny(id)
-      this.emitSessions()
       // ...AND THE CARD GOES. A pane whose program has ended is a card wearing `exited`
       // and a number nobody can explain; the History row for it is already written, with
       // the conversation id, so `Open again` brings the same chat back. `shared/exitClose`
@@ -3712,8 +3721,19 @@ export class SessionManager extends EventEmitter {
         handingOff: !!meta.handingOff,
         quitting: this.down,
         printed: !!meta.printed,
-        exitCode
+        exitCode,
+        starting: wasStarting
       })
+      // A pane closed while it was starting is not one that failed to start: nothing is
+      // left on the desk to mark, and the activity list would blame the agent for a close.
+      const failedStart = plan.failedStart && !closedFirst
+      if (failedStart) {
+        meta.startFailed = true
+        logReclaim({ action: 'start-failed', pane: id, agent: meta.agent, folder: basename(meta.cwd),
+          exitCode, afterMs: Date.now() - meta.createdAt, tail: plainTail(live.buffer.read(), 8) })
+      }
+      this.emitSessions()
+      if (failedStart) this.emit('start-failed', id, meta.title || meta.cwd || 'A pane', plan.why)
       if (!plan.close) return
       const say = exitWords(meta.title || meta.cwd || 'A pane', plan)
       const go = (): void => {

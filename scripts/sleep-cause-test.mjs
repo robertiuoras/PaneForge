@@ -127,7 +127,8 @@ assert.deepEqual(calls.at(-1), ['internal', 'unknown', { source: 'renderer' }])
 const sessions = read('src/main/sessions.ts')
 const identityStart = sessions.indexOf('    const processIdentity =')
 const identityEnd = sessions.indexOf('\n\n    proc.onData', identityStart)
-const exitStart = sessions.indexOf("      logReclaim({ action: 'process-exit'")
+// From the readings taken before the line (`wasStarting`, `closedFirst`) to the line itself.
+const exitStart = sessions.indexOf('      const wasStarting =')
 const exitEnd = sessions.indexOf('\n      if (live.proc !== proc)', exitStart)
 assert(identityStart > 0 && identityEnd > identityStart && exitEnd > exitStart)
 const lifecycle = []
@@ -135,11 +136,13 @@ const meta = { agent: 'claude', cwd: '/old', status: 'idle' }
 const proc = { pid: 321 }
 const live = { req: { resumeId: 'original' }, proc }
 const code = transformSync(sessions.slice(identityStart, identityEnd), { loader: 'ts' }).code
-const exitCode = transformSync(sessions.slice(exitStart, exitEnd).replace('this.down', 'false'), { loader: 'ts' }).code
-new Function('meta', 'live', 'proc', 'id', 'basename', 'logReclaim', `${code}; meta.agent='codex'; meta.cwd='/new'; live.proc={pid:999}; const exitCode=137; ${exitCode}`)(meta, live, proc, 'pane', s => s.split('/').at(-1), row => lifecycle.push(row))
+const exitCode = transformSync(sessions.slice(exitStart, exitEnd), { loader: 'ts' }).code
+// `this` is the manager: not quitting, and the pane already gone from its list (kill() ran).
+new Function('meta', 'live', 'proc', 'id', 'basename', 'logReclaim', `${code}; meta.agent='codex'; meta.cwd='/new'; live.proc={pid:999}; const exitCode=137; ${exitCode}`).call({ down: false, sessions: new Map() }, meta, live, proc, 'pane', s => s.split('/').at(-1), row => lifecycle.push(row))
 assert.equal(lifecycle[1].agent, 'claude')
 assert.equal(lifecycle[1].folder, 'old')
 assert.equal(lifecycle[1].processPid, 321)
 assert.equal(lifecycle[1].resumeId, 'original')
 assert.equal(lifecycle[1].superseded, true)
+assert.equal(lifecycle[1].closedFirst, true)
 console.log('sleep-cause: caller attribution and superseded process identity verified')
