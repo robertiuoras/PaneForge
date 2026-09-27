@@ -2029,6 +2029,12 @@ export interface Config {
    * safe to leave alone forever and an upgrade changes nothing on anyone's profile.
    */
   discordStyle: DiscordStyle
+  /**
+   * When a person last changed `discordPresence` or `discordStyle`, epoch ms (0 = never).
+   * Linked machines take the newest they hear of, so the card follows a change made on
+   * either machine whichever one is sending it (`shared/discordRpc.ts` `DiscordSettings`).
+   */
+  discordSettingsAt: number
   /** show every session at once instead of one at a time */
   grid: boolean
   /**

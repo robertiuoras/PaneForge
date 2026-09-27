@@ -29,8 +29,8 @@ import { doneReviewId } from '../shared/doneClose'
 import { FinishedDigest, summaryOf } from '../shared/finishedDigest'
 import { DataPump } from './dataPump'
 import { DiscordPresence } from './discordPresence'
-import { countPresence, needsTokens, type PresenceCounts } from '../shared/discordRpc'
-import { tokenSpend, tokenSpendFresh } from './tokenUsage'
+import { countPresence, needsTokens, newerSettings, wholeDesk, type PresenceCounts } from '../shared/discordRpc'
+import { tokenCounting, tokenSpend, tokenSpendFresh } from './tokenUsage'
 import { promptReview, promptsForSession, recordPromptReview, removePromptReview } from './promptReview'
 import { readPulls } from './pulls'
 import { quitWhere } from '../shared/quitWords'
@@ -950,38 +950,76 @@ manager.on('sessions', () => {
 // Discord Rich Presence: "3/6 sessions running" on the user's profile, refreshed as
 // turns start and finish.
 //
-// The WHOLE desk, mirrored panes included. This counted local panes only, on the
-// reasoning that a mirrored pane is counted by the device its agent actually runs on -
-// which is never true in practice: a Discord account shows ONE presence, so the other
-// device's PaneForge has nowhere to publish its half, and those panes went uncounted
-// everywhere. Measured 2026-08-17: eight panes on screen with five running turns, and
-// the profile said "4/5 sessions running" - the five being the local half of the desk.
-// The mirrored view is what the user is looking at, so it is what the profile says.
+// The WHOLE desk: every pane on this machine and on every machine linked to it, each
+// machine counting its own and telling the others (`wholeDesk`, `shared/discordRpc.ts`).
+// A Discord account shows ONE presence, so exactly one machine speaks - the one with the
+// lowest device id among those that can reach Discord - and the rest send a clear.
+// Counting "what this window shows" instead left out whatever was not mirrored: the PC,
+// mirroring one asleep Mac pane, put "1 session idle" on the profile while the Mac ran
+// five turns and stayed quiet for it (2026-09-27).
 const appStartedAt = Date.now()
+let discordReachable = false
 const presence = new DiscordPresence({
   enabled: getConfig().discordPresence,
   style: getConfig().discordStyle,
   // The Discord tab reports Discord's own answer rather than guessing from the switch,
   // so every change of that answer has to reach an open Settings dialog by itself.
-  onStatus: (s) => send('discord:status', s)
+  onStatus: (s) => {
+    send('discord:status', s)
+    // Discord opening or closing here moves which machine speaks, on both machines.
+    if (s.connected !== discordReachable) {
+      discordReachable = s.connected
+      presence.update(presenceCounts())
+    }
+  }
 })
+let awaitedCount: Promise<unknown> | null = null
 function presenceCounts(): PresenceCounts {
-  const counts = countPresence(allSessions(), appStartedAt)
-  // Another desk connected to this one mirrors every pane here, so its count already
-  // includes them. Unless this desk mirrors some other machine too (then both counts are
-  // the whole desk), this one stays quiet rather than put its half on the profile.
-  const guest = remote.state().guests[0]
-  if (guest && !remote.sessions().length) counts.countedBy = guest.name
+  const cfg = getConfig()
+  // This machine's own panes: not the ones mirrored from another machine, which that
+  // machine reports itself, and not a screen view, which is a picture of a machine.
+  const own = countPresence(manager.list(), appStartedAt)
   // The token numbers cost a walk of every transcript written this week (7.6s of async
   // I/O on this Mac, 7,546 files), so they are counted only while a row on the card
   // actually says one. `tokenSpend` answers from its own cache and refreshes behind
   // itself; nothing here waits on the disk.
-  if (needsTokens(getConfig().discordStyle)) {
+  if (needsTokens(cfg.discordStyle)) {
     const spend = tokenSpend()
-    counts.tokensToday = spend.today
-    counts.tokensWeek = spend.week
+    own.tokensToday = spend.today
+    own.tokensWeek = spend.week
+    // A count still on the disk says its numbers when it lands. Without this the first
+    // frame after the tokens switch went on said "0 tokens today" and kept saying it until
+    // some pane next started or stopped (dev copy, 2026-09-27: still 0 a minute later).
+    const counting = tokenCounting()
+    if (counting && counting !== awaitedCount) {
+      awaitedCount = counting
+      void counting.then(() => presence.update(presenceCounts())).catch(() => {})
+    }
   }
-  return counts
+  const discord = presence.status().connected
+  const { running, total, asleep, names, oldestRunSince, tokensToday, tokensWeek } = own
+  remote.tellDesk({
+    counts: { running, total, asleep, names, oldestRunSince, tokensToday, tokensWeek },
+    discord,
+    settings: { on: cfg.discordPresence, style: cfg.discordStyle, at: cfg.discordSettingsAt }
+  })
+  return wholeDesk({ id: cfg.remote.id, discord, own }, remote.deskLinks())
+}
+/**
+ * Take Discord settings a person changed more recently on a linked machine. The machine
+ * that speaks is often not the one being sat at, so without this a switch flipped here
+ * never reached the card the other machine sends.
+ */
+function adoptDiscordSettings(): void {
+  const cfg = getConfig()
+  const newer = newerSettings(
+    { on: cfg.discordPresence, style: cfg.discordStyle, at: cfg.discordSettingsAt },
+    remote.deskLinks()
+  )
+  if (!newer) return
+  const next = setConfig({ discordPresence: newer.on, discordStyle: newer.style, discordSettingsAt: newer.at })
+  presence.configure(next.discordPresence, next.discordStyle)
+  send('config:changed', next)
 }
 // A card that goes on its own is a row in the list, never a pane that just vanished:
 // `shared/exitClose.ts` decides, and this is the one place that says it happened.
@@ -1293,6 +1331,11 @@ remote.on('sessions', () => {
   presence.update(presenceCounts())
 })
 remote.on('attention', (s: Session) => raiseAttention(s))
+// Another machine said something new about its own panes or its Discord.
+remote.on('desk', () => {
+  adoptDiscordSettings()
+  presence.update(presenceCounts())
+})
 remote.on('changed', (state: RemoteState) => {
   send('remote:changed', state)
   // A desk connecting or leaving decides whether this machine speaks for the profile.
@@ -2674,6 +2717,13 @@ ipcMain.handle('sessions:swarm', (_e, req: SwarmRequest) => manager.startSwarm(r
 
 ipcMain.handle('config:get', () => getConfig())
 ipcMain.handle('config:set', (_e, patch: Partial<Config>) => {
+  // A person changed what Discord shows: stamped, so linked machines take it too.
+  const was = getConfig()
+  if (
+    (patch.discordPresence !== undefined && patch.discordPresence !== was.discordPresence) ||
+    (patch.discordStyle !== undefined && JSON.stringify(patch.discordStyle) !== JSON.stringify(was.discordStyle))
+  )
+    patch = { ...patch, discordSettingsAt: Date.now() }
   const next = setConfig(patch)
   // An edited custom agent changes what is launchable, so the availability cache
   // must not outlive the edit.

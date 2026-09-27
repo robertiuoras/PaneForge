@@ -128,13 +128,17 @@ export function tallyTokens(rows: Iterable<TokenRow>, now: number): TokenSpend {
 }
 
 /**
- * The number as a line of a presence says it: `1.2M`, `340k`, `912`.
+ * The number as a line of a presence says it: `1.6B`, `1.2M`, `340k`, `912`.
  *
  * A raw `1483920` on a profile card is not read, it is skimmed past, and Discord gives
  * the line 128 characters for everything including the words around it.
  */
 export function formatTokens(n: number): string {
   if (!Number.isFinite(n) || n <= 0) return '0'
+  if (n >= 1_000_000_000) {
+    const b = n / 1_000_000_000
+    return `${b >= 10 ? Math.round(b) : Math.round(b * 10) / 10}B`
+  }
   if (n >= 1_000_000) {
     const m = n / 1_000_000
     return `${m >= 10 ? Math.round(m) : Math.round(m * 10) / 10}M`

@@ -1496,6 +1496,45 @@ does not drop the pipe (that would be a reconnect per keystroke) but does clear 
 last-sent memo, or an edit landing on the same numbers would be read as "no change"
 and never leave the machine.
 
+**Settings → Discord since 2026-09-27: pick a look, flip four switches.** Robert: the
+profile said "1 session idle" with five running, and "make it a lot easier to edit and
+change in settings". The cause was counting, not wording: measured that day, the Mac (14
+panes, five working) went quiet because a guest desk was connected, and that desk - the
+PC on 0.8.224, zero panes of its own - counted the ONE Mac pane it mirrored. The old rule
+("a connected desk mirrors everything, so it speaks") was false. Now every machine sends a
+`desk` frame over the device link both ways with its OWN counts and whether its Discord is
+connected; every machine adds up every machine once (`wholeDesk`), and of the machines
+whose Discord is connected the lowest device id speaks - the rest name it in `countedBy`
+and clear. A machine on an older build ignores desk frames and still speaks for itself, so
+both machines need the build before the old card stops. The tab, top to bottom:
+
+- **the switch** ("Show what your chats are doing on Discord") and Discord's own answer:
+  accepted at when, for whom, and the two lines it STORED (`PresenceStatus.lines`) - or,
+  when another machine speaks, only that ("showing <PC>'s count ... this computer stays
+  quiet"), never "the desk is empty".
+- **Look**: radio cards in a 2x2 grid (`DISCORD_PRESETS`), each showing the line it would
+  put on the card for the sample desk. `counts` "Working and waiting" (default: "5 running
+  · 2 idle"), `fraction` "Out of all" ("5/7 sessions running"), `projects` "With project
+  names" (folder names - a Discord profile is public, so never the default), and "Your own
+  lines" (`custom`). A look REBUILDS `rows` (`presetRows`/`withLook`) every time, so a
+  later reword reaches everyone on it; any hand edit under Advanced turns the look `custom`.
+- **four switches**: "Say how many are waiting" (`idle`) and "Show tokens used today"
+  (`tokens`, today's total summed across machines) belong to the looks, so they are put
+  away - not greyed; greyed measured 2.63:1 in the light theme - while the look is custom;
+  "Show how long it has been going" (`elapsed`); "Show the link button" (every button on or
+  off, adding the default one when there is none).
+- **preview**: the Discord card replica for a made-up 5-of-7 desk, working or all waiting.
+- **Advanced: write your own lines**, closed: the row editor, buttons, Reset. Settings
+  search opens the fold when a match is inside it.
+
+The switch and look travel: `DiscordSettings {on, style, at}` rides the desk report,
+`config:set` stamps `discordSettingsAt` when a Discord key actually changes, and a machine
+adopts newer settings from a link (`newerSettings`, tie keeps its own) - a change made
+anywhere reaches the machine that speaks within one send (15s). Token totals are a disk
+walk (`tokenUsage.ts`, cached 5 min); the presence re-sends when a walk lands, because the
+first frame after the switch went on said "0 tokens today" and kept saying it until a pane
+changed. Past a billion it reads "1.6B", not "1555M".
+
 `npm run test:notes` is about the release page saying what changed.
 `scripts/release-notes.mjs` reads the Conventional Commit subjects between the previous
 version tag and this one and sorts them into New / Fixed / Faster / Other changes.
