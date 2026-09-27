@@ -415,7 +415,12 @@ const SERIAL = new Set([
   // 54.6px of 116px`. It lays out a card whose content is a RUNNING clock, so a slow
   // machine writes a wider string than the box the assertion was written against. The
   // contention is the test's input, not its environment.
-  'cardfit'
+  'cardfit',
+  // Measured on the PC 2026-09-28: four full runs, each 1 of 280 red, always this suite
+  // and a different check each time (startup wait log, pid-file short wait, restarted
+  // pane, silent command); 3 of 3 green alone. The app's timers and the test's clock share
+  // one event loop, so a pool's stall moves the ground every check stands on.
+  'promptsubmit'
 ])
 
 const failed = []

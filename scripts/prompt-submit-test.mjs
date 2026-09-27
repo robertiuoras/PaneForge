@@ -40,8 +40,11 @@ process.env.PF_PROMPT_STALE_BUSY_MS ??= '1500'
 // assertion below is about the cap existing at all, not about the number.
 process.env.PF_PROMPT_ENTER_TRIES ??= '3'
 // A fresh Claude Code is waited for until its SessionStart hooks are done (`claudeStartup`):
-// the real ceilings are a minute and ten seconds, these keep the cases below short.
-process.env.PF_PROMPT_STARTUP_MS ??= '1500'
+// the real ceilings are a minute and ten seconds, these keep the cases below short. The
+// startup ceiling sits well past the ~1.2s the hooks-done case needs to open its gate: at
+// 1500 the PC's full-suite pool (timers 300-650ms late) opened it AT the ceiling, which logs
+// `typing anyway`, not `finished starting` (2026-09-28, 1 of 280 red).
+process.env.PF_PROMPT_STARTUP_MS ??= '3000'
 process.env.PF_PROMPT_PIDFILE_MS ??= '800'
 process.env.PF_CLAUDE_SETTLE_MS ??= '200'
 
@@ -447,7 +450,7 @@ const confirmBudget = Number(process.env.PF_PROMPT_CONFIRM_MS) * Number(process.
 ok(
   eatenDone === 0 && sinceReturn < confirmBudget,
   'a command that printed nothing has not landed',
-  `settles=${eatenDone}, ${sinceReturn}ms after the return, budget ${confirmBudget}ms`
+  `settles=${eatenDone}, ${sinceReturn}ms after the return, budget ${confirmBudget}ms\n${logOf(eaten.id)}`
 )
 ok(
   eatenProc.writes.some((w) => w === '\r'),
@@ -604,7 +607,13 @@ const ANSWERING =
   hooksDone('sess-done', 60_000)
   const b = open()
   const bAt = await typedAt(b.p, 1200)
-  ok(bAt > 0 && bAt - b.at < 700, 'a CLI that has finished starting is typed into at once', `${bAt ? bAt - b.at : '-'}ms`)
+  // Not held is what the app logged, as for the shell pane below: a stopwatch here is the
+  // PC pool's timer lag, not the gate.
+  ok(
+    bAt > 0 && (await logSays(b.pane.id, /prompt typed/)) && !/waiting for Claude Code to finish starting/.test(logOf(b.pane.id)),
+    'a CLI that has finished starting is typed into at once',
+    `${bAt ? bAt - b.at : '-'}ms\n${logOf(b.pane.id)}`
+  )
   manager.kill(b.pane.id)
 
   // The record never comes (hooks stuck): held only until the process is
@@ -612,8 +621,8 @@ const ANSWERING =
   cli('sess-stuck')
   hooksPending('sess-stuck')
   const c = open()
-  const cAt = await typedAt(c.p, 3000)
-  ok(cAt > 0 && cAt - c.at >= 1200, 'a record that never comes holds the prompt only up to the ceiling',
+  const cAt = await typedAt(c.p, 4500)
+  ok(cAt > 0 && cAt - c.at >= 2700, 'a record that never comes holds the prompt only up to the ceiling',
     `${cAt ? cAt - c.at : '-'}ms\n${logOf(c.pane.id)}`)
   ok(await logSays(c.pane.id, /typing anyway/), 'and the log says it was typed without the record', logOf(c.pane.id))
   manager.kill(c.pane.id)
@@ -624,8 +633,10 @@ const ANSWERING =
   // at +62-67s after the app typed anyway. The pid file alone gets the short wait.
   cli('sess-deferred')
   const f = open()
+  // The short wait is 800ms and the ceiling 3000: under 2400 is the short one even with the
+  // PC pool's 300-650ms timer lag (a 1400 limit failed there, 2026-09-28).
   const fAt = await typedAt(f.p, 2500)
-  ok(fAt - f.at >= 600 && fAt - f.at < 1400,
+  ok(fAt - f.at >= 600 && fAt - f.at < 2400,
     'a pid file whose transcript is not on disk yet costs only the short wait, not the ceiling',
     `${fAt ? fAt - f.at : '-'}ms\n${logOf(f.pane.id)}`)
   ok(await logSays(f.pane.id, /no pid file or transcript yet/), 'and the log says what it was waiting for', logOf(f.pane.id))
@@ -665,7 +676,7 @@ const ANSWERING =
   rmSync(pidFile, { force: true })
   const d = open()
   const dAt = await typedAt(d.p, 2500)
-  ok(dAt - d.at >= 600 && dAt - d.at < 1400, 'a CLI with no pid file costs only the short wait', `${dAt ? dAt - d.at : '-'}ms`)
+  ok(dAt - d.at >= 600 && dAt - d.at < 2400, 'a CLI with no pid file costs only the short wait', `${dAt ? dAt - d.at : '-'}ms`)
   manager.kill(d.pane.id)
 
   // Restarted while it waited: `restart` re-keys the owed row and queues it again, so the
