@@ -111,6 +111,25 @@ const ok = (c, n, detail) => {
   }
 }
 const sleep = (n) => new Promise((r) => setTimeout(r, n))
+// What the app itself wrote down about one pane, waited for because the log is appended off
+// the typing path. A check that is about WHICH way a prompt went reads this, not a clock: on
+// the PC's full-suite pool this process's own timers fired 300-650ms late (2026-09-27, the
+// test said its composer at +456ms for a planned +120), so wall-clock limits failed runs in
+// which the app did exactly the right thing - a different check each time.
+const logOf = (id) => {
+  try {
+    return readFileSync(join(work, 'userData', 'autoclear-app.log'), 'utf8').split('\n').filter((l) => l.includes(id)).join('\n')
+  } catch {
+    return ''
+  }
+}
+// On the PC a line can land after the keystrokes it describes, so a reading waits for it
+// rather than racing it.
+const logSays = async (id, re) => {
+  const until = Date.now() + 2000
+  while (Date.now() < until && !re.test(logOf(id))) await sleep(40)
+  return re.test(logOf(id))
+}
 
 const PROMPT = 'first line of the ask\nsecond line: do the thing'
 // What Codex really prints while its MCP servers come up. `esc to interrupt` is the
@@ -136,7 +155,9 @@ ok(!typed().includes('first line of the ask'), 'nothing is typed while the CLI i
 // 2. The startup finishes: output stops and the footer stops claiming work. Now the
 //    prompt goes in - and the return is NOT part of it.
 proc.say(COMPOSER)
-await sleep(400)
+// Until the return is written (capped), not a fixed 400ms: the return is 60ms after the
+// text, and a starved PC run typed at +370ms and failed with the return still 60ms away.
+await sentReturnAt(proc)
 ok(typed().includes('first line of the ask'), 'the prompt is typed once the composer is idle', typed())
 // `?? ''` rather than a bare index: when the prompt never went in at all - which is
 // the whole bug - this must report a FAILING assertion, not crash the file and take
@@ -267,6 +288,11 @@ ok(
 
 // 9. The same pane accepts a prompt queued AFTER the person's message: the drop is about
 //    ownership at queue time, not a pane that is permanently off limits.
+//
+// Queued once the resume prompt has SETTLED. Its confirm returns are keystrokes too (`write`
+// stamps `lastKeyboard` on every submit), so a prompt queued while they are still coming
+// reads them as a person who typed after it and waits behind that turn.
+for (const until = Date.now() + 5000; Date.now() < until && manager.sessions.get(hijack.id).meta.owedPrompt; ) await sleep(40)
 const LATER = 'and this one is still wanted'
 manager.sendPrompt(hijack.id, LATER)
 // Painted AFTER the first poll on purpose: the busy read is of the NEWEST output, and
@@ -274,11 +300,11 @@ manager.sendPrompt(hijack.id, LATER)
 // a stub that never says anything again leaves the last busy frame as the newest one.
 await sleep(200)
 hijackProc.say(COMPOSER)
-await sleep(700)
+for (const until = Date.now() + 5000; Date.now() < until && !hijackProc.writes.join('').includes(LATER); ) await sleep(40)
 ok(
   hijackProc.writes.join('').includes(LATER),
   'a prompt queued after they finished still goes in',
-  JSON.stringify(hijackProc.writes)
+  `${JSON.stringify(hijackProc.writes)}\n${logOf(hijack.id)}`
 )
 
 // 10. The handover curtain always comes DOWN. It swallows keystrokes, so every way the
@@ -326,7 +352,11 @@ let done = 0
 manager.queuePrompt(settling.id, 'goes in fine', 0, 40, () => done++)
 await sleep(120)
 settlingProc.say(COMPOSER)
-await sleep(1400)
+// Until it fires (capped), then a whole confirm budget more for a second firing to show up.
+// A fixed 1400ms failed 6 of 9 cold PC runs (2026-09-27) on the same late timers as above.
+const settleBy = Date.now() + 5000
+while (!done && Date.now() < settleBy) await sleep(40)
+await sleep(Number(process.env.PF_PROMPT_CONFIRM_MS) * Number(process.env.PF_PROMPT_ENTER_TRIES))
 ok(done === 1, 'the settle callback fires exactly once on the happy path', String(done))
 ok(
   settlingProc.writes.join('').includes('goes in fine'),
@@ -341,19 +371,42 @@ ok(
 // proof: exactly one return, settled at the poll cadence, no turn needed.
 const cmd = manager.start({ cwd: root, agent: 'shell' })
 const cmdProc = manager.sessions.get(cmd.id).proc
+// The CLI answers the command with one line and the composer again - still no turn. It
+// answers the RETURN, as the real one does, not a fixed 400ms after the composer: on a
+// starved PC that sleep ran so late (2026-09-27, settled at 1082ms) that the answer came
+// after the confirm window, and the app rightly settled some other way. `setImmediate` puts
+// the answer after the app's bookkeeping for that return and before its first poll; the
+// spin keeps it out of the return's own millisecond, which a real pty's answer never shares
+// and the app reads (`lastOutput > typedAt`) as nothing printed.
+const cmdWrite = cmdProc.write
+cmdProc.write = function (d) {
+  cmdWrite.call(this, d)
+  if (d !== '\r') return
+  setImmediate(() => {
+    const at = Date.now()
+    while (Date.now() === at);
+    this.say('\r\n  ⎿  Set model to Opus 5 and saved as your default for new sessions\r\n' + COMPOSER)
+  })
+}
 let cmdDone = 0
 const cmdAt = Date.now()
 let cmdSettledAt = 0
 manager.queuePrompt(cmd.id, '/model opus', 0, 40, () => { cmdDone++; cmdSettledAt = Date.now() }, 5000, 'idle')
 await sleep(120)
 cmdProc.say(COMPOSER)
-await sleep(400)
-// The CLI answers the command with one line and the composer again - still no turn.
-cmdProc.say('\r\n  ⎿  Set model to Opus 5 and saved as your default for new sessions\r\n' + COMPOSER)
-await sleep(900)
+const cmdBy = Date.now() + 5000
+while (!cmdDone && Date.now() < cmdBy) await sleep(40)
+await sleep(Number(process.env.PF_PROMPT_CONFIRM_MS) * Number(process.env.PF_PROMPT_ENTER_TRIES))
 ok(cmdDone === 1, 'a slash command settles without a turn', String(cmdDone))
 ok(cmdProc.writes.filter((w) => w === '\r').length === 1, 'and it got exactly one return - the idle composer was the proof', JSON.stringify(cmdProc.writes))
-ok(cmdSettledAt - cmdAt < Number(process.env.PF_PROMPT_CONFIRM_MS) * Number(process.env.PF_PROMPT_ENTER_TRIES) + 500, 'and it settled at the poll cadence, not after the whole confirm budget', String(cmdSettledAt - cmdAt))
+// The WAY it settled, not how long it took: the budget path logs `return swallowed` and sends
+// more returns, this one logs `command landed`. Timed from cmdAt it read 1167ms on a starved
+// PC while the app settled 1ms after the answer - which the test itself had said 647ms late.
+ok(
+  await logSays(cmd.id, /command landed - the composer is idle again/),
+  'and it settled at the poll cadence, not after the whole confirm budget',
+  `${cmdSettledAt - cmdAt}ms\n${logOf(cmd.id)}`
+)
 manager.kill(cmd.id)
 
 // ...and a QUIET composer that printed NOTHING is a swallowed return, not a landed command.
@@ -531,15 +584,6 @@ const ANSWERING =
     p.say(IDLE)
     return { pane, p, at: Date.now() }
   }
-  const acPath = join(work, 'userData', 'autoclear-app.log')
-  const logOf = (id) => readFileSync(acPath, 'utf8').split('\n').filter((l) => l.includes(id)).join('\n')
-  // The durable log is appended off the typing path; on the PC a line can land after the
-  // keystrokes it describes, so a reading waits for it rather than racing it.
-  const logSays = async (id, re) => {
-    const until = Date.now() + 2000
-    while (Date.now() < until && !re.test(logOf(id))) await sleep(40)
-    return re.test(logOf(id))
-  }
 
   // s113: the pid file is there, the hooks are not done. The composer is idle the whole time.
   cli('sess-running')
@@ -648,8 +692,15 @@ const ANSWERING =
   const sAt0 = Date.now()
   manager.queuePrompt(shell.id, BRIEF, 0, 40, undefined, 5000)
   sp.say(IDLE)
-  const sAt = await typedAt(sp, 1200)
-  ok(sAt > 0 && sAt - sAt0 < 700, 'a pane that is not Claude Code is not held', `${sAt ? sAt - sAt0 : '-'}ms`)
+  const sAt = await typedAt(sp, 2500)
+  // Held or not is what the app logged, not a stopwatch: the hold says so the moment it starts
+  // (`waiting for Claude Code to finish starting`). A 700ms limit failed twice in the PC's
+  // full-suite pool (2026-09-27) and never alone on the Mac, where this pane types at ~130ms.
+  ok(
+    sAt > 0 && (await logSays(shell.id, /prompt typed/)) && !/waiting for Claude Code to finish starting/.test(logOf(shell.id)),
+    'a pane that is not Claude Code is not held',
+    `${sAt ? sAt - sAt0 : '-'}ms\n${logOf(shell.id)}`
+  )
   manager.kill(shell.id)
 
   // THE PROMPT WENT IN AND THE APP CALLED IT LOST. 2026-09-24 13:26:18.630Z, pane s105: the
