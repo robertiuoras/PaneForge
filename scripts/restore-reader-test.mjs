@@ -39,6 +39,7 @@ const pin={current:false},intent={current:0}
 new Function('api','t','pinned','scrollIntent','setScrolledUp','mirrorRef','withoutBinaryBells',`
 const sessionId='test',list=[],publish=()=>{},dead=false,setBlank=()=>{},window={clearTimeout(){}},wipeTimer=0,makeKeeper=()=>x=>x,withoutReplayQueries=x=>x,seedMarks=()=>{},drainTyped=()=>{};
 let replayEvents=null; const drainReplayEvents=()=>{replayEvents=null};
+const dropWipeSnap=()=>{wipeSnap=null};
 let initialReplay, sawOutput=false,wipeSnap=null,keep=x=>x,readingSnapshot=false,pendingDataWrites=0,awaitingInitialReplay=false;
 const cleanOutput=(d)=>withoutBinaryBells(keep(d));
 const writeStaged=(b,done)=>t.write(b,done); // the stage itself is proved by replay-width-test
