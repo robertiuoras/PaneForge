@@ -5012,31 +5012,6 @@ html.handheld .card-x { width: 44px; height: 44px; top: 0; right: 0; font-size: 
 .lane-row.readable { cursor: pointer; }
 .lane-row.readable:hover { border-color: var(--line-strong); }
 
-/* ---- a job that cannot sign in -----------------------------------------------
-   The card, in `.corner-stack` with everything else the app puts in that corner.
-   Surfaces follow design-vault/linear.app.md, the same ladder the pane header and
-   `.copy-menu` already use here: one hairline `--line` on `--surface`, no shadow. */
-.login-card {
-  width: 300px; padding: 10px 12px;
-  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg);
-  pointer-events: auto;
-}
-.login-card-title { font-size: 13px; font-weight: 600; color: var(--text); }
-.login-card-who { margin-top: 3px; font-size: 12px; color: var(--text); }
-/* The body carries the sign-in address, and a real one is hundreds of characters with
-   no space in it (Keap's Thryv page, 2026-09-25): it has to be allowed to break. */
-.login-card-body { margin: 5px 0 9px; font-size: 12px; color: var(--muted); line-height: 1.45; overflow-wrap: anywhere; }
-.login-card-why { margin: -5px 0 9px; font-size: 12px; color: var(--muted); line-height: 1.45; }
-.login-card-row { display: flex; gap: 7px; }
-.login-btn {
-  padding: 3px 10px; border-radius: var(--r-sm);
-  border: 1px solid var(--line); background: transparent; color: var(--text);
-  font-size: 12px; cursor: pointer;
-  transition: border-color var(--fast), background var(--fast);
-}
-.login-btn:hover { border-color: var(--accent); }
-.login-btn.primary { border-color: var(--accent); color: var(--accent-text); background: var(--accent-dim); }
-
 /* What the card can SEE of the step it just showed - the half no node suite can answer.
    Same row shape as a check verdict, one step quieter. */
 .tour-look { display: flex; gap: 6px; align-items: baseline; font-size: 12px; color: var(--muted); }

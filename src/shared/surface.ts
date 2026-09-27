@@ -220,14 +220,7 @@ export const SURFACE: Surface = {
   // A queued move's own countdown - it started once the turn ended, separate from the
   // idle/pressure countdowns `MoveSoon.tsx` already draws. See handoffQueue.ts `soon`.
   onHandoffSoon: ['on', 'remote:handoffSoon'],
-  // A job that cannot sign in - see shared/signIn.ts. A card and a mark on the pane that
-  // asked; nothing is opened.
-  loginRequests: ['invoke', 'login:list'],
-  needsLogin: ['invoke', 'login:need'],
-  doneLogin: ['send', 'login:done'],
   tellPane: ['send', 'pane:tell'],
-  dismissLogin: ['send', 'login:dismiss'],
-  onLogins: ['on', 'login:changed'],
   askAutoClear: ['invoke', 'autoclear:ask'],
   cancelAutoClear: ['invoke', 'autoclear:cancel'],
   takeOverPane: ['invoke', 'autoclear:takeover'],

@@ -739,10 +739,6 @@ ok(!server.running, 'the gate test server stopped cleanly')
     // A read of the process table, filtered to dev servers. `devs:stop` is the other half
     // and is GATED - it kills a process on this desk.
     'devs:list',
-    // Reviewed 2026-09-03. A read of the sign-in requests waiting on the desk - site,
-    // address and which computer. The one that ACTS (`login:need` puts the card up) is
-    // GATED.
-    'login:list',
     // Reviewed 2026-08-23. A read of the /clear countdowns in flight - what is pending and
     // when it is due. The two channels that START or SKIP one (`autoclear:ask`,
     // `autoclear:answer`) are GATED: both end in keystrokes reaching a pane.
@@ -777,7 +773,6 @@ ok(!server.running, 'the gate test server stopped cleanly')
   ok(gatedSend.has('app:relaunchAsAdmin'), 'relaunching elevated is behind the passkey')
   ok(gatedSend.has('restore:answer'), 'accepting a deskful of panes is behind the passkey')
   ok(gatedSend.has('pane:tell'), 'handing a pane a line is typing, so it costs a passkey touch')
-  ok(gatedSend.has('login:done'), 'and so does the Done that reports it back to the pane that asked')
   // Reviewed 2026-08-16: pane geometry, visibility, bells and the stash's own text - the
   // things a phone touches constantly and none of which start anything.
   const REVIEWED_SAFE_SEND = new Set([
@@ -802,9 +797,7 @@ ok(!server.running, 'the gate test server stopped cleanly')
     // Reviewed 2026-09-01: "leave that dev server alone". It writes one pid into a
     // never-offer-again set for this app run. It starts nothing and stops nothing - the
     // worst a phone reaches is that a leaked dev server keeps leaking.
-    'devs:keep',
-    // Reviewed 2026-09-25. `login:dismiss` takes a sign-in card down and tells nobody.
-    'login:dismiss'
+    'devs:keep'
   ])
   const unclassifiedSend = sends.filter(
     (c) => !gatedSend.has(c) && !deskOnly.has(c) && !REVIEWED_SAFE_SEND.has(c)

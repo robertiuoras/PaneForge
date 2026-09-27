@@ -1,5 +1,9 @@
 # REMOVED 2026-09-25 - the live sign-in picture
 
+**2026-09-28: the "needs you" card below was removed as well** (one commit, `git log --grep
+"switch off the sign-in card"`; revert it to bring the card back). `pf needs-login` now prints
+the Claude in Chrome route and exits 0. See `docs/design-notes.md` "A job that cannot sign in".
+
 The picture (a CDP screencast of the automation Chrome beside the chat, over an ssh tunnel,
 plus the `--desk` relay and `pf login`) was removed on Robert's word: "remove this feature
 paneforge for remote accees its terrible and doesnt work properly will need to build another

@@ -106,6 +106,12 @@ console.log('2. help answers with no app; a wrong word points at it')
   const bad = pf(['bogus'])
   check('an unknown command exits 1', bad.code === 1, `exit ${bad.code}`)
   check('and its message ends with run: pf help', bad.err.trim().endsWith('run: pf help'), bad.err.trim())
+  // The sign-in card was switched off 2026-09-28. Callers still run the command, so it
+  // must not fail their job - and must not reach the app (no-app would exit 2).
+  const off = pf(['needs-login', 'keap', '--url', 'https://keap.com/login', '--why', 'finish'])
+  check('pf needs-login exits 0 without the app', off.code === 0, `exit ${off.code} ${off.err}`)
+  check('in one line naming the Chrome route', off.out.trim().split('\n').length === 1 && off.out.includes('switched off') && off.out.includes('Claude in Chrome'), off.out.trim())
+  check('pf help does not offer it', !helpText().includes('needs-login'))
   const badTopic = pf(['help', 'bogus'])
   check('pf help <unknown> exits 1 pointing at pf help', badTopic.code === 1 && badTopic.err.trim().endsWith('run: pf help'))
   const tidyBad = pf(['tidy', '--everything'])

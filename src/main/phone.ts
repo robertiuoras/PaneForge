@@ -139,11 +139,9 @@ const DESK_ONLY = new Set([
  * construction rather than by a flag.
  */
 const GATED_SEND = new Set([
-  // Reviewed 2026-09-07. Both end in a line arriving in a pane's composer: `pane:tell`
-  // hands one to a named pane, and `login:done` tells whichever pane asked for the
-  // sign-in that the wall is down.
+  // Reviewed 2026-09-07. It ends in a line arriving in a pane's composer: `pane:tell`
+  // hands one to a named pane.
   'pane:tell',
-  'login:done',
   // It kills a process: the countdown card's `Close now`. The invoke half, `devs:stop`,
   // is gated for the same reason.
   'devs:stopNow',
@@ -169,8 +167,6 @@ const GATED_INVOKE = new Set([
   'reviews:open',
   // Binds a compute job to a shell pane, which is then CLOSED when the job's result lands.
   'sessions:watchCompute',
-  // `login:need` puts a card on the desk and marks a pane as needing a person.
-  'login:need',
   // Reviewed 2026-08-31. `projects:create` writes a directory into the projects root from
   // a name somebody typed. `shared/projectName.ts` refuses every name that could mean a
   // folder somewhere else, so the worst case is an empty folder with an odd name - but it

@@ -27,17 +27,16 @@ same headings as `docs/design-notes.md` (the why). Paths: `shared/` = `src/share
   commit, conversation, screen, dev servers; mid-turn queued; sender closes on ack, becomes
   mirror; dirty/unpushed refused by name; paths grafted (`test:handoff`, `test:handofffit`).
 
-## A job that cannot sign in says so
+## A job that cannot sign in: no card (switched off 2026-09-28)
 
-`pf needs-login <site> --url <url> [--why TEXT] [--machine WORDS]` -> `login:need` ->
-`main/signIn.ts` list -> `LoginCard.tsx` ("<Site> needs you to sign in", address, pane,
-wait) + asking pane's row red with a `sign in` chip (`alarmIds`, `signInFor`). Opens NOTHING:
-no browser, no Chrome connection, no ssh, no other computer. `Signed in` = `login:done` ->
-`tellPane(from, signedInWords)`; `Not now` = `login:dismiss`. Same site+machine = one card.
-`--host/--port/--open/--desk/--me/--pf/--report-to/--report-host` and `pf login` refused by
-name. `sign-in.log`; `test:signin`. The live-picture version (CDP screencast over an ssh
-tunnel, `--desk` relay) was REMOVED 2026-09-25: `docs/specs/remote-login-pane.md` says why
-and names the last commit that has it.
+The "<Site> needs you to sign in" card (`LoginCard.tsx`, `main/signIn.ts`, `shared/signIn.ts`,
+`login:*` channels, the row's `sign in` chip, `test:signin`) was REMOVED 2026-09-28 in ONE
+commit (`git log --grep "switch off the sign-in card"`), so `git revert <sha>` brings it back
+when it is tuned. `pf needs-login` stays a word: `SWITCHED_OFF` in `pf-ctl.mjs` prints one line
+naming the replacement (Claude in Chrome on the Mac, the person signs in in that tab, the agent
+carries on there) and exits 0 without reaching the app; `pf login` exits 1 with the same line
+(`test:pfhelp`). The live-picture version was REMOVED 2026-09-25:
+`docs/specs/remote-login-pane.md`.
 
 ## A new pane starts where the work can run
 

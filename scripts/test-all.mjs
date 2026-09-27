@@ -216,7 +216,6 @@ const TESTS = [
   ['renametrigger', 'rename-trigger-test.mjs'],
   ['resolvedname', 'resolved-name-test.mjs'],
   ['peerchrome', 'peer-chrome-test.mjs'],
-  ['signin', 'sign-in-test.mjs'],
   ['projectname', 'project-name-test.mjs'],
   ['historysearch', 'history-search-test.mjs'],
   ['chatsearch', 'chat-search-test.mjs'],

@@ -90,7 +90,7 @@ const server = new PhoneServer({
   staticDir,
   code: () => code,
   secret: () => 'device-secret',
-  channels: { invoke: ['sessions:list', 'login:list'], send: [], on: [] },
+  channels: { invoke: ['sessions:list', 'devs:list'], send: [], on: [] },
   invoke: async () => [],
   send: () => {}
 })

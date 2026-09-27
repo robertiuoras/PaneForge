@@ -25,8 +25,6 @@
  *                                       [--resume <chat-id> | --continue] [--here | --on <device>]
  *   node scripts/pf-ctl.mjs open-many <plan.json>
  *   node scripts/pf-ctl.mjs devices
- *   node scripts/pf-ctl.mjs needs-login <site> --url <url> [--machine WORDS]
- *                                        [--why "what it will do once signed in"]
  *   node scripts/pf-ctl.mjs tell <title-or-id> <text...>
  *   node scripts/pf-ctl.mjs continue <chat-id> --prompt-file <file> [--json]   next prompt to one conversation, reopening it if closed
  *   node scripts/pf-ctl.mjs close <title-or-id>
@@ -275,17 +273,31 @@ if (!cmd || cmd === 'help' || cmd === '--help' || cmd === '-h') {
   console.log(one)
   process.exit(0)
 }
+// What an agent does instead when a job needs a person to sign in: the person's own Chrome,
+// driven by Claude in Chrome, rather than a card on the desk.
+const SIGN_IN_ROUTE =
+  'When a job needs a person to sign in: open the sign-in page in Claude in Chrome on the Mac (mcp__claude-in-chrome__* tools, the person\'s real Chrome), say in your reply which tab and what to sign in to, then carry on in that tab yourself once they have signed in.'
 // A command agents were taught and that is gone is answered with what replaced it, rather
 // than with the list of everything. `pf login` opened the sign-in picture until 2026-09-25.
 const RETIRED = {
-  login:
-    'pf login was removed with the sign-in picture. To say a job cannot sign in: pf needs-login <site> --url <url> [--why TEXT]'
+  login: `pf login was removed with the sign-in picture. ${SIGN_IN_ROUTE}`
 }
 if (Object.hasOwn(RETIRED, cmd)) fail(1, RETIRED[cmd])
+// A command that is switched off rather than gone: scripts and agents still run it, so it
+// answers with what to do instead and exits 0 rather than failing the job that asked.
+// Nothing reaches the app. `pf needs-login` put a "needs you to sign in" card on the desk
+// until 2026-09-28; the card kept coming back without getting anybody signed in.
+const SWITCHED_OFF = {
+  'needs-login': `pf needs-login is switched off: no card goes up. ${SIGN_IN_ROUTE}`
+}
+if (Object.hasOwn(SWITCHED_OFF, cmd)) {
+  console.log(SWITCHED_OFF[cmd])
+  process.exit(0)
+}
 if (!isCommand(cmd))
   fail(
     1,
-    `unknown command "${cmd}" - use: help | list | agents | open | open-many | devices | tell | continue | type | composer | close | close-when-done | tidy | move | rename | review | watch-job | needs-login | hold | cost | reload | call | send - run: pf help`
+    `unknown command "${cmd}" - use: help | list | agents | open | open-many | devices | tell | continue | type | composer | close | close-when-done | tidy | move | rename | review | watch-job | hold | cost | reload | call | send - run: pf help`
   )
 if (rest[0] === '--help' || rest[0] === '-h') {
   console.log(commandHelp(cmd))
@@ -296,42 +308,6 @@ if (rest[0] === '--help' || rest[0] === '-h') {
 function shellQuote(word) {
   if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(word)) return word
   return `'${String(word).replace(/'/g, `'"'"'`)}'`
-}
-
-/*
- * A sign-in request is checked BEFORE the app is asked for anything.
- *
- * The whole point of the card is that a person walks over to it and signs in, so an ask
- * that names no site, or an address that is not an address, must cost nobody that walk.
- * It refuses here, where the mistake was made, rather than putting up a card that sends
- * a person to nothing.
- */
-
-/*
- * The flags `needs-login` took while it could open a live picture of the automation
- * browser (removed 2026-09-25, see docs/specs/remote-login-pane.md). Each one promised
- * something that no longer happens - a tunnel, a picture, a card on the other computer -
- * so it is refused by name rather than quietly dropped.
- */
-const REMOVED_LOGIN_FLAGS = ['--host', '--port', '--open', '--desk', '--me', '--pf', '--report-to', '--report-host']
-
-let loginArgs = null
-if (cmd === 'needs-login') {
-  const removed = REMOVED_LOGIN_FLAGS.find((f) => rest.includes(f))
-  if (removed)
-    fail(
-      1,
-      `${removed} was removed with the sign-in picture - pf needs-login now only puts a "needs you" card on the computer it runs on. Say which computer the sign-in is for with --machine.`
-    )
-  const machine = flag(rest, '--machine')
-  const url = flag(rest, '--url')
-  const why = flag(rest, '--why')
-  const site = rest[0]
-  if (!site) fail(1, 'needs-login needs a site: pf needs-login <site> --url <url>')
-  if (!url) fail(1, 'needs-login needs --url <address of the sign-in page>')
-  if (!/^https?:\/\//i.test(url))
-    fail(1, `--url must start with http:// or https:// - got "${url}"`)
-  loginArgs = { site, url, machine, why, from: process.env.PF_PANE }
 }
 
 /**
@@ -502,11 +478,6 @@ if (cmd === 'list') {
   const list = await sessions()
   // The number leads, because it is the name on the card. See `resolve`.
   for (const s of list) console.log([cardNumber(list, s.id), s.id, s.status, s.title, s.cwd].join('\t'))
-  // A sign-in request is not a pane - it is a card waiting for somebody - so it is listed
-  // too, and says which computer it is waiting on.
-  const logins = (await call('login:list', [])) ?? []
-  for (const r of logins)
-    console.log([r.id, 'needs you', `Sign in to ${r.site} on ${r.machine}`, r.url].join('\t'))
 } else if (cmd === 'agents') {
   // The running app's own catalogue, so an agent the person added is here too, and
   // "installed" is this computer's answer rather than a list baked into this file.
@@ -733,10 +704,6 @@ if (cmd === 'list') {
   )
   if (!transcript) console.log(`note: no conversation file found for ${pane.id}; the brief carries its last screen instead`)
   if (state === 'starting') console.log(`note: ${fresh.id} has drawn nothing yet after 40s - check it with pf list`)
-} else if (cmd === 'needs-login') {
-  const req = await call('login:need', [loginArgs])
-  if (!req?.id) fail(1, 'PaneForge did not accept the sign-in request')
-  console.log(req.id)
 } else if (cmd === 'open') {
   const title = flag(rest, '--title')
   // A pane opened on a backlog task is briefed FROM the task: the app compiles the prompt
@@ -948,7 +915,7 @@ if (cmd === 'list') {
   console.log(draft.text)
 } else if (cmd === 'tell') {
   // One line into a pane, queued for the gap between its turns rather than typed into
-  // the middle of one - the same door the sign-in card reports back through.
+  // the middle of one.
   const ref = rest.shift()
   const text = rest.join(' ')
   if (!ref || !text) fail(1, 'tell needs a pane and one line: pf-ctl tell <title-or-id> <text...>')
