@@ -22,7 +22,7 @@ import {
   shell } from 'electron'
 import { startMainWatch, stopMainWatch } from './mainWatch'
 import { SessionManager, setSilenceAlert, type WriteOrigin } from './sessions'
-import { acknowledgeReview, listReviews, noteReviewClose, recordReview, reviewCloseArmAction, reviewOpenTarget, type ReviewCloseArm } from './reviews'
+import { acknowledgeReview, listReviews, noteReviewClose, recordReview, reviewCloseArmAction, reviewOpenTarget, setReviewDesk, type ReviewCloseArm } from './reviews'
 import { ComputeReviews, computeResult } from './computeReviews'
 import { mayNotify, noticesDir, readReply, sweepDoneClose } from './doneClose'
 import { doneReviewId } from '../shared/doneClose'
@@ -1255,6 +1255,8 @@ remote.on('screen', (e) => screenViews.onRemote(e))
 function allSessions(): Session[] {
   return [...manager.list(), ...remote.sessions(), ...screenViews.sessions()]
 }
+// A finished chat's report carries the number on its card, counted from this same list.
+setReviewDesk(allSessions)
 
 remote.on('data', (id: string, data: string) => pump.push(id, data))
 // The link came back and the whole scrollback arrived again: the pane has to start
