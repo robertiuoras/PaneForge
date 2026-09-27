@@ -4773,13 +4773,6 @@ button.chip:hover {
   font-size: 12px;
   text-align: center;
 }
-.autoclear-steps {
-  margin: 0;
-  padding-left: 16px;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.4;
-}
 .autoclear-keep {
   align-self: flex-start;
   padding: 5px 10px;
