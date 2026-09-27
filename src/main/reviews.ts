@@ -328,15 +328,17 @@ function closed(h: HistoryEntry): ReviewRecord {
 /**
  * A transcript's lines that hold `needle`, read 1MB at a time: a Codex rollout reaches
  * 128MB and is never held whole, and only a matching line is decoded. Measured 2026-09-27
- * on a 20MB Claude transcript: 12-16ms, against 75ms decoding every line.
+ * on a 20MB Claude transcript: 12-16ms, against 75ms decoding every line. Started at `from`
+ * inside the file, the first line read is a fragment of one and is skipped.
  */
-function* linesWith(file: string, needle: string): Generator<string> {
+function* linesWith(file: string, needle: string, from = 0): Generator<string> {
   const want = Buffer.from(needle);
   const fd = openSync(file, "r");
   try {
     let buf = Buffer.alloc(1 << 20),
       have = 0,
-      pos = 0;
+      pos = from,
+      fragment = from > 0;
     for (;;) {
       if (have === buf.length) {
         const grown = Buffer.alloc(buf.length * 2);
@@ -351,18 +353,21 @@ function* linesWith(file: string, needle: string): Generator<string> {
         nl: number;
       while ((nl = buf.indexOf(10, start)) >= 0 && nl < have) {
         const line = buf.subarray(start, nl);
-        if (line.indexOf(want) >= 0) yield line.toString("utf8");
+        if (fragment) fragment = false;
+        else if (line.indexOf(want) >= 0) yield line.toString("utf8");
         start = nl + 1;
       }
       buf.copy(buf, 0, start, have);
       have -= start;
     }
     const tail = buf.subarray(0, have);
-    if (have && tail.indexOf(want) >= 0) yield tail.toString("utf8");
+    if (have && !fragment && tail.indexOf(want) >= 0) yield tail.toString("utf8");
   } finally {
     closeSync(fd);
   }
 }
+/** The end of a Codex rollout read for its token count: many turns' worth of rows. */
+const CODEX_TOKEN_TAIL = 2 * 1024 * 1024;
 /**
  * The report contract's live facts: the card number now, and how full the chat is. Any of
  * them unreadable is left out - a report is never held back for a number.
@@ -386,14 +391,20 @@ function sessionFacts(
       r.provider === "codex"
         ? codexTranscriptPath(r.cwd, r.nativeSessionId)
         : transcriptPath(r.cwd, r.nativeSessionId);
-    if (file)
-      Object.assign(
-        out,
-        transcriptTokens(
-          r.provider,
-          linesWith(file, r.provider === "codex" ? '"token_count"' : '"usage"'),
-        ),
-      );
+    if (file) {
+      const needle = r.provider === "codex" ? '"token_count"' : '"usage"';
+      // Codex's last token_count holds the whole session's running total, so only the end of
+      // a rollout is read; the whole file only when its end has no token count at all.
+      // Measured 2026-09-27 on a 128MB rollout: 72-90ms whole, 1-3ms tail, same numbers.
+      const size = r.provider === "codex" ? statSync(file).size : 0;
+      let tokens: ReturnType<typeof transcriptTokens> =
+        size > CODEX_TOKEN_TAIL
+          ? transcriptTokens("codex", linesWith(file, needle, size - CODEX_TOKEN_TAIL))
+          : {};
+      if (!tokens.context && !tokens.sessionTokens)
+        tokens = transcriptTokens(r.provider, linesWith(file, needle));
+      Object.assign(out, tokens);
+    }
   } catch {
     /* an unreadable transcript leaves the numbers out */
   }
