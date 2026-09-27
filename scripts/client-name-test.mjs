@@ -30,7 +30,6 @@ buildSync({
   outfile: out
 })
 const {
-  topicReading,
   clientFromPath,
   clientFromText,
   clientTitle,
@@ -39,11 +38,6 @@ const {
   nameFromHeading,
   repeatedClient,
   slugFromPath,
-  topicTitle,
-  mayTopicName,
-  repeatedTopic,
-  topicKeywords,
-  SHORT_TITLE,
   withAliases
 } = createRequire(import.meta.url)(out)
 
@@ -175,104 +169,6 @@ ok(
 const solo = withAliases([{ slug: 'angie-c', name: 'Angie C.' }])
 is(clientFromText('angie wants a call', solo)?.slug, 'angie-c', 'one client, its own words')
 
-// -------------------------------------------------------------- the subject of a first ask
-
-is(topicTitle('check the rental car booking'), 'Checking Rental Car', 'the runway comes off, the verb stays')
-is(
-  topicTitle('can you please help me fix the invoice template'),
-  'Fixing Invoice Template',
-  'politeness and articles both come off'
-)
-// A label may not end on the word that joined it to the half that was cut off:
-// `pizzasrus and the invoice template` used to name a pane `Pizzasrus And`.
-is(topicTitle('pizzasrus and the invoice template'), 'Pizzasrus', 'one clause, never a joining word')
-is(topicTitle('fix the deploy script and'), 'Fixing Deploy Script', 'trailing and trimmed')
-is(topicTitle('rename the invoice folder with'), 'Renaming Invoice Folder', 'trailing with trimmed')
-is(topicTitle('pizzasrus invoice reminder emails'), 'Pizzasrus Invoice Reminder', 'a real four-word subject survives')
-is(topicTitle('look at it'), '', 'nothing but joining words is not a subject')
-is(
-  topicTitle("i'm looking for a cheap car"),
-  'Cheap Car',
-  'half a contraction is not the first word of a card'
-)
-is(
-  topicTitle('we need to set up meta ads for the new offer'),
-  'Setting Up Meta Ads',
-  'the runway comes off a real errand too'
-)
-
-// A pane already wearing a project's name is not renamed to a sentence: PaneForge stays
-// PaneForge however the first ask is worded. Only a client tree, where every pane is
-// called `clients`, has nothing to lose.
-is(mayTopicName('/Users/r/Projects/PaneForge'), false, 'a repo keeps its own name')
-is(mayTopicName('/Users/r/Desktop'), true, 'a folder that is nobody project')
-is(mayTopicName('/Users/r/Projects'), true, 'the projects root names no work')
-is(mayTopicName('/Users/r/Projects/clients'), true, 'the client tree root')
-is(mayTopicName('/Users/r/Projects/clients/pizzasrus/menu'), true, 'anywhere inside it')
-is(mayTopicName('C:\\Users\\Gamer\\Desktop\\Projects\\clients\\angie'), true, 'either separator')
-is(mayTopicName(''), false, 'no folder, no rename')
-
-// A card says what the pane is DOING. `R Is It Okay` and `See This Error Can` (2026-09-02)
-// were the runway of a sentence, cut mid-thought; the verb at the front is the name.
-is(
-  topicTitle('can you help fix issue with this remote screen looking weird for a bit until it changes'),
-  'Fixing Remote Screen',
-  'the verb leads, the hollow words after it come off, one clause only'
-)
-is(topicTitle('see this error, can you check why it happens'), 'Checking Error', 'punctuation ends the clause')
-is(topicTitle('r is it okay to delete the old worktrees?'), 'Removing Old Worktrees', 'a stray letter is runway')
-is(topicTitle('is it okay if we ship today'), '', 'a question with no subject names nothing')
-is(topicTitle('the login page is broken on safari'), 'Fixing Login Page', 'a thing said to be broken is being fixed')
-is(topicTitle('why is the build so slow'), 'Fixing Build', 'a complaint is a fix')
-is(topicTitle('what does this function do'), 'Explaining Function', 'a question is an explanation')
-is(topicTitle('speed up the test suite please'), 'Speeding Up Test Suite', 'the particle stays with its verb')
-is(topicTitle('update all the dependencies and run the tests'), 'Updating Dependencies', 'the second ask is not the name')
-is(topicTitle('fix'), '', 'a verb with nothing after it is not a subject')
-
-is(topicTitle('/clear'), '', 'a slash command is a command, not a subject')
-
-// ── broken English is still a name ─────────────────────────────────────────────────────
-// Robert's asks open on the typing, not on the subject: the thing a session is about
-// arrives four or five words in, often misspelt. Naming off the FRONT gave cards called
-// `Cacan See Hubspot Api`, `Access To Both Hello` and `Clicking On Teh Gpt` (2026-09-19,
-// "its still terrible and not reflecting the work/idea of the session").
-is(topicTitle('cacan u see hubspot api and see how a contact is made'), 'Checking HubSpot API', 'a doubled keystroke is repaired, and the acronym is spelled')
-is(topicTitle('can you check how we blew so quickly openai billing api for gpt live?'), 'Checking OpenAI Billing', 'the subject four words in, spelled the way the product is')
-is(topicTitle('can u anaylse ram ad account meta see any improvements immediately?'), 'RAM Ad Meta Improvements', 'a misspelt verb does not eat the subject')
-is(topicTitle('im clicking on teh gpt live button but it doesnt look active enough'), 'Clicking On GPT Live', 'teh is the, and GPT keeps its shape')
-is(topicTitle('continue from last session'), '', 'an ask about the session names nothing at all')
-is(topicTitle('upwork bot is it running or not i havent seen it on this device'), 'Upwork Bot Running', 'the negation is not the subject')
-ok(!topicTitle('what is this session i cant see the history why').includes('Cant'), 'cant is never a word on a card')
-
-is(topicTitle('ok'), '', 'too short to identify a pane')
-is(topicTitle(''), '', 'nothing typed')
-ok(topicTitle('rewrite the onboarding email sequence for new leads').length <= 26, 'capped')
-
-// ------------------------------------------------ the opener may not eat the whole budget
-//
-// docs/brief-session-naming-2026-09-04.md, four cards read off this session's own asks.
-
-is(
-  topicTitle('whenever you open the dev window it will say whats different'),
-  'Open Dev Window',
-  'a runway opener (whenever you) may not spend the four-word budget'
-)
-is(
-  topicTitle('can you measure right now why im lagging?'),
-  'Measure Lagging',
-  'a name may not end on a dangling why'
-)
-is(
-  topicTitle('we need to tune the naming of session as well, broken like this'),
-  'Tune Naming',
-  '"of as" is not words - both trailing fillers come off'
-)
-is(
-  topicTitle('when pressing on sidebar icon everything breaks'),
-  'Fixing Sidebar Icon',
-  'two verbs is one too many - the second gerund is the trigger, not the subject'
-)
-
 // ------------------------------------------------------------------------- who may rename
 
 ok(mayRename('clients', '/Users/r/Projects/clients'), 'a pane still wearing the folder name')
@@ -284,136 +180,13 @@ is(clientTitle({ slug: 'x', name: 'y'.repeat(80), aliases: [] }).length, 60, 'ca
 is(clientLabel({ slug: 'alison', name: 'Alison', aliases: [] }), 'Alison | clients', 'the card says who and where')
 is(clientLabel({ slug: 'x', name: 'y'.repeat(80), aliases: [] }).length, 60, 'and is capped the same')
 
-// ------------------------------------------------- a subject several asks agree on
-
-const say = (...asks) => repeatedTopic(asks)
-
-is(say('the invoice reminder emails'), '', 'one ask is not a subject')
-// Two asks that agree ARE. Three was most of a session: a pane in the `assistant` repo
-// worked on an Upwork bot all afternoon still wearing `assistant` (Robert, 2026-09-17).
-is(
-  say('sort the invoice reminders', 'fix the invoice template'),
-  'Sort Invoice Reminders',
-  'two asks about invoices name the pane, as a phrase'
-)
-is(
-  say('build the upwork bot proposal step', 'the upwork bot keeps timing out'),
-  'Build Upwork Bot Proposal',
-  'and the pane in a repo takes the subject, not the folder name'
-)
-is(
-  say('what did we ship', 'is the mac lagging', 'make a dev release'),
-  '',
-  'unrelated asks name nothing'
-)
-is(
-  say('invoice reminders', 'deploy the site', 'the site deploy failed', 'ship it'),
-  'Deploy Site',
-  'the newest agreeing pair wins as the window moves on'
-)
-ok(
-  say(
-    'the onboarding email sequence needs rewriting',
-    'onboarding email sequence tone',
-    'onboarding email sequence timing'
-  ).length <= SHORT_TITLE,
-  'a repeated subject is short'
-)
-is(
-  say('please can you check this', 'could you look at that', 'would you make it better'),
-  '',
-  'words every prompt uses are not a subject'
-)
-is(say('/clear', '/clear', '/clear'), '', 'slash commands say nothing')
-is(topicKeywords('fix the invoice template').join(' '), 'invoice template', 'runway and verbs drop out')
-// The phrase must hold a word the asks agreed on. This named a toolstash pane
-// `Were Able To Switch` on 2026-09-01: the runway of a question, subject still ahead.
-{
-  const named = say(
-    'so you were able to switch models for me? thats good but does fable have cached now',
-    'is fable cheaper than opus for these models',
-    'switch the default models back to fable'
-  )
-  ok(/Fable|Models/.test(named), `the phrase carries the repeated word, got "${named}"`)
-  ok(!/Were|Able/.test(named), `and never the runway, got "${named}"`)
-  is(topicTitle('so you were able to switch models for me'), 'Switch Models', 'the runway is cut even without an anchor')
-  is(topicTitle('please look at this again', new Set(['invoice'])), '', 'an ask holding no anchor names nothing')
-}
-
-// Housekeeping the desk does to itself between jobs is not the job. A pane in
-// `Projects/PaneForge` came back from a `/clear` wearing the name `Handoff`.
-is(
-  say(
-    'continue the handoff and work its next steps',
-    'the handoff says the next steps are open',
-    'write the handoff before I clear this'
-  ),
-  '',
-  'a session talking about its own handoff is not a subject'
-)
-is(
-  say('resume the session', 'resume this session context', 'session context resume'),
-  '',
-  'resume, session and context name nothing either'
-)
-is(topicTitle('continue the handoff and clear the session'), '', 'nor as a first-ask phrase')
-is(
-  topicKeywords('write the handoff then clear the session context').join(' '),
-  'write',
-  'the session words drop out, the verb is all that is left'
-)
-// ...and the fence still lets a real subject through, so the stop list has not eaten naming.
-is(
-  say(
-    'continue the invoice reminders work',
-    'the invoice reminders are still wrong',
-    'invoice reminders need a resume button'
-  ),
-  'Invoice Reminders Work',
-  'a real subject beside a session word still names the pane'
-)
-
-// A subject already on a card may be replaced, but only by evidence.
-//
-// The failure this pins: a pane in a real project folder was named off an errand, and
-// nothing could ever rename it - `untitled` is false the moment the card wears a subject,
-// so the better name the desk went on to earn was never written. A repeated reading is
-// allowed to; one sentence is not.
-{
-  const repo = '/Users/r/Projects/PaneForge'
-  const one = topicReading(repo, ['sort out the invoice reminders'], 'sort out the invoice reminders')
-  is(one.title, '', 'one ask in a real project folder names nothing')
-  is(one.strong, false, '...and is never evidence')
-
-  const asks = [
-    'sort out the invoice reminders',
-    'the invoice reminders are still wrong',
-    'invoice reminders need a resume button'
-  ]
-  const three = topicReading(repo, asks, asks[2])
-  is(three.title, 'Sort Out Invoice Reminders', 'three asks agreeing name the pane')
-  is(three.strong, true, '...and that reading may replace a name the pane already wears')
-
-  // A client-tree folder is useful identity, but a single task sentence is still a guess.
-  const tree = '/Users/r/Projects/clients'
-  const guess = topicReading(tree, ['check the rental car booking'], 'check the rental car booking')
-  is(guess.title, '', 'a client-tree pane waits for repeated user task evidence')
-  is(guess.strong, false, '...and one vague ask never changes a card title')
-
-  // ...and once the tree pane has repeated itself, that reading outranks the first-ask one.
-  const settled = topicReading(tree, asks, asks[2])
-  is(settled.title, 'Sort Out Invoice Reminders', 'a repeated subject wins inside the tree too')
-  is(settled.strong, true, '...as evidence')
-}
-
 // ------------------------------------------- a rename needs more than one ask (client alias)
 //
 // "it renamed way too early / too confident, now this session is called name like `Cars`
 // which is wrong because we only said 1 prompt, needs multiple at least" - the word `Cars`
 // appeared once, inside a sentence ABOUT naming rules, and the card took it. A client name
-// lifted from PROMPT TEXT needs the same three-agreeing-asks bar `repeatedTopic` already
-// holds a real project's pane to; the folder is exempt, because it is a fact rather than a
-// guess (see `clientFromPath` above).
+// lifted from PROMPT TEXT needs more than one ask naming it; the folder is exempt, because
+// it is a fact rather than a guess (see `clientFromPath` above).
 {
   const carsRoster = withAliases([{ slug: 'carsworld', name: 'Carsworld' }])
   const oneOfThree = [

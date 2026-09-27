@@ -121,10 +121,10 @@ export interface ClientNamed {
   /** what it was called a moment ago - `basename(cwd)` */
   was: string
   /**
-   * `folder` is evidence, `prompt` is a client read out of what was typed, and `topic` is
-   * the subject of the first ask when it named no client at all.
+   * `folder` is evidence, `prompt` is a client read out of what was typed, and `agent` is
+   * the agent's own title for the chat (`shared/cliTitle.ts`).
    */
-  from: 'folder' | 'prompt' | 'topic' | 'reply'
+  from: 'folder' | 'prompt' | 'agent'
 }
 
 /** What a card says about a Codex pane's reasoning effort. See `shared/effort.ts`. */
@@ -211,11 +211,12 @@ export interface Session {
    */
   clientOff?: boolean
   /**
-   * Which reading named this pane, when one did. `topic` is a guess off the first prompt
-   * and may be replaced by a `client` identified later; `client` is final, and a title a
-   * person typed carries neither and is never touched.
+   * Which reading named this pane, when one did. `agent` is the agent's own title for the
+   * chat and may be replaced by a `client` identified later, or by the next chat's title
+   * after a `/clear`; `client` is final; a title a person typed carries neither and is
+   * never touched. Saved with the desk, so a restart does not turn one into the other.
    */
-  autoTitled?: 'client' | 'topic'
+  autoTitled?: 'client' | 'agent'
   /**
    * Epoch ms since this pane's `cwd` stopped existing on disk, unset while it is there.
    * A live pane keeps running (its shell falls back to $HOME); an EXITED one whose folder
@@ -741,6 +742,8 @@ export interface StartSessionRequest {
    */
   fromAddress?: string
   title?: string
+  /** who gave `title`, carried across a restart or a move: see `Session.autoTitled` */
+  autoTitled?: 'client' | 'agent'
   agent?: Agent
   model?: string
   /**

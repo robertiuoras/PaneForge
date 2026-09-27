@@ -22,12 +22,21 @@ generated branch (`pf/w2`, `lane-a`, `worktree-<slug>`) dropped; `copy 2` = seco
 `shared/clientName.ts`, `main/clients.ts`; `test:clientname`. Roster =
 `clients/<who>/README.md` walking UP; first heading, contact stripped; parenthetical kept
 only for a person, not an org; `Client` off. Prompt name matches ONE client, word boundary,
-`MIN_ALIAS`, not `GENERIC`. Replace only on STRONG reading (`topicReading`, `repeatedTopic`);
-`/clear` empties `topicAsks`. Others get `topicTitle` where `mayTopicName` (client tree,
-`Desktop`/`Downloads`/root); real repo waits three agreeing asks, EARLIEST names. Rename is
-SILENT: no card, Activity row only (`test:activity`). Pointing ask (`$50 task`) named off the REPLY
-(`shared/resolvedName.ts` `handleOf`/`resolvedName`, `sweepResolved` once, app-given names
-only; `The agent found what you meant.`; `test:resolvedname`).
+`MIN_ALIAS`, not `GENERIC`, named by `CLIENT_MIN_ASKS` of the last `ASK_WINDOW` asks;
+`/clear` empties `clientAsks`. Rename is SILENT: no card, Activity row only (`test:activity`).
+
+## A pane is called what its chat is called
+
+`shared/cliTitle.ts`, `sweepCliTitle` (`main/sessions.ts`, Claude panes, every 5s, only new
+transcript bytes, first read the last 256 KB); `test:clititle`. Ranking: a person (app rename, `pf rename`, CLI `/rename` =
+`custom-title`) > opener (`pf open --title`) > client roster > the CLI's own `ai-title` >
+project name. NO word-picker off typed asks (deleted 2026-09-28: ~3 of ~33 names usable). CLI
+title only over an app-chosen name (`appDefault()` or `autoTitled: 'agent'`), once per
+conversation; housekeeping words cut (`cardTitle`), a continuation never replaces an earned
+name, a title that is only the project names nothing. `autoTitled` is saved with the desk and a
+handoff (and a continuation); on a desk/handoff restore (`scrollbackId`) a name the Activity
+list says the app gave (`appNamedTitle`) with no saved `autoTitled` goes back to the project name.
+`HOUSEKEEPING` is whole words; `session` only before a handoff word.
 
 ## A pane says how long it has been open
 

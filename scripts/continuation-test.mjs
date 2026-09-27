@@ -23,7 +23,7 @@ try {
   const out = join(work,'continuation.cjs')
   buildSync({absWorkingDir:process.cwd(),entryPoints:['src/main/continuation.ts'],bundle:true,platform:'node',format:'cjs',outfile:out,logLevel:'silent'})
   const {startContinuation} = createRequire(import.meta.url)(out)
-  const source = {id,cwd,agent:'codex',model:'test-model',role:'reviewer',lane:'a',title:'Task',status:'idle',engaged:true,lastKeyboard:0}
+  const source = {id,cwd,agent:'codex',model:'test-model',role:'reviewer',lane:'a',title:'Task',autoTitled:'agent',status:'idle',engaged:true,lastKeyboard:0}
   const spec = {scrollbackId:id,resumeId:'r',cwd,laneEnv:{LANE:'a'}}
   function fixture({sleep=true,throwStart=false}={}) {
     const calls = []
@@ -39,7 +39,7 @@ try {
   let deps = fixture()
   eq(startContinuation(deps,id,now).id,'new','valid continuation starts')
   eq(deps.calls,['sleep','start'],'source saved before new writer')
-  eq(deps.request,{cwd,title:source.title,agent:source.agent,model:source.model,role:source.role,lane:source.lane,laneEnv:spec.laneEnv,prompt:doc},'preserve selected provider and worktree; fresh request contains no resume id')
+  eq(deps.request,{cwd,title:source.title,autoTitled:source.autoTitled,agent:source.agent,model:source.model,role:source.role,lane:source.lane,laneEnv:spec.laneEnv,prompt:doc},'preserve selected provider, worktree and who named it; fresh request contains no resume id')
   deps = fixture({sleep:false})
   eq(startContinuation(deps,id,now).ok,false,'sleep refusal blocks continuation')
   eq(deps.calls,['sleep'],'no new writer after refusal')
