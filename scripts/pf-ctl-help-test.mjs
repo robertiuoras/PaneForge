@@ -18,6 +18,7 @@ import {
   COMMAND_NAMES,
   REPLY_CHARS,
   buildHandoffBrief,
+  cardNumber,
   claimHolder,
   claudeProjectDir,
   commandHelp,
@@ -30,6 +31,7 @@ import {
   laneLedger,
   movePrompt,
   moveRefusal,
+  paneAt,
   readTail,
   samePath,
   stripAnsi,
@@ -207,6 +209,18 @@ const row = (id, over = {}) => ({
 }
 
 const RESUME = '849b009a-e33d-4189-8960-6240e8f72219'
+// ----------------------------------------------------------------- card numbers
+// This app's rows carry no number: a card's number is its place. PaneForge Next's rows
+// carry their own, which keep their value when a pane before them closes - gaps.
+{
+  const placed = [{ id: 'a' }, { id: 'b' }, { id: 'c' }]
+  check('no number on the rows: the card number is the place in the list', cardNumber(placed, 'b') === 2 && paneAt(placed, 2)?.id === 'b')
+  const kept = [{ id: 'a', number: 1 }, { id: 'b', number: 3 }, { id: 'c', number: 4 }]
+  check('rows with their own number print that number', cardNumber(kept, 'b') === 3 && cardNumber(kept, 'c') === 4)
+  check('and a bare number finds the pane showing it, not the one at that place', paneAt(kept, 3)?.id === 'b' && paneAt(kept, 2) === undefined)
+  check('a pane not on the desk has no number', cardNumber(kept, 'gone') === 0 && cardNumber(placed, 'gone') === 0)
+}
+
 // ----------------------------------------------------------------- move refusals
 console.log('4. move refuses a pane that is mid-anything')
 {

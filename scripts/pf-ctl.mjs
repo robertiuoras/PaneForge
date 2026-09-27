@@ -77,6 +77,7 @@ import {
   laneLedger,
   movePrompt,
   moveRefusal,
+  paneAt,
   readTail,
   samePath,
   stripAnsi
@@ -185,15 +186,16 @@ async function sessions() {
  * Ctrl+<n> reaches, and the only name Robert ever uses for a pane ("check PaneForge
  * session 12"). It was the one name this CLI could not answer to: `pf list` printed
  * `s45-mu5kq7f9` and no number at all, so another session asked about pane 12 looked at
- * that list, found no 12, and told him it did not exist (2026-09-17). The order here is
- * the order `sessions:list` returns, which is the sidebar's own order.
+ * that list, found no 12, and told him it did not exist (2026-09-17). Which pane shows
+ * which number is `cardNumber`: a row's own `number` when it has one, else its place in
+ * the `sessions:list` answer, which is the sidebar's own order.
  */
 function resolve(list, ref) {
   const byId = list.find((s) => s.id === ref)
   if (byId) return byId
   if (/^\d+$/.test(ref)) {
-    const at = list[Number(ref) - 1]
-    if (!at) fail(1, `there is no pane ${ref} - the desk has ${list.length}`)
+    const at = paneAt(list, Number(ref))
+    if (!at) fail(1, `there is no pane ${ref} - the cards on the desk are ${list.map((s) => cardNumber(list, s.id)).join(', ') || 'none'}`)
     return at
   }
   const byTitle = list.filter((s) => s.title === ref)
