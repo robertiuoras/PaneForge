@@ -426,6 +426,11 @@ export interface DiscordStyle {
   tokens: boolean
   /** the whole card's wording, in the order the user put it */
   rows: DiscordRow[]
+  /**
+   * The hand-written lines, kept while a ready-made look is picked, so choosing "Your own
+   * lines" again brings them back. A click on a look is not a delete (`pickLook`).
+   */
+  ownRows?: DiscordRow[]
   /** show Discord's elapsed clock under the lines */
   elapsed: boolean
   /** up to MAX_BUTTONS links under the presence */
@@ -521,6 +526,17 @@ export function withLook(
   return next.preset === 'custom' ? next : { ...next, rows: presetRows(next.preset, next.idle, next.tokens) }
 }
 
+/**
+ * A look picked in Settings. Leaving "Your own lines" keeps them in `ownRows`; picking it
+ * again brings them back, or starts from the look's lines when there were none.
+ */
+export function pickLook(style: DiscordStyle, preset: DiscordPresetId): DiscordStyle {
+  if (preset === style.preset) return style
+  const copy = (rows: DiscordRow[]): DiscordRow[] => rows.map((r) => ({ ...r }))
+  if (preset === 'custom') return { ...style, preset, rows: copy(style.ownRows ?? style.rows) }
+  return withLook({ ...style, ...(style.preset === 'custom' ? { ownRows: copy(style.rows) } : {}) }, { preset })
+}
+
 export const DEFAULT_DISCORD_STYLE: DiscordStyle = {
   preset: 'counts',
   idle: true,
@@ -550,17 +566,20 @@ export function newRowId(taken: ReadonlyArray<{ id: string }>): string {
  */
 export function migrateRows(raw: Partial<DiscordStyle> | undefined): DiscordStyle {
   const base = raw ?? {}
-  const style = migrateWording(base)
+  const style = {
+    ...migrateWording(base),
+    ...(Array.isArray(base.ownRows) && base.ownRows.length ? { ownRows: base.ownRows.map((r) => ({ ...r })) } : {})
+  }
   // A look is a look: its lines are rebuilt from it every time, so a wording change in a
   // later version reaches everyone on that look rather than living on in their config.
   if (base.preset && PRESET_IDS.includes(base.preset))
-    return withLook(style, { preset: base.preset, idle: base.idle !== false, tokens: base.tokens === true })
+    return withLook({ ...style, preset: base.preset, idle: base.idle !== false, tokens: base.tokens === true }, {})
   // Written before the looks existed. Lines nobody ever changed are the old default,
   // which named project folders on a public profile - they become the new default. Lines
   // somebody wrote are theirs, kept exactly, as a hand-written card.
   const untouched = JSON.stringify(style.rows) === JSON.stringify(DEFAULT_ROWS)
   return untouched
-    ? withLook(style, { preset: DEFAULT_DISCORD_STYLE.preset, idle: true, tokens: false })
+    ? withLook({ ...style, preset: DEFAULT_DISCORD_STYLE.preset, idle: true, tokens: false }, {})
     : { ...style, preset: 'custom', idle: true, tokens: needsTokens(style) }
 }
 
@@ -666,11 +685,11 @@ export const DISCORD_TOKENS: ReadonlyArray<readonly [string, string]> = [
  * line. Order matches `DISCORD_TOKENS`.
  */
 export const TOKEN_PHRASES: ReadonlyArray<{ token: string; label: string; phrase: string }> = [
-  { token: '{running}', label: 'Running count', phrase: '{running} running' },
-  { token: '{total}', label: 'Total panes', phrase: '{total} {sessions} total' },
-  { token: '{idle}', label: 'Idle count', phrase: '{idle} idle' },
-  { token: '{asleep}', label: 'Asleep count', phrase: '{asleep} asleep' },
-  { token: '{sessions}', label: 'Running / total', phrase: DEFAULT_DETAILS },
+  { token: '{running}', label: 'Chats working', phrase: '{running} running' },
+  { token: '{total}', label: 'All chats', phrase: '{total} {sessions} total' },
+  { token: '{idle}', label: 'Chats waiting', phrase: '{idle} idle' },
+  { token: '{asleep}', label: 'Chats asleep', phrase: '{asleep} asleep' },
+  { token: '{sessions}', label: 'Working out of all', phrase: DEFAULT_DETAILS },
   { token: '{projects}', label: 'Projects', phrase: 'on {projects}' },
   { token: '{project}', label: 'First project', phrase: 'on {project}' },
   { token: '{tokens}', label: 'Tokens today', phrase: '{tokens} tokens today' },
@@ -682,9 +701,9 @@ export const TOKEN_PHRASES: ReadonlyArray<{ token: string; label: string; phrase
  * wording and timing, so starting a new line never needs typing.
  */
 export const PRESET_ROWS: ReadonlyArray<{ label: string; text: string; when: RowWhen }> = [
-  { label: 'Panes running', text: DEFAULT_DETAILS, when: 'running' },
+  { label: 'Chats working', text: DEFAULT_DETAILS, when: 'running' },
   { label: 'Projects being worked on', text: DEFAULT_STATE, when: 'running' },
-  { label: 'Panes asleep', text: '{asleep} asleep', when: 'always' },
+  { label: 'Chats asleep', text: '{asleep} asleep', when: 'always' },
   { label: 'Tokens spent today', text: '{tokens} tokens today', when: 'always' },
   { label: 'Tokens spent this week', text: '{tokensWeek} tokens this week', when: 'always' }
 ]
@@ -717,15 +736,20 @@ export function readStyle(raw: unknown): DiscordStyle | undefined {
   const r = raw as Record<string, unknown> | null
   if (!r || typeof r !== 'object' || !Array.isArray(r.rows)) return undefined
   const str = (v: unknown, max: number): string | undefined => (typeof v === 'string' ? v.slice(0, max) : undefined)
-  const rows: DiscordRow[] = []
-  for (const x of r.rows.slice(0, 20) as Array<Record<string, unknown> | null>) {
-    const id = str(x?.id, 40)
-    const text = str(x?.text, 300)
-    if (!id || text === undefined) continue
-    const when = x?.when === 'running' || x?.when === 'idle' ? x.when : 'always'
-    rows.push({ id, text, when, on: x?.on !== false })
+  const readRows = (list: unknown): DiscordRow[] => {
+    const out: DiscordRow[] = []
+    for (const x of (Array.isArray(list) ? list : []).slice(0, 20) as Array<Record<string, unknown> | null>) {
+      const id = str(x?.id, 40)
+      const text = str(x?.text, 300)
+      if (!id || text === undefined) continue
+      const when = x?.when === 'running' || x?.when === 'idle' ? x.when : 'always'
+      out.push({ id, text, when, on: x?.on !== false })
+    }
+    return out
   }
+  const rows = readRows(r.rows)
   if (!rows.length) return undefined
+  const ownRows = readRows(r.ownRows)
   const buttons: DiscordButton[] = []
   for (const x of (Array.isArray(r.buttons) ? r.buttons : []).slice(0, MAX_BUTTONS) as Array<Record<string, unknown> | null>) {
     const id = str(x?.id, 40)
@@ -738,13 +762,14 @@ export function readStyle(raw: unknown): DiscordStyle | undefined {
     idle: r.idle !== false,
     tokens: r.tokens === true,
     rows,
+    ...(ownRows.length ? { ownRows } : {}),
     elapsed: r.elapsed !== false,
     buttons
   })
 }
 
 /** Whether anything on the card asks for the token numbers, which cost a disk walk. */
-export function needsTokens(style: DiscordStyle): boolean {
+export function needsTokens(style: Pick<DiscordStyle, 'rows'>): boolean {
   return (style.rows ?? []).some((r) => r.on && /\{tokens(Week)?\}/.test(r.text))
 }
 

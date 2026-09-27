@@ -82,10 +82,14 @@ export const SETTINGS: SettingEntry[] = [
   { tab: 'appearance', label: "Density", find: "Density" },
   { tab: 'sounds', label: "Volume", find: "Volume" },
   { tab: 'sounds', label: "Your own sounds", find: "Your own sounds" },
-  { tab: 'discord', label: "Show what the desk is doing on Discord", find: "Show what the desk is doing on Discord Rich presence on your profile, refreshed as turns start and finish. Counts, project folder names and your own token totals - never a byte of what a pane says. Needs the Discord app running; off tells Discord nothing at all." },
+  { tab: 'discord', label: "Show what your chats are doing on Discord", find: "Show what your chats are doing on Discord Puts a short line on your Discord profile saying how many chats are working. Numbers only, unless you pick the look with project names - never a word of what a chat says. Needs the Discord app open. Your other computer, if it is linked to this one, uses the same choices and is counted too." },
+  { tab: 'discord', label: "Look", find: "Look" },
+  { tab: 'discord', label: "Say how many are waiting", find: "Say how many are waiting Adds how many chats are waiting beside the ones working: \"5 running · 2 idle\" rather than \"5 running\"." },
+  { tab: 'discord', label: "Show how long it has been going", find: "Show how long it has been going A clock under the lines, counting from the chat that has been working longest - or from when PaneForge opened, while every chat is waiting." },
+  { tab: 'discord', label: "Show tokens used today", find: "Show tokens used today How much every agent on your computers has used since midnight, from the logs Claude Code and Codex already keep." },
+  { tab: 'discord', label: "Show the link button", find: "Show the link button A button under the card that opens the PaneForge page. Discord shows it to everyone except you, so your own profile will not have it." },
   { tab: 'discord', label: "What other people see", find: "What other people see" },
   { tab: 'discord', label: "Lines", find: "Lines" },
-  { tab: 'discord', label: "Show the elapsed clock", find: "Show the elapsed clock Discord counts up from the oldest running turn, or from when PaneForge started while everything is idle." },
   { tab: 'discord', label: "Buttons", find: "Buttons" }
 ]
 

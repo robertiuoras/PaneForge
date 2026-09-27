@@ -3187,6 +3187,58 @@ input[type='range']::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px var(--ac
 .pickrow.discord-chips, .pickrow.discord-presets { flex-wrap: wrap; margin: 2px 0 0; }
 .pickrow.discord-presets { margin: 6px 0 2px; }
 
+/* The looks to pick from. Built to design-vault/linear.app.md: one surface step up from
+   the dialog, a hairline edge rather than a shadow, and the accent spent as an edge and a
+   9% tint on the chosen one - never a filled block - so four cards side by side read as
+   one choice with one answer, not four buttons. The sample line is the card's reason to
+   exist: "Out of all" means nothing until you read "5/7 sessions running". */
+/* Two by two, always: four looks at auto-fit came out three and one, which read as a
+   leftover rather than a fourth choice. */
+.look-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.look-card {
+  display: flex; flex-direction: column; gap: 6px; min-width: 0;
+  padding: 10px 11px; border-radius: var(--r-sm); text-align: left; cursor: pointer;
+  border: 1px solid var(--line); background: var(--surface-2); color: var(--text);
+  transition: border-color 0.1s ease, background 0.1s ease;
+}
+.look-card:hover { border-color: var(--line-strong); }
+.look-card.on { border-color: var(--accent); background: var(--accent-soft); }
+.lc-top { display: flex; align-items: center; gap: 7px; }
+.lc-dot {
+  flex: none; width: 12px; height: 12px; border-radius: 50%;
+  border: 1px solid var(--line-strong); background: var(--surface-3);
+}
+.look-card.on .lc-dot { border-color: var(--accent); background: radial-gradient(circle, var(--accent) 0 3px, transparent 3.5px); }
+.lc-name { font-size: 12.5px; font-weight: 590; letter-spacing: -0.01em; }
+/* The words Discord would show, set off by a rail so they read as a quotation of the
+   card rather than as more description. */
+.lc-sample {
+  display: flex; flex-direction: column; gap: 1px; padding-left: 7px;
+  border-left: 2px solid var(--line-strong); font-size: 11.5px; color: var(--text);
+  overflow-wrap: anywhere;
+}
+.look-card.on .lc-sample { border-left-color: var(--accent); }
+.lc-hint { color: var(--muted); font-size: 11px; line-height: 1.35; }
+/* What Discord echoed back, quoted in the status line above the looks. */
+.discord-said { color: var(--text); }
+
+/* Writing lines by hand, folded away: it is the one part of the tab that needs somebody
+   to know what a template is. Same fold as the pairing details, with a hairline above so
+   it reads as the end of the simple settings. */
+.discord-advanced { border-top: 1px solid var(--line); padding-top: 8px; }
+.discord-advanced > summary {
+  cursor: pointer; list-style: none; user-select: none;
+  padding: 5px 2px; font-size: 12px; color: var(--muted);
+}
+.discord-advanced > summary::-webkit-details-marker { display: none; }
+.discord-advanced > summary::before {
+  content: '›'; display: inline-block; width: 12px;
+  transition: transform var(--fast); transform-origin: 40% 55%;
+}
+.discord-advanced[open] > summary::before { transform: rotate(90deg); }
+.discord-advanced > summary:hover { color: var(--text); }
+.da-body { display: flex; flex-direction: column; gap: var(--set-gap); padding-top: 8px; }
+
 .install-console { margin-top: 10px; border: 1px solid var(--line); border-radius: var(--r-sm); background: #06060a; overflow: hidden; }
 .ic-head { display: flex; align-items: center; gap: 7px; padding: 6px 9px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px; }
 .ic-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }

@@ -30,7 +30,7 @@ import { FinishedDigest, summaryOf } from '../shared/finishedDigest'
 import { DataPump } from './dataPump'
 import { DiscordPresence } from './discordPresence'
 import { countPresence, needsTokens, newerSettings, wholeDesk, type PresenceCounts } from '../shared/discordRpc'
-import { tokenSpend, tokenSpendFresh } from './tokenUsage'
+import { tokenCounting, tokenSpend, tokenSpendFresh } from './tokenUsage'
 import { promptReview, promptsForSession, recordPromptReview, removePromptReview } from './promptReview'
 import { readPulls } from './pulls'
 import { quitWhere } from '../shared/quitWords'
@@ -974,6 +974,7 @@ const presence = new DiscordPresence({
     }
   }
 })
+let awaitedCount: Promise<unknown> | null = null
 function presenceCounts(): PresenceCounts {
   const cfg = getConfig()
   // This machine's own panes: not the ones mirrored from another machine, which that
@@ -987,6 +988,14 @@ function presenceCounts(): PresenceCounts {
     const spend = tokenSpend()
     own.tokensToday = spend.today
     own.tokensWeek = spend.week
+    // A count still on the disk says its numbers when it lands. Without this the first
+    // frame after the tokens switch went on said "0 tokens today" and kept saying it until
+    // some pane next started or stopped (dev copy, 2026-09-27: still 0 a minute later).
+    const counting = tokenCounting()
+    if (counting && counting !== awaitedCount) {
+      awaitedCount = counting
+      void counting.then(() => presence.update(presenceCounts())).catch(() => {})
+    }
   }
   const discord = presence.status().connected
   const { running, total, asleep, names, oldestRunSince, tokensToday, tokensWeek } = own

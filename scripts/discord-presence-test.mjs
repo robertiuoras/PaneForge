@@ -66,6 +66,7 @@ const {
   readStyle,
   newerSettings,
   withLook,
+  pickLook,
   DISCORD_PRESETS,
   wholeDesk
 } =
@@ -302,6 +303,22 @@ function check(name, ok, extra = '') {
     old.buttons.length === 1 && old.buttons[0].label === 'Site' && old.buttons[0].url === 'https://x.dev')
   check('old config: one that already has rows is left alone',
     migrateRows({ rows: [row({ id: 'z', text: 'kept' })], elapsed: false, buttons: [] }).rows[0].id === 'z')
+
+  // ---------- leaving "Your own lines" is not a delete ----------
+  // A click on a ready-made look rebuilds the lines; the hand-written ones must come back
+  // when "Your own lines" is picked again, on this machine and on one the setting reached.
+  {
+    const own = [row({ id: 'mine', text: 'shipping {project}', when: 'running' })]
+    const mineStyle = { ...DEFAULT_DISCORD_STYLE, preset: 'custom', rows: own }
+    const away = pickLook(mineStyle, 'counts')
+    check('pick a look: the lines become the look', away.preset === 'counts' && away.rows[0].text === '{running} running · {idle} idle')
+    const back = pickLook(away, 'custom')
+    check('pick own lines again: the hand-written lines come back', back.preset === 'custom' && JSON.stringify(back.rows) === JSON.stringify(own), JSON.stringify(back.rows))
+    const wired = readStyle(JSON.parse(JSON.stringify(away)))
+    check('own lines kept through the device link', JSON.stringify(pickLook(wired, 'custom').rows) === JSON.stringify(own))
+    check('own lines kept through a reload', JSON.stringify(pickLook(migrateRows(away), 'custom').rows) === JSON.stringify(own))
+    check('own lines from a look with none: start from the look', JSON.stringify(pickLook(DEFAULT_DISCORD_STYLE, 'custom').rows) === JSON.stringify(DEFAULT_DISCORD_STYLE.rows))
+  }
 
   // ---------- the buttons ----------
   // A URL in a text row is drawn as text, so the only clickable thing a rich presence

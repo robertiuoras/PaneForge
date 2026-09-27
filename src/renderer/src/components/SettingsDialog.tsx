@@ -75,7 +75,7 @@ const TABS: { id: Tab; label: string; note: string; find: string }[] = [
   { id: 'sounds', label: 'Sounds', note: 'What the alerts play', find: 'sound audio chime bell alert volume mute noise cat meow dog bark animal arcade coin laser upload custom mp3 wav file ringtone notification' },
   { id: 'agents', label: 'Agents', note: 'The CLIs you run', find: 'claude codex antigravity copilot cursor install uninstall model custom cli path' },
   { id: 'voice', label: 'Voice', note: 'Dictation', find: 'microphone mic speech whisper dictate push to talk language model' },
-  { id: 'discord', label: 'Discord', note: 'What your profile shows', find: 'discord presence rich activity status application id template project elapsed idle' },
+  { id: 'discord', label: 'Discord', note: 'What your profile shows', find: 'discord presence rich activity status profile look style switch waiting tokens link button template project elapsed idle' },
   { id: 'system', label: 'System', note: 'Updates and startup', find: 'update administrator admin uac restore restart reopen version download install' }
 ]
 
@@ -264,6 +264,10 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
       })
       if (!row) continue
       const mark = row.closest<HTMLElement>('.sw-row, .setting') ?? row
+      // A match inside a closed fold (Discord's "Advanced") is opened, or the mark lands
+      // on something nobody can see.
+      const fold = mark.closest('details')
+      if (fold && !fold.open) fold.open = true
       mark.classList.add('found')
       if (!top) top = mark
     }

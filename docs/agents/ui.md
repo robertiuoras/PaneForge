@@ -141,6 +141,14 @@ Bell -> `ActivityFlyout.tsx`; `shared/activity.ts`, `main/activity.ts` `activity
 READING, nothing pressable; opening marks seen. `activity:list`/`seen` `REVIEWED_SAFE`
 (`scripts/passkey-test.mjs`).
 
+## Discord: a look and four switches, own lines under Advanced
+
+`components/DiscordTab.tsx`, `shared/discordRpc.ts` (`DISCORD_PRESETS`, `presetRows`,
+`withLook`, `wholeDesk`). Look cards rebuild the lines; hand edits make it `custom`, which
+puts the `idle`/`tokens` switches away (greyed failed contrast). Counts every machine, one
+machine speaks, settings travel newest-wins. `test:discord`, contrast sweeps the tab.
+Why: `docs/design-notes.md` "Settings → Discord since 2026-09-27".
+
 ## ...and one card says what this app can even do
 
 `shared/tips.ts`, `components/Tips.tsx`, `test:tips`. Silent during dialog/update/question/
