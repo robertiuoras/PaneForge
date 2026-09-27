@@ -1,6 +1,18 @@
 // The main-process watchdog is deliberately arithmetic first: this proves its refusals.
 
-import { BEAT_MS, HANG_MS, beat, decide, fresh } from '../src/shared/mainWatch.ts'
+import {
+  BEAT_MS,
+  HANG_MS,
+  beat,
+  decide,
+  fresh,
+  readVitals,
+  describeVitals,
+  machineBusyPct,
+  describeTasklist,
+  silenceLine,
+  forkStoppedReason
+} from '../src/shared/mainWatch.ts'
 import { build } from 'esbuild'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -43,6 +55,53 @@ now += 20 * 60 * 1000
 const slept = decide(state, now)
 state = slept.state
 ok('a twenty-minute clock jump is sleep, not a hang', slept.action === 'wait' && state.silentTicks === 0)
+
+// --- vitals arithmetic ---
+
+const mark0 = { at: 1_000_000, cpuUs: 500_000 }
+const r1 = readVitals(mark0, 1_002_000, { rss: 100 * 1048576, heapUsed: 40 * 1048576 }, 500_000 + 400_000, 1_001_500)
+ok('readVitals lag is the gap past BEAT_MS', r1.vitals.lagMs === 0)
+const r2 = readVitals(mark0, 1_005_000, { rss: 100 * 1048576, heapUsed: 40 * 1048576 }, 500_000, 0)
+ok('readVitals lag is gap minus BEAT_MS when the timer fires late', r2.vitals.lagMs === 3_000)
+ok('readVitals cpuPct comes from delta cpu microseconds over the gap', r1.vitals.cpuPct === 20)
+ok('readVitals rendererAgoMs is null when the renderer has never answered', r2.vitals.rendererAgoMs === null)
+ok('readVitals rendererAgoMs is the time since the last answer otherwise', r1.vitals.rendererAgoMs === 500)
+ok('readVitals mark carries the raw cpu microseconds forward', r1.mark.cpuUs === 900_000 && r1.mark.at === 1_002_000)
+
+const described = describeVitals(r1.vitals)
+ok('describeVitals mentions memory, lag and cpu', described.includes('MB') && described.includes('ms late') && described.includes('cpu'))
+ok('describeVitals says the window has not answered yet when null', describeVitals(r2.vitals).includes('has not answered yet'))
+
+const cpuBefore = [{ user: 0, nice: 0, sys: 0, idle: 0, irq: 0 }, { user: 0, nice: 0, sys: 0, idle: 0, irq: 0 }]
+const cpuAfter = [{ user: 15, nice: 0, sys: 10, idle: 75, irq: 0 }, { user: 15, nice: 0, sys: 10, idle: 75, irq: 0 }]
+ok('machineBusyPct reads busy time across all cores', machineBusyPct(cpuBefore, cpuAfter) === 25)
+ok('machineBusyPct refuses mismatched core counts', machineBusyPct(cpuBefore, [cpuAfter[0]]) === null)
+ok('machineBusyPct refuses an empty reading', machineBusyPct([], []) === null)
+
+const tasklistLine = '"PaneForge.exe","15976","","1","211,388 K","Running","DESKTOP-CMSUCM1\\Gamer","0:10:56","PaneForge"'
+const tasklistDesc = describeTasklist(tasklistLine)
+ok('describeTasklist reads the status', tasklistDesc?.includes('Running') ?? false)
+ok('describeTasklist reads the cpu time', tasklistDesc?.includes('0:10:56') ?? false)
+ok('describeTasklist reads the memory', tasklistDesc?.includes('211,388 K') ?? false)
+ok('describeTasklist refuses garbage', describeTasklist('not a csv line at all') === null)
+
+const line = silenceLine({
+  silentS: 76,
+  what: 'relaunching',
+  pid: 16972,
+  last: { agoS: 4, vitals: r1.vitals },
+  machine: { freeMb: 512, totalMb: 16384, busyPct: 40 },
+  proc: tasklistDesc
+})
+ok('silenceLine names the pid', line.includes('pid 16972'))
+ok('silenceLine names the silent seconds', line.includes('76s'))
+ok('silenceLine names the last beat', line.includes('last beat'))
+ok('silenceLine names the machine reading', line.includes('machine:'))
+
+const stoppedReason = forkStoppedReason('stopped (0)', 1_000_000, 1_094_000, 46, r1.vitals, 512, 16384)
+ok('forkStoppedReason names beats sent and uptime', stoppedReason.includes('after 94s') && stoppedReason.includes('46 beats sent'))
+ok('forkStoppedReason names the machine', stoppedReason.includes('machine:') && stoppedReason.includes('512MB free of 16384MB'))
+ok('forkStoppedReason says main had nothing to show with no prior beat', forkStoppedReason('stopped (0)', 0, 1_000, 0, null, 1, 2).includes('no beat was sent'))
 
 // Bundle the real module, substituting Electron and crash logging only at test time. This
 // keeps the production watchdog free of a test injection surface while driving lifecycle
@@ -93,6 +152,13 @@ try {
   old.emit('error', 'FatalError', 'test')
   old.emit('exit', 1)
   ok('an error kills the old child and error plus exit schedule one retry', old.killed && timeouts.length === 2)
+  const stoppedChild = fakeChild()
+  const stoppedLifecycle = lifecycle(() => stoppedChild)
+  stoppedLifecycle.startMainWatch()
+  stoppedChild.emit('exit', 0)
+  const stoppedLog = globalThis.__watchLogs.map((args) => args.join(' ')).join('\n')
+  ok('a stopped helper logs beats sent', stoppedLog.includes('beats sent'))
+  ok('a stopped helper logs the machine reading', stoppedLog.includes('machine:'))
   const named = fakeChild()
   const namedLifecycle = lifecycle(() => named)
   namedLifecycle.startMainWatch()

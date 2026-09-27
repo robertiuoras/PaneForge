@@ -1027,6 +1027,11 @@ manager.on('exit-closed', (_id: string, why: string) => {
   const [what, ...rest] = why.split(' closed - ')
   noteActivity(activityEntry('closed', what, rest.join(' closed - ') || undefined))
 })
+// A pane that could not start keeps its card; this is the row that says why, next to the
+// `closed` rows above, so the card is not the only place the failure can be read.
+manager.on('start-failed', (_id: string, what: string, why: string) => {
+  noteActivity(activityEntry('stopped', what, why))
+})
 manager.on('attention', (s: Session) => raiseAttention(s))
 manager.on('stalled', (s: Session) => raiseStalled(s))
 manager.on('bell', (s: Session) => raiseBell(s))

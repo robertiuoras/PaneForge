@@ -21,6 +21,7 @@
  *    an empty desk over the one that should come back,
  *  - a pane that FAILED TO START never ran: closing it would make a broken agent look like
  *    nothing happened at all, which is the one case where the card is the only evidence.
+ *    That is a pane that printed nothing, and one that failed while still `starting`.
  */
 
 /** The card holds its last screen for this long, so the final lines can be read. */
@@ -37,6 +38,8 @@ export interface ExitReading {
   printed?: boolean
   /** Exit code, when there is one. */
   exitCode?: number | null
+  /** Was the pane still `starting` - never once idle or working - when it ended? */
+  starting?: boolean
 }
 
 export interface ExitPlan {
@@ -46,6 +49,8 @@ export interface ExitPlan {
   after: number
   /** Why, in this app's own words, for the log and the activity list. */
   why: string
+  /** The agent never got going: the card stays and says so (`Session.startFailed`). */
+  failedStart?: boolean
 }
 
 export function exitPlan(r: ExitReading): ExitPlan {
@@ -54,8 +59,15 @@ export function exitPlan(r: ExitReading): ExitPlan {
   if (r.quitting) return { close: false, after: 0, why: 'the app is closing' }
   // A pane that never printed anything did not run. The card is the only place that says
   // so, and an agent that cannot start is exactly what somebody needs to see.
-  if (!r.printed) return { close: false, after: 0, why: 'it never started' }
+  if (!r.printed) return { close: false, after: 0, why: 'it never started', failedStart: true }
   const failed = typeof r.exitCode === 'number' && r.exitCode !== 0
+  // The same failure with a screen to read: a CLI that printed and then died before it was
+  // ever ready. Claude answering its own folder-trust question with the preselected
+  // "No, exit" is the measured one (exit 1 within seconds, 2026-09-12 s27/s28), and closing
+  // it six seconds later made a broken start look like nothing happened. A clean exit
+  // during start (`/exit` typed early) is not a failure and still closes.
+  if (failed && r.starting)
+    return { close: false, after: 0, why: `it stopped before it was ready (code ${r.exitCode})`, failedStart: true }
   return {
     close: true,
     after: LINGER_MS,

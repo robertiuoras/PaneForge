@@ -198,6 +198,12 @@ export interface Session {
   openedAt?: number
   exitCode?: number
   /**
+   * The process ended before the agent was ever ready - it printed nothing, or failed while
+   * still `starting` (`shared/exitClose.ts`). The card stays and says `couldn't start`
+   * instead of closing, because it is the only evidence. Cleared by restart and wake.
+   */
+  startFailed?: boolean
+  /**
    * The client this pane was recognised as working for, when it was - the folder slug out
    * of `shared/clientName.ts`. Set once and kept: it is what stops the prompt reading
    * asking the same question of every line typed afterwards, and what a second reading

@@ -61,6 +61,7 @@ import { acLog } from './autoclearLog'
 import { dropAllFor, noteAccepted, noteNativeAccepted, noteDropped, noteSubmitted, noteWithheld, owedAfterRestore, stillOwed } from './queuedPrompts'
 import type { QueueDrop } from '../shared/queuedPrompts'
 import { logReclaim } from './activationLog'
+import { guardPtyPipes } from './closedPipe'
 import { ledgerSleep, ledgerWake } from './laneLedger'
 import type { SleepReason } from '../shared/types'
 import { SLEEP_REASONS, SLEEP_SOURCES } from '../shared/types'
@@ -1298,6 +1299,7 @@ export class SessionManager extends EventEmitter {
     live.meta.printed = undefined
     live.meta.exitCode = undefined
     live.meta.exitedAt = undefined
+    live.meta.startFailed = undefined
     live.meta.attention = false
     live.meta.bell = false
     live.meta.stalledSince = undefined
@@ -1608,6 +1610,7 @@ export class SessionManager extends EventEmitter {
     live.meta.printed = undefined
     live.meta.exitCode = undefined
     live.meta.exitedAt = undefined
+    live.meta.startFailed = undefined
     live.meta.engaged = false
     live.busyUntil = 0
     live.ackedAt = 0
@@ -3532,7 +3535,7 @@ export class SessionManager extends EventEmitter {
     // Codex asks the same question, and on a machine it has never run on there is no
     // config.toml to answer it from - `main/codexTrust.ts` creates one.
     if (spec.id === 'codex') trustCodexFolder(req.cwd)
-    return pty.spawn(which(spec.bin), args, {
+    const proc = pty.spawn(which(spec.bin), args, {
       name: 'xterm-256color',
       cols,
       rows,
@@ -3557,6 +3560,12 @@ export class SessionManager extends EventEmitter {
         ...(req.laneEnv ?? {})
       }) as Record<string, string>
     })
+    // A keystroke written after the console behind this pane went away is an EPIPE with no
+    // listener, which used to reach `crash.ts` as an uncaughtException naming nothing
+    // (2026-09-22). One line per pipe, per pane, naming both. See `closedPipe.ts`.
+    guardPtyPipes(proc, (side, code) =>
+      logReclaim({ action: 'pipe-error', pane: id, side, code, agent: spec.id, folder: basename(req.cwd) }))
+    return proc
   }
 
   private attach(live: Live): void {
@@ -3656,9 +3665,17 @@ export class SessionManager extends EventEmitter {
     })
 
     proc.onExit(({ exitCode }) => {
+      // Read before anything below overwrites it: a pane that dies while still `starting`
+      // never got going, which `shared/exitClose` keeps on the desk.
+      const wasStarting = meta.status === 'starting'
+      // `kill()` takes the pane out of the list before its process is gone, so a missing
+      // pane here means the app or a person closed it and this exit is the answer. The
+      // 2026-09-23 log review read eleven of those as crashes; this says so on the line.
+      const closedFirst = !this.sessions.has(id)
       logReclaim({ action: 'process-exit', ...processIdentity, exitCode,
         superseded: live.proc !== proc, asleep: Boolean(meta.asleep),
-        sleepReason: meta.asleepReason, quitting: this.down, currentStatus: meta.status })
+        sleepReason: meta.asleepReason, quitting: this.down, currentStatus: meta.status,
+        closedFirst: closedFirst || undefined })
       if (live.proc !== proc) return
       meta.status = 'exited'
       // A pane put to sleep killed this process itself and has already said everything
@@ -3681,7 +3698,6 @@ export class SessionManager extends EventEmitter {
       // now: a row that never arrives because the pane closed first is the same as no
       // reading at all.
       endHookDeny(id)
-      this.emitSessions()
       // ...AND THE CARD GOES. A pane whose program has ended is a card wearing `exited`
       // and a number nobody can explain; the History row for it is already written, with
       // the conversation id, so `Open again` brings the same chat back. `shared/exitClose`
@@ -3692,8 +3708,19 @@ export class SessionManager extends EventEmitter {
         handingOff: !!meta.handingOff,
         quitting: this.down,
         printed: !!meta.printed,
-        exitCode
+        exitCode,
+        starting: wasStarting
       })
+      // A pane closed while it was starting is not one that failed to start: nothing is
+      // left on the desk to mark, and the activity list would blame the agent for a close.
+      const failedStart = plan.failedStart && !closedFirst
+      if (failedStart) {
+        meta.startFailed = true
+        logReclaim({ action: 'start-failed', pane: id, agent: meta.agent, folder: basename(meta.cwd),
+          exitCode, afterMs: Date.now() - meta.createdAt, tail: plainTail(live.buffer.read(), 8) })
+      }
+      this.emitSessions()
+      if (failedStart) this.emit('start-failed', id, meta.title || meta.cwd || 'A pane', plan.why)
       if (!plan.close) return
       const say = exitWords(meta.title || meta.cwd || 'A pane', plan)
       const go = (): void => {

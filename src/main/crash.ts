@@ -16,6 +16,7 @@ import { join } from 'node:path'
 import { app } from 'electron'
 import { appendLog } from './logWrite'
 import { diagnosticMeta } from './diagnosticMeta'
+import { tolerateClosedPipe } from './closedPipe'
 
 /** paneforge-errors.log is rotated past this size. 20 MB is months of normal faults. */
 const LOG_MAX_BYTES = 20 * 1024 * 1024
@@ -87,6 +88,11 @@ export function onProblem(fn: (kind: string, detail: string) => void): void {
  * itself a thing that has thrown at module scope.
  */
 export function installCrashGuard(): void {
+  // A launcher that closed its end of our stdout/stderr made the next console line an
+  // uncaughtException (see `closedPipe.ts`). Reported once per code; the console line that
+  // `write` also prints goes nowhere, which is the point, and the file keeps the record.
+  tolerateClosedPipe(process.stdout, (code) => write('closed pipe', `stdout: ${code}`))
+  tolerateClosedPipe(process.stderr, (code) => write('closed pipe', `stderr: ${code}`))
   process.on('uncaughtException', (err) => {
     write('uncaughtException', err)
     report(err)
