@@ -4703,6 +4703,17 @@ and wears `.alert` while one is running.
 
 ## A job that cannot sign in says so
 
+**2026-09-28: the card was switched off too.** Robert, about the "Bing-webmaster needs you to
+sign in" card that a pane on the PC kept raising: "remove this sign in popups and features
+please it doesnt work well ill need to tune it later", and "if u need anything me to login
+that u cant do it yourself ... ill login and u do everyrhing and control browser". The card
+told a person to walk to a computer and sign in, then press a button; it came back every
+sweep and nothing downstream used the sign-in. The route that replaced it is outside the app:
+the agent opens the page in Claude in Chrome on the Mac (his real Chrome), says which tab,
+and does the rest in that tab once he has signed in. The whole card went in ONE commit
+(`git log --grep "switch off the sign-in card"`) so a revert restores it; `pf needs-login`
+prints that route and exits 0 so callers that still run it do not fail.
+
 **2026-09-25: the live picture was removed; the card stays.** `pf needs-login` now puts up
 a card naming the site, the address, the computer and the pane that asked, and marks that
 pane's row red with a `sign in` chip. It opens nothing. What happened: a Claude pane

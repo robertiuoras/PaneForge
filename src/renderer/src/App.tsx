@@ -39,8 +39,6 @@ import OffloadSoon from './components/OffloadSoon'
 import ModelAdvice from './components/ModelAdvice'
 import QuitGuard from './components/QuitGuard'
 import StopServer from './components/StopServer'
-import { paneChipTitle, type LoginRequest } from '../../shared/signIn'
-import LoginCard from './components/LoginCard'
 import UsersDialog from './components/UsersDialog'
 import ToolsDialog from './components/ToolsDialog'
 import PullsDialog from './components/PullsDialog'
@@ -811,9 +809,6 @@ export default function App(): JSX.Element {
   const [activitySeen, setActivitySeen] = useState(0)
   /** The bell's rectangle while the list is open, absent when it is shut. */
   const [activityAt, setActivityAt] = useState<DOMRect | null>(null)
-  /* A job somewhere cannot get past a login. The list is main's, the choice is a
-     person's: nothing opens a browser until the card is pressed. */
-  const [logins, setLogins] = useState<LoginRequest[]>([])
   // The dev server the app is about to close, published by main every sweep.
   const [stopSoon, setStopSoon] = useState<StopSoon | null>(null)
   const [devices, setDevices] = useState(false)
@@ -1727,12 +1722,6 @@ export default function App(): JSX.Element {
   const capacityShown = useRef('')
   const capacityTimer = useRef<number | undefined>(undefined)
   useEffect(() => api.onStopSoon((soon) => setStopSoon(soon ?? null)), [])
-  /* Sign-in requests. Asked for once at startup as well as subscribed to, because a job
-     that asked while the window was reloading would otherwise wait for the next one. */
-  useEffect(() => {
-    void api.loginRequests().then(setLogins)
-    return api.onLogins(setLogins)
-  }, [])
   useEffect(() => api.onCapacity(setCapacity), [])
 
   /**
@@ -4277,15 +4266,10 @@ export default function App(): JSX.Element {
     () =>
       new Set([
         ...closeSoons.flatMap((s) => s.ids),
-        ...sessions.filter((s) => s.autoClearAt).map((s) => s.id),
-        // A job in this pane cannot sign in by itself (`pf needs-login`): the pane waits
-        // on a person exactly as a question does, so its row says so until the card goes.
-        ...logins.flatMap((r) => (r.from ? [r.from] : []))
+        ...sessions.filter((s) => s.autoClearAt).map((s) => s.id)
       ]),
-    [closeSoons, sessions, logins]
+    [closeSoons, sessions]
   )
-  /** The sign-in this pane is waiting on, if any - the row's "sign in" chip reads it. */
-  const signInFor = useCallback((id: string) => logins.find((r) => r.from === id), [logins])
   /**
    * Panes main REFUSED to sleep, and until when the sleep clock leaves them alone.
    *
@@ -5357,14 +5341,6 @@ export default function App(): JSX.Element {
                         row). One box wraps whole, keeps its chips together, and is the
                         only thing on the line that may be pushed to the right. */}
                     <span className="row-tags">
-                      {/* The red glow a waiting sign-in gives this row, in a word: a ring
-                          never travels without one. The site and the address are on hover
-                          and on the card. */}
-                      {!s.ask && signInFor(s.id) && (
-                        <span className="chip asks" title={paneChipTitle(signInFor(s.id) as LoginRequest)}>
-                          sign in
-                        </span>
-                      )}
                       {/* The dot gives the state its quickest possible scan, but it cannot
                           be the only reading. Keep the word beside the actual timers so a
                           green dot never has to be decoded from memory. A question already
@@ -7537,14 +7513,6 @@ export default function App(): JSX.Element {
           api.stopDevNow(pid)
           setStopSoon(null)
         }}
-      />
-      {/* A person has to sign in before a job can go on. It sits with the countdowns
-          because it is the same kind of thing - something is waiting on the hand - and
-          it is dismissable for as long as it is drawn. */}
-      <LoginCard
-        reqs={logins}
-        onDone={(id) => api.doneLogin(id)}
-        onDismiss={(id) => api.dismissLogin(id)}
       />
       <MoveSoon
         soons={[...closeSoons, ...queueSoons]}

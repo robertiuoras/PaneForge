@@ -184,16 +184,6 @@ export const COMMANDS = [
     example: 'pf watch-job job-42 --owner 1234 --pane s12-abc'
   },
   {
-    name: 'needs-login',
-    summary: 'Say a job cannot sign in: a "needs you" card names the site, and the pane is marked.',
-    usage: 'pf needs-login <site> --url <url> [--why TEXT] [--machine WORDS]',
-    example: 'pf needs-login keap --url https://keap.com/login --why "finish the footer check"',
-    detail: [
-      'Opens nothing and connects to nothing: the person signs in themselves, then presses the card.',
-      'Pressing Signed in tells the pane that asked to carry on. --machine names the computer if it is not this one.'
-    ]
-  },
-  {
     name: 'hold',
     summary: 'Ask GuardDeck\'s idle-app reapers to leave an app alone while you use it.',
     usage: 'pf hold [--bundle ID | --name APP | --pid N] [--reason R] [--ttl MIN] [--this]  |  pf hold list  |  pf hold release <id>',

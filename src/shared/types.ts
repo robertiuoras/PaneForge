@@ -1,7 +1,5 @@
 export interface ContextUsage { used: number; window: number; at: number; model: string; percent: number; advisory?: 'prepare' | 'boundary' }
 
-import type { LoginRequest } from './signIn'
-
 import type { AutoClearAsk } from './autoclear'
 import type { SplitAnswer } from './splitPlan'
 import type { Away } from './away'
@@ -2747,21 +2745,12 @@ export interface Api {
   /** named profile this window runs under ('' = the normal installed app) */
   profile(): Promise<string>
   updateState(): Promise<UpdateState>
+  /** Hand one line to a pane, queued for the gap between its own turns. */
+  tellPane(ref: string, text: string): void
   /**
    * Ask for a pane to be /clear'd after a countdown the desk can stop. The caller is the
    * `autoclear` Stop hook, never the window - see shared/autoclear.ts.
    */
-  /** Every sign-in a job is waiting on, newest first. */
-  loginRequests(): Promise<LoginRequest[]>
-  /** A job cannot sign in. Puts a card up and marks the pane that asked; opens nothing. */
-  needsLogin(req: { site: string; url: string; machine?: string; from?: string; why?: string }): Promise<LoginRequest>
-  /** Signed in: tell the pane that asked, then take the card down. */
-  doneLogin(id: string): void
-  /** Hand one line to a pane, queued for the gap between its own turns. */
-  tellPane(ref: string, text: string): void
-  /** Not now. */
-  dismissLogin(id: string): void
-  onLogins(cb: (reqs: LoginRequest[]) => void): () => void
   askAutoClear(req: AutoClearAsk): Promise<{ ok: boolean; reason?: string; dueAt?: number }>
   /** The two buttons on that card. */
   /** Countdowns in flight, for a window that has just opened. */

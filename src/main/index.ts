@@ -158,7 +158,6 @@ import { handoffReceiverCanQuit, INTERRUPT_WAIT_MS, landingCopy, type CopyState,
 import { HandoffQueue } from './handoffQueue'
 import { devServersOf, listRunningDevs, localDevCommand, stopDevServer } from './devServers'
 import { keepDevServer, stopNow, watchDeadDevs } from './deadDev'
-import { dismissLogin, doneLogin, initSignIn, listLogins, requestLogin } from './signIn'
 import { DEFAULT_DEAD_DEV } from '../shared/deadDev'
 import { asleepSweep, clearFinishedNow, exitedSweep, finishedCount, type ExitedFact } from '../shared/exitedSweep'
 import { listBackJobs, type BackJob } from './backJobs'
@@ -1426,27 +1425,11 @@ ipcMain.handle('owner:stats', (e) => {
 // and what that project is called - because that is the sidebar's own arithmetic and main
 // has never had it. Every FACT is read here: the folder off the pane's own record and the
 // pty's pid off the manager, so a caller cannot point this at a folder it does not own.
-/*
- * A job that cannot sign in - src/main/signIn.ts.
- *
- * `pf needs-login` puts a card up and marks the pane that asked. Nothing here opens a
- * browser or reaches another computer: the person signs in themselves and presses the
- * card, and the pane that asked is told on the ordinary prompt queue.
- */
-initSignIn({
-  publish: (reqs) => send('login:changed', reqs),
-  paneName: (id) => allSessions().find((s) => s.id === id || s.title === id)?.title,
-  tell: (paneId, text) => manager.tellPane(paneId, text)
-})
-ipcMain.handle('login:list', () => listLogins())
-ipcMain.handle('login:need', (_e, req: Parameters<typeof requestLogin>[0]) => requestLogin(req))
-ipcMain.on('login:done', (_e, id: string) => doneLogin(String(id)))
 // Anything that can reach the app can hand a pane one line, queued for the gap between
 // its turns - `pf tell`.
 ipcMain.on('pane:tell', (_e, ref: string, text: string) => {
   manager.tellPane(String(ref), String(text))
 })
-ipcMain.on('login:dismiss', (_e, id: string) => dismissLogin(String(id)))
 
 ipcMain.handle('devs:list', async (_e, panes: Array<{ id: string; pane: number; name: string }>) => {
   const roots = manager.roots()

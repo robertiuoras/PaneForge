@@ -1,6 +1,6 @@
 {
   "name": "claude-orchestrator",
-  "version": "0.8.229",
+  "version": "0.8.230",
   "private": true,
   "description": "PaneForge",
   "author": "Robert",
@@ -114,7 +114,6 @@
     "test:pulls": "node scripts/pulls-test.mjs",
     "test:tokentally": "node scripts/token-tally-test.mjs",
     "test:discordbrand": "node scripts/discord-brand-test.mjs",
-    "test:signin": "node scripts/sign-in-test.mjs",
     "test:remote": "node scripts/remote-test.mjs",
     "test:remoteversion": "node scripts/remote-version-test.mjs",
     "test:deadlink": "node scripts/deadlink-test.mjs",

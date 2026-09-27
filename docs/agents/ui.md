@@ -125,7 +125,7 @@ Whisper worker (`voiceWorker.ts`, ONNX wasm) -> phone recogniser (`test:voice`).
 
 `shared/cardIdle.ts` `CARD_IDLE_MS` 5 min, `renderer/src/idleDismiss.ts`; pointer/focus HOLDS
 (`idleLeft` `null`); one timeout. Only `WhatsNewCard`; `MoveSoon`, `OffloadSoon`,
-`AutoClearToast`, `StopServer`, `LoginCard`, `UpdateToast`, `TourCard` end at their own
+`AutoClearToast`, `StopServer`, `UpdateToast`, `TourCard` end at their own
 deadline. `test:cardidle`.
 
 ## Every card the app puts in the corner is in ONE column

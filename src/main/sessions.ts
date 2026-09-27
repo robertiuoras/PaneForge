@@ -2314,8 +2314,7 @@ export class SessionManager extends EventEmitter {
    *
    * `queuePrompt` is the difference between this and a raw write: it waits for an idle
    * composer, so a line that arrives while the agent is mid-answer is not typed into the
-   * middle of it. The sign-in card uses it to tell the pane that asked that the wall is
-   * down; `false` means no such pane, which the caller logs rather than retries.
+   * middle of it. `false` means no such pane.
    */
   tellPane(ref: string, text: string): boolean {
     const live =
