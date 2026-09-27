@@ -65,6 +65,7 @@ import {
   buildHandoffBrief,
   claimHolder,
   commandHelp,
+  cardNumber,
   continueTarget,
   findDuplicates,
   findTranscript,
@@ -498,7 +499,7 @@ function placeTranscript(cwd, id) {
 if (cmd === 'list') {
   const list = await sessions()
   // The number leads, because it is the name on the card. See `resolve`.
-  for (const [i, s] of list.entries()) console.log([i + 1, s.id, s.status, s.title, s.cwd].join('\t'))
+  for (const s of list) console.log([cardNumber(list, s.id), s.id, s.status, s.title, s.cwd].join('\t'))
   // A sign-in request is not a pane - it is a card waiting for somebody - so it is listed
   // too, and says which computer it is waiting on.
   const logins = (await call('login:list', [])) ?? []
@@ -524,7 +525,7 @@ if (cmd === 'list') {
   const { dupes, dry } = tidyArgs
   const self = process.env.PF_PANE
   const before = await sessions()
-  const at = (list, p) => `${p.id} (pane ${list.indexOf(p) + 1} "${p.title}")`
+  const at = (list, p) => `${p.id} (pane ${cardNumber(list, p.id)} "${p.title}")`
   let closed = 0
   // A dry run numbers panes as they are now; a real one as they are once the finished
   // ones are gone - either way the number printed is the one on the card at that moment.
@@ -598,7 +599,7 @@ if (cmd === 'list') {
   const list = await sessions()
   const pane = resolve(list, ref)
   if (!pane) fail(1, `no pane named "${ref}"`)
-  const number = list.indexOf(pane) + 1
+  const number = cardNumber(list, pane.id)
   const refused = moveRefusal(pane, { now: Date.now(), self: process.env.PF_PANE })
   if (refused) fail(1, `will not move pane ${number} "${pane.title}" (${pane.id}): ${refused}`)
   // The folder has to be free the moment the old pane goes, or the new one opens in a copy.
@@ -726,7 +727,7 @@ if (cmd === 'list') {
   }
   const now = await sessions()
   console.log(
-    `moved pane ${number} ${pane.id} (${pane.agent}) -> pane ${now.findIndex((x) => x.id === fresh.id) + 1} ${fresh.id} (${to}${model ? ` ${model}` : ''}) in ${fresh.cwd ?? pane.cwd}`
+    `moved pane ${number} ${pane.id} (${pane.agent}) -> pane ${cardNumber(now, fresh.id)} ${fresh.id} (${to}${model ? ` ${model}` : ''}) in ${fresh.cwd ?? pane.cwd}`
   )
   if (!transcript) console.log(`note: no conversation file found for ${pane.id}; the brief carries its last screen instead`)
   if (state === 'starting') console.log(`note: ${fresh.id} has drawn nothing yet after 40s - check it with pf list`)
@@ -998,7 +999,7 @@ if (cmd === 'list') {
   }
   await send('pane:tell', [paneId, prompt])
   const list = await sessions()
-  const number = list.findIndex((x) => x.id === paneId) + 1
+  const number = cardNumber(list, paneId)
   if (!number) fail(1, `pane ${paneId} disappeared before the prompt could be handed to it`)
   if (json) console.log(JSON.stringify({ paneId, number, reopened }))
   else console.log(`sent to pane ${number} (${paneId})${reopened ? ' - reopened from History' : target.action === 'wake' ? ' - woken first' : ''}`)

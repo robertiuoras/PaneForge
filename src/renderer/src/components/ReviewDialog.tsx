@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { ReviewRecord } from '@shared/reviews'
+import { FULL_ADVICE, contextLevel, contextPercent, contextWords, type ReviewRecord } from '@shared/reviews'
 import { ago, filterReviews, firstLine, statusWord, visibleReviews, type ReviewFilter } from '@shared/reviewList'
 import { folderName } from '@shared/place'
 import useDialogFocus from './useDialogFocus'
@@ -116,10 +116,19 @@ export default function ReviewDialog({ onHistory, onReopen, onClose }: Props): J
                       else if (e.key === 'ArrowUp') { e.preventDefault(); move(i, -1) }
                     }}
                   >
-                    <span className="review-num">#{i + 1}</span>
+                    {/* The number the chat's card had when it finished - the name Robert
+                        uses for a chat ("add 10 etc in front so i know what session it is"). */}
+                    <span className="review-num" style={{ fontWeight: 700, color: 'var(--text)' }} title={r.paneNumber ? `Chat ${r.paneNumber} on the desk when it finished` : undefined}>
+                      {r.paneNumber ?? ''}
+                    </span>
                     <strong className="review-project">{folderName(r.cwd)}</strong>
                     <span className="review-ask">{firstLine(r.prompt)}</span>
                     <span className="review-result">{firstLine(r.report)}</span>
+                    {r.context && (
+                      <span className="review-status" style={{ color: `var(--${contextLevel(r.context)})`, fontWeight: 600 }} title={contextWords(r)}>
+                        {contextPercent(r.context)}% full
+                      </span>
+                    )}
                     <span className={'review-status' + (accent ? ' accent' : '')}>{status}</span>
                     <span className="review-when">{ago(timeOf(r))}</span>
                   </button>
@@ -133,6 +142,15 @@ export default function ReviewDialog({ onHistory, onReopen, onClose }: Props): J
                         <strong>What it did</strong>
                         <pre>{r.report}</pre>
                       </div>
+                      {(r.context || r.sessionTokens) && (
+                        <div className="review-field">
+                          <strong>How full the chat is</strong>
+                          <span style={{ color: r.context ? `var(--${contextLevel(r.context)})` : undefined, fontWeight: 600 }}>
+                            {contextWords(r)}
+                            {r.context && contextLevel(r.context) === 'danger' ? ` - ${FULL_ADVICE}` : ''}
+                          </span>
+                        </div>
+                      )}
                       {r.evidence && r.evidence.length > 0 && (
                         <div className="review-field">
                           <strong>Evidence</strong>

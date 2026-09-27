@@ -346,6 +346,15 @@ function folderKey(p) {
 const lastActive = (p) => Math.max(p.lastOutput ?? 0, typedAt(p))
 
 /**
+ * The number drawn on a pane's card: its 1-based place in the `sessions:list` answer (the
+ * sidebar's own order), 0 when it is not on the desk. `pf list` prints it and a finished
+ * chat's report stores it (`src/main/reviews.ts`), so the two can never count differently.
+ */
+export function cardNumber(list, id) {
+  return list.findIndex((p) => p.id === id) + 1
+}
+
+/**
  * Duplicate panes: 2+ panes (not finished, not screen views) on the same folder and agent
  * on the same computer. Per group the most recently active pane is kept - a busy one counts
  * as the most active of all - and every other one is either `close` (idle, nothing holds
@@ -356,11 +365,11 @@ const lastActive = (p) => Math.max(p.lastOutput ?? 0, typedAt(p))
  */
 export function findDuplicates(list, { now = Date.now(), self } = {}) {
   const groups = new Map()
-  list.forEach((p, i) => {
+  list.forEach((p) => {
     if (p.status === 'exited' || p.agent === 'screen' || p.screen) return
     const key = folderKey(p)
     if (!groups.has(key)) groups.set(key, [])
-    groups.get(key).push({ pane: p, number: i + 1 })
+    groups.get(key).push({ pane: p, number: cardNumber(list, p.id) })
   })
   const out = []
   for (const members of groups.values()) {
