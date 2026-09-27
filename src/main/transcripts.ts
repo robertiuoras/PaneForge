@@ -1075,6 +1075,15 @@ function tailLines(file: string, bytes: number): string[] {
  *
  * Matched on the prompt's first non-blank line, not the whole text: a paste is stored
  * wrapped in `<pasted_content id=..>` tags, and split across several when long.
+ *
+ * A prompt typed while Claude is mid-turn is QUEUED, and no user row is written for it
+ * until the turn absorbs it. Its receipt is the queue's own record, written the moment the
+ * return lands: `{"type":"queue-operation","operation":"enqueue","content":"..."}`, later
+ * joined by a `{"type":"attachment","attachment":{"type":"queued_command","prompt":...}}`.
+ * Shapes measured 2026-09-27 over 3 days of transcripts (2688 enqueues, content always a
+ * string; queued_command prompts a string, or content parts when an image is pasted). Missed,
+ * pane s9-mujbz9vp's queued prompt got five more returns at 04:55:21-37Z that answered an
+ * AskUserQuestion drawn over it, and was logged LOST.
  */
 const RECEIPT_MATCH_CHARS = 60
 export function claudeAcceptedPrompt(pid: number | undefined, prompt: string, since: number): boolean {
@@ -1083,17 +1092,33 @@ export function claudeAcceptedPrompt(pid: number | undefined, prompt: string, si
   const file = row && transcriptPath(row.cwd, row.sessionId)
   if (!first || !file) return false
   for (const line of tailLines(file, PROMPT_RECEIPT_BYTES)) {
-    if (!line.includes('"user"')) continue
-    let rec: { type?: string; isMeta?: boolean; toolUseResult?: unknown; timestamp?: string; message?: { content?: unknown } }
+    if (!line.includes('"user"') && !line.includes('"queue-operation"') && !line.includes('"queued_command"')) continue
+    let rec: {
+      type?: string
+      isMeta?: boolean
+      toolUseResult?: unknown
+      timestamp?: string
+      message?: { content?: unknown }
+      operation?: string
+      content?: unknown
+      attachment?: { type?: string; prompt?: unknown; isMeta?: boolean }
+    }
     try {
       rec = JSON.parse(line) as typeof rec
     } catch {
       continue
     }
-    if (rec.type !== 'user' || rec.isMeta || rec.toolUseResult !== undefined) continue
+    const content =
+      rec.type === 'user' && !rec.isMeta && rec.toolUseResult === undefined
+        ? rec.message?.content
+        : rec.type === 'queue-operation' && rec.operation === 'enqueue'
+          ? rec.content
+          : rec.type === 'attachment' && rec.attachment?.type === 'queued_command' && !rec.attachment.isMeta
+            ? rec.attachment.prompt
+            : undefined
+    if (content === undefined) continue
     const at = typeof rec.timestamp === 'string' ? Date.parse(rec.timestamp) : NaN
     if (!Number.isFinite(at) || at < since) continue
-    const content = rec.message?.content
     const text = typeof content === 'string'
       ? content
       : Array.isArray(content)

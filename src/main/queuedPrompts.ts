@@ -18,6 +18,7 @@ import {
   owedTo,
   readStore,
   sentLine,
+  withheldLine,
   type QueueDrop,
   type QueuedPrompt,
   type QueuedPromptStore
@@ -107,6 +108,13 @@ export function noteNativeAccepted(id: string, text: string, cwd?: string): stri
 export function noteSubmitted(key: string): void {
   const row = load()[key]
   if (row) qpLog(sentLine(row))
+  save(clearQueued(load(), key))
+}
+
+/** Typed, then a question came up over it: no more returns, and no claim either way. */
+export function noteWithheld(key: string): void {
+  const row = load()[key]
+  if (row) qpLog(withheldLine(row))
   save(clearQueued(load(), key))
 }
 

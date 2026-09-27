@@ -153,3 +153,12 @@ export function dropLine(row: QueuedPrompt, why: QueueDrop): string {
 export function sentLine(row: QueuedPrompt): string {
   return `${row.id} queued prompt submitted - ${preview(row.text)}`
 }
+
+/**
+ * The line written when a prompt was typed and a question then came up over it. Neither
+ * LOST nor proven: another return would have answered that question (s9-mujbz9vp,
+ * 2026-09-27), so none was sent, and whether the first one went in is unknown.
+ */
+export function withheldLine(row: QueuedPrompt): string {
+  return `${row.id} queued prompt typed, not proven - a question came up on screen, so no more returns were sent - ${preview(row.text)}`
+}

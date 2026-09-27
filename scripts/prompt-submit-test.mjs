@@ -676,6 +676,89 @@ const ANSWERING =
       'with no user row in the transcript it is still called UNSENT', `${returnsOf(p)} returns\n${logOf(pane.id)}`)
     manager.kill(pane.id)
   }
+
+  // A RETURN INTO A QUESTION IS AN ANSWER. 2026-09-27 04:55Z, pane s9-mujbz9vp: `pf tell`
+  // typed into a Claude turn, Claude QUEUED it (a queue-operation enqueue, no user row), an
+  // AskUserQuestion was drawn over it, and the retries' five returns answered all four
+  // questions and pressed Submit. The frame is the real one, replayed from that pane's
+  // history log through @xterm/headless (rows trimmed, the queued text swapped for BRIEF).
+  // The records are the shapes Claude Code 2.1.283 wrote into that transcript.
+  const ASK_FRAME = [
+    '⏺ Agent "Inventory social-media access routes" finished · 9m 22s',
+    '',
+    '❯ ' + BRIEF.split('\n')[0],
+    '  ' + BRIEF.split('\n')[1],
+    '─'.repeat(143),
+    '←  ☒ X access  ☐ TikTok/IG  ☐ Delivery  ☐ Run length  ✔ Submit  →',
+    '',
+    'X is the main source. How should the nightly agent read it?',
+    '',
+    '❯ 1. Free watchlist (Recommended)',
+    '     Reads ~120 picked accounts (AI tools, web design, marketing, agency) plus their threads and linked pages through the free X mirror your X',
+    '  2. Watchlist + paid X search',
+    '     Adds keyword search across all of X through twitterapi.io at US$0.15 per 1,000 posts (checked today), roughly US$5-15 a month at our',
+    '  3. Use my logged-in X account',
+    '     Full search plus your likes and bookmarks, but it\'s automation on your real account and X can restrict it the way Upwork did on 24 Sep.',
+    '  4. Type something.',
+    '─'.repeat(143),
+    '  5. Chat about this',
+    '',
+    'Enter to select · Tab/Arrow keys to navigate · Esc to cancel'
+  ].join('\n')
+  const queued = (sessionId, record) =>
+    appendFileSync(join(proj, `${sessionId}.jsonl`), JSON.stringify({ ...record, timestamp: new Date().toISOString(), sessionId }) + '\n')
+  const enqueue = { type: 'queue-operation', operation: 'enqueue',
+    content: '<pasted_content id="68c7">\n' + BRIEF + '\n</pasted_content id="68c7">' }
+  const qpPath = join(work, 'userData', 'queued-prompts.log')
+  const qpOf = (id) => { try { return readFileSync(qpPath, 'utf8').split('\n').filter((l) => l.includes(id)).join('\n') } catch { return '' } }
+  const asked = async (name, record, ask) => {
+    cli(name)
+    hooksDone(name, 60_000)
+    const pane = manager.start({ cwd: root, agent: 'claude' })
+    const p = manager.sessions.get(pane.id).proc
+    manager.queuePrompt(pane.id, BRIEF, 0, 40, undefined, 5000)
+    p.say(IDLE)
+    await sentReturnAt(p)
+    if (record) queued(name, record)
+    if (ask) {
+      // The question arrives after the first return, as it did: painted by the CLI, and read
+      // off that frame by the renderer's busy reading into `meta.ask`.
+      await sleep(50)
+      p.say('\x1b[2J\x1b[H' + ASK_FRAME.replace(/\n/g, '\r\n'))
+      manager.setBusyOnScreen(pane.id, false, ASK_FRAME)
+    }
+    await sleep(budget + 600)
+    await logSays(pane.id, /prompt submitted|UNSENT|return withheld/)
+    const out = { log: logOf(pane.id), qp: qpOf(pane.id), returns: returnsOf(p), asking: Boolean(manager.sessions.get(pane.id).meta.ask) }
+    manager.kill(pane.id)
+    return out
+  }
+
+  const both = await asked('sess-queued-ask', enqueue, true)
+  ok(both.asking, 'the real AskUserQuestion frame is read as a question on screen', both.log)
+  ok(both.returns === 1, 'a queued entry plus a question on screen: zero returns after the first', `${both.returns} returns\n${both.log}`)
+  ok(/Claude transcript receipt/.test(both.log) && !/UNSENT/.test(both.log), 'and the queued entry is the receipt, not UNSENT', both.log)
+  ok(!/LOST/.test(both.qp) && /queued prompt submitted/.test(both.qp), 'queued-prompts.log says submitted, not LOST', both.qp)
+
+  const askOnly = await asked('sess-ask-only', null, true)
+  ok(askOnly.returns === 1, 'a question on screen with no receipt still gets no more returns', `${askOnly.returns} returns\n${askOnly.log}`)
+  ok(/selector on screen, return withheld/.test(askOnly.log), 'and the log says the return was withheld', askOnly.log)
+  ok(!/LOST/.test(askOnly.qp) && /not proven/.test(askOnly.qp), 'queued-prompts.log says not proven, not LOST', askOnly.qp)
+
+  const enqOnly = await asked('sess-enqueue-only', enqueue, false)
+  ok(enqOnly.returns === 1 && /Claude transcript receipt/.test(enqOnly.log),
+    'a queue-operation enqueue alone is a receipt: no more returns into an idle box', `${enqOnly.returns} returns\n${enqOnly.log}`)
+
+  const attOnly = await asked('sess-queued-command', { type: 'attachment',
+    attachment: { type: 'queued_command', prompt: '<pasted_content id="68c7">\n' + BRIEF + '\n</pasted_content id="68c7">',
+      commandMode: 'prompt', origin: { kind: 'human' }, humanTurn: true } }, false)
+  ok(attOnly.returns === 1 && /Claude transcript receipt/.test(attOnly.log),
+    'a queued_command attachment alone is a receipt too', `${attOnly.returns} returns\n${attOnly.log}`)
+
+  // A queue record for some OTHER message is no receipt: the empty box still gets its returns.
+  const other = await asked('sess-queued-other', { type: 'queue-operation', operation: 'enqueue',
+    content: '<task-notification>\n<task-id>a5bbfa148ebfc4b2f</task-id>\n</task-notification>' }, false)
+  ok(other.returns > 1 && /UNSENT/.test(other.log), 'an enqueue of a different message is not a receipt', `${other.returns} returns\n${other.log}`)
   rmSync(pidFile, { force: true })
 }
 

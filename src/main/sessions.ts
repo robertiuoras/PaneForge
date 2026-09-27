@@ -54,7 +54,7 @@ import { START_COLS, START_ROWS } from '../shared/paneGrid'
 import { paintedWidth, RESTORE_MARK_TEXT } from '../shared/replayWidth'
 import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, SUBMIT_GAP_MS, armDecision, clearChunks, hasFreshPaneHandoff, resumeOf, dropFor, dropWords, expiryDecision, queuedPromptDecision, quietEnoughToArm, standDownFor, type DropReason, type QueuedPromptVerdict } from '../shared/autoclear'
 import { acLog } from './autoclearLog'
-import { dropAllFor, noteAccepted, noteNativeAccepted, noteDropped, noteSubmitted, owedAfterRestore, stillOwed } from './queuedPrompts'
+import { dropAllFor, noteAccepted, noteNativeAccepted, noteDropped, noteSubmitted, noteWithheld, owedAfterRestore, stillOwed } from './queuedPrompts'
 import type { QueueDrop } from '../shared/queuedPrompts'
 import { logReclaim } from './activationLog'
 import { ledgerSleep, ledgerWake } from './laneLedger'
@@ -3826,10 +3826,11 @@ export class SessionManager extends EventEmitter {
     // command, an idle composer) PROVED the text went in; every other word is a prompt
     // nobody typed, and says so in `queued-prompts.log`.
     let settled = false
-    const settle = (end: QueueDrop | 'sent'): void => {
+    const settle = (end: QueueDrop | 'sent' | 'withheld'): void => {
       if (settled) return
       settled = true
       if (end === 'sent') noteSubmitted(key)
+      else if (end === 'withheld') noteWithheld(key)
       else noteDropped(key, end)
       this.setOwedPrompt(id, false)
       onSettled?.()
@@ -3943,6 +3944,20 @@ export class SessionManager extends EventEmitter {
       if ((live.meta.lastKeyboard ?? 0) > mark) {
         acLog(`${id} prompt left UNSENT: the pane was typed into by hand before the return`)
         return settle('unsent')
+      }
+      // A RETURN INTO A QUESTION IS AN ANSWER. 2026-09-27 04:55Z, pane s9-mujbz9vp: `pf tell`
+      // typed into a Claude turn, Claude queued it, and an AskUserQuestion with 4 questions
+      // was drawn over it at 04:55:17. The retries' five returns (04:55:21-37) each picked the
+      // highlighted "(Recommended)" option and the last one pressed Submit - Robert's own
+      // question answered by this app. While a selector is on screen no return goes in:
+      // Claude's receipt says it went in, and otherwise nobody can say, so this stops there.
+      if (live.meta.ask) {
+        if (claudeTook(live)) {
+          acLog(`${id} prompt submitted - Claude transcript receipt (a question is on screen)`)
+          return settle('sent')
+        }
+        acLog(`${id} selector on screen, return withheld (try ${tries + 1}/${PROMPT_ENTER_TRIES}) - the prompt may be queued or still typed; not proven`)
+        return settle('withheld')
       }
       ourWrite('\r')
       // Renderer submissions record at `prompt:used`; queued continuations and handoffs
