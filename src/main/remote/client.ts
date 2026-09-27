@@ -23,6 +23,7 @@ import { connect, type Socket } from 'node:net'
 import type { AgentInfo } from '../../shared/agents'
 import type { AttachIn, AttachResult } from '../../shared/attach'
 import type { BackJob } from '../../shared/backJobs'
+import { readDeskReport, type DeskReport } from '../../shared/discordRpc'
 import {
   HANDOFF_ASK_MS,
   HANDOFF_CHUNK,
@@ -92,6 +93,10 @@ export class RemoteClient extends EventEmitter {
    * it - a row can then say nothing rather than inventing an empty desk.
    */
   peerPerson: boolean | undefined = undefined
+  /** what that machine last said about its own panes and its Discord (`shared/discordRpc.ts`) */
+  peerDesk: DeskReport | undefined = undefined
+  /** what this desk last said about itself, re-sent whenever the link comes back */
+  private desk: DeskReport | undefined = undefined
 
   /** Every pane that device has, whether or not this one is mirroring it. */
   private available: Session[] = []
@@ -293,6 +298,12 @@ export class RemoteClient extends EventEmitter {
    */
   sendPresence(person: boolean): void {
     this.conn?.send({ t: 'presence', person })
+  }
+
+  /** Tell that machine this desk's own numbers and whether it reaches Discord. */
+  sendDesk(report: DeskReport): void {
+    this.desk = report
+    this.conn?.send({ t: 'desk', report })
   }
 
   /**
@@ -511,6 +522,7 @@ export class RemoteClient extends EventEmitter {
     this.peerPerson = conn.peer.person
     if (conn.peer.id && conn.peer.id !== this.peer.id) this.emit('identified', conn.peer)
     conn.on('msg', (m: Msg) => this.receive(m))
+    if (this.desk) conn.send({ t: 'desk', report: this.desk })
     conn.on('gone', (why: string) => {
       for (const p of this.pending.values()) p.no(new Error('Connection lost'))
       this.pending.clear()
@@ -580,6 +592,10 @@ export class RemoteClient extends EventEmitter {
         // into a redraw of the Devices list.
         this.peerPerson = typeof m.person === 'boolean' ? m.person : undefined
         this.emit('status')
+        return
+      case 'desk':
+        this.peerDesk = readDeskReport(m.report)
+        this.emit('desk')
         return
       case 'attention':
         this.emit('attention', this.tag(m.session as Session))
@@ -698,6 +714,7 @@ export class RemoteClient extends EventEmitter {
     this.since = 0
     this.peerVersion = ''
     this.peerPerson = undefined
+    this.peerDesk = undefined
     this.available = []
     // `watching` deliberately survives: it is what this device chose to mirror, and a
     // reconnect should bring those panes back rather than make the choice again.

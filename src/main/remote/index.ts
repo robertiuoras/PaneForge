@@ -26,6 +26,7 @@ import type {
 import type { AgentInfo } from '../../shared/agents'
 import type { AttachIn, AttachResult } from '../../shared/attach'
 import type { BackJob } from '../../shared/backJobs'
+import type { DeskLink, DeskReport } from '../../shared/discordRpc'
 import type { HandoffItem, HandoffPayload, HandoffResult } from '../../shared/handoff'
 import { DEFAULT_REMOTE_PORT, getConfig, setConfig } from '../config'
 import { profileName } from '../profile'
@@ -91,6 +92,7 @@ export class Remote extends EventEmitter {
     }
     this.host = new RemoteHost(backend, this.me, () => getConfig().remote.code)
     this.host.on('changed', () => this.changed())
+    this.host.on('desk', () => this.emit('desk'))
     this.host.on('screen', (peer: PeerIdentity, address: string, m: Msg) =>
       this.emit('screen', { device: peer.id, name: peer.name, address, msg: m })
     )
@@ -157,6 +159,31 @@ export class Remote extends EventEmitter {
    * refusal may not wear the shape of a close.
    */
   private closing = new Map<string, number>()
+
+  /** What this desk last told the others about itself (`tellDesk`). */
+  private deskReport: DeskReport | undefined
+
+  /**
+   * Tell every machine linked to this one - the ones it mirrors and the ones mirroring it -
+   * this desk's own numbers and whether it reaches Discord. Sent only when that changes;
+   * a link that comes up later is handed the last one.
+   */
+  tellDesk(report: DeskReport): void {
+    if (this.deskReport && JSON.stringify(report) === JSON.stringify(this.deskReport)) return
+    this.deskReport = report
+    for (const c of this.clients.values()) c.sendDesk(report)
+    this.host.tellDesk(report)
+  }
+
+  /** Every other machine linked to this one, either way round, and what each said about itself. */
+  deskLinks(): DeskLink[] {
+    const out: DeskLink[] = []
+    for (const c of this.clients.values()) {
+      if (c.status !== 'online') continue
+      out.push({ id: c.peer.id, name: c.identity()?.name || c.peer.name, report: c.peerDesk, panes: c.panes() })
+    }
+    return [...out, ...this.host.deskReports()]
+  }
 
   /** Every mirrored pane, from every connected device. */
   sessions(): Session[] {
@@ -855,6 +882,8 @@ export class Remote extends EventEmitter {
     client.on('reset', (sessionId: string, snapshot?: string) => this.emit('reset', sessionId, snapshot))
     client.on('attention', (s: Session) => this.emit('attention', s))
     client.on('status', () => this.changed())
+    client.on('desk', () => this.emit('desk'))
+    if (this.deskReport) client.sendDesk(this.deskReport)
     client.on('screen', (m: Msg) =>
       this.emit('screen', { device: id, name: client.identity()?.name || client.peer.name, address: client.peer.address, msg: m })
     )

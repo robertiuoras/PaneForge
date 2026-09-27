@@ -9,7 +9,7 @@
 //   node scripts/discord-presence-test.mjs
 
 import { buildSync } from 'esbuild'
-import { mkdirSync, rmSync } from 'node:fs'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import net from 'node:net'
 import { tmpdir } from 'node:os'
@@ -61,7 +61,9 @@ const {
   OP_HANDSHAKE,
   OP_FRAME,
   countPresence,
-  folderName
+  folderName,
+  readDeskReport,
+  wholeDesk
 } =
   req(outShared)
 const { DiscordPresence } = req(outMain)
@@ -606,6 +608,189 @@ const counts = (running, total, names = ['PaneForge']) => ({
   check('counts: a pane running a background job is running, like the sidebar says', backJobs.running === 2, JSON.stringify(backJobs))
   check('counts: ...and its job start dates the clock', backJobs.oldestRunSince === 700, String(backJobs.oldestRunSince))
   check('counts: ...and a finished pane with nothing running is not', !backJobs.names.includes('bar') && !backJobs.names.includes('old'))
+}
+
+// ---------- two desks, one Discord profile ----------
+// Measured 2026-09-27 with `pf call discord:status` on both machines: the Mac ran 14 panes
+// with work going in several, the PC ran none of its own and mirrored ONE of the Mac's
+// (an asleep one). The Mac said `countedBy: DESKTOP-CMSUCM1` and sent a clear; the PC sent
+// "1 session idle", and that was the profile. A desk that mirrors a few panes does not
+// count the rest - so "the other desk already counts mine" was never true.
+{
+  const MAC = 'e8a289e1e7d70116'
+  const PC = 'e38080cc645760c5'
+  // Robert's own card that day: running line, tokens line switched off, idle line.
+  const style = {
+    rows: [
+      { id: 'running', text: '{running}/{total} {sessions} running', when: 'running', on: true },
+      { id: 'projects', text: 'used {tokens}', when: 'running', on: false },
+      { id: 'idle', text: '{total} {sessions} idle', when: 'idle', on: true }
+    ],
+    elapsed: true,
+    buttons: [{ id: 'link', label: 'toolstash.xyz/paneforge', url: 'https://toolstash.xyz/paneforge', on: true }]
+  }
+  const pane = (id, status, extra = {}) => ({ id, status, cwd: `/Users/r/Projects/${id}`, ...extra })
+  const macPanes = [
+    pane('s26', 'working', { runSince: 1_000 }),
+    pane('s44', 'idle', { backJob: 'rbuild.mjs', backJobSince: 2_000 }),
+    pane('s59', 'working', { runSince: 3_000 }),
+    pane('s60', 'working', { runSince: 4_000 }),
+    pane('s61', 'working', { runSince: 5_000 }),
+    pane('s51', 'idle'),
+    pane('s57', 'idle'),
+    pane('s58', 'idle'),
+    pane('s62', 'idle'),
+    pane('s41', 'exited'),
+    pane('s46', 'exited'),
+    pane('s52', 'exited'),
+    pane('s54', 'exited'),
+    pane('s55', 'exited')
+  ]
+  const now = 10_000
+  // What each machine would put on the profile, given what each one knows.
+  const desks = ({ macDiscord = true, pcDiscord = true, pcReports = true, macIsClient = true } = {}) => {
+    const reportOf = (local, discord) => ({ counts: countPresence(local, 0), discord })
+    const mac = wholeDesk(
+      { id: MAC, discord: macDiscord, local: macPanes, appStart: 1 },
+      [
+        {
+          id: PC,
+          name: 'DESKTOP-CMSUCM1',
+          guest: true,
+          ...(pcReports ? { report: reportOf([], pcDiscord) } : {}),
+          ...(macIsClient ? { panes: [] } : {})
+        }
+      ]
+    )
+    const pc = wholeDesk(
+      { id: PC, discord: pcDiscord, local: [], appStart: 1 },
+      [
+        {
+          id: MAC,
+          name: 'Roberts-MacBook-Pro',
+          guest: macIsClient,
+          report: reportOf(macPanes, macDiscord),
+          panes: macPanes.map((p) => ({ ...p, watched: p.id === 's54' }))
+        }
+      ]
+    )
+    const sent = []
+    if (macDiscord) sent.push(['mac', buildActivity(mac, style, now)])
+    if (pcDiscord && pcReports) sent.push(['pc', buildActivity(pc, style, now)])
+    return { mac, pc, speaking: sent.filter(([, a]) => a) }
+  }
+
+  const both = desks()
+  check('two desks: exactly one of them puts a card on the profile',
+    both.speaking.length === 1, both.speaking.map(([w, a]) => `${w}: ${a.details}`).join(' | '))
+  check('two desks: and it counts every pane on both machines',
+    both.speaking[0]?.[1].details === '5/14 sessions running', both.speaking[0]?.[1].details)
+  check('two desks: the quiet one names the one that speaks',
+    [both.mac, both.pc].filter((c) => c.countedBy).length === 1)
+  check('two desks: both desks agree on the numbers',
+    both.mac.running === both.pc.running && both.mac.total === both.pc.total, `${both.mac.running}/${both.mac.total} vs ${both.pc.running}/${both.pc.total}`)
+
+  const macOnly = desks({ pcDiscord: false })
+  check('Discord open on the Mac only: the Mac says the whole desk',
+    macOnly.speaking.length === 1 && macOnly.speaking[0][0] === 'mac' && macOnly.speaking[0][1].details === '5/14 sessions running',
+    macOnly.speaking.map(([w, a]) => `${w}: ${a.details}`).join(' | '))
+  const pcOnly = desks({ macDiscord: false })
+  check('Discord open on the PC only: the PC says the whole desk',
+    pcOnly.speaking.length === 1 && pcOnly.speaking[0][0] === 'pc' && pcOnly.speaking[0][1].details === '5/14 sessions running',
+    pcOnly.speaking.map(([w, a]) => `${w}: ${a.details}`).join(' | '))
+  // The PC connects to the Mac but the Mac was never paired back: the Mac has no pane list
+  // for the PC, only what the PC says about itself.
+  const oneWay = wholeDesk(
+    { id: MAC, discord: true, local: macPanes.slice(0, 4), appStart: 1 },
+    [{ id: PC, name: 'PC', guest: true, report: { counts: countPresence([pane('p1', 'working', { runSince: 1 }), pane('p2', 'idle')], 0), discord: false } }]
+  )
+  check('one-way pairing: the machine Discord is on still counts the other one',
+    oneWay.running === 5 && oneWay.total === 6 && !oneWay.countedBy, JSON.stringify(oneWay))
+  // A PC still on a build from before desks reported themselves says nothing about its
+  // Discord; the Mac counts it from the pane list it already has, and speaks.
+  const older = wholeDesk(
+    { id: MAC, discord: true, local: macPanes, appStart: 1 },
+    [{ id: PC, name: 'PC', guest: true, panes: [pane('p1', 'working', { runSince: 1 })] }]
+  )
+  check('older build on the other desk: counted from its pane list, and this desk speaks',
+    older.running === 6 && older.total === 15 && !older.countedBy, JSON.stringify(older))
+  // Linked both ways, the same machine is two links: counted once.
+  const twice = wholeDesk(
+    { id: MAC, discord: true, local: [], appStart: 1 },
+    [
+      { id: PC, name: 'PC', report: { counts: countPresence([pane('p1', 'working', { runSince: 1 })], 0), discord: false }, panes: [pane('p1', 'working', { runSince: 1 })] },
+      { id: PC, name: 'PC', guest: true, report: { counts: countPresence([pane('p1', 'working', { runSince: 1 })], 0), discord: false } }
+    ]
+  )
+  check('a machine linked both ways is counted once', twice.running === 1 && twice.total === 1, JSON.stringify(twice))
+}
+
+// ---------- a desk report, as it lands off the wire ----------
+{
+  check('report: not a report is nothing', readDeskReport(null) === undefined && readDeskReport({ discord: true }) === undefined && readDeskReport({ counts: { running: -1, total: 3 } }) === undefined)
+  const r = readDeskReport({ counts: { running: 9, total: 4, asleep: 7, names: ['a', 3, 'b'], oldestRunSince: 'x' }, discord: 'yes' })
+  check('report: running and asleep never exceed the total', r.counts.running === 4 && r.counts.asleep === 4, JSON.stringify(r))
+  check('report: only real names, and Discord only when it says true', r.counts.names.join() === 'a,b' && r.discord === false && r.counts.oldestRunSince === undefined, JSON.stringify(r))
+}
+
+// ---------- desk reports cross the device link, both ways ----------
+{
+  const entry = join(work, 'remote-entry.ts')
+  const from = (p) => JSON.stringify(join(root, p).replace(/\\/g, '/'))
+  writeFileSync(entry, [
+    `export { RemoteHost } from ${from('src/main/remote/host.ts')}`,
+    `export { RemoteClient } from ${from('src/main/remote/client.ts')}`,
+    `export { newCode } from ${from('src/main/remote/wire.ts')}`
+  ].join('\n'))
+  const outRemote = join(work, 'remote.bundle.cjs')
+  buildSync({ absWorkingDir: root, entryPoints: [entry], bundle: true, platform: 'node', format: 'cjs', logLevel: 'warning', outfile: outRemote })
+  const { RemoteHost, RemoteClient, newCode } = req(outRemote)
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+  const until = async (cond, ms = 5_000) => {
+    for (const stop = Date.now() + ms; Date.now() < stop; await wait(20)) if (cond()) return true
+    return false
+  }
+  const port = await new Promise((resolve) => {
+    const srv = net.createServer()
+    srv.listen(0, '127.0.0.1', () => {
+      const p = srv.address().port
+      srv.close(() => resolve(p))
+    })
+  })
+  const sessions = [{ id: 's1', title: 'a', cwd: '/w/a', agent: 'claude', status: 'working', lastOutput: 0, createdAt: 0, cols: 80, rows: 24 }]
+  const none = () => () => {}
+  const backend = {
+    list: () => sessions, buffer: () => '', log: () => '', write() {}, resize() {}, returnSize() {}, redraw() {},
+    setBusy() {}, clearAttention() {}, kill() {}, restart: () => null, rename() {}, switchAgent: () => null,
+    startSession: () => sessions[0], projects: async () => [], agents: async () => [], jobs: async () => [],
+    onData: none, onTyped: none, onSessions: none, onAttention: none
+  }
+  const code = newCode()
+  const host = new RemoteHost(backend, () => ({ id: 'HOSTID', name: 'PC', platform: 'win32', version: '0' }), () => code)
+  const hostSaid = { counts: { running: 0, total: 1, asleep: 0, names: [] }, discord: true }
+  // Both ends say their piece BEFORE the link exists; each must still reach the other.
+  host.tellDesk(hostSaid)
+  host.start(port)
+  await until(() => host.listening)
+  const client = new RemoteClient(
+    { id: 'HOSTID', name: 'PC', address: '127.0.0.1', port, code, watch: [] },
+    () => ({ id: 'GUESTID', name: 'Mac', platform: 'darwin', version: '0' })
+  )
+  client.sendDesk({ counts: { running: 5, total: 14, asleep: 5, names: ['PaneForge'], oldestRunSince: 1000 }, discord: false })
+  client.connect()
+  check('link: the guest comes online', await until(() => client.status === 'online'), client.error)
+  check('link: the host\'s report reaches a guest that joined after it was said',
+    await until(() => client.peerDesk?.discord === true && client.peerDesk.counts.total === 1), JSON.stringify(client.peerDesk))
+  check('link: the guest\'s report, said before the link came up, reaches the host',
+    await until(() => host.deskReports()[0]?.report?.counts.total === 14), JSON.stringify(host.deskReports()))
+  host.tellDesk({ ...hostSaid, discord: false })
+  check('link: Discord closing on the host reaches the guest', await until(() => client.peerDesk?.discord === false))
+  client.sendDesk({ counts: { running: 6, total: 14, asleep: 5, names: ['PaneForge'] }, discord: true })
+  check('link: a turn starting on the guest reaches the host',
+    await until(() => host.deskReports()[0]?.report?.counts.running === 6 && host.deskReports()[0].report.discord === true))
+  client.disconnect()
+  check('link: a machine that went away has said nothing', await until(() => client.peerDesk === undefined && host.deskReports().length === 0))
+  host.stop()
 }
 
 console.log(failed ? `\n${failed} FAILED` : '\nall good')

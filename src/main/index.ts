@@ -29,7 +29,7 @@ import { doneReviewId } from '../shared/doneClose'
 import { FinishedDigest, summaryOf } from '../shared/finishedDigest'
 import { DataPump } from './dataPump'
 import { DiscordPresence } from './discordPresence'
-import { countPresence, needsTokens, type PresenceCounts } from '../shared/discordRpc'
+import { countPresence, needsTokens, wholeDesk, type PresenceCounts } from '../shared/discordRpc'
 import { tokenSpend, tokenSpendFresh } from './tokenUsage'
 import { promptReview, promptsForSession, recordPromptReview, removePromptReview } from './promptReview'
 import { readPulls } from './pulls'
@@ -951,28 +951,40 @@ manager.on('sessions', () => {
 // Discord Rich Presence: "3/6 sessions running" on the user's profile, refreshed as
 // turns start and finish.
 //
-// The WHOLE desk, mirrored panes included. This counted local panes only, on the
-// reasoning that a mirrored pane is counted by the device its agent actually runs on -
-// which is never true in practice: a Discord account shows ONE presence, so the other
-// device's PaneForge has nowhere to publish its half, and those panes went uncounted
-// everywhere. Measured 2026-08-17: eight panes on screen with five running turns, and
-// the profile said "4/5 sessions running" - the five being the local half of the desk.
-// The mirrored view is what the user is looking at, so it is what the profile says.
+// The WHOLE desk: every pane on this machine and on every machine linked to it, each
+// machine counting its own and telling the others (`wholeDesk`, `shared/discordRpc.ts`).
+// A Discord account shows ONE presence, so exactly one machine speaks - the one with the
+// lowest device id among those that can reach Discord - and the rest send a clear.
+// Counting "what this window shows" instead left out whatever was not mirrored: the PC,
+// mirroring one asleep Mac pane, put "1 session idle" on the profile while the Mac ran
+// five turns and stayed quiet for it (2026-09-27).
 const appStartedAt = Date.now()
+let discordReachable = false
 const presence = new DiscordPresence({
   enabled: getConfig().discordPresence,
   style: getConfig().discordStyle,
   // The Discord tab reports Discord's own answer rather than guessing from the switch,
   // so every change of that answer has to reach an open Settings dialog by itself.
-  onStatus: (s) => send('discord:status', s)
+  onStatus: (s) => {
+    send('discord:status', s)
+    // Discord opening or closing here moves which machine speaks, on both machines.
+    if (s.connected !== discordReachable) {
+      discordReachable = s.connected
+      presence.update(presenceCounts())
+    }
+  }
 })
 function presenceCounts(): PresenceCounts {
-  const counts = countPresence(allSessions(), appStartedAt)
-  // Another desk connected to this one mirrors every pane here, so its count already
-  // includes them. Unless this desk mirrors some other machine too (then both counts are
-  // the whole desk), this one stays quiet rather than put its half on the profile.
-  const guest = remote.state().guests[0]
-  if (guest && !remote.sessions().length) counts.countedBy = guest.name
+  // This machine's own panes: not the ones mirrored from another machine, which that
+  // machine reports itself, and not a screen view, which is a picture of a machine.
+  const local = manager.list()
+  const discord = presence.status().connected
+  const own = countPresence(local, appStartedAt)
+  remote.tellDesk({
+    counts: { running: own.running, total: own.total, asleep: own.asleep, names: own.names, oldestRunSince: own.oldestRunSince },
+    discord
+  })
+  const counts = wholeDesk({ id: getConfig().remote.id, discord, local, appStart: appStartedAt }, remote.deskLinks())
   // The token numbers cost a walk of every transcript written this week (7.6s of async
   // I/O on this Mac, 7,546 files), so they are counted only while a row on the card
   // actually says one. `tokenSpend` answers from its own cache and refreshes behind
@@ -1294,6 +1306,8 @@ remote.on('sessions', () => {
   presence.update(presenceCounts())
 })
 remote.on('attention', (s: Session) => raiseAttention(s))
+// Another machine said something new about its own panes or its Discord.
+remote.on('desk', () => presence.update(presenceCounts()))
 remote.on('changed', (state: RemoteState) => {
   send('remote:changed', state)
   // A desk connecting or leaving decides whether this machine speaks for the profile.

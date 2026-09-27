@@ -164,6 +164,113 @@ export function countPresence(sessions: PresenceSession[], appStart: number): Pr
   }
 }
 
+/** A desk's own numbers, as it tells the machines linked to it. */
+export type DeskCounts = Pick<PresenceCounts, 'running' | 'total' | 'asleep' | 'names' | 'oldestRunSince'>
+
+/**
+ * What one machine tells every machine linked to it about itself: its OWN panes only, and
+ * whether it can reach Discord. Sent both ways over the device link, because either end
+ * may be the one Discord is open on.
+ */
+export interface DeskReport {
+  counts: DeskCounts
+  /** PaneForge there is connected to a running Discord */
+  discord: boolean
+}
+
+/** This machine, as the presence sees it. */
+export interface DeskSelf {
+  /** its paired-device id - the tie-break every desk agrees on */
+  id: string
+  /** PaneForge here is connected to a running Discord */
+  discord: boolean
+  /** the panes this machine runs itself - never the ones it mirrors from another */
+  local: PresenceSession[]
+  appStart: number
+}
+
+/** Another machine linked to this one, either way round. */
+export interface DeskLink {
+  id: string
+  name: string
+  /** what it last said about itself; absent from a build older than desk reports */
+  report?: DeskReport
+  /** every pane it has, when this machine is connected to it */
+  panes?: PresenceSession[]
+}
+
+/**
+ * A desk report as it came off the wire, or nothing if it is not one. Shapes are checked
+ * where they land: a count that is not a small whole number is not a count.
+ */
+export function readDeskReport(raw: unknown): DeskReport | undefined {
+  const r = raw as { counts?: Record<string, unknown>; discord?: unknown } | null
+  const c = r?.counts
+  if (!c || typeof c !== 'object') return undefined
+  const n = (v: unknown): number | undefined =>
+    typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.floor(v) : undefined
+  const running = n(c.running)
+  const total = n(c.total)
+  if (running === undefined || total === undefined) return undefined
+  return {
+    counts: {
+      running: Math.min(running, total),
+      total,
+      asleep: Math.min(n(c.asleep) ?? 0, total),
+      names: Array.isArray(c.names) ? c.names.filter((x): x is string => typeof x === 'string').slice(0, 50) : [],
+      oldestRunSince: n(c.oldestRunSince) || undefined
+    },
+    discord: r?.discord === true
+  }
+}
+
+/**
+ * The profile's numbers for the whole desk, and whether this machine is the one that
+ * says them.
+ *
+ * A Discord account shows ONE presence, and Robert runs Discord and PaneForge on both
+ * machines. The rule this replaces - "a desk with another desk connected to it stays quiet,
+ * because that desk counts its panes" - assumed a connected desk mirrors every pane. It
+ * mirrors the ones somebody picked: measured 2026-09-27, the Mac (14 panes, work going in
+ * five) went quiet for the PC, whose desk was the ONE Mac pane it mirrored, and the
+ * profile said "1 session idle".
+ *
+ * So every machine adds up every machine: its own panes plus what each linked machine
+ * says about its own (or, from a build too old to say, that machine's pane list), each
+ * machine once. And of the machines that can reach Discord, the one with the lowest
+ * device id speaks; the rest name it in `countedBy` and send a clear. Each machine tells
+ * the others whether it can reach Discord, so the pick follows Discord to whichever
+ * machine it is open on.
+ */
+export function wholeDesk(self: DeskSelf, links: DeskLink[]): PresenceCounts {
+  const counts = countPresence(self.local, self.appStart)
+  const heard = new Map<string, DeskLink>()
+  for (const l of links) {
+    if (!l.id || l.id === self.id) continue
+    const had = heard.get(l.id)
+    // The same machine, linked both ways, is two links. What it says about itself beats a
+    // pane list read off it.
+    if (!had || (!had.report && l.report)) heard.set(l.id, { ...had, ...l, report: l.report ?? had?.report, panes: l.panes ?? had?.panes })
+  }
+  const speakers: Array<{ id: string; name: string }> = self.discord ? [{ id: self.id, name: '' }] : []
+  for (const l of heard.values()) {
+    const theirs: DeskCounts | undefined = l.report?.counts ?? (l.panes ? countPresence(l.panes, 0) : undefined)
+    if (theirs) {
+      counts.running += theirs.running
+      counts.total += theirs.total
+      counts.asleep += theirs.asleep
+      for (const name of theirs.names) if (!counts.names.includes(name)) counts.names.push(name)
+      if (theirs.oldestRunSince)
+        counts.oldestRunSince = Math.min(counts.oldestRunSince ?? theirs.oldestRunSince, theirs.oldestRunSince)
+    }
+    if (l.report?.discord) speakers.push({ id: l.id, name: l.name })
+  }
+  speakers.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+  const speaker = speakers[0]
+  if (speaker && speaker.id !== self.id) counts.countedBy = speaker.name
+  return counts
+}
+
 /**
  * What Discord itself last said about the presence - the only honest answer to "is this
  * working", and the reason the settings tab can stop guessing.
