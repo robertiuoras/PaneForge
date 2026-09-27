@@ -511,6 +511,10 @@ const ANSWERING =
       attachment: { type: 'hook_success', hookName: 'SessionStart:startup' }, timestamp: new Date().toISOString() }) + '\n')
     if (agoMs) utimesSync(file, new Date(Date.now() - agoMs), new Date(Date.now() - agoMs))
   }
+  // A transcript on disk with the records that come BEFORE the hooks' own (the head
+  // 2.1.283 writes), so the hooks are provably still running.
+  const hooksPending = (sessionId) =>
+    writeFileSync(join(proj, `${sessionId}.jsonl`), JSON.stringify({ type: 'mode', mode: 'normal', sessionId }) + '\n')
   const typings = (...procs) => procs.flatMap((p) => p.writes).filter((w) => w.includes('RESEARCH QUESTION')).length
   const typedAt = async (p, waitMs) => {
     const until = Date.now() + waitMs
@@ -539,6 +543,7 @@ const ANSWERING =
 
   // s113: the pid file is there, the hooks are not done. The composer is idle the whole time.
   cli('sess-running')
+  hooksPending('sess-running')
   const a = open()
   const early = await typedAt(a.p, 900)
   ok(!early, 'a prompt is not typed while Claude Code is still running its SessionStart hooks',
@@ -558,15 +563,59 @@ const ANSWERING =
   ok(bAt > 0 && bAt - b.at < 700, 'a CLI that has finished starting is typed into at once', `${bAt ? bAt - b.at : '-'}ms`)
   manager.kill(b.pane.id)
 
-  // The record never comes (hooks stuck, or none configured): held only until the process is
+  // The record never comes (hooks stuck): held only until the process is
   // PF_PROMPT_STARTUP_MS old, then typed as it always was.
   cli('sess-stuck')
+  hooksPending('sess-stuck')
   const c = open()
   const cAt = await typedAt(c.p, 3000)
   ok(cAt > 0 && cAt - c.at >= 1200, 'a record that never comes holds the prompt only up to the ceiling',
     `${cAt ? cAt - c.at : '-'}ms\n${logOf(c.pane.id)}`)
   ok(await logSays(c.pane.id, /typing anyway/), 'and the log says it was typed without the record', logOf(c.pane.id))
   manager.kill(c.pane.id)
+
+  // NO TRANSCRIPT ON DISK IS NOT "STILL STARTING". Claude Code 2.1.283 often writes none
+  // until the first prompt is in: panes s2, s15, s20, s26 and s27 (2026-09-26/27) had their
+  // hooks done at +2-11s and their launch prompts held the whole minute, the file born only
+  // at +62-67s after the app typed anyway. The pid file alone gets the short wait.
+  cli('sess-deferred')
+  const f = open()
+  const fAt = await typedAt(f.p, 2500)
+  ok(fAt - f.at >= 600 && fAt - f.at < 1400,
+    'a pid file whose transcript is not on disk yet costs only the short wait, not the ceiling',
+    `${fAt ? fAt - f.at : '-'}ms\n${logOf(f.pane.id)}`)
+  ok(await logSays(f.pane.id, /no pid file or transcript yet/), 'and the log says what it was waiting for', logOf(f.pane.id))
+  manager.kill(f.pane.id)
+
+  // ONE PASTE, NOT A BURST. 2026-09-27 05:37:04Z, pane s26-mujdy43s: the 2116-char prompt
+  // written raw reached the CLI as two 1024-byte reads and a 99-byte tail, Claude Code took
+  // them as two pastes and some typing, and its user row was the tail alone. Bracketed, it
+  // is one paste however the pty splits it. A slash command stays keystrokes, and so does
+  // any agent this was not measured on.
+  {
+    cli('sess-paste')
+    hooksDone('sess-paste', 60_000)
+    const g = open()
+    await typedAt(g.p, 1500)
+    const w = g.p.writes.find((x) => x.includes('RESEARCH QUESTION')) ?? ''
+    ok(w === '\x1b[200~' + BRIEF + '\x1b[201~', 'a Claude prompt goes in as one bracketed paste', JSON.stringify(w.slice(0, 40)))
+    ok(!g.p.writes.some((x) => x.includes('\x1b[201~\r')), 'and its return is still a keystroke of its own', JSON.stringify(g.p.writes))
+    manager.kill(g.pane.id)
+    const cmd = manager.start({ cwd: root, agent: 'claude' })
+    const cp = manager.sessions.get(cmd.id).proc
+    manager.queuePrompt(cmd.id, '/model opus', 0, 40, undefined, 5000, 'idle')
+    cp.say(IDLE)
+    for (const until = Date.now() + 1500; Date.now() < until && !cp.writes.length; ) await sleep(20)
+    ok(cp.writes[0] === '/model opus', 'a slash command is typed, not pasted', JSON.stringify(cp.writes[0]))
+    manager.kill(cmd.id)
+    const sh = manager.start({ cwd: root, agent: 'shell' })
+    const shp = manager.sessions.get(sh.id).proc
+    manager.queuePrompt(sh.id, BRIEF, 0, 40, undefined, 5000)
+    shp.say(IDLE)
+    await typedAt(shp, 1500)
+    ok(shp.writes.find((x) => x.includes('RESEARCH QUESTION')) === BRIEF, 'a shell pane gets the text as it was', JSON.stringify(shp.writes))
+    manager.kill(sh.id)
+  }
 
   // No pid file at all (a CLI that writes none): the short wait, then as before.
   rmSync(pidFile, { force: true })
@@ -660,6 +709,32 @@ const ANSWERING =
   const lateReturn = await receipt('sess-receipt-early', undefined, 1500)
   ok(!/UNSENT/.test(lateReturn.log) && /Claude transcript receipt/.test(lateReturn.log),
     'a receipt stamped after the text went in but before the return still counts', lateReturn.log)
+
+  // SOMEBODY TYPING AFTERWARDS DOES NOT UN-SEND IT. 2026-09-27 05:37Z, pane s27-mujdy58r:
+  // the launch prompt is a user row at 05:37:06.4, a `pf type` re-send of it landed at
+  // 05:37:13.8 (a submitted line from outside, which stamps `lastKeyboard`), and the next
+  // confirm tick called it UNSENT - queued-prompts.log said LOST for a prompt Claude had.
+  {
+    cli('sess-receipt-then-hand')
+    hooksDone('sess-receipt-then-hand', 60_000)
+    const pane = manager.start({ cwd: root, agent: 'claude' })
+    const p = manager.sessions.get(pane.id).proc
+    let settles = 0
+    manager.queuePrompt(pane.id, BRIEF, 0, 40, () => settles++, 5000)
+    p.say(IDLE)
+    await sentReturnAt(p)
+    received('sess-receipt-then-hand')
+    manager.write(pane.id, 'sent again by hand\r', 'phone')
+    const until = Date.now() + budget + 600
+    while (Date.now() < until && !settles) await sleep(50)
+    await logSays(pane.id, /prompt submitted|UNSENT/)
+    const qpLog = (() => { try { return readFileSync(join(work, 'userData', 'queued-prompts.log'), 'utf8').split('\n').filter((l) => l.includes(pane.id)).join('\n') } catch { return '' } })()
+    ok(!/UNSENT/.test(logOf(pane.id)) && /Claude transcript receipt/.test(logOf(pane.id)),
+      'a prompt Claude wrote down is submitted even when the pane is typed into afterwards', logOf(pane.id))
+    ok(!/LOST/.test(qpLog) && /queued prompt submitted/.test(qpLog), 'and queued-prompts.log says submitted, not LOST', qpLog)
+    ok(settles === 1, 'it settles once', String(settles))
+    manager.kill(pane.id)
+  }
 
   // ...and a transcript without it is still no receipt: the empty box gets its returns.
   cli('sess-receipt-none')

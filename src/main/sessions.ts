@@ -264,6 +264,12 @@ const PROMPT_ENTER_TRIES = ms('PF_PROMPT_ENTER_TRIES', 6)
  * all - both counted from the process's own start, so a pane older than that is never
  * held. Measured 2026-09-25, five panes opened at once: pid files at +2-5s, hooks done at
  * +9-15s, and 12-45s on a loaded desk. Past either, the prompt is typed as before.
+ * The short wait also covers a pid file whose transcript is not on disk yet, which on
+ * Claude Code 2.1.281-2.1.283 can stay missing until the first prompt (`claudeStartup`).
+ * A prompt that goes in while the hooks still run is one bracketed paste (see `tick`),
+ * and that is delivered: dev probe 2026-09-27, 2.1.283 with a 15s SessionStart hook, typed
+ * at +6s - one user row, whole, written the moment the hooks ended. Typed raw, the same
+ * prompt was left in the box and never sent.
  */
 const PROMPT_STARTUP_MS = ms('PF_PROMPT_STARTUP_MS', 60_000)
 const PROMPT_PIDFILE_MS = ms('PF_PROMPT_PIDFILE_MS', 10_000)
@@ -3942,6 +3948,10 @@ export class SessionManager extends EventEmitter {
       // A confirm return is still a keystroke into a live CLI. If somebody has sent their
       // own message since the prompt went in, that return would land on THEIR turn.
       if ((live.meta.lastKeyboard ?? 0) > mark) {
+        if (claudeTook(live)) {
+          acLog(`${id} prompt submitted - Claude transcript receipt (then the pane was typed into by hand)`)
+          return settle('sent')
+        }
         acLog(`${id} prompt left UNSENT: the pane was typed into by hand before the return`)
         return settle('unsent')
       }
@@ -4006,7 +4016,15 @@ export class SessionManager extends EventEmitter {
             acLog(`${id} prompt submitted - a turn started`)
             return settle('sent')
           }
+          // ...AND SOMEBODY TYPING AFTERWARDS DOES NOT UN-SEND IT. 2026-09-27 05:37Z, pane
+          // s27-mujdy58r: the launch prompt is a user row in its transcript at 05:37:06.4, a
+          // `pf type` re-send landed at 05:37:13.8, and the next tick called it UNSENT and
+          // queued-prompts.log said LOST - the receipt was never asked on this branch.
           if ((still.meta.lastKeyboard ?? 0) > mark) {
+            if (claudeTook(still)) {
+              acLog(`${id} prompt submitted - Claude transcript receipt (then the pane was typed into by hand)`)
+              return settle('sent')
+            }
             acLog(`${id} prompt left UNSENT: the pane was typed into by hand while confirming`)
             return settle('unsent')
           }
@@ -4100,8 +4118,9 @@ export class SessionManager extends EventEmitter {
     // until its SessionStart hooks are done - text typed before that was lost outright
     // (s113-mufldnmu), drawn seconds late, or held unsent past the confirm; see
     // `claudeStartup`. Only a process younger than PROMPT_STARTUP_MS is held, never past
-    // that age (a CLI with no SessionStart hook at all waits the whole of it), and no longer
-    // than PROMPT_PIDFILE_MS for a pid file that never appears. Once open it stays open.
+    // that age, and no longer than PROMPT_PIDFILE_MS while there is no pid file or no
+    // transcript to read - Claude Code may write none until the prompt this is holding goes
+    // in. Once open it stays open.
     let gateOpen = false
     let startWait: string | null = null
     const starting = (live: Live): boolean => {
@@ -4113,7 +4132,7 @@ export class SessionManager extends EventEmitter {
       if (hold) {
         if (!startWait) {
           startWait = now
-          acLog(`${id} queued prompt waiting for Claude Code to finish starting (${now === 'unknown' ? 'no pid file yet' : 'SessionStart hooks running'})`)
+          acLog(`${id} queued prompt waiting for Claude Code to finish starting (${now === 'unknown' ? 'no pid file or transcript yet' : 'SessionStart hooks running'})`)
         }
         return true
       }
@@ -4168,7 +4187,22 @@ export class SessionManager extends EventEmitter {
       typedIntoTurn =
         (live.meta.lastKeyboard ?? 0) > mark && (Boolean(live.meta.runSince) || live.busyUntil > Date.now())
       if (!typedTextAt) typedTextAt = Date.now()
-      ourWrite(prompt)
+      // ONE PASTE, NOT A BURST OF KEYS. The pty hands a big write to the CLI 1024 bytes a
+      // read, and Claude Code takes each read of a burst as a paste of its own and a short
+      // last one as typing: a 2110-byte prompt showed as `[Pasted text #1 +12 lines]
+      // [Pasted text #2 +12 lines] bulk. LAST LINE...` (dev probe, 2.1.283). Those pieces
+      // can come apart - 2026-09-27 05:37:04Z, pane s26-mujdy43s, 2116 chars: Claude's user
+      // row was the 99-char tail and nothing else - and a Claude user row came back shorter
+      // than half its prompt for s115, s108, s17 and s15 before it (10392 -> 2333 chars).
+      // Bracketed, it is one paste however it is read: the same probe gave one
+      // `[Pasted text #1 +26 lines]` and a user row holding every line. A slash command
+      // stays keystrokes: it is a command only while typed, and `typeLine` reads it so.
+      if (live.meta.agent === 'claude' && !prompt.trimStart().startsWith('/')) {
+        ourWrite(`\x1b[200~${prompt}\x1b[201~`)
+        // `typeLine` skips a paste whole, and the words asked - the pane's name is read
+        // from them at the return - are the prompt all the same.
+        live.typed = typeLine(live.typed, prompt)
+      } else ourWrite(prompt)
       acLog(`${id} prompt typed (${prompt.length} chars), return in ${PROMPT_ENTER_MS}ms${typedIntoTurn ? ' (a turn is running)' : ''}`)
       setTimeout(() => this.sessions.get(id) && submit(0), PROMPT_ENTER_MS)
     }
