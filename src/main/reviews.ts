@@ -1,8 +1,11 @@
 import { createHash } from "node:crypto";
 import {
+  closeSync,
   existsSync,
   mkdirSync,
+  openSync,
   readFileSync,
+  readSync,
   readdirSync,
   renameSync,
   rmSync,
@@ -14,14 +17,26 @@ import { extname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { app } from "electron";
 import { profileName } from "./profile";
+import { codexTranscriptPath, transcriptPath } from "./transcripts";
+import { cardNumber } from "../../scripts/pf-ctl-lib.mjs";
 import type { HistoryEntry } from "../shared/types";
-import type {
-  ReviewInput,
-  ReviewKind,
-  ReviewLink,
-  ReviewProof,
-  ReviewRecord,
+import {
+  FULL_ADVICE,
+  contextLevel,
+  contextWords,
+  transcriptTokens,
+  type ReviewInput,
+  type ReviewKind,
+  type ReviewLink,
+  type ReviewProof,
+  type ReviewRecord,
 } from "../shared/reviews";
+
+/** The desk in `sessions:list` order (index.ts), so a report can carry its card number. */
+let desk: () => ReadonlyArray<{ id: string }> = () => [];
+export function setReviewDesk(list: () => ReadonlyArray<{ id: string }>) {
+  desk = list;
+}
 
 export interface ReviewCloseArm {
   sessionId: string;
@@ -140,8 +155,49 @@ function reviewEvidence(value: unknown): string[] {
     throw new Error("Invalid review evidence");
   return value.map((v) => need(v, 10000, "review evidence"));
 }
+/** "4:10pm Sun 27 Sep", this computer's clock. */
+function when(at: string) {
+  const d = new Date(at),
+    h = d.getHours();
+  return `${h % 12 || 12}:${String(d.getMinutes()).padStart(2, "0")}${h < 12 ? "am" : "pm"} ${d.toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short" }).replace(/,/g, "")}`;
+}
+/**
+ * The reply as it was written, made readable: `**bold**`, `code` and `#` headings keep
+ * their meaning instead of showing their marks. Everything is escaped first, so only these
+ * fixed tags are ever added; a fenced code block is left exactly as written (its `#` is a
+ * shell comment, not a heading).
+ */
+function markdown(text: string) {
+  let fenced = false;
+  return esc(text)
+    .split("\n")
+    .map((line) => {
+      if (/^\s*```/.test(line)) {
+        fenced = !fenced;
+        return line;
+      }
+      if (fenced) return line;
+      const h = /^#{1,6}\s+(.*)$/.exec(line);
+      const body = (h ? h[1] : line)
+        .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+        .replace(/`([^`]+)`/g, "<code>$1</code>");
+      return h ? `<strong class="h">${body}</strong>` : body;
+    })
+    .join("\n");
+}
+/** GuardDeck's green / amber / red, on this page's dark background. */
+const LEVEL_COLOUR = { ok: "#35d07f", warn: "#f0b429", danger: "#ff8f8f" } as const;
+function contextLine(r: ReviewRecord) {
+  const words = contextWords(r);
+  if (!words) return "";
+  const level = r.context ? contextLevel(r.context) : "ok";
+  return `<p class="ctx" style="color:${LEVEL_COLOUR[level]}"><b>${esc(words)}</b>${level === "danger" ? ` - ${FULL_ADVICE}` : ""}</p>`;
+}
 function page(r: ReviewRecord) {
-  return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(r.title)}</title><style>:root{color-scheme:dark}body{max-width:820px;margin:60px auto;padding:0 28px;background:#121416;color:#e9e9e6;font:16px/1.65 -apple-system,BlinkMacSystemFont,sans-serif}h1{font-size:32px;line-height:1.2;letter-spacing:-.025em}h2{margin-top:32px;font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:#adb0ac}pre{font:inherit;white-space:pre-wrap;overflow-wrap:anywhere;background:#1c1f21;border:1px solid #303437;border-radius:12px;padding:20px}a{color:#d6e5ec;text-underline-offset:4px}li{margin:8px 0}</style><h1>${esc(r.title)}</h1><p>${esc(r.kind)} · ${esc(r.proof)}</p><pre>${esc(r.report)}</pre><h2>Original prompt</h2><pre>${esc(r.prompt)}</pre><h2>Evidence</h2><ul>${(r.evidence ?? []).map((e) => `<li>${esc(e)}</li>`).join("")}</ul><h2>Links</h2><ul>${(r.links ?? []).map((l) => `<li><a href="${esc(l.url)}">${esc(l.label)}</a></li>`).join("")}</ul>`;
+  const num = r.paneNumber ? `<span class="num">${esc(String(r.paneNumber))}</span> ` : "";
+  const list = (title: string, items: string[]) =>
+    items.length ? `<h2>${title}</h2><ul>${items.join("")}</ul>` : "";
+  return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${r.paneNumber ? `${esc(String(r.paneNumber))} ` : ""}${esc(r.title)}</title><style>:root{color-scheme:dark}body{max-width:820px;margin:60px auto;padding:0 28px;background:#121416;color:#e9e9e6;font:16px/1.65 -apple-system,BlinkMacSystemFont,sans-serif}h1{font-size:32px;line-height:1.2;letter-spacing:-.025em;font-weight:800}.num{display:inline-block;min-width:1.4em;padding:0 .3em;margin-right:.15em;border-radius:8px;background:#f0a868;color:#121416;text-align:center;font-variant-numeric:tabular-nums}.meta{color:#adb0ac}.ctx{margin-top:-6px}h2{margin-top:32px;font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:#adb0ac}pre,.report{font:inherit;white-space:pre-wrap;overflow-wrap:anywhere;background:#1c1f21;border:1px solid #303437;border-radius:12px;padding:20px}.report strong{color:#fff}.report .h{color:#f0a868}code{font:14px ui-monospace,Menlo,monospace;background:#2a2e31;border-radius:5px;padding:1px 5px}a{color:#d6e5ec;text-underline-offset:4px}li{margin:8px 0}</style><h1>${num}${esc(r.title)}</h1><p class="meta">${esc(r.kind)} · ${esc(r.proof)} · finished ${esc(when(r.completedAt ?? r.createdAt))}</p>${contextLine(r)}<div class="report">${markdown(r.report)}</div><h2>Original prompt</h2><pre>${esc(r.prompt)}</pre>${list("Evidence", (r.evidence ?? []).map((e) => `<li>${esc(e)}</li>`))}${list("Links", (r.links ?? []).map((l) => `<li><a href="${esc(l.url)}">${esc(l.label)}</a></li>`))}`;
 }
 function immutable(r: ReviewRecord) {
   const {
@@ -153,6 +209,12 @@ function immutable(r: ReviewRecord) {
     reportPath,
     payloadHash,
     noticeSentAt,
+    // Read off the desk and the transcript at the moment of recording: a retry of the same
+    // report is the same report even when the card has moved or the chat has said more.
+    paneNumber,
+    app,
+    context,
+    sessionTokens,
     ...rest
   } = r;
   return rest;
@@ -221,6 +283,11 @@ function spoolNotice(record: ReviewRecord): ReviewRecord {
             // The gate above lets only the Mac app write notices; the field is here so a
             // PC notice, when there is one, needs no new reader.
             machine: "mac",
+            // Finished-chat report contract v1: optional, absent when unknown.
+            paneNumber: record.paneNumber,
+            app: record.app,
+            context: record.context,
+            sessionTokens: record.sessionTokens,
           },
         },
         null,
@@ -257,6 +324,80 @@ function closed(h: HistoryEntry): ReviewRecord {
     closedAt: at,
     attention: false,
   };
+}
+/**
+ * A transcript's lines that hold `needle`, read 1MB at a time: a Codex rollout reaches
+ * 128MB and is never held whole, and only a matching line is decoded. Measured 2026-09-27
+ * on a 20MB Claude transcript: 12-16ms, against 75ms decoding every line.
+ */
+function* linesWith(file: string, needle: string): Generator<string> {
+  const want = Buffer.from(needle);
+  const fd = openSync(file, "r");
+  try {
+    let buf = Buffer.alloc(1 << 20),
+      have = 0,
+      pos = 0;
+    for (;;) {
+      if (have === buf.length) {
+        const grown = Buffer.alloc(buf.length * 2);
+        buf.copy(grown, 0, 0, have);
+        buf = grown;
+      }
+      const n = readSync(fd, buf, have, buf.length - have, pos);
+      if (!n) break;
+      pos += n;
+      have += n;
+      let start = 0,
+        nl: number;
+      while ((nl = buf.indexOf(10, start)) >= 0 && nl < have) {
+        const line = buf.subarray(start, nl);
+        if (line.indexOf(want) >= 0) yield line.toString("utf8");
+        start = nl + 1;
+      }
+      buf.copy(buf, 0, start, have);
+      have -= start;
+    }
+    const tail = buf.subarray(0, have);
+    if (have && tail.indexOf(want) >= 0) yield tail.toString("utf8");
+  } finally {
+    closeSync(fd);
+  }
+}
+/**
+ * The report contract's live facts: the card number now, and how full the chat is. Any of
+ * them unreadable is left out - a report is never held back for a number.
+ */
+function sessionFacts(
+  sessionId: string,
+  r: Pick<ReviewRecord, "provider" | "cwd" | "nativeSessionId">,
+): Pick<ReviewRecord, "paneNumber" | "app" | "context" | "sessionTokens"> {
+  const out: Pick<ReviewRecord, "paneNumber" | "app" | "context" | "sessionTokens"> = {
+    app: "paneforge",
+  };
+  try {
+    const n = cardNumber(desk(), sessionId);
+    if (n > 0) out.paneNumber = n;
+  } catch {
+    /* no desk to count on */
+  }
+  if (r.provider === "shell" || r.provider === "screen") return out;
+  try {
+    const file =
+      r.provider === "codex"
+        ? codexTranscriptPath(r.cwd, r.nativeSessionId)
+        : transcriptPath(r.cwd, r.nativeSessionId);
+    if (file)
+      Object.assign(
+        out,
+        transcriptTokens(
+          r.provider,
+          linesWith(file, r.provider === "codex" ? '"token_count"' : '"usage"'),
+        ),
+      );
+  } catch {
+    /* an unreadable transcript leaves the numbers out */
+  }
+  return out;
 }
 export function recordReview(
   input: ReviewInput,
@@ -322,6 +463,7 @@ export function recordReview(
     atomic(prior.reportPath, page(prior));
     return spoolNotice(prior);
   }
+  Object.assign(base, sessionFacts(input.sessionId, base));
   atomic(base.reportPath, page(base));
   base.payloadHash = digest(base);
   atomic(jsonPath(base.id), JSON.stringify(base, null, 2));

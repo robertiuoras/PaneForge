@@ -158,6 +158,31 @@ const scenario = (panes, extra = {}) => {
   ok(!calls.some(([c]) => c === 'sessions:restart'), 'closed pane: no restart when it landed in its own folder')
 }
 
+// ---- a chat that closed ITSELF (claude-config autoclose.mjs, review `autoclose_*`) --------
+// Its GuardDeck notice names the pane it was in and the conversation; the pane is gone and
+// History holds the row `closeAfterResult` left. GuardDeck runs `pf continue <resumeId>`
+// straight off the notice, and the same conversation comes back.
+{
+  const AUTO = '7a2d3b5f-1c4e-4d6f-8a81-2b3c4d5e6f70'
+  writeFileSync(join(projectDir(project), `${AUTO}.jsonl`), '{"type":"user"}\n')
+  const notice = { id: 'paneforge-review-autoclose_s14-auto_1790000000', actor: 'paneforge', result: { id: 'autoclose_s14-auto_1790000000', kind: 'result', sessionId: 's14-auto', resumeId: AUTO, cwd: project, agent: 'claude', machine: 'mac', paneNumber: 4, app: 'paneforge' } }
+  history.push({ id: 's14-auto', title: 'Autoclosed chat', cwd: project, agent: 'claude', model: 'claude-opus-5-5', startedAt: 50, endedAt: 60, resumeId: AUTO })
+  scenario([{ id: 's1-a', title: 'Other', status: 'idle' }], {
+    'sessions:start': ([req], desk) => {
+      const s = { id: 's23-back', title: req.title, cwd: req.cwd, status: 'starting', agent: req.agent, resumeId: req.resumeId }
+      desk.push(s)
+      return s
+    }
+  })
+  const r = await pf(['continue', notice.result.resumeId, '--prompt-file', promptFile, '--json'])
+  ok(r.code === 0, 'autoclosed chat: exit 0', r.err)
+  ok(r.out === JSON.stringify({ paneId: 's23-back', number: 2, reopened: true }), 'autoclosed chat: reopened, with its new card number', r.out)
+  const req = started()[0]?.[1]?.[0] ?? {}
+  ok(req.resume === true && req.resumeId === AUTO && req.cwd === project && req.title === 'Autoclosed chat', 'autoclosed chat: its own conversation, in its own folder', JSON.stringify(req))
+  ok(told().length === 1 && told()[0][1][0] === 's23-back' && told()[0][1][1] === PROMPT, 'autoclosed chat: the prompt reaches it')
+  history.pop()
+}
+
 // ---- closed pane reopened in a copy of the folder: transcript follows, pane restarted ------
 {
   const copy = join(work, 'proj-a')

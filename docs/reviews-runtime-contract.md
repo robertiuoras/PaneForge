@@ -8,6 +8,27 @@ GuardDeck notices are emitted only for explicit `notify: true` records by the pa
 
 The app also closes finished panes on its own (`src/main/doneClose.ts`): an agent pane whose turn is over, that nobody is looking at, that has been quiet three minutes, with no question, draft, job, background job or running subagent, and whose last reply lists no step an agent could take, is recorded as a `result` with `proof: "unverified"` and `notify: true` (id `done_<pane>_<turn>`, report = the reply as the CLI's own transcript has it) and closed through the same `closeAfterResult` gate, so every chat that closes itself leaves a GuardDeck result card whose next prompt can reach it through `pf continue`. Each step only a person can take becomes `~/.claude/guarddeck/notices/paneforge-step-<review>-<n>.json` with `kind: "step"`, `machine: "pc" | "mac"` and a `reopen` block (`cwd`, `agent`, `resumeId`, `title`, `prompt`) for GuardDeck to bring the conversation back once the step is done; same production gate as result notices.
 
+## Finished-chat report fields (contract v1, 2026-09-27)
+
+Shared with GuardDeck's result cards and Reports list and with PaneForge Next; the field
+names are fixed. Each is OPTIONAL on the review JSON and inside the notice's `result`:
+absent means unknown, and every reader works without them (a record written before them,
+or an older build, has none).
+
+| field | type | meaning |
+|---|---|---|
+| `paneNumber` | int >= 1 | the chat's card number when the report was recorded, exactly as `pf list` column 1 shows it: `cardNumber()` in `scripts/pf-ctl-lib.mjs` over the `sessions:list` order, the one function both use (`setReviewDesk(allSessions)` in `main/index.ts`). Absent when the chat is not on the desk |
+| `app` | `"paneforge"` / `"paneforge-next"` | which app hosted the chat; absent = `"paneforge"` |
+| `context` | `{ used, window }` | tokens in context after the chat's last reply. Claude: `input_tokens + cache_read_input_tokens + cache_creation_input_tokens` of the LAST assistant message (not a subagent's, not the CLI's `<synthetic>` note). Codex: that turn's `last_token_usage.total_tokens` over `model_context_window`. Claude `window` is 1,000,000 for a `[1m]` model, for Opus 5 / 5.5 (their standard window; a real Opus 5.5 chat was measured at 546,800 in context), and for anything already past 200,000; otherwise 200,000 |
+| `sessionTokens` | int | whole-session total: `input_tokens + cache_creation_input_tokens + output_tokens` over every assistant message, each message id once (Claude writes one message on several rows), cache reads left out. Codex: `total_token_usage` input minus cached input, plus output |
+
+Computed once, when the report is first recorded (`sessionFacts` in `main/reviews.ts`; the
+transcript is read 1MB at a time and only lines holding `"usage"` / `"token_count"` are
+decoded). They are not part of the retry identity (`payloadHash`): a retry after the card
+moved returns the stored report unchanged. A failure to read any of them leaves that field
+out and never blocks the report. Colours, everywhere they are drawn: green under 50%,
+amber 50-80%, red over 80% with "clear before the next big job".
+
 ## Continuing a result's conversation
 
 GuardDeck's next-prompt box writes the typed prompt to a file and runs, on the notice's `machine`:
