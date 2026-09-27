@@ -834,15 +834,26 @@ export function claimFromCli(id: string, pid: number | undefined): boolean {
  * its pid file's own `status` already says `idle` at +2s, so that cannot tell), and
  * `~/.claude/sessions/<pid>.json` names that transcript. The records of one start carry
  * stamps up to ~4s apart, so the file must also have gone quiet for `STARTUP_SETTLE_MS`.
- * `started` - both; `starting` - the pid file is there and they are not (yet); `unknown` -
- * no pid file for this pid, nothing to read.
+ * `started` - both; `starting` - the transcript is there and they are not (yet); `unknown` -
+ * no pid file for this pid, or no transcript on disk yet: nothing to read.
+ *
+ * NO TRANSCRIPT IS NOT "STILL STARTING". Claude Code (2.1.281-2.1.283) often writes no
+ * transcript at all until the first prompt has been submitted - it keeps the SessionStart records in
+ * memory and writes them out with the first user row. Of 178 fresh 2.1.283 sessions on this
+ * Mac whose first prompt came 10s+ after their hooks, 83 had no file before that prompt;
+ * every pane on 2026-09-26/27 whose launch prompt waited the whole 60s had its file born at
+ * +62-67s, right after the app typed anyway (s2, s15, s20, s26, s27; hooks done at +2-11s).
+ * Read as `starting`, a missing file held every such prompt the full minute, and at 05:37Z
+ * two panes sat at an empty box long enough that the prompt was sent again by hand. So it
+ * is `unknown`, which holds only the short `PROMPT_PIDFILE_MS` wait.
  */
 const STARTUP_SETTLE_MS = Number(process.env.PF_CLAUDE_SETTLE_MS ?? 2_500)
 export function claudeStartup(pid: number | undefined): 'started' | 'starting' | 'unknown' {
   const row = cliSession(pid)
   if (!row) return 'unknown'
   const file = transcriptPath(row.cwd, row.sessionId)
-  if (!file || !/"hookName":"SessionStart:/.test(readHead(file) ?? '')) return 'starting'
+  if (!file) return 'unknown'
+  if (!/"hookName":"SessionStart:/.test(readHead(file) ?? '')) return 'starting'
   try {
     return Date.now() - statSync(file).mtimeMs >= STARTUP_SETTLE_MS ? 'started' : 'starting'
   } catch {
