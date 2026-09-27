@@ -39,6 +39,13 @@ let lastGiveUpAt = 0
 let lastPid = 0
 /** Why it went, from `render-process-gone`, for the recreate line. */
 let goneDetail = ''
+/** When the liveness probe was last answered, for main's own vitals. 0 = never. */
+let answeredAt = 0
+
+/** For main's beat vitals: how long ago the window last answered anything at all. */
+export function rendererAnsweredAt(): number {
+  return answeredAt
+}
 
 /** What the renderer's own OS process is costing, for the log line that names the spin. */
 function metricsFor(pid: number): string {
@@ -155,6 +162,7 @@ export function watchRenderer(win: BrowserWindow, recreate: () => void): void {
           // was spinning.
           .executeJavaScript('1', true)
           .then(() => {
+            answeredAt = Date.now()
             if (state.probeSentAt === sent) state.probeSentAt = 0
           })
           .catch(() => {
