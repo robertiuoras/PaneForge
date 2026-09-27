@@ -230,10 +230,6 @@ const titles = await ask(`(async () => {
 results.push(['Pane titles', titles])
 console.log(`      ${JSON.stringify(titles)}`)
 
-// The rule itself, off the shipped file rather than off a memory of it.
-const rule = spawnSync(process.execPath, [join(here, 'title-demo.mjs')], { encoding: 'utf8' })
-if (rule.stdout) process.stdout.write(rule.stdout)
-
 // ---------------------------------------------------------------- receipt
 
 console.log(`\n== ${sha} - what the window just showed`)

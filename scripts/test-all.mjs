@@ -215,7 +215,7 @@ const TESTS = [
   ['projectfolder', 'project-folder-test.mjs'],
   ['clientname', 'client-name-test.mjs'],
   ['renametrigger', 'rename-trigger-test.mjs'],
-  ['resolvedname', 'resolved-name-test.mjs'],
+  ['clititle', 'cli-title-test.mjs'],
   ['peerchrome', 'peer-chrome-test.mjs'],
   ['projectname', 'project-name-test.mjs'],
   ['historysearch', 'history-search-test.mjs'],

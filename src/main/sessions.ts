@@ -6,7 +6,7 @@
 
 import { spawn } from 'node:child_process'
 import { gitRun } from './gitRun'
-import { existsSync } from 'node:fs'
+import { closeSync, existsSync, openSync, readSync, statSync } from 'node:fs'
 import { EventEmitter } from 'node:events'
 import * as pty from '@lydell/node-pty'
 import { audit, plainTail } from './audit'
@@ -25,16 +25,20 @@ import { changedNothingWhy, changedNothingWords } from '../shared/changedNothing
 import { clientForCwd, clientForTexts } from './clients'
 import { trustAgyWorkspace } from './agyTrust'
 import { trustCodexFolder } from './codexTrust'
-import {
-  clientLabel,
-  mayRename,
-  TOPIC_WINDOW,
-  topicReading,
-  type TopicReading
-} from '../shared/clientName'
-import { handleOf, resolvedName } from '../shared/resolvedName'
+import { ASK_WINDOW, CLIENTS_DIR, clientLabel, mayRename } from '../shared/clientName'
+import { appNamedTitle } from './activity'
+import { nextTitle, titlesIn, type CliTitles } from '../shared/cliTitle'
 import { chromeCdpFor } from '../shared/peerChrome'
 import type { ClientNamed } from '../shared/types'
+
+/** How often a Claude pane's transcript is looked at for its title. See `sweepCliTitle`. */
+const TITLE_READ_MS = 5_000
+/**
+ * How much of a resumed chat's transcript the first read takes. The CLI re-appends its title
+ * as it saves: on the PC on 2026-09-28, every one of 232 titled transcripts over 250 KB had
+ * its last title within 35 KB of the end.
+ */
+const TITLE_TAIL_BYTES = 256 * 1024
 
 /**
  * The refusal a caller must NOT override.
@@ -476,8 +480,13 @@ interface Live {
   workAfter?: string
   /** The finished turn waiting to be judged, or absent when there is nothing pending. */
   workTurn?: { startedAt: number; endedAt: number }
-  /** the last few things asked at this pane, for `repeatedTopic` - see `topicFor` */
-  topicAsks?: string[]
+  /** the last few things asked at this pane, for `repeatedClient` - see `trackAsk` */
+  clientAsks?: string[]
+  /**
+   * How far into its transcript this pane's titles have been read, and what was found:
+   * see `sweepCliTitle`. Reset when the pane moves to another conversation.
+   */
+  titleRead?: { path: string; offset: number; at: number; seen?: CliTitles }
   /** a phone is holding the pty at its own shape, and owes the desk its size back */
   borrowed?: boolean
   /**
@@ -565,14 +574,6 @@ interface Live {
   recoverTries: number
   /** A stop already sent off the machine for this pane; cleared by a submitted turn. */
   stop: StopLatch
-  /**
-   * The handle the last ask pointed at its subject with (`$50 task`), while the card is
-   * still waiting for the reply to say what that is. Unset once named, or when an ask
-   * names its subject outright. `shared/resolvedName.ts`.
-   */
-  handle?: string
-  /** How much of the screen had been painted when that ask went in: the reply starts there. */
-  handleSeen: number
   /**
    * When the question now on this pane's screen was first seen, and what it was.
    *
@@ -830,6 +831,9 @@ export class SessionManager extends EventEmitter {
       .map((s) => ({
         cwd: s.meta.cwd,
         title: s.meta.title,
+        // ...and who gave it that name, or a restart turns every automatic name into one a
+        // person typed, which nothing may replace.
+        autoTitled: s.meta.autoTitled,
         agent: s.meta.agent,
         model: s.meta.model,
         role: s.meta.role,
@@ -927,13 +931,26 @@ export class SessionManager extends EventEmitter {
     // screen was painted at; a new one at the size the desk last fitted a pane to.
     const startCols = back.cols > 0 ? back.cols : (this.deskSize?.cols ?? START_COLS)
     const startRows = back.rows > 0 ? back.rows : (this.deskSize?.rows ?? START_ROWS)
+    // A word-picker name saved by an older build comes back as if a person had typed it
+    // and would never be replaced: the Activity list says the app gave it, so the pane
+    // starts over on its project name and its chat's own title can land. A client label
+    // is kept - that one came from the roster, not from the typing. Only on the way back
+    // from a saved desk or a handoff (`scrollbackId`): a pane reopened from History or a
+    // continuation is carrying a name on purpose.
+    const oldGuess =
+      !!req.scrollbackId &&
+      !!req.title &&
+      !req.autoTitled &&
+      !req.title.endsWith(` | ${CLIENTS_DIR}`) &&
+      appNamedTitle(req.title)
     const meta: Session = {
       id,
       // The PROJECT, never the folder: a pane opened in the `PaneForge-a` worktree is
       // still working on PaneForge, and the `-a` is a slot id this app invented. The
       // copy is already said by the chip beside the name (`copy 2`), so the folder
       // spelling here was the machinery leaking onto the card twice.
-      title: req.title ?? projectOf(req.cwd, req.lane),
+      title: req.title && !oldGuess ? req.title : projectOf(req.cwd, req.lane),
+      autoTitled: oldGuess ? undefined : req.autoTitled,
       cwd: req.cwd,
       agent,
       model: req.model || undefined,
@@ -1005,7 +1022,6 @@ export class SessionManager extends EventEmitter {
       footerEndedAt: 0,
       sawFooter: false,
       recoverSeen: 0,
-      handleSeen: 0,
       recoverTries: 0,
       stop: { reported: false },
       askSince: 0,
@@ -1090,7 +1106,7 @@ export class SessionManager extends EventEmitter {
 
     // ...and WHO this pane is for, when the folder proves it. A title the caller supplied
     // is a person's answer to the same question and is never argued with.
-    if (!req.title) this.nameForClient(id, 'folder')
+    if (!req.title || oldGuess) this.nameForClient(id, 'folder')
 
     this.emitSessions()
     return meta
@@ -1119,17 +1135,13 @@ export class SessionManager extends EventEmitter {
     if (!live) return
     const s = live.meta
     if (s.clientOff) return
-    // Only a pane still wearing the name the APP gave it, with one exception: a subject
-    // read out of the first prompt is a guess, and a client identified afterwards is
-    // evidence, so evidence is allowed to replace the guess. Nothing replaces a client,
-    // and nothing at all replaces a name a person typed.
-    const untitled = mayRename(s.title, s.cwd)
-    const upgradable = s.autoTitled === 'topic'
-    if (!untitled && !upgradable) return
+    // Only a pane still wearing a name the APP gave it: its folder, or the agent's own
+    // title for the chat, which a client identified afterwards is allowed to replace.
+    // Nothing replaces a client, and nothing at all replaces a name a person typed.
+    if (!this.appDefault(s) && s.autoTitled !== 'agent') return
 
-    // Every ask is remembered here, on its way to the pty - both for the topic reading
-    // below and for `found`, so a client lifted out of the words somebody typed needs the
-    // same repetition a topic does: see `repeatedClient`.
+    // Every ask is remembered here, on its way to the pty, so a client lifted out of the
+    // words somebody typed needs the same client named again: see `repeatedClient`.
     const asks = from === 'prompt' && text ? this.trackAsk(live, text) : undefined
     const found =
       from === 'folder'
@@ -1137,54 +1149,30 @@ export class SessionManager extends EventEmitter {
         : asks
           ? clientForTexts(s.cwd, asks)
           : undefined
-    if (found && found.slug === s.clientSlug) return
-    // A pane in a client tree doing something else entirely is still a pane nobody can
-    // tell apart, so it gets the subject of what was asked instead. Never on the folder
-    // reading, which has no words to read.
-    // A subject is only ever written over the word `clients`: see `mayTopicName`.
-    // Outside a client roster the folder name is already true, so a subject may only
-    // replace it once the desk has asked about the same thing three times: see
-    // `repeatedTopic`. Inside the tree every card says `clients` and nothing tells them
-    // apart, so the first ask still names them.
-    const topic: TopicReading =
-      !found && from === 'prompt' && text
-        ? topicReading(live.meta.cwd, asks ?? [], text)
-        : { title: '', strong: false }
-    // An ask that points at its subject rather than naming it (`$50 task from
-    // yesterday`) is a question the reply answers; the sweep reads the answer off the
-    // screen and names the card for it. Remembered only while no client is found and
-    // the card still wears an app-given name - the same gate as every rename here.
-    if (!found && from === 'prompt' && text) {
-      const handle = handleOf(text)
-      live.handle = handle || undefined
-      live.handleSeen = handle ? strip(live.buffer.read()).length : 0
-    }
-    // ...and a subject already on the card may be replaced by a BETTER one. The first
-    // few asks in a repo are usually an errand ("what did we ship yesterday") and the
-    // card then wears that errand through the job that follows it, which is the name
-    // Robert kept looking at after a `/clear`. Only a STRONG reading may do it - three
-    // of the last four asks agreeing - so one sentence cannot re-name a pane, and a
-    // title a person typed is still never touched.
-    if (!found && !untitled && !(upgradable && topic.strong)) return
-    const title = found ? clientLabel(found) : topic.title
+    if (!found || found.slug === s.clientSlug) return
+    this.nameTo(live, clientLabel(found), 'client', from, found.slug)
+  }
+
+  /** Whether a pane still wears the name the app gave it at birth: its folder or project. */
+  private appDefault(s: Session): boolean {
+    return mayRename(s.title, s.cwd) || s.title === projectOf(s.cwd, s.lane)
+  }
+
+  /** Put an automatic name on a pane and write the Activity row. Silent otherwise. */
+  private nameTo(live: Live, title: string, by: 'client' | 'agent', from: ClientNamed['from'], slug = ''): void {
+    const s = live.meta
     if (!title || title === s.title) return
     const was = s.title
     s.title = title
-    s.clientSlug = found?.slug
-    s.autoTitled = found ? 'client' : 'topic'
-    this.emit('clientNamed', {
-      id,
-      slug: found?.slug ?? '',
-      title,
-      was,
-      from: found ? from : 'topic'
-    } satisfies ClientNamed)
+    s.clientSlug = by === 'client' ? slug : s.clientSlug
+    s.autoTitled = by
+    this.emit('clientNamed', { id: s.id, slug, title, was, from } satisfies ClientNamed)
     this.emitSessions()
   }
 
   /**
-   * Every ask this pane has taken, most recent last, capped to the window both the topic
-   * and client readings agree on.
+   * Every ask this pane has taken, most recent last, capped to the window the client
+   * reading looks at.
    *
    * Kept here rather than read back out of the transcript because they are already
    * passing through this process on their way to the pty - the same feed the prompt
@@ -1192,9 +1180,9 @@ export class SessionManager extends EventEmitter {
    * CLI to cooperate.
    */
   private trackAsk(live: Live, text: string): string[] {
-    const asks = (live.topicAsks ??= [])
+    const asks = (live.clientAsks ??= [])
     asks.push(text)
-    if (asks.length > TOPIC_WINDOW) asks.splice(0, asks.length - TOPIC_WINDOW)
+    if (asks.length > ASK_WINDOW) asks.splice(0, asks.length - ASK_WINDOW)
     return asks
   }
 
@@ -1760,7 +1748,6 @@ export class SessionManager extends EventEmitter {
     s.meta.title = title.trim().slice(0, 60)
     // A manual name is authoritative even when it happens to equal the folder label.
     s.meta.autoTitled = undefined
-    s.handle = undefined
     this.emitSessions()
   }
 
@@ -2172,11 +2159,11 @@ export class SessionManager extends EventEmitter {
     // engagement: the two are both true of the same keypress and this is the one that
     // survives it. The run clock still counts the clear itself (the pane reads Running
     // while its hooks flap), and the pane falls into Ready the moment that ends.
-    // A `/clear` ends the job the pane was named for, so the asks that earned that name
-    // stop counting towards the next one: the card keeps what it has - flickering back to
-    // the folder name would be a worse reading, not a truer one - until three fresh asks
-    // agree on something else.
-    if (cleared) live.topicAsks = []
+    // A `/clear` ends the job the pane was named for, so the asks that named a client stop
+    // counting towards the next one. The card keeps its name - flickering back to the folder
+    // would be a worse reading, not a truer one - until the new conversation's own title
+    // says what the next job is: see `sweepCliTitle`.
+    if (cleared) live.clientAsks = []
     if (cleared && live.meta.engaged) {
       live.meta.engaged = false
       live.meta.attention = false
@@ -4279,27 +4266,6 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
-   * Name the pane for what its reply said the handle was.
-   *
-   * `Working On 50 Task` sat on a card all day (2026-09-03) while the first line the
-   * agent printed was `$50 task = Travel Video Editor, Jacob P. (board id 794 ...)`. The
-   * ask carried the handle, the reply carried the name; this joins them. Only output since
-   * the ask is read, and only once: a handle is spent the first time a reply resolves it,
-   * and dropped the moment a person types a title or a client is found.
-   */
-  private sweepResolved(live: Live): void {
-    const handle = live.handle
-    if (!handle) return
-    const s = live.meta
-    if (s.clientOff || s.clientSlug || !(mayRename(s.title, s.cwd) || s.autoTitled === 'topic')) {
-      live.handle = undefined
-      return
-    }
-    // Agent output is not user task evidence. Keep titles grounded in submitted prompts.
-    live.handle = undefined
-  }
-
-  /**
    * Press the obvious answer to the question on this pane, if there is one.
    *
    * The decision is `shared/autoAnswer.ts` and the keystrokes are `choose`, which already
@@ -4427,6 +4393,48 @@ export class SessionManager extends EventEmitter {
     // starts a beat late, never a pane that is closed.
     const found = this.tableJobs.get(live.meta.id)
     return found && !found.turnTracked ? { name: found.name, since: now - (found.elapsed ?? 0) * 1000 } : null
+  }
+
+  /**
+   * Name the pane from its transcript: the CLI's own title for the chat, or a person's
+   * `/rename` inside it. `shared/cliTitle.ts` decides; this only reads what is new since
+   * the last look, at most every `TITLE_READ_MS`.
+   */
+  private sweepCliTitle(live: Live, path: string, now: number): void {
+    const prev = live.titleRead?.path === path ? live.titleRead : undefined
+    if (prev && now - prev.at < TITLE_READ_MS) return
+    let size: number
+    try {
+      size = statSync(path).size
+    } catch {
+      return // gone since the path was resolved - nothing to read
+    }
+    const from = prev ? Math.min(prev.offset, size) : Math.max(0, size - TITLE_TAIL_BYTES)
+    const read: CliTitles = { ...prev?.seen }
+    let offset = from
+    if (size > from) {
+      const buf = Buffer.allocUnsafe(size - from)
+      const fd = openSync(path, 'r')
+      let got = 0
+      try {
+        got = readSync(fd, buf, 0, buf.length, from)
+      } finally {
+        closeSync(fd)
+      }
+      // Whole lines only: one still being written is read, whole, next time.
+      const end = buf.subarray(0, got).lastIndexOf(0x0a) + 1
+      offset = from + end
+      Object.assign(read, titlesIn(buf.subarray(0, end).toString('utf8')))
+    }
+    live.titleRead = { path, offset, at: now, seen: read }
+    const s = live.meta
+    const pane = { title: s.title, autoTitled: s.autoTitled, appDefault: this.appDefault(s) }
+    const next = nextTitle(pane, read, prev?.seen, projectOf(s.cwd, s.lane))
+    if (!next) return
+    // A person's `/rename` is theirs to make; an old save's "do not name this pane" only
+    // holds the app's own naming back.
+    if (next.by === 'person') this.rename(s.id, next.title)
+    else if (!s.clientOff) this.nameTo(live, next.title, 'agent', 'agent')
   }
 
   /**
@@ -4624,6 +4632,9 @@ export class SessionManager extends EventEmitter {
           meta.model = live2
           changed = true
         }
+        // ...and what the chat is CALLED: the CLI's own title for it, or a person's
+        // `/rename` inside it. Same path, only the bytes written since the last look.
+        if (path) this.sweepCliTitle(live, path, now)
         // ...and whether that conversation still has a BACKGROUND AGENT running inside
         // this CLI. The turn is over, the footer is quiet, and ending the process now - a
         // move, a sleep, a close - ends the agent with it (s24-mud0n7wb, 2026-09-22: moved
@@ -4739,9 +4750,6 @@ export class SessionManager extends EventEmitter {
       ) {
         this.sweepRecover(live)
       }
-
-      // A pane that asked about `$50 task` and has now been told what that is.
-      if (live.handle && !meta.runSince) this.sweepResolved(live)
 
       // A question with an obvious answer, pressed rather than waited on. Here rather
       // than where the question is READ, for the same reason as recover: the frame

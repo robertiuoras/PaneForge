@@ -1,5 +1,3 @@
-import { pick, repair, SPELLING } from './topicWords'
-
 // Which CLIENT a pane is working for, so its card says so without anybody typing it.
 //
 // A pane is named `basename(cwd)` and that is the right default everywhere except one
@@ -31,6 +29,32 @@ import { pick, repair, SPELLING } from './topicWords'
 //
 // Pure, so scripts/client-name-test.mjs can compile this one file and assert the
 // sentences. Everything that touches disk is in main/clients.ts.
+
+/**
+ * How a word is SPELLED once it reaches a card.
+ *
+ * An acronym title-cased by the generic rule reads as a misspelling - `Gpt`, `Api`, `Ghl`
+ * - and a product with a capital inside it loses it (`Hubspot`, `Openai`). Both are
+ * things the reader knows the shape of, so getting them wrong is the loudest possible
+ * way to look automated.
+ */
+const SPELLING: Record<string, string> = {
+  api: 'API', apis: 'APIs', ui: 'UI', ux: 'UX', cli: 'CLI', css: 'CSS', html: 'HTML',
+  url: 'URL', urls: 'URLs', pdf: 'PDF', csv: 'CSV', json: 'JSON', sql: 'SQL', db: 'DB',
+  ai: 'AI', gpt: 'GPT', llm: 'LLM', mcp: 'MCP', ssh: 'SSH', dns: 'DNS', ssl: 'SSL',
+  seo: 'SEO', crm: 'CRM', ghl: 'GHL', cdp: 'CDP', ram: 'RAM', cpu: 'CPU', gpu: 'GPU',
+  ios: 'iOS', macos: 'macOS', npm: 'npm', ci: 'CI', qr: 'QR', sms: 'SMS', otp: 'OTP',
+  openai: 'OpenAI', hubspot: 'HubSpot', paneforge: 'PaneForge', taskdriver: 'Taskdriver',
+  supabase: 'Supabase', vercel: 'Vercel', github: 'GitHub', gitlab: 'GitLab',
+  mailchimp: 'Mailchimp', telegram: 'Telegram', discord: 'Discord', upwork: 'Upwork',
+  zapier: 'Zapier', stripe: 'Stripe', shopify: 'Shopify', wordpress: 'WordPress',
+  wix: 'Wix', canva: 'Canva', notion: 'Notion', slack: 'Slack', gmail: 'Gmail',
+  whatsapp: 'WhatsApp', linkedin: 'LinkedIn', youtube: 'YouTube', tiktok: 'TikTok',
+  instagram: 'Instagram', facebook: 'Facebook', meta: 'Meta', google: 'Google',
+  claude: 'Claude', codex: 'Codex', antigravity: 'Antigravity', toolstash: 'Toolstash',
+  safari: 'Safari', chrome: 'Chrome', electron: 'Electron', react: 'React',
+  nextjs: 'Next.js', node: 'Node', python: 'Python', docker: 'Docker', launchd: 'launchd'
+}
 
 /** A client the roster knows about. */
 export interface ClientEntry {
@@ -270,25 +294,24 @@ export function clientFromText(text: string, roster: ClientEntry[]): ClientEntry
  * The client several asks agree a pane is for, when the evidence is words somebody TYPED
  * rather than the folder the pane is in.
  *
- * A name lifted out of a sentence is inference, the same way a repeated topic is - one
+ * A name lifted out of a sentence is inference - one
  * mention of a word that happens to match a client's alias is not evidence about what a
  * pane is FOR. "we need to tune the naming of session as well, broken like Cars" named a
  * PaneForge pane `Cars` off a single prompt, because the word appeared once inside a
- * sentence ABOUT naming rules. `repeatedTopic` already refuses to rename a real project's
- * pane until the desk has said the same thing three times; this is the same bar, held
- * against the client roster instead of a keyword. The FOLDER is exempt - `clientFromPath`
+ * sentence ABOUT naming rules, so a client read out of typing needs the same client named
+ * again inside the last few asks. The FOLDER is exempt - `clientFromPath`
  * is a fact about where the pane runs, never a guess about what somebody typed - so this
  * only ever gates `clientFromText`.
  */
 export function repeatedClient(asks: string[], roster: ClientEntry[]): ClientEntry | undefined {
-  const recent = asks.slice(-TOPIC_WINDOW)
-  if (recent.length < TOPIC_MIN_ASKS) return undefined
+  const recent = asks.slice(-ASK_WINDOW)
+  if (recent.length < CLIENT_MIN_ASKS) return undefined
   const seen = new Map<string, number>()
   for (const a of recent) {
     const c = clientFromText(a, roster)
     if (c) seen.set(c.slug, (seen.get(c.slug) ?? 0) + 1)
   }
-  const slug = [...seen].find(([, n]) => n >= TOPIC_MIN_ASKS)?.[0]
+  const slug = [...seen].find(([, n]) => n >= CLIENT_MIN_ASKS)?.[0]
   return slug ? roster.find((c) => c.slug === slug) : undefined
 }
 
@@ -303,246 +326,6 @@ export function mayRename(title: string, cwd: string, dismissed?: boolean): bool
   if (dismissed) return false
   const base = parts(cwd).pop() ?? ''
   return title.trim() === base.trim()
-}
-
-/**
- * What a prompt is ABOUT, in a few words, for a pane that turned out not to be a client's.
- *
- * A client tree holds unrelated work too - "we just needed a claude session" - and the
- * folder name is no better an answer there than it was for the client panes. The subject
- * of the first thing asked is: `check the rental car booking` is `Rental Car` on a card,
- * which is what a person was going to type if they got round to it.
- *
- * Deliberately blunt. It drops the polite runway a request starts with (`can you`,
- * `please`, `i think we should`), which is where the words are that describe the ASKING
- * rather than the work, keeps four words, and refuses anything left too short to identify
- * a pane. There is no model here and there should not be: this is a label, and a wrong
- * label somebody can retype costs nothing, while a request per prompt costs money for ever.
- */
-/**
- * Words a title may not END on: they join a phrase to something that was cut off.
- *
- * Not the same list as the openers stripped off the front - `check` and `fix` are fine
- * to end a title on ("Deploy Check"), and `and`/`with`/`to` never are.
- */
-const DANGLING_WORDS =
-  'and|or|but|so|then|with|without|for|from|to|of|in|on|at|by|into|onto|about|that|this|these|those|is|are|was|were|be|its|it|my|our|your|their|his|her|has|have|had|do|does|did|can|could|would|should|will|as|why|what|how|the|a|an'
-const DANGLING = new RegExp(`^(?:${DANGLING_WORDS})$`)
-
-/**
- * Whether a pane in this folder may be renamed to the SUBJECT of what was asked.
- *
- * Only inside a client tree. The reason topic naming exists is that every pane under
- * `clients/` is called `clients` and nothing tells them apart; a pane opened in
- * `Projects/PaneForge` is already called PaneForge, which is the truest thing that can be
- * written on it - one repo is worked on across many subjects, so renaming it to the first
- * sentence typed replaces a fact with a guess, and the guess goes stale the moment the
- * conversation moves on ("Pizzasrus And" on a PaneForge pane).
- *
- * The folder is the fence rather than a cleverer reading of the prompt, because the whole
- * of this file is the same bet: a card that keeps its folder name is as useful as it was
- * yesterday, and a card that lies is worse than either.
- */
-const NO_IDENTITY = new Set([
-  CLIENTS_DIR,
-  'desktop',
-  'documents',
-  'downloads',
-  'projects',
-  'tmp',
-  'temp',
-  'home',
-  'users'
-])
-
-export function mayTopicName(cwd: string): boolean {
-  const seg = parts(cwd)
-  if (seg.some((s) => s.toLowerCase() === CLIENTS_DIR)) return true
-  // ...and a pane opened in a folder that is nobody's project - `Desktop`, `Downloads`,
-  // the projects root itself - has the same problem the client tree has: the folder name
-  // is not about the work. Those get the subject of the first ask too. A real project
-  // folder still keeps its own name until the desk has said the same thing three times.
-  const last = seg[seg.length - 1]?.toLowerCase() ?? ''
-  return NO_IDENTITY.has(last)
-}
-
-/**
- * A verb at the front of an ask names what the pane is DOING, so the card says
- * `Fixing Remote Screen` rather than `Remote Screen` - and never the runway of the
- * sentence around it. The map is the verb somebody types to the word a card wears; a verb
- * not in it names nothing on its own and the subject stands alone as before.
- */
-const DOING: Record<string, string> = {
-  fix: 'Fixing', fixing: 'Fixing', repair: 'Fixing', resolve: 'Fixing', debug: 'Debugging',
-  check: 'Checking', checking: 'Checking', see: 'Checking', look: 'Checking', review: 'Reviewing',
-  verify: 'Checking', confirm: 'Checking', test: 'Testing', investigate: 'Investigating',
-  explain: 'Explaining', understand: 'Explaining', research: 'Researching', find: 'Finding',
-  add: 'Adding', adding: 'Adding', build: 'Building', create: 'Creating', write: 'Writing',
-  make: 'Making', set: 'Setting', setup: 'Setting Up', install: 'Installing', update: 'Updating',
-  upgrade: 'Upgrading', improve: 'Improving', polish: 'Improving', harden: 'Hardening',
-  change: 'Changing', rename: 'Renaming', move: 'Moving', remove: 'Removing', delete: 'Removing',
-  clean: 'Cleaning', refactor: 'Refactoring', rewrite: 'Rewriting', redesign: 'Redesigning',
-  design: 'Designing', deploy: 'Deploying', release: 'Releasing', ship: 'Shipping',
-  publish: 'Publishing', merge: 'Merging', migrate: 'Migrating', optimise: 'Optimising',
-  optimize: 'Optimising', speed: 'Speeding', plan: 'Planning', implement: 'Building',
-  run: 'Running', try: 'Trying', compare: 'Comparing', draft: 'Drafting', prepare: 'Preparing',
-  reply: 'Replying', answer: 'Answering', translate: 'Translating', convert: 'Converting',
-  // A question is a pane explaining something: `what does this function do` is
-  // `Explaining Function`, not the question's own runway.
-  why: 'Explaining', what: 'Explaining', how: 'Explaining', where: 'Explaining',
-  when: 'Explaining', which: 'Explaining', who: 'Explaining'
-}
-
-/** Words that describe the SHAPE of an ask, not its subject: `issue with this` is nothing. */
-const HOLLOW = new RegExp(
-  '^(?:issue|issues|problem|problems|thing|things|stuff|bit|little|some|any|this|that|these|those|' +
-    'it|its|my|our|your|their|his|her|me|us|them|the|a|an|up|out|please|pls|again|now|quick|quickly|' +
-    'with|on|in|for|about|regarding|around|why|how|what|where|i|you|we|they|to|' +
-    'properly|correctly|also|really|actually|just|new|current|whole|entire|here|there|all|of|' +
-    'is|are|was|were|be|being|been|do|does|did|can|could|would|should|will|okay|ok|if|whether)$'
-)
-
-/** Where the first thought ends: the card wears one clause, never the sentence after it. */
-const CLAUSE_END =
-  /\s(?:and|but|also|so\s(?:that|it|we|i|you|they)|then|because|since|when|while|until|after|before|if|which|where|or|can|could|would|should)\s/
-
-/**
- * A thing said to be broken is a thing being fixed: `the login page is broken on safari`
- * is `Fixing Login Page`, and the words after the complaint are the symptom, not the name.
- */
-const BROKEN =
-  /\s(?:is|are|was|were|isnt|arent|keeps|still|seems)?\s*(?:so|very|really|too|not|now)?\s*(?:broken|breaks|breaking|broke|not working|doesnt work|dont work|failing|fails|failed|crashes|crashing|crashed|wrong|weird|slow|stuck|missing|glitchy|laggy|buggy)(?:\s|$)/
-
-/**
- * The runway an ask starts on - every word about the ASKING rather than the work. A lone
- * letter or digit counts too: a stray keystroke ahead of the sentence (`r is it okay`)
- * used to stop the stripping dead and name a card `R Is It Okay`.
- */
-const RUNWAY =
-  /^(?:hi|hey|ok|okay|so|also|and|but|please|pls|can|could|would|you|we|i|it|lets|let|us|need|needs|needed|want|wanna|think|maybe|just|help|me|to|for|the|a|an|do|does|did|is|are|should|now|were|was|able|been|have|has|had|will|gonna|going|thats|its|im|ive|weve|youre|still|already|yes|yeah|no|not|that|this|quickly|quick|whenever|[a-z0-9])\s+/
-
-export function topicTitle(prompt: string, anchor?: ReadonlySet<string>): string {
-  const line = prompt.split(/\r?\n/).map((l) => l.trim()).find(Boolean) ?? ''
-  if (!line || line.startsWith('/')) return ''
-  // One clause: `fix the remote screen and also can you see the screenshot` is about the
-  // remote screen, and everything after `and` is another ask. Punctuation ends it too.
-  // How it was MEANT, before anything is read off it. `cacan u see hubspot api` opens on
-  // a doubled keystroke, so the runway stripper met a word it did not know and stopped -
-  // and the card read `Cacan See Hubspot Api`. Repairing first lets every later rule see
-  // the sentence the person typed.
-  const mend = (t: string) => normalise(t).split(' ').map(repair).join(' ')
-  // Every word of the whole line, for weighing only: a word the ask comes back to later
-  // is the one it is about, and the clause below is usually too short to show that.
-  const pool = mend(line).split(' ').filter(Boolean)
-  let s = mend(line.split(/[,.;:?!()]/)[0] ?? '')
-  for (;;) {
-    const cut = s.replace(RUNWAY, '')
-    if (cut === s) break
-    s = cut
-  }
-  // The verb the ask opens on, if the card has a word for it: `Fixing`, `Checking`. Only
-  // a first-ask reading; a phrase earned by repetition is a subject, not a job.
-  let doing = ''
-  let first = s.split(' ')[0] ?? ''
-  // A complaint outranks its question: `why is the build so slow` is a build being fixed.
-  if (!anchor && (!DOING[first] || DOING[first] === 'Explaining')) {
-    const hurt = (' ' + s).search(BROKEN)
-    if (hurt >= 0) {
-      s = (' ' + s).slice(0, hurt).trim().replace(/^(?:why|what|how|where|when|is|are|does|do|did|the|a|an|this|that|it|my|our|so)\s+/g, '')
-      for (;;) {
-        const cut = s.replace(/^(?:why|what|how|where|when|is|are|does|do|did|the|a|an|this|that|it|my|our|so)\s+/, '')
-        if (cut === s) break
-        s = cut
-      }
-      if (s) s = 'fix ' + s
-      first = 'fix'
-    }
-  }
-  if (!anchor && DOING[first]) {
-    doing = DOING[first]
-    s = s.slice(first.length).trim()
-    // `set up`, `look at`, `speed up`: the particle belongs to the verb, not the subject.
-    s = s.replace(/^(?:up|at|into|out|on)\s+/, (m) => {
-      if (m.trim() === 'up' && /^(?:Setting|Speeding|Cleaning)$/.test(doing)) doing += ' Up'
-      return ''
-    })
-    // Two verbs is one too many: "when pressing on sidebar icon everything breaks" became
-    // "fix pressing on sidebar icon everything", and "pressing" is the trigger the bug
-    // happens under, not a second subject - "Fixing Pressing On Sidebar" spent the whole
-    // budget on the shape of the ask and pushed "sidebar" out of it. A gerund followed by
-    // a particle is a verb phrase, not a noun ("loading spinner" has no particle after it
-    // and survives); the particle itself is mopped up by the hollow-word loop below.
-    s = s.replace(/^[a-z]+ing\s+(?=(?:on|at|in|for|about|with|into|onto|around|regarding)\s)/, '')
-    // ...and a hollow word after the verb is the shape of the ask, not what it is about:
-    // `fix issue with this remote screen` is about the remote screen.
-    for (;;) {
-      const cut = s.replace(/^[a-z0-9]+\s+/, (m) => (HOLLOW.test(m.trim()) ? '' : m))
-      if (cut === s) break
-      s = cut
-    }
-  }
-  if (!anchor) {
-    const stop = (' ' + s + ' ').search(CLAUSE_END)
-    if (stop === 0) return ''
-    if (stop > 0) s = s.slice(0, stop - 1)
-  }
-  let words = s
-    .split(' ')
-    // Articles anywhere, and the single letters `normalise` leaves behind when it splits
-    // `i'm` and `we've` - a card called `M Looking For Cheap` spends its first word on
-    // half a contraction.
-    // ...and never a word about the session itself: see `SESSION_WORDS`.
-    .filter((w) => w.length > 1 && !/^(?:the|a|an)$/.test(w) && !SESSION_WORDS.includes(w))
-  // A phrase earned by REPETITION must contain a word that was repeated. The first four
-  // words of "so you were able to switch models for me? ... does fable have cached now"
-  // named a toolstash pane `Were Able To Switch` (2026-09-01) - the sentence's runway,
-  // with the subject the three asks agreed on ("fable", "models") still ahead. So when
-  // the opening words hold no anchor, the phrase starts one word before the first anchor
-  // and reads on from there, and an ask with no anchor at all names nothing.
-  if (anchor) {
-    const at = words.findIndex((w) => anchor.has(w))
-    if (at < 0) return ''
-    if (!words.slice(0, 4).some((w) => anchor.has(w))) words = words.slice(Math.max(0, at - 1))
-  }
-  // The best words, not the first ones. Taking them off the front only works for a
-  // sentence that opens on its subject, and an ask rarely does: `do u have access to both
-  // hello@... can u find the latest ghl verification code` gave `Access To Both Hello`,
-  // with the whole subject still ahead of the cut. Scored against the rest of the line and
-  // put back in the order they were typed - see `shared/topicWords.ts`.
-  // A verb that took a particle with it - `Setting Up`, `Speeding Up` - has already spent
-  // two words of the card, so the subject gets one fewer: `set up meta ads for the new
-  // offer` is `Setting Up Meta Ads`, and `offer` is what the ads are FOR.
-  const room = doing ? (doing.includes(' ') ? 2 : 3) : 4
-  // An ask holding no word worth underlining names NOTHING. Falling back to its first
-  // few words is how `continue from last session` became a card called `From Last`: the
-  // words were only ever there to carry the sentence, and the folder name it replaced
-  // said more.
-  const best = pick(words, pool, room)
-  if (!best.length) return ''
-  words = best
-  // A label may not end on a word that is only there to join it to the words that were
-  // cut off. Taking the first four words of "pizzasrus and the invoice template" left a
-  // card called `Pizzasrus And`, which reads as an unfinished sentence rather than a name
-  // - the reader spends a beat looking for the missing half. Trimmed AFTER the slice,
-  // because that is where the dangling word comes from.
-  while (words.length && DANGLING.test(words[words.length - 1])) words.pop()
-  // The 26-character cap takes whole WORDS. Slicing the string left the card wearing half
-  // a word - `pizzasrus and the invoice template` became `Pizzasrus And Invoice Tem`,
-  // which reads as a name that got corrupted rather than one that got shortened.
-  const kept: string[] = doing ? [doing.toLowerCase()] : []
-  for (const w of words) {
-    const next = kept.length ? kept.join(' ').length + 1 + w.length : w.length
-    if (kept.length && next > 26) break
-    kept.push(w)
-  }
-  // ...and dropping the last word can leave the one that joined it on the end.
-  while (kept.length && DANGLING.test(kept[kept.length - 1])) kept.pop()
-  // A verb with nothing after it is not a subject: `Fixing` alone says less than the
-  // folder name did.
-  if (doing && kept.length < 2) return ''
-  const out = kept.join(' ').slice(0, 26)
-  if (out.length < 5) return ''
-  return titleCase(out)
 }
 
 /** The title a client gets, capped the way `rename` caps it. */
@@ -564,152 +347,11 @@ export function clientLabel(entry: ClientEntry): string {
 }
 
 /**
- * The subject a pane keeps coming back to, when several asks in a row agree on it.
- *
- * Naming a pane off the FIRST sentence typed is a guess made from one reading, and it is
- * wrong as often as it is right: the first thing asked in a repo is usually an errand
- * ("what did we ship yesterday") and the card then wears that errand for the rest of the
- * day. Repetition is the evidence that was missing. Asks that share a word are not a
- * sentence about the work, they ARE the work, and a pane can be named for it without a
- * model, a request, or a fence around one folder.
- *
- * TWO, not three, since 2026-09-17. Three asks is most of a session: a pane in the
- * `assistant` repo spent an afternoon on an Upwork bot still wearing `assistant`, because
- * the third agreeing ask only arrives once the work is nearly done (Robert: "im working
- * in assitant folder session on upwork bot should be renamed to upwork or upwork bot at
- * least after 1-2 prompts not immediately of course"). Two agreeing asks inside a window
- * of four is still repetition - one sentence can never name a card - and it lands while
- * the name is still worth having. A subject that turns out to be an errand is replaced by
- * the next two asks that agree, since the window keeps moving.
+ * How many asks must name the same client before a pane at the roster's ROOT is renamed
+ * for them. One mention of a word that happens to match a client is not evidence: see
+ * `repeatedClient`.
  */
-export const TOPIC_MIN_ASKS = 2
+export const CLIENT_MIN_ASKS = 2
 
-/** How many recent asks are looked at, so a subject that has moved on stops matching. */
-export const TOPIC_WINDOW = 4
-
-/**
- * A repeated subject is a LABEL, not a sentence, and it sits beside a client name on the
- * same card - so it is held to the same width a person would type. Shorter than
- * `topicTitle`'s 26: the words here are the ones that survived three asks, so there are
- * fewer of them worth keeping.
- */
-export const SHORT_TITLE = 26
-
-/** The most words a repeated subject may spend. */
-const TOPIC_MAX_WORDS = 3
-
-/**
- * Words that carry no subject: the runway a request starts with, the verbs every ask
- * uses, and the joining words. A word repeated three times only means something if it is
- * about the WORK - "please" and "should" are in every prompt on the desk.
- */
-/**
- * Words about the SESSION rather than about the work.
- *
- * A pane in `Projects/PaneForge` came back from a `/clear` called `Handoff`, because the
- * three asks that earned the rename were all about continuing a handoff - which is
- * housekeeping the desk does to itself between jobs, not the job. Naming a card for it is
- * the same failure the folder fence was built to stop: a fact ("PaneForge") replaced by a
- * word that will be wrong the moment the session gets going.
- *
- * Held out of BOTH readings - the keywords that earn a repeat, and the phrase a
- * client-tree pane takes off its first ask - so no path can name a pane after the plumbing.
- */
-const SESSION_WORDS = [
-  'handoff', 'handoffs', 'handover', 'clear', 'clears', 'cleared', 'clearing',
-  'compact', 'compacted', 'resume', 'resumed', 'resuming', 'continue', 'continues',
-  'continued', 'continuing', 'context', 'session', 'sessions', 'chat', 'transcript',
-  'transcripts', 'memory', 'summarise', 'summarize', 'summary', 'recap'
-]
-
-const TOPIC_STOP = new Set(
-  (
-    'hi hey okay also please pls can could would you your we our they them this that these those ' +
-    'need needs needed want wanna think maybe just help lets let does did done doing what which ' +
-    'when where why how there here from with without into onto about again still then than they ' +
-    'make made makes making check checks checked look looks looked have has had been being will ' +
-    'shall must some more most much many any all every each other another same thing things stuff ' +
-    'good bad better best right wrong sure okay yeah yes not dont cant wont sorry thanks thank ' +
-    'now today tomorrow yesterday really actually basically simply file files code stuff work ' +
-    'working works worked run runs running fix fixes fixed add adds added change changes changed ' +
-    'were able thats theyre youre gonna going already ' +
-    // Sequence and errand words. They never name work, and at two agreeing asks - see
-    // `TOPIC_MIN_ASKS` - one of them landing in two asks by chance is enough to name a
-    // card: `continue the handoff and work its next steps` twice read as `And Work Its
-    // Next`. A word that survives this list and still repeats is about the job.
-    'next steps step again back about please need needs want wants help into over with ' +
-    'from this that here there when what then also still just even only very such'
-  ).split(' ').concat(SESSION_WORDS)
-)
-
-/** The words in one ask that could name a subject, in the order they were typed. */
-export function topicKeywords(prompt: string): string[] {
-  const line = prompt.trim()
-  if (!line || line.startsWith('/')) return []
-  const out: string[] = []
-  for (const w of normalise(line).split(' ')) {
-    if (w.length < 4 || /^\d+$/.test(w)) continue
-    if (TOPIC_STOP.has(w) || DANGLING.test(w)) continue
-    if (!out.includes(w)) out.push(w)
-  }
-  return out
-}
-
-/**
- * The title several asks agree on, or nothing.
- *
- * Nothing is the common answer and it is the point: a desk that jumps between subjects
- * keeps its folder name, which is the truest thing that can be written on that card.
- */
-export function repeatedTopic(asks: string[]): string {
-  const recent = asks.slice(-TOPIC_WINDOW)
-  if (recent.length < TOPIC_MIN_ASKS) return ''
-  const words = recent.map(topicKeywords)
-  if (words.some((w) => w.length === 0)) {
-    // A window holding an ask with no subject at all (`ok`, a pasted path) has not said
-    // the same thing three times - it has said it twice with something else in between.
-    if (words.filter((w) => w.length > 0).length < TOPIC_MIN_ASKS) return ''
-  }
-  const seen = new Map<string, number>()
-  for (const w of words) for (const word of w) seen.set(word, (seen.get(word) ?? 0) + 1)
-  const shared = new Set([...seen].filter(([, n]) => n >= TOPIC_MIN_ASKS).map(([w]) => w))
-  if (!shared.size) return ''
-  // The label is the SENTENCE the desk keeps coming back to, not the words it has in
-  // common: `Invoice Reminders` reads like something a person would type on a card,
-  // `Invoice` reads like a search term. The EARLIEST ask in the window is the one that
-  // states the job - the later ones are follow-ups about a corner of it - so the phrase
-  // comes off that one, and the repetition is only what earns the rename.
-  for (let i = 0; i < recent.length; i++) {
-    if (!words[i].some((w) => shared.has(w))) continue
-    const phrase = topicTitle(recent[i], shared)
-    if (phrase) return phrase
-  }
-  return ''
-}
-
-/** What a pane may call itself, and how much evidence is behind it. */
-export interface TopicReading {
-  /** the subject to write on the card, or '' for nothing */
-  title: string
-  /**
-   * Did several asks agree on it?
-   *
-   * A first-ask phrase is one sentence read in a folder whose name says nothing - a
-   * guess, good enough to replace `clients` and not good enough to replace a subject
-   * already on the card. A repeated one is evidence: three of the last four asks about
-   * the same thing are not a sentence about the work, they are the work.
-   */
-  strong: boolean
-}
-
-/**
- * The subject a pane should wear, given every ask it has taken and the newest one.
- *
- * A subject is evidence only after repeated user asks. Folder-derived client labels remain
- * useful immediately, but one vague launch prompt must not rename a live card.
- */
-export function topicReading(cwd: string, asks: string[], text: string): TopicReading {
-  const repeated = repeatedTopic(asks)
-  if (repeated) return { title: repeated, strong: true }
-  return { title: '', strong: false }
-}
+/** How many recent asks are looked at, so a client that has moved on stops matching. */
+export const ASK_WINDOW = 4
