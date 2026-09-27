@@ -13,7 +13,7 @@
 //   - a pane that did not settle it gets another after DISPATCH_AGAIN_MS, three at most
 //   - no PaneForge to ask (no pf-ctl beside lane.mjs): nothing requested, nothing recorded
 //   - the lane folder gets the repo's Claude Code trust entry, so the pane does not stop
-//     on the trust prompt
+//     on the trust prompt - also when Claude Code already wrote its own untrusted entry there
 //
 // `LANE_DISPATCH_LOG` stands in for the app; CLAUDE_CONFIG_DIR keeps the trust write in
 // the temp folder. `ship` is never reached: a fresh `lastShip` is seeded.
@@ -125,9 +125,18 @@ ok('but not the repo\'s prompt history', trust && !('history' in trust), JSON.st
 
 // ---------------------------------------------------- the chat did not settle it
 
+// Meanwhile Claude Code ran in the lane folder and wrote its own untrusted default entry.
+// The repo is trusted, so the next resolver pane must not stop on the trust prompt either,
+// and the folder keeps the rest of its own entry.
+const withCliDefault = JSON.parse(readFileSync(claudeJson, 'utf8'))
+withCliDefault.projects[realpathSync(work.dir)] = { hasTrustDialogAccepted: false, allowedTools: [], enabledMcpServers: ['computer-use'] }
+writeFileSync(claudeJson, JSON.stringify(withCliDefault))
 patchState((s) => { s.conflicts[work.lane].dispatch.at = Date.now() - 3 * 60 * 60 * 1000 })
 retryTimes(2)
 ok('two hours on and still conflicted: one more chat, not two', requests().length === 2, JSON.stringify(requests().map((x) => x.lane)))
+const own = JSON.parse(readFileSync(claudeJson, 'utf8')).projects[realpathSync(work.dir)]
+ok('an untrusted lane entry under a trusted repo becomes trusted', own?.hasTrustDialogAccepted === true, JSON.stringify(own))
+ok('and keeps its own allowedTools and settings', JSON.stringify(own?.allowedTools) === '[]' && own?.enabledMcpServers?.[0] === 'computer-use', JSON.stringify(own))
 patchState((s) => { s.conflicts[work.lane].dispatch.at = Date.now() - 3 * 60 * 60 * 1000 })
 lane(['retry'])
 patchState((s) => { s.conflicts[work.lane].dispatch.at = Date.now() - 3 * 60 * 60 * 1000 })
