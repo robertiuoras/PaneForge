@@ -5,8 +5,9 @@
 // src/main/claudeTrust.ts copies a folder's trust down from the nearest ancestor that
 // already has it, so opening `<repo>/backend` in a repo you have worked in all week
 // starts working instead of waiting on a prompt nobody is there to answer. The rules
-// that matter are the ones it must NOT break: never overwrite a folder that has its own
-// settings, and never invent trust for a folder with no trusted ancestor.
+// that matter are the ones it must NOT break: never overwrite a folder's own settings
+// (an untrusted entry only gains trust), and never invent trust for a folder with no
+// trusted ancestor.
 //
 // It runs against a throwaway CLAUDE_CONFIG_DIR, never the real ~/.claude.json.
 
@@ -66,13 +67,30 @@ check('subfolder inherits allowedTools', JSON.stringify(after[sub]?.allowedTools
 check('the ancestor\'s prompt history is not copied', after[sub]?.history === undefined)
 check('both slash forms are written', Boolean(after[sub.replace(/\\/g, '/')]))
 
-// 2. A folder that already has its own entry is never touched.
+// 2. Claude Code writes its own default entry for a folder the first time it runs there,
+// untrusted. That entry must not lock the folder out of its ancestor's trust (2026-09-27:
+// every pane in research-lab-d stopped on the prompt): trust turns on, and the folder
+// keeps the rest of its own settings.
 writeConfig({
   [repo]: { hasTrustDialogAccepted: true, allowedTools: ['Bash(ls:*)'] },
-  [owned]: { hasTrustDialogAccepted: false, allowedTools: [] }
+  [owned]: { hasTrustDialogAccepted: false, allowedTools: [], enabledMcpServers: ['computer-use'] }
 })
 ensureTrusted(owned)
-check('a folder with its own settings is left alone', read().projects[owned].hasTrustDialogAccepted === false)
+const ownedAfter = read().projects[owned]
+check('an untrusted entry under a trusted ancestor becomes trusted', ownedAfter.hasTrustDialogAccepted === true)
+check('and keeps its own allowedTools', JSON.stringify(ownedAfter.allowedTools) === '[]', JSON.stringify(ownedAfter))
+check('and its own other settings', JSON.stringify(ownedAfter.enabledMcpServers) === '["computer-use"]', JSON.stringify(ownedAfter))
+
+// 2b. A folder already trusted is never rewritten.
+const ownTrusted = { hasTrustDialogAccepted: true, allowedTools: ['Bash(own:*)'], lastCost: 2 }
+writeConfig({ [repo]: { hasTrustDialogAccepted: true, allowedTools: ['Bash(ls:*)'] }, [owned]: ownTrusted })
+ensureTrusted(owned)
+check('a folder already trusted is left exactly as it was', JSON.stringify(read().projects[owned]) === JSON.stringify(ownTrusted))
+
+// 2c. An untrusted entry with no trusted ancestor stays untrusted.
+writeConfig({ [repo]: { hasTrustDialogAccepted: false }, [owned]: { hasTrustDialogAccepted: false, allowedTools: [] } })
+ensureTrusted(owned)
+check('an untrusted entry with no trusted ancestor stays untrusted', read().projects[owned].hasTrustDialogAccepted === false)
 
 // 3. No trusted ancestor means the prompt still happens - trust is never invented.
 writeConfig({ [repo]: { hasTrustDialogAccepted: true } })

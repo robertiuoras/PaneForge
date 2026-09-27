@@ -1440,7 +1440,8 @@ function adoptable(state, id) {
  * stop on "Do you trust the files in this folder?" with "No, exit" preselected - the
  * queued prompt's Enter answers it and the chat exits within seconds (2026-09-12, two
  * panes lost that way). Nothing is granted the repo did not already have; a folder with
- * its own entry is left alone. Same idea as seedClaudeProjectSettings in lanes.ts.
+ * its own entry keeps it and only gains trust (Claude Code writes an untrusted default
+ * there itself). Same idea as seedClaudeProjectSettings in lanes.ts.
  */
 function seedTrust(dir) {
   const home = process.env.CLAUDE_CONFIG_DIR?.trim() || join(homedir(), '.claude')
@@ -1449,17 +1450,26 @@ function seedTrust(dir) {
   const forms = (p) => [resolve(p), resolve(p).replace(/\\/g, '/')]
   try {
     const data = JSON.parse(readFileSync(path, 'utf8'))
-    if (!data.projects || forms(dir).some((k) => data.projects[k])) return
+    if (!data.projects) return
+    // Claude Code writes an untrusted default entry the first time it runs in a folder;
+    // only trust is added to that, the rest of it is the folder's own.
+    const own = forms(dir).filter((k) => data.projects[k])
+    const untrusted = own.filter((k) => data.projects[k].hasTrustDialogAccepted !== true)
+    if (own.length && !untrusted.length) return
     const from = forms(MAIN)
       .map((k) => data.projects[k])
       .find((e) => e?.hasTrustDialogAccepted === true)
     if (!from) return
-    const KEEP = ['allowedTools', 'mcpContextUris', 'mcpServers', 'enabledMcpjsonServers', 'disabledMcpjsonServers',
-      'hasTrustDialogAccepted', 'hasCompletedProjectOnboarding', 'projectOnboardingSeenCount',
-      'hasClaudeMdExternalIncludesApproved', 'hasClaudeMdExternalIncludesWarningShown']
-    const entry = {}
-    for (const k of KEEP) if (k in from) entry[k] = from[k]
-    for (const k of forms(dir)) data.projects[k] = { ...entry }
+    if (own.length) {
+      for (const k of untrusted) data.projects[k] = { ...data.projects[k], hasTrustDialogAccepted: true }
+    } else {
+      const KEEP = ['allowedTools', 'mcpContextUris', 'mcpServers', 'enabledMcpjsonServers', 'disabledMcpjsonServers',
+        'hasTrustDialogAccepted', 'hasCompletedProjectOnboarding', 'projectOnboardingSeenCount',
+        'hasClaudeMdExternalIncludesApproved', 'hasClaudeMdExternalIncludesWarningShown']
+      const entry = {}
+      for (const k of KEEP) if (k in from) entry[k] = from[k]
+      for (const k of forms(dir)) data.projects[k] = { ...entry }
+    }
     const tmp = `${path}.lane.${process.pid}.tmp`
     writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8')
     renameSync(tmp, path)

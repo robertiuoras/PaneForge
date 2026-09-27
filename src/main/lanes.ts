@@ -671,20 +671,28 @@ function seedClaudeProjectSettings(repo: string, lane: string): void {
       projects?: Record<string, Record<string, unknown>>
     }
     if (!data.projects) return
-    // Already seeded, or the lane has its own settings: leave it alone.
-    if (forms(lane).some((k) => data.projects![k])) return
-
     const from = forms(repo)
       .map((k) => data.projects![k])
       .find(Boolean)
     if (!from) return
 
-    const entry: Record<string, unknown> = {}
-    for (const k of KEEP) if (k in from) entry[k] = from[k]
-    // Prompt history is the largest field by far and only the recent end of it is
-    // any use; the whole thing per lane would bloat a file read on every launch.
-    if (Array.isArray(entry.history)) entry.history = (entry.history as unknown[]).slice(0, 50)
-    for (const k of forms(lane)) data.projects[k] = { ...entry }
+    const own = forms(lane).filter((k) => data.projects![k])
+    if (own.length) {
+      // Already seeded, or the lane has its own settings: those are left alone, except
+      // trust. Claude Code writes an untrusted default entry the first time it runs in a
+      // folder, and while it stands every pane in the lane stops on the prompt
+      // (research-lab-d, 2026-09-27). Trust is only turned on when the repo has it.
+      const untrusted = own.filter((k) => data.projects![k].hasTrustDialogAccepted !== true)
+      if (!untrusted.length || from.hasTrustDialogAccepted !== true) return
+      for (const k of untrusted) data.projects[k] = { ...data.projects[k], hasTrustDialogAccepted: true }
+    } else {
+      const entry: Record<string, unknown> = {}
+      for (const k of KEEP) if (k in from) entry[k] = from[k]
+      // Prompt history is the largest field by far and only the recent end of it is
+      // any use; the whole thing per lane would bloat a file read on every launch.
+      if (Array.isArray(entry.history)) entry.history = (entry.history as unknown[]).slice(0, 50)
+      for (const k of forms(lane)) data.projects[k] = { ...entry }
+    }
 
     // Write-then-rename: this file is Claude Code's own, and a torn write would
     // cost the user every setting in it.
@@ -760,7 +768,9 @@ export async function laneExtras(laneCwd: string, label: string): Promise<LaneEx
   const port = await freePort(Math.min(base + laneIndex(label) - 1, 65000))
   const moved = !samePath(repo, laneCwd)
   const sharedMemory = moved ? shareClaudeMemory(repo, laneCwd) : false
-  if (sharedMemory) seedClaudeProjectSettings(repo, laneCwd)
+  // Not gated on the memory share: a lane that kept its own transcripts folder still
+  // needs the repo's trust, or its panes stop on the trust prompt.
+  if (moved) seedClaudeProjectSettings(repo, laneCwd)
   // Not gated on the Claude share: a lane running Codex still opens on a trust
   // prompt for a repo the user already approved, whether or not Claude is even
   // installed on this machine.

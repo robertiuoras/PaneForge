@@ -58,8 +58,8 @@ function configPath(): string | undefined {
 
 /**
  * Give `cwd` the trust its nearest trusted ancestor already has. No-ops when the
- * folder is known, when no ancestor is trusted, or when the file cannot be read -
- * every one of those leaves the CLI to ask, which is the behaviour without this.
+ * folder is already trusted, when no ancestor is trusted, or when the file cannot be
+ * read - every one of those leaves the CLI to ask, which is the behaviour without this.
  */
 export function ensureTrusted(cwd: string): void {
   const path = configPath()
@@ -69,8 +69,12 @@ export function ensureTrusted(cwd: string): void {
       projects?: Record<string, Record<string, unknown>>
     }
     if (!data.projects) return
-    // Already known - never overwrite a folder's own settings.
-    if (forms(cwd).some((k) => data.projects![k])) return
+    // A folder already trusted is never rewritten. One with an untrusted entry is
+    // usually not a "no": Claude Code writes that default itself the first time it runs
+    // in a folder, and while it stands the pane stops on the prompt every time.
+    const own = forms(cwd).filter((k) => data.projects![k])
+    const untrusted = own.filter((k) => data.projects![k]['hasTrustDialogAccepted'] !== true)
+    if (own.length && !untrusted.length) return
 
     // Walk up until a trusted ancestor turns up or the drive root runs out.
     let dir = dirname(resolve(cwd))
@@ -86,9 +90,14 @@ export function ensureTrusted(cwd: string): void {
     }
     if (!from) return
 
-    const entry: Record<string, unknown> = {}
-    for (const k of KEEP) if (k in from) entry[k] = from[k]
-    for (const k of forms(cwd)) data.projects[k] = { ...entry }
+    if (own.length) {
+      // Only trust is inherited; the folder keeps the rest of its own settings.
+      for (const k of untrusted) data.projects[k] = { ...data.projects[k], hasTrustDialogAccepted: true }
+    } else {
+      const entry: Record<string, unknown> = {}
+      for (const k of KEEP) if (k in from) entry[k] = from[k]
+      for (const k of forms(cwd)) data.projects[k] = { ...entry }
+    }
 
     // Write-then-rename: this file is Claude Code's own, and a torn write would cost
     // the user every setting in it.
