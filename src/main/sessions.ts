@@ -148,7 +148,7 @@ import { askSignature, CHOOSE_GAP_MS, keysForChoice, readAsk, sameAsk , stampMat
 import { stripAnsi as strip } from '../shared/ansi'
 import { silenceMs, stalledNow } from '../shared/alerts'
 import { DEFAULT_RECOVER, recover, TAIL_CHARS } from '../shared/recover'
-import { stoppedLine } from '../shared/paneError'
+import { nextStop, turnSubmitted, type StopLatch } from '../shared/paneError'
 import { wakeBytes } from '../shared/wakeScreen'
 import { getConfig } from './config'
 import { spawnQuiet } from './spawnQuiet'
@@ -562,6 +562,8 @@ interface Live {
   recoverSeen: number
   /** Auto-continues sent in a row on this pane. Reset by any turn that ends whole. */
   recoverTries: number
+  /** A stop already sent off the machine for this pane; cleared by a submitted turn. */
+  stop: StopLatch
   /**
    * The handle the last ask pointed at its subject with (`$50 task`), while the card is
    * still waiting for the reply to say what that is. Unset once named, or when an ask
@@ -1004,6 +1006,7 @@ export class SessionManager extends EventEmitter {
       recoverSeen: 0,
       handleSeen: 0,
       recoverTries: 0,
+      stop: { reported: false },
       askSince: 0,
       askHold: 0,
       askSig: '',
@@ -2014,6 +2017,7 @@ export class SessionManager extends EventEmitter {
       backslashNewline: continuesOnBackslash(live.meta.agent)
     })
     live.draft = whole.state
+    if (whole.submitted.some((line) => line.trim())) turnSubmitted(live.stop)
     // `typeLine` ignores Enter, so the `\` Claude Code just turned into a line break is still
     // on the end of `typed`, and the words asked would read "one \two".
     if (whole.continued && live.typed.endsWith('\\')) live.typed = live.typed.slice(0, -1) + '\n'
@@ -4231,7 +4235,8 @@ export class SessionManager extends EventEmitter {
     // they are different features and share only this cursor. Turning the automatic
     // continue off must not also silence the pane that has given up, which is the one a
     // person misses (`shared/paneError.ts`).
-    const stopped = stoppedLine(painted)
+    // Once per stop: `nextStop` answers null until a turn is submitted into this pane.
+    const stopped = nextStop(live.stop, painted)
     if (stopped) this.emit('paneError', live.meta, stopped)
     const found = cfg.enabled
       ? recover({ painted, busy: false, tries: live.recoverTries }, cfg)

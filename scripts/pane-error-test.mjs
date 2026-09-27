@@ -67,6 +67,36 @@ for (const [what, line] of cases) {
   ok(`reports ${what}`, P.stoppedLine(`thinking...\n${line}\n`) === line)
 }
 
+// The CLIs' own wording, from this Mac's record rather than memory: Claude Code 2.1.283's
+// `isApiErrorMessage` transcript rows and binary, Codex's pane history and binary.
+const real = [
+  ['a Claude weekly limit', "You've hit your weekly limit · resets Sep 24 at 3pm (Australia/Brisbane)"],
+  ['a Claude session limit', "You've hit your session limit · resets 5pm (Australia/Brisbane)"],
+  ['a Claude logged-out pane', 'Not logged in · Please run /login'],
+  ['a Claude bad key', 'API Error: 401 Invalid API key · Please run /login'],
+  ['an expired Claude login', 'Session expired. Please run /login to sign in again.'],
+  [
+    'a Codex usage limit',
+    "■ You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:05 PM."
+  ],
+  ['a Codex 429 after its own retries', '■ exceeded retry limit, last status: 429 Too Many Requests']
+]
+for (const [what, line] of real) {
+  ok(`reports ${what}`, P.stoppedLine(`thinking...\n${line}\n`) === line.trim(), P.stoppedLine(line))
+}
+ok(
+  "reports Claude's limit under its own gutter",
+  P.stoppedLine("  ⎿  You've hit your session limit · resets 5pm (Australia/Brisbane)\n") ===
+    "⎿  You've hit your session limit · resets 5pm (Australia/Brisbane)"
+)
+// The painted stream is not the screen: a CLI steps the cursor over a blank run rather than
+// printing it, so a stripped row can arrive with its spaces gone (this desk's history has
+// `⎿ lib/app/supabaseQuota.ts:1:import{PAGE_OVERAGE_USD}from...`).
+ok(
+  'reports a limit whose spaces were cursor moves',
+  P.stoppedLine("⎿You'vehityoursessionlimit·resets5pm(Australia/Brisbane)\n") !== null
+)
+
 ok(
   'quotes the line verbatim, never a summary of it',
   P.stoppedLine('API Error: Claude usage limit reached. Your limit will reset at 5pm.') ===
@@ -108,6 +138,21 @@ ok(
   'an answer that TALKS about a rate limit is prose, not a failure',
   P.stoppedLine('I would add a retry here so a rate limit does not lose the batch.\n') === null
 )
+// 2026-09-27, verbatim: a PC pane researching Reddit, working fine, sent Robert a
+// "stopped:" message for each of these. A status code inside a sentence is prose.
+const PROSE_429 = 'It returned 429 once, then 200 with 100 posts in rank order, but no upvote counts.'
+const PROSE_403 = '... (same hard domain block as normal pages, not a 403/rate-limit)'
+for (const [what, line] of [
+  ['an answer quoting a 429', PROSE_429],
+  ['a tool result mentioning a 403 and a rate limit', PROSE_403],
+  ["the answer under Claude's bullet", `⏺ ${PROSE_429}`],
+  ["the tool result under Claude's gutter", `  ⎿  ${PROSE_403}`],
+  ['a tool that failed with a 403', '  ⎿  Error: Exit code 22 - curl: (22) The requested URL returned error: 403'],
+  ['an agent sentence that starts like an error', 'Error handling: a 429 from Reddit is retried twice.']
+]) {
+  ok(`${what} is prose, not a stop`, P.stoppedLine(`${line}\n`) === null, P.stoppedLine(`${line}\n`))
+}
+
 ok(
   'a stopping word with no report shape is not reported',
   P.stoppedLine('the billing page is at /account/usage limit settings\n') === null
@@ -136,6 +181,25 @@ ok(
     'API Error: 401 authentication_error - invalid x-api-key\n' + 'x'.repeat(P.TAIL_CHARS + 200)
   ) === null
 )
+
+// ---- one message per stop -----------------------------------------------------------
+
+const LIMIT = "You've hit your session limit · resets 5pm (Australia/Brisbane)"
+const latch = { reported: false }
+ok('the first read of a stopped pane sends', P.nextStop(latch, `${LIMIT}\n`) === LIMIT)
+ok('the same line again sends nothing', P.nextStop(latch, `${LIMIT}\n`) === null)
+ok(
+  'a second, DIFFERENT error line on the same stopped pane sends nothing',
+  P.nextStop(latch, 'API Error: 429 rate_limit_error - too many requests\n') === null
+)
+P.turnSubmitted(latch)
+ok(
+  'after a turn is submitted, the next stop sends again',
+  P.nextStop(latch, 'API Error: 401 authentication_error - invalid x-api-key\n') ===
+    'API Error: 401 authentication_error - invalid x-api-key'
+)
+const quiet = { reported: false }
+ok('a read with nothing stopped leaves the latch open', P.nextStop(quiet, 'Done.\n') === null && !quiet.reported)
 
 // ---- the message ------------------------------------------------------------------
 
