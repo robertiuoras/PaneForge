@@ -346,12 +346,25 @@ function folderKey(p) {
 const lastActive = (p) => Math.max(p.lastOutput ?? 0, typedAt(p))
 
 /**
- * The number drawn on a pane's card: its 1-based place in the `sessions:list` answer (the
- * sidebar's own order), 0 when it is not on the desk. `pf list` prints it and a finished
- * chat's report stores it (`src/main/reviews.ts`), so the two can never count differently.
+ * The number drawn on a pane's card, 0 when it is not on the desk. `pf list` prints it,
+ * `pf <cmd> <number>` finds a pane by it (`paneAt`) and a finished chat's report stores it
+ * (`src/main/reviews.ts`), so none of them can count differently.
+ *
+ * A row that carries its own `number` is that number: PaneForge Next keeps a card's number
+ * when a pane before it closes, so its desk has gaps (1, 3, 4) and the 1-based place in the
+ * list named the wrong pane - `pf list` printed 2 on the card that shows 3. A row without
+ * one (this app's `sessions:list`) is its 1-based place, the sidebar's own order.
  */
 export function cardNumber(list, id) {
-  return list.findIndex((p) => p.id === id) + 1
+  const at = list.findIndex((p) => p.id === id)
+  if (at < 0) return 0
+  const n = list[at].number
+  return Number.isInteger(n) && n > 0 ? n : at + 1
+}
+
+/** The pane whose card shows `n`, or undefined. See `cardNumber`. */
+export function paneAt(list, n) {
+  return list.find((p) => cardNumber(list, p.id) === n)
 }
 
 /**
