@@ -318,7 +318,6 @@ export interface Session {
    */
   owedPrompt?: boolean
   autoClearPrompt?: string
-  autoClearSteps?: string[]
   /**
    * The exact keystrokes the countdown will send, frozen when it was armed.
    *

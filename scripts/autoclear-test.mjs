@@ -215,6 +215,9 @@ console.log('nothing but the button stands a countdown down')
   ok('and it has words', dropWords('cancelled') === 'you stopped it')
   const toast = readFileSync(join(root, 'src/renderer/src/components/AutoClearToast.tsx'), 'utf8')
   ok('the card still carries that button', /Keep this session/.test(toast))
+  // Robert 2026-09-27: the handoff's next steps under the countdown were "too cluttered".
+  // A step is a paragraph of commands; the pane's name is what the card needs to say.
+  ok('the card lists no handoff steps', !/autoClearSteps|<ul|<li/.test(toast))
 }
 
 console.log('a countdown stays silent')

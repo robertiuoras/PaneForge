@@ -3047,13 +3047,11 @@ export class SessionManager extends EventEmitter {
         acLog(`${id} refused: ${NOTHING_OPEN} (${hand.path})`)
         return { ok: false, reason: NOTHING_OPEN }
       }
-      if (hand.path && hand.steps.length) plan.steps = hand.steps
     }
     this.cancelAutoClear(id, 'cancelled')
     const at = Date.now() + plan.seconds * 1000
     s.meta.autoClearAt = at
     s.meta.autoClearPrompt = plan.prompt
-    s.meta.autoClearSteps = plan.steps
     // Decided HERE, once, and typed verbatim when the timer fires. The command is the
     // CLI's own (`/new` in Codex), and a pane's agent cannot change under an armed
     // countdown, so there is nothing to gain from re-deriving it at the last moment - and
@@ -3280,11 +3278,10 @@ export class SessionManager extends EventEmitter {
     return true
   }
 
-  /** The six countdown fields, deleted together - the fire path and every drop share it. */
+  /** The five countdown fields, deleted together - the fire path and every drop share it. */
   private clearAutoClearMeta(s: { meta: Session }): void {
     delete s.meta.autoClearAt
     delete s.meta.autoClearPrompt
-    delete s.meta.autoClearSteps
     delete s.meta.autoClearChunks
     delete s.meta.autoClearNoResume
     delete s.meta.autoClearTokens
