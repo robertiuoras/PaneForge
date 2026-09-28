@@ -1186,6 +1186,22 @@ function TerminalPane({
       api.resize(sessionId, t.cols, t.rows, isPhoneClient(), viewerName())
     return changed
   }
+  const resizeRepaint = useRef<number | undefined>(undefined)
+  const queueResizeRepaint = (rewrapped: boolean): void => {
+    window.clearTimeout(resizeRepaint.current)
+    resizeRepaint.current = window.setTimeout(() => {
+      if (!autoFixRef.current || Date.now() - mountAt.current < 3000) return
+      if (!host.current?.offsetParent) return
+      if (mirrorRef.current && !rewrapped) return
+      api.redraw(sessionId)
+      try {
+        const active = term.current
+        if (active) active.refresh(0, active.rows - 1)
+      } catch {
+        /* detached */
+      }
+    }, 400)
+  }
   // The pty has just reported a new grid. A pane holding a shrink back was waiting for
   // exactly this, so it applies now instead of at the end of the grace.
   // A pty that lands at a grid this terminal is not at, with nothing outstanding, is
@@ -1196,7 +1212,8 @@ function TerminalPane({
     const f = fit.current
     if (!t || !f) return
     if (!asked.current && !ptyOwed({ cols: t.cols, rows: t.rows }, pty ?? null)) return
-    reshape(t, f)
+    const wasCols = t.cols
+    if (reshape(t, f)) queueResizeRepaint(t.cols !== wasCols)
   }, [pty?.cols, pty?.rows])
 
   /**
@@ -4547,8 +4564,6 @@ function TerminalPane({
 
     // A hidden pane has zero size; fitting it would resize the pty to 1x1 and wrap
     // the agent's output permanently, so resizes only run while the pane is shown.
-    const mountedAt = Date.now()
-    let settle: number | undefined
     const ro = new ResizeObserver(() => {
       if (!host.current?.offsetParent) return
       let changed = false
@@ -4612,27 +4627,7 @@ function TerminalPane({
       // missed and leaves torn boxes behind. Once the dragging stops, make it draw the
       // whole frame again. Held off for the first seconds so a CLI still painting its
       // welcome screen is not poked mid-paint.
-      window.clearTimeout(settle)
-      settle = window.setTimeout(() => {
-        if (!autoFixRef.current || Date.now() - mountedAt < 3000) return
-        if (!host.current?.offsetParent) return
-        // A mirror changing ROWS means the far end resized, and the far end has already
-        // asked its own agent to repaint. Asking again from here would poke a CLI
-        // mid-paint over the network for no reason.
-        //
-        // A mirror changing COLUMNS is this window's own doing, and the far end cannot
-        // see it: its pane is the right shape over there. Every absolute column the far
-        // CLI printed is now clamped into a narrower grid here, which is the overlapping,
-        // half-overwritten rows Robert sent a picture of. So a width change is repaired
-        // from here, and only a width change.
-        if (mirrorRef.current && !rewrapped) return
-        api.redraw(sessionId)
-        try {
-          t.refresh(0, t.rows - 1)
-        } catch {
-          /* detached */
-        }
-      }, 400)
+      queueResizeRepaint(rewrapped)
     })
     ro.observe(host.current)
 
@@ -4655,7 +4650,7 @@ function TerminalPane({
       offHandover()
       coarse.removeEventListener('change', oneComposer)
       ro.disconnect()
-      window.clearTimeout(settle)
+      window.clearTimeout(resizeRepaint.current)
       window.clearTimeout(settle2)
       window.clearTimeout(fixTimer)
       window.clearTimeout(grantTimer.current)
