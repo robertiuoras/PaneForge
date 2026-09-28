@@ -814,7 +814,12 @@ const phone = new PhoneServer({
   setKeepOpen: (id, keepOpen) => {
     const current = getConfig().pinnedPanes ?? []
     const next = keepOpen ? [...new Set([...current, id])] : current.filter((pinned) => pinned !== id)
-    if (next.join(',') !== current.join(',')) setConfig({ pinnedPanes: next })
+    // Told to the window, not only written: `setConfig` broadcasts nothing, and the idle
+    // clock and the chip both live in the renderer's copy of the pins. A Keep pressed on
+    // the phone or the other desk was saved here and never reached them - the pane stayed
+    // on the clock and its card kept saying `closes` (2026-09-29, a pane pinned from the
+    // Mac still publishing its deadline an hour later).
+    if (next.join(',') !== current.join(',')) send('config:changed', setConfig({ pinnedPanes: next }))
     return true
   },
   isKeepOpen: (id) => (getConfig().pinnedPanes ?? []).includes(id),
@@ -1211,7 +1216,12 @@ const remote = new Remote({
   setKeepOpen: (id, keepOpen) => {
     const current = getConfig().pinnedPanes ?? []
     const next = keepOpen ? [...new Set([...current, id])] : current.filter((pinned) => pinned !== id)
-    if (next.join(',') !== current.join(',')) setConfig({ pinnedPanes: next })
+    // Told to the window, not only written: `setConfig` broadcasts nothing, and the idle
+    // clock and the chip both live in the renderer's copy of the pins. A Keep pressed on
+    // the phone or the other desk was saved here and never reached them - the pane stayed
+    // on the clock and its card kept saying `closes` (2026-09-29, a pane pinned from the
+    // Mac still publishing its deadline an hour later).
+    if (next.join(',') !== current.join(',')) send('config:changed', setConfig({ pinnedPanes: next }))
     return true
   },
   isKeepOpen: (id) => (getConfig().pinnedPanes ?? []).includes(id),

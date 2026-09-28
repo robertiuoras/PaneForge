@@ -372,6 +372,7 @@ function writeLedgerSync(ledger: Ledger): void {
 const tracked = new Map<string, StrayRecord[]>()
 let timer: NodeJS.Timeout | undefined
 let panes: () => Array<{ id: string; pid: number }> = () => []
+let sampled: ((procs: ProcRecord[], ledger: ReadonlyMap<string, StrayRecord[]>) => void) | undefined
 
 function persist(): void {
   const ledger = readLedger()
@@ -397,6 +398,10 @@ export function sampleOnce(done?: () => void): void {
       tracked.set(pane.id, merged)
     }
     persist()
+    // The same table, handed on: which of these processes is SERVING is a question about
+    // exactly this list - what closing each pane would stop - and a second read of the
+    // process table to ask it would double this sampler's cost. See `shared/serving.ts`.
+    if (procs.length) sampled?.(procs, tracked)
     done?.()
   })
 }
@@ -406,8 +411,12 @@ export function sampleOnce(done?: () => void): void {
  * handed them once - panes open and close, and a sampler holding a stale list is a sampler
  * recording somebody else's children.
  */
-export function trackStrays(livePanes: () => Array<{ id: string; pid: number }>): void {
+export function trackStrays(
+  livePanes: () => Array<{ id: string; pid: number }>,
+  onSample?: (procs: ProcRecord[], ledger: ReadonlyMap<string, StrayRecord[]>) => void
+): void {
   panes = livePanes
+  sampled = onSample
   if (timer) return
   timer = setInterval(() => sampleOnce(), SAMPLE_MS)
   timer.unref?.()

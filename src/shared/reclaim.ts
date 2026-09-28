@@ -394,6 +394,17 @@ export interface ReclaimPane {
    */
   backJob?: string | null
   /**
+   * A process closing this pane would stop is holding a listening socket - a dev server,
+   * a preview, anything a browser can reach (`shared/serving.ts`, `Session.serving`).
+   *
+   * Its own reading beside `job` and `backJob` because a server is the one thing that is
+   * quiet on purpose: both of those can miss it (a foreground reading that names the
+   * wrong process, a sampler that stops with a hidden window) and the clock then reads a
+   * server nobody is talking to right now as a pane nobody is using. Robert, 2026-09-29:
+   * "isnt that our dev server on remote pc session that shouldn't close".
+   */
+  serving?: string | null
+  /**
    * Already on its way to another device - see shared/autoHandoff.ts.
    *
    * Closing it would be the same memory saved and the work lost: the move is mid-flight,
@@ -606,6 +617,7 @@ export function reclaimPlan(
         !p.busy &&
         !p.job &&
         !p.backJob &&
+        !p.serving &&
         !p.pinned &&
         !p.asleep &&
         CLOSEABLE.has(p.state)
@@ -912,6 +924,7 @@ function keepable(p: ReclaimPane, personHere = true): boolean {
     !p.busy &&
     !p.job &&
     !p.backJob &&
+    !p.serving &&
     !p.pinned &&
     CLOSEABLE.has(p.state)
   )
