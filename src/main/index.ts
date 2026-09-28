@@ -73,7 +73,7 @@ import { isOutdated, versionOf } from '../shared/codexCatalogue'
 import { gitCached, gitInfo } from './git'
 import { projectRoot } from './projectRoot'
 import { diffFiles, diffPatch } from './diff'
-import { withDefaultModel } from '../shared/startModel'
+import { routeCodexStart, withDefaultModel } from '../shared/startModel'
 import type { ClientNamed, DiffScope, EffortChoice, PhoneState , LaneBoard} from '../shared/types'
 import { detectLane, isWorktreeOf, laneExtras, LANE_LABELS, resolveLane, seedLane } from './lanes'
 import { hideCopyFolder } from './hideCopy'
@@ -1224,9 +1224,8 @@ const remote = new Remote({
   // in one repo must not share a checkout just because one of them is remote.
   sendPrompt: (id, text) => manager.sendPrompt(id, text),
   startSession: async (req) => {
-    // A request that named no model starts on the configured default, as the New Session
-    // dialog always did (`shared/startModel.ts`), same as the other start path below.
-    return startComputeAware(withDefaultModel(await laneFor(req), getConfig().defaultModels))
+    // Give unpinned new Codex work a task-sized model and effort before applying defaults.
+    return startComputeAware(withDefaultModel(routeCodexStart(await laneFor(req)), getConfig().defaultModels))
   },
   // A pane handed here from another device: pull its branch, drop its transcript
   // where the CLI will look, start it as an ordinary local pane. The lane split
@@ -2091,10 +2090,9 @@ async function startOrSend(
     const began = Date.now()
     const lane = await laneFor(req, claimed)
     const decided = Date.now() - began
-    // A request that named no model starts on the configured default, as the New Session
-    // dialog always did (`shared/startModel.ts`). Here, not at the top of `startOrSend`:
-    // a pane handed to the other desk takes THAT desk's defaults.
-    const session = await startComputeAware(withDefaultModel(lane, getConfig().defaultModels))
+    // Route unpinned new Codex work here, after the placement decision: a pane handed
+    // to the other desk takes that desk's launch rule and saved defaults.
+    const session = await startComputeAware(withDefaultModel(routeCodexStart(lane), getConfig().defaultModels))
     logOffload({ event: 'started', id: session.id, cwd: lane.cwd, decidedMs: decided, openMs: Date.now() - began })
     return session
   }

@@ -96,6 +96,7 @@ import { backgroundAgentsFor, forgetBackgroundAgents, noteBackgroundAgents } fro
 import {
   EFFORT_PRESS_GAP_MS,
   EFFORT_SETTLE_MS,
+  classifyEffort,
   confirmEffort,
   decideBeforeTurn,
   planEffortKeys,
@@ -407,6 +408,11 @@ export function setSilenceAlert(minutes: number | undefined): void {
 /** What a new Codex pane is launched thinking at, when the reading is on for it. */
 const EFFORT_START = 'medium'
 
+function startEffort(req: StartSessionRequest): string {
+  if (req.effort?.mode === 'manual' && req.effort.manual) return req.effort.manual
+  return req.prompt ? classifyEffort(req.prompt).level : EFFORT_START
+}
+
 /**
  * The card's half of a pane's effort state: the level the rollout has CONFIRMED, the plain
  * words for why, and the levels this model offers so the right-click menu can list them.
@@ -431,7 +437,7 @@ function effortStart(req: StartSessionRequest, agent: Agent): EffortState | unde
     manual: req.effort.manual,
     // What the `-c model_reasoning_effort` flag on the spawn asked for. It is a starting
     // point for the arithmetic and not a claim: the first rollout line confirms it.
-    launched: EFFORT_START,
+    launched: startEffort(req),
     reason: "waiting for Codex's first reply"
   }
 }
@@ -3562,7 +3568,7 @@ export class SessionManager extends EventEmitter {
         resume: req.resume,
         resumeId: req.resumeId,
         model: req.model,
-        effort: req.effort ? EFFORT_START : undefined
+        effort: req.effort ? startEffort(req) : undefined
       }),
       ...pfPrimerArgs(spec.id)
     ]
