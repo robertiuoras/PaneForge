@@ -1255,7 +1255,7 @@ export default function App(): JSX.Element {
   // session was simply absent from New Session, with nothing to explain why.
   useEffect(() => {
     api.listProjects().then(setProjects)
-  }, [config?.root, picking])
+  }, [config?.root, config?.archivedClientPaths, picking])
 
   // Re-probed whenever the custom list changes, and on every open of the picker, so
   // a CLI installed while the app was running shows up without a restart.

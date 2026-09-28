@@ -7,8 +7,8 @@
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
-import { projectsRoot } from './config'
+import { basename, isAbsolute, join, resolve } from 'node:path'
+import { getConfig, projectsRoot, setConfigStrict } from './config'
 import { looksLikeRoster, readRoster } from './clients'
 import { CLIENTS_DIR, clientLabel } from '../shared/clientName'
 import { checkoutOwners, type FolderFacts } from '../shared/checkout'
@@ -55,6 +55,12 @@ export function createProject(typed: string, root = projectsRoot()): Project | n
 }
 
 export function listProjects(root = projectsRoot()): Project[] {
+  const archived = new Set(getConfig().archivedClientPaths ?? [])
+  return listAllProjects(root).filter((p) => !p.client || !archived.has(p.path))
+}
+
+/** Routing keeps seeing clients whose launcher entry was archived. */
+export function listAllProjects(root = projectsRoot()): Project[] {
   if (!existsSync(root)) return []
   const used = lastUsedByPathSlug()
 
@@ -94,6 +100,27 @@ export function listProjects(root = projectsRoot()): Project[] {
   // folder, and the lane a pane lands in is `laneFor`'s decision as it is everywhere else.
   projects.push(...clientRows(root, used, owners))
   return projects.sort((a, b) => b.lastUsed - a.lastUsed || a.name.localeCompare(b.name))
+}
+
+export function listArchivedClients(root = projectsRoot()): Project[] {
+  const all = listAllProjects(root)
+  return (getConfig().archivedClientPaths ?? []).map((path) =>
+    all.find((p) => p.client && p.path === path) ??
+    { name: basename(path), path, lastUsed: 0, isGit: false })
+}
+
+/** Only launcher visibility changes. Never touch the roster, folders or sessions. */
+export function setClientArchived(path: string, archived: boolean, root = projectsRoot()): void {
+  if (typeof path !== 'string' || !isAbsolute(path) || typeof archived !== 'boolean') {
+    throw new Error('Choose an exact client folder and archive or restore it.')
+  }
+  const saved = getConfig().archivedClientPaths ?? []
+  if (archived && !listAllProjects(root).some((p) => p.client && p.path === path)) {
+    throw new Error('This folder is not a client in the current projects list.')
+  }
+  const next = saved.filter((p) => p !== path)
+  if (archived) next.push(path)
+  setConfigStrict({ archivedClientPaths: next })
 }
 
 /** Local shortcuts belong only to the session picker, never routing or project workflows. */

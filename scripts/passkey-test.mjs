@@ -697,6 +697,8 @@ ok(!server.running, 'the gate test server stopped cleanly')
     'autoclear:cancel', 'autoclear:takeover',
     // Local starting-folder metadata only, like projects:list; no file or session writes.
     'projects:sessionFolders',
+    // Exact client visibility only: no folder, transcript, process or authority changes.
+    'projects:archivedClients', 'projects:archiveClient',
     // Welcome checklist facts: whether claude and git are on PATH and whether the CLI is
     // signed in, as booleans. Reads `~/.claude.json` for one key's presence; returns no
     // token, types nothing, reaches no pty.

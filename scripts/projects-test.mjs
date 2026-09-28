@@ -124,7 +124,9 @@ ok('a suffix on its own proves nothing', alone.size === 0, [...alone.keys()].joi
 // new session alison | clients would popup so i know that its part of clients".
 {
   const stub = join(out, 'electron-stub.mjs')
-  writeFileSync(stub, 'export const app = { getPath: () => "/tmp", isPackaged: false }\nexport default { app }\n', 'utf8')
+  const profile = join(out, 'profile')
+  mkdirSync(profile)
+  writeFileSync(stub, `export const app = { getPath: () => ${JSON.stringify(profile)}, isPackaged: false }\nexport default { app }\n`, 'utf8')
   const file = join(out, 'projects.mjs')
   let built = true
   try {
@@ -142,7 +144,7 @@ ok('a suffix on its own proves nothing', alone.size === 0, [...alone.keys()].joi
     ok('the project list builds without a window', false, String(e).slice(0, 200))
   }
   if (built) {
-    const { listProjects, listSessionFolders } = await import(pathToFileURL(file).href)
+    const { listProjects, listAllProjects, listArchivedClients, setClientArchived, listSessionFolders } = await import(pathToFileURL(file).href)
     const desk = mkdtempSync(join(tmpdir(), 'pf-desk-'))
     mkdirSync(join(desk, 'PaneForge'), { recursive: true })
     mkdirSync(join(desk, 'clients', 'alison'), { recursive: true })
@@ -161,6 +163,30 @@ ok('a suffix on its own proves nothing', alone.size === 0, [...alone.keys()].joi
     ok('...and marked a client, so the launcher can go back to their pane', alison?.client === 'Adie Bradley', String(alison?.client))
     ok('every client gets a row, not just the first', rows.filter((r) => r.client).length === 2, String(rows.filter((r) => r.client).length))
     ok('an ordinary project is untouched', rows.some((r) => r.name === 'PaneForge' && !r.client))
+    const clientPath = alison.path
+    const readme = readFileSync(join(clientPath, 'README.md'), 'utf8')
+    setClientArchived(clientPath, true, desk)
+    setClientArchived(clientPath, true, desk)
+    ok('archive hides only the exact client from the launcher', !listProjects(desk).some((p) => p.path === clientPath) && listProjects(desk).some((p) => p.client === 'PIA Team'))
+    ok('archived clients remain discoverable once for restore', listArchivedClients(desk).filter((p) => p.path === clientPath).length === 1)
+    ok('routing retains the archived client and metadata', listAllProjects(desk).some((p) => p.path === clientPath && p.client === alison.client))
+    ok('archive preserves the canonical folder and contents', readFileSync(join(clientPath, 'README.md'), 'utf8') === readme)
+    ok('archive persists the exact path in the test profile', JSON.parse(readFileSync(join(profile, 'config.json'), 'utf8')).archivedClientPaths.includes(clientPath))
+    const fresh = await import(pathToFileURL(file).href + '?restart')
+    ok('archive survives fresh config loading', !fresh.listProjects(desk).some((p) => p.path === clientPath))
+    for (const bad of [join(desk, 'PaneForge'), join(desk, 'clients'), 'alison', clientPath + '/../alison']) {
+      let refused = false
+      try { setClientArchived(bad, true, desk) } catch { refused = true }
+      ok('non-client or non-exact path refused: ' + bad, refused)
+    }
+    mkdirSync(join(profile, 'config.json.tmp'))
+    let failedSave = false
+    try { setClientArchived(clientPath, false, desk) } catch { failedSave = true }
+    ok('failed persistence reports failure and retains archive', failedSave && !listProjects(desk).some((p) => p.path === clientPath))
+    rmSync(join(profile, 'config.json.tmp'), { recursive: true })
+    ok('changed root does not lose the restore control', listArchivedClients(join(desk, 'absent')).some((p) => p.path === clientPath))
+    setClientArchived(clientPath, false, join(desk, 'absent'))
+    ok('restore works after the projects root changes', listProjects(desk).some((p) => p.path === clientPath) && listArchivedClients(desk).length === 0)
     // The real shape on this desk: the client work is a repository of its own, and the
     // roster is the `clients` folder inside it - `Projects/clients/clients/<who>`.
     const nested = mkdtempSync(join(tmpdir(), 'pf-nested-'))

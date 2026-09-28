@@ -1949,6 +1949,8 @@ export interface Config {
   firstChatStarted?: boolean
   /** folder scanned for projects */
   root: string
+  /** Profile-local exact client paths hidden only from project launchers. */
+  archivedClientPaths?: string[]
   presets: Preset[]
   defaultAgent: Agent
   /** model per agent id, remembered from the last launch ('' = the CLI's default) */
@@ -2349,6 +2351,8 @@ export interface Api {
   /** Aggregate GitHub installer-asset downloads, not unique people or IP telemetry. */
   ownerStats(): Promise<OwnerStats>
   listProjects(): Promise<Project[]>
+  listArchivedClients(): Promise<Project[]>
+  setClientArchived(path: string, archived: boolean): Promise<void>
   listSessionFolders(): Promise<Project[]>
   /** make a project folder from a typed name; null when the name may not be one */
   createProject(name: string): Promise<Project | null>

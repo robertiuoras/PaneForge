@@ -40,7 +40,7 @@ import { mayReturnLane } from '../shared/laneReturn'
 import { revealTarget, within } from '../shared/reveal'
 import { revealTargetFor } from '../shared/revealPane'
 import { clientForText, rosterRoot } from './clients'
-import { createProject, listProjects, listSessionFolders } from './projects'
+import { createProject, listAllProjects, listArchivedClients, listProjects, listSessionFolders, setClientArchived } from './projects'
 import { routeCandidates } from './projectAliases'
 import { routePrompt } from '../shared/projectRoute'
 import { sendOrOpen } from '../shared/sendOrOpen'
@@ -1556,6 +1556,11 @@ startAway((a) => {
 }
 
 ipcMain.handle('projects:list', () => listProjects())
+ipcMain.handle('projects:archivedClients', () => listArchivedClients())
+ipcMain.handle('projects:archiveClient', (_e, path: string, archived: boolean) => {
+  setClientArchived(path, archived)
+  send('config:changed', getConfig())
+})
 ipcMain.handle('projects:sessionFolders', () => listSessionFolders())
 ipcMain.handle('projects:create', (_e, name: string) => createProject(name))
 ipcMain.handle('projects:route', (_e, text: string) => routeText(text))
@@ -4563,7 +4568,7 @@ function applyVoiceHotkey(cfg: Config): void {
  */
 function routeText(text: string): RouteResult {
   if (!text || text.trim().length < 3) return { matches: [], confident: false }
-  return routePrompt(text, routeCandidates(listProjects()))
+  return routePrompt(text, routeCandidates(listAllProjects()))
 }
 
 /**
