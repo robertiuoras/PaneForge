@@ -218,7 +218,12 @@ ok(
 )
 ok(
   'a pty landing at another grid re-runs reshape',
-  /if \(!asked\.current && !ptyOwed\(\{ cols: t\.cols, rows: t\.rows \}, pty \?\? null\)\) return\s*\n\s*reshape\(t, f\)\s*\n\s*\}, \[pty\?\.cols, pty\?\.rows\]\)/.test(pane)
+  /if \(!asked\.current && !ptyOwed\(\{ cols: t\.cols, rows: t\.rows \}, pty \?\? null\)\) return\s*\n\s*const wasCols = t\.cols\s*\n\s*if \(reshape\(t, f\)\) queueResizeRepaint\(t\.cols !== wasCols\)/.test(pane)
+)
+ok(
+  'a granted shrink schedules the same repaint as a direct fit',
+  /if \(reshape\(t, f\)\) queueResizeRepaint\(t\.cols !== wasCols\)/.test(pane) &&
+    /if \(!changed\) return[\s\S]*queueResizeRepaint\(rewrapped\)/.test(pane)
 )
 {
   const i = pane.indexOf('const redrawHistory = async')
