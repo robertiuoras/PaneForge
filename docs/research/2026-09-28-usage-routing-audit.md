@@ -27,6 +27,16 @@ The Mac Claude login's backed-up 26 September 09:52 UTC plan row showed 5% weekl
 
 The current visible native Codex pane is `01a0e6b7-8fee-7a10-a88c-c99aeb97101a`, `gpt-6-sol/high`, despite the lower-model handoff. Its first 77 collected usage events had 0.386M uncached input, 4.918M cache read, 0.031M output and 0.009M reasoning output. Four actual user messages appeared in the sampled native rollout, the largest 24,959 characters, with no exact duplicates. A large Mac Codex client session sampled over 9h 39m had 1,338 usage events, 31 actual user messages, 89.65M cache reads, 0.318M output and no exact repeated user text. Two high-volume Mac Claude session samples had respectively 2 and 5 actual text prompts plus 40 and 261 tool-result entries; neither repeated the actual text prompts exactly. Tool-result entries are not user retries. No error event was seen in the sampled current or client Codex rollouts. The available telemetry does not attribute cache volume to a specific fork, resume, repeated instruction, or failed retry, so none of those is established as a leading cause.
 
+The five largest Mac sessions by **total processed token volume** in this seven-day collector are bounded examples, with identifiers and client names removed. This rank is not a quota-depletion rank: cache reads dominate the total, and their plan-meter weight is provider-specific.
+
+| Session category | Model/effort observed | Events | Cache read | Output |
+| --- | --- | ---: | ---: | ---: |
+| Client delivery | Codex 5.6 Sol/medium | 1,338 | 89.65M | 0.318M |
+| Taskdriver | Claude Opus 5.5/unknown | 237 | 88.17M | 0.171M |
+| PaneForge | Claude Opus 5.5/unknown | 257 | 77.79M | 0.230M |
+| Shared configuration | Claude Opus 5.5/unknown | 230 | 76.01M | 0.225M |
+| PaneForge continuation | Claude Opus 5.5/unknown | 241 | 74.46M | 0.267M |
+
 ## What changed and what it proves
 
 The live `~/.codex/config.toml` had `model=gpt-6-astra` and `model_reasoning_effort=high`; choosing Sol for the current pane did not lower its inherited effort. A backed-up local edit changed the global default **effort** to medium for future raw Codex processes, leaving the strong default model and per-task overrides available. A native `codex exec -m gpt-6-sol -c model_reasoning_effort=medium` smoke returned `ROUTE_SMOKE_OK`; its native `turn_context` recorded Sol/medium and its final answer file contained that response. This verifies the CLI override for a new process. The installed app's `sessions:setEffort` control also returned `ok` for this pane and `effort.log` recorded manual medium at 07:24:57 UTC. That choice is for a future turn boundary; the current turn remains Sol/high until native observation proves otherwise.
