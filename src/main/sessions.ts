@@ -744,7 +744,40 @@ export class SessionManager extends EventEmitter {
   }
 
   list(): Session[] {
-    return [...this.sessions.values()].map((s) => (s.meta.id === this.activeId ? { ...s.meta, focused: true } : s.meta))
+    return [...this.sessions.values()].map((s) => {
+      const focused = s.meta.id === this.activeId
+      // `owedPrompt` is READ here, not only stored: see `owesPrompt`. A copy only when it
+      // differs from the meta, as for `focused`.
+      const owed = !s.meta.owedPrompt && this.owesPrompt(s)
+      if (!focused && !owed) return s.meta
+      return { ...s.meta, ...(focused ? { focused: true } : {}), ...(owed ? { owedPrompt: true } : {}) }
+    })
+  }
+
+  /**
+   * The app owes this pane a prompt - `Session.owedPrompt` as `list()`, `doneReadings()` and
+   * `sleep()` all read it, from this one place so they cannot disagree.
+   *
+   * Three facts: a prompt `queuePrompt` accepted and has not settled; the handover between
+   * an autoclear's `/clear` and its resume prompt (`handoverUntil`); and an automatic clear
+   * on its way in - the ask waiting for the turn to end, the settle hold in front of the
+   * countdown, and the countdown up to the moment `/clear` is typed. The last was missing
+   * on 2026-09-28 (Mac 0.8.230, s60-mulljm2l): a move armed at 19:01:07Z fired at 19:01:22
+   * inside the clear's countdown, the PC resumed the 259k conversation un-cleared, and the
+   * `/clear` typed at 19:01:37 went into the copy being closed. A sleep or close in that
+   * window loses the clear the same way. `autoClearAt` rather than `autoClearTimers`: every
+   * live countdown timer has its deadline there, and the lead timer is left in that map
+   * after it has typed.
+   */
+  private owesPrompt(live: Live): boolean {
+    const id = live.meta.id
+    return (
+      Boolean(live.meta.owedPrompt) ||
+      (live.meta.handoverUntil ?? 0) > Date.now() ||
+      Boolean(live.meta.autoClearAt) ||
+      this.autoClearPending.has(id) ||
+      this.autoClearArmTimers.has(id)
+    )
   }
 
   /** The pane a person is looking at, as the window last said (`sessions:active`). */
@@ -784,7 +817,7 @@ export class SessionManager extends EventEmitter {
         // reason. Once the summary has landed and been answered, the opener is a pane
         // like any other.
         openedOthers: this.openChildrenOf(m.id) > 0 || this.digestPending(m.id),
-        owedPrompt: Boolean(m.owedPrompt) || (m.handoverUntil ?? 0) > Date.now(),
+        owedPrompt: this.owesPrompt(live),
         lookedAt: live.lookedAt || undefined
       }
     })
@@ -1396,9 +1429,9 @@ export class SessionManager extends EventEmitter {
       busy: Boolean(live.meta.runSince) || live.busyUntil > Date.now(),
       asking: Boolean(live.meta.ask),
       drafting: Boolean(live.meta.drafting),
-      // `handoverUntil` covers the beat between a queued prompt settling and the next one
-      // starting (the model-switch-then-resume chain) that `owedPrompt` alone would miss.
-      owedPrompt: Boolean(live.meta.owedPrompt) || (live.meta.handoverUntil ?? 0) > Date.now(),
+      // The same reading `list()` gives - see `owesPrompt`, which also covers the beat
+      // between a queued prompt settling and the next one starting.
+      owedPrompt: this.owesPrompt(live),
       job: live.meta.job,
       // A background agent still running inside the CLI dies with a sleep exactly as a
       // background shell does. See `Session.subagent`.
@@ -2401,6 +2434,8 @@ export class SessionManager extends EventEmitter {
     if (!ask) return
     this.autoClearPending.delete(id)
     const res = this.armAutoClear(id, ask)
+    // Dropped after the turn: the pane is owed nothing now (`owesPrompt`).
+    if (!res.ok) this.emitSessions()
     console.info(
       res.ok
         ? `autoclear: ${id} countdown started - the turn ended (${ask.seconds}s)`
@@ -3035,6 +3070,9 @@ export class SessionManager extends EventEmitter {
     if (decision === 'queue') {
       this.autoClearPending.set(id, ask)
       acLog(`${id} queued until this turn ends (${why})`)
+      // `owedPrompt` from here - see `owesPrompt`. Said now, or the desk arms a move on a
+      // reading that does not have it yet.
+      this.emitSessions()
       return { ok: true, reason: 'queued until this turn ends' }
     }
     if (decision === 'refuse') {
@@ -3055,10 +3093,12 @@ export class SessionManager extends EventEmitter {
       acLog(`${id} holding ${wait}ms: the pane printed ${quiet}ms ago and may not be finished`)
       const t = setTimeout(() => {
         this.autoClearArmTimers.delete(id)
-        this.armAutoClear(id, ask)
+        // A refusal on the second pass ends what `owedPrompt` was saying - say that too.
+        if (!this.armAutoClear(id, ask).ok) this.emitSessions()
       }, wait)
       t.unref?.()
       this.autoClearArmTimers.set(id, t)
+      this.emitSessions()
       return { ok: true, reason: 'waiting for the pane to settle' }
     }
     // The steps that reached here are a PHOTOGRAPH, and everything above this line is a
@@ -3289,7 +3329,7 @@ export class SessionManager extends EventEmitter {
   cancelAutoClear(id: string, why: DropReason): boolean {
     // Somebody using the pane means the whole idea is off, queue included. A 'working'
     // cancel is the internal re-queue above and must leave the pending ask alone.
-    if (why !== 'working') this.autoClearPending.delete(id)
+    let dropped = why !== 'working' && this.autoClearPending.delete(id)
     // ...and the wait in FRONT of the countdown, or pressing Keep on a card is undone a
     // few seconds later by an arm nobody can see. A 'working' cancel is this class's own
     // re-queue and leaves it alone, exactly as it leaves the pending ask alone.
@@ -3298,6 +3338,7 @@ export class SessionManager extends EventEmitter {
       if (arming) {
         clearTimeout(arming)
         this.autoClearArmTimers.delete(id)
+        dropped = true
       }
     }
     const s = this.sessions.get(id)
@@ -3306,7 +3347,12 @@ export class SessionManager extends EventEmitter {
       clearTimeout(timer)
       this.autoClearTimers.delete(id)
     }
-    if (!s?.meta.autoClearAt) return false
+    if (!s?.meta.autoClearAt) {
+      // A dropped ask or hold ends `owedPrompt` (`owesPrompt`): say so, or the desk goes on
+      // holding the pane on a reading that is no longer true.
+      if (dropped) this.emitSessions()
+      return false
+    }
     this.clearAutoClearMeta(s)
     console.info(`autoclear: ${id} stood down - ${dropWords(why)}`)
     acLog(`${id} stood down - ${dropWords(why)}`)

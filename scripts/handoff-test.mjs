@@ -653,6 +653,36 @@ console.log('move now')
   ok('an idle pane moved with now is not interrupted and not asked to carry on', idle[0]?.ok === true && interrupted === 0 && received.at(-1)?.continueWith === undefined && started.at(-1)?.prompt === undefined, idle[0]?.error)
 }
 
+// ---------------------------------------------------------------- owed a prompt
+// An idle pane the app still owes a prompt - an automatic clear counting down, or its
+// resume prompt not yet sent - is held like a turn. s60-mulljm2l (2026-09-28 19:01Z) was
+// moved inside its clear's countdown: the PC resumed it at 259k tokens, un-cleared, and the
+// /clear was typed into the copy being closed.
+console.log('owed a prompt')
+{
+  const deliveriesBefore = received.length
+  const queued = []
+  const owedSender = {
+    ...sender,
+    list: () => [{ id: 's1', title: 'proj', cwd: repo, agent: 'claude', status: 'idle', lastOutput: 0, createdAt: 0, owedPrompt: true }],
+    busy: () => false,
+    queue: (id, device, closeAfter) => queued.push({ id, device, closeAfter })
+  }
+  const held = await sendHandoff(owedSender, 'pc', { ids: ['s1'] })
+  ok(
+    'an idle pane owed a prompt is queued, not delivered',
+    held[0]?.pending === true && queued.length === 1 && queued[0].id === 's1' && received.length === deliveriesBefore,
+    JSON.stringify({ item: held[0], queued, delivered: received.length - deliveriesBefore })
+  )
+  const beforeNow = received.length
+  const now = await sendHandoff(
+    { ...owedSender, queue: () => { throw new Error('a NOW move must never queue') }, interrupt: async () => true, selfDevice: () => 'mac' },
+    'pc',
+    { ids: ['s1'], now: true }
+  )
+  ok('...and a NOW move of it is unchanged: moved at once, never queued', now[0]?.ok === true && !now[0]?.pending && received.length === beforeNow + 1, now[0]?.error)
+}
+
 // ---------------------------------------------------------------- refusals
 console.log('refusals')
 writeFileSync(join(clone, 'local-edit.txt'), 'work someone did on the PC\n')

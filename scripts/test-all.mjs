@@ -472,9 +472,17 @@ const killChromeUnder = (root) => {
   }
   execSync(`pkill -9 -f -- "--user-data-dir=${root}"`, { stdio: 'ignore' })
 }
+// A root something still holds open (a Chrome not yet let go, a child whose working folder
+// is inside it) threw EPERM out of this `exit` handler, and a throw there exits 1: "20
+// tests passed" then red, on 2026-09-28. The verdict is the suites', not the cleanup's -
+// say it and leave the root to `sweepStaleRoots` below.
 const dropTmp = () => {
   try { killChromeUnder(TMP_ROOT) } catch {}
-  rmSync(TMP_ROOT, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+  try {
+    rmSync(TMP_ROOT, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+  } catch (err) {
+    console.error(`test-all: could not remove ${TMP_ROOT} (${err.code ?? err.message}); a later run removes it`)
+  }
 }
 // A run killed before `exit` - or one whose cleanup lost a race with a Chrome that had not
 // released its handles yet - leaves its root behind for good, because the name is unique
