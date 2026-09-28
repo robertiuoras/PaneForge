@@ -44,17 +44,19 @@ check(
   /if \(mirrorRef\.current && !rewrapped\) return/.test(src),
   'a resize repair on a mirror is refused only when the width did not change'
 )
-// The bail sits in the resize settle, which is the only place in this file that may turn
-// a mirror away from a REPAINT. (`checkBusy` refuses a mirror too, and rightly: the far
-// window is already judging that frame.)
+// The bail sits in the shared resize repaint helper. (`checkBusy` refuses a mirror too,
+// and rightly: the far window is already judging that frame.)
 const settle = src.slice(src.indexOf('const rewrapped = t.cols !== wasCols'), src.indexOf('ro.observe(host.current)'))
+const repaint = src.slice(src.indexOf('const queueResizeRepaint'), src.indexOf('const queueResizeRepaint') + 900)
 check(
   !/if \(mirrorRef\.current\) return/.test(settle),
   '...and never refused outright'
 )
 check(
-  src.indexOf('const rewrapped = t.cols !== wasCols') < src.indexOf('if (mirrorRef.current && !rewrapped) return'),
-  'and the width reading is taken before it is used'
+  /if \(mirrorRef\.current && !rewrapped\) return/.test(repaint) &&
+    /const rewrapped = t\.cols !== wasCols[\s\S]*queueResizeRepaint\(rewrapped\)/.test(settle) &&
+    /if \(reshape\(t, f\)\) queueResizeRepaint\(t\.cols !== wasCols\)/.test(src),
+  'and each resize path passes its width reading to the repaint guard'
 )
 
 // 3. A remote snapshot stays covered until xterm has parsed the complete replacement.
