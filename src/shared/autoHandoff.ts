@@ -958,7 +958,7 @@ export type QueueVerdict =
   | 'go'
   /** the turn just ended: start the countdown */
   | 'soon'
-  /** still working, holding a question, running a background agent, or counting down: leave it queued */
+  /** still working, holding a question, running a background agent, owed a prompt, or counting down: leave it queued */
   | 'wait'
   /** it waited longer than the budget: give up and say so, never kill it */
   | 'expired'
@@ -967,7 +967,7 @@ export type QueueVerdict =
 
 export function queueVerdict(
   q: Queued,
-  pane: Pick<AutoPane, 'state' | 'asking' | 'subagent'> | undefined,
+  pane: Pick<AutoPane, 'state' | 'asking' | 'subagent' | 'owedPrompt'> | undefined,
   cfg: AutoHandoffConfig = DEFAULT_AUTO_HANDOFF,
   now = 0
 ): QueueVerdict {

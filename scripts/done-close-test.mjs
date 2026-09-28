@@ -452,7 +452,8 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
   const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
   assert.doesNotMatch(sessions, /private openers = new Set/, 'no life-long set of openers')
   assert.match(sessions, /openedOthers: this\.openChildrenOf\(m\.id\) > 0 \|\| this\.digestPending\(m\.id\)/, 'open children or a waiting summary')
-  assert.match(sessions, /owedPrompt: Boolean\(m\.owedPrompt\) \|\| \(m\.handoverUntil \?\? 0\) > Date\.now\(\)/, 'a prompt being delivered is in the reading')
+  assert.match(sessions, /owedPrompt: this\.owesPrompt\(live\)/, 'a prompt being delivered is in the reading')
+  assert.match(sessions, /\(live\.meta\.handoverUntil \?\? 0\) > Date\.now\(\)/, '...the handover between /clear and its resume included')
   const index = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
   assert.match(index, /manager\.digestPending = \(id\) => finishedDigest\.has\(id\)/, 'index.ts says when a summary is waiting')
   // The real opener: s44-mujgi828 on 27 Sep (`desk-2026-09-28-sessions.json`), finished,
