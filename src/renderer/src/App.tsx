@@ -352,6 +352,9 @@ function reclaimPaneOf(
     // A Claude background agent still running inside the CLI dies with a close or a sleep
     // exactly as a background shell does. See `Session.subagent`.
     backJob: backJob ?? s.subagent ?? null,
+    // ...and a server any of it is running, which is quiet on purpose. Read in main off
+    // the process table, so a hidden window still knows. See `ReclaimPane.serving`.
+    serving: s.serving ?? null,
     focused: s.id === activeId,
     // Only the pressure sweep refuses a pane for being on screen; the clock deliberately
     // does not, or a desk with the grid on could never close anything.
@@ -2962,6 +2965,8 @@ export default function App(): JSX.Element {
         // A Claude background agent still running - closing the pane ends it. See
         // `Session.subagent`.
         backJob: s.subagent ?? null,
+        // A server this pane runs dies with it. See `ReclaimPane.serving`.
+        serving: s.serving ?? null,
         focused: s.id === activeId,
         visible: visibleIds.has(s.id),
         remote: !!s.remote,

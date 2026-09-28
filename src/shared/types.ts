@@ -547,6 +547,16 @@ export interface Session {
   /** Epoch ms that job started, so the row's clock counts the job and not the silence. */
   backJobSince?: number
   /**
+   * The program holding a listening socket among the processes closing this pane would
+   * stop (`shared/serving.ts`) - a dev server, whether it is the shell's foreground, an
+   * agent's background job, or a `next dev` whose npm parent has exited.
+   *
+   * A REFUSAL, unlike `backJob`: no clock closes or sleeps a pane that is serving, because
+   * a server is quiet on purpose. Read off the strays sampler's table every 30 s, which runs
+   * whether or not anybody can see the window.
+   */
+  serving?: string
+  /**
    * A Claude Code BACKGROUND AGENT this pane's conversation launched and that has not
    * finished (`a background agent (Visual review Design 4 pages)`), read off the transcript
    * by `main/runningAgents.ts`. Absent when none is running or nothing could be read.
