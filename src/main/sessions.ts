@@ -4123,7 +4123,13 @@ export class SessionManager extends EventEmitter {
           // answer, so the turn proof still stands there.
           repaint(still)
           const heldNow = proof !== 'idle' ? promptStillInBox(painted, prompt) : null
-          if (proof !== 'idle' && heldNow !== true && (still.meta.runSince ?? 0) >= typedAt) {
+          // Codex paints startup and hook activity like a turn, and can erase a
+          // composer before accepting its text. Only its native user row proves delivery.
+          if (proof !== 'idle' && still.meta.agent === 'codex' && codexAcceptedPrompt(id, prompt, typedTextAt - 1000)) {
+            acLog(`${id} prompt submitted - native Codex receipt`)
+            return settle('sent')
+          }
+          if (proof !== 'idle' && still.meta.agent !== 'codex' && heldNow !== true && (still.meta.runSince ?? 0) >= typedAt) {
             acLog(`${id} prompt submitted - a turn started`)
             return settle('sent')
           }
@@ -4209,7 +4215,7 @@ export class SessionManager extends EventEmitter {
                 acLog(`${id} prompt submitted - Claude transcript receipt`)
                 return settle('sent')
               }
-              if (box === false && !typedIntoTurn) {
+              if (box === false && !typedIntoTurn && still.meta.agent !== 'codex') {
                 acLog(`${id} prompt submitted - it is no longer in the composer`)
                 return settle('sent')
               }

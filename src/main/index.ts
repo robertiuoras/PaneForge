@@ -68,6 +68,7 @@ import { surfaceChannels } from '../shared/surface'
 import { startDisplayAwake } from './awake'
 import { attachGlass, glassSupported } from './glass'
 import { invalidateAgents, listAgents, specFor } from './agents'
+import { includedAccounts } from './includedAccounts'
 import { codexInstalledVersion, codexLatest, forgetCodexVersion } from './codexModels'
 import { isOutdated, versionOf } from '../shared/codexCatalogue'
 import { gitCached, gitInfo } from './git'
@@ -1569,6 +1570,7 @@ ipcMain.handle('projects:sessionFolders', () => listSessionFolders())
 ipcMain.handle('projects:create', (_e, name: string) => createProject(name))
 ipcMain.handle('projects:route', (_e, text: string) => routeText(text))
 ipcMain.handle('agents:list', (_e, force?: boolean) => listAgents(force))
+ipcMain.handle('agents:includedAccounts', (_e, target, change) => includedAccounts(target, change))
 ipcMain.handle('sessions:list', () => allSessions())
 ipcMain.handle('reviews:list', () => ({ reviews: listReviews(history.list()), persistent: true as const }))
 let computeReviews: ComputeReviews | undefined
@@ -3421,7 +3423,9 @@ function paneBusy(s: Session): boolean {
     s.status === 'working' ||
     s.status === 'starting' ||
     s.stalledSince !== undefined ||
-    !!s.bell ||
+    // Codex also rings on a completed reply. An unread completion is not a live
+    // question; retaining that bell used to hold finished transfers indefinitely.
+    (!!s.bell && !s.finished) ||
     !!s.ask
   )
 }
