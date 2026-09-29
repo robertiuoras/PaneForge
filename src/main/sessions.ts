@@ -8,6 +8,10 @@ import { spawn } from 'node:child_process'
 import { gitRun } from './gitRun'
 import { closeSync, existsSync, openSync, readSync, statSync } from 'node:fs'
 import { EventEmitter } from 'node:events'
+import { join } from 'node:path'
+import { app } from 'electron'
+import { PaneAnswers } from './paneAnswers'
+import type { PaneAnswerIdentity, PaneAnswerRequest, PaneAnswerReceipt } from '../shared/paneAnswer'
 import * as pty from '@lydell/node-pty'
 import { audit, plainTail } from './audit'
 import { ensureTrusted } from './claudeTrust'
@@ -60,7 +64,7 @@ import { START_COLS, START_ROWS } from '../shared/paneGrid'
 import { paintedWidth, RESTORE_MARK_TEXT } from '../shared/replayWidth'
 import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, SUBMIT_GAP_MS, armDecision, clearChunks, hasFreshPaneHandoff, resumeOf, dropFor, dropWords, expiryDecision, queuedPromptDecision, quietEnoughToArm, standDownFor, type DropReason, type QueuedPromptVerdict } from '../shared/autoclear'
 import { acLog } from './autoclearLog'
-import { dropAllFor, noteAccepted, noteNativeAccepted, noteDropped, noteSubmitted, noteWithheld, owedAfterRestore, stillOwed } from './queuedPrompts'
+import { dropAllFor, noteAccepted, noteNativeAccepted, noteDropped, noteSubmitted, noteWithheld, owedAfterRestore, owedCount, stillOwed } from './queuedPrompts'
 import type { QueueDrop } from '../shared/queuedPrompts'
 import { logReclaim } from './activationLog'
 import { guardPtyPipes } from './closedPipe'
@@ -88,7 +92,7 @@ export interface AutoClearArm {
   tokens?: number
 }
 import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from './pipe'
-import { claimFromCli, claudeAcceptedPrompt, claudeStartup, codexAcceptedPrompt, forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeEvidence, resumeIdFor, transcriptPath } from './transcripts'
+import { claimFromCli, claudeAcceptedPrompt, claudeStartup, codexAcceptedPrompt, codexPromptReceipt, forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeEvidence, resumeIdFor, transcriptPath } from './transcripts'
 import { recordPromptReview } from './promptReview'
 import { liveModelFor } from './paneModel'
 import { backgroundAgentsFor, forgetBackgroundAgents, noteBackgroundAgents } from './runningAgents'
@@ -678,6 +682,8 @@ function claudeModelValues(): string[] {
 
 export class SessionManager extends EventEmitter {
   private sessions = new Map<string, Live>()
+  private answerLedger?: PaneAnswers
+  private answering = new Set<string>()
   /**
    * Shell children at the last table read. Also used on POSIX for background jobs
    * and for distinguishing an interactive Codex wrapper from an ordinary node job.
@@ -2047,6 +2053,78 @@ export class SessionManager extends EventEmitter {
    * nothing relayed those keystrokes. `null` means no such pane; an empty `text` with
    * `certain` true is the one shape that really means nothing is pending.
    */
+  answerStatus(req: PaneAnswerIdentity): PaneAnswerReceipt | null {
+    this.answerLedger ??= new PaneAnswers(join(app.getPath('userData'), 'pane-answers.json'))
+    return this.answerLedger.status(req)
+  }
+
+  /** Conversation-bound steering. Never clears a draft or retries an uncertain write. */
+  answerPane(req: PaneAnswerRequest): PaneAnswerReceipt {
+    this.answerLedger ??= new PaneAnswers(join(app.getPath('userData'), 'pane-answers.json'))
+    const ledger = this.answerLedger
+    const accepted = ledger.accept(req)
+    if (!accepted.fresh) return accepted.receipt
+    const id = req.paneId
+    const live = this.sessions.get(id)
+    const proc = live?.proc
+    const same = () => Boolean(live && proc && this.sessions.get(id) === live && live.proc === proc &&
+      !live.meta.asleep && live.meta.status !== 'exited' && live.meta.agent === 'codex' &&
+      resumeIdFor(id) === req.expectedConversationId)
+    if (!same() || this.answering.has(id) || live!.meta.owedPrompt) {
+      return ledger.update(req, { state: 'rejected', reason: 'Pane identity unavailable or another prompt owns the composer' })
+    }
+    this.answering.add(id)
+    this.setOwedPrompt(id, true)
+    const finish = (state: PaneAnswerReceipt['state'], reason?: string, transcriptAt?: number) => {
+      this.answering.delete(id)
+      if (this.sessions.get(id) === live) this.setOwedPrompt(id, owedCount(id) > 0)
+      try {
+        ledger.update(req, { state, reason, ...(state === 'confirmed' ? { confirmedAt: Date.now(), transcriptAt } : {}) })
+      } catch { console.warn('pane answer: receipt persistence failed; request must not be replayed') }
+    }
+    const started = Date.now()
+    const tick = () => {
+      try {
+        if (!same()) { finish('rejected', 'Pane process or conversation changed before delivery'); return }
+        if (Date.now() - started > 120_000) { finish('rejected', 'Composer remained occupied; no answer was typed'); return }
+        const painted = plainTail(live!.buffer.read(), 30)
+        // A busy turn is allowed. A human draft, uncertain reconstruction, dialog,
+        // or reasoning-control write is not. Do not erase/reconstruct somebody's text.
+        if (!live!.draft.certain || live!.draft.text || live!.typed.trim() || live!.meta.drafting ||
+          live!.effortHold || composerHeld(painted)) {
+          setTimeout(tick, 250).unref(); return
+        }
+        // Persist intent before the first byte. A crash at any later point is uncertain.
+        const submittedAt = Date.now()
+        ledger.update(req, { state: 'submitted', submittedAt })
+        this.write(id, `\x1b[200~${req.text}\x1b[201~`, 'app')
+        const keyboard = live!.meta.lastKeyboard
+        setTimeout(() => {
+          try {
+            if (!same() || live!.meta.lastKeyboard !== keyboard || live!.draft.text !== req.text || !live!.draft.certain || live!.effortHold) {
+              finish('uncertain', 'Composer or pane changed after paste; Enter withheld'); return
+            }
+            // Codex 0.157 Enter submits/steers an active turn; Tab queues it.
+            live!.effortPassThrough = true
+            try { this.write(id, '\r', 'app') } finally { live!.effortPassThrough = false }
+            const confirm = () => {
+              try {
+                if (!same()) { finish('uncertain', 'Pane changed before transcript confirmation'); return }
+                const proof = codexPromptReceipt(id, req.text, submittedAt)
+                if (proof) { finish('confirmed', undefined, proof.transcriptAt); return }
+                if (Date.now() - submittedAt > 30_000) { finish('uncertain', 'No exact native transcript receipt; no automatic retry'); return }
+                setTimeout(confirm, 250).unref()
+              } catch { finish('uncertain', 'Receipt verification failed; no automatic retry') }
+            }
+            confirm()
+          } catch { finish('uncertain', 'Delivery failed; no automatic retry') }
+        }, 150).unref()
+      } catch { finish('uncertain', 'Durable delivery failed; no automatic retry') }
+    }
+    setTimeout(tick, 0).unref()
+    return accepted.receipt
+  }
+
   draftOf(id: string): { text: string; certain: boolean } | null {
     const live = this.sessions.get(id)
     if (!live) return null
@@ -4278,6 +4356,7 @@ export class SessionManager extends EventEmitter {
         setTimeout(tick, PROMPT_POLL_MS)
         return
       }
+      if (this.answering.has(id)) { setTimeout(tick, PROMPT_POLL_MS); return }
       const what = verdict(live, idle(live))
       if (what === 'wait') {
         // Somebody is typing in there. The curtain says "Keys are held" and they are

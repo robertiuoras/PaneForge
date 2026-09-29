@@ -21,7 +21,7 @@ const fixtureCodexHome = join(work, 'codex')
 
 const out = join(work, 'transcripts.cjs')
 buildSync({ absWorkingDir: root, entryPoints: ['src/main/transcripts.ts'], bundle: true, format: 'cjs', platform: 'node', outfile: out, define: { 'process.env.CODEX_HOME': JSON.stringify(fixtureCodexHome) } })
-const { codexAcceptedPrompt, noteSession, forgetSession, projectDir, nativeTranscriptPage } = createRequire(import.meta.url)(out)
+const { codexAcceptedPrompt, noteSession, noteSubmittedPrompt, resumeIdFor, forgetSession, projectDir, nativeTranscriptPage } = createRequire(import.meta.url)(out)
 const cwd = '/Users/native/Projects/reader'
 const line = (value) => JSON.stringify(value)
 const claudeRow = (type, content, extra = {}) => line({ type, timestamp: '2026-09-09T01:02:03.000Z', message: { role: type, content }, ...extra })
@@ -122,7 +122,27 @@ try {
   assert.equal(codex.messages[4].blocks[0].phase, 'call'); assert.equal(codex.messages[5].blocks[0].phase, 'result')
   assert.equal(codex.messages[5].blocks[0].state, 'error'); assert.equal(codex.messages[5].blocks[0].output, 'failed exactly\n')
   assert.equal(codex.rawOutput, codexRows.slice(1).join('\n'), 'correlation metadata never changes raw JSONL')
+  appendFileSync(codexFile, line({ timestamp: '2026-09-09T01:03:00.000Z', type: 'response_item', payload: {
+    type: 'message', role: 'user', content: [{ type: 'input_text', text: 'fragment' }, { type: 'input_text', text: 'other text' }]
+  } }) + '\n')
+  assert.equal(codexAcceptedPrompt('codex-pane', 'fragment', 0), false, 'a matching fragment of a different message is not exact delivery')
   forgetSession('codex-pane')
+
+  // New Codex panes have no public resumeId yet. Identity must come from a unique
+  // native user row this pane submitted, never cwd or expectedConversationId alone.
+  const newPane = 's-new-codex'
+  noteSession(newPane, cwd, 'codex')
+  assert.equal(resumeIdFor(newPane), undefined, 'a same-folder rollout alone proves no identity')
+  noteSubmittedPrompt(newPane, 'queued follow-up receipt')
+  const duplicate = join(dirname(codexFile), 'duplicate.jsonl')
+  const otherId = '23456789-1234-1234-1234-123456789abc'
+  writeFileSync(duplicate, codexRows.join('\n').replaceAll(codexId, otherId) + '\n')
+  assert.equal(resumeIdFor(newPane), undefined, 'ambiguous native evidence fails closed')
+  rmSync(duplicate)
+  assert.equal(resumeIdFor(newPane), codexId, 'a unique actual native row identifies a new pane without a resumeId')
+  writeFileSync(codexFile, codexRows.join('\n').replaceAll(codexId, otherId) + '\n')
+  assert.equal(resumeIdFor(newPane), otherId, 'changed native metadata invalidates the old conversation claim')
+  forgetSession(newPane)
 
   // A giant unbroken record must still return a smaller cursor, never the same one.
   const giantId = 'claude-giant'; const giantFile = join(claudeDir, `${giantId}.jsonl`)

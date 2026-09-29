@@ -1045,8 +1045,12 @@ export function codexTranscriptPath(cwd: string, resumeId: string): string | nul
  * because this is only used seconds after Enter was sent.
  */
 export function codexAcceptedPrompt(id: string, prompt: string, since: number): boolean {
+  return codexPromptReceipt(id, prompt, since) !== null
+}
+
+export function codexPromptReceipt(id: string, prompt: string, since: number): { transcriptAt: number } | null {
   const file = transcriptFor(id)
-  if (!file || !prompt) return false
+  if (!file || !prompt) return null
   for (const line of tailLines(file, PROMPT_RECEIPT_BYTES)) {
     let row: { timestamp?: string | number; type?: string; payload?: { type?: string; role?: string; content?: unknown } }
     try {
@@ -1059,10 +1063,11 @@ export function codexAcceptedPrompt(id: string, prompt: string, since: number): 
     if (row.type !== 'response_item' || row.payload?.type !== 'message' || row.payload.role !== 'user') continue
     const content = row.payload.content
     if (!Array.isArray(content)) continue
-    if (content.some((part) => typeof part === 'object' && part !== null &&
-      (part as { type?: string }).type === 'input_text' && (part as { text?: string }).text === prompt)) return true
+    const texts = content.filter((part) => typeof part === 'object' && part !== null &&
+      (part as { type?: string }).type === 'input_text').map((part) => (part as { text?: string }).text)
+    if (texts.length === 1 && texts[0] === prompt) return { transcriptAt: at }
   }
-  return false
+  return null
 }
 
 /** The whole lines in the last `bytes` of a file (a cut first line dropped); none when unreadable. */

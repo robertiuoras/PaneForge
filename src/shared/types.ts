@@ -2761,6 +2761,8 @@ export interface Api {
   updateState(): Promise<UpdateState>
   /** Hand one line to a pane, queued for the gap between its own turns. */
   tellPane(ref: string, text: string): void
+  answerPane(req: import('./paneAnswer').PaneAnswerRequest): Promise<import('./paneAnswer').PaneAnswerReceipt>
+  answerStatus(req: import('./paneAnswer').PaneAnswerIdentity): Promise<import('./paneAnswer').PaneAnswerReceipt | null>
   /**
    * Ask for a pane to be /clear'd after a countdown the desk can stop. The caller is the
    * `autoclear` Stop hook, never the window - see shared/autoclear.ts.
