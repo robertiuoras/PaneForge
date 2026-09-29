@@ -137,7 +137,7 @@ import { OutBuffer } from './outBuffer'
 import { allAgents, buildArgs, colourEnv, continuesOnBackslash, hasAgent, modelValue, resolveEnv } from '../shared/agents'
 import { homedir } from 'node:os'
 import { allowsCwd, scrubForeignKeys } from '../shared/paneTrust'
-import { anchoredStart, readsBusy, composerHeld, type BusyReason } from '../shared/busy'
+import { anchoredStart, readsBusy, composerHeld, ASK_PROMPT, type BusyReason } from '../shared/busy'
 import { promptStillInBox } from '../shared/promptLanded'
 import { resumeVerdict, RESUME_POLL_MS } from '../shared/resumeCheck'
 import { exitPlan, exitWords } from '../shared/exitClose'
@@ -2087,11 +2087,13 @@ export class SessionManager extends EventEmitter {
       try {
         if (!same()) { finish('rejected', 'Pane process or conversation changed before delivery'); return }
         if (Date.now() - started > 120_000) { finish('rejected', 'Composer remained occupied; no answer was typed'); return }
-        const painted = plainTail(live!.buffer.read(), 30)
+        // Keep line boundaries and the whole tail: the audit formatter truncates at
+        // 400 characters and joins lines, hiding anchored question footers.
+        const painted = strip(live!.buffer.read()).split('\n').slice(-30).join('\n')
         // A busy turn is allowed. A human draft, uncertain reconstruction, dialog,
         // or reasoning-control write is not. Do not erase/reconstruct somebody's text.
         if (!live!.draft.certain || live!.draft.text || live!.typed.trim() || live!.meta.drafting ||
-          live!.effortHold || composerHeld(painted)) {
+          live!.effortHold || live!.meta.ask || ASK_PROMPT.test(painted) || composerHeld(painted)) {
           setTimeout(tick, 250).unref(); return
         }
         // Persist intent before the first byte. A crash at any later point is uncertain.
@@ -2101,7 +2103,9 @@ export class SessionManager extends EventEmitter {
         const keyboard = live!.meta.lastKeyboard
         setTimeout(() => {
           try {
-            if (!same() || live!.meta.lastKeyboard !== keyboard || live!.draft.text !== req.text || !live!.draft.certain || live!.effortHold) {
+            const painted = strip(live!.buffer.read()).split('\n').slice(-30).join('\n')
+            if (!same() || live!.meta.lastKeyboard !== keyboard || live!.draft.text !== req.text || !live!.draft.certain ||
+              live!.effortHold || live!.meta.ask || ASK_PROMPT.test(painted) || composerHeld(painted)) {
               finish('uncertain', 'Composer or pane changed after paste; Enter withheld'); return
             }
             // Codex 0.157 Enter submits/steers an active turn; Tab queues it.

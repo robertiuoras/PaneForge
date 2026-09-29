@@ -19,7 +19,8 @@ Both return a receipt containing `paneId`, `expectedConversationId`, `requestId`
 returns null for an unknown request. Validation/identity conflicts throw an IPC error.
 
 - `waiting`: durable request, no answer typed yet. An occupied or uncertain human
-  composer is preserved. Busy model work alone does not hold the answer.
+  composer is preserved. Live question metadata, question/approval footers and a
+  connecting composer also hold delivery. Busy model work alone does not hold the answer.
 - `submitted`: write intent saved before paste. This is **not delivery proof**.
 - `confirmed`: the same native conversation contains the exact answer in a fresh
   native user-message row. No terminal/UI heuristic can produce this state.
@@ -29,6 +30,9 @@ returns null for an unknown request. Validation/identity conflicts throw an IPC 
   retry under a new ID. Human typing between paste and Enter withholds Enter without
   deleting the draft. Receipt timeout is thirty seconds. Application restart never
   replays a request into a restored process.
+
+Question and composer guards are checked again against fresh terminal output before
+Enter. A dialog appearing after paste withholds Enter and makes the receipt uncertain.
 
 Repeat the same request to retrieve its receipt without typing twice. Changing its
 text or conversation under the same ID is an error. The private durable ledger stores
