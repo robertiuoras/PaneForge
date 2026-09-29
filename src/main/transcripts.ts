@@ -201,6 +201,8 @@ const started = new Map<string, Started>()
 const claimed = new Map<string, string>()
 /** paneId -> Codex rollout id, which is not encoded in the rollout filename. */
 const codexClaimed = new Map<string, string>()
+// Avoid rereading a growing rollout once its latest submitted prompt is confirmed.
+const codexConfirmedPrompt = new Map<string, string>()
 /**
  * Transcripts a pane has moved OFF, which nothing may drift onto.
  *
@@ -461,6 +463,7 @@ export function noteSession(id: string, cwd: string, agent: string, resumeId?: s
   started.set(id, { cwd, agent, at: Date.now(), prior: claimed.get(id) })
   claimed.delete(id)
   codexClaimed.delete(id)
+  codexConfirmedPrompt.delete(id)
   settled.delete(id)
   const file = resumeId ? (agent === 'codex' ? codexTranscriptPath(cwd, resumeId) : transcriptPath(cwd, resumeId)) : null
   if (file) {
@@ -475,6 +478,7 @@ export function forgetSession(id: string): void {
   started.delete(id)
   claimed.delete(id)
   codexClaimed.delete(id)
+  codexConfirmedPrompt.delete(id)
   settled.delete(id)
 }
 
@@ -501,19 +505,27 @@ export function transcriptFor(id: string): string | null {
   if (s.agent === 'codex') {
     const mine = claimed.get(id)
     const known = codexClaimed.get(id)
-    if (mine && known && codexMatches(mine, s.cwd, known)) return mine
+    const current = mine && known && codexMatches(mine, s.cwd, known) ? mine : null
+    const submittedLines = submitted.get(id)
+    const latest = submittedLines?.at(-1)
+    if (current && (!latest || codexConfirmedPrompt.get(id) === latest)) return current
+    if (current && latest && codexSaidByPane(current, [latest])) {
+      codexConfirmedPrompt.set(id, latest)
+      return current
+    }
     const taken = new Set([...claimed].filter(([other]) => other !== id).map(([, file]) => file))
-    const lines = submitted.get(id)
+    // /new keeps the terminal. Only the latest prompt can prove the pane has moved.
+    const lines = current && latest ? [latest] : submittedLines
     // Cwd plus a one-minute launch window is not identity: a first pane can be queried
     // after a second pane has already written its rollout. Require a line THIS pane typed.
-    if (!lines?.length) return null
+    if (!lines?.length) return current
     // Shared evidence cannot decide ownership, but a later pane-specific submitted line
     // can. Keep only proof no other live same-folder Codex pane also submitted.
     const uniqueLines = lines.filter((line) => ![...started].some(([other, candidate]) =>
       other !== id && candidate.agent === 'codex' && sameCwd(candidate.cwd, s.cwd) &&
-      !codexClaimed.has(other) && proofsOverlap([line], submitted.get(other) ?? [])
+      (current || !codexClaimed.has(other)) && proofsOverlap([line], submitted.get(other) ?? [])
     ))
-    if (!uniqueLines.length) return null
+    if (!uniqueLines.length) return current
     const matches = codexRollouts(s.at - START_SLACK_MS)
       .map(codexMeta)
       .filter((row): row is CodexMeta => Boolean(row))
@@ -525,12 +537,14 @@ export function transcriptFor(id: string): string | null {
       // `s2-mtwz8uej`). What still bounds the search is `codexRollouts`, which only offers
       // files WRITTEN since this pane started - a rollout this pane is typing into has
       // just been appended to, whenever it was created.
-      .filter((row) => sameCwd(row.cwd, s.cwd) && !taken.has(row.file) && codexSaidByPane(row.file, uniqueLines))
+      .filter((row) => sameCwd(row.cwd, s.cwd) && !taken.has(row.file) && !released.has(row.file) && codexSaidByPane(row.file, uniqueLines))
     // Cwd and time identify a candidate only while they identify exactly one. Two panes
     // launched together in one folder must remain unresumable rather than swap chats.
-    if (matches.length !== 1) return null
+    if (matches.length !== 1) return current
+    if (current && current !== matches[0].file) released.add(current)
     claimed.set(id, matches[0].file)
     codexClaimed.set(id, matches[0].id)
+    if (latest && codexSaidByPane(matches[0].file, [latest])) codexConfirmedPrompt.set(id, latest)
     settled.add(id)
     return matches[0].file
   }

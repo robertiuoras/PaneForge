@@ -321,6 +321,32 @@ try {
   rollout('one', codexId, cwd, undefined, 'pane three owns this Codex prompt')
   assert.equal(T.resumeIdFor('pane3'), codexId, 'Codex keeps its metadata-bound session id')
   assert.equal(T.resumable(cwd, codexId, 'codex'), true, 'an exact Codex id with an assistant reply is resumable')
+  // /new changes the native conversation without restarting its terminal pane.
+  const freshCwd = mkdtempSync(join(tmpdir(), 'pf-codex-new-'))
+  const freshOld = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'
+  const freshNew = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd'
+  T.noteSession('pane-codex-new', freshCwd, 'codex')
+  T.noteSubmittedPrompt('pane-codex-new', 'original conversation unique request')
+  rollout('fresh-old', freshOld, freshCwd, undefined, 'original conversation unique request')
+  assert.equal(T.resumeIdFor('pane-codex-new'), freshOld)
+  rollout('fresh-unrelated', freshNew, freshCwd, undefined, 'unrelated same directory conversation')
+  assert.equal(T.resumeIdFor('pane-codex-new'), freshOld, 'newest file alone never changes identity')
+  T.noteSubmittedPrompt('pane-codex-new', 'new conversation distinct request')
+  assert.equal(T.resumeIdFor('pane-codex-new'), freshOld, 'a prompt not written yet preserves the verified claim')
+  rollout('fresh-unrelated', freshNew, freshCwd, undefined, 'new conversation distinct request')
+  assert.equal(T.resumeIdFor('pane-codex-new'), freshNew, 'a new native conversation follows unique submitted proof')
+  assert.equal(T.resumeIdFor('pane-codex-new'), freshNew, 'the refreshed identity stays stable')
+  T.noteSession('pane-codex-abandoned', freshCwd, 'codex')
+  T.noteSubmittedPrompt('pane-codex-abandoned', 'original conversation unique request')
+  assert.equal(T.resumeIdFor('pane-codex-abandoned'), undefined, 'abandoned history cannot be claimed by another pane')
+  T.noteSubmittedPrompt('pane-codex-new', 'ambiguous later conversation request')
+  rollout('fresh-amb-one', 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', freshCwd, undefined, 'ambiguous later conversation request')
+  rollout('fresh-amb-two', 'ffffffff-ffff-4fff-8fff-ffffffffffff', freshCwd, undefined, 'ambiguous later conversation request')
+  assert.equal(T.resumeIdFor('pane-codex-new'), freshNew, 'ambiguous new evidence never swaps identities')
+  T.forgetSession('pane-codex-new')
+  T.forgetSession('pane-codex-abandoned')
+  rmSync(freshCwd, { recursive: true, force: true })
+
   const largeMetaId = '12121212-1212-4121-8121-121212121212'
   rollout('large-meta', largeMetaId, cwd, undefined, 'large native metadata is restorable', true, 'x'.repeat(22_000))
   assert.equal(T.resumable(cwd, largeMetaId, 'codex'), true, 'Codex metadata larger than 8KB is read through its complete first line')
