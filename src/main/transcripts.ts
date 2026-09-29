@@ -194,6 +194,8 @@ interface Started {
   at: number
   /** the transcript this pane held when it last said it had moved, if it held one */
   prior?: string
+  /** An explicitly resumed Codex conversation remains authoritative until re-noted. */
+  codexResumeId?: string
 }
 
 const started = new Map<string, Started>()
@@ -460,7 +462,8 @@ const openings = new Map<string, Opening>()
  * folder - and take somebody else's.
  */
 export function noteSession(id: string, cwd: string, agent: string, resumeId?: string): void {
-  started.set(id, { cwd, agent, at: Date.now(), prior: claimed.get(id) })
+  started.set(id, { cwd, agent, at: Date.now(), prior: claimed.get(id),
+    codexResumeId: agent === 'codex' ? resumeId : undefined })
   claimed.delete(id)
   codexClaimed.delete(id)
   codexConfirmedPrompt.delete(id)
@@ -506,6 +509,11 @@ export function transcriptFor(id: string): string | null {
     const mine = claimed.get(id)
     const known = codexClaimed.get(id)
     const current = mine && known && codexMatches(mine, s.cwd, known) ? mine : null
+    // A pending receipt is not evidence that an explicitly resumed pane moved. An
+    // older same-folder rollout may contain the identical prompt already; following
+    // that text would hide the delayed receipt in the conversation we actually own.
+    // /new, /clear and /resume re-note the pane; changed metadata invalidates current.
+    if (current && known === s.codexResumeId) return current
     const submittedLines = submitted.get(id)
     const latest = submittedLines?.at(-1)
     if (current && (!latest || codexConfirmedPrompt.get(id) === latest)) return current
@@ -1049,7 +1057,16 @@ export function codexAcceptedPrompt(id: string, prompt: string, since: number): 
 }
 
 export function codexPromptReceipt(id: string, prompt: string, since: number): { transcriptAt: number } | null {
-  const file = transcriptFor(id)
+  return codexReceiptIn(transcriptFor(id), prompt, since)
+}
+
+/** Recovery must use the original conversation, even when the restored pane changed. */
+export function codexConversationReceipt(cwd: string, conversationId: string, prompt: string, since: number): { transcriptAt: number } | null {
+  if (!Number.isFinite(since) || since <= 0) return null
+  return codexReceiptIn(codexTranscriptPath(cwd, conversationId), prompt, since)
+}
+
+function codexReceiptIn(file: string | null, prompt: string, since: number): { transcriptAt: number } | null {
   if (!file || !prompt) return null
   for (const line of tailLines(file, PROMPT_RECEIPT_BYTES)) {
     let row: { timestamp?: string | number; type?: string; payload?: { type?: string; role?: string; content?: unknown } }

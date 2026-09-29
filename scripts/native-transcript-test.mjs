@@ -144,6 +144,44 @@ try {
   assert.equal(resumeIdFor(newPane), otherId, 'changed native metadata invalidates the old conversation claim')
   forgetSession(newPane)
 
+  // A resumed pane must not follow an older identical row while its new receipt is
+  // pending. This is the same cwd and exact multiline payload in both conversations.
+  const resumedCwd = '/Users/native/Projects/resumed-reader'
+  const resumedId = '34567890-1234-1234-1234-123456789abc'
+  const olderId = '45678901-1234-1234-1234-123456789abc'
+  const resumedFile = join(dirname(codexFile), 'resumed.jsonl')
+  const olderFile = join(dirname(codexFile), 'older-same-prompt.jsonl')
+  const repeated = 'repeat the exact first line\n  and this indented second line\n\nlast line'
+  const pasteAt = Date.now()
+  const codexMetaRow = id => line({ type: 'session_meta', payload: { id, cwd: resumedCwd, timestamp: new Date(pasteAt - 1000).toISOString() } })
+  const codexUserRow = (text, at) => line({ timestamp: new Date(at).toISOString(), type: 'response_item', payload: {
+    type: 'message', role: 'user', content: [{ type: 'input_text', text }]
+  } })
+  writeFileSync(resumedFile, codexMetaRow(resumedId) + '\n')
+  writeFileSync(olderFile, codexMetaRow(olderId) + '\n' + codexUserRow(repeated, pasteAt - 1) + '\n')
+  noteSession('explicit-resumed', resumedCwd, 'codex', resumedId)
+  noteSubmittedPrompt('explicit-resumed', repeated)
+  assert.equal(resumeIdFor('explicit-resumed'), resumedId, 'pending receipt preserves the explicitly resumed native claim')
+  assert.equal(codexAcceptedPrompt('explicit-resumed', repeated, pasteAt), false, 'an older identical row in another rollout cannot acknowledge this paste')
+  appendFileSync(resumedFile, codexUserRow(repeated, pasteAt + 350) + '\n')
+  assert.equal(codexAcceptedPrompt('explicit-resumed', repeated, pasteAt), true, 'the exact delayed multiline receipt is read from the authoritative conversation')
+  // Re-noting is the existing /new, /clear and /resume invalidation boundary. Inferred
+  // claims must still follow a uniquely verified conversation change afterwards.
+  noteSession('explicit-resumed', resumedCwd, 'codex')
+  const movedPrompt = 'a unique prompt after explicitly changing conversation'
+  appendFileSync(olderFile, codexUserRow(movedPrompt, pasteAt + 500) + '\n')
+  noteSubmittedPrompt('explicit-resumed', movedPrompt)
+  assert.equal(resumeIdFor('explicit-resumed'), undefined, 'explicit invalidation clears authority while shared historical proof stays ambiguous')
+  forgetSession('explicit-resumed')
+  noteSession('inferred-movement', resumedCwd, 'codex')
+  noteSubmittedPrompt('inferred-movement', movedPrompt)
+  assert.equal(resumeIdFor('inferred-movement'), olderId, 'unique actual native evidence still establishes an inferred claim')
+  const movedBack = 'another unique prompt after an inferred conversation change'
+  appendFileSync(resumedFile, codexUserRow(movedBack, pasteAt + 700) + '\n')
+  noteSubmittedPrompt('inferred-movement', movedBack)
+  assert.equal(resumeIdFor('inferred-movement'), resumedId, 'inferred claims retain deliberate verified conversation-change behavior')
+  forgetSession('inferred-movement')
+
   // A giant unbroken record must still return a smaller cursor, never the same one.
   const giantId = 'claude-giant'; const giantFile = join(claudeDir, `${giantId}.jsonl`)
   writeFileSync(giantFile, '{"type":"assistant","message":{"role":"assistant","content":"' + 'x'.repeat(300 * 1024) + '"}}')
