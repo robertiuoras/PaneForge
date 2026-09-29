@@ -4423,7 +4423,7 @@ function TerminalPane({
     paneRedraw.set(sessionId, redrawHistory)
     paneComposer.set(sessionId, () => {
       const b = t.buffer.active
-      if (b.type === 'alternate') return null
+      if (b.type === 'alternate' && agent !== 'codex') return null
       return composerText((row) => b.getLine(row)?.translateToString(true) ?? '', b.baseY + b.cursorY, {
         codexCols: agent === 'codex' ? t.cols : undefined,
         maxUp: agent === 'codex' ? t.rows : undefined,

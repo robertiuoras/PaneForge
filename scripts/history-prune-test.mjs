@@ -40,6 +40,7 @@ buildSync({
 })
 
 const h = createRequire(join(work, 'x.cjs'))('./history.bundle.cjs')
+const { Terminal } = createRequire(import.meta.url)('@xterm/headless')
 
 const fail = []
 const ok = (c, n, detail) => {
@@ -166,6 +167,25 @@ ok(
   !/\(spec\?\.label \?\? id\)\.replace/.test(logo),
   'AgentLogo does not call .replace on a value it has not proved is a string'
 )
+
+// A clipped raw tail must still be a native Codex screen, with working mouse/paste.
+// Modes may change anywhere before the cut, not only in the first block of the log.
+const init = '\x1b[?1049h\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h\x1b[?2004h'
+for (const [name, before, alternate] of [
+  ['native', init, true],
+  ['late-native', 'x'.repeat(70000) + init, true],
+  ['exited-native', init + '\x1b[?1049l\x1b[?1003l\x1b[?2004l', false],
+  ['reset-native', init + '\x1bc', false]
+]) {
+  const raw = before + '\r\n' + 'paint\r\n'.repeat(1000) + '\x1b[1;1HCurrent frame'
+  writeFileSync(join(dir, `${name}.log`), raw)
+  const term = new Terminal({ cols: 80, rows: 24, allowProposedApi: true })
+  await new Promise(resolve => term.write(h.tail(name, 1000), resolve))
+  ok(term.buffer.active.type === (alternate ? 'alternate' : 'normal'), `${name}: tail retains active buffer`)
+  ok(term.modes.mouseTrackingMode === (alternate ? 'any' : 'none'), `${name}: tail retains mouse controls`)
+  ok(term.modes.bracketedPasteMode === alternate, `${name}: tail retains paste mode`)
+  term.dispose()
+}
 
 rmSync(work, { recursive: true, force: true })
 console.log(fail.length ? `\n${fail.length} failed` : '\nall passed')

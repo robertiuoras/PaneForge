@@ -22,6 +22,7 @@ import {
 } from 'node:fs'
 import { open, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { StringDecoder } from 'node:string_decoder'
 import { app } from 'electron'
 // One stripper, not two: the live tee in `pipe.ts` needs the same rules a chunk at a
 // time, and two copies of "what counts as an escape sequence" drift in exactly the way
@@ -31,6 +32,7 @@ import { gistOf, noteAskInto } from '../shared/gist'
 import type { HistoryEntry, HistoryHit, Session } from '../shared/types'
 import { logProblem } from './crash'
 import { firstAskIn } from './promptArchive'
+import { TerminalModes } from '../shared/terminalModes'
 
 /** Stop one runaway pane filling the disk; the newest output is what matters. */
 const MAX_LOG_BYTES = 8 * 1024 * 1024
@@ -667,24 +669,32 @@ export function tail(id: string, bytes: number): string {
   flushSync()
   let fd: number | undefined
   try {
-    // The LAST `bytes`, read as the last `bytes` - not as the whole file with the front
-    // thrown away. A pane's log is capped at 8 MB (LOG_LIMIT) and a restore asks every
-    // reopened pane for its tail, all in one tick, on the main process: measured on this
-    // Mac 2026-08-21, `readFileSync(8 MB, 'utf8')` plus the slice is **22.7ms** against
-    // **1.2ms** for an fd read of the last 400 KB - so nine restored panes were 200ms of
-    // blocked main process, which on Windows is the busy cursor and here is a desk that
-    // does not answer while it comes back.
+    // Keep only the requested tail in memory. The discarded prefix is scanned in small
+    // chunks for terminal modes: Codex enters its alternate screen and enables mouse
+    // reporting only at startup. Replaying a tail without those modes after RIS makes
+    // the pane swallow scrolling and interpret native screen updates as normal output.
     fd = openSync(logFile(id), 'r')
     const size = fstatSync(fd).size
     const want = Math.min(bytes, size)
     const buf = Buffer.alloc(want)
     readSync(fd, buf, 0, want, size - want)
-    const cut = buf.toString('utf8')
-    if (size <= bytes) return cut
+    if (size <= bytes) return buf.toString('utf8')
+    const modes = new TerminalModes()
+    const decoder = new StringDecoder('utf8')
+    const skipped = Buffer.alloc(Math.min(64 * 1024, size - want))
+    for (let offset = 0; offset < size - want;) {
+      const got = readSync(fd, skipped, 0, Math.min(skipped.length, size - want - offset), offset)
+      if (!got) break
+      modes.consume(decoder.write(skipped.subarray(0, got)))
+      offset += got
+    }
+    const cut = decoder.end(buf)
     const nl = cut.indexOf('\n')
+    if (nl !== -1) modes.consume(cut.slice(0, nl + 1))
     // No newline in the whole tail: the read may have started inside a UTF-8 sequence, and
     // the decoder leaves that as one replacement character at the very front.
-    return nl === -1 ? cut.replace(/^\uFFFD+/, '') : cut.slice(nl + 1)
+    const retained = nl === -1 ? cut.replace(/^\uFFFD+/, '') : cut.slice(nl + 1)
+    return modes.restorePrefix(retained) + retained
   } catch {
     return ''
   } finally {

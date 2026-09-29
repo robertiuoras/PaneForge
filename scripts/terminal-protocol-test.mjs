@@ -39,11 +39,13 @@ for (const query of ['\x1b[5n','\x1b[6n','\x1b[?6n','\x1b[>c','\x1b[?1004$p','\x
  assert.equal(writes.length,1,`one local reply to ${JSON.stringify(query)}`)
  assert.equal(pinned.current,false)
 }
-for (const data of ['\x1b[I','\x1b[O','\x1b]11;rgb:0000/0000/0000\x1b\\']) {
+for (const data of ['\x1b[I','\x1b[O','\x1b]11;rgb:0000/0000/0000\x1b\\',
+  '\x1b[<64;25;8M', '\x1b[<65;25;8M', '\x1b[<0;25;8m', '\x1b[M`99']) {
  writes.length = 0
  t.input(data,false)
  assert.equal(writes.length,1)
- assert.equal(pinned.current,false)
+  assert.equal(pinned.current,false)
+  assert.deepEqual(feeds,[], 'mouse and focus reports never become draft text')
 }
 for (const data of ['hello','\x1b[D','\x1b[1;2R','\x1b[200~paste\x1b[201~']) {
  pinned.current = false
