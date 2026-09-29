@@ -144,29 +144,42 @@ export interface DoneCloseDeps {
    * line. `pf tidy --dry-run`.
    */
   dry?: boolean
+  /** Publish a separate finished-chat deadline; idle-close has its own clock. */
+  setClosing?: (id: string, at: number | undefined) => void
 }
 
 /** The last thing logged per pane, so a pane that stays for an hour is one line, not 240. */
 const said = new Map<string, string>()
+const warnings = new Map<string, { turn: number; at: number }>()
 
 /** One pass over the desk. Returns what it closed (with `dry`, would close), for the log and the test. */
 export function sweepDoneClose(d: DoneCloseDeps): string[] {
-  if (!d.enabled()) return []
+  const readings = d.readings()
+  const enabled = d.enabled()
+  if (!d.dry) for (const id of warnings.keys()) {
+    if (!enabled || !readings.some((r) => (r as DoneReading & { id: string }).id === id)) {
+      warnings.delete(id)
+      d.setClosing?.(id, undefined)
+    }
+  }
+  if (!enabled) return []
   const now = d.now?.() ?? Date.now()
   const quietMs = d.quietMs?.()
   const closed: string[] = []
   const say = (id: string, what: string): void => {
+    if (!d.dry && warnings.delete(id)) d.setClosing?.(id, undefined)
     if (d.dry || said.get(id) === what) return
     said.set(id, what)
     console.info(`done-close: ${id} ${what}`)
     d.log?.(`${id} ${what}`)
   }
-  for (const r of d.readings()) {
+  for (const r of readings) {
     const id = (r as DoneReading & { id: string }).id
     if (!id) continue
     // Cheap gates first; the transcript is read only for a pane that is otherwise done.
     let verdict = doneVerdict({ ...r, reply: undefined }, now, quietMs)
     if (!verdict.close && verdict.reason !== 'reply not read') {
+      if (!d.dry && warnings.delete(id)) d.setClosing?.(id, undefined)
       if (r.turnEndedAt && verdict.reason !== 'not quiet long enough' && verdict.reason !== 'shell pane') say(id, `stays - ${verdict.reason}`)
       continue
     }
@@ -196,6 +209,17 @@ export function sweepDoneClose(d: DoneCloseDeps): string[] {
     if (d.dry) {
       closed.push(id)
       continue
+    }
+    // Quiet eligibility is not a visible warning. Start a fresh 30-second deadline
+    // only after every refusal passes, and recheck them on every sweep.
+    if (d.setClosing && quietMs !== 0) {
+      let warning = warnings.get(id)
+      if (!warning || warning.turn !== r.turnEndedAt) {
+        warning = { turn: r.turnEndedAt, at: now + 30_000 }
+        warnings.set(id, warning)
+        d.setClosing(id, warning.at)
+      }
+      if (now < warning.at) continue
     }
     const reviewId = doneReviewId(id, r.turnEndedAt)
     const h = d.history().find((e) => e.id === id)
@@ -232,17 +256,18 @@ export function sweepDoneClose(d: DoneCloseDeps): string[] {
     const opener = d.openerOf?.(id)
     const res = d.close(id, now)
     if (res.closed) {
+      warnings.delete(id)
+      d.setClosing?.(id, undefined)
       // Nothing reaches GuardDeck before this line: a close refused after its card went out
       // left a card for a pane still on the desk (s93, 27 Sep). The to-dos go either way;
-      // the result card only when something is left for a person who has not read it
-      // (Robert, 2026-09-28: "i already reviewed the session").
+      // unread findings and person-owned actions retain their result card.
       let n = 0
       for (const step of verdict.personSteps) {
         const notice = stepNotice(record, step, ++n, thisMachine(), new Date(now))
         const path = join(noticesDir(), `${notice.id}.json`)
         if (!existsSync(path)) d.writeNotice(path, JSON.stringify(notice, null, 2))
       }
-      if (verdict.read) d.markRead(reviewId)
+      if (verdict.read && !verdict.personSteps.length) d.markRead(reviewId)
       if (finishedCard(verdict.personSteps.length, verdict.read)) d.notify(reviewId)
       if (opener)
         d.finished?.(opener, {

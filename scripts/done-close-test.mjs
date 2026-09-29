@@ -108,6 +108,7 @@ const finished = (over = {}) => ({
     transcriptFor: () => transcript, resumeIdFor: () => 'native-q', history: () => [],
     titleOf: () => ({ title: 'quiet', cwd: '/Users/r/Projects/site', agent: 'claude' }), otherwiseBusy: () => null,
     record: (input, native) => ({ ...input, ...native, provider: 'claude', reportPath: '/x', createdAt: 'now', attention: false }),
+    notify: () => {}, markRead: () => {},
     close: (id) => { shut.push(id); return { closed: true } }, noteClose: () => {}, writeNotice: () => {}, activity: () => {},
     now: () => NOW, ...(quietMs ? { quietMs } : {})
   })
@@ -140,6 +141,7 @@ const finished = (over = {}) => ({
     transcriptFor: () => transcript, resumeIdFor: () => 'native-f', history: () => [],
     titleOf: () => ({ title: 'folder', cwd: '/Users/r/Projects/site', agent: 'claude' }), otherwiseBusy: () => null,
     record: (input, native) => ({ ...input, ...native, provider: 'claude', reportPath: '/x', createdAt: 'now', attention: false }),
+    notify: () => {}, markRead: () => {},
     close: () => ({ closed: true }), noteClose: () => {}, writeNotice: () => {}, activity: () => {},
     now: () => NOW, log: (l) => lines.push(l)
   }
@@ -268,11 +270,18 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
   assert.equal(typed.close, false, 'typing after the look restarts the 30 s')
   assert.equal(doneVerdict(finished({ turnEndedAt: ended, lookedAt: lookEnded, focused: true }), lookEnded + 31_000).reason, 'somebody is looking at it')
   assert.equal(doneVerdict(finished({ turnEndedAt: ended, lookedAt: lookEnded, reply: 'Which port?' }), lookEnded + 31_000).reason, 'the reply ends in a question', 'read never excuses a question')
-  assert.equal(doneVerdict(finished({ turnEndedAt: NOW - 90_000, lookedAt: NOW - 85_000 }), NOW, doneQuietMs('tight')).close, true, 'whichever wait ends first: tight pressure')
-  // (a) The card: only something left for a person who has not read it.
-  assert.equal(finishedCard(0, false), false, 'no person steps: no card')
+  assert.equal(doneVerdict(finished({ turnEndedAt: NOW - 90_000, lookedAt: NOW - 85_000 }), NOW, doneQuietMs('tight')).close, true, 'read quiet interval has elapsed under tight pressure')
+  assert.equal(doneVerdict(finished({ lookedAt: NOW - 1_000 }), NOW).close, false, 'old turn cannot override a recent look')
+  assert.equal(doneVerdict(finished({ lookedAt: NOW - 1_000 }), NOW, doneQuietMs('over')).close, false, 'pressure cannot override a recent look')
+  for (const reply of ['- **Unfinished:** tracking verification.', 'Seven tasks remain open.', 'The client job itself is not finished.', 'The check is queued.']) {
+    assert.equal(doneVerdict(finished({ reply }), NOW).close, false, reply)
+  }
+  assert.equal(doneVerdict(finished({ reply: 'The work is complete.' }), NOW).close, true)
+  assert.equal(finishedCard(0, true), false, 'already read ordinary answer needs no card')
+  // (a) The card: unread findings or actions left for a person.
+  assert.equal(finishedCard(0, false), true, 'unread findings: card')
   assert.equal(finishedCard(2, false), true, 'person steps, unread: card')
-  assert.equal(finishedCard(2, true), false, 'person steps, read: no card')
+  assert.equal(finishedCard(2, true), true, 'manual actions remain visible after a glance')
 
   // The sweep end to end: three panes, each closing.
   const transcript = (name, text) => {
@@ -316,10 +325,34 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
   assert.deepEqual(main.sweepDoneClose({ ...deps, dry: true, quietMs: () => 0, readings: () => [{ id: 'none', ...finished({ turnEndedAt: at - 20_000 }) }] }), ['none'], 'tidy asks without the quiet wait')
   assert.deepEqual(main.sweepDoneClose({ ...deps, dry: true, quietMs: () => 0, readings: () => [{ id: 'none', ...finished({ turnEndedAt: at - 20_000, reply: 'Which port?' }) }], transcriptFor: () => transcript('q', 'Which port?') }), [], 'and keeps every refusal')
   assert.deepEqual(main.sweepDoneClose(deps), ['none', 'steps', 'stepsRead'])
-  assert.deepEqual(cards, [doneReviewId('steps', readings[1].turnEndedAt)], 'one card: the unread pane with a step left for the person')
-  assert.deepEqual(reads, [doneReviewId('stepsRead', readings[2].turnEndedAt)], 'the read pane is written as read')
+  assert.deepEqual(cards, readings.map(r => doneReviewId(r.id, r.turnEndedAt)), 'unread findings and manual actions get cards')
+  assert.deepEqual(reads, [], 'manual actions are not acknowledged by a glance')
   assert.equal(todos.length, 2, 'both panes with a person step still send their to-do')
   assert.ok(lines.some((l) => l === `stepsRead finished and closed itself into Review (${doneReviewId('stepsRead', readings[2].turnEndedAt)}), read`))
+
+  // Automatic closure publishes a full warning, with cancellation and a fresh deadline.
+  let clock = at
+  let focused = false
+  const deadlines = []
+  const warned = { ...deps, readings: () => [{ ...readings[0], id: 'warning', focused }],
+    transcriptFor: () => files.none, now: () => clock,
+    setClosing: (id, deadline) => deadlines.push([id, deadline]) }
+  assert.deepEqual(main.sweepDoneClose(warned), [])
+  assert.equal(deadlines.at(-1)[1], at + 30_000)
+  clock += 29_000
+  assert.deepEqual(main.sweepDoneClose(warned), [])
+  focused = true
+  assert.deepEqual(main.sweepDoneClose(warned), [])
+  assert.equal(deadlines.at(-1)[1], undefined, 'returning to pane cancels warning')
+  focused = false
+  main.sweepDoneClose(warned)
+  assert.equal(deadlines.at(-1)[1], clock + 30_000, 'fresh warning after cancellation')
+  clock += 30_000
+  assert.deepEqual(main.sweepDoneClose(warned), ['warning'])
+  assert.equal(deadlines.at(-1)[1], undefined)
+  main.sweepDoneClose(warned)
+  main.sweepDoneClose({ ...warned, enabled: () => false })
+  assert.equal(deadlines.at(-1)[1], undefined, 'disabling cancels published clock')
 
   // (d) What held s93-muk43els at 17:52:44Z on 27 Sep (done-close.log 258): `handoffOpen` -
   // /Users/robertiuoras/Projects/assistant's session-handoff.md, another chat's, five steps

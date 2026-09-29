@@ -273,6 +273,8 @@ export interface Session {
    * and a second machine guessing at it would draw a countdown nobody is going to honour.
    */
   closingAt?: number
+  /** Published warning deadline from the finished-chat sweep. */
+  doneClosingAt?: number
   /** The owning device's persistent Keep open preference for this pane. */
   keepOpen?: boolean
   /**

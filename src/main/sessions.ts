@@ -2834,6 +2834,13 @@ export class SessionManager extends EventEmitter {
     this.emitSessions()
   }
 
+  setDoneClosingAt(id: string, at: number | undefined): void {
+    const s = this.sessions.get(id)
+    if (!s || s.meta.doneClosingAt === at) return
+    s.meta.doneClosingAt = at
+    this.emitSessions()
+  }
+
   setBusyOnScreen(id: string, busy: boolean, tail = '', clock?: TurnClock, reason?: BusyReason): void {
     const s = this.sessions.get(id)
     if (!s) return

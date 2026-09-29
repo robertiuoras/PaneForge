@@ -1650,6 +1650,7 @@ function doneCloseDeps(): DoneCloseDeps {
       return doneQuietMs(sleepPressureOf(v.level, v.why))
     },
     readings: () => manager.doneReadings(),
+    setClosing: (id, at) => manager.setDoneClosingAt(id, at),
     folderOf: (id, since) => {
       const cwd = manager.list().find((x) => x.id === id)?.cwd
       return cwd ? gitCached(cwd, since) : null
@@ -1726,7 +1727,7 @@ function cardAfterClose(paneId: string): (closed: boolean) => void {
     if (!held || !closed) return
     heldCards.delete(paneId)
     if (!turn || turn.endedAt !== held.turn) return
-    if (turn.read) acknowledgeReview(held.reviewId, true)
+    if (turn.read && !held.steps) acknowledgeReview(held.reviewId, true)
     if (finishedCard(held.steps, turn.read)) sendReviewNotice(held.reviewId)
   }
 }
