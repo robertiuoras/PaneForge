@@ -829,6 +829,8 @@ export class SessionManager extends EventEmitter {
    * the old one-line notice.
    */
   onFinished: ((meta: Session, opener: string) => void) | null = null
+  /** A person kept this pane open (`config.pinnedPanes`); `--close-when-done` leaves it. Set by index.ts. */
+  keptOpen: ((id: string) => boolean) | null = null
   /** The last reply in a pane's transcript, for `Session.finished`. Set by index.ts, which knows where transcripts live. */
   replyFor: ((id: string, agent: string) => { text: string; runningAgents?: number; promptAt?: number } | undefined) | null = null
 
@@ -2378,6 +2380,7 @@ export class SessionManager extends EventEmitter {
 
   private sweepCloseWhenDone(live: Live, now: number, quiet: number): void {
     const { meta } = live
+    if (this.keptOpen?.(meta.id)) return
     if (!doneEnough({ ...meta, busyUntil: live.busyUntil }, quiet, now)) return
     const told = live.req.reportTo
     const opener = this.openerOf(meta.id)
@@ -3464,6 +3467,7 @@ export class SessionManager extends EventEmitter {
     const live = this.sessions.get(id)
     if (!live) return { closed: false, reason: 'session is no longer open' }
     const m = live.meta
+    if (this.keptOpen?.(id)) return { closed: false, reason: 'kept open by hand' }
     if (m.status !== 'idle' || m.runSince || live.busyUntil > Date.now() || m.job || (m.backJob && !backJobWaitOnly(id)) || m.subagent) return { closed: false, reason: 'session is busy or has a background job' }
     const held = closeHeldBy(m)
     if (held.length) return { closed: false, reason: `session has ${held.join(', ')}` }
@@ -3747,7 +3751,8 @@ export class SessionManager extends EventEmitter {
         quitting: this.down,
         printed: !!meta.printed,
         exitCode,
-        starting: wasStarting
+        starting: wasStarting,
+        kept: this.keptOpen?.(id) ?? false
       })
       // A pane closed while it was starting is not one that failed to start: nothing is
       // left on the desk to mark, and the activity list would blame the agent for a close.
@@ -3765,7 +3770,7 @@ export class SessionManager extends EventEmitter {
         // Re-read: the pane may have been woken, moved or closed by hand in the meantime,
         // and a pane with a LIVE process again is not the one this plan was made for.
         const now = this.sessions.get(id)
-        if (!now || now.proc || now.meta.status !== 'exited') return
+        if (!now || now.proc || now.meta.status !== 'exited' || this.keptOpen?.(id)) return
         this.emit('exit-closed', id, say)
         this.kill(id)
       }

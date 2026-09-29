@@ -163,3 +163,7 @@ Why: `docs/design-notes.md` "Settings → Discord since 2026-09-27".
 `shared/tips.ts`, `components/Tips.tsx`, `test:tips`. Silent during dialog/update/question/
 minimised/`FIRST_MS` 4 min; `EVERY_MS` 40 min; first and every fourth `offersOff` (Settings
 re-enables); each once before any twice; `seen` resets.
+
+Keep-open checkboxes live on every session card; Keep all open includes filtered sessions
+and writes mirrored choices on the owning device. Queued handoff text is omitted from cards;
+the existing handoff menu retains cancellation.

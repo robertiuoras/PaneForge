@@ -66,6 +66,14 @@ export interface DoneReading extends DonePane {
    * turn's and counts as unset, so a new turn resets it without anybody clearing it.
    */
   lookedAt?: number
+  /**
+   * A person said to keep this pane open (the card's "Keep this pane open",
+   * `config.pinnedPanes`). Robert, 2026-09-29: "mark a session as keep open so auto close
+   * won't close it ... some work long running I need to see result and also continue the
+   * session". The pin held off the idle clock only, so a kept pane still closed itself
+   * into Review the moment its turn was over.
+   */
+  kept?: boolean
 }
 
 /**
@@ -157,6 +165,7 @@ export type DoneVerdict =
 export function doneVerdict(reading: DoneReading, now = Date.now(), quietMs = AUTO_CLOSE_QUIET_MS): DoneVerdict {
   const p = reading.backWaitOnly ? { ...reading, backJob: undefined } : reading
   if (p.agent === 'shell') return { close: false, reason: 'shell pane' }
+  if (p.kept) return { close: false, reason: 'kept open by hand' }
   if (!p.turnEndedAt) return { close: false, reason: 'no finished turn' }
   if (p.focused) return { close: false, reason: 'somebody is looking at it' }
   if (p.openedOthers) return { close: false, reason: 'it opened other panes and collects their summary' }

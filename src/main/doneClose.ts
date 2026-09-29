@@ -139,6 +139,8 @@ export interface DoneCloseDeps {
    * console alone kept nothing, so "why didn't it close" could only be guessed at.
    */
   log?: (line: string) => void
+  /** Return true once the visible warning for this completed turn has elapsed. */
+  countdown?: (id: string, turn: number) => boolean
   /**
    * Decide only: return what WOULD close and touch nothing - no row, no close, no log
    * line. `pf tidy --dry-run`.
@@ -197,6 +199,7 @@ export function sweepDoneClose(d: DoneCloseDeps): string[] {
       closed.push(id)
       continue
     }
+    if (d.countdown && !d.countdown(id, r.turnEndedAt)) continue
     const reviewId = doneReviewId(id, r.turnEndedAt)
     const h = d.history().find((e) => e.id === id)
     const prompt = h?.askLines?.[0] || h?.gist || reply.prompt || ''

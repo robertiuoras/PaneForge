@@ -31,12 +31,11 @@ export default function AutoClearToast({
   // drawn on top of each other. The corner is a COLUMN now (`.corner-stack`), so a second
   // countdown has somewhere to go - and it has to have one: two handoffs ran on
   // 2026-09-01 and only one of them ever said so, which means the other pane cleared with
-  // nobody given the chance to stop it. Capped, because a desk clearing six panes at once
-  // is a wall of cards, and the ones past the cap are the ones with the most time left.
+  // nobody given the chance to stop it. Every armed pane remains visible.
   const counting = panes
     .filter((s) => s.autoClearAt)
     .sort((a, b) => (a.autoClearAt ?? 0) - (b.autoClearAt ?? 0))
-    .slice(0, MAX_CARDS)
+
   if (!counting.length) {
     // No countdown, but one JUST ended: say how. A card that vanishes without a word -
     // or worse, freezes at 0:00 - leaves whoever watched it guessing what the app
@@ -59,15 +58,15 @@ export default function AutoClearToast({
   }
   return (
     <>
+      {counting.length > 1 && <button className="autoclear-keep" onClick={() => counting.forEach(s => onKeep(s.id))}>
+        Keep all current sessions
+      </button>}
       {counting.map((s) => (
         <ClearingCard key={s.id} pane={s} now={now} numberOf={numberOf} onKeep={onKeep} />
       ))}
     </>
   )
 }
-
-/** More countdowns than this at once is a wall of cards, not a warning. */
-const MAX_CARDS = 3
 
 /** One pane, counting down, with the button that stops it. */
 function ClearingCard({

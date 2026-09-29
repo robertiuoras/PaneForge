@@ -67,6 +67,9 @@ const finished = (over = {}) => ({
   assert.equal(refuse({ agent: 'shell' }), 'shell pane')
   assert.equal(refuse({ turnEndedAt: 0 }), 'no finished turn')
   assert.equal(refuse({ focused: true }), 'somebody is looking at it')
+  // Robert, 2026-09-29: a pane he kept open for a long job must stay to be read and continued.
+  assert.equal(refuse({ kept: true }), 'kept open by hand')
+  assert.equal(refuse({ kept: true, lookedAt: NOW - 60_000, turnEndedAt: NOW - 90_000 }), 'kept open by hand', 'read does not undo a keep')
   assert.equal(refuse({ lastKeyboard: NOW - 10_000 }), 'not quiet long enough', 'typing restarts the clock')
   assert.equal(refuse({ turnEndedAt: NOW - 30_000 }), 'not quiet long enough')
   assert.match(refuse({ ask: { q: 'which?' } }), /busy, asking/)
@@ -315,7 +318,12 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
   assert.deepEqual(main.sweepDoneClose({ ...deps, dry: true, readings: () => [{ id: 'none', ...finished({ turnEndedAt: at - 20_000 }) }] }), [], 'not quiet: stays')
   assert.deepEqual(main.sweepDoneClose({ ...deps, dry: true, quietMs: () => 0, readings: () => [{ id: 'none', ...finished({ turnEndedAt: at - 20_000 }) }] }), ['none'], 'tidy asks without the quiet wait')
   assert.deepEqual(main.sweepDoneClose({ ...deps, dry: true, quietMs: () => 0, readings: () => [{ id: 'none', ...finished({ turnEndedAt: at - 20_000, reply: 'Which port?' }) }], transcriptFor: () => transcript('q', 'Which port?') }), [], 'and keeps every refusal')
-  assert.deepEqual(main.sweepDoneClose(deps), ['none', 'steps', 'stepsRead'])
+  const warned = []
+  assert.deepEqual(main.sweepDoneClose({ ...deps, countdown: (id, turn) => { warned.push([id, turn]); return false } }), [], 'warning gives the person time to keep a finished session')
+  assert.equal(warned.length, 3, 'every eligible session gets its own warning')
+  assert.equal(shut.length + cards.length + reads.length + todos.length, 0, 'warning has no close or notice side effects')
+  assert.deepEqual(main.sweepDoneClose({ ...deps, countdown: () => { throw new Error('kept session must not count down') }, readings: () => readings.map(r => ({ ...r, kept: true })) }), [], 'pin cancels eligibility before countdown')
+  assert.deepEqual(main.sweepDoneClose({ ...deps, countdown: () => true }), ['none', 'steps', 'stepsRead'])
   assert.deepEqual(cards, [doneReviewId('steps', readings[1].turnEndedAt)], 'one card: the unread pane with a step left for the person')
   assert.deepEqual(reads, [doneReviewId('stepsRead', readings[2].turnEndedAt)], 'the read pane is written as read')
   assert.equal(todos.length, 2, 'both panes with a person step still send their to-do')

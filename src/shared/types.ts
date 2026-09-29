@@ -288,6 +288,8 @@ export interface Session {
    */
   stayHere?: boolean
   autoAnswerN?: number
+  /** Finished reply will move to Review after this cancellable warning. */
+  reviewCloseAt?: number
   /**
    * When this session will /clear ITSELF, epoch ms, and what it will ask the fresh one.
    *

@@ -105,4 +105,45 @@ check(
 )
 check('and the stamp is cleared, so it is one line per wake', /live\.wokeAt = 0/.test(sessions))
 
+// Execute the real callback against a mixed desk, including a filtered-out local pane.
+const { transformSync } = await import('esbuild')
+const callbackStart = app.indexOf('async (ids: string[], keep: boolean) => {', app.indexOf('const savePins ='))
+const callbackEnd = app.indexOf(', [sessions, flash])', callbackStart)
+const callback = transformSync(`const save = ${app.slice(callbackStart, callbackEnd)}`, { loader: 'ts', format: 'cjs' }).code
+let savedPins = ['existing']
+const remoteCalls = [], errors = []
+let remoteOK = true
+const ref = { current: false }
+const desk = [{ id: 'visible' }, { id: 'filtered-out' }, { id: '@pc/one', remote: { name: 'PC' } }]
+const api = {
+  getConfig: async () => ({ pinnedPanes: savedPins }),
+  setConfig: async patch => { savedPins = patch.pinnedPanes; return patch },
+  setRemoteKeepOpen: async (id, keep) => { remoteCalls.push([id, keep]); return remoteOK }
+}
+const save = new Function('api', 'sessions', 'savingPinsRef', 'setSavingPins', 'pinsWritten', 'setPinned', 'setConfigState', 'setCloseSoons', 'flash', callback + '; return save')(
+  api, desk, ref, () => {}, { current: '' }, () => {}, () => {}, () => {}, e => errors.push(e))
+await save(desk.map(s => s.id), true)
+assert.deepEqual(savedPins, ['existing', 'visible', 'filtered-out'])
+assert.deepEqual(remoteCalls, [['@pc/one', true]])
+await save(desk.map(s => s.id), false)
+assert.deepEqual(savedPins, ['existing'])
+remoteOK = false
+await save(['@pc/one'], true)
+assert.match(errors[0], /Could not save on PC/)
+assert.equal(ref.current, false, 'failed remote write releases the save lock')
+check('select-all persists hidden local panes, uses the remote owner, and reports failure', true)
+
+// A renderer timer queued before the pin was saved cannot close the now-kept pane.
+const closeStart = index.indexOf("ipcMain.handle('sessions:closeIntoReview'")
+const closeEnd = index.indexOf("ipcMain.handle('sessions:clearFinished'", closeStart)
+const closeCode = transformSync(index.slice(closeStart, closeEnd), { loader: 'ts' }).code
+let closeHandler, keep = true, closed = 0
+new Function('ipcMain', 'keptOpen', 'remote', 'closePane', closeCode)(
+  { handle(_name, fn) { closeHandler = fn } }, () => keep, { owns: () => true }, () => { closed++ })
+closeHandler({}, 'pane', 'timer expired')
+assert.equal(closed, 0, 'saved keep-open wins over an already-dispatched close')
+keep = false
+closeHandler({}, 'pane', 'timer expired')
+assert.equal(closed, 1, 'unkept panes can still close normally')
+
 console.log(`pin restore: ${checks} checks passed`)
