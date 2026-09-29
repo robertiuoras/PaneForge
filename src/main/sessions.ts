@@ -29,6 +29,7 @@ import { trustCodexFolder } from './codexTrust'
 import { ASK_WINDOW, CLIENTS_DIR, clientLabel, mayRename } from '../shared/clientName'
 import { appNamedTitle } from './activity'
 import { nextTitle, titlesIn, type CliTitles } from '../shared/cliTitle'
+import { earlierTitles } from './cliChain'
 import { chromeCdpFor } from '../shared/peerChrome'
 import type { ClientNamed } from '../shared/types'
 
@@ -4528,7 +4529,7 @@ export class SessionManager extends EventEmitter {
     live.titleRead = { path, offset, at: now, seen: read }
     const s = live.meta
     const pane = { title: s.title, autoTitled: s.autoTitled, appDefault: this.appDefault(s) }
-    const next = nextTitle(pane, read, prev?.seen, projectOf(s.cwd, s.lane))
+    const next = nextTitle(pane, read, prev?.seen, projectOf(s.cwd, s.lane), s.clientOff ? undefined : () => earlierTitles(path))
     if (!next) return
     // A person's `/rename` is theirs to make; an old save's "do not name this pane" only
     // holds the app's own naming back.

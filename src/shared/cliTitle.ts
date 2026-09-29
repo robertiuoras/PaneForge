@@ -64,7 +64,7 @@ export function titlesIn(text: string): CliTitles {
  * sweep` and `Supabase session auth fix` are about the work.
  */
 const HOUSEKEEPING =
-  /\b(?:hand-?offs?|handovers?|continuations?|continu(?:ing|ed|e)|resum(?:ed|ing)|next steps?|(?<=hand-?offs? )steps?|sessions?(?= (?:hand-?offs?|handovers?|continu|resum|next steps?\b))|lane [a-z])\b|\(cont(?:\.|inued)?\)/gi
+  /\b(?:hand-?offs?|handovers?|continuations?|continu(?:ing|ed|e)|resum(?:ed|ing)|next steps?|(?<=hand-?offs? )steps?|sessions?(?= (?:hand-?offs?|handovers?|continu|resum|next steps?\b))|lane[ -][a-z])\b|\(cont(?:\.|inued)?\)/gi
 
 /** Joining words a title may not end or start on once the housekeeping is cut out of it. */
 const JOINER = /^(?:and|or|with|for|of|to|in|on|from|the|a|an|&|\+|-|–|—|:|,|;)$/i
@@ -102,9 +102,11 @@ export function cardTitle(cliTitle: string, project: string): CardTitle {
   const title = words.join(' ')
   const name = squash(title)
   const home = squash(project)
-  // Only the project again (`Taskdriver` in `taskdriver-mobile`, `Car` in `Car`), or
-  // nothing at all: the folder name already says it.
+  // Only the project again (`Taskdriver` in `taskdriver-mobile`, `Car` in `Car`), the
+  // project's lane folder (`PaneForge-a handoff next steps`, `-w2`), or nothing at all: the
+  // folder name already says it.
   if (!name || (home && (home.startsWith(name) || name === home))) return { title: '', continuing }
+  if (home && name.startsWith(home) && /^(?:[a-z]|w\d+)$/.test(name.slice(home.length))) return { title: '', continuing }
   return { title: capTitle(title), continuing }
 }
 
@@ -131,12 +133,20 @@ export interface PaneName {
  * handoff is the same job going on, so the card keeps saying what that job is. The CLI
  * writes its title once per conversation, so a card changes name at most once per `/clear`
  * that starts new work, never mid-chat.
+ *
+ * A title that is ONLY housekeeping (`Taskdriver AI handoff next steps`) on a card still
+ * wearing its folder name takes the name of the conversation it continues instead: `earlier`
+ * lists the titles of the conversations the same CLI ran before this one, newest first (see
+ * `main/cliChain.ts`). Without it the card stayed on its folder for good - an automatic
+ * handoff's next conversation is another handoff - which is what cards 3 and 4 on the Mac
+ * showed on 2026-09-29 (`taskdriver.ai`, `PaneForge`). Only asked for when it is needed.
  */
 export function nextTitle(
   pane: PaneName,
   read: CliTitles,
   seen: CliTitles | undefined,
-  project: string
+  project: string,
+  earlier?: () => CliTitles[]
 ): { title: string; by: 'person' | 'agent' } | undefined {
   const appChosen = pane.appDefault || pane.autoTitled === 'agent'
   if (read.custom && read.custom !== seen?.custom) {
@@ -145,9 +155,34 @@ export function nextTitle(
   }
   if (!read.ai || read.ai === seen?.ai || read.custom || !appChosen) return undefined
   const next = cardTitle(read.ai, project)
-  if (!next.title || next.title === pane.title) return undefined
   if (next.continuing && pane.autoTitled === 'agent') return undefined
-  return { title: next.title, by: 'agent' }
+  const title = next.title || (next.continuing && pane.appDefault && earlier ? continuedTitle(earlier(), project) : '')
+  if (!title || title === pane.title) return undefined
+  return { title, by: 'agent' }
+}
+
+/** The newest earlier conversation's name that says what the work is, or ''. */
+function continuedTitle(earlier: CliTitles[], project: string): string {
+  for (const t of earlier) {
+    if (t.custom) return t.custom.slice(0, MAX_TITLE)
+    const name = t.ai ? cardTitle(t.ai, project).title : ''
+    if (name) return name
+  }
+  return ''
+}
+
+/**
+ * The id of the CLI process a transcript was written by, when that is not its own.
+ *
+ * `/clear` starts a new transcript file under a new id, but the CLI keeps stamping the id it
+ * was STARTED with on its attachment records (`"session_id":"100b6a8b-..."` inside
+ * `be6d5f8a-....jsonl`). Measured on the Mac on 2026-09-29: all 300 conversations of the
+ * last three days whose title was only housekeeping were born from a `/clear` and carry it.
+ * It sits after the SessionStart hook output, ~265 KB into the file, so `head` must reach it.
+ */
+export function startedAs(head: string, own: string): string | undefined {
+  const m = /"session_id":"([0-9a-f-]{36})"/.exec(head)
+  return m && m[1] !== own ? m[1] : undefined
 }
 
 /** At most `MAX_TITLE` characters, cut at a whole word. */

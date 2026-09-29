@@ -3356,7 +3356,7 @@ function TerminalPane({
      */
     const inputRows = (): { top: number; rows: InputRow[] } | null => {
       const b = t.buffer.active
-      if (b.type === 'alternate') return null
+      if (b.type === 'alternate' && agent !== 'codex') return null
       const cursorRow = b.baseY + b.cursorY
       const comp = composerAt(rowText, cursorRow, {
         codexCols: agent === 'codex' ? t.cols : undefined,
@@ -3386,6 +3386,9 @@ function TerminalPane({
         }
         return { top: comp.top, rows }
       }
+      // Codex now draws its native composer in the alternate screen. Only a proven
+      // composer is editable there; never treat a menu's cursor row as shell input.
+      if (b.type === 'alternate') return null
       let top = cursorRow
       while (top > 0 && b.getLine(top)?.isWrapped) top--
       let bottom = cursorRow
@@ -3469,7 +3472,7 @@ function TerminalPane({
      */
     const deleteSelection = (): 'done' | 'refused' | 'no' => {
       const pos = t.getSelectionPosition()
-      if (!pos || t.buffer.active.type === 'alternate') return 'no'
+      if (!pos) return 'no'
       // A run of backspaces into a chooser is the same mistake as a run of arrows, and
       // there is no line being edited to delete from anyway - see `askRef`.
       if (askRef.current) return 'no'
@@ -3542,7 +3545,7 @@ function TerminalPane({
       if (Math.abs(e.clientX - from.x) > 3 || Math.abs(e.clientY - from.y) > 3) {
         return clickNote('pointer-travelled')
       }
-      if (t.buffer.active.type === 'alternate') return clickNote('alternate-screen')
+      if (t.buffer.active.type === 'alternate' && agent !== 'codex') return clickNote('alternate-screen')
       const screen = el.querySelector('.xterm-screen') as HTMLElement | null
       if (!screen) return clickNote('no-screen')
       const r = screen.getBoundingClientRect()
@@ -3593,6 +3596,7 @@ function TerminalPane({
         }
         clickNote('outside-the-composer', { top: span.top, bottom, cursorRow, clickRow })
       } else clickNote('no-composer-found', { cursorRow, clickRow })
+      if (b.type === 'alternate') return clickNote('alternate-screen')
       if (t.getSelection()) return clickNote('selection-held', { cursorRow, clickRow })
       if (!sameLine(cursorRow, clickRow)) return clickNote('other-line', { cursorRow, clickRow })
       // Past the end of what is written is the end of what is written. Without this, a

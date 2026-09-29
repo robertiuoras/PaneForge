@@ -2294,9 +2294,13 @@ ipcMain.handle('sessions:switchAgent', (_e, id: string, agent: string, model?: s
   if (continuationOwnsSource(id)) return null
   return manager.switchAgent(id, agent, model)
 })
-ipcMain.handle('sessions:rename', (_e, id: string, title: string) =>
-  remote.owns(id) ? remote.send(id, { t: 'rename', title }) : manager.rename(id, title)
-)
+// A pane on another desk is renamed by that desk, and the new name comes back with its next
+// list - so this only says whether the rename left: false = the link could not carry it.
+ipcMain.handle('sessions:rename', (_e, id: string, title: string) => {
+  if (remote.owns(id)) return remote.send(id, { t: 'rename', title })
+  manager.rename(id, title)
+  return true
+})
 // A pane that has finished what it was opened for, said while it is open rather than
 // asked for at the open. The rule that decides WHEN is `shared/closeWhenDone.ts`.
 ipcMain.handle('sessions:closeWhenDone', (_e, id: string, reportTo?: string) =>
@@ -2539,7 +2543,10 @@ ipcMain.on('sessions:attention-clear', (_e, id: string) =>
 )
 /** Bytes into a pane, wherever that pane lives. The one path anything here types through. */
 function writePane(id: string, data: string, origin: WriteOrigin = 'desk'): void {
-  if (remote.owns(id)) return remote.send(id, { t: 'write', data })
+  if (remote.owns(id)) {
+    remote.send(id, { t: 'write', data })
+    return
+  }
   watchForClear(id, data)
   // Nothing typed here stands a countdown down any more. It used to: a write carrying one
   // printable character cancelled the pane's own /clear outright, which meant the card

@@ -2374,7 +2374,8 @@ export interface Api {
   restartSession(id: string): Promise<Session | null>
   /** swap a running pane to another CLI/model - same folder, same pane, fresh process */
   switchAgent(id: string, agent: Agent, model?: string): Promise<Session | null>
-  renameSession(id: string, title: string): Promise<void>
+  /** false = the pane is on another computer and the link could not carry the rename */
+  renameSession(id: string, title: string): Promise<boolean>
   /**
    * Let a Codex pane pick its own reasoning effort, pin it to one level by hand, or stop
    * doing either. Per pane, off until asked for.
