@@ -14,7 +14,7 @@
   top: 7px;
   bottom: 7px;
   right: 17px;
-  width: 28px;
+  width: calc(28px * var(--rail-scale, 1));
   /* Only the tags are targets. The rest of the strip is terminal, and swallowing clicks
      over it would put a dead column down the side of every pane. */
   pointer-events: none;
@@ -33,8 +33,8 @@
 
 .mark {
   position: absolute;
-  right: 3px;
-  width: 18px;
+  right: calc(3px * var(--rail-scale, 1));
+  width: calc(18px * var(--rail-scale, 1));
   height: 8px;
   /* Centred on the line it marks rather than hanging below it. */
   margin-top: -4px;
@@ -57,7 +57,7 @@
   opacity: 1;
 }
 .mark:hover {
-  width: 24px;
+  width: calc(24px * var(--rail-scale, 1));
 }
 
 /* The bar has to stay thin - eighty of them at 15px would be a wall down the pane, not a
@@ -76,7 +76,7 @@
 .mark::before {
   content: '';
   position: absolute;
-  inset: calc(-1 * var(--hit-up, 6px)) -3px calc(-1 * var(--hit-down, 6px)) -13px;
+  inset: calc(-1 * var(--hit-up, 6px)) calc(-3px * var(--rail-scale, 1)) calc(-1 * var(--hit-down, 6px)) calc(-13px * var(--rail-scale, 1));
 }
 /* Brief confirmation that a click landed, since the jump itself can be subtle in a pane
    that was already near that part of the buffer. */
@@ -337,9 +337,15 @@
 }
 
 /* A crowded rail still has a full-size way to choose every prompt. */
-.prompt-index { position: absolute; top: 0; right: 25px; z-index: 2; pointer-events: auto; font-size: 11px; }
+.prompt-index { position: absolute; top: 3px; right: 25px; z-index: 11; pointer-events: auto; font-size: 11px; }
 .prompt-index summary { list-style: none; white-space: nowrap; cursor: pointer; padding: 4px 8px; border: 1px solid var(--line-strong); border-radius: var(--r); background: var(--surface-3); color: var(--text); }
 .prompt-index summary::-webkit-details-marker { display: none; }
 .prompt-index-list { position: absolute; right: 0; top: calc(100% + 4px); width: min(340px, calc(100vw - 100px)); max-height: min(360px, 55vh); overflow: auto; background: var(--surface-3); border: 1px solid var(--line-strong); border-radius: var(--r); padding: 4px; box-shadow: var(--shadow); }
 .prompt-index-list button { display: block; width: 100%; padding: 8px; text-align: left; white-space: normal; overflow-wrap: anywhere; background: transparent; color: var(--text); border: 0; border-radius: var(--r); cursor: pointer; }
 .prompt-index-list button:hover, .prompt-index-list button:focus-visible { background: var(--surface-2); }
+
+/* FitAddon subtracts the terminal element padding, leaving real room for tags.
+   The viewport still reaches the pane edge, so its scrollbar stays flush right. */
+.xterm-host .xterm { padding-right: 32px; }
+/* The closed prompt control has its own row instead of covering the first output line. */
+.xterm-wrap:has(.prompt-index) .xterm-host { margin-top: 34px; }
