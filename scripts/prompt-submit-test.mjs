@@ -543,6 +543,25 @@ const ANSWERING =
   manager.kill(answering.id)
 }
 
+// A Codex startup repaint can clear the visible composer without accepting a turn.
+// No native user row means no successful delivery, even with a fresh run clock.
+{
+  const pane = manager.start({ cwd: root, agent: 'shell' })
+  const live = manager.sessions.get(pane.id)
+  const proc = live.proc
+  manager.queuePrompt(pane.id, 'Native receipt required for this startup fixture', 0, 40, () => {}, 5000)
+  await sleep(120)
+  proc.say(COMPOSER)
+  await sentReturnAt(proc)
+  live.meta.agent = 'codex'
+  live.meta.runSince = Date.now() + 1
+  const until = Date.now() + Number(process.env.PF_PROMPT_CONFIRM_MS) * Number(process.env.PF_PROMPT_ENTER_TRIES) + 400
+  while (Date.now() < until) { proc.say(ANSWERING); await sleep(50) }
+  ok(await logSays(pane.id, /UNSENT/), 'Codex startup paint without a native row remains unverified', logOf(pane.id))
+  ok(!/prompt submitted/.test(logOf(pane.id)), 'neither a startup clock nor an empty composer proves Codex delivery', logOf(pane.id))
+  manager.kill(pane.id)
+}
+
 // ...and the failure this path exists for still reads as the failure. Same painting pane,
 // but the composer is holding the prompt: the return was eaten and nobody sent it.
 {

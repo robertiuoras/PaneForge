@@ -2374,6 +2374,11 @@ export type RenderCostReading = {
   upMinutes: number
 }
 
+export type IncludedAccounts = Record<'claude' | 'codex', {
+  live: string | null
+  saved: { email: string; plan: string | null }[]
+}>
+
 export interface Api {
   listReviews(): Promise<{ reviews: ReviewRecord[]; persistent: true }>
   recordReview(input: ReviewInput): Promise<{ review: ReviewRecord; close: { closed: boolean; reason?: string } }>
@@ -2396,6 +2401,7 @@ export interface Api {
   routeProjects(text: string): Promise<RouteResult>
   /** every known agent with whether its binary is actually on this machine */
   listAgents(): Promise<AgentInfo[]>
+  includedAccounts(target: 'local' | 'pc', change?: { provider: 'claude' | 'codex'; email: string }): Promise<IncludedAccounts>
   listSessions(): Promise<Session[]>
   contextUsage(id: string): Promise<ContextUsage | null>
   prepareContinuation(id: string): Promise<{ ok: boolean; reason?: string }>
