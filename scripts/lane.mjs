@@ -33,6 +33,8 @@
 //   node scripts/lane.mjs ship [patch|minor|major] merge ready lanes, one release
 //   node scripts/lane.mjs autoship                 ship, but only if no chat is mid-work
 //   node scripts/lane.mjs retry                    re-try stuck lanes (the app, on a timer)
+//   node scripts/lane.mjs park --session <id> --lane <slot> --ref <ref>
+//                                                    remember a committed snapshot outside the pool
 //   node scripts/lane.mjs sweep [--dry-run]        remove unused checkout folders, work saved first
 //   node scripts/lane.mjs release --session <id>   give the lane back (SessionEnd)
 //
@@ -534,6 +536,9 @@ function read() {
     s.release ??= null
     s.lastShip ??= null
     s.passed ??= {}
+    // Explicit snapshots parked outside the configured pool. Known parked naming
+    // conventions are inventoried for review, but never become lane work by discovery.
+    s.parkedWork ??= {}
     // Why the last automatic release did not go out. See noteHold below.
     s.hold ??= null
     // What THIS device last told the other one, so a turn ending can tell whether a
@@ -544,7 +549,7 @@ function read() {
     s.peers ??= null
     return s
   } catch {
-    return { lanes: {}, ready: {}, conflicts: {}, passed: {}, release: null, lastShip: null, hold: null, peer: null, peers: null }
+    return { lanes: {}, ready: {}, conflicts: {}, passed: {}, parkedWork: {}, release: null, lastShip: null, hold: null, peer: null, peers: null }
   }
 }
 
@@ -935,9 +940,77 @@ function holdGivenUp(c) {
  * claim may conclude: a parked `main` is handed over in minutes (PARK_STEAL_MS, or at
  * once for a visitor) instead of the hour the silence sweep needs.
  */
-function park(session, { ended = false } = {}) {
+/** A parked ref is deliberately narrower than a git revision expression. */
+function parkedRef(raw) {
+  if (!raw) throw new Error('park needs --ref')
+  const ref = raw.startsWith('refs/') ? raw : raw.startsWith('origin/') ? `refs/remotes/${raw}` : `refs/heads/${raw}`
+  if (!/^refs\/(?:heads|remotes\/origin)\/[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(ref) || ref.includes('..') || ref.endsWith('/'))
+    throw new Error(`parked work needs a branch ref, not "${raw}"`)
+  return ref
+}
+
+function parkedCommit(ref) {
+  const r = gitSafe(MAIN, 'rev-parse', '--verify', '--quiet', `${ref}^{commit}`)
+  return r.ok && /^[0-9a-f]{40}$/i.test(r.out.trim()) ? r.out.trim() : null
+}
+
+// Inventory only the three established parked-work spellings. The slot in the name is a
+// useful recovery hint, not authority to alter a worktree: a ref can be an active branch,
+// stale backup, or already-integrated work. An operator must explicitly park it before
+// ordinary claim/cherry-pick/ready work can resume it.
+function discoveredParked(state) {
+  const r = gitSafe(MAIN, 'for-each-ref', '--format=%(refname)', 'refs/remotes/origin/lane-*', 'refs/remotes/origin/wip/lane-*', 'refs/remotes/origin/park/lane-*')
+  if (!r.ok) return []
+  const found = []
+  for (const ref of r.out.split('\n').filter(Boolean)) {
+    const m = /^refs\/remotes\/origin\/(?:lane-|wip\/lane-|park\/lane-)([A-Za-z0-9]+)-[A-Za-z0-9._-]+$/.exec(ref)
+    if (!m || !POOL.includes(m[1])) continue
+    const commit = parkedCommit(ref)
+    if (!commit) continue
+    found.push({ ref, commit, lane: m[1] })
+    if (state.parkedWork[ref]) continue
+    state.parkedWork[ref] = { ref, commit, lane: m[1], session: null, parkedAt: now(), discovered: true, reviewRequired: true }
+    reaped = true
+  }
+  return found
+}
+
+function unregisteredWip(state) {
+  const r = gitSafe(MAIN, 'for-each-ref', '--format=%(refname)', 'refs/heads/*-wip')
+  if (!r.ok) return []
+  return r.out
+    .split('\n')
+    .filter((ref) => /^refs\/heads\/[A-Za-z0-9][A-Za-z0-9._/-]*-wip$/.test(ref) && !state.parkedWork[ref])
+    .map((ref) => ({ ref, commit: parkedCommit(ref), action: 'inspect, then park --ref <ref> --lane <empty slot>' }))
+    .filter((p) => p.commit)
+}
+
+function registerParked(state, { ref: raw, lane, session }) {
+  if (!lane || lane === 'main' || !POOL.includes(lane)) throw new Error('parked work needs a non-main configured --lane')
+  const ref = parkedRef(raw)
+  const commit = parkedCommit(ref)
+  if (!commit) throw new Error(`cannot park ${raw}: that ref does not name a commit in this repository`)
+  const old = state.parkedWork[ref]
+  state.parkedWork[ref] = {
+    ref,
+    commit,
+    lane,
+    session: session ?? null,
+    parkedAt: old?.parkedAt ?? now()
+  }
+  return state.parkedWork[ref]
+}
+
+function park(session, { ended = false, ref, lane } = {}) {
   if (!session) throw new Error('park needs --session')
   const state = reap(read())
+  // Registering an external snapshot is independent of the Stop hook. In particular,
+  // it must not mark the caller's active lane parked or update its session lifecycle.
+  if (ref) {
+    const saved = registerParked(state, { ref, lane, session })
+    write(state)
+    return { saved }
+  }
   const parked = []
   for (const [id, c] of Object.entries(state.lanes)) {
     if (c.session !== session || c.parked) continue
@@ -974,6 +1047,7 @@ function park(session, { ended = false } = {}) {
 }
 
 function reap(state) {
+  discoveredParked(state)
   for (const [id, c] of Object.entries(state.lanes)) {
     // A lane reserved by a chat that only talked about PaneForge and never touched it.
     // Nothing can be lost - a tentative lane is by definition one nothing was written in -
@@ -4433,6 +4507,25 @@ function statusOf(state, session, held) {
     }),
     // Why a finished lane has not gone out yet, in one field.
     blockedBy: releaseHolds(state),
+    // Registered or discovered recovery work is intentionally separate from `lanes`.
+    // Discovery is a review prompt only; ordinary claim/cherry-pick/ready owns resumption.
+    parkedWork: Object.values(state.parkedWork ?? {}).map((p) => {
+      const current = parkedCommit(p.ref)
+      return {
+        ...p,
+        present: Boolean(current),
+        moved: Boolean(current && current !== p.commit),
+        merged: Boolean(gitSafe(MAIN, 'merge-base', '--is-ancestor', p.commit, MB).ok),
+        action: gitSafe(MAIN, 'merge-base', '--is-ancestor', p.commit, MB).ok
+          ? 'already on trunk by ancestry; no recovery needed (a cherry-picked equivalent cannot be inferred)'
+          : p.reviewRequired
+            ? `inspect then park --ref ${p.ref.replace(/^refs\/remotes\//, '')} --lane <empty slot>`
+            : `claim a lane, cherry-pick ${p.commit.slice(0, 12)}, then ready`
+      }
+    }),
+    // A local *-wip branch gives no safe lane assignment. Show it without registering or
+    // merging it, so its owner can choose a slot explicitly.
+    unregisteredParked: unregisteredWip(state),
     pending: shippable(state),
     release: state.release,
     lastShip: state.lastShip,
@@ -4659,6 +4752,18 @@ function doctor() {
     }
   }
   say()
+
+  // Status JSON reaches the board, but doctor is the existing human-facing recovery
+  // surface. Keep discovered snapshots unmistakably separate from lanes and releases.
+  if (s.parkedWork.length || s.unregisteredParked.length) {
+    say('PARKED WORK')
+    for (const p of s.parkedWork) {
+      const state = !p.present ? 'ref is gone' : p.moved ? 'ref moved' : p.merged ? 'already on trunk' : p.reviewRequired ? 'review required' : 'registered'
+      say(`  ${p.ref} (${p.commit.slice(0, 12)}): ${state}; ${p.action}`)
+    }
+    for (const p of s.unregisteredParked) say(`  ${p.ref} (${p.commit.slice(0, 12)}): unregistered; ${p.action}`)
+    say()
+  }
 
   // ---- debris: folders and branches that look like lanes and are not
   const registered = new Set(
@@ -5315,7 +5420,7 @@ try {
   } else if (cmd === 'park') {
     // The Stop hook: this chat's turn ended. Holds on clean lanes are marked parked so a
     // chat that needs one takes it in minutes; the mark clears itself on the next claim.
-    const r = park(session, { ended: argv.includes('--ended') })
+    const r = park(session, { ended: argv.includes('--ended'), ref: arg('ref'), lane: arg('lane') })
     console.log(JSON.stringify(r))
   } else if (cmd === 'autoship') sayRelease(autoship((argv[1] && !argv[1].startsWith('--') ? argv[1] : 'auto').toLowerCase(), session ?? 'auto'))
   else if (cmd === 'ship') {

@@ -197,6 +197,7 @@ const TESTS = [
   ['sessioncopies', 'session-copies-test.mjs'],
   ['lanevisitor', 'lane-visitor-test.mjs'],
   ['laneorphan', 'lane-orphan-test.mjs'],
+  ['laneparked', 'lane-parked-test.mjs'],
   ['lanework', 'lane-work-test.mjs'],
   ['lanemergehold', 'lane-mergehold-test.mjs'],
   // A cleared pane keeps its lane; an unrecorded open merge can be resolved; identical

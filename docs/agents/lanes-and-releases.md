@@ -15,6 +15,13 @@ there, PreToolUse refuses elsewhere. `node scripts/lane.mjs status --repo <dir>`
 - One engine `lane.mjs --repo <dir>`. `.lanes.json` `{ "lanes": false, "branch": "main",
   "release": "merge", "pool": ["main","a"] }`. No-remote repos, `claude-memory`: no lanes.
   Never leave one conflicted.
+- A committed snapshot that lives outside the configured pool is not merged by name.
+  `status` inventories the bounded `origin/lane-<slot>-<name>`,
+  `origin/wip/lane-<slot>-<name>`, and `origin/park/lane-<slot>-<name>` conventions,
+  plus local `*-wip` branches, for explicit inspection. Discovery never changes a lane.
+  Register reviewed work with `park --ref <branch> --lane <empty slot> --session <id>`;
+  the pinned commit remains visible even when its ref moves or vanishes. Resume through an
+  ordinary claimed lane and its normal validation before `ready` (`node scripts/lane-parked-test.mjs`).
 - Shipped once `landedOnOrigin` proves it; failed lane out of `lastShip.lanes`; `state.passed`.
 - ONE PANE, ONE LANE: a claim drops other holds with the same `PF_PANE`; no pane id = kept.
 - Trunk = `.lanes.json` `branch`, else origin/HEAD, else main/master, never the root's
