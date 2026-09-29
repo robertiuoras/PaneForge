@@ -12,6 +12,7 @@ import { join } from 'node:path'
 import { app } from 'electron'
 import { PaneAnswers } from './paneAnswers'
 import { composerOf } from './composerRead'
+import { isTerminalReply } from '../shared/terminalProtocol'
 import type { PaneAnswerIdentity, PaneAnswerRequest, PaneAnswerReceipt } from '../shared/paneAnswer'
 import * as pty from '@lydell/node-pty'
 import { audit, plainTail } from './audit'
@@ -2159,9 +2160,16 @@ export class SessionManager extends EventEmitter {
     return { text: live.draft.text, certain: live.draft.certain }
   }
 
-  write(id: string, data: string, origin: WriteOrigin = 'desk'): void {
+  write(id: string, data: string, origin: WriteOrigin = 'desk', terminalReply = false): void {
     const live = this.sessions.get(id)
     if (!live || !live.proc) return
+    // The renderer's onKey context distinguishes Shift-F3 from an identical cursor
+    // report. Only its tagged, validated protocol replies bypass ownership and drafts.
+    if (terminalReply && isTerminalReply(data)) {
+      live.proc.write(data)
+      live.repaintUntil = Date.now() + REPAINT_GRACE_MS
+      return
+    }
     const queued = this.codexQueued.get(id)
     if (queued && queued.live === live && queued.proc === live.proc && !queued.writing && !live.effortPassThrough && data &&
       data !== '\x1b[I' && data !== '\x1b[O') {

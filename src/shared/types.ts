@@ -2435,7 +2435,8 @@ export interface Api {
    * leaves the marker that stops the keep-alive task reopening what was closed on purpose.
    */
   quitIdle(reason: string): Promise<void>
-  write(id: string, data: string): void
+  /** `terminalReply` is set only by xterm's non-keyboard protocol path. */
+  write(id: string, data: string, terminalReply?: boolean): void
   /**
    * Put a job in a pane's prompt box and press Enter, properly.
    *

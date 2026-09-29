@@ -2980,7 +2980,7 @@ function TerminalPane({
       const fromKeyboard = keyboardData === d
       keyboardData = null
       if (!fromKeyboard && isTerminalReply(d)) {
-        if (!asleepRef.current) api.write(sessionId, d)
+        if (!asleepRef.current) api.write(sessionId, d, true)
         return
       }
       // The curtain is up: the app is mid-handover and the resume prompt has not landed.

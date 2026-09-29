@@ -1191,7 +1191,7 @@ const remote = new Remote({
   // keystrokes - so it needs telling on `pane:typed`, exactly as a phone's line does.
   // Without an origin here it defaulted to `desk`, and a pane driven from another
   // machine got no rail tag and no row in the prompt archive.
-  write: (id, data) => manager.write(id, data, 'phone'),
+  write: (id, data, terminalReply) => manager.write(id, data, 'phone', terminalReply),
   onTyped: (cb) => {
     manager.on('submitted', cb)
     return () => manager.off('submitted', cb)
@@ -2545,9 +2545,9 @@ ipcMain.on('sessions:attention-clear', (_e, id: string) =>
   remote.owns(id) ? remote.send(id, { t: 'ack' }) : manager.clearAttention(id)
 )
 /** Bytes into a pane, wherever that pane lives. The one path anything here types through. */
-function writePane(id: string, data: string, origin: WriteOrigin = 'desk'): void {
+function writePane(id: string, data: string, origin: WriteOrigin = 'desk', terminalReply = false): void {
   if (remote.owns(id)) {
-    remote.send(id, { t: 'write', data })
+    remote.send(id, { t: 'write', data, ...(terminalReply ? { terminalReply: true } : {}) })
     return
   }
   watchForClear(id, data)
@@ -2559,14 +2559,14 @@ function writePane(id: string, data: string, origin: WriteOrigin = 'desk'): void
   // session". The one thing typing must still prevent is being typed OVER, and that is
   // handled where it can be handled honestly: `expiryDecision` returns 'wait' for an
   // unsent draft, so the timer asks again rather than the countdown disappearing.
-  manager.write(id, data, origin)
+  manager.write(id, data, origin, terminalReply)
 }
 
 // A phone's write arrives through `ipcTap`'s stand-in event, whose sender reports itself
 // gone; the window's own sender is live. That one bit decides whether the rail in this
 // window already tagged the line (it typed it) or needs telling (`pane:typed`).
-ipcMain.on('pty:write', (e, id: string, data: string) =>
-  writePane(id, data, e.sender?.isDestroyed?.() ? 'phone' : 'desk')
+ipcMain.on('pty:write', (e, id: string, data: string, terminalReply?: boolean) =>
+  writePane(id, data, e.sender?.isDestroyed?.() ? 'phone' : 'desk', terminalReply === true)
 )
 // The DESK window only, never `send()`. `send` broadcasts to the phone first, and a
 // phone's own submitted line already ran through its renderer's `feedInput` on the way

@@ -1121,6 +1121,44 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
   const pasted = (p, text = payload) => p.writes.includes('\x1b[200~' + text + '\x1b[201~')
   const ledger = (id) => Object.values(JSON.parse(readFileSync(join(work, 'userData', 'queued-prompts.json'), 'utf8'))).filter(row => row.id === id)
 
+  const startup = open()
+  startup.p.onWrite = data => {
+    if (data.includes(payload)) startup.p.say(frame(payload))
+    if (data === '\r') startup.received(payload)
+  }
+  const startupSettled = queue(startup)
+  const { Terminal } = createRequire(import.meta.url)('@xterm/headless')
+  const terminal = new Terminal({cols:73,rows:28,allowProposedApi:true})
+  const replies = []
+  terminal.onData(data => {
+    replies.push(data)
+    manager.write(startup.pane.id,data,'desk',true)
+  })
+  await new Promise(resolve => terminal.write('\x1b[6n\x1b[c',resolve))
+  terminal.dispose()
+  ok(JSON.stringify(replies) === JSON.stringify(['\x1b[1;1R','\x1b[?1;2c']) &&
+    startup.live.draft.certain && !startup.live.draft.text && !startup.live.meta.drafting &&
+    !manager.codexQueued.get(startup.pane.id)?.foreign,
+    'real xterm startup replies reach PTY without claiming or poisoning the queued composer')
+  ok(await waitFor(() => startupSettled() === 1) &&
+    startup.p.writes.filter(data => data === '\x1b[200~' + payload + '\x1b[201~').length === 1 && ledger(startup.pane.id).length === 0,
+    'startup replies preserve one multiline delivery confirmed by the exact native receipt',logOf(startup.pane.id))
+  manager.kill(startup.pane.id)
+
+  for (const [name,data,tagged] of [
+    ['typing','human',false],['arrow','\x1b[D',false],['Shift-F3','\x1b[1;2R',false],
+    ['paste','\x1b[200~human\x1b[201~',false],['invalid protocol tag','human',true]
+  ]) {
+    const edited = open()
+    queue(edited,payload,300)
+    manager.write(edited.pane.id,data,'desk',tagged)
+    const claimed = manager.codexQueued.get(edited.pane.id)?.foreign
+    await sleep(420)
+    ok(claimed && !pasted(edited.p) && !returnsOf(edited.p) && edited.p.writes.includes(data),
+      `${name} still owns the composer and prevents queued startup paste`,logOf(edited.pane.id))
+    manager.kill(edited.pane.id)
+  }
+
   const hint = 'Ask Codex to do anything'
   const hinted = open()
   hinted.p.say(frame(`\x1b[2m${hint}\x1b[22m`).replace(/\x1b\[5;\d+H$/, '\x1b[5;3H'))
