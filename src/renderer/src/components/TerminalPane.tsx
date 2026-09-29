@@ -207,9 +207,10 @@ interface Props {
   /**
    * Which CLI is running in this pane.
    *
-   * Only used to decide what a dropped IMAGE becomes: Claude Code reads an image off the
-   * clipboard when it gets a ^V, so it can be handed the picture itself; the other twelve
-   * read a path off the prompt and would see nothing at all from a paste.
+   * Only used to decide what a dropped IMAGE becomes: Claude Code, Codex and
+   * Antigravity read an image off the clipboard when they get a ^V, so they can be
+   * handed the picture itself; other CLIs read a path off the prompt and would see
+   * nothing at all from a paste.
    */
   agent?: string
   /** Say something happened, in the window's own toast. */

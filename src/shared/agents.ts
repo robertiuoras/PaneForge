@@ -670,9 +670,29 @@ const CLAUDE_CODE_AGENTS = new Set([
   'anthropic'
 ])
 
+/**
+ * Which CLIs read images directly off the OS clipboard on ^V.
+ *
+ * Claude Code reads an image off the clipboard when it gets a ^V; modern Codex (0.150+)
+ * and Antigravity CLI (1.2+) also read macOS/OS clipboard images on ^V.
+ *
+ * `openrouter`, `deepseek` and `glm` are Claude Code with a different base URL, so they
+ * read the clipboard too - the binary is what decides this, never the model behind it.
+ */
+const CLIPBOARD_IMAGE_AGENTS = new Set([
+  'claude',
+  'openrouter',
+  'deepseek',
+  'glm',
+  'claude-code',
+  'anthropic',
+  'codex',
+  'antigravity'
+])
+
 /** Would a raw ^V put an image in front of this agent, rather than nothing? */
 export function pastesClipboardImage(agent: string | undefined): boolean {
-  return !!agent && CLAUDE_CODE_AGENTS.has(agent)
+  return !!agent && CLIPBOARD_IMAGE_AGENTS.has(agent)
 }
 
 /**
