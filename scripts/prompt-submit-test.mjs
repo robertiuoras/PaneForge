@@ -1121,6 +1121,28 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
   const pasted = (p, text = payload) => p.writes.includes('\x1b[200~' + text + '\x1b[201~')
   const ledger = (id) => Object.values(JSON.parse(readFileSync(join(work, 'userData', 'queued-prompts.json'), 'utf8'))).filter(row => row.id === id)
 
+  const hint = 'Ask Codex to do anything'
+  const hinted = open()
+  hinted.p.say(frame(`\x1b[2m${hint}\x1b[22m`).replace(/\x1b\[5;\d+H$/, '\x1b[5;3H'))
+  hinted.p.onWrite = data => {
+    if (data.includes(payload)) hinted.p.say(frame(payload))
+    if (data === '\r') hinted.received(payload)
+  }
+  const hintSettled = queue(hinted)
+  ok(await waitFor(() => hintSettled() === 1) &&
+    hinted.p.writes.filter(data => data === '\x1b[200~' + payload + '\x1b[201~').length === 1 && ledger(hinted.pane.id).length === 0,
+    'native dim placeholder permits one multiline paste proven by its exact native receipt', logOf(hinted.pane.id))
+  manager.kill(hinted.pane.id)
+
+  const literalDraft = open()
+  literalDraft.p.say(frame(hint).replace(/\x1b\[5;\d+H$/, '\x1b[5;3H'))
+  const draftSettled = queue(literalDraft, payload, 300)
+  await sleep(700)
+  ok(draftSettled() === 0 && !pasted(literalDraft.p) &&
+    ledger(literalDraft.pane.id).some(row => row.text === payload && !row.typed),
+    'regular same-string draft with caret at start keeps queued bytes out and preserves accepted intent')
+  manager.kill(literalDraft.pane.id)
+
   const persistence = open()
   const markerFile = join(work, 'userData', 'queued-prompts.json.tmp')
   mkdirSync(markerFile)

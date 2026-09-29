@@ -168,6 +168,25 @@ eq('with nothing typed', emptyOut?.text, '')
 // No bytes at all is a pane that has printed nothing - nothing to read, and saying so.
 eq('an empty stream is refused', await composerOf('', cols, rows), null)
 
+// Native Codex 0.159: alternate screen, bold marker, dim hint, caret before the hint.
+// The literal alone must never erase a genuine draft, including one with Home pressed.
+const hint = 'Ask Codex to do anything'
+const codexPaint = (text, style, caret = 2) =>
+  `${ESC}[?1049h${ESC}[2J${ESC}[56;1H${ESC}[48;2;213;231;208m${ESC}[1m›${ESC}[22m ${style}${text}${ESC}[0m${ESC}[58;1H  GPT-6.1-Sol · 50% left${ESC}[56;${caret + 1}H`
+const readCodex = raw => composerOf(raw, 73, 59, 'codex')
+eq('native dim Codex hint with caret before it is an empty composer',
+  (await readCodex(codexPaint(hint, `${ESC}[2m`)))?.text, '')
+eq('the same words typed normally remain a draft even with the caret at the start',
+  (await readCodex(codexPaint(hint, '')))?.text, hint)
+eq('dim same-string text with a caret after it is preserved conservatively',
+  (await readCodex(codexPaint(hint, `${ESC}[2m`, hint.length + 2)))?.text, hint)
+eq('partially dim same-string text is not treated as a placeholder',
+  (await readCodex(codexPaint(`A${ESC}[22m${hint.slice(1)}`, `${ESC}[2m`)))?.text, hint)
+eq('other dim text at the start remains a draft',
+  (await readCodex(codexPaint('Ask Codex to do anything else', `${ESC}[2m`)))?.text, 'Ask Codex to do anything else')
+const repaintedHint = codexPaint(hint, `${ESC}[2m`) + codexPaint(hint, '')
+eq('regular draft repaint replaces the earlier identical dim hint', (await readCodex(repaintedHint))?.text, hint)
+
 // Exercise the renderer's actual reader: Codex now keeps its native composer in
 // the alternate screen. A blanket alternate-screen refusal hid unsent drafts.
 const promptFile = join(work, 'prompt.bundle.cjs')
