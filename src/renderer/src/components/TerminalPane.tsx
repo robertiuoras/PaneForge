@@ -1372,7 +1372,7 @@ function TerminalPane({
   //
   // So both ends are read off the viewport's real box: where its right edge actually is,
   // plus however wide its scrollbar actually is at the scale it is actually drawn at.
-  const [track, setTrack] = useState({ top: 7, height: 0, right: 17 })
+  const [track, setTrack] = useState({ top: 7, height: 0, right: 17, scale: 1 })
   // Which tag just got clicked, so it can light up long enough to be seen.
   const [flash, setFlash] = useState(-1)
   /**
@@ -1687,12 +1687,14 @@ function TerminalPane({
       // ...and the height is the DRAWN height for the same reason `top` is: `clientHeight`
       // answers the unscaled box, which stretched a mirror's track past its own screen.
       height: vb.height,
-      right: wb.right - vb.right + bar
+      right: wb.right - vb.right + bar,
+      scale
     }
     setTrack((p) =>
       Math.abs(p.top - next.top) < 0.5 &&
       Math.abs(p.height - next.height) < 0.5 &&
-      Math.abs(p.right - next.right) < 0.5
+      Math.abs(p.right - next.right) < 0.5 &&
+      Math.abs(p.scale - next.scale) < 0.001
         ? p
         : next
     )
@@ -3933,8 +3935,12 @@ function TerminalPane({
     let staleTries = 0
     let lastNudge = 0
     let settle2: number | undefined
-    /** How long a `false` must hold before it is believed. See the grace below. */
+    /** Confirm weak counter-only evidence before starting a turn. */
     const BUSY_SETTLE_MS = 1200
+    // Codex briefly removes its footer between tool/output bursts. Live audit readings
+    // went idle and back to working less than 1.3s later even with the old 1.2s grace.
+    // Keep the turn and its place in Running through a short pause. Questions bypass it.
+    const IDLE_SETTLE_MS = 8000
     /** How far past the grace the re-check is armed, so it cannot land a tick short. */
     const BUSY_SETTLE_STEP_MS = 350
     const checkBusy = (): void => {
@@ -4025,19 +4031,23 @@ function TerminalPane({
           return
         }
       } else onSince = 0
-      if (!now && busy) {
+      // Read the whole chooser before delaying completion: an actual question must
+      // reach main immediately, including changes to the selected answer.
+      const wide = now ? '' : screenText(t, ASK_ROWS)
+      const sig = wide ? askSignature(wide) : ''
+      if (!now && busy && !sig) {
         if (!offSince) offSince = at
-        if (at - offSince < BUSY_SETTLE_MS) {
+        if (at - offSince < IDLE_SETTLE_MS) {
           // ...and the confirming tick has to be ARMED, because every other check in
           // here is driven by output and a finished turn prints nothing more. The
-          // after-the-burst timer fires at 900ms, which is inside this 1200ms grace, so
-          // it deferred a second time and nothing ever asked again: the last thing main
+          // after-the-burst timer fires at 900ms, inside even the former 1200ms grace.
+          // Without this timer it deferred again and nothing ever asked: the last thing main
           // heard about the pane was `true`, its run clock kept counting, and the card
           // said Running for the rest of the day. Measured 2026-08-26 on this desk -
           // `attention-audit.log` has PaneForge at quietMs 1507149 with
           // busyOnScreen:true over the frame `✻ Baked for 7m 57s · done 3:08 PM`.
           window.clearTimeout(settle2)
-          settle2 = window.setTimeout(checkBusy, BUSY_SETTLE_MS - (at - offSince) + BUSY_SETTLE_STEP_MS)
+          settle2 = window.setTimeout(checkBusy, IDLE_SETTLE_MS - (at - offSince) + BUSY_SETTLE_STEP_MS)
           return
         }
       }
@@ -4055,15 +4065,6 @@ function TerminalPane({
       // a turn boundary the app read wrong is only corrected on the next one of these.
       const clock = now ? readsElapsedMs(text, true) : null
       const restate = clock ? 15_000 : BUSY_RESTATE
-      // A question's own frame, wide enough to hold the whole chooser. Only while the
-      // pane is idle - a chooser and a running agent are never on screen together, and
-      // this is the one place a wider translate would be paid for every tick of a turn.
-      const wide = now ? '' : screenText(t, ASK_ROWS)
-      // The SELECTION is part of the signature, not only the question. Answering walks
-      // the arrow from where it is now, so a person who arrowed at the desk while a
-      // phone was looking at the same pane would otherwise have the phone's button pick
-      // the wrong row - silently, and only ever by the distance they moved it.
-      const sig = wide ? askSignature(wide) : ''
       if (now === busy && sig === lastAsk && !(now && at - lastReport > restate)) return
       busy = now
       lastAsk = sig
@@ -5163,6 +5164,34 @@ function TerminalPane({
       }}
       onDrop={onDrop}
     >
+      {marks.length > 0 && (
+        <details className="prompt-index" onKeyDown={event => {
+          if (event.key !== 'Escape') return
+          event.preventDefault()
+          event.stopPropagation()
+          event.currentTarget.open = false
+          event.currentTarget.querySelector('summary')?.focus()
+        }}>
+          <summary>Prompts · {marks.length}</summary>
+          <div className="prompt-index-list">
+            {marks.map((mark, index) => <button
+              key={mark.id}
+              title={mark.marker.line < 0
+                ? `${markLabel(mark, Math.max(railNow, mark.at))} · older than terminal scrollback · click to copy`
+                : markLabel(mark, Math.max(railNow, mark.at))}
+              onClick={event => {
+                if (mark.marker.line < 0) putOnClipboard(mark.full || mark.text, 'Prompt')
+                else jumpTo(mark)
+                const details = event.currentTarget.closest('details')
+                if (details) {
+                  details.open = false
+                  details.querySelector('summary')?.focus()
+                }
+              }}
+            >{index + 1}. {mark.text}</button>)}
+          </div>
+        </details>
+      )}
       <div
         className="xterm-host"
         ref={host}
@@ -5292,34 +5321,8 @@ function TerminalPane({
       {marks.length > 0 && (
         <div
           className="mark-rail"
-          style={{ top: track.top, height: track.height || undefined, right: track.right }}
+          style={{ top: track.top, height: track.height || undefined, right: track.right, '--rail-scale': track.scale } as React.CSSProperties}
         >
-          <details className="prompt-index" onKeyDown={event => {
-            if (event.key !== 'Escape') return
-            event.preventDefault()
-            event.stopPropagation()
-            event.currentTarget.open = false
-            event.currentTarget.querySelector('summary')?.focus()
-          }}>
-            <summary>Prompts · {marks.length}</summary>
-            <div className="prompt-index-list">
-              {marks.map((mark, index) => <button
-                key={mark.id}
-                title={mark.marker.line < 0
-                  ? `${markLabel(mark, Math.max(railNow, mark.at))} · older than terminal scrollback · click to copy`
-                  : markLabel(mark, Math.max(railNow, mark.at))}
-                onClick={event => {
-                  if (mark.marker.line < 0) putOnClipboard(mark.full || mark.text, 'Prompt')
-                  else jumpTo(mark)
-                  const details = event.currentTarget.closest('details')
-                  if (details) {
-                    details.open = false
-                    details.querySelector('summary')?.focus()
-                  }
-                }}
-              >{index + 1}. {mark.text}</button>)}
-            </div>
-          </details>
           {placed.map((p, i) => {
             if (!p) return null
             const { mark: m, top, hitUp, hitDown } = p
