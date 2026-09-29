@@ -40,6 +40,7 @@ if (process.platform !== 'win32') {
 // build should say so in a second rather than after the slow ones.
 const TESTS = [
   ['includedaccounts', 'included-accounts-test.mjs'],
+  ['paneanswer', 'pane-answer-test.mjs'],
   ['remotesuite', 'test-remote-test.mjs'],
   ['testchrome', 'test-chrome-test.mjs'],
   ['promptreview', 'prompt-review-test.mjs'],

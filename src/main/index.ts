@@ -1446,6 +1446,8 @@ ipcMain.handle('owner:stats', (e) => {
 ipcMain.on('pane:tell', (_e, ref: string, text: string) => {
   manager.tellPane(String(ref), String(text))
 })
+ipcMain.handle('pane:answer', (_e, req) => manager.answerPane(req))
+ipcMain.handle('pane:answerStatus', (_e, req) => manager.answerStatus(req))
 
 ipcMain.handle('devs:list', async (_e, panes: Array<{ id: string; pane: number; name: string }>) => {
   const roots = manager.roots()

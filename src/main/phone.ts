@@ -164,6 +164,8 @@ const GATED_SEND = new Set([
   'stash:reveal'
 ])
 const GATED_INVOKE = new Set([
+  // Steering an active Codex turn types into its pty, just like pane:tell.
+  'pane:answer',
   // A report can close a pane or ask the desktop to open local evidence.
   'reviews:record',
   'reviews:open',

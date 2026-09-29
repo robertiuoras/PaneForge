@@ -223,6 +223,8 @@ export const SURFACE: Surface = {
   // idle/pressure countdowns `MoveSoon.tsx` already draws. See handoffQueue.ts `soon`.
   onHandoffSoon: ['on', 'remote:handoffSoon'],
   tellPane: ['send', 'pane:tell'],
+  answerPane: ['invoke', 'pane:answer'],
+  answerStatus: ['invoke', 'pane:answerStatus'],
   askAutoClear: ['invoke', 'autoclear:ask'],
   cancelAutoClear: ['invoke', 'autoclear:cancel'],
   takeOverPane: ['invoke', 'autoclear:takeover'],

@@ -1027,7 +1027,8 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
 // that write. The proof a return landed is a TURN, not output.
 {
   const src = readFileSync(new URL('../src/main/sessions.ts', import.meta.url), 'utf8')
-  const fn = src.slice(src.indexOf('const submit = (tries: number)'), src.indexOf('const tick = ()'))
+  const submitStart = src.indexOf('const submit = (tries: number)')
+  const fn = src.slice(submitStart, src.indexOf('const tick = ()', submitStart))
   ok(/runSince \?\? 0\) >= typedAt/.test(fn), 'a turn newer than the return is the only proof it went in')
   // ...for a PROMPT. `write()` stamps `runSince` on every return it sends, so a slash
   // command - which starts no turn - would otherwise be proven by this app's own keystroke.
@@ -1055,7 +1056,7 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
   ok(!/Date\.now\(\) >= deadline\)/.test(fn), 'the confirm may not expire on the WAIT deadline')
   ok(
     /confirmUntil = typedAt \+ PROMPT_CONFIRM_MS \* PROMPT_ENTER_TRIES/.test(
-      src.slice(src.indexOf('const submit = (tries: number)'), src.indexOf('const tick = ()'))
+      fn
     ),
     'the confirm clock starts at the return and lasts every retry it is allowed'
   )
