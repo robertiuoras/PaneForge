@@ -12,10 +12,11 @@ try {
   const fixture = `
 import { PaneAnswers } from ${JSON.stringify(resolve('src/main/paneAnswers.ts'))}
 import { feedDraft, newDraft } from ${JSON.stringify(resolve('src/shared/draft.ts'))}
+import { ASK_PROMPT, composerHeld } from ${JSON.stringify(resolve('src/shared/busy.ts'))}
+import { stripAnsi as strip } from ${JSON.stringify(resolve('src/shared/ansi.ts'))}
 const app={getPath:()=>${JSON.stringify(work)}}
 const owedCount=()=>0
 import {join} from 'node:path'
-const plainTail=(s)=>s, composerHeld=(s)=>s.includes('DIALOG')
 let native='11111111-1111-1111-1111-111111111111', received=false, clock=1000
 const resumeIdFor=()=>native, codexPromptReceipt=()=>received ? {transcriptAt:1001} : null
 const tasks=[]
@@ -46,6 +47,36 @@ export { PaneAnswers }
   assert.equal(h.answerPane(r).state,'confirmed'); assert.equal(h.writes.length,2)
   assert.throws(()=>h.answerPane({...r,text:'different'}),/different text/)
   assert.throws(()=>h.answerStatus({...r,expectedConversationId:'22222222-2222-2222-2222-222222222222'}),/identity mismatch/)
+  const blockers = [
+    ['question metadata', live => { live.meta.ask = { question: 'Synthetic choice' } }],
+    ...[
+      ['approval dialog', 'Do you want to run this command?'],
+      ['numbered choice', '\x1b[32m❯ 1. Allow once\x1b[0m'],
+      ['chooser footer below long preview', 'Synthetic preview '.repeat(40) + '\n  Enter to select · ↑/↓ to navigate · Esc to cancel'],
+      ['yes/no question', 'Continue? (y/n)\nWorking · esc to interrupt'],
+      ['confirmation footer', 'Press Enter to confirm'],
+      ['waiting on reply', 'Waiting for your reply'],
+      ['connecting composer', '/rc connecting…']
+    ].map(([name, frame]) => [name, live => { live.buffer.read = () => frame }])
+  ]
+  for (const [name, block] of blockers) {
+    h=fresh(); r=request(); let live=h.sessions.get(r.paneId)
+    block(live); h.answerPane(r); tick()
+    assert.equal(h.answerStatus(r).state,'waiting', `${name}: wait before paste`)
+    assert.equal(h.writes.length,0, `${name}: no paste into dialog`)
+    delete live.meta.ask; live.buffer.read=()=>'Working · esc to interrupt'
+    tick(); tick(); receipt(); tick()
+    assert.equal(h.answerStatus(r).state,'confirmed', `${name}: clearing blocker permits delivery`)
+    assert.deepEqual(h.writes,[`\x1b[200~${r.text}\x1b[201~`,'\r'])
+
+    h=fresh(); r=request(); live=h.sessions.get(r.paneId)
+    h.answerPane(r); tick(); block(live); tick()
+    assert.equal(h.answerStatus(r).state,'uncertain', `${name}: newly appeared dialog withholds Enter`)
+    assert.deepEqual(h.writes,[`\x1b[200~${r.text}\x1b[201~`], `${name}: no Enter into dialog`)
+    assert.equal(live.draft.text,r.text, `${name}: pasted text preserved`)
+    assert.equal(h.answerPane(r).state,'uncertain', `${name}: no replay`)
+    assert.equal(h.writes.length,1)
+  }
   h=fresh(); r=request(); h.sessions.get(r.paneId).draft={text:'human draft',certain:true}
   h.answerPane(r); tick(); assert.equal(h.writes.length,0); assert.equal(h.sessions.get(r.paneId).draft.text,'human draft')
   identity('changed'); tick(); assert.equal(h.answerStatus(r).state,'rejected'); assert.equal(h.writes.length,0)
@@ -69,5 +100,5 @@ export { PaneAnswers }
   assert.throws(()=>durable.update(durableRequest,{state:'confirmed',confirmedAt:Date.now()}))
   assert.equal(durable.status(durableRequest).state,'submitted', 'failed persistence cannot advertise a durable confirmation')
   for(const text of ['\x1b[2J','/clear','!rm anything']) assert.throws(()=>h.answerPane({...request(),text}),/Invalid/)
-  console.log('Pane answer: busy delivery, exact identity, idempotency, human draft, takeover, process replacement, restart and control-text checks passed')
+  console.log(`Pane answer: busy delivery, ${blockers.length} real-helper dialog guards at both boundaries, exact identity, idempotency, human draft, takeover, process replacement, restart and control-text checks passed`)
 } finally {rmSync(work,{recursive:true,force:true})}
