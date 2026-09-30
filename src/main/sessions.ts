@@ -63,6 +63,7 @@ import { closeHeldBy, personLooking, replyFinished, wasRead, type DoneReading } 
 import { folderName, laneOfCheckout, projectOf } from '../shared/place'
 import { dropStale, lentGrid, watchedBorrow, type Borrow } from '../shared/paneSize'
 import { START_COLS, START_ROWS } from '../shared/paneGrid'
+import { LIVE_REPLAY_LIMIT } from '../shared/freshReplay'
 import { paintedWidth, RESTORE_MARK_TEXT } from '../shared/replayWidth'
 import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, SUBMIT_GAP_MS, armDecision, clearChunks, hasFreshPaneHandoff, resumeOf, dropFor, dropWords, expiryDecision, queuedPromptDecision, quietEnoughToArm, standDownFor, type DropReason, type QueuedPromptVerdict } from '../shared/autoclear'
 import { acLog } from './autoclearLog'
@@ -94,10 +95,11 @@ export interface AutoClearArm {
   tokens?: number
 }
 import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from './pipe'
-import { claimFromCli, claimCodexFromProcess, claudeAcceptedPrompt, claudeStartup, codexAcceptedPrompt, codexConversationReceipt, codexPromptReceipt, codexQuestionPending, forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeEvidence, resumeIdFor, transcriptPath } from './transcripts'
+import { claimFromCli, claimCodexFromProcess, claudeAcceptedPrompt, claudeStartup, codexAcceptedPrompt, codexConversationReceipt, codexPromptReceipt, codexQuestionPending, forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeEvidence, resumeIdFor, transcriptFor, transcriptPath } from './transcripts'
 import { recordPromptReview } from './promptReview'
 import { liveModelFor } from './paneModel'
 import { backgroundAgentsFor, forgetBackgroundAgents, noteBackgroundAgents } from './runningAgents'
+import { codexWorkersFor, forgetCodexWorkers } from './codexWorkers'
 // How hard a Codex pane thinks. The rule is `shared/effort.ts`, the disk is
 // `main/effort.ts`, the levels each model offers come from Codex itself.
 import {
@@ -236,7 +238,7 @@ const ATTENTION_AFTER_FOOTER_MS = 12_000
  */
 const REPAINT_GRACE_MS = 1200
 /** Cap on retained scrollback per session (chars). Enough to redraw a pane. */
-const BUFFER_LIMIT = 400_000
+const BUFFER_LIMIT = LIVE_REPLAY_LIMIT
 /**
  * How long a launching CLI must stop painting before its prompt is typed in, how
  * long to keep waiting for that, and the beat between the prompt and its return.
@@ -688,7 +690,7 @@ export class SessionManager extends EventEmitter {
   private answering = new Set<string>()
   private pendingAnswers = new Map<string, string[]>()
   // An unconfirmed Codex draft still owns the composer after its bounded wait ends.
-  private codexQueued = new Map<string, { key: string; live: Live; proc: Live['proc']; prompt: string; since: number; writing: boolean; foreign: boolean; proof: 'receipt' | 'idle'; conversationId?: string; receiptCwd?: string; commandOutputAt?: number; recovered?: boolean }>()
+  private codexQueued = new Map<string, { key: string; live: Live; proc: Live['proc']; prompt: string; since: number; writing: boolean; foreign: boolean; proof: 'receipt' | 'idle'; conversationId?: string; receiptCwd?: string; commandOutputAt?: number; recovered?: boolean; receiptMiss?: string }>()
   /**
    * Shell children at the last table read. Also used on POSIX for background jobs
    * and for distinguishing an interactive Codex wrapper from an ordinary node job.
@@ -3671,6 +3673,7 @@ export class SessionManager extends EventEmitter {
     this.codexQueued.delete(id)
     forgetSession(id)
     forgetBackgroundAgents(id)
+    forgetCodexWorkers(id)
     this.sessions.delete(id)
     forgetHandoff(id)
     this.emitSessions()
@@ -4616,11 +4619,35 @@ export class SessionManager extends EventEmitter {
           this.codexQueued.delete(id)
           previous = undefined
         }
+        let previousAccepted = false
         if (previous && previous !== owner && previous.since &&
-          previous.live === live && previous.proc === live.proc &&
-          (previous.proof === 'idle' ? await commandLanded(previous, live) : previous.conversationId ?
-            Boolean(codexConversationReceipt(previous.receiptCwd ?? previous.live.meta.cwd, previous.conversationId, previous.prompt, previous.since)) :
-            !previous.recovered && codexAcceptedPrompt(id, previous.prompt, previous.since))) {
+          previous.live === live && previous.proc === live.proc) {
+          if (previous.proof === 'idle') previousAccepted = await commandLanded(previous, live)
+          else {
+            const cwd = previous.receiptCwd ?? previous.live.meta.cwd
+            const file = previous.conversationId ? codexTranscriptPath(cwd, previous.conversationId) :
+              !previous.recovered ? transcriptFor(id) : null
+            let signature: string | undefined
+            try {
+              if (file) {
+                const st = statSync(file)
+                signature = JSON.stringify([file, st.dev, st.ino, st.size, st.mtimeMs, st.ctimeMs,
+                  cwd, previous.conversationId, previous.prompt, previous.since])
+              }
+            } catch { /* unavailable files must not leave a cached miss */ }
+            // Every follower checks the same retained intent. Share only a negative
+            // scan of an unchanged file; native identity is still resolved above.
+            if (!signature || previous.receiptMiss !== signature) {
+              previous.receiptMiss = undefined
+              const receipt = previous.conversationId ?
+                codexConversationReceipt(cwd, previous.conversationId, previous.prompt, previous.since) :
+                !previous.recovered ? codexPromptReceipt(id, previous.prompt, previous.since) : undefined
+              previousAccepted = Boolean(receipt)
+              if (receipt === null) previous.receiptMiss = signature
+            }
+          }
+        }
+        if (previous && previousAccepted) {
           noteSubmitted(previous.key)
           this.codexQueued.delete(id)
         }
@@ -5171,6 +5198,13 @@ export class SessionManager extends EventEmitter {
       // only ever claimed once the conversation's own log says the turn ran at it. Same
       // seam and the same cost as the model reading above: one cached tail read, and only
       // when the file has actually moved.
+      if (meta.agent === 'codex') {
+        const workers = codexWorkersFor(meta.id, resumeIdFor(meta.id), now)
+        if (JSON.stringify(workers) !== JSON.stringify(meta.codexWorkers)) {
+          meta.codexWorkers = workers
+          changed = true
+        }
+      }
       const turn =
         meta.agent === 'codex'
           ? rolloutTurn(codexTranscriptPath(meta.cwd, resumeIdFor(meta.id) ?? ''))

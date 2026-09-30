@@ -4193,6 +4193,11 @@ function TerminalPane({
       writeStaged('\x1bc' + bytes, () => {
         pendingDataWrites--
         if (dead) return
+        // A capped transcript can be followed by a newer live tail with missing
+        // cursor state between them. Restore the native frame after this replay,
+        // just as after the first restore, rather than leaving Fix to the person.
+        needRestoreFix.current = true
+        armRestoreFix()
         if (scrollIntent.current === intent) {
           if (wasPinned) t.scrollToBottom()
           else {

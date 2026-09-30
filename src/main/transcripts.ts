@@ -1132,10 +1132,10 @@ export function codexTranscriptPath(cwd: string, resumeId: string): string | nul
  * because this is only used seconds after Enter was sent.
  */
 export function codexAcceptedPrompt(id: string, prompt: string, since: number): boolean {
-  return codexPromptReceipt(id, prompt, since) !== null
+  return Boolean(codexPromptReceipt(id, prompt, since))
 }
 
-export function codexPromptReceipt(id: string, prompt: string, since: number): { transcriptAt: number } | null {
+export function codexPromptReceipt(id: string, prompt: string, since: number): { transcriptAt: number } | null | undefined {
   return codexReceiptIn(transcriptFor(id), prompt, since)
 }
 
@@ -1198,14 +1198,17 @@ export function codexQuestionPending(cwd: string, conversationId: string, toolUs
 }
 
 /** Recovery must use the original conversation, even when the restored pane changed. */
-export function codexConversationReceipt(cwd: string, conversationId: string, prompt: string, since: number): { transcriptAt: number } | null {
+export function codexConversationReceipt(cwd: string, conversationId: string, prompt: string, since: number): { transcriptAt: number } | null | undefined {
   if (!Number.isFinite(since) || since <= 0) return null
   return codexReceiptIn(codexTranscriptPath(cwd, conversationId), prompt, since)
 }
 
-function codexReceiptIn(file: string | null, prompt: string, since: number): { transcriptAt: number } | null {
+// Null is a completed negative scan; undefined is an unavailable read that must be retried.
+function codexReceiptIn(file: string | null, prompt: string, since: number): { transcriptAt: number } | null | undefined {
   if (!file || !prompt) return null
-  for (const line of tailLines(file, PROMPT_RECEIPT_BYTES)) {
+  const lines = tailLines(file, PROMPT_RECEIPT_BYTES)
+  if (lines === null) return undefined
+  for (const line of lines) {
     let row: { timestamp?: string | number; type?: string; payload?: { type?: string; role?: string; content?: unknown } }
     try {
       row = JSON.parse(line) as typeof row
@@ -1219,13 +1222,16 @@ function codexReceiptIn(file: string | null, prompt: string, since: number): { t
     if (!Array.isArray(content)) continue
     const texts = content.filter((part) => typeof part === 'object' && part !== null &&
       (part as { type?: string }).type === 'input_text').map((part) => (part as { text?: string }).text)
-    if (texts.length === 1 && texts[0] === prompt) return { transcriptAt: at }
+    // Codex's composer can omit the paste's final LF in its native user row.
+    // Accept only that one terminator; all other text and whitespace stay exact.
+    if (texts.length === 1 && (texts[0] === prompt ||
+      (prompt.endsWith('\n') && texts[0] === prompt.slice(0, -1)))) return { transcriptAt: at }
   }
   return null
 }
 
-/** The whole lines in the last `bytes` of a file (a cut first line dropped); none when unreadable. */
-function tailLines(file: string, bytes: number): string[] {
+/** The whole lines in the last `bytes` of a file (a cut first line dropped); null when unreadable. */
+function tailLines(file: string, bytes: number): string[] | null {
   let fd = -1
   try {
     const size = statSync(file).size
@@ -1233,6 +1239,7 @@ function tailLines(file: string, bytes: number): string[] {
     const buf = Buffer.alloc(size - start)
     fd = openSync(file, 'r')
     const read = readSync(fd, buf, 0, buf.length, start)
+    if (read !== buf.length) return null
     let text = buf.toString('utf8', 0, read)
     if (start > 0) {
       const firstLine = text.indexOf('\n')
@@ -1241,7 +1248,7 @@ function tailLines(file: string, bytes: number): string[] {
     }
     return text.split('\n')
   } catch {
-    return []
+    return null
   } finally {
     if (fd >= 0) closeSync(fd)
   }
@@ -1275,7 +1282,7 @@ export function claudeAcceptedPrompt(pid: number | undefined, prompt: string, si
   const row = first ? cliSession(pid) : null
   const file = row && transcriptPath(row.cwd, row.sessionId)
   if (!first || !file) return false
-  for (const line of tailLines(file, PROMPT_RECEIPT_BYTES)) {
+  for (const line of tailLines(file, PROMPT_RECEIPT_BYTES) ?? []) {
     if (!line.includes('"user"') && !line.includes('"queue-operation"') && !line.includes('"queued_command"')) continue
     let rec: {
       type?: string

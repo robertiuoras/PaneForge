@@ -73,7 +73,7 @@ module.exports={spawn:(file,args,opts)=>({
   pid: 4242, file, args, cols: opts.cols, rows: opts.rows,
   writes: [], _data: null,
   onData(fn){this._data=fn;return off}, onExit(){return off},
-  write(d){this.writes.push(d);this.onWrite?.(d)}, kill(){}, resize(){},
+  write(d){if(d==='\\r'&&this.firstReturnAt===undefined)this.firstReturnAt=Date.now();this.writes.push(d);this.onWrite?.(d)}, kill(){}, resize(){},
   say(text){this._data && this._data(text)}
 })}
 `
@@ -432,18 +432,19 @@ manager.kill(cmd.id)
 async function sentReturnAt(proc, waitMs = 3000) {
   const until = Date.now() + waitMs
   while (Date.now() < until) {
-    if (proc.writes.some((w) => w === '\r')) return Date.now()
+    if (proc.firstReturnAt !== undefined) return proc.firstReturnAt
     await sleep(10)
   }
-  return Date.now()
+  throw new Error('fake PTY did not receive Enter within the fixture wait')
 }
 
 const eaten = manager.start({ cwd: root, agent: 'shell' })
 const eatenProc = manager.sessions.get(eaten.id).proc
 let eatenDone = 0
-manager.queuePrompt(eaten.id, '/model opus', 0, 40, () => eatenDone++, 5000, 'idle')
-await sleep(120)
+// Paint readiness before submitting: a delayed setup paint after Enter would look
+// like the command printed an answer, defeating this silence-only fixture.
 eatenProc.say(COMPOSER)
+manager.queuePrompt(eaten.id, '/model opus', 0, 40, () => eatenDone++, 5000, 'idle')
 // The return goes in and the pane stays exactly as it was - quiet at its composer, with
 // nothing printed. The old code settled on that silence within one poll (40ms here).
 // Timed off the RETURN, never off a fixed sleep: the give-up settle lands
@@ -1307,7 +1308,91 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
     `pasted=${pasted(unknown.p, later)}, rows=${ledger(unknown.pane.id).length}\n${logOf(unknown.pane.id)}`)
   manager.kill(unknown.pane.id)
 
-  // An altered native row with its LF missing cannot acknowledge the original.
+  // All waiting followers share the retained owner's negative native scan. Count
+  // real 2 MiB reads, including invalidation without a terminal repaint.
+  const scanHeld = open()
+  appendFileSync(scanHeld.file, (JSON.stringify({ type: 'event_msg', payload: { text: 'x'.repeat(4000) } }) + '\n').repeat(600))
+  scanHeld.p.onWrite = data => { if (data.includes(payload)) scanHeld.p.say(frame(payload)) }
+  const scanHead = queue(scanHeld)
+  ok(await waitFor(scanHead), 'scan fixture retains an unconfirmed typed head')
+  const fs = req('node:fs')
+  const originalFs = { openSync: fs.openSync, readSync: fs.readSync, statSync: fs.statSync }
+  const scanFds = new Set()
+  let scans = 0, statChecks = 0, failedStats = 0, failedReads = 0, failStat = false, failRead = false, frozenStat
+  fs.openSync = (file, ...args) => {
+    const fd = originalFs.openSync(file, ...args)
+    if (String(file) === scanHeld.file) scanFds.add(fd)
+    else scanFds.delete(fd)
+    return fd
+  }
+  fs.readSync = (fd, buf, ...args) => {
+    if (scanFds.has(fd) && buf.length === 2 * 1024 * 1024 && failRead) {
+      failedReads++
+      throw new Error('fixture read unavailable')
+    }
+    const got = originalFs.readSync(fd, buf, ...args)
+    if (scanFds.has(fd) && buf.length === 2 * 1024 * 1024) scans++
+    return got
+  }
+  fs.statSync = (file, ...args) => {
+    if (String(file) === scanHeld.file) {
+      statChecks++
+      if (failStat) { failedStats++; throw new Error('fixture stat unavailable') }
+      if (frozenStat) return frozenStat
+    }
+    return originalFs.statSync(file, ...args)
+  }
+  try {
+    const initialReturns = returnsOf(scanHeld.p)
+    for (let n = 0; n < 8; n++) queue(scanHeld, `scan follower ${n}`, 300)
+    ok(await waitFor(() => statChecks >= 32) && scans === 1 && ledger(scanHeld.pane.id).length === 9,
+      'eight followers poll an unchanged rollout repeatedly but share one 2 MiB negative scan', `stats=${statChecks}, scans=${scans}`)
+    scanHeld.received(payload.replace('first', 'wrong'))
+    ok(await waitFor(() => scans === 2) && ledger(scanHeld.pane.id).length === 9,
+      'a delayed append invalidates the shared miss without accepting a different prompt')
+    const beforeRewrite = originalFs.statSync(scanHeld.file)
+    writeFileSync(scanHeld.file, readFileSync(scanHeld.file, 'utf8').replace('wrong line:', 'other line:'))
+    utimesSync(scanHeld.file, beforeRewrite.atime, beforeRewrite.mtime)
+    ok(await waitFor(() => scans === 3) && originalFs.statSync(scanHeld.file).size === beforeRewrite.size &&
+      ledger(scanHeld.pane.id).length === 9,
+      'a same-size rewrite with restored mtime invalidates the miss through file change identity')
+    const unchangedStat = originalFs.statSync(scanHeld.file)
+    failStat = true
+    ok(await waitFor(() => failedStats >= 8), 'unavailable stat is retried without discarding the retained intent')
+    writeFileSync(scanHeld.file, readFileSync(scanHeld.file, 'utf8').replace('other line:', 'first line:'))
+    // Simulate the same signature returning after a transient stat failure. The
+    // failed check must have cleared its prior miss, so this receipt is still read.
+    frozenStat = unchangedStat
+    failRead = true
+    failStat = false
+    ok(await waitFor(() => failedReads >= 8) && scans === 3 && ledger(scanHeld.pane.id).length === 9,
+      'transient read failure is retried with the same signature and preserves every intent')
+    failRead = false
+    scanHeld.p.say(frame('a foreign draft still owns the composer'))
+    ok(await waitFor(() => ledger(scanHeld.pane.id).length === 8) && scans === 4 &&
+      ledger(scanHeld.pane.id).every(row => row.text.startsWith('scan follower ') && !row.typed) &&
+      returnsOf(scanHeld.p) === initialReturns && scanHeld.p.writes.filter(data => data.includes(payload)).length === 1,
+      'a receipt after stat recovery acknowledges only the head and never repastes its waiting followers', `scans=${scans}`)
+    console.log(`receipt scan regression: 8 followers, ${statChecks} stat checks, ${scans} scans across 4 file states`)
+  } finally {
+    Object.assign(fs, originalFs)
+    manager.kill(scanHeld.pane.id)
+  }
+
+  const finalLF = open()
+  const terminated = payload + '\n'
+  finalLF.p.onWrite = data => {
+    if (data.includes(terminated)) finalLF.p.say(frame(terminated))
+    if (data === '\r') finalLF.received(payload)
+  }
+  const finalLFSettled = queue(finalLF, terminated)
+  ok(await waitFor(finalLFSettled) && returnsOf(finalLF.p) === 1 &&
+    finalLF.p.writes.filter(data => data === '\x1b[200~' + terminated + '\x1b[201~').length === 1 &&
+    ledger(finalLF.pane.id).length === 0 && !finalLF.live.meta.owedPrompt,
+    'the native receipt omitting only the final LF clears its durable intent without another paste or Return', logOf(finalLF.pane.id))
+  manager.kill(finalLF.pane.id)
+
+  // An altered native row missing interior LFs cannot acknowledge the original.
   const changed = open()
   changed.p.onWrite = data => {
     if (data.includes(payload)) changed.p.say(frame(payload))
@@ -1315,8 +1400,8 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
   }
   const changedSettled = queue(changed)
   ok(await waitFor(changedSettled) && ledger(changed.pane.id).some(row => row.text === payload),
-    'a native row missing LF is not normalized into an exact receipt')
-  ok(!/prompt submitted/.test(logOf(changed.pane.id)), 'missing LF never reports Codex as submitted')
+    'a native row missing interior LF is not normalized into an exact receipt')
+  ok(!/prompt submitted/.test(logOf(changed.pane.id)), 'missing interior LF never reports Codex as submitted')
   const nextHeld = queue(changed, 'must not append to held prompt', 300)
   ok(await logSays(changed.pane.id, /queued prompt retained/) && nextHeld() === 0 && !pasted(changed.p, 'must not append to held prompt'),
     'a held composer also retains ownership after all safe retries expire')

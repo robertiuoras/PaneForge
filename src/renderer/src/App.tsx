@@ -5547,11 +5547,31 @@ export default function App(): JSX.Element {
                     const model = s.model ? agentModelLabel(spec, s.model) : ''
                     return (
                       <span className="meta row-agent" title={(spec?.label ?? s.agent) + (s.model ? ` · ${s.model}` : '')}>
-                        {model || (spec?.label ?? s.agent)}
+                        {s.agent === 'codex' ? 'Lead: ' : ''}{model || (spec?.label ?? s.agent)}
                         {s.effort ? ` ${effortChip(s.effort)}${s.effort.pending ? '…' : ''}` : ''}
                       </span>
                     )
                   })()}
+                  {s.codexWorkers && (s.codexWorkers.workers.length > 0 || s.codexWorkers.status !== 'fresh') && (
+                    <span className="meta row-workers" title={
+                      s.codexWorkers.workers.map(w => `${w.name}${w.nickname ? ` (${w.nickname})` : ''}: ${w.model || 'model unknown'} · ${w.effort || 'effort unknown'} · ${w.state}`).join('\n') +
+                      (s.codexWorkers.status === 'fresh' ? '' : `\nWorker lookup ${s.codexWorkers.status === 'limited' ? 'limited to 20 newest children' : 'unavailable; states may be stale'}`)
+                    }>
+                      {(() => {
+                        const workers = s.codexWorkers!.workers
+                        const running = workers.filter(w => w.state === 'running')
+                        const models = [...new Set(running.map(w => agentModelLabel(agents.find(a => a.id === 'codex'), w.model || '') || w.model || 'unknown model'))]
+                        const parts: string[] = []
+                        if (running.length) parts.push(`${running.length} ${models.join('/')} worker${running.length === 1 ? '' : 's'} running (${running.map(w => w.name).join(', ')})`)
+                        for (const state of ['completed', 'interrupted', 'stale', 'unknown'] as const) {
+                          const count = workers.filter(w => w.state === state).length
+                          if (count) parts.push(`${count} ${state}`)
+                        }
+                        if (s.codexWorkers!.status !== 'fresh') parts.push(`worker lookup ${s.codexWorkers!.status}`)
+                        return parts.join(' · ')
+                      })()}
+                    </span>
+                  )}
                   {s.status !== 'exited' && (
                     <span className="meta" title="Time since this session opened, including idle time">
                       <Elapsed since={s.openedAt ?? s.createdAt} className="elapsed done" />
