@@ -12,12 +12,13 @@
 //
 //   node scripts/drop-image-test.mjs
 
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { buildSync } from 'esbuild'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { runInNewContext } from 'node:vm'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const work = mkdtempSync(join(tmpdir(), 'pf-drop-image-test-'))
@@ -84,6 +85,43 @@ ok('.png matches', IMAGE_NAME.test('a.png'))
 ok('.webp matches', IMAGE_NAME.test('a.webp'))
 ok('a name that merely CONTAINS png does not', !IMAGE_NAME.test('png-notes.txt'))
 ok('a trailing dot does not', !IMAGE_NAME.test('a.png.txt'))
+
+// Cmd+V uses a separate handler from drop. Exercise that shipped handler too: checking
+// the capability list alone cannot catch an accidental path fallback in this branch.
+const pane = readFileSync(join(root, 'src/renderer/src/components/TerminalPane.tsx'), 'utf8')
+const start = pane.indexOf('    const pasteClipboard = (): void => {')
+const end = pane.indexOf('\n    t.attachCustomKeyEventHandler', start)
+if (start < 0 || end < 0) throw new Error('pasteClipboard handler not found')
+const handler = pane.slice(start, end).replace('(): void =>', '() =>')
+const paste = async (agent, sessionId, text = '') => {
+  const calls = []
+  const pasteClipboard = runInNewContext(`(() => { ${handler}; return pasteClipboard })()`, {
+    api: {
+      readClipboard: async () => text,
+      write: (id, data) => calls.push(['write', id, data]),
+      attachClipboardImage: async (id) => {
+        calls.push(['attach', id])
+        return { paths: ['/fixture/clipboard.png'] }
+      }
+    },
+    t: { paste: (data) => calls.push(['text', data]) },
+    agentRef: { current: agent }, sessionId, pastesClipboardImage,
+    RAW_PASTE: '\u0016', NO_IMAGE: 'No image on the clipboard',
+    typePaths: (paths) => calls.push(['paths', ...paths]), toast: { current: null }
+  })
+  pasteClipboard()
+  // Both asynchronous branches settle through promises, with no real clipboard/CLI.
+  await new Promise((resolve) => setImmediate(resolve))
+  return calls
+}
+ok('Codex Cmd+V sends native image paste, with no path',
+  JSON.stringify(await paste('codex', 'local')) === JSON.stringify([['write', 'local', '\u0016']]))
+ok('text still uses bracketed terminal paste',
+  JSON.stringify(await paste('codex', 'local', 'hello')) === JSON.stringify([['text', 'hello']]))
+ok('a custom CLI still receives a saved image path',
+  JSON.stringify(await paste('custom', 'local')) === JSON.stringify([['attach', 'local'], ['paths', '/fixture/clipboard.png']]))
+ok('a remote Codex pane still receives its own saved image path',
+  JSON.stringify(await paste('codex', '@pc/remote')) === JSON.stringify([['attach', '@pc/remote'], ['paths', '/fixture/clipboard.png']]))
 
 writeFileSync(join(work, 'done'), 'ok')
 if (failed) {
