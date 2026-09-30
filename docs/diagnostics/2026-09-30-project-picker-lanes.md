@@ -34,17 +34,27 @@ A Git worktree, an open pane, unmerged commits, and dirty files are separate sta
 
 Owned branch: `fix/picker-lane-clones-20260930`, in `PaneForge-picker-20260930`, based on `bf5dca5e8c6be86677fd8ca30cfe77d73e017f31`.
 
-Changed `src/shared/checkout.ts` (classification), `src/main/projects.ts` (bounded HEAD/origin metadata reads), and `scripts/projects-test.mjs` (five added classification/discovery assertions). Existing client-roster, ordinary clone, linked-copy, and explicit-path coverage remains. The diff was inspected and `git diff --check` passed.
+Source checkpoint: `6dac9bb3`. Changed `src/shared/checkout.ts` (classification), `src/main/projects.ts` (HEAD/origin metadata parsing), and `scripts/projects-test.mjs` (five added classification/discovery assertions). Existing client-roster, ordinary clone, linked-copy, and explicit-path coverage remains. The diff was inspected, approved by the parent, and `git diff --check` passed.
 
-Direct Mac typechecking was denied by the GuardDeck queue requirement, so it was not bypassed. One normal PC snapshot verification was submitted with `npm test -- projects projectroute projectfolder`; that path includes typechecking before the focused suites. Job: `1dcbd452-f764-4eab-a6c0-7cbad3863234`. It was queued at handoff, so this checkpoint is **changed but unverified**, not coordinator-ready. Queue delay is not failure. Do not resubmit the same job.
+Direct Mac typechecking was denied by the GuardDeck queue requirement, so it was not bypassed. One normal PC snapshot verification was submitted with `npm test -- projects projectroute projectfolder`; that path includes typechecking before the focused suites. Job: `1dcbd452-f764-4eab-a6c0-7cbad3863234`. Its final receipt was retrieved by the parent from the existing streaming observer: **succeeded**, two minutes running after eleven minutes queued, peak memory 1.0/8.0 GB. No duplicate check was submitted.
 
-Await the existing receipt with:
+The receipt ran and passed both TypeScript configurations:
 
 ```sh
-node ~/Projects/claude-memory/claude-config/rbuild.mjs --wait 1dcbd452-f764-4eab-a6c0-7cbad3863234
+tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json
 ```
 
-After a passing receipt, review its actual typecheck and suite results, then perform the repository's authorized local integration through an available ordinary coordinator lane. This branch is outside the configured pool; do not call it ready by name or displace another lane. A `ready` path can merge/push, so inspect coordinator state and release mode before using it. No release or installation is authorized by this request.
+Its suite output was:
+
+```text
+ok projectfolder 0.4s
+ok projects 14.1s
+2 tests passed in 14.2s
+```
+
+The count is two suites, not three. `scripts/test-all.mjs` selects registered suite names by substring and only errors when none match. There is no registered `projectroute` suite, so that extra selector matched nothing. `scripts/project-route-test.mjs` exists separately; it tests first-message scoring and alias extraction in unchanged `projectRoute.ts` and `projectAliases.ts`, using its own project fixtures. It does not exercise the changed checkout classifier or project discovery. Therefore this was an unnecessary unmatched selector, not missing coverage of a changed path: `projects` exercised classification, disk discovery, independent-clone preservation, client rows, and explicit paths; `projectfolder` checked canonical folder opening. No further check was submitted.
+
+The source checks are verified; the branch remains unmerged. Coordinator readback showed `release: merge`: `ready` calls `autoship`, whose ship path takes a remote release lock and can push. This custom branch has no configured pool slot, lane i belongs to an active peer, and lane h is already ready. No coordinator operation was invoked under the parent's no-push/no-displacement scope. Other dirty lane work and the main checkout's unrelated `.lanes.json` edit remain preserved. No release or installation is authorized by this request.
 
 The installed app still shows the observed classification defect. No runtime registry cleanup was applied. A later authorized release/install and picker readback are required to claim the user-facing fix is running. This report does not claim a new build, release, installation, or live UI verification.
 
