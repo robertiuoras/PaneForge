@@ -28,6 +28,7 @@ import { mayNotify, noticesDir, readReply, sweepDoneClose, type DoneCloseDeps } 
 import { doneQuietMs, doneReviewId } from '../shared/doneClose'
 import { FinishedDigest, summaryOf } from '../shared/finishedDigest'
 import { DataPump } from './dataPump'
+import { freshReplay } from '../shared/freshReplay'
 import { DiscordPresence } from './discordPresence'
 import { countPresence, needsTokens, newerSettings, wholeDesk, type PresenceCounts } from '../shared/discordRpc'
 import { tokenCounting, tokenSpend, tokenSpendFresh } from './tokenUsage'
@@ -1186,7 +1187,7 @@ function raiseAttention(s: Session): void {
 const remote = new Remote({
   list: () => manager.list(),
   buffer: (id) => manager.buffer(id),
-  log: (id, bytes) => history.tail(id, bytes) || manager.buffer(id),
+  log: (id, bytes) => freshReplay(history.tail(id, bytes), manager.buffer(id)),
   // A person typed this on the paired machine's mirror, and this desk never saw the
   // keystrokes - so it needs telling on `pane:typed`, exactly as a phone's line does.
   // Without an origin here it defaulted to `desk`, and a pane driven from another
@@ -2478,13 +2479,13 @@ ipcMain.handle('app:tourCheck', (_e, script: string) =>
 ipcMain.handle('sessions:log', (_e, id: string, bytes?: number) => {
   const want = Math.min(Math.max(Number(bytes) || 2_000_000, 1), 8 * 1024 * 1024)
   if (remote.owns(id)) return remote.log(id, want)
-  return history.tail(id, want) || manager.buffer(id)
+  return freshReplay(history.tail(id, want), manager.buffer(id))
 })
 ipcMain.handle('sessions:replay', async (_e, id: string) => {
   if (remote.owns(id)) return remote.replayHistory(id)
   if (!manager.list().some((session) => session.id === id)) return false
   pump.flushOne(id)
-  const raw = history.tail(id, 4 * 1024 * 1024) || manager.buffer(id)
+  const raw = freshReplay(history.tail(id, 4 * 1024 * 1024), manager.buffer(id))
   send('pane:reset', id, raw)
   return true
 })

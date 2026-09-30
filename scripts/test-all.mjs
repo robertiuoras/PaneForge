@@ -39,6 +39,7 @@ if (process.platform !== 'win32') {
 // name -> the script file, in the order they run. Cheapest first is deliberate: a broken
 // build should say so in a second rather than after the slow ones.
 const TESTS = [
+  ['freshreplay', 'fresh-replay-test.mjs'],
   ['codexworkers', 'codex-workers-test.mjs'],
   ['paneanswer', 'pane-answer-test.mjs'],
   ['remotesuite', 'test-remote-test.mjs'],

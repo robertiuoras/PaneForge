@@ -63,6 +63,7 @@ import { closeHeldBy, personLooking, replyFinished, wasRead, type DoneReading } 
 import { folderName, laneOfCheckout, projectOf } from '../shared/place'
 import { dropStale, lentGrid, watchedBorrow, type Borrow } from '../shared/paneSize'
 import { START_COLS, START_ROWS } from '../shared/paneGrid'
+import { LIVE_REPLAY_LIMIT } from '../shared/freshReplay'
 import { paintedWidth, RESTORE_MARK_TEXT } from '../shared/replayWidth'
 import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, SUBMIT_GAP_MS, armDecision, clearChunks, hasFreshPaneHandoff, resumeOf, dropFor, dropWords, expiryDecision, queuedPromptDecision, quietEnoughToArm, standDownFor, type DropReason, type QueuedPromptVerdict } from '../shared/autoclear'
 import { acLog } from './autoclearLog'
@@ -237,7 +238,7 @@ const ATTENTION_AFTER_FOOTER_MS = 12_000
  */
 const REPAINT_GRACE_MS = 1200
 /** Cap on retained scrollback per session (chars). Enough to redraw a pane. */
-const BUFFER_LIMIT = 400_000
+const BUFFER_LIMIT = LIVE_REPLAY_LIMIT
 /**
  * How long a launching CLI must stop painting before its prompt is typed in, how
  * long to keep waiting for that, and the beat between the prompt and its return.

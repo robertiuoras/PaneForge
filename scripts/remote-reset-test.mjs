@@ -42,6 +42,7 @@ const install = new Function('api', 't', 'keepScrollback', 'withoutReplayQueries
   const keptRows = () => { throw new Error('read stale screen during snapshot'); };
   const screenNow = () => { throw new Error('armed stale wipe during snapshot'); };
   const armWipeCheck = () => {};
+  const needRestoreFix = { current: false }, armRestoreFix = () => {};
   // The staged write (shared/replayWidth.ts) is proved by replay-width-test; here a reset is a plain write.
   const writeStaged = (b, done) => t.write(b, done);
   ${factory}

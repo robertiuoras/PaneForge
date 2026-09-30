@@ -68,7 +68,8 @@ const lines=Array.from({length:300},(_,i)=>`conversation row ${i}\r\n`).join('')
 const write=data=>new Promise(r=>term.write(data,r))
 let reset
 const pin={current:false},intent={current:0}
-new Function('api','t','pinned','scrollIntent','setScrolledUp','mirrorRef','withoutBinaryBells',`
+const needRestoreFix={current:false};let armed=0
+new Function('api','t','pinned','scrollIntent','setScrolledUp','mirrorRef','withoutBinaryBells','needRestoreFix','armRestoreFix',`
 const sessionId='test',list=[],publish=()=>{},dead=false,setBlank=()=>{},window={clearTimeout(){}},wipeTimer=0,makeKeeper=()=>x=>x,withoutReplayQueries=x=>x,seedMarks=()=>{},drainTyped=()=>{};
 let replayEvents=null; const drainReplayEvents=()=>{replayEvents=null};
 const dropWipeSnap=()=>{wipeSnap=null};
@@ -76,11 +77,13 @@ let initialReplay, sawOutput=false,wipeSnap=null,keep=x=>x,readingSnapshot=false
 const cleanOutput=(d)=>withoutBinaryBells(keep(d));
 const writeStaged=(b,done)=>t.write(b,done); // the stage itself is proved by replay-width-test
 ${resetCode}
-`)({onPaneReset:fn=>{reset=fn}},term,pin,intent,()=>{},{current:true},withoutBinaryBells)
+`)({onPaneReset:fn=>{reset=fn}},term,pin,intent,()=>{},{current:true},withoutBinaryBells,needRestoreFix,()=>{armed++})
 try{
  await write(lines+'\r\n'.repeat(59));term.scrollToLine(100);pin.current=false
  reset('test',lines);await write('')
  assert.equal(term.buffer.active.viewportY,100,'history reset preserves matching reader text when repaint blanks disappear')
+ assert.equal(needRestoreFix.current,true,'history reset owes a native current frame after parsing')
+ assert.equal(armed,1,'history reset schedules its native redraw once after parsing')
  pin.current=true;reset('test',lines);await write('');assert.equal(term.buffer.active.viewportY,term.buffer.active.baseY,'following reset lands at live end')
  // A user scroll during an asynchronous write takes precedence over its saved intent.
  pin.current=true;const nativeWrite=term.write.bind(term)
