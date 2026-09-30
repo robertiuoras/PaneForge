@@ -1187,6 +1187,64 @@ export function codexPromptReceipt(id: string, prompt: string, since: number): {
   return codexReceiptIn(transcriptFor(id), prompt, since)
 }
 
+/** Async acceptance is not an answer. Require the exact still-unanswered native call,
+ * including old calls outside the tail and calls preceding a newer independent question. */
+export function codexQuestionPending(cwd: string, conversationId: string, toolUseId: string, questionCount: number): boolean {
+  const file = codexTranscriptPath(cwd, conversationId)
+  if (!file || !toolUseId.trim() || !Number.isInteger(questionCount) || questionCount < 1) return false
+  let fd = -1, pending = '', matches = false, calls = 0, ended = false
+  const consume = (line: string) => {
+    if (!line.includes('session_meta') && !line.includes(toolUseId) && !line.includes('send_user_message_question_reply')) return
+    try {
+      const row = JSON.parse(line), p = row.payload
+      if (row.type === 'session_meta') { matches = p?.id === conversationId; return }
+      if (row.type !== 'response_item' || !p) return
+      if (p.type === 'function_call' && p.call_id === toolUseId) {
+        if (!/^(?:functions\.)?request_user_input_async$/.test(p.name ?? '')) { ended = true; return }
+        const args = JSON.parse(p.arguments)
+        if (!Array.isArray(args.questions) || args.questions.length !== questionCount) { ended = true; return }
+        calls++
+      }
+      if (p.type === 'function_call_output' && p.call_id === toolUseId) {
+        let result
+        try { result = typeof p.output === 'string' ? JSON.parse(p.output) : p.output } catch { ended = true; return }
+        if (p.is_error || result?.accepted !== true) ended = true
+      }
+      if (p.type !== 'message' || p.role !== 'user' || !Array.isArray(p.content)) return
+      for (const part of p.content) {
+        if (part.type !== 'input_text' || typeof part.text !== 'string') continue
+        const start = '<send_user_message_question_reply>', end = '</send_user_message_question_reply>'
+        if (!part.text.startsWith(start) || !part.text.endsWith(end)) continue
+        const replies = JSON.parse(part.text.slice(start.length, -end.length))
+        if (!Array.isArray(replies)) continue
+        for (const reply of replies) {
+          if (typeof reply.answer !== 'string' || !reply.answer.trim() || typeof reply.questionItemId !== 'string') continue
+          const key = JSON.parse(reply.questionItemId)
+          if (Array.isArray(key) && key.length === 3 && key[0] === 'request_user_input_async' && key[1] === toolUseId &&
+            Number.isInteger(key[2]) && key[2] >= 0 && key[2] < questionCount) ended = true
+        }
+      }
+    } catch { /* A partial or unrelated row cannot prove a pending call. */ }
+  }
+  try {
+    fd = openSync(file, 'r')
+    const chunk = Buffer.alloc(64 * 1024)
+    // Decode complete lines together so a chunk boundary cannot split UTF-8 JSON.
+    let bytes = Buffer.alloc(0), read
+    while ((read = readSync(fd, chunk, 0, chunk.length, null)) > 0) {
+      bytes = Buffer.concat([bytes, chunk.subarray(0, read)])
+      let at
+      while ((at = bytes.indexOf(10)) >= 0) {
+        consume(bytes.subarray(0, at).toString('utf8'))
+        bytes = bytes.subarray(at + 1)
+      }
+    }
+    pending = bytes.toString('utf8')
+    if (pending) consume(pending)
+    return matches && calls === 1 && !ended
+  } catch { return false } finally { if (fd >= 0) closeSync(fd) }
+}
+
 /** Recovery must use the original conversation, even when the restored pane changed. */
 export function codexConversationReceipt(cwd: string, conversationId: string, prompt: string, since: number): { transcriptAt: number } | null | undefined {
   if (!Number.isFinite(since) || since <= 0) return null

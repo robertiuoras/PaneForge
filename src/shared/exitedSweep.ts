@@ -65,6 +65,8 @@ function isFinished(p: ExitedFact): boolean {
   // The one guard the whole feature exists to get right: an app-slept pane also reads
   // `exited`, and must never be swept or counted as finished.
   if (p.asleep) return false
+  // Kept open by hand: its last screen is what the person kept it for (Robert, 2026-09-29).
+  if (p.keepOpen) return false
   if (p.ask) return false
   if (p.handingOff) return false
   if (!p.exitedAt) return false

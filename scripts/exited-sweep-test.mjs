@@ -166,5 +166,12 @@ function dead(overrides = {}) {
   check('the dead-pane sweep still never takes a sleeping one', exitedSweep([nap({ exitedAt: 1 })], T).length === 0)
 }
 
+// --- Keep open holds a dead pane too, against the clock and the button (2026-09-29) ---
+{
+  check('a kept dead pane is not swept', exitedSweep([dead({ keepOpen: true })], NOW).length === 0)
+  check('Clear finished leaves a kept pane', clearFinishedNow([dead({ keepOpen: true })]).length === 0)
+  check('and does not count it', finishedCount([dead({ id: 'a' }), dead({ id: 'k', keepOpen: true })]) === 1)
+}
+
 console.log(`exited-sweep-test: ${pass} passed`)
 if (process.exitCode) process.exit(process.exitCode)

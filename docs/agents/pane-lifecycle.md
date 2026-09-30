@@ -79,7 +79,8 @@ armed one. `shared/markAnchor.ts` re-anchors tags (`test:markanchor`).
 ## A finished pane closes itself into Review
 
 `shared/doneClose.ts` (`test:doneclose`), `main/doneClose.ts`, 15s timer; `config.autoCloseDone`
-on. Closes when: agent pane, turn over (`footerEndedAt`), not LOOKED AT (`personLooking`),
+on. Never a kept pane (card's Keep open, `config.pinnedPanes`, `keptOpen` in `main/index.ts`: done-close, `pf tidy`,
+`reviews:record` close, exited/asleep sweeps, Clear finished, `--close-when-done`; memory pressure may only sleep it). Closes when: agent pane, turn over (`footerEndedAt`), not LOOKED AT (`personLooking`),
 quiet `doneQuietMs` (3 min, 1 min tight, 30s over) past turn end AND last key, OR read
 (`lookedAt`, stamped each second by `sweepIdle`, older than the turn = unread) and
 `READ_QUIET_MS` 30s past max(look, key); `doneEnough`, no prompt owed, opener only while its
@@ -102,6 +103,11 @@ sweep over `Session.finished` panes, quiet 0, `dry` touches nothing. Opener told
 `shared/reviewList.ts`, `test:reviewlist`): Needs you/Done/All, row = number+project+ask+
 result, expand = full reply + Reopen (`--resume`) + Copy; shell/bare-slash rows hidden. Idle
 shell undrawn (`fleet.ts` `idleShell`) till pressed/run; idle countdown still takes it.
+
+Finished-turn sweeps publish a 30-second `doneClosingAt` before closing, rechecking every
+refusal on expiry; Keep open persists the pin. Local/remote pins also cancel an armed
+clear and refuse new automatic clears. Cancelling a clear holds the same native conversation
+for the lifetime of the app, until a manual fresh session changes its ID.
 
 ## A session that clears itself asks first
 

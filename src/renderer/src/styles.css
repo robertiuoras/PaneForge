@@ -4989,9 +4989,9 @@ html.handheld .link-down-retry { min-height: 44px; padding: 0 14px; }
   gap: 10px; pointer-events: none;
   /* Never taller than the window: with five cards up the top one would otherwise be
      drawn off-screen, which is the same bug in a different direction. */
-  max-height: calc(100vh - 36px); overflow: hidden;
+  max-height: calc(100vh - 36px); overflow-y: auto;
 }
-.corner-stack > * { pointer-events: auto; }
+.corner-stack > * { pointer-events: auto; flex-shrink: 0; }
 /* Inside the stack a card is a row, not a fixed thing in a corner. Every one of these
    keeps its own width, padding and border - only the placement is taken away. */
 .corner-stack > .autoclear-card,
@@ -5214,3 +5214,33 @@ html.handheld .card-x { width: 44px; height: 44px; top: 0; right: 0; font-size: 
 .fr-note { font-size: 11.5px; line-height: 1.4; color: var(--muted); overflow-wrap: anywhere; }
 .fr-go { align-self: flex-start; margin-top: 4px; }
 /* ---- end first-run card ------------------------------------------------------------- */
+
+/* Keep choices stay beside the sessions they protect. Native inputs retain keyboard
+   and assistive-technology behavior; only their drawn box is customized. */
+.sessions-section { flex-wrap: wrap; }
+.keep-all, .session-keep-open {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 24px;
+  color: var(--muted); font-size: 11px; font-weight: 500;
+  white-space: nowrap; text-transform: none; letter-spacing: normal; cursor: pointer;
+}
+.keep-all { order: 2; flex-basis: 100%; }
+.session-keep-open { margin-top: 3px; }
+.keep-all:hover, .session-keep-open:hover,
+.keep-all:has(:checked), .session-keep-open:has(:checked) { color: var(--text); }
+.keep-checkbox {
+  appearance: none; -webkit-appearance: none; flex: none; display: grid; place-content: center;
+  width: 15px; height: 15px; margin: 0; border: 1px solid var(--muted);
+  border-radius: 4px; background: var(--surface); color: var(--accent-on); cursor: pointer;
+}
+.keep-checkbox:checked, .keep-checkbox:indeterminate { border-color: var(--accent); background: var(--accent); }
+.keep-checkbox::before {
+  content: ''; width: 7px; height: 4px; border-left: 1.8px solid currentColor;
+  border-bottom: 1.8px solid currentColor; margin-bottom: 2px; transform: rotate(-45deg); visibility: hidden;
+}
+.keep-checkbox:checked::before { visibility: visible; }
+.keep-checkbox:indeterminate::before {
+  visibility: visible; width: 7px; height: 0; border-left: 0; transform: none;
+}
+.keep-checkbox:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.keep-all:has(:disabled), .session-keep-open:has(:disabled) { opacity: .5; cursor: default; }
+.keep-checkbox:disabled { cursor: default; }
