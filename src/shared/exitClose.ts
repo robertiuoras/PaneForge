@@ -40,6 +40,8 @@ export interface ExitReading {
   exitCode?: number | null
   /** Was the pane still `starting` - never once idle or working - when it ended? */
   starting?: boolean
+  /** A person kept it open (the card's Keep open): its last screen is what they kept. */
+  kept?: boolean
 }
 
 export interface ExitPlan {
@@ -57,6 +59,7 @@ export function exitPlan(r: ExitReading): ExitPlan {
   if (r.asleep) return { close: false, after: 0, why: 'asleep' }
   if (r.handingOff) return { close: false, after: 0, why: 'moving to the other machine' }
   if (r.quitting) return { close: false, after: 0, why: 'the app is closing' }
+  if (r.kept) return { close: false, after: 0, why: 'kept open by hand' }
   // A pane that never printed anything did not run. The card is the only place that says
   // so, and an agent that cannot start is exactly what somebody needs to see.
   if (!r.printed) return { close: false, after: 0, why: 'it never started', failedStart: true }

@@ -356,7 +356,7 @@ is(keptWords(true), 'kept', 'a sleeping one does not claim to be open')
 ok(!keptWords(true).includes('open'), 'the contradiction itself is the assertion')
 
 const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
-ok(/\{keptWords\(Boolean\(s\.asleep\)\)\}/.test(app), 'the card asks keptWords rather than spelling it')
+ok(/className="session-keep-open"/.test(app), 'the card exposes a persistent keep-open checkbox for running and sleeping panes')
 is(
   /^\s+kept open$/m.test(app),
   false,
@@ -388,7 +388,7 @@ is(
   const chip = app.slice(app.indexOf('function CloseClock('), app.indexOf('const api = window.api'))
   assert.match(chip, /sleep \? 'sleeps' : 'closes'/, 'the chip has a word for a sleep countdown')
   assert.match(chip, /going to sleep/, '...and its hover says what a sleep keeps')
-  const row = app.slice(app.indexOf('{alarmAt(s.id) ?? s.closingAt ? ('), app.indexOf('onKeep={() => keepOpen([s.id])}'))
+  const row = app.slice(app.indexOf('at={s.doneClosingAt ?? alarmAt(s.id)'), app.indexOf('onKeep={() => keepOpen([s.id])}'))
   assert.match(row, /sleep=\{alarmSleeps\(s\.id\)\}/, 'the row tells the chip whether the armed countdown is a sleep')
   const at = app.indexOf('if (soon.sleep) {', app.indexOf('// One timer per card'))
   const deadline = app.slice(at, app.indexOf('const mb = pendingMb.current[key] ?? 0', at))

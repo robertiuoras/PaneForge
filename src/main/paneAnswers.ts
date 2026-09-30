@@ -36,8 +36,9 @@ export class PaneAnswers {
   accept(req: PaneAnswerRequest): { fresh: boolean; receipt: PaneAnswerReceipt } {
     if (!req || !/^s[\w-]+$/.test(req.paneId) || !/^[a-f0-9-]{36}$/i.test(req.expectedConversationId) ||
       !/^[\w.-]{1,160}$/.test(req.requestId) || typeof req.text !== 'string' || !req.text.trim() ||
+      typeof req.toolUseId !== 'string' || !req.toolUseId.trim() || !Number.isInteger(req.questionCount) || req.questionCount < 1 ||
       req.text.length > 64_000 || /[\x00-\x08\x0b-\x1f\x7f]/.test(req.text) || /^[\s]*[!/]/.test(req.text)) throw new Error('Invalid answer request')
-    const digest = createHash('sha256').update(req.text).digest('hex')
+    const digest = createHash('sha256').update(JSON.stringify([req.text, req.toolUseId, req.questionCount])).digest('hex')
     const prior = this.status(req)
     if (prior) {
       if (this.rows[req.requestId].digest !== digest) throw new Error('Answer request ID already used for different text')

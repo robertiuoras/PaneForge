@@ -94,7 +94,7 @@ export interface AutoClearArm {
   tokens?: number
 }
 import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from './pipe'
-import { claimFromCli, claimCodexFromProcess, claudeAcceptedPrompt, claudeStartup, codexAcceptedPrompt, codexConversationReceipt, codexPromptReceipt, forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeEvidence, resumeIdFor, transcriptPath } from './transcripts'
+import { claimFromCli, claimCodexFromProcess, claudeAcceptedPrompt, claudeStartup, codexAcceptedPrompt, codexConversationReceipt, codexPromptReceipt, codexQuestionPending, forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeEvidence, resumeIdFor, transcriptPath } from './transcripts'
 import { recordPromptReview } from './promptReview'
 import { liveModelFor } from './paneModel'
 import { backgroundAgentsFor, forgetBackgroundAgents, noteBackgroundAgents } from './runningAgents'
@@ -686,6 +686,7 @@ export class SessionManager extends EventEmitter {
   private sessions = new Map<string, Live>()
   private answerLedger?: PaneAnswers
   private answering = new Set<string>()
+  private pendingAnswers = new Map<string, string[]>()
   // An unconfirmed Codex draft still owns the composer after its bounded wait ends.
   private codexQueued = new Map<string, { key: string; live: Live; proc: Live['proc']; prompt: string; since: number; writing: boolean; foreign: boolean; proof: 'receipt' | 'idle'; conversationId?: string; receiptCwd?: string; commandOutputAt?: number; recovered?: boolean }>()
   /**
@@ -874,6 +875,8 @@ export class SessionManager extends EventEmitter {
    * the old one-line notice.
    */
   onFinished: ((meta: Session, opener: string) => void) | null = null
+  /** A person kept this pane open (`config.pinnedPanes`); `--close-when-done` leaves it. Set by index.ts. */
+  keptOpen: ((id: string) => boolean) | null = null
   /** The last reply in a pane's transcript, for `Session.finished`. Set by index.ts, which knows where transcripts live. */
   replyFor: ((id: string, agent: string) => { text: string; runningAgents?: number; promptAt?: number } | undefined) | null = null
 
@@ -2097,14 +2100,34 @@ export class SessionManager extends EventEmitter {
       !live.meta.asleep && live.meta.status !== 'exited' && live.meta.agent === 'codex')
     const same = () => sameProcess() && resumeIdFor(id) === req.expectedConversationId
     const known = resumeIdFor(id)
-    if (!sameProcess() || (known && known !== req.expectedConversationId) || this.answering.has(id) || live!.meta.owedPrompt) {
+    const waitingPrompt = () => {
+      const queued = this.codexQueued.get(id)
+      return Boolean(queued && queued.live === live && queued.proc === proc && stillOwed(queued.key) &&
+        !queued.since && !queued.writing && !queued.foreign)
+    }
+    const composerReserved = () => {
+      const queued = this.codexQueued.get(id)
+      return Boolean((queued && (!waitingPrompt())) || (live!.meta.handoverUntil ?? 0) > Date.now() ||
+        live!.meta.autoClearAt || this.autoClearPending.has(id) || this.autoClearArmTimers.has(id))
+    }
+    if (!sameProcess() || (known && known !== req.expectedConversationId) || composerReserved() ||
+      (live!.meta.owedPrompt && !waitingPrompt() && !this.pendingAnswers.has(id))) {
       return ledger.update(req, { state: 'rejected', reason: 'Pane identity unavailable or another prompt owns the composer' })
     }
-    this.answering.add(id)
+    const pending = this.pendingAnswers.get(id) ?? []
+    pending.push(req.requestId)
+    this.pendingAnswers.set(id, pending)
     this.setOwedPrompt(id, true)
+    let ownsComposer = false
     const finish = (state: PaneAnswerReceipt['state'], reason?: string, transcriptAt?: number) => {
-      this.answering.delete(id)
-      if (this.sessions.get(id) === live) this.setOwedPrompt(id, owedCount(id) > 0)
+      const pending = this.pendingAnswers.get(id)
+      if (pending) {
+        const index = pending.indexOf(req.requestId)
+        if (index >= 0) pending.splice(index, 1)
+        if (!pending.length) this.pendingAnswers.delete(id)
+      }
+      if (ownsComposer) this.answering.delete(id)
+      if (this.sessions.get(id) === live) this.setOwedPrompt(id, owedCount(id) > 0 || this.pendingAnswers.has(id))
       try {
         ledger.update(req, { state, reason, ...(state === 'confirmed' ? { confirmedAt: Date.now(), transcriptAt } : {}) })
       } catch { console.warn('pane answer: receipt persistence failed; request must not be replayed') }
@@ -2114,6 +2137,9 @@ export class SessionManager extends EventEmitter {
       try {
         if (!same()) { finish('rejected', 'Pane process or conversation changed before delivery'); return }
         if (Date.now() - started > 120_000) { finish('rejected', 'Composer remained occupied; no answer was typed'); return }
+        if (composerReserved()) { finish('rejected', 'Another prompt took the composer; no answer was typed'); return }
+        if (this.pendingAnswers.get(id)?.[0] !== req.requestId) { setTimeout(tick, 250).unref(); return }
+        if (!ownsComposer) { this.answering.add(id); ownsComposer = true }
         // Keep line boundaries and the whole tail: the audit formatter truncates at
         // 400 characters and joins lines, hiding anchored question footers.
         const painted = strip(live!.buffer.read()).split('\n').slice(-30).join('\n')
@@ -2123,6 +2149,9 @@ export class SessionManager extends EventEmitter {
           live!.effortHold || live!.meta.ask || ASK_PROMPT.test(painted) || composerHeld(painted)) {
           setTimeout(tick, 250).unref(); return
         }
+        if (!codexQuestionPending(live!.req.resumeCwd ?? live!.meta.cwd, req.expectedConversationId, req.toolUseId, req.questionCount)) {
+          finish('rejected', 'Exact native question is unavailable or already ended; no answer was typed'); return
+        }
         // Persist intent before the first byte. A crash at any later point is uncertain.
         const submittedAt = Date.now()
         ledger.update(req, { state: 'submitted', submittedAt })
@@ -2131,7 +2160,9 @@ export class SessionManager extends EventEmitter {
         setTimeout(() => {
           try {
             const painted = strip(live!.buffer.read()).split('\n').slice(-30).join('\n')
-            if (!same() || live!.meta.lastKeyboard !== keyboard || live!.draft.text !== req.text || !live!.draft.certain ||
+            if (!same() || composerReserved() ||
+              !codexQuestionPending(live!.req.resumeCwd ?? live!.meta.cwd, req.expectedConversationId, req.toolUseId, req.questionCount) ||
+              live!.meta.lastKeyboard !== keyboard || live!.draft.text !== req.text || !live!.draft.certain ||
               live!.effortHold || live!.meta.ask || ASK_PROMPT.test(painted) || composerHeld(painted)) {
               finish('uncertain', 'Composer or pane changed after paste; Enter withheld'); return
             }
@@ -2177,7 +2208,8 @@ export class SessionManager extends EventEmitter {
       return
     }
     const queued = this.codexQueued.get(id)
-    if (queued && queued.live === live && queued.proc === live.proc && !queued.writing && !live.effortPassThrough && data &&
+    if (queued && queued.live === live && queued.proc === live.proc && !queued.writing &&
+      !(origin === 'app' && this.answering.has(id)) && !live.effortPassThrough && data &&
       data !== '\x1b[I' && data !== '\x1b[O') {
       // Only a bare manual Enter, before any foreign editing, can complete our command.
       if (queued.proof === 'idle' && queued.since && data === '\r' && !queued.foreign)
@@ -2541,6 +2573,7 @@ export class SessionManager extends EventEmitter {
 
   private sweepCloseWhenDone(live: Live, now: number, quiet: number): void {
     const { meta } = live
+    if (this.keptOpen?.(meta.id)) return
     if (!doneEnough({ ...meta, busyUntil: live.busyUntil }, quiet, now)) return
     const told = live.req.reportTo
     const opener = this.openerOf(meta.id)
@@ -3648,6 +3681,7 @@ export class SessionManager extends EventEmitter {
     const live = this.sessions.get(id)
     if (!live) return { closed: false, reason: 'session is no longer open' }
     const m = live.meta
+    if (this.keptOpen?.(id)) return { closed: false, reason: 'kept open by hand' }
     if (m.status !== 'idle' || m.runSince || live.busyUntil > Date.now() || m.job || (m.backJob && !backJobWaitOnly(id)) || m.subagent) return { closed: false, reason: 'session is busy or has a background job' }
     const held = closeHeldBy({ ...m, ask: m.ask || heldByGuardDeck(id, readGuardDeckQuestions(), Date.now(), m.agent === 'codex' ? resumeIdFor(id) : undefined) })
     if (held.length) return { closed: false, reason: `session has ${held.join(', ')}` }
@@ -3931,7 +3965,8 @@ export class SessionManager extends EventEmitter {
         quitting: this.down,
         printed: !!meta.printed,
         exitCode,
-        starting: wasStarting
+        starting: wasStarting,
+        kept: this.keptOpen?.(id) ?? false
       })
       // A pane closed while it was starting is not one that failed to start: nothing is
       // left on the desk to mark, and the activity list would blame the agent for a close.
@@ -3949,7 +3984,7 @@ export class SessionManager extends EventEmitter {
         // Re-read: the pane may have been woken, moved or closed by hand in the meantime,
         // and a pane with a LIVE process again is not the one this plan was made for.
         const now = this.sessions.get(id)
-        if (!now || now.proc || now.meta.status !== 'exited') return
+        if (!now || now.proc || now.meta.status !== 'exited' || this.keptOpen?.(id)) return
         this.emit('exit-closed', id, say)
         this.kill(id)
       }
@@ -3990,6 +4025,7 @@ export class SessionManager extends EventEmitter {
   private setOwedPrompt(id: string, owed: boolean): void {
     const live = this.sessions.get(id)
     if (!live) return
+    owed ||= this.pendingAnswers.has(id)
     if (Boolean(live.meta.owedPrompt) === owed) return
     live.meta.owedPrompt = owed || undefined
     this.emitSessions()
@@ -4221,7 +4257,7 @@ export class SessionManager extends EventEmitter {
       codexAcceptedPrompt(id, prompt, owner.since)))
     const blocked = (live: Live): boolean => {
       const screen = strip(live.buffer.read()).split('\n').slice(-30).join('\n').slice(-PROMPT_TAIL_CHARS)
-      return Boolean(live.meta.ask || live.effortHold || this.answering.has(id) || ASK_PROMPT.test(screen) || composerHeld(screen))
+      return Boolean(live.meta.ask || live.effortHold || this.pendingAnswers.has(id) || ASK_PROMPT.test(screen) || composerHeld(screen))
     }
     const sameCodex = (live: Live): boolean =>
       live === owner?.live && live.proc === owner.proc && this.codexQueued.get(id) === owner && stillOwed(key)
@@ -4602,7 +4638,7 @@ export class SessionManager extends EventEmitter {
           return
         }
       }
-      if (this.answering.has(id)) { setTimeout(tick, PROMPT_POLL_MS); return }
+      if (this.pendingAnswers.has(id)) { setTimeout(tick, PROMPT_POLL_MS); return }
       const what = verdict(live, idle(live))
       if (what === 'wait') {
         // Somebody is typing in there. The curtain says "Keys are held" and they are
