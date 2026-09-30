@@ -21,7 +21,7 @@ const fixtureCodexHome = join(work, 'codex')
 
 const out = join(work, 'transcripts.cjs')
 buildSync({ absWorkingDir: root, entryPoints: ['src/main/transcripts.ts'], bundle: true, format: 'cjs', platform: 'node', outfile: out, define: { 'process.env.CODEX_HOME': JSON.stringify(fixtureCodexHome) } })
-const { codexAcceptedPrompt, noteSession, noteSubmittedPrompt, resumeIdFor, forgetSession, projectDir, nativeTranscriptPage } = createRequire(import.meta.url)(out)
+const { codexAcceptedPrompt, codexConversationReceipt, noteSession, noteSubmittedPrompt, resumeIdFor, forgetSession, projectDir, nativeTranscriptPage } = createRequire(import.meta.url)(out)
 const cwd = '/Users/native/Projects/reader'
 const line = (value) => JSON.stringify(value)
 const claudeRow = (type, content, extra = {}) => line({ type, timestamp: '2026-09-09T01:02:03.000Z', message: { role: type, content }, ...extra })
@@ -165,6 +165,16 @@ try {
   assert.equal(codexAcceptedPrompt('explicit-resumed', repeated, pasteAt), false, 'an older identical row in another rollout cannot acknowledge this paste')
   appendFileSync(resumedFile, codexUserRow(repeated, pasteAt + 350) + '\n')
   assert.equal(codexAcceptedPrompt('explicit-resumed', repeated, pasteAt), true, 'the exact delayed multiline receipt is read from the authoritative conversation')
+  const terminated = 'a coordination handoff\n  preserve its indentation\n\nfinal instruction\n'
+  appendFileSync(resumedFile, codexUserRow(terminated.slice(0, -1), pasteAt + 400) + '\n')
+  assert.equal(codexAcceptedPrompt('explicit-resumed', terminated, pasteAt), true, 'Codex omitting exactly the final LF acknowledges the original paste')
+  assert.deepEqual(codexConversationReceipt(resumedCwd, resumedId, terminated, pasteAt), { transcriptAt: pasteAt + 400 }, 'recovery recognizes the final-LF receipt in the original conversation')
+  assert.equal(codexConversationReceipt(resumedCwd, olderId, terminated, pasteAt), null, 'a final-LF receipt cannot cross native conversations')
+  assert.equal(codexConversationReceipt(cwd, resumedId, terminated, pasteAt), null, 'a final-LF receipt cannot cross project directories')
+  assert.equal(codexConversationReceipt(resumedCwd, resumedId, terminated, pasteAt + 401), null, 'a final-LF receipt must still follow the actual paste')
+  for (const altered of [terminated + '\n', terminated + ' ', terminated.replace('instruction', 'different instruction'), terminated.replace('\n  ', '\n '), terminated.replace(/\n/g, ''), terminated.slice(0, -1) + '\r\n']) {
+    assert.equal(codexAcceptedPrompt('explicit-resumed', altered, pasteAt), false, 'extra whitespace or substantive differences never acknowledge another prompt')
+  }
   // Re-noting is the existing /new, /clear and /resume invalidation boundary. Inferred
   // claims must still follow a uniquely verified conversation change afterwards.
   noteSession('explicit-resumed', resumedCwd, 'codex')

@@ -1161,7 +1161,10 @@ function codexReceiptIn(file: string | null, prompt: string, since: number): { t
     if (!Array.isArray(content)) continue
     const texts = content.filter((part) => typeof part === 'object' && part !== null &&
       (part as { type?: string }).type === 'input_text').map((part) => (part as { text?: string }).text)
-    if (texts.length === 1 && texts[0] === prompt) return { transcriptAt: at }
+    // Codex's composer can omit the paste's final LF in its native user row.
+    // Accept only that one terminator; all other text and whitespace stay exact.
+    if (texts.length === 1 && (texts[0] === prompt ||
+      (prompt.endsWith('\n') && texts[0] === prompt.slice(0, -1)))) return { transcriptAt: at }
   }
   return null
 }

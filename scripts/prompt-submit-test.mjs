@@ -1308,7 +1308,20 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
     `pasted=${pasted(unknown.p, later)}, rows=${ledger(unknown.pane.id).length}\n${logOf(unknown.pane.id)}`)
   manager.kill(unknown.pane.id)
 
-  // An altered native row with its LF missing cannot acknowledge the original.
+  const finalLF = open()
+  const terminated = payload + '\n'
+  finalLF.p.onWrite = data => {
+    if (data.includes(terminated)) finalLF.p.say(frame(terminated))
+    if (data === '\r') finalLF.received(payload)
+  }
+  const finalLFSettled = queue(finalLF, terminated)
+  ok(await waitFor(finalLFSettled) && returnsOf(finalLF.p) === 1 &&
+    finalLF.p.writes.filter(data => data === '\x1b[200~' + terminated + '\x1b[201~').length === 1 &&
+    ledger(finalLF.pane.id).length === 0 && !finalLF.live.meta.owedPrompt,
+    'the native receipt omitting only the final LF clears its durable intent without another paste or Return', logOf(finalLF.pane.id))
+  manager.kill(finalLF.pane.id)
+
+  // An altered native row missing interior LFs cannot acknowledge the original.
   const changed = open()
   changed.p.onWrite = data => {
     if (data.includes(payload)) changed.p.say(frame(payload))
@@ -1316,8 +1329,8 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
   }
   const changedSettled = queue(changed)
   ok(await waitFor(changedSettled) && ledger(changed.pane.id).some(row => row.text === payload),
-    'a native row missing LF is not normalized into an exact receipt')
-  ok(!/prompt submitted/.test(logOf(changed.pane.id)), 'missing LF never reports Codex as submitted')
+    'a native row missing interior LF is not normalized into an exact receipt')
+  ok(!/prompt submitted/.test(logOf(changed.pane.id)), 'missing interior LF never reports Codex as submitted')
   const nextHeld = queue(changed, 'must not append to held prompt', 300)
   ok(await logSays(changed.pane.id, /queued prompt retained/) && nextHeld() === 0 && !pasted(changed.p, 'must not append to held prompt'),
     'a held composer also retains ownership after all safe retries expire')
