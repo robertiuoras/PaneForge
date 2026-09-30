@@ -1064,6 +1064,8 @@ button.row-lane:hover { color: var(--text); }
 .row-sub .meta { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-sub .meta.row-agent { display: inline-flex; align-items: center; gap: 5px; flex: 0 1 auto; }
 .row-sub .meta + .meta::before { content: '\00b7'; margin: 0 6px; opacity: 0.7; }
+.row-sub .meta.row-workers { flex: 1 1 100%; white-space: normal; overflow-wrap: anywhere; }
+.row-sub .meta.row-workers::before { content: none; }
 .row-sub .meta.jobs { color: var(--accent); }
 .row-state .elapsed, .row-sub .elapsed {
   margin: 0; padding: 0; border: none; background: none; box-shadow: none;
