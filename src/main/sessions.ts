@@ -98,6 +98,7 @@ import { claimFromCli, claimCodexFromProcess, claudeAcceptedPrompt, claudeStartu
 import { recordPromptReview } from './promptReview'
 import { liveModelFor } from './paneModel'
 import { backgroundAgentsFor, forgetBackgroundAgents, noteBackgroundAgents } from './runningAgents'
+import { codexWorkersFor, forgetCodexWorkers } from './codexWorkers'
 // How hard a Codex pane thinks. The rule is `shared/effort.ts`, the disk is
 // `main/effort.ts`, the levels each model offers come from Codex itself.
 import {
@@ -3638,6 +3639,7 @@ export class SessionManager extends EventEmitter {
     this.codexQueued.delete(id)
     forgetSession(id)
     forgetBackgroundAgents(id)
+    forgetCodexWorkers(id)
     this.sessions.delete(id)
     forgetHandoff(id)
     this.emitSessions()
@@ -5135,6 +5137,13 @@ export class SessionManager extends EventEmitter {
       // only ever claimed once the conversation's own log says the turn ran at it. Same
       // seam and the same cost as the model reading above: one cached tail read, and only
       // when the file has actually moved.
+      if (meta.agent === 'codex') {
+        const workers = codexWorkersFor(meta.id, resumeIdFor(meta.id), now)
+        if (JSON.stringify(workers) !== JSON.stringify(meta.codexWorkers)) {
+          meta.codexWorkers = workers
+          changed = true
+        }
+      }
       const turn =
         meta.agent === 'codex'
           ? rolloutTurn(codexTranscriptPath(meta.cwd, resumeIdFor(meta.id) ?? ''))

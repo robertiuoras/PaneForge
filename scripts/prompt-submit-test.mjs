@@ -73,7 +73,7 @@ module.exports={spawn:(file,args,opts)=>({
   pid: 4242, file, args, cols: opts.cols, rows: opts.rows,
   writes: [], _data: null,
   onData(fn){this._data=fn;return off}, onExit(){return off},
-  write(d){this.writes.push(d);this.onWrite?.(d)}, kill(){}, resize(){},
+  write(d){if(d==='\\r'&&this.firstReturnAt===undefined)this.firstReturnAt=Date.now();this.writes.push(d);this.onWrite?.(d)}, kill(){}, resize(){},
   say(text){this._data && this._data(text)}
 })}
 `
@@ -432,18 +432,19 @@ manager.kill(cmd.id)
 async function sentReturnAt(proc, waitMs = 3000) {
   const until = Date.now() + waitMs
   while (Date.now() < until) {
-    if (proc.writes.some((w) => w === '\r')) return Date.now()
+    if (proc.firstReturnAt !== undefined) return proc.firstReturnAt
     await sleep(10)
   }
-  return Date.now()
+  throw new Error('fake PTY did not receive Enter within the fixture wait')
 }
 
 const eaten = manager.start({ cwd: root, agent: 'shell' })
 const eatenProc = manager.sessions.get(eaten.id).proc
 let eatenDone = 0
-manager.queuePrompt(eaten.id, '/model opus', 0, 40, () => eatenDone++, 5000, 'idle')
-await sleep(120)
+// Paint readiness before submitting: a delayed setup paint after Enter would look
+// like the command printed an answer, defeating this silence-only fixture.
 eatenProc.say(COMPOSER)
+manager.queuePrompt(eaten.id, '/model opus', 0, 40, () => eatenDone++, 5000, 'idle')
 // The return goes in and the pane stays exactly as it was - quiet at its composer, with
 // nothing printed. The old code settled on that silence within one poll (40ms here).
 // Timed off the RETURN, never off a fixed sleep: the give-up settle lands
