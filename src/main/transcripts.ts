@@ -20,7 +20,8 @@
 
 import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, join, sep } from 'node:path'
+import { execFile } from 'node:child_process'
 
 /** Claude Code and Antigravity keep transcripts we can name a session from. */
 const SUPPORTED = new Set(['claude', 'antigravity'])
@@ -925,6 +926,7 @@ interface CodexMeta {
   id: string
   cwd: string
   at: number
+  mainCli: boolean
 }
 
 const CODEX_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -983,7 +985,10 @@ function codexMeta(file: string): CodexMeta | null {
       const cwd = row.payload.cwd
       const timestamp = row.payload.timestamp
       const at = typeof timestamp === 'number' ? timestamp : typeof timestamp === 'string' ? Date.parse(timestamp) : NaN
-      return typeof cwd === 'string' && Number.isFinite(at) ? { file, id, cwd, at } : null
+      return typeof cwd === 'string' && Number.isFinite(at) ? {
+        file, id, cwd, at,
+        mainCli: row.payload.source === 'cli' && row.payload.thread_source === 'user'
+      } : null
     }
   } catch {
     return null
@@ -991,6 +996,80 @@ function codexMeta(file: string): CodexMeta | null {
     if (fd >= 0) closeSync(fd)
   }
   return null
+}
+
+/** Recover an edited-prompt claim from the live native CLI, never cwd or the caller's ID.
+ * Codex also holds its subagents' rollouts open, so only one main CLI rollout qualifies.
+ * Stop walking at the native CLI: its child `codex exec` jobs are not the pane itself.
+ */
+export async function claimCodexFromProcess(id: string, pid: number | undefined): Promise<boolean> {
+  const s = started.get(id)
+  if (process.platform !== 'darwin' || !s || s.agent !== 'codex' || !pid || resumeIdFor(id)) return false
+  const read = (command: string, args: string[]): Promise<string> => new Promise((resolve) => {
+    execFile(command, args, { timeout: 5000, maxBuffer: 4 * 1024 * 1024 },
+      (error, stdout) => resolve(error ? '' : stdout))
+  })
+  const snapshot = async () => (await read('ps', ['-Ao', 'pid=,ppid=,lstart=,comm=,args=']))
+    .split('\n').flatMap((line) => {
+      const m = /^\s*(\d+)\s+(\d+)\s+(\S+\s+\S+\s+\d+\s+\S+\s+\d+)\s+(\S+)\s+(.*)$/.exec(line)
+      return m ? [{ pid: Number(m[1]), parent: Number(m[2]), born: m[3], exe: m[4], args: m[5] }] : []
+    })
+  const before = await snapshot()
+  const root = before.find((p) => p.pid === pid)
+  if (!root) return false
+  const path: typeof before = []
+  const candidates: typeof before = []
+  const seen = new Set<number>()
+  const walk = (p: typeof root) => {
+    if (seen.has(p.pid)) return
+    seen.add(p.pid); path.push(p)
+    // macOS truncates `comm` to 16 columns even with -ww. The full argv executable
+    // must name codex and agree with the native executable, not a Node wrapper.
+    const executable = /^\S+/.exec(p.args)?.[0] ?? ''
+    if (basename(executable) === 'codex' &&
+      (executable.startsWith(p.exe) || basename(p.exe) === 'codex')) {
+      // Headless jobs and app servers do not own an interactive pane composer.
+      if (!/\s(?:exec|app-server)\b/.test(p.args)) candidates.push(p)
+      return
+    }
+    for (const child of before.filter((child) => child.parent === p.pid)) walk(child)
+  }
+  walk(root)
+  if (candidates.length !== 1) return false
+  const native = candidates[0]
+  const openRollout = async (): Promise<CodexMeta | null> => {
+    const handles = await read('lsof', ['-n', '-p', String(native.pid), '-Ffn'])
+    let field = '', cwd = ''
+    const files = new Set<string>()
+    for (const line of handles.split('\n')) {
+      if (line.startsWith('f')) field = line.slice(1)
+      else if (line.startsWith('n')) {
+        if (field === 'cwd') cwd = line.slice(1)
+        else if (/^\d+$/.test(field) && line.endsWith('.jsonl') &&
+          line.slice(1).startsWith(join(codexHome(), 'sessions') + sep) && basename(line).startsWith('rollout-')) files.add(line.slice(1))
+      }
+    }
+    if (!sameCwd(cwd, s.cwd)) return null
+    const matches = [...files].map(codexMeta).filter((row): row is CodexMeta => Boolean(row))
+      .filter((row) => row.mainCli && sameCwd(row.cwd, s.cwd) &&
+        ![...claimed].some(([other, file]) => other !== id && file === row.file))
+    return matches.length === 1 ? matches[0] : null
+  }
+  const match = await openRollout()
+  if (!match) return false
+  const after = await snapshot()
+  if (!path.every((p) => after.some((q) => q.pid === p.pid && q.parent === p.parent &&
+    q.born === p.born && q.exe === p.exe && q.args === p.args))) return false
+  // The process must still hold this exact rollout after the ancestry check.
+  const stillOpen = await openRollout()
+  if (stillOpen?.file !== match.file || stillOpen.id !== match.id || started.get(id) !== s || resumeIdFor(id) ||
+    [...claimed].some(([other, file]) => other !== id && file === match.file)) return false
+  claimed.set(id, match.file)
+  codexClaimed.set(id, match.id)
+  s.codexResumeId = match.id
+  settled.add(id)
+  released.delete(match.file)
+  return true
 }
 
 /** A Codex user message this pane actually submitted, never a loose text search. */

@@ -94,7 +94,7 @@ export interface AutoClearArm {
   tokens?: number
 }
 import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from './pipe'
-import { claimFromCli, claudeAcceptedPrompt, claudeStartup, codexAcceptedPrompt, codexConversationReceipt, codexPromptReceipt, forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeEvidence, resumeIdFor, transcriptPath } from './transcripts'
+import { claimFromCli, claimCodexFromProcess, claudeAcceptedPrompt, claudeStartup, codexAcceptedPrompt, codexConversationReceipt, codexPromptReceipt, forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeEvidence, resumeIdFor, transcriptPath } from './transcripts'
 import { recordPromptReview } from './promptReview'
 import { liveModelFor } from './paneModel'
 import { backgroundAgentsFor, forgetBackgroundAgents, noteBackgroundAgents } from './runningAgents'
@@ -2094,10 +2094,11 @@ export class SessionManager extends EventEmitter {
     const id = req.paneId
     const live = this.sessions.get(id)
     const proc = live?.proc
-    const same = () => Boolean(live && proc && this.sessions.get(id) === live && live.proc === proc &&
-      !live.meta.asleep && live.meta.status !== 'exited' && live.meta.agent === 'codex' &&
-      resumeIdFor(id) === req.expectedConversationId)
-    if (!same() || this.answering.has(id) || live!.meta.owedPrompt) {
+    const sameProcess = () => Boolean(live && proc && this.sessions.get(id) === live && live.proc === proc &&
+      !live.meta.asleep && live.meta.status !== 'exited' && live.meta.agent === 'codex')
+    const same = () => sameProcess() && resumeIdFor(id) === req.expectedConversationId
+    const known = resumeIdFor(id)
+    if (!sameProcess() || (known && known !== req.expectedConversationId) || this.answering.has(id) || live!.meta.owedPrompt) {
       return ledger.update(req, { state: 'rejected', reason: 'Pane identity unavailable or another prompt owns the composer' })
     }
     this.answering.add(id)
@@ -2152,7 +2153,11 @@ export class SessionManager extends EventEmitter {
         }, 150).unref()
       } catch { finish('uncertain', 'Durable delivery failed; no automatic retry') }
     }
-    setTimeout(tick, 0).unref()
+    if (known) setTimeout(tick, 0).unref()
+    else void claimCodexFromProcess(id, proc!.pid).then(() => {
+      if (!same()) { finish('rejected', 'Pane identity unavailable; no answer was typed'); return }
+      tick()
+    }).catch(() => finish('rejected', 'Pane identity verification failed; no answer was typed'))
     return accepted.receipt
   }
 
