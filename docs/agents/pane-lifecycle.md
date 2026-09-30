@@ -91,8 +91,9 @@ failed read or one started before the turn ended is `'unread'` and refuses); a b
 label/done/fail words) holds nothing. Writes `result`/`unverified` review
 `done_<pane>_<turn s>` with `hold` (row, no card), then `closeAfterResult` (refusal names each
 flag, `closeHeldBy`). ONLY after a real close: each `personOwnedSteps` step a GuardDeck to-do,
-the result card (`sendReviewNotice`) iff `finishedCard` (person steps OR unread), a read row
-without person steps marked reviewed. Explicit unfinished/queued work in prose also holds the pane.
+the result card (`sendReviewNotice`) unless explicitly marked reviewed in Review or by a
+GuardDeck receipt. Looking at a pane only controls close timing; it never acknowledges a
+report or suppresses its delivery. Explicit unfinished/queued work in prose also holds the pane.
 Once eligible, the automatic sweep publishes `doneClosingAt` and waits a fresh 30 seconds;
 any refusal cancels it. GuardDeck displays that deadline alongside the idle-close clock.
 An old turn never overrides the 30-second quiet period after a recent look. `autoclose_*` rows (`reviews:record`) same rule via `heldCards`/

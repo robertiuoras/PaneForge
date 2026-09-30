@@ -6,6 +6,10 @@ import { join } from 'node:path'
 import { build } from 'esbuild'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
+import { spawn } from 'node:child_process'
+import { testChrome } from './test-chrome.mjs'
+import { closeTestChrome } from './close-test-chrome.mjs'
+import { Link } from './ui-lab.mjs'
 
 const repo = fileURLToPath(new URL('..', import.meta.url))
 
@@ -95,6 +99,125 @@ assert.equal(api.listReviews().find(r => r.id === decision.id).attention, true)
 assert.equal(api.reviewOpenTarget('done_1', -1), first.reportPath)
 assert.equal(api.reviewOpenTarget('done_1', 0), 'https://example.test/a')
 
+const report = `## Findings
+
+**Finished** and *checked*, with \`inline code\`.
+
+> A retained quotation.
+
+- First item
+- [Evidence](https://example.test/proof?q=1&v=2)
+  - Nested item
+
+1. First step
+2. Second step
+
+| Check | Result |
+| --- | --- |
+| Build | Passed |
+
+\`\`\`sh
+# literal comment
+echo '<script>'
+\`\`\`
+
+<script>alert('bad')</script>
+[Unsafe](javascript:alert%281%29)
+![Picture](https://example.test/image.png)
+[Executable](file:///tmp/bad.command)
+`
+const formatted = api.recordReview({ ...input, id: 'formatted', report }, native)
+const page = readFileSync(formatted.reportPath, 'utf8')
+for (const fragment of ['<h2>Findings</h2>', '<strong>Finished</strong>', '<em>checked</em>', '<blockquote>', '<ul>', '<ol>', '<table>', '<pre><code class="language-sh">', '&lt;script&gt;', 'href="https://example.test/proof?q=1&amp;v=2"']) assert.ok(page.includes(fragment), `rendered report retains ${fragment}`)
+assert.ok(!page.includes('<script>') && !page.includes('<img ') && !page.includes('href="javascript:') && !page.includes('href="file:///tmp/bad.command"'), 'report content cannot inject HTML, tracking images or executable links')
+const sourceFile = join(temp, 'reviews', 'formatted.json')
+const retainedSource = readFileSync(sourceFile, 'utf8')
+writeFileSync(formatted.reportPath, '<p>old raw formatting</p>')
+api.reviewOpenTarget('formatted', -1)
+assert.equal(readFileSync(formatted.reportPath, 'utf8'), page, 'opening an existing report refreshes HTML from its retained report')
+assert.equal(readFileSync(sourceFile, 'utf8'), retainedSource, 'rendering preserves the source record and its review state')
+assert.equal(api.reviewOpenTarget('formatted', 'https://example.test/proof?q=1&v=2'), 'https://example.test/proof?q=1&v=2')
+assert.equal(api.reviewOpenTarget('formatted', 'https://example.test/not-in-report'), null)
+assert.equal(api.reviewOpenTarget('formatted', 'javascript:alert(1)'), null)
+assert.equal(api.reviewOpenTarget('formatted', 'file:///tmp/bad.command'), null)
+
+// Render the actual Review component and the actual saved page in an isolated PC
+// test browser. No installed app, user desktop, retained report or agent is touched.
+const componentJs = join(temp, 'review-dialog.js')
+await build({
+  stdin: {
+    contents: `import React from 'react'; import {createRoot} from 'react-dom/client'; import ReviewDialog from './src/renderer/src/components/ReviewDialog'; createRoot(document.getElementById('root')).render(React.createElement(ReviewDialog,{onClose(){},onHistory(){},onReopen(){}}));`,
+    resolveDir: repo, loader: 'tsx'
+  },
+  outfile: componentJs, bundle: true, platform: 'browser', format: 'iife',
+  tsconfig: join(repo, 'tsconfig.web.json'), define: { 'process.env.NODE_ENV': '"production"' }, logLevel: 'silent'
+})
+const dialogHtml = join(temp, 'review-dialog.html')
+const css = readFileSync(join(repo, 'src/renderer/src/styles.css'), 'utf8')
+writeFileSync(dialogHtml, `<!doctype html><meta charset="utf-8"><style>:root{--text:#eee;--muted:#aaa;--accent:#f0a868;--line:#444;--surface-2:#222}body{margin:0}${css}</style><div id="root"></div><script>window.opened=[];window.api={listReviews:async()=>({reviews:${JSON.stringify([formatted]).replace(/</g, '\\u003c')}}),openReview:async(id,url)=>{window.opened.push([id,url]);return {opened:true}}};</script><script src="review-dialog.js"></script>`)
+const chromePath = testChrome()
+assert.ok(chromePath, 'rendering checks require the PC test browser')
+const profile = join(temp, 'chrome-profile')
+const chrome = spawn(chromePath, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check', '--disable-extensions', 'about:blank'], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] })
+let ws
+try {
+  const socket = await new Promise((resolve, reject) => {
+    let stderr = ''
+    const timeout = setTimeout(() => reject(new Error('Review test Chrome did not start')), 10_000)
+    chrome.on('error', (error) => { clearTimeout(timeout); reject(error) })
+    chrome.on('exit', (code) => { clearTimeout(timeout); reject(new Error(`Review test Chrome exited ${code}`)) })
+    chrome.stderr.on('data', (data) => {
+      stderr += data
+      const match = /DevTools listening on (ws:\/\/[^\s]+)/.exec(stderr)
+      if (match) { clearTimeout(timeout); resolve(match[1]) }
+    })
+  })
+  ws = new WebSocket(socket)
+  await new Promise((resolve, reject) => { ws.addEventListener('open', resolve); ws.addEventListener('error', reject) })
+  const browser = new Link(ws)
+  const { targetId } = await browser.send('Target.createTarget', { url: 'about:blank' })
+  const { sessionId } = await browser.send('Target.attachToTarget', { targetId, flatten: true })
+  // Link's page methods have no session argument; scope this link to the owned target.
+  const send = browser.send.bind(browser)
+  browser.send = (method, params = {}) => {
+    const id = ++browser.seq
+    return new Promise((res, rej) => {
+      browser.pending.set(id, { res, rej })
+      ws.send(JSON.stringify({ id, method, params, sessionId }))
+    })
+  }
+  for (const [view, html] of [['Review', dialogHtml], ['saved page', formatted.reportPath]]) {
+    const { pathToFileURL } = await import('node:url')
+    await browser.send('Emulation.setDeviceMetricsOverride', { width: 560, height: 900, deviceScaleFactor: 1, mobile: false })
+    await browser.send('Page.navigate', { url: pathToFileURL(html).href })
+    await browser.evaluate(`new Promise((resolve,reject)=>{const limit=Date.now()+5000;function ready(){if(document.querySelector(${JSON.stringify(view === 'Review' ? '.review-markdown' : '.report')})){resolve(true);return}const row=document.querySelector('.review-row');if(row&&row.getAttribute('aria-expanded')!=='true')row.click();if(Date.now()>limit){reject(new Error('report did not render'));return}requestAnimationFrame(ready)}ready()})`)
+    const metrics = await browser.evaluate(`(() => {
+      const report = document.querySelector(${JSON.stringify(view === 'Review' ? '.review-markdown' : '.report')})
+      const list = report.querySelector('ul'), code = report.querySelector('pre'), quote = report.querySelector('blockquote')
+      const bounds = report.getBoundingClientRect()
+      return { h: report.querySelector('h2')?.textContent, bold: report.querySelector('strong')?.textContent,
+        ul: report.querySelectorAll('ul').length, ol: report.querySelectorAll('ol').length,
+        table: report.querySelector('table')?.rows.length, code: code?.textContent,
+        marker: getComputedStyle(list).listStyleType, quoteBorder: parseFloat(getComputedStyle(quote).borderLeftWidth),
+        width: bounds.width, right: bounds.right, unsafe: !!report.querySelector('script,img,a[href^="javascript:"],a[href$=".command"]') }
+    })()`)
+    assert.equal(metrics.h, 'Findings', `${view}: headings render`)
+    assert.equal(metrics.bold, 'Finished', `${view}: bold renders`)
+    assert.ok(metrics.ul === 2 && metrics.ol === 1 && metrics.table === 2, `${view}: nested lists and tables render`)
+    assert.ok(metrics.code.includes("# literal comment\necho '<script>'"), `${view}: fenced code stays literal`)
+    assert.ok(metrics.marker !== 'none' && metrics.quoteBorder > 0, `${view}: list markers and quotation styling are visible`)
+    assert.ok(metrics.width > 0 && metrics.right <= 561 && !metrics.unsafe, `${view}: safe report fits a narrow view`)
+    if (view === 'Review') {
+      await browser.evaluate(`document.querySelector('.review-markdown a[href^="https://example.test/proof"]').click()`)
+      assert.deepEqual(await browser.evaluate('window.opened'), [['formatted', 'https://example.test/proof?q=1&v=2']], 'inline link uses the validated Review opening path')
+    }
+    console.log(`review rendering passed: ${view} headings, bold, nested lists, quotes, links, tables and code observed at 560px`)
+  }
+  browser.send = send
+} finally {
+  await closeTestChrome(chrome, profile, ws)
+}
+
 mkdirSync(join(temp, 'history'), { recursive: true })
 writeFileSync(join(temp, 'history', 'old_1.log'), 'retained')
 const old = api.listReviews([{ id: 'old_1', title: 'Old', cwd: temp, agent: 'claude', startedAt: 1, endedAt: 2, bytes: 0, askLines: ['original ask'], resumeId: 'chat_1' }]).find(r => r.kind === 'closed')
@@ -168,6 +291,56 @@ prod.recordReview({ ...input, id: 'notice_quiet', notify: false }, native, true)
 prod.sendReviewNotice('notice_quiet')
 assert.ok(!existsSync(join(temp, '.claude', 'guarddeck', 'notices', 'paneforge-review-notice_quiet.json')), 'a row that asked for no card gets none')
 
+// Only an explicit Review acknowledgement or GuardDeck reviewed receipt suppresses
+// a new delivery. Focus is used for close timing, never written as a review receipt.
+for (const via of ['review', 'guarddeck']) {
+  const id = `notice_reviewed_${via}`
+  prod.recordReview({ ...input, id, notify: true }, native, true)
+  if (via === 'review') prod.acknowledgeReview(id, true)
+  else writeFileSync(join(temp, '.claude', 'guarddeck', 'result-receipts', `${id}.json`), JSON.stringify({ id, reviewedAt: new Date().toISOString() }))
+  prod.sendReviewNotice(id)
+  assert.ok(!existsSync(join(temp, '.claude', 'guarddeck', 'notices', `paneforge-review-${id}.json`)), `${via}: an explicitly reviewed result gets no duplicate card`)
+  assert.equal(prod.listReviews().find(r => r.id === id).attention, false)
+}
+prod.acknowledgeReview('notice_reviewed_review', false)
+prod.sendReviewNotice('notice_reviewed_review')
+assert.ok(existsSync(join(temp, '.claude', 'guarddeck', 'notices', 'paneforge-review-notice_reviewed_review.json')), 'marking unread permits delivery again')
+
+// Execute the held-card close callback used by reviews:record, retries and kill.
+// Both paths must keep the receipt absent even when the pane was looked at.
+const mainSource = readFileSync(join(repo, 'src/main/index.ts'), 'utf8')
+const callbackStart = mainSource.indexOf('function cardAfterClose(')
+const callbackEnd = mainSource.indexOf("\nipcMain.handle('reviews:record'", callbackStart)
+assert.ok(callbackStart >= 0 && callbackEnd > callbackStart)
+const callbackSource = mainSource.slice(callbackStart, callbackEnd).replace(
+  'function cardAfterClose(paneId: string): (closed: boolean) => void',
+  'function cardAfterClose(paneId)'
+)
+const heldCards = new Map()
+let endedAt = 100
+const cardAfterClose = Function('heldCards', 'manager', 'sendReviewNotice', `${callbackSource}; return cardAfterClose`)(
+  heldCards, { turnRead: () => ({ endedAt, read: true }) }, prod.sendReviewNotice
+)
+prod.recordReview({ ...input, id: 'notice_looked', notify: true }, native, true)
+heldCards.set('pane_1', { reviewId: 'notice_looked', turn: endedAt })
+cardAfterClose('pane_1')(false)
+assert.equal(heldCards.has('pane_1'), true, 'a refused close retains the held card')
+const lookedNotice = join(temp, '.claude', 'guarddeck', 'notices', 'paneforge-review-notice_looked.json')
+assert.ok(!existsSync(lookedNotice))
+cardAfterClose('pane_1')(true)
+assert.ok(existsSync(lookedNotice), 'a looked-at held result delivers after the real close')
+assert.ok(!existsSync(join(temp, '.claude', 'guarddeck', 'result-receipts', 'notice_looked.json')), 'the close does not fabricate an acknowledgement')
+assert.equal(prod.listReviews().find(r => r.id === 'notice_looked').attention, true, 'the delivered looked-at report remains unread')
+heldCards.set('pane_1', { reviewId: 'notice_reviewed_guarddeck', turn: endedAt })
+cardAfterClose('pane_1')(true)
+assert.ok(!existsSync(join(temp, '.claude', 'guarddeck', 'notices', 'paneforge-review-notice_reviewed_guarddeck.json')), 'the held path respects an actual review receipt')
+prod.recordReview({ ...input, id: 'notice_stale', notify: true }, native, true)
+heldCards.set('pane_1', { reviewId: 'notice_stale', turn: endedAt })
+endedAt++
+cardAfterClose('pane_1')(true)
+assert.equal(heldCards.has('pane_1'), false, 'an old turn is dropped without delivery')
+assert.ok(!existsSync(join(temp, '.claude', 'guarddeck', 'notices', 'paneforge-review-notice_stale.json')))
+
 // ---- finished-chat report contract v1: card number, app, context, session tokens ----------
 // The maths on its own, over transcripts copied from real ones (every word redacted). The
 // expected numbers were measured with an independent Python pass over the same fixtures.
@@ -228,11 +401,12 @@ const html = readFileSync(ctx.reportPath, 'utf8')
 assert.match(html, /<h1><span class="num">2<\/span> Remember Use Colors<\/h1>/)
 assert.match(html, /162k of 1M context used \(16%\) · 24k tokens this session/)
 assert.ok(html.includes('&lt;script&gt;alert(1)&lt;/script&gt;') && !html.includes('<script>'), 'the reply is escaped')
-assert.ok(html.includes('<strong class="h">Batch 2 <strong>done</strong></strong>'), 'headings and bold keep their meaning')
-assert.ok(html.includes('\n# a comment, not a heading\n'), 'a # inside a code block stays as written')
+assert.ok(html.includes('<h2>Batch 2 <strong>done</strong></h2>'), 'headings and bold keep their meaning')
+assert.ok(html.includes('<pre><code class="language-sh"># a comment, not a heading\n</code></pre>'), 'a # inside a code block stays as written')
 const shown = html.slice(html.indexOf('<div class="report">'), html.indexOf('</div>')).replace(/<[^>]+>/g, '')
   .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
-assert.equal(shown, longReply.replace(/^## /, '').replace(/\*\*/g, ''), 'nothing of a 6,000+ character reply is cut')
+assert.equal(shown.split('Every line of this reply has to reach the page.').length - 1, 150, 'all repeated content in a 6,000+ character reply is retained')
+assert.ok(shown.startsWith('Batch 2 done') && shown.includes('<script>alert(1)</script>') && shown.includes('# a comment, not a heading') && shown.includes('LAST LINE'), 'headings, literal HTML, fenced code and the end of the reply are retained')
 // A retry after the card moved is the same report, not a conflict.
 deskNow = [{ id: 'pane_ctx' }]
 assert.equal(api.recordReview(ctxInput, claudeNative).paneNumber, 2)

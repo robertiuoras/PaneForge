@@ -2345,7 +2345,7 @@ export interface Api {
   listReviews(): Promise<{ reviews: ReviewRecord[]; persistent: true }>
   recordReview(input: ReviewInput): Promise<{ review: ReviewRecord; close: { closed: boolean; reason?: string } }>
   acknowledgeReview(id: string, reviewed: boolean): Promise<{ ok: boolean; clearedAttention: boolean }>
-  openReview(id: string, index: number): Promise<{ opened: boolean }>
+  openReview(id: string, index: number | string): Promise<{ opened: boolean }>
   /** Available only to the authenticated PaneForge repository owner. */
   ownerAccess(): Promise<boolean>
   /** Aggregate GitHub installer-asset downloads, not unique people or IP telemetry. */

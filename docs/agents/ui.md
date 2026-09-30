@@ -113,6 +113,13 @@ clean basename, ext from MAGIC BYTES; 5MB/batch; never auto-submitted. macOS dro
 
 ## History says what each session was working on
 
+Review's expanded report and saved HTML share `shared/reviewMarkdown.ts`: headings,
+lists, quotes, links, tables and code render as written. Raw HTML stays escaped; inline
+links open through `reviews:open` only when retained in the source report and validated
+as web pages or supported evidence files. Existing report HTML is rebuilt from its JSON
+source when opened, preserving its contents and read state. Internal `reviews` paths stay
+stable; people use Review and Open report, not the storage folder.
+
 Row = FIRST ask + count (`shared/gist.ts`, `test:gist`) from relayed keystrokes. Newest closed
 top (`endedAt ?? startedAt`); `closed 5 min ago`/date; green `open since`, red `closed …`.
 `View all` = `summaryFull`. Closed before recording = archive line or none. `/clear` ends a

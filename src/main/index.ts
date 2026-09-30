@@ -25,7 +25,7 @@ import { SessionManager, setSilenceAlert, type WriteOrigin } from './sessions'
 import { acknowledgeReview, listReviews, noteReviewClose, recordReview, reviewCloseArmAction, reviewOpenTarget, sendReviewNotice, setReviewDesk, type ReviewCloseArm } from './reviews'
 import { ComputeReviews, computeResult } from './computeReviews'
 import { mayNotify, noticesDir, readReply, sweepDoneClose, type DoneCloseDeps } from './doneClose'
-import { doneQuietMs, doneReviewId, finishedCard } from '../shared/doneClose'
+import { doneQuietMs, doneReviewId } from '../shared/doneClose'
 import { FinishedDigest, summaryOf } from '../shared/finishedDigest'
 import { DataPump } from './dataPump'
 import { DiscordPresence } from './discordPresence'
@@ -145,7 +145,7 @@ import {
 import { codexContextUsage, receivedContinuation } from './contextUsage'
 import { rolloutTurn } from './effort'
 import { startContinuation } from './continuation'
-import { handoffCandidates, personOwnedSteps } from '../shared/handoffSteps'
+import { handoffCandidates } from '../shared/handoffSteps'
 import { receiveHandoff, sendHandoff, shareable, type LandedCopy } from './handoff'
 import { RESUME_CONFIRM_MS } from '../shared/resumeCheck'
 import { briefAnchor, clearCommandFor, hasFreshPaneHandoff, readAsk as readAutoClearAsk, resumeBrief } from '../shared/autoclear'
@@ -1613,8 +1613,8 @@ ipcMain.handle('sessions:watchCompute', (_e, id: string, job: string, owner: str
   return { watching: true, pane: id, job }
 })
 ipcMain.handle('reviews:ack', (_e, id: string, reviewed: boolean) => acknowledgeReview(String(id), reviewed === true))
-ipcMain.handle('reviews:open', async (_e, id: string, index: number) => {
-  const target = reviewOpenTarget(String(id), Number(index), history.list())
+ipcMain.handle('reviews:open', async (_e, id: string, index: number | string) => {
+  const target = reviewOpenTarget(String(id), typeof index === 'string' ? index : Number(index), history.list())
   return { opened: target ? /^https?:/.test(target) ? await openLink(target, 'review') : await openLocal(target, 'review') : false }
 })
 // The pane the person is looking at. A finished pane is never closed under them.
@@ -1670,7 +1670,6 @@ function doneCloseDeps(): DoneCloseDeps {
         : null,
     record: (input, native) => recordReview(input, native, true),
     notify: sendReviewNotice,
-    markRead: (id) => void acknowledgeReview(id, true),
     close: (id, at) => manager.closeAfterResult(id, at),
     noteClose: noteReviewClose,
     writeNotice: (path, body) => {
@@ -1717,10 +1716,10 @@ ipcMain.handle('sessions:closeDone', async (_e, dry: unknown) => {
  * `reviews:record` instead: claude-config's autoclose (`autoclose_*`). Its close is tried
  * there, retried on an arm, or done by its own `sessions:kill` fallback, so all three ask.
  */
-const heldCards = new Map<string, { reviewId: string; steps: number; turn: number }>()
+const heldCards = new Map<string, { reviewId: string; turn: number }>()
 /**
- * Read BEFORE the pane closes (whether the person saw this turn goes with it); call the
- * answer with whether it closed. A card held for an earlier turn is dropped unsent.
+ * Capture the turn BEFORE the pane closes; call the answer with whether it closed.
+ * A card held for an earlier turn is dropped unsent. Focus never acknowledges it.
  */
 function cardAfterClose(paneId: string): (closed: boolean) => void {
   const held = heldCards.get(paneId)
@@ -1729,8 +1728,7 @@ function cardAfterClose(paneId: string): (closed: boolean) => void {
     if (!held || !closed) return
     heldCards.delete(paneId)
     if (!turn || turn.endedAt !== held.turn) return
-    if (turn.read && !held.steps) acknowledgeReview(held.reviewId, true)
-    if (finishedCard(held.steps, turn.read)) sendReviewNotice(held.reviewId)
+    sendReviewNotice(held.reviewId)
   }
 }
 ipcMain.handle('reviews:record', (_e, input: import('../shared/reviews').ReviewInput) => {
@@ -1740,7 +1738,7 @@ ipcMain.handle('reviews:record', (_e, input: import('../shared/reviews').ReviewI
   const native = session ? { title: session.title, provider: session.agent, cwd: session.cwd, nativeSessionId: resumeIdFor(session.id) ?? session.id } : { title: old!.title, provider: old!.agent, cwd: old!.cwd, nativeSessionId: old!.resumeId ?? old!.id }
   const chat = session && session.agent !== 'shell' && input.notify === true && input.closeSession === true ? session : undefined
   const review = recordReview(input, native, Boolean(chat))
-  if (chat) heldCards.set(chat.id, { reviewId: review.id, steps: personOwnedSteps(input.report).length, turn: manager.turnRead(chat.id)?.endedAt ?? 0 })
+  if (chat) heldCards.set(chat.id, { reviewId: review.id, turn: manager.turnRead(chat.id)?.endedAt ?? 0 })
   if (old?.endedAt) noteReviewClose(review.id, undefined, new Date(old.endedAt).toISOString())
   let close: { closed: boolean; reason?: string } = { closed: false }
   if (input.closeSession === true) {
