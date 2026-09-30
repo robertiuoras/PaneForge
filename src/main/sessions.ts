@@ -95,7 +95,7 @@ export interface AutoClearArm {
   tokens?: number
 }
 import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from './pipe'
-import { claimFromCli, claimCodexFromProcess, claudeAcceptedPrompt, claudeStartup, codexAcceptedPrompt, codexConversationReceipt, codexPromptReceipt, forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeEvidence, resumeIdFor, transcriptPath } from './transcripts'
+import { claimFromCli, claimCodexFromProcess, claudeAcceptedPrompt, claudeStartup, codexAcceptedPrompt, codexConversationReceipt, codexPromptReceipt, forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeEvidence, resumeIdFor, transcriptFor, transcriptPath } from './transcripts'
 import { recordPromptReview } from './promptReview'
 import { liveModelFor } from './paneModel'
 import { backgroundAgentsFor, forgetBackgroundAgents, noteBackgroundAgents } from './runningAgents'
@@ -689,7 +689,7 @@ export class SessionManager extends EventEmitter {
   private answerLedger?: PaneAnswers
   private answering = new Set<string>()
   // An unconfirmed Codex draft still owns the composer after its bounded wait ends.
-  private codexQueued = new Map<string, { key: string; live: Live; proc: Live['proc']; prompt: string; since: number; writing: boolean; foreign: boolean; proof: 'receipt' | 'idle'; conversationId?: string; receiptCwd?: string; commandOutputAt?: number; recovered?: boolean }>()
+  private codexQueued = new Map<string, { key: string; live: Live; proc: Live['proc']; prompt: string; since: number; writing: boolean; foreign: boolean; proof: 'receipt' | 'idle'; conversationId?: string; receiptCwd?: string; commandOutputAt?: number; recovered?: boolean; receiptMiss?: string }>()
   /**
    * Shell children at the last table read. Also used on POSIX for background jobs
    * and for distinguishing an interactive Codex wrapper from an ordinary node job.
@@ -4583,11 +4583,35 @@ export class SessionManager extends EventEmitter {
           this.codexQueued.delete(id)
           previous = undefined
         }
+        let previousAccepted = false
         if (previous && previous !== owner && previous.since &&
-          previous.live === live && previous.proc === live.proc &&
-          (previous.proof === 'idle' ? await commandLanded(previous, live) : previous.conversationId ?
-            Boolean(codexConversationReceipt(previous.receiptCwd ?? previous.live.meta.cwd, previous.conversationId, previous.prompt, previous.since)) :
-            !previous.recovered && codexAcceptedPrompt(id, previous.prompt, previous.since))) {
+          previous.live === live && previous.proc === live.proc) {
+          if (previous.proof === 'idle') previousAccepted = await commandLanded(previous, live)
+          else {
+            const cwd = previous.receiptCwd ?? previous.live.meta.cwd
+            const file = previous.conversationId ? codexTranscriptPath(cwd, previous.conversationId) :
+              !previous.recovered ? transcriptFor(id) : null
+            let signature: string | undefined
+            try {
+              if (file) {
+                const st = statSync(file)
+                signature = JSON.stringify([file, st.dev, st.ino, st.size, st.mtimeMs, st.ctimeMs,
+                  cwd, previous.conversationId, previous.prompt, previous.since])
+              }
+            } catch { /* unavailable files must not leave a cached miss */ }
+            // Every follower checks the same retained intent. Share only a negative
+            // scan of an unchanged file; native identity is still resolved above.
+            if (!signature || previous.receiptMiss !== signature) {
+              previous.receiptMiss = undefined
+              const receipt = previous.conversationId ?
+                codexConversationReceipt(cwd, previous.conversationId, previous.prompt, previous.since) :
+                !previous.recovered ? codexPromptReceipt(id, previous.prompt, previous.since) : undefined
+              previousAccepted = Boolean(receipt)
+              if (receipt === null) previous.receiptMiss = signature
+            }
+          }
+        }
+        if (previous && previousAccepted) {
           noteSubmitted(previous.key)
           this.codexQueued.delete(id)
         }
