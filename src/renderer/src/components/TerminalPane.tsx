@@ -4439,11 +4439,20 @@ function TerminalPane({
     paneComposer.set(sessionId, () => {
       const b = t.buffer.active
       if (b.type === 'alternate' && agent !== 'codex') return null
-      return composerText((row) => b.getLine(row)?.translateToString(true) ?? '', b.baseY + b.cursorY, {
+      const cursor = b.baseY + b.cursorY
+      const text = composerText((row) => b.getLine(row)?.translateToString(true) ?? '', cursor, {
         codexCols: agent === 'codex' ? t.cols : undefined,
         maxUp: agent === 'codex' ? t.rows : undefined,
         maxDown: agent === 'codex' ? t.rows : undefined
       })
+      // Match main's native Codex hint reading: these words are empty only when the
+      // whole hint is dim and the caret precedes it. Identical typed words stay a draft.
+      if (agent === 'codex' && text === 'Ask Codex to do anything' && b.cursorX === 2 &&
+        b.getLine(cursor)?.translateToString(true) === `› ${text}` &&
+        Array.from(text).every((_, n) => Boolean(b.getLine(cursor)?.getCell(n + 2)?.isDim()))) {
+        return ''
+      }
+      return text
     })
     paneRepair.set(sessionId, repair)
     paneArmClear.set(sessionId, () => {

@@ -207,4 +207,26 @@ register(terminal, 'claude', composerText, readers, 'other')
 eq('other alternate-screen applications are still refused', readers.get('other')(), null)
 terminal.dispose()
 
+// sessions:draft prefers this live renderer reader over main's replay reader. Exercise
+// the same native hint fixtures through its actual registration, not a second parser.
+const liveCodex = new Terminal({ cols: 73, rows: 59, allowProposedApi: true })
+register(liveCodex, 'codex', composerText, readers, 'hint')
+const liveRead = async raw => {
+  await new Promise(resolve => liveCodex.write(raw, resolve))
+  return readers.get('hint')()
+}
+eq('live screen reads the native dim hint as an empty composer',
+  await liveRead(codexPaint(hint, `${ESC}[2m`)), '')
+eq('live screen preserves identical normally typed words with Home pressed',
+  await liveRead(codexPaint(hint, '')), hint)
+eq('live screen preserves dim same-string text with the caret after it',
+  await liveRead(codexPaint(hint, `${ESC}[2m`, hint.length + 2)), hint)
+eq('live screen preserves partially dim same-string text',
+  await liveRead(codexPaint(`A${ESC}[22m${hint.slice(1)}`, `${ESC}[2m`)), hint)
+eq('live screen preserves other dim text with the caret at the start',
+  await liveRead(codexPaint('Ask Codex to do anything else', `${ESC}[2m`)), 'Ask Codex to do anything else')
+eq('live screen reads a regular repaint of the former hint as a real draft',
+  await liveRead(repaintedHint), hint)
+liveCodex.dispose()
+
 console.log(`composer read: ${checks} checks passed`)
