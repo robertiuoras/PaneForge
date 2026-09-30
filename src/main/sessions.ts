@@ -154,7 +154,7 @@ import {
   heldByGuardDeck,
   pickAnswer
 } from '../shared/autoAnswer'
-import { guardDeckQuestions } from './guardDeckQuestions'
+import { guardDeckQuestions, readGuardDeckQuestions } from './guardDeckQuestions'
 import { countIntervention } from './interventions'
 import { deskFocused } from './gameMode'
 import { askSignature, CHOOSE_GAP_MS, keysForChoice, readAsk, sameAsk , stampMatches} from '../shared/choices'
@@ -808,7 +808,8 @@ export class SessionManager extends EventEmitter {
         asleep: m.asleep,
         runSince: m.runSince,
         busyUntil: live.busyUntil,
-        ask: m.ask,
+        // Native async questions outlive their terminal turn and may have no PTY ask.
+        ask: m.ask || heldByGuardDeck(m.id, guardDeckQuestions(), Date.now(), m.agent === 'codex' ? resumeIdFor(m.id) : undefined),
         drafting: m.drafting,
         job: m.job,
         backJob: m.backJob,
@@ -3643,7 +3644,7 @@ export class SessionManager extends EventEmitter {
     if (!live) return { closed: false, reason: 'session is no longer open' }
     const m = live.meta
     if (m.status !== 'idle' || m.runSince || live.busyUntil > Date.now() || m.job || (m.backJob && !backJobWaitOnly(id)) || m.subagent) return { closed: false, reason: 'session is busy or has a background job' }
-    const held = closeHeldBy(m)
+    const held = closeHeldBy({ ...m, ask: m.ask || heldByGuardDeck(id, readGuardDeckQuestions(), Date.now(), m.agent === 'codex' ? resumeIdFor(id) : undefined) })
     if (held.length) return { closed: false, reason: `session has ${held.join(', ')}` }
     if (m.lastKeyboard > reportedAt) return { closed: false, reason: 'newer user input exists' }
     this.kill(id, 'review')

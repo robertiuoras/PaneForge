@@ -18,8 +18,10 @@ function closeAfterResultFromSource() {
     /closeAfterResult\(id: string, reportedAt: number\): \{ closed: boolean; reason\?: string \} \{/,
     'function closeAfterResult(id, reportedAt) {'
   )
-  // The flags it names come from `shared/doneClose.ts`, handed in as the one free name.
-  return Function('closeHeldBy', `${method}; return closeAfterResult`)(doneClose.closeHeldBy)
+  // Exercise the actual hold helpers with no external question records or native claims.
+  return Function('closeHeldBy', 'heldByGuardDeck', 'readGuardDeckQuestions', 'resumeIdFor', `${method}; return closeAfterResult`)(
+    doneClose.closeHeldBy, autoAnswer.heldByGuardDeck, () => [], () => undefined
+  )
 }
 
 function fakeManager(meta, busyUntil = 0) {
@@ -103,6 +105,9 @@ assert.equal(old.completedAt, undefined)
 const doneCloseOut = join(temp, 'doneclose.cjs')
 await build({ entryPoints: [join(repo, 'src/shared/doneClose.ts')], outfile: doneCloseOut, bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent' })
 const doneClose = require(doneCloseOut)
+const autoAnswerOut = join(temp, 'autoanswer.cjs')
+await build({ entryPoints: [join(repo, 'src/shared/autoAnswer.ts')], outfile: autoAnswerOut, bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent' })
+const autoAnswer = require(autoAnswerOut)
 const closeAfterResult = closeAfterResultFromSource()
 const reportedAt = Date.now()
 const safeMeta = { status: 'idle', lastKeyboard: reportedAt, drafting: false, ask: undefined, owedPrompt: false, handingOff: false }

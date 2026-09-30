@@ -47,6 +47,93 @@ const finished = (over = {}) => ({
   turnEndedAt: NOW - AUTO_CLOSE_QUIET_MS - 1000, reply: 'Built it.\n\n## Next steps\n- None', runningAgents: 0, ...over
 })
 
+// A native async question finishes its terminal turn before GuardDeck receives the
+// answer. Exercise the manager's actual methods, with only their environment stubbed.
+{
+  const source = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
+  const method = (name, next) => {
+    const start = source.indexOf(`  ${name}(`)
+    const end = source.indexOf(`  ${next}(`, start)
+    assert.ok(start >= 0 && end > start, `real ${name} method exists`)
+    return source.slice(start, end)
+  }
+  const fixture = join(work, 'question-manager.ts')
+  writeFileSync(fixture, `
+import { heldByGuardDeck } from ${JSON.stringify(join(root, 'src/shared/autoAnswer.ts'))}
+import { guardDeckQuestions, readGuardDeckQuestions } from ${JSON.stringify(join(root, 'src/main/guardDeckQuestions.ts'))}
+import { closeHeldBy, personLooking } from ${JSON.stringify(join(root, 'src/shared/doneClose.ts'))}
+const backJobWaitOnly = () => false
+let native: string | undefined = 'synthetic-native'
+const resumeIdFor = () => native
+export const nativeClaim = (value: string | undefined) => { native = value }
+export class Harness {
+  sessions = new Map(); activeId = null; killed: unknown[] = []
+  windowFocused = () => false; deskWatched = () => false
+  openChildrenOf = () => 0; digestPending = () => false; owesPrompt = () => false
+  kill(id: string, by: string) { this.killed.push([id, by]); this.sessions.delete(id) }
+${method('doneReadings', 'turnRead')}
+${method('closeAfterResult', 'killAll')}
+}
+`)
+  const { Harness, nativeClaim } = await bundle(fixture, 'question-manager.cjs')
+  const now = Date.now()
+  let directory = 0
+  const previousDir = process.env.GD_QUESTIONS_DIR
+  const records = (values) => {
+    const dir = join(work, `questions-${directory++}`)
+    mkdirSync(dir)
+    values.forEach((value, i) => writeFileSync(join(dir, `${i}.json`), value === 'bad-json' ? '{' : JSON.stringify(value)))
+    process.env.GD_QUESTIONS_DIR = dir
+  }
+  const question = (over = {}) => ({ pane: { id: 'synthetic-pane' }, session_id: 'synthetic-native', state: 'open', created: new Date(now).toISOString(), ...over })
+  const fresh = (over = {}) => {
+    const h = new Harness()
+    h.sessions.set('synthetic-pane', { meta: { id: 'synthetic-pane', agent: 'codex', printed: now - 600_000, status: 'idle', lastKeyboard: now - 400_000, ...over }, busyUntil: 0, footerEndedAt: now - AUTO_CLOSE_QUIET_MS - 1000 })
+    return h
+  }
+  const verdict = (h) => doneVerdict({ ...h.doneReadings()[0], reply: 'PROBE_READY', runningAgents: 0 }, now)
+  try {
+    for (const state of ['open', 'sending', 'queued']) {
+      records([question({ state })])
+      const h = fresh()
+      assert.equal(verdict(h).close, false, `${state}: pending GuardDeck question keeps a finished native turn open`)
+      assert.deepEqual(h.closeAfterResult('synthetic-pane', now), { closed: false, reason: 'session has a question' }, `${state}: final close boundary also holds`)
+      assert.deepEqual(h.killed, [])
+    }
+    records([question({ pane: { id: 'previous-pane' } })])
+    let h = fresh()
+    assert.equal(verdict(h).close, false, 'a reopened pane of the same verified native conversation remains open')
+    assert.equal(h.closeAfterResult('synthetic-pane', now).closed, false)
+    for (const value of [
+      question({ pane: { id: 'other-pane' }, session_id: 'other-native' }),
+      question({ state: 'answered' }), question({ state: 'expired' }),
+      question({ created: new Date(now - 25 * 60 * 60_000).toISOString() }),
+      question({ created: undefined }), null, 'bad-json'
+    ]) {
+      records([value]); h = fresh()
+      assert.equal(verdict(h).close, true, 'foreign, resolved, expired or unreadable questions do not disable ordinary autoclose')
+      assert.deepEqual(h.closeAfterResult('synthetic-pane', now), { closed: true })
+      assert.deepEqual(h.killed, [['synthetic-pane', 'review']])
+    }
+    nativeClaim(undefined)
+    records([question({ pane: { id: 'other-pane' } })]); h = fresh()
+    assert.equal(verdict(h).close, true, 'matching a reopened pane requires a verified native identity')
+    nativeClaim('synthetic-native')
+    records([]); h = fresh({ ask: { question: 'terminal question' } })
+    assert.equal(verdict(h).close, false, 'terminal questions still hold')
+    assert.equal(h.closeAfterResult('synthetic-pane', now).closed, false)
+    records([]); h = fresh()
+    assert.equal(verdict(h).close, true)
+    writeFileSync(join(process.env.GD_QUESTIONS_DIR, 'new.json'), JSON.stringify(question()))
+    assert.equal(h.closeAfterResult('synthetic-pane', now).closed, false, 'a question arriving after the sweep reading prevents the kill')
+    assert.deepEqual(h.killed, [])
+    console.log('done-close: real manager preserves pending async questions at both boundaries, exact reopened identity and ordinary closure ok')
+  } finally {
+    if (previousDir === undefined) delete process.env.GD_QUESTIONS_DIR
+    else process.env.GD_QUESTIONS_DIR = previousDir
+  }
+}
+
 // 1. The one shape that closes, and its person-only steps.
 {
   const v = doneVerdict(finished(), NOW)
@@ -364,7 +451,7 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
   assert.equal(handoffOpenAfter(s93Hand, Date.parse('2026-09-27T17:48:01Z')), undefined, 's93: a handoff older than the prompt holds nothing')
   assert.deepEqual(closeHeldBy({ handoffOpen: handoffOpenAfter(s93Hand, Date.parse('2026-09-27T17:48:01Z')) }), [], 's93 closes')
   const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
-  assert.match(sessions, /const held = closeHeldBy\(m\)\r?\n\s+if \(held\.length\) return \{ closed: false, reason: `session has \$\{held\.join\(', '\)\}` \}/, 'closeAfterResult names the flags')
+  assert.match(sessions, /if \(held\.length\) return \{ closed: false, reason: `session has \$\{held\.join\(', '\)\}` \}/, 'closeAfterResult names the flags')
   assert.match(sessions, /personLooking\(true, this\.windowFocused\(\), this\.deskWatched\(\)\)\) seen\.lookedAt = now/, 'the sweep stamps who is looking')
   assert.match(sessions, /lookedAt: live\.lookedAt \|\| undefined/, 'and the reading carries it')
   const index = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
