@@ -19,6 +19,8 @@ const owedCount=()=>0
 import {join} from 'node:path'
 let native='11111111-1111-1111-1111-111111111111', received=false, clock=1000
 const resumeIdFor=()=>native, codexPromptReceipt=()=>received ? {transcriptAt:1001} : null
+let recover=false, recovery
+const claimCodexFromProcess=async()=>{if(recovery)await recovery;if(recover)native='11111111-1111-1111-1111-111111111111';return recover}
 const tasks=[]
 const setTimeout=(f)=>{tasks.push(f);return {unref(){}}}
 export class Harness {
@@ -27,7 +29,8 @@ export class Harness {
   write(id,text){const l=this.sessions.get(id);this.writes.push(text);l.draft=feedDraft(l.draft,text).state}
 ${methods}
 }
-export function fresh(){const h=new Harness();h.sessions.set('s1-test',{meta:{agent:'codex',status:'working',runSince:100},proc:{pid:1},draft:newDraft(),typed:'',buffer:{read:()=> 'Working · esc to interrupt'}});native='11111111-1111-1111-1111-111111111111';received=false;tasks.length=0;return h}
+export function fresh(){const h=new Harness();h.sessions.set('s1-test',{meta:{agent:'codex',status:'working',runSince:100},proc:{pid:1},draft:newDraft(),typed:'',buffer:{read:()=> 'Working · esc to interrupt'}});native='11111111-1111-1111-1111-111111111111';received=false;recover=false;recovery=undefined;tasks.length=0;return h}
+export function recoverIdentity(wait){recover=true;recovery=wait}
 export function tick(){const fn=tasks.shift();if(!fn)throw Error('No scheduled callback');fn()}
 export function identity(v){native=v}
 export function receipt(){received=true}
@@ -35,7 +38,7 @@ export { PaneAnswers }
 `
   writeFileSync(join(work, 'fixture.ts'), fixture)
   buildSync({ entryPoints:[join(work,'fixture.ts')], bundle:true, platform:'node', format:'cjs', outfile:join(work,'fixture.cjs'), logLevel:'silent' })
-  const {fresh,tick,identity,receipt,PaneAnswers}=createRequire(import.meta.url)(join(work,'fixture.cjs'))
+  const {fresh,tick,identity,receipt,recoverIdentity,PaneAnswers}=createRequire(import.meta.url)(join(work,'fixture.cjs'))
   let seq=0
   const request=()=>({paneId:'s1-test',expectedConversationId:'11111111-1111-1111-1111-111111111111',requestId:`test-${++seq}`,text:'Synthetic answer\nsecond line'})
   let h=fresh(), r=request()
@@ -86,10 +89,24 @@ export { PaneAnswers }
   assert.equal(h.answerStatus(r).state,'uncertain'); assert.equal(h.writes.length,1)
   h=fresh(); r=request(); h.answerPane(r); identity('wrong'); tick(); assert.equal(h.writes.length,0)
   h=fresh(); r=request(); identity(undefined)
-  assert.equal(h.answerPane(r).state,'rejected', 'no native evidence fails closed even when the caller supplies an ID')
+  assert.equal(h.answerPane(r).state,'waiting', 'identity verification happens before any bytes')
+  await new Promise(resolve=>setImmediate(resolve))
+  assert.equal(h.answerStatus(r).state,'rejected', 'no native evidence fails closed even when the caller supplies an ID')
   assert.equal(h.writes.length,0)
   identity(r.expectedConversationId)
   assert.equal(h.answerPane(r).state,'rejected', 'rejected request IDs are not silently replayed after identity recovers')
+  h=fresh(); r=request(); identity(undefined); recoverIdentity()
+  h.answerPane(r); assert.equal(h.writes.length,0)
+  await new Promise(resolve=>setImmediate(resolve)); tick(); receipt(); tick()
+  assert.equal(h.answerStatus(r).state,'confirmed', 'live process proof recovers an edited prompt identity')
+  h=fresh(); r=request(); identity(undefined); let release
+  recoverIdentity(new Promise(resolve=>{release=resolve})); h.answerPane(r)
+  h.sessions.get(r.paneId).proc={pid:2}; release()
+  await new Promise(resolve=>setImmediate(resolve))
+  assert.equal(h.answerStatus(r).state,'rejected', 'replacement during process verification prevents delivery')
+  assert.equal(h.writes.length,0)
+  h=fresh(); r=request(); identity(undefined); h.sessions.get(r.paneId).meta.owedPrompt=true
+  assert.equal(h.answerPane(r).state,'rejected', 'process recovery does not steal another prompt reservation')
   h=fresh(); r=request(); h.answerPane(r)
   const restored=new PaneAnswers(join(work,'pane-answers.json'))
   assert.equal(restored.accept(r).receipt.state,'uncertain'); assert.equal(restored.accept(r).fresh,false)
