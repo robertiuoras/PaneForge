@@ -58,6 +58,18 @@ The source checks are verified; the branch remains unmerged. Coordinator readbac
 
 The installed app still shows the observed classification defect. No runtime registry cleanup was applied. A later authorized release/install and picker readback are required to claim the user-facing fix is running. This report does not claim a new build, release, installation, or live UI verification.
 
+## Authorized release preparation, 30 September 2026
+
+Robert subsequently requested a PaneForge release. The verified picker checkpoint was merged into owned configured lane h, preserving its completed Codex-worker display change (698c25cd). Release candidate source tip is 59b6d171; installed host remains 0.8.232.
+
+Full PC job 85c77fa5-2f64-434b-99ac-a53c77102ab5 ran 288 suites: 287 passed and laneargs failed, in 414.1 seconds. Its snapshot still contained speculative release-runner assertions that were fully reverted in 59b6d171 after verifying the existing symlinked runner was valid. There is no net change to lane.mjs or lane-args-test.mjs relative to master. The failed assertion was not retained or suppressed. Actual picker projectfolder/projects and Codex-worker checks passed.
+
+Focused actual-candidate PC job 7aa14a42-17e4-4552-b906-b88117c67b05 succeeded: npm run typecheck (both node/web configurations), followed by npm run test:laneargs (all good). It ran 41 seconds after one second waiting, peak 1.3/8 GB. No full suite was resubmitted. Thus the unchanged 287 suites and corrected current laneargs have passing coverage, while the original full-job result remains explicitly failed. No machine-local wrapper change remains after diagnosis.
+
+Lane i is separately owned by native conversation 01a0f0ef-c60e-7ed0-9875-57ccfbd4e8ce. Its committed product fix d7d4a468 and authorized configuration checkpoint ff293125 are clean. Configuration bytes match the main checkout's existing pool expansion; the coordinator mainDirt/restoreSame path recognizes an identical file from a ready lane, so no manual reset or stash is necessary. Its final exact-native delayed two-question runtime acceptance remains pending. A release must preserve that gate and combine the accepted batches.
+
+The source Electron PID 18735, profile keep-open-20260930, belongs to that pending test. Installed host PID 20879 is separate. Both were alive at the read-only checkpoint; neither was closed. Test-copy closure is pending its final test; installed-host shutdown or installation is outside this release workflow. No version bump, tag push, publication, or installed-runtime improvement has been claimed.
+
 ## Per-folder snapshot
 
 | Folder | Branch | HEAD vs canonical | Unique commits | Dirty paths | Open panes |
