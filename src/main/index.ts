@@ -1,4 +1,5 @@
 import { appendLog, flushLogsOnExit } from './logWrite'
+import { measureMainTask } from './mainPerformance'
 import { profileRenderer, reloadRenderer } from './renderCost'
 import { execFile } from 'node:child_process'
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -1684,7 +1685,7 @@ function doneCloseDeps(): DoneCloseDeps {
     log: (line) => appendLog(join(app.getPath('userData'), 'done-close.log'), `[${new Date().toISOString()}] ${line}\n`, { rotateAt: 64 * 1024 })
   }
 }
-setInterval(() => {
+setInterval(() => measureMainTask('done-close', () => {
   try {
     sweepDoneClose(doneCloseDeps())
   } catch (e) {
@@ -1692,7 +1693,7 @@ setInterval(() => {
   }
   for (const opener of finishedDigest.flush((o) => manager.openChildrenOf(o), (o, text) => manager.tellPane(o, text)))
     console.info(`done-close: told ${opener} what the panes it opened did`)
-}, 15_000).unref()
+}), 15_000).unref()
 /**
  * `pf tidy`: every pane whose card says finished (`Session.finished`) that the sweep above
  * would close - the same refusals, only not the quiet wait, because somebody asking to
@@ -2439,13 +2440,13 @@ ipcMain.handle('sessions:clearFinished', () => {
 })
 // The automatic half: the same facts the button reads, checked on its own clock so a
 // pane nobody presses the button on still leaves the sidebar ten minutes after it dies.
-setInterval(() => {
+setInterval(() => measureMainTask('exited-close', () => {
   const facts = exitedFacts()
   const now = Date.now()
   // Sleeping panes only when finished panes close themselves at all (Settings).
   const asleep = getConfig().autoCloseDone !== false ? asleepSweep(facts, now) : []
   removeFinished([...exitedSweep(facts, now), ...asleep])
-}, 30_000).unref()
+}), 30_000).unref()
 ipcMain.handle('sessions:buffer', (_e, id: string) =>
   remote.owns(id) ? remote.buffer(id) : manager.buffer(id)
 )
@@ -3126,7 +3127,7 @@ function sweepCopies(repos: string[], gap: number): void {
 // lane command, so the ones that come unstuck by themselves do it overnight too. Both
 // the interval and laneRetry are no-ops on a machine with no PaneForge checkout, and it
 // returns immediately unless a lane is conflicted or waiting to go out.
-setInterval(() => {
+setInterval(() => measureMainTask('lane-maintenance', () => {
   laneRetry(lanePanes())
   // And the lanes held by chats that are not here any more: a killed pane never runs its
   // SessionEnd hook, so its lane sat held - and blocking the release - for twelve hours.
@@ -3134,7 +3135,7 @@ setInterval(() => {
   // Same clock, and the copies nothing has freed up since: no git here, the list of
   // projects with copies is read off disk, and each is swept at most every six hours.
   sweepCopies(ledgerRepos(lanePanes()), COPIES_EVERY_MS)
-}, 60_000).unref()
+}), 60_000).unref()
 
 // A pane ending is when a copy most often stops being needed: its chat let go, and nothing
 // else may be in it. Only the projects of the panes that ended are swept, and not at once -

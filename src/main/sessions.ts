@@ -6,6 +6,7 @@
 
 import { spawn } from 'node:child_process'
 import { gitRun } from './gitRun'
+import { measureMainTask } from './mainPerformance'
 import { closeSync, existsSync, openSync, readSync, statSync } from 'node:fs'
 import { EventEmitter } from 'node:events'
 import { join } from 'node:path'
@@ -726,7 +727,7 @@ export class SessionManager extends EventEmitter {
     super()
     // Single timer for all sessions: flipping working -> idle per session with its
     // own timer would mean N timers doing the same 1s tick.
-    setInterval(() => this.sweepIdle(), 1000).unref()
+    setInterval(() => measureMainTask('idle-sweep', () => this.sweepIdle()), 1000).unref()
     // Windows only, and it stops itself when no shell pane is open. See `sweepWinJobs`.
     setInterval(() => this.sweepTableJobs(), TABLE_JOB_MS).unref()
     // Write down what the panes have started, while their parent links still say so.

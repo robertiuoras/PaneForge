@@ -22,6 +22,7 @@ import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, r
 import { homedir } from 'node:os'
 import { basename, join, sep } from 'node:path'
 import { execFile } from 'node:child_process'
+import { measureMainTask } from './mainPerformance'
 
 /** Claude Code and Antigravity keep transcripts we can name a session from. */
 const SUPPORTED = new Set(['claude', 'antigravity'])
@@ -287,7 +288,7 @@ function transcripts(dir: string): Listed[] {
  * pty bytes pass through, so it was the lag a keystroke felt. `reads.head` counts, so a
  * test can prove a file is not read again for an answer that cannot change.
  */
-export const reads = { head: 0 }
+export const reads = { head: 0, codexProofBytes: 0 }
 const head = Buffer.alloc(HEAD_BYTES)
 function readHead(file: string): string | null {
   let fd = -1
@@ -1074,8 +1075,49 @@ export async function claimCodexFromProcess(id: string, pid: number | undefined)
 
 /** A Codex user message this pane actually submitted, never a loose text search. */
 function codexSaidByPane(file: string, lines: string[]): boolean {
+  return measureMainTask('codex-proof', () => codexProofIn(file, lines))
+}
+
+// A pending prompt can be asked about several times in each one-second idle sweep.
+// Re-reading and parsing the entire growing rollout on each miss made four actual
+// conversations cost 170ms per pass (2026-09-30). Keep only the current query and its
+// complete-line offset: no agent output or accumulated message index is retained.
+const codexProofs = new Map<string, {
+  dev: number; ino: number; size: number; mtimeMs: number
+  lines: string[]; offset: number; matched: boolean
+}>()
+const CODEX_PROOFS_KEEP = 64
+
+function codexProofIn(file: string, lines: string[]): boolean {
+  let fd = -1
   try {
-    for (const line of readFileSync(file, 'utf8').split('\n')) {
+    const stat = statSync(file)
+    let scan = codexProofs.get(file)
+    if (!scan || scan.dev !== stat.dev || scan.ino !== stat.ino || stat.size < scan.size ||
+      (stat.size === scan.size && stat.mtimeMs !== scan.mtimeMs) ||
+      scan.lines.length !== lines.length || scan.lines.some((line, i) => line !== lines[i])) {
+      scan = { dev: stat.dev, ino: stat.ino, size: 0, mtimeMs: 0, lines: [...lines], offset: 0, matched: false }
+    }
+    codexProofs.delete(file)
+    codexProofs.set(file, scan)
+    while (codexProofs.size > CODEX_PROOFS_KEEP) codexProofs.delete(codexProofs.keys().next().value as string)
+    if (scan.matched) return true
+    if (scan.size === stat.size && scan.mtimeMs === stat.mtimeMs) return false
+    fd = openSync(file, 'r')
+    const buf = Buffer.alloc(stat.size - scan.offset)
+    const n = readSync(fd, buf, 0, buf.length, scan.offset)
+    reads.codexProofBytes += n
+    // Retry a short read and an unfinished final row. In particular, a UTF-8 codepoint
+    // split across appends must be decoded only once the complete row is available.
+    if (n !== buf.length) return false
+    const end = buf.lastIndexOf(0x0a)
+    scan.size = stat.size
+    scan.mtimeMs = stat.mtimeMs
+    scan.offset += end + 1
+    for (const line of buf.toString('utf8').split('\n')) {
+      // Tool output dominates these files. These literal JSON values are required by
+      // the parsed predicate below; filtering first cannot introduce a false match.
+      if (!line.includes('\\u') && (!line.includes('"response_item"') || !line.includes('"user"') || !line.includes('"input_text"'))) continue
       let row: { type?: string; payload?: { type?: string; role?: string; content?: unknown } }
       try {
         row = JSON.parse(line) as { type?: string; payload?: { type?: string; role?: string; content?: unknown } }
@@ -1087,10 +1129,16 @@ function codexSaidByPane(file: string, lines: string[]): boolean {
       const texts = Array.isArray(content)
         ? content.filter((part): part is { type?: string; text?: string } => typeof part === 'object' && part !== null).filter((part) => part.type === 'input_text' && typeof part.text === 'string').map((part) => part.text as string)
         : []
-      if (texts.some((text) => saidByPane(text, lines))) return true
+      if (texts.some((text) => saidByPane(text, lines))) {
+        scan.matched = true
+        return true
+      }
     }
   } catch {
+    codexProofs.delete(file)
     return false
+  } finally {
+    if (fd >= 0) closeSync(fd)
   }
   return false
 }

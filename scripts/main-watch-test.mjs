@@ -130,7 +130,7 @@ global.setInterval = (fn) => { intervals.push(fn); return { unref() {} } }
 global.setTimeout = (fn) => { timeouts.push(fn); return { unref() {} } }
 function lifecycle(forkImpl) {
   const events = new Map()
-  const electron = { app: { isPackaged: true, getPath: () => '/tmp/pf', once: (name, fn) => events.set(name, fn) }, utilityProcess: { fork: forkImpl } }
+  const electron = { app: { isPackaged: true, getPath: () => work, getVersion: () => 'test-version', once: (name, fn) => events.set(name, fn) }, utilityProcess: { fork: forkImpl } }
   globalThis.__watchLogs = []
   Module._load = (request, parent, isMain) => request === 'electron' ? electron : nativeLoad(request, parent, isMain)
   delete requireOut.cache[requireOut.resolve(out)]
