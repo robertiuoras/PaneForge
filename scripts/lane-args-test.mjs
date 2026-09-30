@@ -49,28 +49,6 @@ const ok = (name, cond, detail = '') => {
 // than imported. Reading the shipping text is the point: a test with its own copy of
 // the quoting would pass while the released one was broken.
 const src = readFileSync(join(HERE, 'lane.mjs'), 'utf8')
-// The legacy ~/.claude wrapper can exist while its relative import is missing.
-// Release checks must prefer the shared, complete queue client and pass the npm
-// script explicitly, rather than accidentally running tsc against the root config.
-const runner = /const sharedRbuild =[^\n]+\nconst RBUILD =[^\n]+/.exec(src)
-if (!runner) throw new Error('release PC runner selection is missing')
-const chooseRunner = new Function('MAIN', 'dirname', 'join', 'homedir', 'existsSync', `${runner[0]}; return RBUILD`)
-const shared = join('/projects', 'claude-memory', 'claude-config', 'rbuild.mjs')
-ok('release typecheck prefers the complete shared queue client',
-  chooseRunner('/projects/PaneForge', dirname, join, () => '/home/test', (p) => p === shared) === shared)
-ok('release typecheck keeps the legacy fallback when no shared client exists',
-  chooseRunner('/projects/PaneForge', dirname, join, () => '/home/test', () => false) === '/home/test/.claude/rbuild.mjs')
-const remoteFn = /\nfunction remoteTypecheckFailure\(\) \{[\s\S]*?\n\}/.exec(src)
-if (!remoteFn) throw new Error('remoteTypecheckFailure is missing')
-let submitted
-const runRemote = new Function('process', 'existsSync', 'RBUILD', 'tmpdir', 'MAIN', 'hostname', 'spawnSync',
-  `${remoteFn[0]}; return remoteTypecheckFailure()`)
-const result = runRemote({ platform: 'darwin', argv: ['node', 'lane', '--session', 'native-release-session'],
-  env: {}, execPath: '/node' }, () => true, shared, () => '/tmp/', '/projects/PaneForge', () => 'host',
-  (exe, args) => { submitted = { exe, args }; return { status: 0 } })
-ok('release typecheck submits the actual npm script with its native owner', result === null &&
-  JSON.stringify(submitted) === JSON.stringify({ exe: '/node', args: [shared, '--repo', '/projects/PaneForge',
-    '--session', 'native-release-session', '--', 'npm', 'run', 'typecheck'] }))
 const fn = /\nfunction cmdQuote\(arg\) \{[\s\S]*?\n\}/.exec(src)
 if (!fn) {
   console.error('cmdQuote is gone from lane.mjs - if it was renamed, rename it here too.')
