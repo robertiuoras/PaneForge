@@ -21,7 +21,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { open, readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
 import { app } from 'electron'
 // One stripper, not two: the live tee in `pipe.ts` needs the same rules a chunk at a
@@ -536,12 +536,34 @@ export function list(): HistoryEntry[] {
           const e = JSON.parse(readFileSync(join(dir(), f), 'utf8')) as HistoryEntry
           const log = logFile(e.id)
           e.bytes = existsSync(log) ? statSync(log).size : 0
-          // Not stored - a folder can come back, and a stale `gone` in a metadata file
-          // would outlive the truth. One stat per row, next to the one already being made.
-          const exists = Boolean(e.cwd && existsSync(e.cwd))
-          const baseRepo = e.cwd ? e.cwd.replace(/-(w\d+|[a-z])$/, '') : ''
-          const baseExists = Boolean(baseRepo && baseRepo !== e.cwd && existsSync(baseRepo))
-          e.gone = !exists && !baseExists
+          // A swept copy can contain client subfolders. Recover the same relative
+          // folder in its permanent project only when the recorded lane branch proves
+          // this was a copy. Leave a surviving copy alone, even if its client is missing.
+          // This is read-time recovery: keep the saved path and conversation untouched.
+          if (e.cwd && !existsSync(e.cwd)) {
+            for (let folder = e.cwd; dirname(folder) !== folder; folder = dirname(folder)) {
+              const copy = folder.match(/^(.+)-(w\d+|[a-z])$/)
+              if (!copy || existsSync(folder)) continue
+              const git = join(copy[1], '.git')
+              const target = join(copy[1], relative(folder, e.cwd))
+              if (!existsSync(git) || !existsSync(target)) continue
+              try {
+                if (!statSync(git).isDirectory() || !statSync(target).isDirectory()) continue
+                const ref = `refs/heads/lane-${copy[2]}`
+                const packed = join(git, 'packed-refs')
+                const recorded = existsSync(join(git, ref)) ||
+                  (existsSync(packed) && readFileSync(packed, 'utf8').split('\n')
+                    .some((line) => line.trim().split(/\s+/)[1] === ref))
+                if (!recorded) continue
+                e.cwd = target
+                break
+              } catch {
+                /* an unreadable project stays missing; do not lose its History row */
+              }
+            }
+          }
+          // Not stored: a folder can come back, so `gone` must reflect current state.
+          e.gone = !Boolean(e.cwd && existsSync(e.cwd))
           // A row written with the whole agent SPEC where its id belongs. Two are on this
           // machine; every later reader (the logo, the `a.id === e.agent` lookup) expects a
           // string. Repaired on the way out rather than migrated - the file is a nicety and
