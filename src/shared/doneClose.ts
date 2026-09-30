@@ -80,15 +80,6 @@ export function wasRead(p: Pick<DoneReading, 'lookedAt' | 'turnEndedAt'>): boole
   return Boolean(p.turnEndedAt && p.lookedAt && p.lookedAt >= p.turnEndedAt)
 }
 
-/**
- * Unread findings and person-owned actions need a GuardDeck card. Robert, 2026-09-28: "shouldn't have shown
- * me report ... that had no manual things that i needed to see ... i already reviewed the
- * session". Its person-only steps still go out as their own to-dos either way.
- */
-export function finishedCard(personSteps: number, read: boolean): boolean {
-  return personSteps > 0 || !read
-}
-
 /** What `closeAfterResult` (`main/sessions.ts`) checks beyond busy, as `Session` has it. */
 export interface CloseHolds {
   drafting?: unknown

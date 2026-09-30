@@ -36,7 +36,7 @@ async function bundle(entry, name) {
   await build({ absWorkingDir: root, entryPoints: [entry], outfile: out, bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent', plugins: [stubs] })
   return require(out)
 }
-const { doneVerdict, doneReviewId, doneQuietMs, personLooking, replyFinished, closeHeldBy, finishedCard, wasRead, AUTO_CLOSE_QUIET_MS, READ_QUIET_MS } = await bundle('src/shared/doneClose.ts', 'shared.cjs')
+const { doneVerdict, doneReviewId, doneQuietMs, personLooking, replyFinished, closeHeldBy, wasRead, AUTO_CLOSE_QUIET_MS, READ_QUIET_MS } = await bundle('src/shared/doneClose.ts', 'shared.cjs')
 const { handoffOpenAfter } = await bundle('src/shared/handoffSteps.ts', 'handoffsteps.cjs')
 const digest = await bundle('src/shared/finishedDigest.ts', 'digest.cjs')
 const main = await bundle('src/main/doneClose.ts', 'main.cjs')
@@ -277,13 +277,8 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
     assert.equal(doneVerdict(finished({ reply }), NOW).close, false, reply)
   }
   assert.equal(doneVerdict(finished({ reply: 'The work is complete.' }), NOW).close, true)
-  assert.equal(finishedCard(0, true), false, 'already read ordinary answer needs no card')
-  // (a) The card: unread findings or actions left for a person.
-  assert.equal(finishedCard(0, false), true, 'unread findings: card')
-  assert.equal(finishedCard(2, false), true, 'person steps, unread: card')
-  assert.equal(finishedCard(2, true), true, 'manual actions remain visible after a glance')
-
-  // The sweep end to end: three panes, each closing.
+  // The sweep end to end, including the lost-report path: a selected pane was
+  // inferred read, but its answer had no person-only action and was never acknowledged.
   const transcript = (name, text) => {
     const f = join(work, `${name}.jsonl`)
     writeFileSync(f, JSON.stringify({ type: 'assistant', isSidechain: false, message: { role: 'assistant', content: [{ type: 'text', text }] } }))
@@ -291,6 +286,7 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
   }
   const files = {
     none: transcript('none', "That icon is uBlock Origin Lite, the ad blocker. The number is how many requests it has blocked."),
+    noneLooked: transcript('noneLooked', 'Research complete. The report contains the findings.'),
     steps: transcript('steps', 'Built it.\n\n## Next steps\n- Robert: approve the Vercel build'),
     stepsRead: transcript('stepsRead', 'Built it.\n\n## Next steps\n- Robert: approve the Vercel build')
   }
@@ -298,7 +294,8 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
   const readings = [
     { id: 'none', ...finished({ reply: undefined, runningAgents: undefined }) },
     { id: 'steps', ...finished({ reply: undefined, runningAgents: undefined }) },
-    { id: 'stepsRead', ...finished({ reply: undefined, runningAgents: undefined, turnEndedAt: at - 60_000, lookedAt: at - 31_000 }) }
+    { id: 'stepsRead', ...finished({ reply: undefined, runningAgents: undefined, turnEndedAt: at - 60_000, lookedAt: at - 31_000 }) },
+    { id: 'noneLooked', ...finished({ reply: undefined, runningAgents: undefined, turnEndedAt: at - 60_000, lookedAt: at - 31_000 }) }
   ]
   const cards = []
   const reads = []
@@ -318,17 +315,17 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
   // `dry` (pf tidy --dry-run): the same answer, nothing touched.
   const recordsBefore = []
   const dry = main.sweepDoneClose({ ...deps, dry: true, record: (i) => { recordsBefore.push(i); throw new Error('dry run wrote a row') } })
-  assert.deepEqual(dry, ['none', 'steps', 'stepsRead'], 'dry: what would close')
+  assert.deepEqual(dry, ['none', 'steps', 'stepsRead', 'noneLooked'], 'dry: what would close')
   assert.equal(shut.length + cards.length + reads.length + todos.length + lines.length + recordsBefore.length, 0, 'dry: no row, no close, no notice, no log line')
   // `quietMs: 0` is pf tidy's real run: the same refusals, no wait.
   assert.deepEqual(main.sweepDoneClose({ ...deps, dry: true, readings: () => [{ id: 'none', ...finished({ turnEndedAt: at - 20_000 }) }] }), [], 'not quiet: stays')
   assert.deepEqual(main.sweepDoneClose({ ...deps, dry: true, quietMs: () => 0, readings: () => [{ id: 'none', ...finished({ turnEndedAt: at - 20_000 }) }] }), ['none'], 'tidy asks without the quiet wait')
   assert.deepEqual(main.sweepDoneClose({ ...deps, dry: true, quietMs: () => 0, readings: () => [{ id: 'none', ...finished({ turnEndedAt: at - 20_000, reply: 'Which port?' }) }], transcriptFor: () => transcript('q', 'Which port?') }), [], 'and keeps every refusal')
-  assert.deepEqual(main.sweepDoneClose(deps), ['none', 'steps', 'stepsRead'])
-  assert.deepEqual(cards, readings.map(r => doneReviewId(r.id, r.turnEndedAt)), 'unread findings and manual actions get cards')
-  assert.deepEqual(reads, [], 'manual actions are not acknowledged by a glance')
+  assert.deepEqual(main.sweepDoneClose(deps), ['none', 'steps', 'stepsRead', 'noneLooked'])
+  assert.deepEqual(cards, readings.map(r => doneReviewId(r.id, r.turnEndedAt)), 'every closed result requests delivery, including a looked-at answer with no actions')
+  assert.deepEqual(reads, [], 'a glance never acknowledges any report')
   assert.equal(todos.length, 2, 'both panes with a person step still send their to-do')
-  assert.ok(lines.some((l) => l === `stepsRead finished and closed itself into Review (${doneReviewId('stepsRead', readings[2].turnEndedAt)}), read`))
+  assert.ok(lines.some((l) => l === `stepsRead finished and closed itself into Review (${doneReviewId('stepsRead', readings[2].turnEndedAt)}), looked at`))
 
   // Automatic closure publishes a full warning, with cancellation and a fresh deadline.
   let clock = at
