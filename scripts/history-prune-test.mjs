@@ -119,6 +119,53 @@ ok(row('dead') && row('dead').gone === true, 'a folder that has been deleted is 
 // being unopenable - only the button changes.
 ok(rows.length === 2, 'and the row itself is kept - its output is still readable', rows.length)
 
+// A closed client chat lives INSIDE a temporary copy. Once the empty copy is swept,
+// History must use the same client's permanent folder and keep the exact conversation.
+const repo = join(work, 'clients')
+const client = join(repo, 'clients', 'client-example')
+const refs = join(repo, '.git', 'refs', 'heads')
+mkdirSync(client, { recursive: true })
+mkdirSync(refs, { recursive: true })
+writeFileSync(join(refs, 'lane-c'), '1'.repeat(40) + '\n')
+const removedCopy = join(work, 'clients-c')
+const saved = {
+  id: 'client-copy', startedAt: Date.now(), endedAt: Date.now(),
+  title: 'Example client', agent: 'codex', resumeId: 'exact-example-conversation',
+  cwd: join(removedCopy, 'clients', 'client-example')
+}
+const clientMeta = join(dir, 'client-copy.json')
+const clientRow = () => h.list().find(r => r.id === 'client-copy')
+const writeClient = (change = {}) => writeFileSync(clientMeta, JSON.stringify({ ...saved, ...change }))
+writeClient()
+let recovered = clientRow()
+ok(recovered?.gone === false, 'a client in a swept copy remains openable', JSON.stringify(recovered))
+ok(recovered?.cwd === client, 'Open again receives the permanent CLIENT folder, not its project root', recovered?.cwd)
+ok(recovered?.resumeId === saved.resumeId, 'recovery preserves the exact conversation id', recovered?.resumeId)
+ok(JSON.parse(readFileSync(clientMeta, 'utf8')).cwd === saved.cwd, 'reading history preserves the original saved path')
+ok(!readdirSync(work).includes('clients-c'), 'listing History does not recreate a swept copy')
+
+// Existing copies retain their own work. This is recovery from a swept root, not a
+// reason to jump to another checkout when somebody removed a client inside a live one.
+mkdirSync(removedCopy)
+recovered = clientRow()
+ok(recovered?.gone === true && recovered.cwd === saved.cwd, 'a surviving copy with a missing client is left alone')
+rmSync(removedCopy, { recursive: true })
+
+// A sibling repository and a suffix alone do not prove a copy. The original lane
+// branch must still be recorded in that repository, including when refs are packed.
+rmSync(join(refs, 'lane-c'))
+recovered = clientRow()
+ok(recovered?.gone === true && recovered.cwd === saved.cwd, 'an unproven similarly named folder remains missing')
+writeFileSync(join(repo, '.git', 'packed-refs'), '# pack-refs with: peeled fully-peeled sorted\n' + '1'.repeat(40) + ' refs/heads/lane-c\n')
+recovered = clientRow()
+ok(recovered?.gone === false && recovered.cwd === client, 'packed lane references also prove a swept copy')
+writeClient({ cwd: join(removedCopy, 'clients', 'not-in-the-project') })
+ok(clientRow()?.gone === true, 'a missing client in the permanent project stays missing')
+writeClient({ cwd: removedCopy })
+recovered = clientRow()
+ok(recovered?.gone === false && recovered.cwd === repo, 'a swept project-root chat also gets a usable reopen path')
+rmSync(clientMeta)
+
 // --- a row written with the whole agent SPEC where its id belongs -------------------
 // Two of these are on this machine (a `shell` spec, 2026-08-23). Every later reader
 // expects a string: `agents.find((a) => a.id === e.agent)` misses, and the logo's
