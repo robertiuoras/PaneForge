@@ -275,6 +275,23 @@ const broken = lane('ready', '--session', 's1')
 ok('a real type error is still called a type error', /does not typecheck/i.test(broken), broken)
 ok('and it quotes the error', /TS1005/.test(broken), broken)
 
+makeRepo({ test: 'node suite.cjs' })
+writeFileSync(join(repo, 'suite.cjs'), `const fs = require('node:fs'); const n = Number(fs.existsSync('attempts') ? fs.readFileSync('attempts', 'utf8') : 0); fs.writeFileSync('attempts', String(n + 1)); console.log('FAIL  spawnquiet 0.1s'); console.error('Error: spawn taskkill ENOENT'); process.exit(1)`)
+git(repo, 'add', 'suite.cjs')
+git(repo, 'commit', '-qm', 'suite with an injected missing binary')
+claimLaneA('suite-failure')
+workInLaneA()
+const suiteFailed = lane('ready', '--session', 'suite-failure')
+ok('an explicit failing suite is not reclassified by its injected ENOENT', /fails its own test suite/.test(suiteFailed) && !/could not run/.test(suiteFailed), suiteFailed)
+ok('the failing suite gets its normal confirmation run', readFileSync(join(repo, 'attempts'), 'utf8') === '2')
+ok('the reported reason names the failed suite', /FAIL\s+spawnquiet/.test(suiteFailed), suiteFailed)
+
+makeRepo({ test: 'definitely-not-a-real-binary' })
+claimLaneA('missing-suite-tool')
+workInLaneA()
+const missingSuiteTool = lane('ready', '--session', 'missing-suite-tool')
+ok('a top-level missing suite tool still reports unavailable', /could not run/.test(missingSuiteTool) && !/fails its own test suite/.test(missingSuiteTool), missingSuiteTool)
+
 // ---------------------------------------------------------------- 8: compiles apart, not together
 
 // faec0266 (2026-09-25): master and lane a each compiled, the merge of the two did not
