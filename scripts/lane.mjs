@@ -2862,7 +2862,8 @@ function installDeps() {
   )
 }
 
-const RBUILD = join(homedir(), '.claude', 'rbuild.mjs')
+const sharedRbuild = join(dirname(MAIN), 'claude-memory', 'claude-config', 'rbuild.mjs')
+const RBUILD = existsSync(sharedRbuild) ? sharedRbuild : join(homedir(), '.claude', 'rbuild.mjs')
 
 /**
  * On the Mac the typecheck runs on the PC through rbuild: nothing heavy runs on the laptop,
@@ -2877,7 +2878,7 @@ function remoteTypecheckFailure() {
   const at = process.argv.indexOf('--session')
   const session =
     (at >= 0 && process.argv[at + 1]) || process.env.CLAUDE_SESSION_ID || process.env.CODEX_THREAD_ID || `lane-${hostname()}`
-  const r = spawnSync(process.execPath, [RBUILD, '--repo', MAIN, '--session', session, 'typecheck'], { windowsHide: true,
+  const r = spawnSync(process.execPath, [RBUILD, '--repo', MAIN, '--session', session, '--', 'npm', 'run', 'typecheck'], { windowsHide: true,
     encoding: 'utf8',
     timeout: 1_200_000
   })
