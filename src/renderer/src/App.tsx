@@ -4417,6 +4417,16 @@ export default function App(): JSX.Element {
   const doClose = useCallback(
     (ids: string[], mb: number, why?: CloseSoon['why']) => {
       dropSoon(ids)
+      // Re-read at the deadline, not only at the arm: a Keep or a server that arrived during
+      // the count reaches this closure through refs, and the effect that drops the card
+      // may not have run yet.
+      const held = ids.filter((id) => pinnedRef.current[id] || sessionsRef.current.find((x) => x.id === id)?.serving)
+      if (held.length) {
+        skipClose(held, 'it was kept open or started serving during the countdown')
+        mb = Math.round((mb * (ids.length - held.length)) / ids.length)
+        ids = ids.filter((id) => !held.includes(id))
+        if (!ids.length) return
+      }
       const live = ids.filter((id) => stillCloseable(id))
       if (!live.length) {
         skipGone(ids, 'it went back to work during the countdown')
@@ -4748,6 +4758,28 @@ export default function App(): JSX.Element {
     const gone = new Set(woke.map((s) => soonKey(s)))
     setCloseSoons((list) => list.filter((s) => !gone.has(soonKey(s))))
   }, [closeSoons, sessions, stillCloseable, skipGone])
+
+  /**
+   * ...and so does Keep it open, wherever it was pressed.
+   *
+   * Pressed on this desk, `savePins` drops the countdown itself. Pressed on the phone or on
+   * the other desk it arrives as a config broadcast, and nothing dropped the count: on the
+   * PC 2026-09-29 `dev: dev` was kept from the Mac before 9:02am and a pressure sweep closed
+   * it at 9:09:33am (reclaim.log `armed` why=pressure, `closed` 15 s later). A kept pane is
+   * never closed. It may still be SLEPT under pressure (`sleepable`), so that countdown runs.
+   */
+  useEffect(() => {
+    const kept = closeSoons.filter(
+      (s) => !s.move && !(s.sleep && s.why === 'pressure') && s.ids.some((id) => pinned[id])
+    )
+    if (!kept.length) return
+    skipClose(
+      kept.flatMap((s) => s.ids).filter((id) => pinned[id]),
+      'Keep it open was turned on during the countdown'
+    )
+    const gone = new Set(kept.map((s) => soonKey(s)))
+    setCloseSoons((list) => list.filter((s) => !gone.has(soonKey(s))))
+  }, [closeSoons, pinned, skipClose])
 
   /**
    * Put each local pane's closing deadline on the session, where the card reads it.
