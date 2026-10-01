@@ -60,6 +60,7 @@
     "test:screenstream": "node scripts/screen-stream-test.mjs",
     "test:notes": "node scripts/release-notes-test.mjs",
     "test:trydiff": "node scripts/try-diff-test.mjs",
+    "test:tryreaper": "node scripts/try-reaper-test.mjs",
     "test:sidehidden": "node scripts/side-hidden-test.mjs",
     "test:uploadretry": "node scripts/release-upload-retry-test.mjs",
     "test:promote": "node scripts/promote-test.mjs",

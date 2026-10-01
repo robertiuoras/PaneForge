@@ -328,6 +328,7 @@ const TESTS = [
   ['buffer', 'outbuffer-test.mjs'],
   ['notes', 'release-notes-test.mjs'],
   ['trydiff', 'try-diff-test.mjs'],
+  ['tryreaper', 'try-reaper-test.mjs'],
   ['sidehidden', 'side-hidden-test.mjs'],
   ['uploadretry', 'release-upload-retry-test.mjs'],
   ['updaterelaunchlock', 'update-relaunch-lock-test.mjs'],
