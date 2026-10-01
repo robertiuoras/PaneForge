@@ -109,6 +109,7 @@ import {
   type OffloadCandidate,
   type Verdict
 } from '../../shared/capacity'
+import { reusedLine } from '../../shared/offloadFirst'
 import {
   CLOSE_COUNTDOWN_MS,
   MIN_COUNTDOWN_MS,
@@ -1889,9 +1890,15 @@ export default function App(): JSX.Element {
           `${failed.length} of ${rows.length} folders could not be opened. ` +
             failed.map((r) => `${r.cwd.split(/[\\/]/).pop()}: ${r.why}`).join('; ')
         )
+      // A client row that went to the chat already open there says so: it is the one press
+      // that otherwise did nothing visible but close the dialog (`reusedLine`).
+      const reused = rows.filter((r) => (r.session as { startAction?: string } | undefined)?.startAction === 'send')
+      if (reused.length && !failed.length) flash(reusedLine(reused[0].session?.title ?? ''))
       // A launch that quietly moved folder has to say so once - the pane header and
       // the sidebar chip show where it landed, but only if you go looking.
-      const noted = started.filter((s) => s.laneNote)
+      // Not a reused chat: its `laneNote` was said when it opened, and flashing it again here
+      // replaced the `reusedLine` above with old news.
+      const noted = started.filter((s) => s.laneNote && !reused.some((r) => r.session?.id === s.id))
       if (noted.length === 1) {
         const s = noted[0]
         flash(s.lane ? `${s.cwd.split(/[\\/]/).pop()} - ${s.laneNote}` : (s.laneNote as string))
@@ -5426,7 +5433,9 @@ export default function App(): JSX.Element {
                           transient - it takes the clock's place for the few seconds a move
                           lasts, or for as long as a queued pane's turn runs. It cannot appear
                           beside "asks you": a pane holding a question is never moved. */}
-                      {s.handingOff ? (
+                      {/* Queued agent copies keep their normal status; cancellation is
+                          available from the session menu without a persistent header tag. */}
+                      {s.handingOff && (!s.handoffQueuedAt || s.agent === 'shell') ? (
                         s.handoffQueuedAt ? (
                           // Waiting for its own turn to end, which is as long as the agent
                           // takes. Drawn as a clock rather than as the word `moving`: a
@@ -5442,17 +5451,13 @@ export default function App(): JSX.Element {
                           <button
                             type="button"
                             className="chip handoff-queued"
-                            title={s.agent !== 'shell' ? 'Opens a copy on the paired device after this turn. Press to cancel.' : 'Waiting for this turn to end. Press to keep it here.'}
+                            title="Waiting for this turn to end. Press to keep it here."
                             onClick={(e) => {
                               e.stopPropagation()
                               stopMove(s)
                             }}
                           >
-                            {s.agent !== 'shell' ? (
-                              <>copy opens when done <Elapsed className="handoff-elapsed" since={s.handoffQueuedAt} title="Queued for handoff" /></>
-                            ) : (
-                              <>moves when done <Elapsed className="handoff-elapsed" since={s.handoffQueuedAt} title="Queued for handoff" /></>
-                            )}
+                            moves when done <Elapsed className="handoff-elapsed" since={s.handoffQueuedAt} title="Queued for handoff" />
                           </button>
                         ) : (
                           // Which half is running and for how long: a move is a repo push

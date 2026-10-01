@@ -3,7 +3,7 @@ import { measureMainTask } from './mainPerformance'
 import { profileRenderer, reloadRenderer } from './renderCost'
 import { execFile } from 'node:child_process'
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
-import { tmpdir, homedir } from 'node:os'
+import { tmpdir, homedir, hostname } from 'node:os'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
@@ -31,7 +31,7 @@ import { FinishedDigest, summaryOf } from '../shared/finishedDigest'
 import { DataPump } from './dataPump'
 import { freshReplay } from '../shared/freshReplay'
 import { DiscordPresence } from './discordPresence'
-import { countPresence, needsTokens, newerSettings, wholeDesk, type PresenceCounts } from '../shared/discordRpc'
+import { countPresence, needsTokens, newerSettings, presenceAllowed, wholeDesk, type PresenceCounts } from '../shared/discordRpc'
 import { tokenCounting, tokenSpend, tokenSpendFresh } from './tokenUsage'
 import { promptReview, promptsForSession, recordPromptReview, removePromptReview } from './promptReview'
 import { readPulls } from './pulls'
@@ -58,6 +58,8 @@ import { writeAttachments, readAttachIns } from './attach'
 import { AskNotifier, postAsk, telegramCreds } from './askNotify'
 import { errorMessage } from '../shared/paneError'
 import { tooBig, type AttachIn, type AttachResult } from '../shared/attach'
+import { postPush, startLimitWaves } from './limitWaves'
+import { cardNumber } from '../../scripts/pf-ctl-lib.mjs'
 import { CHOOSE_GAP_MS, keysForChoice, sameAsk, stampMatches } from '../shared/choices'
 import { Remote } from './remote'
 import { readInvite } from './remote/invite'
@@ -178,8 +180,8 @@ import {
   startDeskAutosave
 } from './restore'
 import { ACTIVATION_SETTLE_MS, revealOnActivation } from '../shared/activation'
-import { OFFLOAD_ASK_MS, placeNewPane, preferRemoteOf, REMOTE_START_ACK_MS } from '../shared/offloadFirst'
-import { logActivation, logOffload, logReclaim, logFix, logHandoff, logAwake } from './activationLog'
+import { knownToHave, OFFLOAD_ASK_MS, openFailure, placeNewPane, preferRemoteOf, REMOTE_START_ACK_MS, type KnownProjects } from '../shared/offloadFirst'
+import { logActivation, logOffload, logReclaim, logFix, logHandoff, logAwake, logLimitReset } from './activationLog'
 import { projectNameOf, projectOn } from '../shared/capacity'
 import { staysHere } from '../shared/autoHandoff'
 import { listActivity, markActivitySeen, noteActivity, onActivityChange } from './activity'
@@ -971,7 +973,8 @@ manager.on('sessions', () => {
 const appStartedAt = Date.now()
 let discordReachable = false
 const presence = new DiscordPresence({
-  enabled: getConfig().discordPresence,
+  // A test copy never speaks for the desk (`presenceAllowed`).
+  enabled: presenceAllowed(getConfig().discordPresence, profileName()),
   style: getConfig().discordStyle,
   // The Discord tab reports Discord's own answer rather than guessing from the switch,
   // so every change of that answer has to reach an open Settings dialog by itself.
@@ -1029,7 +1032,7 @@ function adoptDiscordSettings(): void {
   )
   if (!newer) return
   const next = setConfig({ discordPresence: newer.on, discordStyle: newer.style, discordSettingsAt: newer.at })
-  presence.configure(next.discordPresence, next.discordStyle)
+  presence.configure(presenceAllowed(next.discordPresence, profileName()), next.discordStyle)
   send('config:changed', next)
 }
 // A card that goes on its own is a row in the list, never a pane that just vanished:
@@ -1059,9 +1062,17 @@ manager.on('clientNamed', (e: ClientNamed) => {
 })
 
 /**
- * A pane that STOPPED on an error goes to Telegram. A pane's QUESTION does not: Robert
- * 2026-09-23, "remove these question[s] ... in telegram, they gonna come through guarddeck
- * now". Questions stay on the desk (red row, knock) and go to GuardDeck.
+ * A pane that STOPPED on an error goes to Telegram - unless the stop is a usage limit that
+ * names its reset. A pane's QUESTION does not: Robert 2026-09-23, "remove these question[s]
+ * ... in telegram, they gonna come through guarddeck now". Questions stay on the desk (red
+ * row, knock) and go to GuardDeck.
+ *
+ * A limit with a reset goes nowhere when it happens. It joins a wave (`limitWaves` below):
+ * every pane that limit stopped is continued after the reset, and ONE TaskDriver push says
+ * how many actually carried on. 2026-10-01 9:39pm the 5-hour limit stopped ten panes and
+ * this sent ten Telegram messages; Robert: "rather not on telegram taskdriver mobile app
+ * notif and put them together". Every other stop - an expired login, a credit balance, a
+ * limit line with no reset on it - still comes here.
  *
  * `AskNotifier` does what an error needs: wait for the frames to stop, send once, then hold
  * the same message for five minutes. A CLI paints its error line in pieces, and a limit that
@@ -1084,9 +1095,46 @@ const errorNotifier = new AskNotifier({
  * there is no toast, no flash and no sound, and it is skipped for a mirror for the same
  * reason a question is: that pane's own machine is raising it too.
  */
-manager.on('paneError', (s: Session, line: string) => {
-  if (s.remote || !getConfig().telegramAsk) return
+manager.on('paneError', (s: Session, line: string, painted?: string) => {
+  if (s.remote) return
+  if (limitWaves.stopped(s, line, painted)) return
+  if (!getConfig().telegramAsk) return
   errorNotifier.schedule(s.id, () => ({ key: line, text: errorMessage(s.title, line, undefined) }))
+})
+
+// A stop repainted on a pane already reported: only a limit wave cares (see sessions.ts).
+manager.on('paneStopAgain', (s: Session, line: string, painted?: string) => {
+  if (!s.remote) limitWaves.stopped(s, line, painted)
+})
+
+/**
+ * Usage-limit waves: the continue after the reset and the one phone push
+ * (`shared/limitWave.ts` decides, `main/limitWaves.ts` acts). Only this desk's own panes -
+ * a mirror's machine runs its own wave. The continue rides the automatic-continue switch:
+ * off, the panes are left to people and the push says so.
+ */
+const limitWaves = startLimitWaves({
+  list: () => manager.list(),
+  label: (id) => {
+    const s = manager.list().find((x) => x.id === id)
+    return s ? { number: cardNumber(allSessions(), id), title: s.title } : undefined
+  },
+  movedOn: (id) => continuationOwnsSource(id),
+  mayPrompt: () => (getConfig().recover ?? DEFAULT_RECOVER).enabled,
+  carryOn: (id, text, done) => {
+    void (async () => {
+      // Placed again before it wakes, exactly as a press on its sleep chip does.
+      try {
+        await manager.rehome(id, (req) => laneFor(req, ledgerTakenFolders(id, holdOver), id))
+      } catch {
+        /* the folder it slept in is still there */
+      }
+      manager.carryOn(id, text, done)
+    })()
+  },
+  post: (payload) => postPush(payload),
+  host: process.env.PF_DEVICE || hostname().replace(/\.local$/, ''),
+  log: logLimitReset
 })
 
 /**
@@ -2083,6 +2131,44 @@ ipcMain.handle('offload:answer', (_e, id: string, go: boolean) => {
   offloadAsks.get(String(id))?.(!!go)
 })
 
+/** Each paired device's last project list, by device id. See `projectsFor`. */
+const lastProjects = new Map<string, KnownProjects>()
+
+/**
+ * A device's projects for placing a pane in `project`, and why they could not be read.
+ *
+ * Until 2026-10-01 a failed ask was `.catch(() => [])`: an empty list, which every caller
+ * then read as "that machine does not have this project". The PC was taking 10-15 s to
+ * answer against a 15 s limit, so `pf open --on <PC>` was refused for projects sitting on
+ * its disk. A recent list that already names the project answers without the wait; a list
+ * that does not name it asks again, and a failed ask hands back the last list it has with
+ * the reason, so `placeNewPane` can tell "not there" from "did not answer".
+ */
+async function projectsFor(device: string, project: string): Promise<{ list: KnownProjects['list']; error?: string }> {
+  const known = lastProjects.get(device)
+  if (known && knownToHave(known, project, Date.now())) return { list: known.list }
+  try {
+    const list = await remote.projectsOn(device)
+    lastProjects.set(device, { list, at: Date.now() })
+    return { list }
+  } catch (e) {
+    const error = String((e as Error)?.message ?? e).replace(/^Error:\s*/, '') || 'no answer'
+    return { list: known?.list ?? [], error }
+  }
+}
+
+/**
+ * Every new session that did not open goes through here: one line in offload.log (the log
+ * that already holds every decision and every `started`), and a toast in the window unless
+ * the window is the one that asked - it shows its own, from the row's `why`.
+ */
+function reportOpenFailed(req: StartSessionRequest, e: unknown, fromWindow: boolean): string {
+  const failure = openFailure(req, e, fromWindow)
+  logOffload(failure.log)
+  if (failure.toast) send('handoff:moved', failure.toast)
+  return failure.why
+}
+
 async function startOrSend(
   req: StartSessionRequest,
   claimed?: string[]
@@ -2165,19 +2251,24 @@ async function startOrSend(
   let target: ReturnType<typeof projectOn> = null
   let peerPanes: number | undefined
   let deviceOnline: boolean | undefined
+  let deviceName: string | undefined
+  let deviceUnanswered: string | undefined
   try {
     const peers = remote.state().peers.filter((p) => p.status === 'online')
     const candidates = await Promise.all(
-      peers.map(async (p) => ({
-        device: p.id,
-        deviceName: p.name,
-        online: true,
-        projects: await remote.projectsOn(p.id).catch(() => [] as { name: string; path: string }[])
-      }))
+      peers.map(async (p) => {
+        const got = await projectsFor(p.id, project)
+        return { device: p.id, deviceName: p.name, online: true, projects: got.list, error: got.error }
+      })
     )
     // A NAMED device beats the project match, and is answered rather than guessed at:
     // `deviceOnline` says the link is up, `target` says that machine holds this project.
-    if (req.device) deviceOnline = candidates.some((c) => c.device === req.device || c.deviceName === req.device)
+    if (req.device) {
+      const named = candidates.find((c) => c.device === req.device || c.deviceName === req.device)
+      deviceOnline = Boolean(named)
+      deviceName = named?.deviceName
+      deviceUnanswered = named?.error
+    }
     target = req.device
       ? projectOn(
           candidates.filter((c) => c.device === req.device || c.deviceName === req.device),
@@ -2215,6 +2306,8 @@ async function startOrSend(
     device: req.device,
     deviceOnline: req.device ? Boolean(deviceOnline) : undefined,
     deviceHasProject: req.device ? !!target : undefined,
+    deviceName,
+    deviceUnanswered,
     // The same two readings the pressure card is built from, worse of the two. Not a pane
     // count: a desk with eight panes and memory to spare is a desk with room.
     pressure: worstPressure(lastPressure, lagLevel(loadPerCore())),
@@ -2273,13 +2366,21 @@ async function startOrSend(
 // writes to the backlog, which has one writer.
 ipcMain.handle('backlog:task', (_e, ref: string) => briefForTask(String(ref ?? '')))
 ipcMain.handle('sessions:start', async (_e, req: StartSessionRequest) => {
-  const s = await startOrSend(req)
+  let s: Awaited<ReturnType<typeof startOrSend>>
+  try {
+    s = await startOrSend(req)
+  } catch (e) {
+    // The caller still gets the refusal (`pf open` prints it and exits 1); the desk gets a
+    // toast and offload.log a line, so a pane that never arrives is never silent.
+    throw new Error(reportOpenFailed(req, e, Boolean((_e as { processId?: number } | undefined)?.processId)))
+  }
   // `startAction` says whether this is a pane that was opened or one that was already
   // there and took the prompt - `pf open` prints it, so automation can tell the two apart
   // instead of assuming a fresh pane every time.
   return { ...s, startAction: s.startAction ?? 'open' }
 })
 ipcMain.handle('sessions:startMany', async (_e, reqs: StartSessionRequest[]) => {
+  const fromWindow = Boolean((_e as { processId?: number } | undefined)?.processId)
   const out: StartedPane[] = []
   // Folders claimed earlier in this same batch count as taken: two panes launched
   // together for one project must land in different lanes, and the session list
@@ -2295,8 +2396,7 @@ ipcMain.handle('sessions:startMany', async (_e, reqs: StartSessionRequest[]) => 
       // agent refused to trust: the window guessed one sentence for every cause, and
       // `pf open-many` printed `refused <cwd>` with no reason at all. The row is kept in
       // place, so a caller pairs answers to requests by position.
-      const why = String((e as Error)?.message ?? '').replace(/^Error:\s*/, '')
-      out.push({ cwd: r.cwd, why: why || 'it would not open' })
+      out.push({ cwd: r.cwd, why: reportOpenFailed(r, e, fromWindow) })
     }
   }
   return out
@@ -2862,7 +2962,7 @@ ipcMain.handle('config:set', (_e, patch: Partial<Config>) => {
   if (patch.providerKeys || patch.openrouterKey !== undefined) invalidateAgents()
   if (patch.saveHistory !== undefined) history.setHistoryEnabled(patch.saveHistory)
   if (patch.discordPresence !== undefined || patch.discordStyle !== undefined) {
-    presence.configure(next.discordPresence, next.discordStyle)
+    presence.configure(presenceAllowed(next.discordPresence, profileName()), next.discordStyle)
     presence.update(presenceCounts())
   }
   if (patch.silenceAlertMin !== undefined) setSilenceAlert(patch.silenceAlertMin)

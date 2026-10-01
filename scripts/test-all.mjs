@@ -125,6 +125,7 @@ const TESTS = [
   ['settingsearch', 'settings-search-test.mjs'],
   ['autoanswer', 'auto-answer-test.mjs'],
   ['asknotify', 'ask-notify-test.mjs'],
+  ['limitwave', 'limit-wave-test.mjs'],
   ['faultnotify', 'fault-notify-test.mjs'],
   ['spawnguard', 'spawn-guard-test.mjs'],
   ['promptsubmit', 'prompt-submit-test.mjs'],
@@ -173,6 +174,7 @@ const TESTS = [
   ['sleep', 'sleep-test.mjs'],
   ['wakeplan', 'wakeplan-test.mjs'],
   ['deviceopen', 'device-open-test.mjs'],
+  ['openfailed', 'open-failed-test.mjs'],
   ['mascot', 'mascot-test.mjs'],
   ['petmood', 'petmood-test.mjs'],
   ['tips', 'tips-test.mjs'],
@@ -210,8 +212,11 @@ const TESTS = [
   // A cleared pane keeps its lane; an unrecorded open merge can be resolved; identical
   // dirt in main does not hold a merge (2026-09-28).
   ['lanecleared', 'lane-cleared-test.mjs'],
+  // A copy missing most of its files is damaged, never handed to a chat (2026-10-01).
+  ['lanedamaged', 'lane-damaged-test.mjs'],
   // taskdriver.ai's PC-proof gate; a ready lane's own check is what `ready` reports (macOS only).
   ['lanetaskdriver', 'lane-taskdriver-pc-test.mjs'],
+  ['lanetypecheckjob', 'lane-typecheck-job-test.mjs'],
   // A lane whose hooks rewrite its ledger every turn is not dirty forever.
   ['laneledger', 'lane-ledger-test.mjs'],
   ['issues', 'issues-dialog-test.mjs'],

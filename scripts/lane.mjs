@@ -2191,7 +2191,9 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
       return w.dirty || w.ahead > 0 || Boolean(state.ready[id]) || Boolean(state.conflicts[id])
     }
     const earlier = Object.entries(state.lanes)
-      .filter(([, c]) => c.pane === PANE && c.session !== session && c.ended)
+      // A folder missing most of its files (damageOf) is not work to carry on: the pane's
+      // new chat takes another lane and the earlier hold stays where it is for a person.
+      .filter(([id, c]) => c.pane === PANE && c.session !== session && c.ended && !laneWork(id).damaged)
       .map(([id, c]) => ({ id, c, work: hasWork(id) }))
       // Work first, then the most recently heard from.
       .sort((x, y) => y.work - x.work || (y.c.seen ?? 0) - (x.c.seen ?? 0))
@@ -2320,12 +2322,27 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
   // An absent owner does not make their unfinished edits available to a new task.
   // Keep explicit recovery (`wanted`) and same-session resumes above, but exclude
   // dirty orphans from every automatic choice, including last-resort fallbacks.
+  //
+  // A folder missing most of its files (`damageOf`) is the same, only stricter: it is also
+  // never handed to a chat that ASKS for it. `wanted` below goes around this chooser, and the
+  // hook derives `prefer` from the folder a chat is standing in, so a new chat standing in a
+  // damaged copy was handed it. Skipping it sends that chat to a working lane. Damaged
+  // implies dirty (the deletions are the dirt), so every other path that refuses dirty lanes
+  // (`idleEmpty`, the `main` takeover) already refuses it too; the other way in, carrying an
+  // ended chat's hold to the pane's next chat, is closed above.
+  const damaged = new Set()
   const unfinished = new Set(order.filter((id) => {
     if (state.lanes[id]) return false
     const work = laneWork(id)
+    if (work.damaged) {
+      damaged.add(id)
+      return false
+    }
     return work.dirty || (work.ahead > 0 && !state.ready[id])
   }))
-  const spare = order.filter((id) => !state.lanes[id] && !state.conflicts[id] && !unfinished.has(id))
+  const spare = order.filter(
+    (id) => !state.lanes[id] && !state.conflicts[id] && !unfinished.has(id) && !damaged.has(id)
+  )
   // A lane whose FOLDER another chat is standing in is the last one to hand out.
   //
   // A hold records the chat's own cwd, and that is not always the lane it was given:
@@ -2363,7 +2380,7 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
   // Same rule as `pick`, and it has to be repeated here because `wanted` is the one path
   // that goes AROUND the chooser: a chat standing in `<repo>-a` asks for lane a by name,
   // and honouring that while a is mid-conflict hands it exactly what the tiers refuse.
-  const wanted = prefer && !state.lanes[prefer] && !state.conflicts[prefer] ? prefer : null
+  const wanted = prefer && !state.lanes[prefer] && !state.conflicts[prefer] && !damaged.has(prefer) ? prefer : null
   let free = (wanted && !squatted.has(wanted) ? wanted : null) ?? pick(spare) ?? wanted ?? spare[0]
   // A worktree is a cost - a second checkout, a branch, and a merge at the end - and a
   // chat alone in a repository should not pay it. `main` is the repository itself, so the
@@ -2451,7 +2468,9 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
     if (peerTrunk) {
       // Same chooser as the pool above, so there is one definition of "a lane worth
       // handing out" rather than a second one here that nothing exercises.
-      const spare = pick(order.filter((id) => id !== 'main' && !state.lanes[id] && !unfinished.has(id)))
+      const spare = pick(
+        order.filter((id) => id !== 'main' && !state.lanes[id] && !unfinished.has(id) && !damaged.has(id))
+      )
       // No letter left is not a reason to refuse a chat a checkout: the local ledger is
       // still the authority on this machine, and a shared trunk that is reported is a far
       // smaller problem than a chat that cannot start. The word travels either way -
@@ -2471,7 +2490,9 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
     const why = [
       held.join(', '),
       stuck.length && `conflicted: ${stuck.join(', ')}`,
-      unfinished.size && `uncommitted: ${[...unfinished].join(', ')} (preserved; explicitly claim the original checkout to recover)`
+      unfinished.size && `uncommitted: ${[...unfinished].join(', ')} (preserved; explicitly claim the original checkout to recover)`,
+      damaged.size &&
+        `missing most of its files: ${[...damaged].join(', ')} (a copy that never finished being made; not handed to any chat - check it and move it out of the way)`
     ].filter(Boolean).join('; ')
     throw new Error(`all lanes busy: ${why}`)
   }
@@ -2902,7 +2923,44 @@ function laneWorkNow(id) {
   const dirty = Boolean(porcelain)
   const branch = id === 'main' ? MB : laneBranch(id)
   const ahead = id === 'main' ? unreleasedOnMaster() : aheadOf(laneBranch(id))
-  return { dirty, ahead, touchedAt: lastTouched(dir, porcelain, ahead > 0 ? branch : null) }
+  return { dirty, ahead, touchedAt: lastTouched(dir, porcelain, ahead > 0 ? branch : null), ...damageOf(dir, porcelain) }
+}
+
+/**
+ * A folder that IS a worktree but never finished being made: git still lists every file of
+ * the branch, almost none of them are on disk. Measured on taskdriver.ai-a 2026-09-30
+ * (8:45pm): 4,461 staged deletions, only `.claude/` and `..app/` left. `laneWorkNow` read
+ * that as `dirty: true, broken: false` - a chat mid-edit - and the folder was handed to a
+ * new chat, whose SessionStart hook crashed on a missing module because the scripts it runs
+ * were among the files that were gone.
+ *
+ * Damaged = more than half of the files tracked at HEAD are missing (deleted in the index or
+ * on disk). Nothing here repairs or stages anything: those deletions are not anybody's
+ * intent, and what is left in the folder is for a person to diagnose (recorded decision,
+ * docs/agents/lanes-and-releases.md: damaged folders are backed up and diagnosed, never
+ * rebuilt by the engine).
+ *
+ * Costs nothing for a normal lane: the porcelain is already in hand, and only a lane showing
+ * DAMAGED_MIN_DELETED deletions asks git anything more (one `ls-tree`). `ls-tree`, not
+ * `ls-files` - in this state the index has been emptied too, so it would answer "almost
+ * nothing is tracked" and nothing would be half gone. A failed count is "cannot tell", never
+ * "damaged".
+ */
+const DAMAGED_MIN_DELETED = 10
+function damageOf(dir, porcelain) {
+  let missing = 0
+  for (const line of porcelain.split('\n')) {
+    // `XY path`; X = index against HEAD, Y = disk against index. `git()` trims its output,
+    // so the first line may arrive with only one code (` D a` is `D a`) - either way a D
+    // there is "tracked at HEAD, gone now". `AD`/`RD` were never at HEAD under that name.
+    const m = /^([ MADRCUT?!]{1,2})[ \t]+/.exec(line)
+    if (m && m[1].includes('D') && !/^[ARC]/.test(m[1])) missing++
+  }
+  if (missing < DAMAGED_MIN_DELETED) return {}
+  const tree = gitSafe(dir, 'ls-tree', '-r', '--name-only', 'HEAD')
+  const tracked = tree.ok && tree.out ? tree.out.split('\n').length : 0
+  if (!tracked || missing * 2 <= tracked) return {}
+  return { damaged: true, missingFiles: missing, trackedFiles: tracked }
 }
 
 /**
@@ -2949,7 +3007,8 @@ function releaseHolds(state) {
 function busyDetail(id) {
   const w = laneWork(id)
   const what = []
-  if (w.dirty) what.push('uncommitted edits')
+  if (w.damaged) what.push('a folder missing most of its files')
+  else if (w.dirty) what.push('uncommitted edits')
   if (id !== 'main' && w.ahead > 0) what.push(`${w.ahead} unmerged commit${w.ahead === 1 ? '' : 's'}`)
   const age = w.touchedAt ? `, last touched ${Math.round((now() - w.touchedAt) / 60000)}m ago` : ''
   return `${id} (${what.join(' + ') || 'work'}${age})`
@@ -3143,35 +3202,235 @@ function installDeps() {
 
 const RBUILD = join(homedir(), '.claude', 'rbuild.mjs')
 
+/** How long one try waits on a PC job before handing the job to the next try. */
+const PC_WAIT_S = 900
+
 /**
- * On the Mac the typecheck runs on the PC through rbuild: nothing heavy runs on the laptop,
- * and a loaded Mac timed the local one out (see below). `undefined` means "not handled
- * here, run it locally"; null means it passed; a sentence means it did not.
+ * The tree id of everything rbuild would ship from `dir`: the commit plus every edit and
+ * new file .gitignore keeps, staged into a throwaway index so the real one is never
+ * touched. Null when git cannot say, and then nothing is reused.
+ */
+function workingTree(dir) {
+  const index = join(tmpdir(), `lane-tree-${process.pid}-${randomUUID()}`)
+  try {
+    const real = gitSafe(dir, 'rev-parse', '--git-path', 'index')
+    if (!real.ok) return null
+    // A copy of the real index keeps git's stat cache, so only changed files are re-read.
+    copyFileSync(resolve(dir, real.out), index)
+    const env = { ...process.env, GIT_INDEX_FILE: index }
+    const opts = { cwd: dir, env, encoding: 'utf8', windowsHide: true, timeout: 60_000 }
+    if (spawnSync('git', ['add', '-A'], opts).status !== 0) return null
+    const tree = spawnSync('git', ['write-tree'], opts)
+    return tree.status === 0 ? tree.stdout.trim() : null
+  } catch {
+    return null
+  } finally {
+    try {
+      unlinkSync(index)
+    } catch {}
+  }
+}
+
+/**
+ * On the Mac the typecheck and the test suite run on the PC through rbuild: nothing heavy
+ * runs on the laptop, and a loaded Mac timed the local ones out (see `typecheckFailure`).
  * A repo under the temp dir stays local: the fixture tests stub npm and must not reach the PC.
  */
-function remoteTypecheckFailure() {
-  if (process.platform !== 'darwin' || !existsSync(RBUILD)) return undefined
+function onPc() {
+  if (process.platform !== 'darwin' || !existsSync(RBUILD)) return false
   const tmp = tmpdir()
-  if ([tmp, `/private${tmp}`].some((t) => MAIN.startsWith(t))) return undefined
+  return ![tmp, `/private${tmp}`].some((t) => MAIN.startsWith(t))
+}
+
+/**
+ * One ledger entry - `[key]`, or `[key, sub]` inside an object - written onto the ledger AS
+ * IT IS NOW (null removes it), and onto `state` too because the caller goes on using it. A
+ * PC wait holds `state` for up to 15 minutes and must not write back a stale copy of
+ * everything else, same as the suite verdict below.
+ */
+function remember(state, [key, sub], value) {
+  const fresh = read()
+  for (const s of [state, fresh]) {
+    const box = sub === undefined ? s : (s[key] = { ...s[key] })
+    const name = sub ?? key
+    if (value) box[name] = value
+    else delete box[name]
+  }
+  write(fresh)
+}
+
+/** Queue `words` on the PC for `dir` without waiting: `{ id }`, or `{ failed }` with why not. */
+function submitPcJob(dir, words) {
   const at = process.argv.indexOf('--session')
   const session =
     (at >= 0 && process.argv[at + 1]) || process.env.CLAUDE_SESSION_ID || process.env.CODEX_THREAD_ID || `lane-${hostname()}`
-  const r = spawnSync(process.execPath, [RBUILD, '--repo', MAIN, '--session', session, 'typecheck'], { windowsHide: true,
+  const sent = spawnSync(process.execPath, [RBUILD, '--repo', dir, '--session', session, '--no-wait', ...words], {
+    windowsHide: true,
     encoding: 'utf8',
-    timeout: 1_200_000
+    timeout: 600_000
   })
-  if (r.status === 0) return null
-  const all = `${r.stdout ?? ''}${r.stderr ?? ''}`
-  const detail = all
+  const id = /rbuild: job ([0-9a-f-]{36}) saved/.exec(sent.stderr ?? '')?.[1]
+  if (id) return { id }
+  const all = `${sent.stdout ?? ''}${sent.stderr ?? ''}`
+  return { failed: all.trim() ? firstLine(all) : sent.error?.message || `exit ${sent.status}` }
+}
+
+/**
+ * Wait up to `seconds` on one PC job. `pending` while it is still queued or running - and
+ * when this waiter was itself killed, because the job keeps its place on the PC and a dead
+ * waiter is never a verdict on the code (dropping the job there queued a fresh one at the
+ * back, the livelock below). `why` is rbuild's own final line when it printed one.
+ */
+function waitPcJob(id, seconds = PC_WAIT_S) {
+  const r = spawnSync(process.execPath, [RBUILD, '--wait', id, String(seconds)], {
+    windowsHide: true,
+    encoding: 'utf8',
+    // The job's whole output comes back here; past the default 1 MB spawnSync kills rbuild.
+    maxBuffer: 64 * 1024 * 1024,
+    // rbuild ends its own wait at `seconds` (+120s for its ssh); this is only a backstop.
+    timeout: (seconds + 300) * 1000
+  })
+  const stderr = r.stderr ?? ''
+  const out = `${r.stdout ?? ''}${stderr}`
+  // The LAST status line: rbuild relays every PC progress line as `rbuild: <text>` too.
+  const final = stderr.match(/^rbuild: (succeeded|failed|timed_out|cancelled)\b.*$/gm)?.at(-1)
+  return {
+    pending: r.status === 75 || r.status == null,
+    status: r.status,
+    // rbuild names a job that ran and exited red `failed`; cancelled and timed_out never ran to a verdict.
+    ran: /^rbuild: failed\b/.test(final ?? ''),
+    out,
+    why: final ?? (out.trim() ? firstLine(out) : r.error?.message || `exit ${r.status}`)
+  }
+}
+
+/** A PC suite sentence that is not a verdict on the code: still queued, or the runner failed. */
+const PC_UNSETTLED = /test suite (is still waiting its turn on|could not (run on|be sent to)) the PC/
+
+const pcWaiting = (what, id) =>
+  `${MB}'s ${what} is still waiting its turn on the PC (job ${id.slice(0, 8)}), so nothing was released yet. ` +
+  `The next try waits on that same job rather than queueing another.`
+
+/**
+ * `undefined` means "not handled here, run it locally"; null means it passed; a sentence
+ * means it did not.
+ *
+ * One PC job per tree, remembered in the ledger (`state.typecheck`), and a try that runs
+ * out of time leaves it for the next try instead of queueing another. Measured 2026-10-01:
+ * with 25 jobs in the PC queue every try submitted a fresh job at the back, was killed
+ * 20 minutes later still queued (its ssh waiter orphaned, its job still bound to run for
+ * nobody), and the retry timer started over at the back - three copies of one master
+ * typecheck queued 09:32-09:50 and lane e's finished fix never merged. The wait now ends
+ * inside rbuild (`--wait` with a budget), so nothing is killed mid-connection.
+ */
+function remoteTypecheckFailure(state) {
+  if (!onPc()) return undefined
+  const tree = workingTree(MAIN)
+  // Fresh: another chat's try may have queued this tree's job since `state` was read.
+  const last = read().typecheck
+  const known = tree && last?.tree === tree ? last : null
+  if (known && 'verdict' in known) return known.verdict
+  let id = known?.id
+  if (!id) {
+    const sent = submitPcJob(MAIN, ['typecheck'])
+    if (sent.failed) {
+      return `${MB}'s typecheck could not be sent to the PC, so nothing was released - ${sent.failed}. That is the remote runner, not the code.`
+    }
+    id = sent.id
+    if (tree) remember(state, ['typecheck'], { tree, id, at: now() })
+  }
+  const r = waitPcJob(id)
+  if (r.pending) return pcWaiting('typecheck', id)
+  const detail = r.out
     .split('\n')
     .filter((l) => /error TS/.test(l))
     .slice(0, 3)
     .join('; ')
-  if (detail) return `${MB} does not typecheck, so it was not released - ${detail}. Fix it and it goes out by itself.`
-  return (
-    `${MB}'s typecheck could not run on the PC, so nothing was released - ${firstLine(all) || r.error?.message || `exit ${r.status}`}. ` +
-    `That is the remote runner, not the code.`
-  )
+  if (r.status === 0 || detail) {
+    const verdict = detail ? `${MB} does not typecheck, so it was not released - ${detail}. Fix it and it goes out by itself.` : null
+    if (tree) remember(state, ['typecheck'], { tree, id, at: now(), verdict })
+    return verdict
+  }
+  // Cancelled, timed out on the PC, or a job rbuild no longer knows: the next try sends a new one.
+  if (known || tree) remember(state, ['typecheck'], null)
+  return `${MB}'s typecheck could not run on the PC, so nothing was released - ${r.why}. That is the remote runner, not the code.`
+}
+
+/** test-all.mjs prints one line per check; the FAIL lines are the whole answer and the rest is noise. */
+function failLines(all) {
+  return all
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => /^(fail|FAIL|✗|not ok)\b/.test(l))
+    .slice(0, 4)
+    .join('; ')
+}
+
+/**
+ * The test suite of `dir` on the PC: one job per tree, remembered through `save` (master's
+ * in `state.pcSuite`, a lane's in `state.pcLaneSuite[id]`), whose last value is `known`.
+ * Not `state.suite`: every chat's installed lane.mjs still keys that one on the commit and
+ * runs the old blocking suite when it does not match, so sharing it would have each copy
+ * overwrite the other's record and queue the job again.
+ *
+ * The typecheck's livelock (above) with a worse ending. `npm test` on the Mac is
+ * test-remote.mjs, a blocking rbuild; the gate killed it at 20 minutes while it was still
+ * QUEUED behind 25 jobs, ran it again to "confirm", and cached "did not finish within 20
+ * minutes" as master's red verdict on the commit. Master only moves by a merge, which that
+ * verdict blocks: lanes e, i, d, a and f sat ready all evening (2026-10-01), and the lane
+ * fix below queued two more 20-minute kills per lane (one try took 1h45m).
+ *
+ * - `{ pending: id }`: still queued or running. Never cached, never confirmed; the next try
+ *   waits on that same id.
+ * - `{ cannot, why }`: the job never ran to a verdict (could not be sent, cancelled, timed
+ *   out on the PC, unknown to rbuild, tooling missing, or red with no failing check named
+ *   - a dependency install or an out-of-memory kill on the PC, which a tree can never fix
+ *   and caching would pin until a merge). Dropped, so the next try sends a new one.
+ * - `{ red }`: ran and failed checks it names, then failed again on one confirming job (the
+ *   confirm-once rule in `suiteFailure`; the confirming job is remembered too). Cached on
+ *   the tree.
+ * - null: passed. Cached on the tree.
+ *
+ * `known` must be a fresh read, not a `state` loaded before a 15-minute wait: two chats
+ * trying at once would each queue the same tree. `sendOnly` queues the job (or finds the
+ * cached answer) without waiting; `waitS` is the wait budget.
+ */
+function pcSuite(dir, known, save, { sendOnly = false, waitS = PC_WAIT_S } = {}) {
+  const tree = workingTree(dir)
+  const mine = tree && known?.tree === tree ? known : null
+  if (mine && 'ok' in mine) return mine.ok ? null : { red: mine.reason }
+  let id = mine?.id
+  let confirming = Boolean(mine?.confirming)
+  for (;;) {
+    if (!id) {
+      // The repo's own suite, as `npm test` on the PC runs it (test-all.mjs runs in place
+      // on Windows). The typecheck is its own gate, already passed for this tree.
+      const sent = submitPcJob(dir, ['--', 'npm', 'test'])
+      // The record is left as it is: after a red first job it still names that job, and
+      // the next try reads its answer again rather than running it again.
+      if (sent.failed) return { cannot: 'be sent to', why: sent.failed }
+      id = sent.id
+      if (tree) save({ tree, id, at: now(), ...(confirming && { confirming }) })
+    }
+    if (sendOnly) return { pending: id }
+    const r = waitPcJob(id, waitS)
+    if (r.pending) return { pending: id }
+    if (r.status === 0) {
+      if (tree) save({ tree, ok: true, at: now() })
+      return null
+    }
+    const failed = failLines(r.out)
+    if (!r.ran || cannotRun(r.out) || !failed) {
+      if (tree) save(null)
+      return { cannot: 'run on', why: r.why }
+    }
+    if (confirming) {
+      if (tree) save({ tree, ok: false, at: now(), reason: failed })
+      return { red: failed }
+    }
+    confirming = true
+    id = null
+  }
 }
 
 /** Empty when master compiles (or has no typecheck script), a sentence when it does not. */
@@ -3227,7 +3486,7 @@ function typecheckFailure(state) {
     const failed = installDeps()
     if (failed) return failed
   }
-  const remote = remoteTypecheckFailure()
+  const remote = remoteTypecheckFailure(state)
   if (remote !== undefined) return remote
   // One string + shell: npm on Windows is npm.cmd, which cannot be spawned directly.
   const r = spawnSync('npm run --silent typecheck', { windowsHide: true,
@@ -3286,6 +3545,9 @@ const SUITE_TIMEOUT_MS = 20 * 60 * 1000
  * decides where the next person looks. That case is deliberately NOT cached; a missing
  * node_modules is fixed outside this file and the next attempt should find out.
  *
+ * On the Mac it runs on the PC instead (`pcSuite`, cached in `state.pcSuite`) on the TREE
+ * rbuild ships - the commit plus whatever MAIN has uncommitted, which is what the PC tests.
+ *
  * `npm run ship` still bypasses all of it - it exists for a build somebody needs in their
  * hands now, and it is typed by a person who is watching.
  */
@@ -3302,6 +3564,16 @@ function suiteFailure(state) {
   // which exits 1 by design and would block every release in a repo that never had tests.
   const script = pkg.scripts?.test
   if (!script || /no test specified/i.test(script)) return null
+
+  if (onPc()) {
+    const v = pcSuite(MAIN, read().pcSuite, (rec) => remember(state, ['pcSuite'], rec))
+    if (!v) return null
+    if (v.pending) return pcWaiting('test suite', v.pending)
+    if (v.cannot) {
+      return `${MB}'s test suite could not ${v.cannot} the PC, so nothing was released - ${v.why}. That is the remote runner, not the code.`
+    }
+    return `${MB} fails its own test suite, so it was not released - ${v.red}. Fix it and it goes out by itself.`
+  }
 
   const head = gitSafe(MAIN, 'rev-parse', 'HEAD')
   const commit = head.ok ? head.out : null
@@ -3375,14 +3647,8 @@ function suiteFailure(state) {
       `Required tooling or remote transport is unavailable; this is not a code verdict.`
     )
   }
-  // test-all.mjs prints one line per check; the FAIL lines are the whole answer and the
-  // rest is noise. A suite with some other shape falls back to its first real line.
-  const failed = all
-    .split('\n')
-    .map((l) => l.trim())
-    .filter((l) => /^(fail|FAIL|✗|not ok)\b/.test(l))
-    .slice(0, 4)
-    .join('; ')
+  // A suite with some other shape than test-all.mjs falls back to its first real line.
+  const failed = failLines(all)
   const reason =
     r.signal || (r.status == null && !all.trim())
       ? `${MB}'s test suite did not finish within ${Math.round(SUITE_TIMEOUT_MS / 60000)} minutes, so nothing was released. Run \`npm test\` and see what hangs.`
@@ -3419,12 +3685,7 @@ function suiteFailureInLane(dir) {
   }
   const all = `${r.stdout ?? ''}${r.stderr ?? ''}`
   if (cannotRun(all)) return `could not run - ${firstLine(all)}`
-  const failed = all
-    .split('\n')
-    .map((l) => l.trim())
-    .filter((l) => /^(fail|FAIL|✗|not ok)\b/.test(l))
-    .slice(0, 4)
-    .join('; ')
+  const failed = failLines(all)
   return r.signal || (r.status == null && !all.trim())
     ? `did not finish within ${Math.round(SUITE_TIMEOUT_MS / 60000)} minutes`
     : failed || firstLine(all)
@@ -3443,21 +3704,41 @@ function suiteFailureInLane(dir) {
  * `ship()` will merge it and master inherits the fix.
  *
  * Returns the id of the first ready lane whose own suite passes, or null when none does
- * (with `tried` naming whether one was even eligible to ask, so the refusal can say so).
+ * (with `tried` naming whether one was even eligible to ask, so the refusal can say so, and
+ * `pending` whether one is still being tested on the PC).
+ *
+ * On the Mac each lane's tree is one remembered PC job, like master's (`state.pcLaneSuite`).
+ * Every job is queued before any is waited on: the PC runs several at once, and a local
+ * `npm test` per lane was a 20-minute kill per lane, twice (2026-10-01: one try, 1h45m).
  */
 function readyLaneFix(state) {
   const masterHead = gitSafe(MAIN, 'rev-parse', MB)
   if (!masterHead.ok) return { lane: null, tried: false }
-  let tried = false
-  for (const id of Object.keys(state.ready)) {
-    if (id === 'main') continue
-    const dir = laneDir(id)
-    if (!existsSync(dir)) continue
-    if (!gitSafe(MAIN, 'merge-base', '--is-ancestor', masterHead.out, laneBranch(id)).ok) continue
-    tried = true
-    if (!suiteFailureInLane(dir)) return { lane: id, tried }
+  const lanes = Object.keys(state.ready).filter(
+    (id) =>
+      id !== 'main' &&
+      existsSync(laneDir(id)) &&
+      gitSafe(MAIN, 'merge-base', '--is-ancestor', masterHead.out, laneBranch(id)).ok
+  )
+  const tried = lanes.length > 0
+  if (!onPc()) {
+    for (const id of lanes) if (!suiteFailureInLane(laneDir(id))) return { lane: id, tried }
+    return { lane: null, tried }
   }
-  return { lane: null, tried }
+  const ask = (id, opts) =>
+    pcSuite(laneDir(id), read().pcLaneSuite?.[id], (rec) => remember(state, ['pcLaneSuite', id], rec), opts)
+  for (const id of lanes) ask(id, { sendOnly: true })
+  // One wait budget for all of them, not one each: five queued lanes were 75 minutes a try.
+  // Past it, a lane only reads a cached answer and the next try waits on its job.
+  const until = now() + PC_WAIT_S * 1000
+  let pending = false
+  for (const id of lanes) {
+    const left = Math.round((until - now()) / 1000)
+    const v = ask(id, left > 0 ? { waitS: Math.max(60, left) } : { sendOnly: true })
+    if (!v) return { lane: id, tried }
+    if (v.pending) pending = true
+  }
+  return { lane: null, tried, pending }
 }
 
 /**
@@ -3574,6 +3855,9 @@ function autoshipRun(kind = 'auto', session = 'auto') {
   // is ten times the cost and a tree that does not compile cannot pass it anyway.
   const red = suiteFailure(state)
   if (red) {
+    // No verdict yet - master's suite is still queued on the PC, or the runner failed.
+    // Testing every finished lane now would only queue more jobs behind it.
+    if (PC_UNSETTLED.test(red)) return { shipped: false, reason: red }
     // The lane that fixes a red master can never merge if the gate only ever asks
     // master, because master stays red until the merge that only happens once the gate
     // says yes - the deadlock this exists for. A ready lane already carries master's
@@ -3583,9 +3867,11 @@ function autoshipRun(kind = 'auto', session = 'auto') {
     if (!fix.lane) {
       return {
         shipped: false,
-        reason: fix.tried
-          ? `${red} The finished work waiting to ship was tried the same way and it still fails.`
-          : red
+        reason: fix.pending
+          ? `${red} The finished work waiting to ship is still being tested on the PC; the next try waits on the same jobs.`
+          : fix.tried
+            ? `${red} The finished work waiting to ship was tried the same way and it still fails.`
+            : red
       }
     }
   }
@@ -4775,6 +5061,11 @@ function statusOf(state, session, held) {
         // The folder is there and is not a checkout of this repository - a leftover, or a
         // separate clone squatting on the lane's path. Nothing here merges or releases it.
         broken: Boolean(w.broken),
+        // The folder is a worktree of this repo and most of its files are gone (see
+        // damageOf). Separate from `broken`, which stays "not a worktree at all".
+        damaged: Boolean(w.damaged),
+        missingFiles: w.missingFiles ?? 0,
+        trackedFiles: w.trackedFiles ?? 0,
         ready: Boolean(state.ready[id]),
         conflicted: Boolean(state.conflicts[id]),
         // Enough for a hook (or PaneForge) to say "this one is stuck, and here is who
@@ -4908,7 +5199,12 @@ function doctor() {
       what.push(
         `its folder is NOT a worktree of this repo - a leftover or a separate clone at that path. Nothing here merges or releases what is in it`
       )
-    if (l.dirty) what.push('uncommitted edits')
+    if (l.damaged)
+      what.push(
+        `its folder is missing most of its files (${l.missingFiles} of ${l.trackedFiles}) - a copy that never finished being made. It is not handed to a new chat; check it and move it out of the way`
+      )
+    // The deletions of a damaged folder are not edits anybody made.
+    if (l.dirty && !l.damaged) what.push('uncommitted edits')
     if (l.ahead) what.push(`${l.ahead} commit${l.ahead === 1 ? '' : 's'} ${MB} does not have`)
     if (l.ready) what.push('finished, waiting for the next release')
     if (l.conflicted) what.push(`conflicts with ${MB} (${l.conflict?.detail || 'unknown files'})`)
