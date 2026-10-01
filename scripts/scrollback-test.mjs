@@ -181,6 +181,14 @@ ok(
   `${hugeBack.length}`
 )
 
+// A CLI on the alternate screen (Codex) has no scrollback: 2026-09-29, card 2, Fix's reset
+// dropped the mouse and paste modes Codex set once at its start and the pane stopped taking
+// the wheel. A capped log's stale tail is `freshReplay`'s job (fresh-replay-test).
+const pane = readFileSync(join(root, 'src/renderer/src/components/TerminalPane.tsx'), 'utf8')
+const redraw = pane.slice(pane.indexOf('const redrawHistory = async'), pane.indexOf('const redrawHistory = async') + 1200)
+ok(/if \(t\.buffer\.active\.type === 'alternate'\) return false\s*\n\s*redrawingHistory = true/.test(redraw),
+  'Fix replays no history into a CLI on the alternate screen (it has no scrollback, and the reset drops its modes)')
+
 rmSync(work, { recursive: true, force: true })
 console.log(fail.length ? `\n${fail.length} failed` : '\nall good')
 process.exit(fail.length ? 1 : 0)

@@ -343,7 +343,9 @@ export class RemoteClient extends EventEmitter {
   }
 
   projects(): Promise<Project[]> {
-    return this.ask<Project[]>({ t: 'projects' })
+    // 30 s, not the 15 s default: the PC answered in 9.8 s and 12.1 s and once not within
+    // 15 s (2026-10-01), and a list that times out used to refuse `pf open --on` outright.
+    return this.ask<Project[]>({ t: 'projects' }, 30_000)
   }
 
   agents(): Promise<AgentInfo[]> {

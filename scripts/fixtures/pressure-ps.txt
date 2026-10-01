@@ -1,0 +1,53 @@
+    1     0   8464   2.9 /sbin/launchd
+ 1639     1 178704   4.3 /System/Library/PrivateFrameworks/MediaAnalysis.framework/Versions/A/mediaanalysisd
+ 1642 82785    320   0.0 caffeinate
+ 4127 14102    320   0.0 caffeinate
+ 8001     1 217264  77.7 /System/Library/Frameworks/WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.WebContent.xpc/Contents/MacOS/com.apple.WebKit.WebContent
+ 8230 70914   3456  28.5 top
+14102 70914 227792   8.6 /Users/robertiuoras/.local/bin/claude
+17238 70914 222464   7.8 /Users/robertiuoras/.local/bin/claude
+19342 70914 158528   3.1 /Users/robertiuoras/.local/bin/claude
+21415 70914 227824  13.2 /Users/robertiuoras/.local/bin/claude
+30387 70914 181312   4.6 /Users/robertiuoras/.local/bin/claude
+38321 70914 241856  16.8 /Users/robertiuoras/.local/bin/claude
+43163 70914     96   0.0 caffeinate
+43458 70914     96   0.0 caffeinate
+44248 70914     96   0.0 caffeinate
+45060 70914     96   0.0 caffeinate
+46286 70914     96   0.0 caffeinate
+46989 70914     96   0.0 caffeinate
+47625 70914     96   0.0 caffeinate
+48999 70914     96   0.0 caffeinate
+49636 70914     96   0.0 caffeinate
+50492 70914     96   0.0 caffeinate
+51590 70914     96   0.0 caffeinate
+53344 70914     96   0.0 caffeinate
+54222 70914     96   0.0 caffeinate
+57349 70914     96   0.0 caffeinate
+57949 70914     96   0.0 caffeinate
+59101 70914    112   0.0 caffeinate
+59549 70914    112   0.0 caffeinate
+60878 70914    112   0.0 caffeinate
+63421 70914    112   0.0 caffeinate
+64262 70914    112   0.0 caffeinate
+64263 70914 123872   9.2 /Applications/PaneForge.app/Contents/Frameworks/PaneForge Helper (Renderer).app/Contents/MacOS/PaneForge Helper (Renderer)
+65332 70914     96   0.0 caffeinate
+70914     1 124624   7.1 /Applications/PaneForge.app/Contents/MacOS/PaneForge
+70925 70914  37888   2.3 /Applications/PaneForge.app/Contents/Frameworks/PaneForge Helper (GPU).app/Contents/MacOS/PaneForge Helper (GPU)
+70926 70914   6816   0.0 /Applications/PaneForge.app/Contents/Frameworks/PaneForge Helper.app/Contents/MacOS/PaneForge Helper
+70927 70914  11712   0.0 /Applications/PaneForge.app/Contents/Frameworks/PaneForge Helper.app/Contents/MacOS/PaneForge Helper
+82474 70914 202224   3.0 /Users/robertiuoras/.local/bin/claude
+82542 17238    240   0.0 caffeinate
+82785 70914 236688   3.5 /Users/robertiuoras/.local/bin/claude
+83741 70914 203904  13.9 /Users/robertiuoras/.local/bin/claude
+84324 70914 197216   8.7 /Users/robertiuoras/.local/bin/claude
+85363 84324    240   0.0 caffeinate
+85490 83741    240   0.0 caffeinate
+90443 30387    240   0.0 caffeinate
+90895 21415    240   0.0 caffeinate
+91785     1 445472  68.3 /System/Library/Frameworks/WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.WebContent.xpc/Contents/MacOS/com.apple.WebKit.WebContent
+94547 82474    304   0.0 caffeinate
+94569 38321    304   0.0 caffeinate
+94731 70914 146208   3.8 /Users/robertiuoras/.local/bin/claude
+96735 94731    320   0.0 caffeinate
+97712 19342    320   0.0 caffeinate

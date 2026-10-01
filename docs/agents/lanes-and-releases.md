@@ -49,7 +49,9 @@ there, PreToolUse refuses elsewhere. `node scripts/lane.mjs status --repo <dir>`
   worktrees; subfolder panes/processes protect the whole checkout. Claims preserve unready
   clean-ahead HEAD/index until explicit adoption; damaged recovery folders require backup
   and diagnosis before claim. It never auto-stages deletions or reconstructs folders
-  (`test:lanecompletion`).
+  (`test:lanecompletion`). A worktree missing more than half of its HEAD files reads
+  `damaged` in `status`/`doctor` and is never handed to a chat, not even one standing in it
+  (`test:lanedamaged`).
   If a completion pane ends before adopting a native owner, the pinned task becomes
   durably blocked for explicit delivery/intent inspection. An unconfirmed launch is not
   completion and does not trigger another automatic replay.

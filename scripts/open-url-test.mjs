@@ -134,6 +134,7 @@ const URL='https://github.com/robertiuoras/PaneForge/releases/tag/v0.8.188'
   ok(told.length===1,'a link that will not open reaches the screen')
   ok(told[0].includes(URL),'and the person is told which link')
   ok(el.__copied[0]===URL,'and the link is put on the clipboard, so there is something to do about it')
+  for(let waited=0;waited<2000&&!logged().includes(URL);waited+=20) await sleep(20)
   ok(logged().includes(URL),'the log line carries the URL - four of these were undiagnosable without it')
   ok(logged().includes('a link in a pane'),'and which press it came from')
 
@@ -159,6 +160,7 @@ const URL='https://github.com/robertiuoras/PaneForge/releases/tag/v0.8.188'
   ok(await m.openLocal('/Users/x/Projects','reveal') === false,'failed file cannot acknowledge a review')
   await sleep(100)
   ok(told.length===2,'a folder that does not open is not silent any more')
+  for(let waited=0;waited<2000&&!logged().includes('/Users/x/Projects');waited+=20) await sleep(20)
   ok(logged().includes('/Users/x/Projects'),'and the log names the folder')
 
   clearInterval(alive)

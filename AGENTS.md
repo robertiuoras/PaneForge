@@ -19,7 +19,7 @@ linked below. `test:x` = `npm run test:x`. Paths: `shared/` = `src/shared/`, `ma
   `pf needs-login` (off), offload, screen streaming, the phone/web surface, `pf-ctl`, or touch layout.
 - `docs/agents/pane-lifecycle.md`: read when touching prompt sending, restore/scrollback,
   `/clear`, booting, pane width, recovery, auto-close into Review, autoclear, keep-awake, stale
-  frames, render watchdog, fault notices.
+  frames, render watchdog, fault notices, usage-limit waves (continue after reset + one phone push).
 - `docs/agents/questions-and-agents.md`: read when touching question cards, auto-answer, render
   cost, providers/models, split prompts, `promptForge`, task briefs, interventions.
 - `docs/agents/capacity.md`: read when touching usage sampling, shell/agent jobs, strays, dev

@@ -75,5 +75,13 @@ export function promptStillInBox(painted: string, prompt: string): boolean | nul
     if (!row.trim() || RULE.test(row)) break
     block += ' ' + row
   }
-  return flatten(block).includes(needle)
+  return flatten(block).includes(needle) || PASTED.test(block)
 }
+
+/**
+ * A long paste is drawn as a placeholder, not as its words: Claude Code's `[Pasted text #1
+ * +26 lines]`, Codex's `[Pasted Content 959 chars]` (codex-cli 0.157). Read for its words it is
+ * a composer that does not hold the prompt - and a prompt still waiting in the box was
+ * logged as gone. The placeholder IS the prompt still waiting there.
+ */
+const PASTED = /\[Pasted (?:text #\d+(?: \+\d+ lines?)?|Content \d+ chars)\]/

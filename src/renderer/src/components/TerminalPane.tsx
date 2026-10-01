@@ -6,14 +6,18 @@ import { Terminal, type ILink, type IMarker } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { WebglAddon } from '@xterm/addon-webgl'
-import { allAgents, continuesOnBackslash, pastesClipboardImage } from '../../../shared/agents'
+import { allAgents, continuesOnBackslash, imagePasteKey, pastesClipboardImage } from '../../../shared/agents'
 import { spriteReserve } from '../../../shared/mascot'
 import { mascotRect, onMascotRect } from '../mascotSpot'
 import { unwrapForClipboard } from '../unwrapCopy'
 import {
+  imagePathsInText,
+  OLDER_DESK,
+  olderDeskTypedPaths,
   pasteImageDrop,
   splitDropUris,
-  type AttachIn
+  type AttachIn,
+  type AttachResult
 } from '../../../shared/attach'
 import { FULL_SCROLLBACK } from '../../../shared/capacity'
 import { GRANT_GRACE_MS, nextResize, ptyOwed } from '../../../shared/shrinkFirst'
@@ -331,7 +335,7 @@ function AskCountdown({
 
 // On macOS the clipboard lives on Cmd, which leaves Ctrl+C free to interrupt the agent.
 // Same detector the window-level shortcuts use, so the two halves cannot disagree.
-import { isMac } from '../platform'
+import { isMac, isWindows } from '../platform'
 import { isPhoneClient, viewerName } from '../client'
 
 /**
@@ -1514,6 +1518,12 @@ function TerminalPane({
     typePaths(paths)
   }
 
+  /** A mirrored pane's images typed as paths because the far desk is too old to paste them. */
+  const sayIfOlderDesk = (names: string[], res: AttachResult): void => {
+    if (olderDeskTypedPaths({ agent: agentRef.current, sessionId, names, res }, pastesClipboardImage))
+      toast.current?.(OLDER_DESK)
+  }
+
   /**
    * Hand files to the machine this pane's pty is on, and type the paths it answers with.
    *
@@ -1532,6 +1542,7 @@ function TerminalPane({
     if (!payload.length) return
     const res = await api.attachFiles(sessionId, payload)
     if (res.error) toast.current?.(res.error)
+    sayIfOlderDesk(payload.map((p) => p.name), res)
     typePaths(res.paths)
   }
 
@@ -1553,10 +1564,15 @@ function TerminalPane({
    * `shot.png` is exactly how a mixed batch gets this far: `pasteImageDrop` can only read
    * names and MIME types, and only a decode knows.
    */
-  const pasteImages = async (items: { file?: File; path?: string }[]): Promise<void> => {
+  const pasteImages = async (
+    items: { file?: File; path?: string }[],
+    instead?: () => void
+  ): Promise<void> => {
     /** What this drop does when anything at all goes wrong. Never silent, never partial. */
     const fallBack = async (why?: string): Promise<void> => {
       if (why) toast.current?.(why)
+      // A pasted path that would not decode goes back in as the text that was pasted.
+      if (instead) return instead()
       const files = items.map((i) => i.file).filter((f): f is File => !!f)
       const paths = items.map((i) => i.path).filter((p): p is string => !!p)
       if (files.length) await sendFiles(files)
@@ -1598,7 +1614,7 @@ function TerminalPane({
     for (let i = 0; i < loaded.length; i++) {
       try {
         if (!(await api.putImageOnClipboard(loaded[i]))) return fallBack()
-        api.write(sessionId, RAW_PASTE)
+        api.write(sessionId, imagePasteKey(agentRef.current, isWindows))
       } catch {
         return fallBack('That image reached the clipboard but the pane could not paste it.')
       }
@@ -3063,6 +3079,31 @@ function TerminalPane({
 
     const pasteClipboard = (): void => {
       api.readClipboard().then((text) => {
+        // A copied image PATH (a screenshot's location out of a popup, a Finder path) is
+        // the picture to an agent that reads the clipboard, never the path. A mirrored
+        // pane sends the file over and the other desk pastes it there; a path on this
+        // desk would mean nothing to an agent running on that one.
+        const shots = text ? imagePathsInText(text) : null
+        // A mirrored shell or a CLI that reads no clipboard gets the text it was pasted.
+        if (shots && sessionId.startsWith('@') && pastesClipboardImage(agentRef.current)) {
+          void api
+            .attachPaths(sessionId, shots)
+            .then((res) => {
+              if (res.error) toast.current?.(res.error)
+              sayIfOlderDesk(shots, res)
+              if (res.paths.length) typePaths(res.paths)
+              else if (res.error) t.paste(text)
+            })
+            .catch(() => t.paste(text))
+          return
+        }
+        if (shots && pastesClipboardImage(agentRef.current)) {
+          void pasteImages(
+            shots.map((path) => ({ path })),
+            () => t.paste(text)
+          ).catch(() => t.paste(text))
+          return
+        }
         if (text) {
           t.paste(text)
           return
@@ -3074,12 +3115,15 @@ function TerminalPane({
         // from a ^V, and for a MIRRORED pane, whose agent reads the far desk's clipboard
         // and not this one.
         if (pastesClipboardImage(agentRef.current) && !sessionId.startsWith('@')) {
-          api.write(sessionId, RAW_PASTE)
+          api.write(sessionId, imagePasteKey(agentRef.current, isWindows))
           return
         }
         // It is saved as a file on the machine that owns this pty and the PATH is typed.
         void api.attachClipboardImage(sessionId).then((res) => {
+          // The other desk pasted it as a picture: another ^V would paste it twice.
+          if (res.pasted) return
           if (res.paths.length) {
+            sayIfOlderDesk(['clipboard.png'], res)
             typePaths(res.paths)
             return
           }
@@ -3867,6 +3911,20 @@ function TerminalPane({
       // own schedule, so a resize issued straight after `write` can land before the bytes
       // it is meant to be wider than.
       t.write(prep(split.before), () => {
+        if (split.afterCols && split.after) {
+          // The pane's own output, drawn wider than the pane is now: it was narrowed since
+          // (a pane opened beside it, a mirror's borrow). Written at that width and narrowed
+          // once, still `replaying`, so xterm re-wraps it rather than clamping every line
+          // into the right edge - which is where a mirror's doubled footers came from.
+          t.resize(split.afterCols, backRows)
+          t.write(prep(split.after), () => {
+            t.resize(back, backRows)
+            replaying.current = false
+            reshape(t, f)
+            done()
+          })
+          return
+        }
         t.resize(back, backRows) // still `replaying`: not a narrowing to rewrap
         replaying.current = false
         // ...and a fit, because a resize that arrived while `replaying` was set was
@@ -4121,6 +4179,9 @@ function TerminalPane({
       setHandoverUntil(until > Date.now() ? until : 0)
     })
 
+    // Set by `redrawHistory` while its snapshot is on the way: widen when it LANDS, not
+    // when it is asked for. See there.
+    let widenForReset: (() => void) | null = null
     const receiveReset = (id: string, snapshot: string): void => {
       if (id !== sessionId) return
       if (dead) return
@@ -4128,6 +4189,9 @@ function TerminalPane({
         replayEvents.push(() => receiveReset(id, snapshot))
         return
       }
+      const widen = widenForReset
+      widenForReset = null
+      widen?.()
       if (initialReplay) {
         const settle = initialReplay
         initialReplay = undefined
@@ -4391,9 +4455,15 @@ function TerminalPane({
     let redrawingHistory = false
     const redrawHistory = async (): Promise<boolean> => {
       if (redrawingHistory || dead) return false
+      // A CLI on the ALTERNATE screen (Codex) has no scrollback for history to go into, and
+      // a replay opens with `ESC c`, which drops that screen along with the mouse and paste
+      // modes the CLI set once at its start and never sends again: the pane stops taking
+      // the wheel (2026-09-29, card 2). Codex keeps its own history (Ctrl+T); the repaint
+      // `repair` already asked for is the whole fix here.
+      if (t.buffer.active.type === 'alternate') return false
       redrawingHistory = true
-      const back = t.cols
-      const wide = Math.max(back, replayColsRef.current ?? 0, START_COLS)
+      let back = t.cols
+      let wide = back
       try {
         // Finish already queued terminal writes before changing their painted width.
         await new Promise<void>(resolve => t.write('', resolve))
@@ -4408,8 +4478,17 @@ function TerminalPane({
         // the borrow back above already hands the pty the desk's.
         if (!mirrorRef.current && !gridRef.current)
           api.resize(sessionId, back, t.rows, isPhoneClient(), viewerName())
-        replaying.current = true
-        if (wide !== back) t.resize(wide, t.rows)
+        // Widened when the snapshot ARRIVES, never while it is on the way. A mirror's comes
+        // over the link: measured 2026-09-29 on a PC pane mirrored at 133, Fix held this
+        // terminal at 143 for about 7 s with no fit allowed (`replaying`), so the far end's
+        // live frames landed at the wrong width - the right edge cut off, the status footer
+        // twice - and a second press in that time repaired nothing.
+        widenForReset = () => {
+          back = t.cols
+          wide = Math.max(back, replayColsRef.current ?? 0, START_COLS)
+          replaying.current = true
+          if (wide !== back) t.resize(wide, t.rows)
+        }
         // Main delivers the snapshot through the same ordered reset/data stream. Reading
         // a log here and then resetting could erase output that arrived during that read.
         const restored = await api.replayHistory(sessionId)
@@ -4420,6 +4499,7 @@ function TerminalPane({
         if (!dead) say(error instanceof Error ? error.message : 'History is unavailable from that device')
         return false
       } finally {
+        widenForReset = null
         redrawingHistory = false
         replaying.current = false
         if (!dead) {
@@ -5014,6 +5094,7 @@ function TerminalPane({
           .attachPaths(sessionId, dropped)
           .then((res) => {
             if (res.error) toast.current?.(res.error)
+            sayIfOlderDesk(dropped, res)
             typePaths(res.paths)
           })
           .catch(() => toast.current?.('Could not send that file to the other device.'))
