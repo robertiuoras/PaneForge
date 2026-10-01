@@ -18,7 +18,7 @@ import { get } from 'node:https'
 import { join } from 'node:path'
 import { BrowserWindow, app, net } from 'electron'
 import { stagedTooLong, updateIgnored } from '../shared/updateStale'
-import { freshRun, healthWords, noteAnswer, noteTimeout, probeStuck, stuckWords, type ProbeRun } from '../shared/updateProbe'
+import { freshRun, healthWords, noteAnswer, noteTimeout, probeStuck, recentSleeps, stuckWords, type ProbeRun } from '../shared/updateProbe'
 import { applyAtLaunch } from '../shared/launchInstall'
 import { failedInstall } from '../shared/installWedge'
 import { pickRelease } from '../shared/pickRelease'
@@ -257,7 +257,7 @@ function unwedge(): void {
     // explanation of it. Counted apart from wedges, so the health line stops reading
     // "154 wedges" for a laptop that spent three nights with its lid shut.
     log('slept', `${held} was in flight when the machine slept for ${Math.round(slept / 1000)}s (${secs}s on the clock) - dropping it and looking again`)
-    noteSleep()
+    noteSleep(now)
   } else {
     const cause = `${phaseNet || 'network unknown'} when it started, ${netWord()} now`
     log('wedged', `${held} never finished after ${secs}s (${cause}) - dropping it and looking again`)
@@ -349,7 +349,7 @@ function busy(): boolean {
 // like nothing to do. One small file survives the restart and turns that into a number.
 const HEALTH = () => join(app.getPath('userData'), 'update-health.json')
 
-type Health = { lastGood: number; wedges: number; lastWedge?: string; superseded: number; sleeps: number }
+type Health = { lastGood: number; wedges: number; lastWedge?: string; superseded: number; sleptAt: number[] }
 
 function readHealth(): Health {
   try {
@@ -359,10 +359,11 @@ function readHealth(): Health {
       wedges: Number(raw.wedges) || 0,
       lastWedge: raw.lastWedge,
       superseded: Number(raw.superseded) || 0,
-      sleeps: Number(raw.sleeps) || 0
+      // An old file's lifetime `sleeps` total is ignored: it had no date to age out by.
+      sleptAt: recentSleeps(raw.sleptAt, Date.now())
     }
   } catch {
-    return { lastGood: 0, wedges: 0, superseded: 0, sleeps: 0 }
+    return { lastGood: 0, wedges: 0, superseded: 0, sleptAt: [] }
   }
 }
 
@@ -391,10 +392,10 @@ function noteWedge(what: string): void {
   writeHealth({ ...h, wedges: h.wedges + 1, lastWedge: `${new Date().toISOString()} ${what}` })
 }
 
-/** A check the machine slept through. Its own count: it says nothing about the feed. */
-function noteSleep(): void {
+/** A check the machine slept through, dated: it says nothing about the feed. A postponed poll is not one. */
+function noteSleep(now: number): void {
   const h = readHealth()
-  writeHealth({ ...h, sleeps: h.sleeps + 1 })
+  writeHealth({ ...h, sleptAt: recentSleeps([...h.sleptAt, now], now) })
 }
 
 // --- a staged build nobody ever installs ------------------------------------

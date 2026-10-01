@@ -125,7 +125,8 @@ still sit for days: the rule working. `src/main` never consumes
 45min, `PROBE_BUDGET_MS` 5min, `POLL_WATCHDOG_MS` 6min; quit gated `stagedInstallable()`.
 `update-health.json`, 3d = `STALE` (`test:updater`, `test:wedge`). "Never finished" at 10-17
 min = laptop ASLEEP: `shared/wakeWatch.ts` (5s tick, >30s gap) writes `slept`,
-`health.sleeps`, defers `WAKE_SETTLE_MS` 20s; `net::ERR_TIMED_OUT` = one `late answer` line.
+`health.sleptAt`, defers `WAKE_SETTLE_MS` 20s; `net::ERR_TIMED_OUT` = one `late answer` line.
+Health `sleptAt` = dated sleeps, launch line says only the last 24h (old `sleeps` total ignored).
 An install that came back on the old version is never silent: `install-attempt.json` older
 than `app.getVersion()` = `UpdateState.installFailed`, card with that version's installer +
 Try again. Windows install waits for pane pids (5s) and the installer stops everything run

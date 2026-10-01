@@ -23,7 +23,7 @@ buildSync({
   format: 'esm',
   platform: 'node'
 })
-const { STUCK_AFTER, TIMEOUT_WINDOW_MS, freshRun, healthWords, noteAnswer, noteTimeout, probeStuck, stuckWords } =
+const { STUCK_AFTER, TIMEOUT_WINDOW_MS, freshRun, healthWords, noteAnswer, noteTimeout, probeStuck, recentSleeps, stuckWords } =
   await import(pathToFileURL(outfile).href)
 
 let failed = 0
@@ -77,14 +77,27 @@ ok('a probe answer while a build is staged counts as a good check',
   /probeFails = 0\s*noteGood\(\)/.test(updater.slice(updater.indexOf('async function supersede('))))
 {
   const good = Date.parse('2026-09-23T13:58:00Z')
-  const old = { lastGood: good, wedges: 189, lastWedge: '2026-09-18T01:34:48.738Z 3 update probes timed out over 51 min', sleeps: 0 }
+  const old = { lastGood: good, wedges: 189, lastWedge: '2026-09-18T01:34:48.738Z 3 update probes timed out over 51 min', sleptAt: [] }
   const line = healthWords(old, good + 5 * MIN).line
   ok('a wedge the feed has answered since is not re-printed', line === 'last good update check 0h ago', line)
   const open = { ...old, lastGood: Date.parse('2026-09-18T01:00:00Z') }
   const still = healthWords(open, Date.parse('2026-09-18T02:00:00Z')).line
   ok('...a wedge with no good answer after it still is', /189 wedge\(s\) recovered, last 2026-09-18T01:34:48\.738Z 3 update probes/.test(still), still)
   ok('three days without an answer reads STALE', healthWords(old, good + 72 * 3_600_000).stale)
-  ok('no answer on record says so', /no good update check on record yet \(2 wedge/.test(healthWords({ lastGood: 0, wedges: 2, sleeps: 0 }, good).line))
+  ok('no answer on record says so', /no good update check on record yet \(2 wedge/.test(healthWords({ lastGood: 0, wedges: 2, sleptAt: [] }, good).line))
+  // Sleeps are dated like wedges (2026-09-30: "4 check(s) lost to the machine sleeping"
+  // printed at every launch for days off a lifetime total).
+  const now = good + 5 * MIN
+  const recent = healthWords({ ...old, sleptAt: [now - 3_600_000, now - 7_200_000] }, now).line
+  ok('sleeps in the last 24h are said, counted', /, 2 check\(s\) lost to the machine sleeping in the last 24h$/.test(recent), recent)
+  const aged = healthWords({ ...old, sleptAt: [now - 25 * 3_600_000, now - 3_600_000] }, now).line
+  ok('a sleep older than 24h is not counted', /, 1 check\(s\) lost/.test(aged), aged)
+  ok('...and none inside 24h says nothing about sleep', !/sleep/.test(healthWords({ ...old, sleptAt: [now - 30 * 3_600_000] }, now).line))
+  ok('an old-format file (sleeps, no sleptAt) prints nothing about sleep', !/sleep/.test(healthWords({ ...old, sleeps: 4 }, now).line))
+  ok('...also with no good check on record', !/sleep/.test(healthWords({ lastGood: 0, wedges: 0, sleeps: 4 }, now).line))
+  ok('recentSleeps keeps the last 24h, capped at 50, newest kept',
+    recentSleeps(Array.from({ length: 80 }, (_, i) => now - 80 + i).concat([now - 48 * 3_600_000]), now).length === 50
+    && recentSleeps('junk', now).length === 0)
   ok('logHealth prints the shared words', /healthWords\(readHealth\(\), Date\.now\(\)\)/.test(updater))
   // ...and the staged re-check stops writing the same two lines every ten minutes, while
   // a newer version still says so on its own line.
