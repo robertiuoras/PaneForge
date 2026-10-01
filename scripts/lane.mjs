@@ -66,7 +66,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { fileURLToPath } from 'node:url'
 import { homedir, hostname, tmpdir } from 'node:os'
 import { closeTestApps } from './test-app.mjs'
-import { mergeAutoConflicts, mergeImportConflicts, mergeJsonListAdds, mergeTableRowConflicts } from './lane-merge.mjs'
+import { countedSuffixes, maskCounts, mergeAutoConflicts, mergeImportConflicts, mergeJsonListAdds, mergeListAddConflicts, recount } from './lane-merge.mjs'
 import {
   CLAIM_NS,
   LOCK_REF,
@@ -1466,7 +1466,7 @@ function autoResolve(dir, files) {
     } catch {
       return []
     }
-    const merged = mergeAutoConflicts(text, f) ?? mergeFromSides(dir, f)
+    const merged = mergeFromSides(dir, f, text)
     if (merged === null) return []
     writes.push([join(dir, f), merged])
   }
@@ -1476,14 +1476,18 @@ function autoResolve(dir, files) {
 }
 
 /**
- * The rules that need the three whole versions rather than the markers: a generated JSON
- * list (git cuts its hunks mid-entry) and table rows (only the base tells an added row from
- * a rewritten one). Read from the index stages an open merge holds - 1 base, 2 ours, 3
- * theirs - so it is the same on the lane side and the release side. null = not settled.
+ * The marker rules (`mergeAutoConflicts`), plus the rules that need the three whole versions
+ * rather than the markers: a generated JSON list (git cuts its hunks mid-entry), and markdown
+ * list items (only the base tells an added row from a rewritten one) under count lines both
+ * sides bumped (`countedSuffixes`). Read from the index stages an open merge holds - 1 base,
+ * 2 ours, 3 theirs - so it is the same on the lane side and the release side. Markdown tries
+ * the sides first: the marker rule joins two bullet lists and leaves the count above them one
+ * short. null = not settled.
  */
-function mergeFromSides(dir, f) {
+function mergeFromSides(dir, f, text) {
+  const marked = () => mergeAutoConflicts(text, f)
   const json = f.endsWith('.json')
-  if (!json && !f.endsWith('.md')) return null
+  if (!json && !f.endsWith('.md')) return marked()
   const run = (args) =>
     execFileSync('git', args, { windowsHide: true,
       cwd: dir,
@@ -1498,23 +1502,27 @@ function mergeFromSides(dir, f) {
     // Raw, not through git(): its trim() would eat the file's last newline.
     ;[base, ours, theirs] = [1, 2, 3].map((n) => run(['show', `:${n}:${f}`]))
   } catch {
-    return null // added on both sides, deleted on one: no base, nothing to settle
+    return marked() // added on both sides, deleted on one: no base for these rules
   }
-  if (json) return mergeJsonListAdds(base, ours, theirs)
+  if (json) return marked() ?? mergeJsonListAdds(base, ours, theirs)
+  const counted = countedSuffixes([base, ours, theirs])
   const tmp = mkdtempSync(join(tmpdir(), 'pf-merge-'))
   try {
-    const paths = [['ours', ours], ['base', base], ['theirs', theirs]].map(([name, text]) => {
-      writeFileSync(join(tmp, name), text)
+    const paths = [['ours', ours], ['base', base], ['theirs', theirs]].map(([name, side]) => {
+      writeFileSync(join(tmp, name), maskCounts(side, counted))
       return join(tmp, name)
     })
-    let diff3
+    let listed = null
     try {
-      diff3 = run(['merge-file', '-p', '--diff3', '-L', 'ours', '-L', 'base', '-L', 'theirs', ...paths])
+      // Exit 0: with the counts set aside nothing conflicts at all.
+      listed = run(['merge-file', '-p', '--diff3', '-L', 'ours', '-L', 'base', '-L', 'theirs', ...paths])
     } catch (e) {
       // It exits with the number of conflicts, and that is the case this is for.
-      diff3 = e.status > 0 && e.status < 128 && typeof e.stdout === 'string' ? e.stdout : null
+      const diff3 = e.status > 0 && e.status < 128 && typeof e.stdout === 'string' ? e.stdout : null
+      listed = diff3 === null ? null : mergeListAddConflicts(diff3)
     }
-    return diff3 === null ? null : mergeTableRowConflicts(diff3)
+    const settled = listed ?? marked()
+    return settled === null ? null : recount(settled, counted)
   } finally {
     rmSync(tmp, { recursive: true, force: true })
   }

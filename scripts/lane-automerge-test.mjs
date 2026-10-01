@@ -21,11 +21,14 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { installLane } from './lane-fixture.mjs'
 import {
+  countedSuffixes,
+  maskCounts,
   mergeAutoConflicts,
   mergeImportConflicts,
   mergeJsonListAdds,
+  mergeListAddConflicts,
   mergeMarkdownConflicts,
-  mergeTableRowConflicts
+  recount
 } from './lane-merge.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -290,16 +293,37 @@ const d3 = (ours, base, theirs) =>
   ['| Research | Checked |', '|---|---|', '<<<<<<< ours', ...ours, '||||||| base', ...base, '=======', ...theirs, '>>>>>>> theirs', '| [Old](old.md) | 2026-09-01 |', ''].join('\n')
 const rowA = '| [Wispr vs light dictation](a.md) | 2026-10-02 |'
 const rowB = '| [WordPress editing](b.md) | 2026-10-01 |'
-const rows = mergeTableRowConflicts(d3([rowA], [], [rowB]))
+const rows = mergeListAddConflicts(d3([rowA], [], [rowB]))
 ok('two chats each adding a table row keep both rows, ours first', rows?.split('\n').slice(2, 4).join('\n') === `${rowA}\n${rowB}`, rows)
 ok('and no marker survives', rows !== null && !/^(<{7}|\|{7}|={7}|>{7})/m.test(rows), rows)
 ok(
   'a row one side REWROTE is a decision (research-lab 4c61956), so it still asks',
-  mergeTableRowConflicts(d3(['| [AI diagnostic offer](x.md) | 2026-09-20 |', rowA], ['| [AI diagnostic offer](x.md) | 2026-09-20 |'], ['| [AI diagnostic and agency offers](x.md) | 2026-09-20 |'])) === null
+  mergeListAddConflicts(d3(['| [AI diagnostic offer](x.md) | 2026-09-20 |', rowA], ['| [AI diagnostic offer](x.md) | 2026-09-20 |'], ['| [AI diagnostic and agency offers](x.md) | 2026-09-20 |'])) === null
 )
-ok('without the base nobody can tell added from rewritten, so it asks', mergeTableRowConflicts(hunk([rowA], [rowB])) === null)
-ok('a header rule inside the hunk is a new table, not a row: it asks', mergeTableRowConflicts(d3([rowA, '|---|---|'], [], [rowB])) === null)
-ok('prose beside the rows is not a row: it asks', mergeTableRowConflicts(d3([rowA], [], [rowB, 'A paragraph about it.'])) === null)
+ok('without the base nobody can tell added from rewritten, so it asks', mergeListAddConflicts(hunk([rowA], [rowB])) === null)
+ok('a header rule inside the hunk is a new table, not a row: it asks', mergeListAddConflicts(d3([rowA, '|---|---|'], [], [rowB])) === null)
+ok('prose beside the rows is not a row: it asks', mergeListAddConflicts(d3([rowA], [], [rowB, 'A paragraph about it.'])) === null)
+
+// library/README.md is the same finding as a bullet under its category, with a count line
+// above the list that BOTH sides bump - 3 more refusals since 2026-09-01, and when both wrote
+// the same number the bullet rule joined the lists and left the count one short. The count
+// is set aside for the merge and counted again after, only when every side's counts were true.
+const README = (n, extra) => ['# Library', '', '## Offers', '', `${n + 1} source notes.`, '', ...extra, '- [Old](old.md) (draft)', '', '## Other', '', '1 source notes.', '', '- [Z](z.md) (draft)', ''].join('\n')
+const bulletA = '- [Wispr vs light dictation](a.md) (draft)'
+const bulletB = '- [WordPress editing](b.md) (draft)'
+const bulletC = '- [Retell pricing](c.md) (draft)'
+ok(
+  'two bullet lists each side added settle like table rows',
+  mergeListAddConflicts(['<<<<<<< ours', bulletA, '||||||| base', '=======', bulletB, '>>>>>>> theirs', ''].join('\n')) === [bulletA, bulletB, ''].join('\n')
+)
+const sides = [README(0, []), README(1, [bulletA]), README(2, [bulletB, bulletC])]
+const counted = countedSuffixes(sides)
+ok('a count line that states its list on every side is one the merge may count', counted.size === 1 && counted.has(' source notes.'), [...counted])
+ok('set aside, the three counts read the same', new Set(sides.map((t) => maskCounts(t, counted).split('\n')[4])).size === 1)
+ok('and counted again after the merge', recount(maskCounts(README(3, [bulletA, bulletB, bulletC]), counted), counted) === README(3, [bulletA, bulletB, bulletC]))
+const lying = sides.map((t, i) => (i ? t.replace(/^\d+ source notes\.$/m, '9 source notes.') : t))
+ok('a count that never matched its list (research-lab before 2026-10, 122 over 145) is never rewritten', countedSuffixes(lying).size === 0)
+ok('a line that only starts with a number is not a count', countedSuffixes(['2026 was the year.\n- [x](x.md)\n']).size === 0)
 
 const entry = (id, title) => ({ id, kind: 'research', title, tags: [], feed: '' })
 const old = entry('catalog:old', 'Old finding')
@@ -333,18 +357,22 @@ const CATALOG = (extra) => ['# Catalog', '', '| Research | Checked |', '|---|---
 mkdirSync(join(repo, 'library'), { recursive: true })
 commit(repo, 'CATALOG.md', CATALOG([]), 'catalog')
 commit(repo, 'library/index.json', asFile([old]), 'index')
+commit(repo, 'library/README.md', README(0, []), 'readme')
 const third = JSON.parse(lane('claim', '--session', 'sess-d').out)
 git(third.dir, 'merge', '-q', 'master')
 writeFileSync(join(third.dir, 'library', 'index.json'), asFile([entry('catalog:a', 'Wispr'), old]))
+writeFileSync(join(third.dir, 'library', 'README.md'), README(1, [bulletA]))
 commit(third.dir, 'CATALOG.md', CATALOG([rowA]), 'lane files its finding')
 writeFileSync(join(repo, 'library', 'index.json'), asFile([entry('catalog:b', 'WordPress'), old]))
+writeFileSync(join(repo, 'library', 'README.md'), README(1, [bulletB]))
 commit(repo, 'CATALOG.md', CATALOG([rowB]), 'master files another finding')
 const filed = lane('ready', '--session', 'sess-d')
-ok('a lane that only added its own catalog row and index entry finishes by itself', filed.code === 0, filed.err || filed.out)
+ok('a lane that only added its own catalog row, index entry and library bullet finishes by itself', filed.code === 0, filed.err || filed.out)
 ok('and is not left conflicted', laneOf(third.lane).conflicted === false)
 const cat = readFileSync(join(third.dir, 'CATALOG.md'), 'utf8')
 ok('the catalog has both rows', cat.includes(rowA) && cat.includes(rowB) && !/^(<{7}|\|{7}|={7}|>{7})/m.test(cat), cat)
 const idx = readFileSync(join(third.dir, 'library', 'index.json'), 'utf8')
+ok('the library page has both bullets and counts 3', readFileSync(join(third.dir, 'library', 'README.md'), 'utf8') === README(2, [bulletA, bulletB]), readFileSync(join(third.dir, 'library', 'README.md'), 'utf8'))
 ok('the index has both entries, still valid JSON', (() => { try { return JSON.parse(idx).length === 3 } catch { return false } })(), idx)
 
 console.log(failed ? `\n${failed} failed` : '\nall good')
