@@ -2191,7 +2191,9 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
       return w.dirty || w.ahead > 0 || Boolean(state.ready[id]) || Boolean(state.conflicts[id])
     }
     const earlier = Object.entries(state.lanes)
-      .filter(([, c]) => c.pane === PANE && c.session !== session && c.ended)
+      // A folder missing most of its files (damageOf) is not work to carry on: the pane's
+      // new chat takes another lane and the earlier hold stays where it is for a person.
+      .filter(([id, c]) => c.pane === PANE && c.session !== session && c.ended && !laneWork(id).damaged)
       .map(([id, c]) => ({ id, c, work: hasWork(id) }))
       // Work first, then the most recently heard from.
       .sort((x, y) => y.work - x.work || (y.c.seen ?? 0) - (x.c.seen ?? 0))
@@ -2320,12 +2322,27 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
   // An absent owner does not make their unfinished edits available to a new task.
   // Keep explicit recovery (`wanted`) and same-session resumes above, but exclude
   // dirty orphans from every automatic choice, including last-resort fallbacks.
+  //
+  // A folder missing most of its files (`damageOf`) is the same, only stricter: it is also
+  // never handed to a chat that ASKS for it. `wanted` below goes around this chooser, and the
+  // hook derives `prefer` from the folder a chat is standing in, so a new chat standing in a
+  // damaged copy was handed it. Skipping it sends that chat to a working lane. Damaged
+  // implies dirty (the deletions are the dirt), so every other path that refuses dirty lanes
+  // (`idleEmpty`, the `main` takeover) already refuses it too; the other way in, carrying an
+  // ended chat's hold to the pane's next chat, is closed above.
+  const damaged = new Set()
   const unfinished = new Set(order.filter((id) => {
     if (state.lanes[id]) return false
     const work = laneWork(id)
+    if (work.damaged) {
+      damaged.add(id)
+      return false
+    }
     return work.dirty || (work.ahead > 0 && !state.ready[id])
   }))
-  const spare = order.filter((id) => !state.lanes[id] && !state.conflicts[id] && !unfinished.has(id))
+  const spare = order.filter(
+    (id) => !state.lanes[id] && !state.conflicts[id] && !unfinished.has(id) && !damaged.has(id)
+  )
   // A lane whose FOLDER another chat is standing in is the last one to hand out.
   //
   // A hold records the chat's own cwd, and that is not always the lane it was given:
@@ -2363,7 +2380,7 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
   // Same rule as `pick`, and it has to be repeated here because `wanted` is the one path
   // that goes AROUND the chooser: a chat standing in `<repo>-a` asks for lane a by name,
   // and honouring that while a is mid-conflict hands it exactly what the tiers refuse.
-  const wanted = prefer && !state.lanes[prefer] && !state.conflicts[prefer] ? prefer : null
+  const wanted = prefer && !state.lanes[prefer] && !state.conflicts[prefer] && !damaged.has(prefer) ? prefer : null
   let free = (wanted && !squatted.has(wanted) ? wanted : null) ?? pick(spare) ?? wanted ?? spare[0]
   // A worktree is a cost - a second checkout, a branch, and a merge at the end - and a
   // chat alone in a repository should not pay it. `main` is the repository itself, so the
@@ -2451,7 +2468,9 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
     if (peerTrunk) {
       // Same chooser as the pool above, so there is one definition of "a lane worth
       // handing out" rather than a second one here that nothing exercises.
-      const spare = pick(order.filter((id) => id !== 'main' && !state.lanes[id] && !unfinished.has(id)))
+      const spare = pick(
+        order.filter((id) => id !== 'main' && !state.lanes[id] && !unfinished.has(id) && !damaged.has(id))
+      )
       // No letter left is not a reason to refuse a chat a checkout: the local ledger is
       // still the authority on this machine, and a shared trunk that is reported is a far
       // smaller problem than a chat that cannot start. The word travels either way -
@@ -2471,7 +2490,9 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
     const why = [
       held.join(', '),
       stuck.length && `conflicted: ${stuck.join(', ')}`,
-      unfinished.size && `uncommitted: ${[...unfinished].join(', ')} (preserved; explicitly claim the original checkout to recover)`
+      unfinished.size && `uncommitted: ${[...unfinished].join(', ')} (preserved; explicitly claim the original checkout to recover)`,
+      damaged.size &&
+        `missing most of its files: ${[...damaged].join(', ')} (a copy that never finished being made; not handed to any chat - check it and move it out of the way)`
     ].filter(Boolean).join('; ')
     throw new Error(`all lanes busy: ${why}`)
   }
@@ -2902,7 +2923,44 @@ function laneWorkNow(id) {
   const dirty = Boolean(porcelain)
   const branch = id === 'main' ? MB : laneBranch(id)
   const ahead = id === 'main' ? unreleasedOnMaster() : aheadOf(laneBranch(id))
-  return { dirty, ahead, touchedAt: lastTouched(dir, porcelain, ahead > 0 ? branch : null) }
+  return { dirty, ahead, touchedAt: lastTouched(dir, porcelain, ahead > 0 ? branch : null), ...damageOf(dir, porcelain) }
+}
+
+/**
+ * A folder that IS a worktree but never finished being made: git still lists every file of
+ * the branch, almost none of them are on disk. Measured on taskdriver.ai-a 2026-09-30
+ * (8:45pm): 4,461 staged deletions, only `.claude/` and `..app/` left. `laneWorkNow` read
+ * that as `dirty: true, broken: false` - a chat mid-edit - and the folder was handed to a
+ * new chat, whose SessionStart hook crashed on a missing module because the scripts it runs
+ * were among the files that were gone.
+ *
+ * Damaged = more than half of the files tracked at HEAD are missing (deleted in the index or
+ * on disk). Nothing here repairs or stages anything: those deletions are not anybody's
+ * intent, and what is left in the folder is for a person to diagnose (recorded decision,
+ * docs/agents/lanes-and-releases.md: damaged folders are backed up and diagnosed, never
+ * rebuilt by the engine).
+ *
+ * Costs nothing for a normal lane: the porcelain is already in hand, and only a lane showing
+ * DAMAGED_MIN_DELETED deletions asks git anything more (one `ls-tree`). `ls-tree`, not
+ * `ls-files` - in this state the index has been emptied too, so it would answer "almost
+ * nothing is tracked" and nothing would be half gone. A failed count is "cannot tell", never
+ * "damaged".
+ */
+const DAMAGED_MIN_DELETED = 10
+function damageOf(dir, porcelain) {
+  let missing = 0
+  for (const line of porcelain.split('\n')) {
+    // `XY path`; X = index against HEAD, Y = disk against index. `git()` trims its output,
+    // so the first line may arrive with only one code (` D a` is `D a`) - either way a D
+    // there is "tracked at HEAD, gone now". `AD`/`RD` were never at HEAD under that name.
+    const m = /^([ MADRCUT?!]{1,2})[ \t]+/.exec(line)
+    if (m && m[1].includes('D') && !/^[ARC]/.test(m[1])) missing++
+  }
+  if (missing < DAMAGED_MIN_DELETED) return {}
+  const tree = gitSafe(dir, 'ls-tree', '-r', '--name-only', 'HEAD')
+  const tracked = tree.ok && tree.out ? tree.out.split('\n').length : 0
+  if (!tracked || missing * 2 <= tracked) return {}
+  return { damaged: true, missingFiles: missing, trackedFiles: tracked }
 }
 
 /**
@@ -2949,7 +3007,8 @@ function releaseHolds(state) {
 function busyDetail(id) {
   const w = laneWork(id)
   const what = []
-  if (w.dirty) what.push('uncommitted edits')
+  if (w.damaged) what.push('a folder missing most of its files')
+  else if (w.dirty) what.push('uncommitted edits')
   if (id !== 'main' && w.ahead > 0) what.push(`${w.ahead} unmerged commit${w.ahead === 1 ? '' : 's'}`)
   const age = w.touchedAt ? `, last touched ${Math.round((now() - w.touchedAt) / 60000)}m ago` : ''
   return `${id} (${what.join(' + ') || 'work'}${age})`
@@ -4775,6 +4834,11 @@ function statusOf(state, session, held) {
         // The folder is there and is not a checkout of this repository - a leftover, or a
         // separate clone squatting on the lane's path. Nothing here merges or releases it.
         broken: Boolean(w.broken),
+        // The folder is a worktree of this repo and most of its files are gone (see
+        // damageOf). Separate from `broken`, which stays "not a worktree at all".
+        damaged: Boolean(w.damaged),
+        missingFiles: w.missingFiles ?? 0,
+        trackedFiles: w.trackedFiles ?? 0,
         ready: Boolean(state.ready[id]),
         conflicted: Boolean(state.conflicts[id]),
         // Enough for a hook (or PaneForge) to say "this one is stuck, and here is who
@@ -4908,7 +4972,12 @@ function doctor() {
       what.push(
         `its folder is NOT a worktree of this repo - a leftover or a separate clone at that path. Nothing here merges or releases what is in it`
       )
-    if (l.dirty) what.push('uncommitted edits')
+    if (l.damaged)
+      what.push(
+        `its folder is missing most of its files (${l.missingFiles} of ${l.trackedFiles}) - a copy that never finished being made. It is not handed to a new chat; check it and move it out of the way`
+      )
+    // The deletions of a damaged folder are not edits anybody made.
+    if (l.dirty && !l.damaged) what.push('uncommitted edits')
     if (l.ahead) what.push(`${l.ahead} commit${l.ahead === 1 ? '' : 's'} ${MB} does not have`)
     if (l.ready) what.push('finished, waiting for the next release')
     if (l.conflicted) what.push(`conflicts with ${MB} (${l.conflict?.detail || 'unknown files'})`)
