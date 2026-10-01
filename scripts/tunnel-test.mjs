@@ -20,6 +20,7 @@ process.env.PF_TUNNEL_URL_MS = '2000'
 process.env.PF_TUNNEL_PROBE_MS = '1500'
 process.env.PF_TUNNEL_START_MS = '8000'
 process.env.PF_TUNNEL_RESOLVE_MS = '600'
+process.env.PF_TUNNEL_HEAL_MS = '200'
 
 import { buildSync } from 'esbuild'
 import { chmodSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs'
@@ -373,6 +374,76 @@ if (process.platform === 'win32') {
   ok(alive(ours), 'our own child is never swept')
   ok(alive(elsewhere), 'and a second profile on its own port is not in scope')
   for (const c of [lost, ours, elsewhere]) c.kill()
+}
+
+// ---- 6. the permanent address comes back by itself ------------------------------------
+
+{
+  // A stateful stand-in for tailscaled: whether it is up, and what 443 forwards to.
+  const ts = { up: false, proxy: 0, calls: [] }
+  const host = 'roberts-macbook-pro.tail6c8b58.ts.net'
+  const run = async (_bin, args) => {
+    const a = args.join(' ')
+    ts.calls.push(a)
+    const none = { out: '', err: '', code: 0 }
+    if (a === 'status --json') {
+      if (!ts.up) return { out: '', err: 'failed to connect to local tailscaled', code: 1 }
+      return {
+        out: JSON.stringify({ BackendState: 'Running', Self: { DNSName: host + '.' }, CertDomains: [host] }),
+        err: '',
+        code: 0
+      }
+    }
+    if (a === 'funnel status --json') {
+      const Web = ts.proxy
+        ? { [host + ':443']: { Handlers: { '/': { Proxy: `http://127.0.0.1:${ts.proxy}` } } } }
+        : {}
+      return { out: JSON.stringify({ TCP: { 443: { HTTPS: true } }, Web }), err: '', code: 0 }
+    }
+    if (a === 'funnel status') return { out: `https://${host} (Funnel on)`, err: '', code: 0 }
+    if (a.startsWith('funnel --bg')) {
+      ts.proxy = Number(a.split(' ').pop())
+      return none
+    }
+    if (a === 'funnel --https=443 off') {
+      ts.proxy = 0
+      return none
+    }
+    return none
+  }
+  const lines = []
+  const t = new Tunnel({
+    dir: join(work, 'bin'),
+    funnel: { binary: '/stub/tailscale', run },
+    binary: nodeShim(stub('ok')),
+    probe: async () => true,
+    log: (l) => lines.push(l)
+  })
+  const wait = (n) => new Promise((r) => setTimeout(r, n))
+  const s = await t.start(7411)
+  ok(s.phase === 'up' && s.via !== 'tailscale', 'tailscaled not up at launch: cloudflared answers meanwhile', JSON.stringify(s))
+  ts.up = true
+  await wait(900)
+  ok(t.state().phase === 'up' && t.state().via === 'tailscale', 'once tailscaled is up the permanent address takes over', JSON.stringify(t.state()))
+  ok(ts.proxy === 7411, '443 forwards to this app')
+  ok(lines.some((l) => /re-asserted/.test(l)), 'and the re-assert left one log line', lines.join('|'))
+
+  const before = ts.calls.length
+  await wait(700)
+  const quiet = ts.calls.slice(before)
+  ok(quiet.length > 0 && quiet.every((c) => c === 'funnel status --json'), 'a healthy funnel costs one status read per tick and nothing else', quiet.join('|'))
+
+  ts.proxy = 10000
+  await wait(600)
+  ok(ts.proxy === 7411, 'a 443 that someone repointed is put back')
+  ok(!ts.calls.includes('funnel --https=443 off'), 'without ever turning it off first')
+
+  ts.proxy = 10000
+  await t.stop()
+  ok(ts.proxy === 10000, 'quitting leaves a funnel that points at another port alone')
+  const after = ts.calls.length
+  await wait(600)
+  ok(ts.calls.length === after, 'and the checks stop with the switch')
 }
 
 rmSync(work, { recursive: true, force: true })

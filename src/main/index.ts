@@ -838,7 +838,11 @@ const phone = new PhoneServer({
  */
 const tunnel = new Tunnel({
   dir: join(app.getPath('userData'), 'bin'),
-  onChange: () => send('phone:changed', phoneState())
+  onChange: () => send('phone:changed', phoneState()),
+  log: (line) =>
+    appendLog(join(app.getPath('userData'), 'tunnel.log'), `${new Date().toISOString()} ${line}\n`, {
+      rotateAt: 200_000
+    })
 })
 
 /**
