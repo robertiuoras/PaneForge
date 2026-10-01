@@ -4343,16 +4343,21 @@ function idleInstallCheck(): void {
     return // no reading is not "nobody is here"
   }
   const now = Date.now()
-  const why = idleInstallBlocker({
+  const desk = {
     sessions: manager.list(),
     now,
     personIdleMs,
     restoreAfterUpdate: getConfig().restoreAfterUpdate,
     gameActive: isGameActive()
-  })
+  }
+  const why = idleInstallBlocker(desk)
   if (why) {
     if (shouldLogHold(now, idleHoldLoggedAt)) {
-      updateLog('install', `waiting for a quiet desk: ${why}`)
+      // The person check comes first and used to hide the panes' half: 0.8.231/0.8.232 each
+      // sat ~6h behind twelve "someone used this computer" lines, and only the pane lines
+      // logged in between showed the two halves never cleared together (2026-10-01 review).
+      const panes = why.startsWith('someone used') ? idleInstallBlocker({ ...desk, personIdleMs: Infinity }) : null
+      updateLog('install', `waiting for a quiet desk: ${why}${why.startsWith('someone used') ? `; panes: ${panes ?? 'quiet'}` : ''}`)
       idleHoldLoggedAt = now
     }
     return

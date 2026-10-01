@@ -1397,13 +1397,13 @@ export async function pollOnce(): Promise<void> {
     // several times" was. Keep looking, and swap the pending build for a newer one.
     if (state.phase === 'ready') {
       // A build that has been installable for hours is not a fault and is not hurried:
-      // this app installs one only when somebody presses Restart now or quits it. But
+      // it installs on Restart now, a quit, or a quiet desk (idleInstallBlocker). But
       // 0.8.207 sat staged for nearly 24 hours (2026-09-08 02:28 to 09-09 02:30) with
       // nothing said about it anywhere, so the wait is at least written down once.
       if (!stagedNagged && stagedTooLong(state.readyAt, Date.now())) {
         stagedNagged = true
         const hours = Math.round((Date.now() - (state.readyAt ?? 0)) / 3_600_000)
-        log('staged waiting', `v${state.version ?? ''} has been ready ${hours}h and is still not installed - it waits for Restart now or a quit, by design`)
+        log('staged waiting', `v${state.version ?? ''} has been ready ${hours}h and is still not installed - it waits for Restart now, a quit or a quiet desk, by design`)
       }
       await supersede()
     }
