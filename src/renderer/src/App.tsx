@@ -1990,7 +1990,7 @@ export default function App(): JSX.Element {
       const s = sessions.find((x) => x.id === id)
       if (!s) return
       // A screen view has nothing to lose - no agent, no conversation - so no question.
-      if (!config?.confirmClose || s.status === 'exited' || s.screen) return api.killSession(id)
+      if (!config?.confirmClose || s.status === 'exited' || s.screen) return api.killSession(id, 'user')
       setAsk({
         title: `Close ${s.title}?`,
         body: `${s.agent} is still running in ${s.cwd}. Closing ends it - the conversation stays in history.`,
@@ -1998,7 +1998,7 @@ export default function App(): JSX.Element {
         danger: true,
         onConfirm: () => {
           setAsk(null)
-          api.killSession(id)
+          api.killSession(id, 'user')
         }
       })
     },
@@ -2019,7 +2019,7 @@ export default function App(): JSX.Element {
       danger: true,
       onConfirm: () => {
         setAsk(null)
-        for (const s of sessions) api.killSession(s.id)
+        for (const s of sessions) api.killSession(s.id, 'user')
       }
     })
   }, [sessions])
@@ -7452,7 +7452,7 @@ export default function App(): JSX.Element {
         }
         onReveal={(id) => setActiveId(id)}
         onClose={(ids) => {
-          for (const id of ids) void api.killSession(id)
+          for (const id of ids) void api.killSession(id, 'user')
         }}
         onHandoff={(ids) => {
           // It never picks WHICH machine - that is the one question the hand-off box
@@ -7619,7 +7619,7 @@ export default function App(): JSX.Element {
           // for this pane and nobody should have to answer a question to be rid of it.
           const id = tourPaneId.current
           tourPaneId.current = null
-          if (id) void api.killSession(id)
+          if (id) void api.killSession(id, 'user')
           // ...and its example chats, for the same reason: nobody asked for them.
           void api.tourSample(false)
         }}

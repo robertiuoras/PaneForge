@@ -2427,7 +2427,8 @@ export interface Api {
   taskBrief(ref: string): Promise<{ prompt: string } | { error: string }>
   /** The list has been opened: everything in it stops counting as new. */
   markActivitySeen(): void
-  killSession(id: string): Promise<void>
+  /** `by` is always `user`: main tells the window from the phone by the door it came in (`closeByOf`). */
+  killSession(id: string, by: 'user'): Promise<void>
   /** Removes every finished-and-untouched pane now, same class as `killSession` - see `shared/exitedSweep.ts`. Returns how many were removed. */
   clearFinished(): Promise<number>
   /** `pf tidy`: closes into Review every finished pane the done-close sweep would, without its quiet wait - see `main/index.ts`. `dry` closes nothing. Returns the pane ids. */

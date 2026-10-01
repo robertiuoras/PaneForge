@@ -27,6 +27,7 @@ import { acknowledgeReview, listReviews, noteReviewClose, recordReview, reviewCl
 import { ComputeReviews, computeResult } from './computeReviews'
 import { mayNotify, noticesDir, readReply, sweepDoneClose, type DoneCloseDeps } from './doneClose'
 import { doneQuietMs, doneReviewId } from '../shared/doneClose'
+import { closeByOf, type CloseBy } from '../shared/closeWhenDone'
 import { FinishedDigest, summaryOf } from '../shared/finishedDigest'
 import { DataPump } from './dataPump'
 import { freshReplay } from '../shared/freshReplay'
@@ -1227,7 +1228,8 @@ const remote = new Remote({
   },
   isKeepOpen: keptOpen,
   armCloseWhenDone: (id) => manager.armCloseWhenDone(id),
-  kill: (id) => manager.kill(id),
+  // A person closing a pane this desk runs, from the paired machine's mirror of it.
+  kill: (id) => manager.kill(id, 'remote'),
   restart: (id) => continuationOwnsSource(id) ? null : manager.restart(id),
   rename: (id, title) => manager.rename(id, title),
   switchAgent: (id, agent, model) => continuationOwnsSource(id) ? null : manager.switchAgent(id, agent, model),
@@ -1255,7 +1257,7 @@ const remote = new Remote({
         claudeProjectDir: projectDir,
         startDev: (dir, script) => startDevServer(dir, script),
         resumed: (id) => manager.confirmResume(id, RESUME_CONFIRM_MS),
-        kill: (id) => manager.kill(id),
+        kill: (id) => manager.kill(id, 'handoff'),
         list: () => manager.list(),
         log: logHandoff
       },
@@ -2358,7 +2360,7 @@ ipcMain.handle('sessions:setEffort', (_e, id: string, choice: EffortChoice) =>
 ipcMain.handle('model:adviceAnswer', (_e, id: string, doSwitch: boolean) =>
   manager.answerModelAdvice(id, !!doSwitch)
 )
-function closePane(id: string): void {
+function closePane(id: string, by: CloseBy): void {
   if (screenViews.owns(id)) {
     screenViews.close(id)
     return
@@ -2376,11 +2378,10 @@ function closePane(id: string): void {
   // ask with the truth.
   const known = allSessions().some((s) => s.id === id)
   const card = cardAfterClose(id)
-  manager.kill(id)
-  card(known)
+  card(manager.kill(id, by))
   if (!known) send('sessions:changed', allSessions())
 }
-ipcMain.handle('sessions:kill', (_e, id: string) => closePane(id))
+ipcMain.handle('sessions:kill', (_e, id: string, by?: unknown) => closePane(id, closeByOf(Boolean(_e?.processId), by)))
 
 /**
  * A finished pane that closes itself once it has sat dead for a while - see
@@ -2455,7 +2456,7 @@ function removeFinished(removals: { id: string; reason: string }[]): void {
     const s = manager.list().find((x) => x.id === r.id)
     logReclaim({ action: 'exited-sweep-close', pane: r.id, reason: r.reason })
     reviewBeforeRemove(r.id, r.reason)
-    manager.kill(r.id)
+    manager.kill(r.id, 'exited-sweep')
     noteActivity(activityEntry('closed', s?.title || s?.cwd || 'A finished pane', r.reason))
   }
   send('sessions:changed', allSessions())
@@ -2468,10 +2469,12 @@ ipcMain.handle('sessions:closeIntoReview', (_e, id: string, reason: string) => {
   // Only a local agent pane has a conversation to keep; a screen view, a mirror or a stale
   // id is closed exactly the way `sessions:kill` closes it.
   if (!remote.owns(id) && !screenViews.owns(id) && manager.list().some((s) => s.id === id)) {
+    // Asked before the Review row: a refused close must not leave a row for a pane still open.
+    if (manager.closeRefusedFor(id, 'idle-clock')) return
     logReclaim({ action: 'close-into-review', pane: id, reason })
     reviewBeforeRemove(id, reason)
   }
-  closePane(id)
+  closePane(id, 'idle-clock')
 })
 ipcMain.handle('sessions:clearFinished', () => {
   const removals = clearFinishedNow(exitedFacts())

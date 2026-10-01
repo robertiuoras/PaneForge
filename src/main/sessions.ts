@@ -59,7 +59,7 @@ const TITLE_TAIL_BYTES = 256 * 1024
 export const NOTHING_OPEN = 'the handoff lists nothing still open'
 import { jobFromTable, paneJob, programName, SHELLS } from '../shared/paneJob'
 import { canSleep, sleepRefusal } from '../shared/sleep'
-import { doneEnough } from '../shared/closeWhenDone'
+import { closeRefused, doneEnough, type CloseBy } from '../shared/closeWhenDone'
 import { closeHeldBy, personLooking, replyFinished, wasRead, type DoneReading } from '../shared/doneClose'
 import { folderName, laneOfCheckout, projectOf } from '../shared/place'
 import { dropStale, lentGrid, watchedBorrow, type Borrow } from '../shared/paneSize'
@@ -2601,7 +2601,7 @@ export class SessionManager extends EventEmitter {
       else this.queuePrompt(opener, `The pane you opened for "${meta.title}" (${meta.cwd}) has finished and closed itself.`)
     }
     console.info(`close-when-done: ${meta.id} finished and closed itself${told ? ` - told ${told}` : ''}`)
-    this.kill(meta.id)
+    this.kill(meta.id, 'close-when-done')
   }
 
   /** Start a countdown that was queued while the pane was mid-turn. */
@@ -3666,11 +3666,13 @@ export class SessionManager extends EventEmitter {
   /**
    * `by` names the part of the app that closed the pane, for the `close-request` line: on
    * 2026-09-24 the Review auto-close took a pane mid-countdown and nothing on disk said so,
-   * so the countdown was blamed for it.
+   * so the countdown was blamed for it. Required since log review 2026-10-01, where two
+   * working panes closed with no `by` at all. Answers whether the pane closed.
    */
-  kill(id: string, by?: string): void {
+  kill(id: string, by: CloseBy): boolean {
     const s = this.sessions.get(id)
-    if (!s) return
+    if (!s) return false
+    if (this.closeRefusedFor(id, by)) return false
     logReclaim({ action: 'close-request', pane: id, processPid: s.proc?.pid,
       status: s.meta.status, asleep: Boolean(s.meta.asleep), quitting: this.down, by })
     // Before the pty dies, while its pid still names a group and a tree. What the pane
@@ -3694,6 +3696,21 @@ export class SessionManager extends EventEmitter {
     this.sessions.delete(id)
     forgetHandoff(id)
     this.emitSessions()
+    return true
+  }
+
+  /**
+   * Whether `by` may not close this pane now (`shared/closeWhenDone.ts` `closeRefused`),
+   * logged when it may not. Public so a close that writes something first (the idle
+   * clock's Review row) can ask before it does.
+   */
+  closeRefusedFor(id: string, by: CloseBy): boolean {
+    const s = this.sessions.get(id)
+    if (!s) return false
+    const reason = closeRefused(by, s.meta.status)
+    if (!reason) return false
+    logReclaim({ action: 'close-refused', pane: id, processPid: s.proc?.pid, status: s.meta.status, by, reason })
+    return true
   }
 
   /** Close only at a review-safe boundary; records are written before this is called. */
@@ -3711,7 +3728,7 @@ export class SessionManager extends EventEmitter {
   }
 
   killAll(): void {
-    for (const id of [...this.sessions.keys()]) this.kill(id)
+    for (const id of [...this.sessions.keys()]) this.kill(id, 'user')
   }
 
   /**
@@ -4006,7 +4023,7 @@ export class SessionManager extends EventEmitter {
         const now = this.sessions.get(id)
         if (!now || now.proc || now.meta.status !== 'exited' || this.keptOpen?.(id)) return
         this.emit('exit-closed', id, say)
-        this.kill(id)
+        this.kill(id, 'exit-close')
       }
       if (plan.after) setTimeout(go, plan.after).unref?.()
       else go()
@@ -5426,7 +5443,7 @@ export class SessionManager extends EventEmitter {
     // After the loop: `kill` mutates the map this was iterating.
     for (const id of reap) {
       audit('reap-cwd-gone', { id, cwd: this.sessions.get(id)?.meta.cwd ?? null })
-      this.kill(id)
+      this.kill(id, 'cwd-gone')
     }
     if (changed) this.emitSessions()
   }

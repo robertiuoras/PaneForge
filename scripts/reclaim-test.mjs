@@ -1194,8 +1194,23 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   check('no countdown path writes the woke-up words without asking whether the pane is still there',
     !/skipClose\([^)]*'it went back to work/.test(app))
   const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
-  check('the close-request line names who closed the pane', /kill\(id: string, by\?: string\)/.test(sessions) && /quitting: this\.down, by \}/.test(sessions))
+  check('the close-request line names who closed the pane', /kill\(id: string, by: CloseBy\): boolean/.test(sessions) && /quitting: this\.down, by \}/.test(sessions))
   check('...and the Review auto-close says it was the one', /this\.kill\(id, 'review'\)/.test(sessions))
+  // Log review 2026-10-01: s16-munpf9fk and s2-munmghtf closed while `working`, no `by`.
+  check('an automatic close of a working pane is refused, and says so', /action: 'close-refused'/.test(sessions) &&
+    /closeRefused\(by, s\.meta\.status\)/.test(sessions))
+  check('no close inside main leaves the closer out', !/this\.kill\([\w.]+\)/.test(sessions))
+  const index = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
+  check('...nor in the window, phone, pf and sweep wiring', !/manager\.kill\([\w.]+\)/.test(index) && !/closePane\([\w.]+\)/.test(index))
+  check('the close channel tells the window from pf and the phone',
+    /ipcMain\.handle\('sessions:kill', \(_e, id: string, by\?: unknown\) => closePane\(id, closeByOf\(Boolean\(_e\?\.processId\), by\)\)\)/.test(index))
+  const review = index.slice(index.indexOf("ipcMain.handle('sessions:closeIntoReview'"), index.indexOf("ipcMain.handle('sessions:clearFinished'"))
+  check('the idle clock is refused before it writes a Review row for a pane it will not close',
+    review.indexOf("closeRefusedFor(id, 'idle-clock')") > 0 && review.indexOf("closeRefusedFor(id, 'idle-clock')") < review.indexOf('reviewBeforeRemove'))
+  check('every window close says it was a person', !/api\.killSession\([^,)]+\)/.test(app))
+  const ctl = readFileSync(join(root, 'scripts/pf-ctl.mjs'), 'utf8')
+  check('every pf close says it was pf', !/'sessions:kill', \[[^\],]+\]/.test(ctl) && /'sessions:kill', \[m\.pane\.id, 'tidy-dupes'\]/.test(ctl))
+  check("pf's wake says it was pf too", /'sessions:wake', \[target\.pane\.id, 'pf'\]/.test(ctl))
 }
 // A pane put to sleep is not armed again off the session list that still says awake
 // (s22-mueyklpl, 2026-09-24: slept 04:35:29.853, armed .896, refused "already asleep").
