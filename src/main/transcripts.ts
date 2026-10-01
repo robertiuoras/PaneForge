@@ -870,19 +870,213 @@ export function claimFromCli(id: string, pid: number | undefined): boolean {
  * Read as `starting`, a missing file held every such prompt the full minute, and at 05:37Z
  * two panes sat at an empty box long enough that the prompt was sent again by hand. So it
  * is `unknown`, which holds only the short `PROMPT_PIDFILE_MS` wait.
+ *
+ * That short wait was then the whole wait: 67 of 72 fresh panes 2026-10-01/02 typed at
+ * +10.0-10.2s with their hooks over at +2-5s. So the process tree answers first
+ * (`hookState`): a pid file plus hooks seen to run and end is `started`; hooks seen still
+ * running are `starting`, held past the short wait. s38-mupyep73 (2026-10-01, a resume at
+ * memory pressure 2): typed at the 10.1s short wait, `SessionStart:resume` at +29-33s,
+ * six returns swallowed, the prompt lost. Hooks this desk runs but not seen yet are
+ * `awaiting` (`hooksAwaited`): at load 50-137 a fresh CLI's first hook started at +11-25s.
+ * A resumed transcript counts only a record stamped since this spawn (`startRecordSince`).
  */
 const STARTUP_SETTLE_MS = Number(process.env.PF_CLAUDE_SETTLE_MS ?? 2_500)
-export function claudeStartup(pid: number | undefined): 'started' | 'starting' | 'unknown' {
+export function claudeStartup(
+  pid: number | undefined,
+  born: number,
+  resumed?: { cwd: string; id?: string }
+): 'started' | 'starting' | 'awaiting' | 'unknown' {
   const row = cliSession(pid)
-  if (!row) return 'unknown'
-  const file = transcriptPath(row.cwd, row.sessionId)
-  if (!file) return 'unknown'
-  if (!/"hookName":"SessionStart:/.test(readHead(file) ?? '')) return 'starting'
-  try {
-    return Date.now() - statSync(file).mtimeMs >= STARTUP_SETTLE_MS ? 'started' : 'starting'
-  } catch {
-    return 'starting'
+  const hooks = pid === undefined ? 'unseen' : hookState(pid, born)
+  if (hooks === 'over') return 'started'
+  // Seen running is a reading, not a guess: held past the short wait, up to the ceiling.
+  if (hooks === 'running') return 'starting'
+  const file = (row && transcriptPath(row.cwd, row.sessionId)) || (resumed?.id && transcriptPath(resumed.cwd, resumed.id)) || null
+  const record = file ? (resumed ? startRecordSince(file, born) : /"hookName":"SessionStart:/.test(readHead(file) ?? '')) : false
+  if (file && record) {
+    try {
+      return Date.now() - statSync(file).mtimeMs >= STARTUP_SETTLE_MS ? 'started' : 'starting'
+    } catch {
+      return 'starting'
+    }
   }
+  if (pid && hooksAwaited(pid, born, row !== null, resumed ? 'resume' : 'startup')) return 'awaiting'
+  if (!row || !file) return 'unknown'
+  // A resumed transcript without this start's record says nothing: it is the old file.
+  return resumed ? 'unknown' : 'starting'
+}
+
+/**
+ * HOOKS THAT HAVE NOT STARTED YET ARE STILL TO COME. On a loaded Mac a fresh CLI's first
+ * hook started at +11-25s (2026-10-02, load average 50-137, 5 at once), so at the 10s
+ * short wait nothing had been seen and the prompt went in anyway: 14 of 15 such panes left
+ * it UNSENT and 4 never answered it (rows 0 when closed at +60s). A resumed CLI first
+ * takes in its transcript (s38: hooks at +25-33s). So on a desk whose settings run a
+ * SessionStart hook for this kind of start, none seen yet is `awaiting`: held while there is
+ * no pid file (the CLI has not got that far; at most 3x the short wait) and for the short
+ * wait after it appears - a
+ * hook short enough to fall between two readings must not cost the 60s ceiling. Windows
+ * cannot see hooks, so it never awaits them.
+ */
+const HOOKS_UNSEEN_MS = Number(process.env.PF_PROMPT_PIDFILE_MS ?? 10_000)
+const pidFileSeen = new Map<number, { born: number; at: number }>()
+function hooksAwaited(pid: number, born: number, hasPidFile: boolean, source: 'startup' | 'resume'): boolean {
+  if (process.platform === 'win32' || !sessionStartHooks(source)) return false
+  const base = process.env.PF_CLAUDE_HOME || join(homedir(), '.claude')
+  // A CLI too old to write pid files, or one writing them somewhere else, would otherwise hold
+  // every prompt to the ceiling. Under load the pid file was born +3-19s in.
+  if (!hasPidFile) return Date.now() - born < 3 * HOOKS_UNSEEN_MS && existsSync(join(base, 'sessions'))
+  let seen = pidFileSeen.get(pid)
+  if (seen?.born !== born) {
+    for (const [p, s] of pidFileSeen) if (Date.now() - s.at > 120_000) pidFileSeen.delete(p)
+    seen = { born, at: Date.now() }
+    pidFileSeen.set(pid, seen)
+  }
+  return Date.now() - seen.at < HOOKS_UNSEEN_MS
+}
+
+/**
+ * A SessionStart record written by the start that began at `born`. A resumed transcript
+ * holds the records of every earlier start, and read as this one's they opened the gate at
+ * the first look: s41-mupyt5ez (2026-10-01, `--resume` at memory pressure 2) was typed at
+ * +4.6s while the CLI was still taking in an old task notification. A fresh file is this
+ * start's own; a resumed one's new records are at the tail.
+ */
+function startRecordSince(file: string, born: number): boolean {
+  for (const text of [readHead(file) ?? '', tail(file)]) {
+    for (const line of text.split('\n')) {
+      if (!line.includes('"hookName":"SessionStart:')) continue
+      if (Date.parse(/"timestamp":"([^"]+)"/.exec(line)?.[1] ?? '') >= born) return true
+    }
+  }
+  return false
+}
+
+/**
+ * Does this desk run a SessionStart hook for a `source` start (`startup`, `resume`)? Only
+ * then is a missing record "still starting"; with none, nothing will ever write one and the
+ * short wait stands. Read from the user's settings.json, kept while its mtime and size hold.
+ */
+let hookDecl: { key: string; on: Record<string, boolean> } | undefined
+function sessionStartHooks(source: 'startup' | 'resume'): boolean {
+  const file = join(process.env.PF_CLAUDE_HOME || join(homedir(), '.claude'), 'settings.json')
+  try {
+    const st = statSync(file)
+    const key = `${st.mtimeMs}:${st.size}`
+    if (hookDecl?.key !== key) {
+      const s = JSON.parse(readFileSync(file, 'utf8')) as { disableAllHooks?: boolean; hooks?: { SessionStart?: { matcher?: string; hooks?: unknown[] }[] } }
+      const groups = s?.disableAllHooks ? [] : Array.isArray(s?.hooks?.SessionStart) ? s.hooks.SessionStart : []
+      const fires = (src: string): boolean =>
+        groups.some((g) => {
+          if (!Array.isArray(g?.hooks) || !g.hooks.length) return false
+          if (!g.matcher || g.matcher === '*') return true
+          try {
+            return new RegExp(`^(?:${g.matcher})$`).test(src)
+          } catch {
+            return g.matcher.includes(src)
+          }
+        })
+      hookDecl = { key, on: { startup: fires('startup'), resume: fires('resume') } }
+    }
+    return hookDecl.on[source]
+  } catch {
+    return false
+  }
+}
+
+const HOOKS_QUIET_MS = Number(process.env.PF_CLAUDE_HOOKS_QUIET_MS ?? 500)
+const HOOKS_PS_MS = Number(process.env.PF_CLAUDE_HOOKS_PS_MS ?? 200)
+type HookWatch = { born: number; asked: number; saw: boolean; quietSince: number; quietAt: number }
+const hookWatch = new Map<number, HookWatch>()
+let hookPsRunning = false
+let hookTimer: NodeJS.Timeout | undefined
+const hooksOver = (w: HookWatch): boolean => w.saw && w.quietSince > 0 && w.quietAt - w.quietSince >= HOOKS_QUIET_MS
+
+/**
+ * Start reading this Claude Code process's hooks now, not at the prompt's first look: that
+ * look comes 2.5s in (PROMPT_START_MS) and an idle desk's hooks are over at +2.2s, so a
+ * watch begun there never saw one and the pane waited the whole 10s anyway (dev copy
+ * 2026-10-02, one pane alone: `typing anyway after 10.1s`, hooks over at +2.2s).
+ */
+export function watchClaudeHooks(pid: number | undefined, born: number): void {
+  // Same pid, another process: a finished watch must not open a new CLI's gate.
+  if (process.platform === 'win32' || !pid || hookWatch.get(pid)?.born === born) return
+  hookWatch.set(pid, { born, asked: 0, saw: false, quietSince: 0, quietAt: 0 })
+  readHookTree()
+}
+
+/**
+ * Has the Claude Code behind this pid run its SessionStart hooks, and have they all ended?
+ *
+ * Claude Code starts every hook in a process group of its own (pgid = the hook's pid, no
+ * terminal) and keeps its MCP servers in the CLI's group. Measured on 2.1.287, a `sleep 5`
+ * SessionStart hook: pgid its own, `??` tty; `cua-driver mcp`: the CLI's pgid and tty. So a
+ * direct child in another group is a hook still running. Done = one was seen, then two
+ * readings `HOOKS_QUIET_MS` apart, and every one between, found none: on this desk's ~35
+ * hooks the gate opened at +2.4s (hooks over at +1.9s), and with a `sleep 4` hook added at
+ * +5.7s. Twelve real launches (1 alone, 5 at once, 2026-10-02) each ran their startup
+ * children as one unbroken stretch - the status line overlaps the hooks - so a quiet gap
+ * inside it was never seen.
+ *
+ * Watched only once the pid file is there: before it the CLI runs short children of its own
+ * (a shell snapshot), and a quiet gap after one of those is not hooks done.
+ * Never seen answers nothing here: `hooksAwaited` says whether they are still to come.
+ * Windows has no process groups.
+ * One `ps -Ao pid=,ppid=,pgid=` (~15ms, no command column) serves every pane asking.
+ */
+function hookState(pid: number, born: number): 'over' | 'running' | 'unseen' {
+  if (process.platform === 'win32') return 'unseen'
+  watchClaudeHooks(pid, born)
+  const w = hookWatch.get(pid)
+  if (!w) return 'unseen'
+  w.asked = Date.now()
+  return hooksOver(w) ? 'over' : w.saw ? 'running' : 'unseen'
+}
+
+/** One `ps` for every pane still being watched, again every HOOKS_PS_MS until each has settled or gone. */
+function readHookTree(): void {
+  if (hookPsRunning || hookTimer) return
+  hookPsRunning = true
+  const at = Date.now()
+  // Only a CLI that has written its pid file is read: see `hookState`.
+  const ready = new Set([...hookWatch.keys()].filter((pid) => cliSession(pid)))
+  execFile('ps', ['-Ao', 'pid=,ppid=,pgid='], { timeout: 5000, maxBuffer: 4 * 1024 * 1024 }, (error, stdout) => {
+    hookPsRunning = false
+    const end = Date.now()
+    // Past the startup window, or no longer asked about (its prompt went in): stop watching,
+    // whether or not `ps` answered, so a failing `ps` never runs on for ever.
+    for (const [pid, w] of hookWatch) if (end - w.born > 60_000 || (w.asked && end - w.asked > 2000)) hookWatch.delete(pid)
+    // A failed reading is no reading: neither busy nor quiet.
+    if (!error) {
+      const rows: Array<[number, number, number]> = []
+      for (const line of stdout.split('\n')) {
+        const m = /^\s*(\d+)\s+(\d+)\s+(\d+)/.exec(line)
+        if (m) rows.push([Number(m[1]), Number(m[2]), Number(m[3])])
+      }
+      const group = new Map(rows.map(([p, , g]) => [p, g]))
+      const running = new Set(rows.filter(([, parent, g]) => hookWatch.has(parent) && g !== group.get(parent)).map(([, parent]) => parent))
+      for (const [pid, w] of hookWatch) {
+        // Gone (the pid may be reused): stop watching.
+        if (!group.has(pid)) hookWatch.delete(pid)
+        else if (!ready.has(pid) || hooksOver(w)) continue
+        else if (running.has(pid)) {
+          w.saw = true
+          w.quietSince = 0
+        } else if (w.saw) {
+          // A hook may have ended just before this reading's snapshot: quiet counts from its end.
+          if (!w.quietSince) w.quietSince = end
+          w.quietAt = at
+        }
+      }
+    }
+    if ([...hookWatch.values()].some((w) => !hooksOver(w))) {
+      hookTimer = setTimeout(() => {
+        hookTimer = undefined
+        readHookTree()
+      }, HOOKS_PS_MS)
+      hookTimer.unref?.()
+    }
+  })
 }
 
 /** The conversation id to resume this pane with - the transcript's own file name. */

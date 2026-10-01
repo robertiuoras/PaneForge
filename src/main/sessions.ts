@@ -96,7 +96,7 @@ export interface AutoClearArm {
   tokens?: number
 }
 import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from './pipe'
-import { claimFromCli, claimCodexFromProcess, claudeAcceptedPrompt, claudeStartup, codexAcceptedPrompt, codexConversationReceipt, codexPromptReceipt, codexQuestionPending, forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeEvidence, resumeIdFor, transcriptFor, transcriptPath } from './transcripts'
+import { claimFromCli, claimCodexFromProcess, claudeAcceptedPrompt, claudeStartup, codexAcceptedPrompt, codexConversationReceipt, codexPromptReceipt, codexQuestionPending, forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeEvidence, resumeIdFor, transcriptFor, transcriptPath, watchClaudeHooks } from './transcripts'
 import { recordPromptReview } from './promptReview'
 import { liveModelFor } from './paneModel'
 import { backgroundAgentsFor, backgroundWorkerReadingFor, forgetBackgroundAgents, noteBackgroundAgents, pendingBackgroundFor } from './runningAgents'
@@ -282,6 +282,9 @@ const PROMPT_ENTER_TRIES = ms('PF_PROMPT_ENTER_TRIES', 6)
  * +9-15s, and 12-45s on a loaded desk. Past either, the prompt is typed as before.
  * The short wait also covers a pid file whose transcript is not on disk yet, which on
  * Claude Code 2.1.281-2.1.283 can stay missing until the first prompt (`claudeStartup`).
+ * Off Windows the process tree answers first (`hookState`, transcripts.ts): hooks seen to
+ * run and end open the gate ~0.5s after the last one, hooks seen still running hold it up to
+ * PROMPT_STARTUP_MS, and hooks this desk runs but not started yet hold it too (`hooksAwaited`).
  * A prompt that goes in while the hooks still run is one bracketed paste (see `tick`),
  * and that is delivered: dev probe 2026-09-27, 2.1.283 with a 15s SessionStart hook, typed
  * at +6s - one user row, whole, written the moment the hooks ended. Typed raw, the same
@@ -4779,12 +4782,14 @@ export class SessionManager extends EventEmitter {
       if (gateOpen) return false
       const born = live.proc ? procStarted.get(live.proc) : undefined
       const age = born === undefined ? Infinity : Date.now() - born
-      const now = live.meta.agent === 'claude' && age < PROMPT_STARTUP_MS ? claudeStartup(live.proc?.pid) : 'none'
-      const hold = now === 'starting' || (now === 'unknown' && age < PROMPT_PIDFILE_MS)
+      const resumed = live.req.resume ? { cwd: live.req.resumeCwd ?? live.meta.cwd, id: live.req.resumeId } : undefined
+      const now = live.meta.agent === 'claude' && born !== undefined && age < PROMPT_STARTUP_MS ? claudeStartup(live.proc?.pid, born, resumed) : 'none'
+      const hold = now === 'starting' || now === 'awaiting' || (now === 'unknown' && age < PROMPT_PIDFILE_MS)
       if (hold) {
         if (!startWait) {
           startWait = now
-          acLog(`${id} queued prompt waiting for Claude Code to finish starting (${now === 'unknown' ? 'no pid file or transcript yet' : 'SessionStart hooks running'})`)
+          const why = now === 'unknown' ? 'no pid file or transcript yet' : now === 'awaiting' ? 'its SessionStart hooks have not started yet' : 'SessionStart hooks running'
+          acLog(`${id} queued prompt waiting for Claude Code to finish starting (${why})`)
         }
         return true
       }
@@ -4982,6 +4987,10 @@ export class SessionManager extends EventEmitter {
       acLog(`${id} prompt typed (${prompt.length} chars), return in ${PROMPT_ENTER_MS}ms${typedIntoTurn ? ' (a turn is running)' : ''}`)
       setTimeout(() => submit(0), PROMPT_ENTER_MS)
     }
+    // A fresh Claude Code's hooks can be over before that first look: watch them from now.
+    const first = this.sessions.get(id)
+    const firstBorn = first?.proc ? procStarted.get(first.proc) : undefined
+    if (first?.meta.agent === 'claude' && firstBorn !== undefined && Date.now() - firstBorn < PROMPT_STARTUP_MS) watchClaudeHooks(first.proc?.pid, firstBorn)
     setTimeout(tick, Math.max(0, startMs) + Math.max(0, extraDelay))
   }
 
