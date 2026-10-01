@@ -1402,7 +1402,7 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   const index = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
   eq(
     'a Keep from the phone or the other desk is told to the window, not only saved',
-    (index.match(/send\('config:changed', setConfig\(\{ pinnedPanes: next \}\)\)/g) ?? []).length,
+    (index.match(/setKeepOpen: \(id, keepOpen\) => \{[\s\S]{0,400}?send\('config:changed', getConfig\(\)\)/g) ?? []).length,
     2
   )
   // ...and a Keep that lands DURING a countdown stops it. On the PC 2026-09-29 `dev: dev`
