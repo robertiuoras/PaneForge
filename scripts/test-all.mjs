@@ -65,6 +65,7 @@ const TESTS = [
   ['release', 'release-guard-test.mjs'],
   ['grid', 'grid-layout-test.mjs'],
   ['awake', 'awake-test.mjs'],
+  ['pressurelog', 'pressurelog-test.mjs'],
   ['suspend-save', 'suspend-save-test.mjs'],
   ['autoclear', 'autoclear-test.mjs'],
   ['autoclearmanager', 'autoclear-manager-test.mjs'],

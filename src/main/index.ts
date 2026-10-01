@@ -213,6 +213,7 @@ import { restoreAsleep } from '../shared/restoreTurn'
 import { DEFAULT_RECOVER } from '../shared/recover'
 import type { UsageReport } from '../shared/usage'
 import { loadPerCore, readPressure, totalMb, watchPressure } from './memory'
+import { startPressureLog } from './pressureLog'
 import { backJobOf, backJobWaitOnly, trackUsage } from './usage'
 import type {
   Config,
@@ -1532,6 +1533,14 @@ const stopPressure = watchPressure((p) => {
 })
 manager.on('sessions', () => publishCapacity())
 
+// One line a minute into pressure.log: what held the memory when the desk was slow.
+const stopPressureLog = startPressureLog(() =>
+  manager.roots().map((r) => ({
+    id: r.id,
+    pid: r.pid,
+    status: localSessions().find((s) => s.id === r.id)?.status ?? 'unknown'
+  }))
+)
 // Whether anybody is at this machine. The renderer's idle clock freezes while nobody is,
 // so a pane is never closed during minutes a person had no chance to stop it in. Pushed on
 // a CHANGE only - two messages per absence. See src/shared/away.ts.
@@ -5336,3 +5345,4 @@ app.on('will-quit', (e) => {
   removeTestClipboard()
   hardExit()
 })
+  stopPressureLog()

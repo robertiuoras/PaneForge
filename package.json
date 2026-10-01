@@ -316,6 +316,7 @@
     "desks": "node scripts/desks.mjs",
     "test:crlf": "node scripts/crlf-test.mjs",
     "test:awake": "node scripts/awake-test.mjs",
+    "test:pressurelog": "node scripts/pressurelog-test.mjs",
     "test:autoclear": "node scripts/autoclear-test.mjs",
     "test:autoclearhook": "node scripts/autoclear-hook-test.mjs",
     "test:autoclearlag": "node scripts/autoclear-lag-test.mjs",
