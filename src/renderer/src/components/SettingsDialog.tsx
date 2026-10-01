@@ -453,7 +453,7 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                   checked={config.telegramAsk}
                   onChange={(v) => onChange({ telegramAsk: v })}
                   label="Send an error that stopped a pane to Telegram"
-                  hint="An error like a usage limit or an expired login stops the run and nothing retries it. Questions are not sent: they show on this desk and in GuardDeck. Needs TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in the environment or in ~/.claude/usage-notify.env; without them nothing is sent."
+                  hint="An error like an expired login or a used-up credit balance stops the run and nothing retries it. A usage limit is not sent here: once it resets, the chats it stopped are continued and one TaskDriver phone notification says how many carried on. Questions are not sent: they show on this desk and in GuardDeck. Needs TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in the environment or in ~/.claude/usage-notify.env; without them nothing is sent."
                 />
                 <Switch
                   checked={config.bellAlert}

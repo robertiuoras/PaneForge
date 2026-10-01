@@ -135,3 +135,19 @@ START_COLS)`, user-initiated; `window.__pf[id].redraw()`.
 `shared/recover.ts` (`test:recover`) keys on `The response above may be incomplete.`; never
 after rate/usage limit, credit, auth, overload; `> ` quoted error is talk (`promptBox`); three
 in a row stops; new output only; sends via `queuePrompt`.
+
+## A usage limit is one wave, continued after its reset, and one phone push
+
+`shared/limitWave.ts` decides, `main/limitWaves.ts` acts (`test:limitwave`). A `paneError`
+whose line (+ rows under it: Codex wraps its date) names a limit WITH a reset never goes to
+Telegram; no reset / auth / credit keep Telegram. Wave = provider + window + reset within
+`JITTER_MS` 2 min; mirrors excluded; `'stale'` (reset already gone: a `--resume` repaint) is
+dropped. Due = reset + `CONTINUE_AFTER_MS` (Claude 150s: Claude Code continues by itself
+38-116s after the reset; Codex 60s). At due: closed leaves the count; busy / `turnsHere` grew
+/ `continuationOwnsSource` = continuing, nothing typed; drafting, exited, `recover.enabled`
+off = not; else `carryOn` (wakes an asleep pane, `RESTORE_CONTINUE_MS`, `queuePrompt`).
+Continuing = `sent` then busy within `START_WITHIN_MS` 3 min; a second stop = not, same reset
+never re-queues. Push after `SETTLE_QUIET_MS` 60s quiet or `WAVE_DEADLINE_MS` 10 min: TaskDriver
+notify, token env then `~/.claude/todos-ingest.token`, `dedupe_key`
+`pf-limit-reset:<provider>:<resetISO>:<host>`; failed = retried `PUSH_RETRY_MS`, never marked
+sent. In memory only. `limit-reset.log`; `PF_TASKDRIVER_NOTIFY_URL` for tests.
