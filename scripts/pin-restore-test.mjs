@@ -150,12 +150,25 @@ assert.equal(savingStates.at(-1), false, 'controls enable after the write finish
 const closeStart = index.indexOf("ipcMain.handle('sessions:closeIntoReview'")
 const closeEnd = index.indexOf("ipcMain.handle('sessions:clearFinished'", closeStart)
 const closeCode = transformSync(index.slice(closeStart, closeEnd), { loader: 'ts' }).code
-let closeHandler, keep = true, closed = 0
-new Function('ipcMain', 'keptOpen', 'remote', 'closePane', closeCode)(
-  { handle(_name, fn) { closeHandler = fn } }, () => keep, { owns: () => true }, () => { closed++ })
+let closeHandler, keep = true, closed = 0, owedFlag = false, owedRows = 0
+const refused = []
+new Function('ipcMain', 'keptOpen', 'remote', 'closePane', 'manager', 'owedCount', 'logReclaim', closeCode)(
+  { handle(_name, fn) { closeHandler = fn } }, () => keep, { owns: () => true }, () => { closed++ },
+  { list: () => [{ id: 'pane', owedPrompt: owedFlag }] }, () => owedRows, (row) => refused.push(row))
 closeHandler({}, 'pane', 'timer expired')
 assert.equal(closed, 0, 'saved keep-open wins over an already-dispatched close')
 keep = false
+// 2026-10-02 18:44Z: the countdown closed six crash-restored panes still owed their
+// "continue" (queued-prompts.log LOST x6). Owed work, by flag or by ledger row, refuses.
+owedFlag = true
+closeHandler({}, 'pane', 'timer expired')
+assert.equal(closed, 0, 'a pane flagged as owed a prompt is not closed by the countdown')
+owedFlag = false
+owedRows = 1
+closeHandler({}, 'pane', 'timer expired')
+assert.equal(closed, 0, 'a pane with an owed ledger row is not closed by the countdown')
+assert.deepEqual(refused.map((r) => r.reason), ['owed-prompt', 'owed-prompt'], 'each refusal is logged')
+owedRows = 0
 closeHandler({}, 'pane', 'timer expired')
 assert.equal(closed, 1, 'unkept panes can still close normally')
 
