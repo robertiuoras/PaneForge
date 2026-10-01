@@ -1405,6 +1405,16 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
     (index.match(/send\('config:changed', setConfig\(\{ pinnedPanes: next \}\)\)/g) ?? []).length,
     2
   )
+  // ...and a Keep that lands DURING a countdown stops it. On the PC 2026-09-29 `dev: dev`
+  // was kept from the Mac, then armed by a pressure sweep at 9:09:18am and closed at
+  // 9:09:33am: a Keep pressed elsewhere reached no countdown, and the deadline re-checked
+  // only whether the pane had gone back to work.
+  check('a Keep from elsewhere drops the countdown naming that pane',
+    /s\.ids\.some\(\(id\) => pinned\[id\]\)[\s\S]{0,300}'Keep it open was turned on during the countdown'[\s\S]{0,200}setCloseSoons\([\s\S]{0,120}\}, \[closeSoons, pinned, skipClose\]\)/.test(app))
+  check('...but a kept pane may still be slept under pressure', /!\(s\.sleep && s\.why === 'pressure'\)/.test(app))
+  const doClose = app.slice(app.indexOf('const doClose = useCallback'), app.indexOf('const live = ids.filter((id) => stillCloseable(id))'))
+  check('the close at the deadline refuses a kept or serving pane',
+    /pinnedRef\.current\[id\] \|\| sessionsRef\.current\.find\(\(x\) => x\.id === id\)\?\.serving/.test(doClose) && /ids = ids\.filter\(\(id\) => !held\.includes\(id\)\)/.test(doClose))
 }
 
 console.log(`reclaim: ${checks} checks passed`)
