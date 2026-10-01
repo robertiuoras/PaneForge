@@ -39,6 +39,27 @@ function tuned(name: string, fallback: number): number {
  */
 export const WAKE_SETTLE_MS = tuned('PF_WAKE_SETTLE_MS', 20_000)
 
+/**
+ * After a flurry of wakes that went straight back to sleep (11 of them before the
+ * 2026-09-30 21:36 check, which then died with the 21:50 sleep), a single 20s stretch of
+ * being awake may only be the next dark wake. So the second and later deferrals wait three
+ * times as long before a check is allowed.
+ */
+export const BURST_SETTLE_MS = WAKE_SETTLE_MS * 3
+
+/** One poll is deferred this many times at most, so a missed signal cannot end polling. */
+export const MAX_POLL_DEFERS = 8
+
+/** How long the machine must have been awake before a poll that was deferred `deferred` times runs. */
+export function pollSettle(deferred: number): number {
+  return deferred > 0 ? BURST_SETTLE_MS : WAKE_SETTLE_MS
+}
+
+/** Should a poll wait? Pure: awake time so far, and how many times it already waited. */
+export function deferPoll(awakeMs: number, deferred: number): boolean {
+  return deferred < MAX_POLL_DEFERS && awakeMs < pollSettle(deferred)
+}
+
 const GAP_MS = tuned('PF_SLEEP_GAP_MS', SLEEP_GAP_MS)
 
 export class WakeWatch {
@@ -63,6 +84,11 @@ export class WakeWatch {
   /** How long the machine slept during a phase that began at `since`; 0 if it did not. */
   sleptSince(since: number): number {
     return this.wokeAt > since ? this.sleptForMs : 0
+  }
+
+  /** How long since the last sleep-sized gap ended; Infinity when none was ever seen. */
+  awakeFor(now: number): number {
+    return this.wokeAt > 0 ? now - this.wokeAt : Infinity
   }
 
   /** Inside the first `withinMs` of a wake - a check started now would die with a dark one. */
