@@ -4206,7 +4206,9 @@ export class SessionManager extends EventEmitter {
       }
       this.setOwedPrompt(id, owedCount(id) > 0)
       onSettled?.()
-      if (end === 'unsent') watchLate()
+      // Only a prompt the ledger let go (logged LOST) is looked for afterwards; one still owed
+      // under this key is kept for the idle sweep to reconcile, never called LOST.
+      if (end === 'unsent' && !stillOwed(key)) watchLate()
     }
     let deadline = Date.now() + Math.max(0, budgetMs) + Math.max(0, extraDelay)
     // `lastKeyboard` as it stands NOW, which is after whatever write queued this prompt -
