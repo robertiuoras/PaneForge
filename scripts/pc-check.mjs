@@ -56,4 +56,7 @@ const keep = out.filter((l) =>
 // pattern and a run printed only `rbuild: exit 1` (2026-09-23). Then the tail is the answer.
 const said = keep.some((l) => !/rbuild: exit/.test(l))
 console.log((said ? keep : out.slice(-20)).join('\n'))
+// A red run whose failing test words its failure in none of those patterns printed only the
+// suites before it that passed and exit 1 (test:lanes, 2026-10-02). Red runs show the tail too.
+if (said && run.status !== 0) console.log(`--- last 30 lines ---\n${out.slice(-30).join('\n')}`)
 process.exit(run.status ?? 1)
