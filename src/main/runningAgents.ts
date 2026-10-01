@@ -14,7 +14,8 @@
 
 import { closeSync, openSync, readSync, statSync } from 'node:fs'
 import { logHandoff } from './activationLog'
-import { agentWords, newAgentScan, runningAgents, scanAgentLines, type AgentScan } from '../shared/runningAgents'
+import { AGENT_MAX_AGE_MS, agentWords, newAgentScan, runningAgents, scanAgentLines, type AgentScan } from '../shared/runningAgents'
+import type { CodexWorkerReading } from '../shared/types'
 
 const CHECK_MS = 3_000
 const FIRST_READ_BYTES = 8 * 1024 * 1024
@@ -27,6 +28,8 @@ interface Reading {
   checkedAt: number
   /** what was last said about this pane, so the log hears only CHANGES */
   words?: string
+  available?: boolean
+  limited?: boolean
 }
 
 const readings = new Map<string, Reading>()
@@ -72,12 +75,12 @@ export function backgroundAgentsFor(
     return undefined
   }
   let r = readings.get(paneId)
-  if (r && r.file === file && now - r.checkedAt < CHECK_MS) return wordsOf(r, since, now)
+  if (r && r.file === file && now - r.checkedAt < CHECK_MS) return r.available ? wordsOf(r, since, now) : undefined
   try {
     const size = statSync(file).size
     if (!r || r.file !== file || size < r.offset) {
       const start = Math.max(0, size - FIRST_READ_BYTES)
-      r = { file, offset: start, scan: newAgentScan(), checkedAt: now, words: r?.words }
+      r = { file, offset: start, scan: newAgentScan(), checkedAt: now, words: r?.words, limited: start > 0 }
       if (start > 0) {
         // Started mid-file: drop the partial first line.
         const head = readFrom(file, start, Math.min(size, start + 1024 * 1024))
@@ -93,6 +96,7 @@ export function backgroundAgentsFor(
       const from = size - r.offset > FIRST_READ_BYTES ? size - FIRST_READ_BYTES : r.offset
       const got = readFrom(file, from, size)
       if (from !== r.offset) {
+        r.limited = true
         r.scan = newAgentScan()
         const nl = got.text.indexOf('\n')
         scanAgentLines(r.scan, nl < 0 ? '' : got.text.slice(nl + 1))
@@ -101,10 +105,26 @@ export function backgroundAgentsFor(
       }
       r.offset = from + got.consumed
     }
+    r.available = true
   } catch {
+    if (r) r.available = false
     return undefined
   }
   return wordsOf(r, since, now)
+}
+
+/** Reuse the hold reader's proof without a second transcript scan or requested-model claim. */
+export function backgroundWorkerReadingFor(paneId: string, since: number | undefined, now = Date.now()): CodexWorkerReading {
+  const r = readings.get(paneId)
+  if (!r?.available) return { workers: [], status: 'unknown' }
+  return {
+    status: r.limited ? 'limited' : 'fresh',
+    workers: runningAgents(r.scan, { since }).map(a => ({
+      id: a.id, name: a.label || 'Background task',
+      state: a.at == null ? 'unknown' : now - a.at > AGENT_MAX_AGE_MS ? 'stale' : 'running',
+      startedAt: a.at ?? undefined
+    }))
+  }
 }
 
 function wordsOf(r: Reading, since: number | undefined, now: number): string | undefined {

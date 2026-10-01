@@ -154,6 +154,9 @@ ${method('closeAfterResult', 'killAll')}
   assert.equal(refuse({ agent: 'shell' }), 'shell pane')
   assert.equal(refuse({ turnEndedAt: 0 }), 'no finished turn')
   assert.equal(refuse({ focused: true }), 'somebody is looking at it')
+  // Robert, 2026-09-29: a pane he kept open for a long job must stay to be read and continued.
+  assert.equal(refuse({ kept: true }), 'kept open by hand')
+  assert.equal(refuse({ kept: true, lookedAt: NOW - 60_000, turnEndedAt: NOW - 90_000 }), 'kept open by hand', 'read does not undo a keep')
   assert.equal(refuse({ lastKeyboard: NOW - 10_000 }), 'not quiet long enough', 'typing restarts the clock')
   assert.equal(refuse({ turnEndedAt: NOW - 30_000 }), 'not quiet long enough')
   assert.match(refuse({ ask: { q: 'which?' } }), /busy, asking/)
@@ -408,6 +411,7 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
   assert.deepEqual(main.sweepDoneClose({ ...deps, dry: true, readings: () => [{ id: 'none', ...finished({ turnEndedAt: at - 20_000 }) }] }), [], 'not quiet: stays')
   assert.deepEqual(main.sweepDoneClose({ ...deps, dry: true, quietMs: () => 0, readings: () => [{ id: 'none', ...finished({ turnEndedAt: at - 20_000 }) }] }), ['none'], 'tidy asks without the quiet wait')
   assert.deepEqual(main.sweepDoneClose({ ...deps, dry: true, quietMs: () => 0, readings: () => [{ id: 'none', ...finished({ turnEndedAt: at - 20_000, reply: 'Which port?' }) }], transcriptFor: () => transcript('q', 'Which port?') }), [], 'and keeps every refusal')
+  assert.deepEqual(main.sweepDoneClose({ ...deps, readings: () => readings.map(r => ({ ...r, kept: true })) }), [], 'kept sessions never start a close warning')
   assert.deepEqual(main.sweepDoneClose(deps), ['none', 'steps', 'stepsRead', 'noneLooked'])
   assert.deepEqual(cards, readings.map(r => doneReviewId(r.id, r.turnEndedAt)), 'every closed result requests delivery, including a looked-at answer with no actions')
   assert.deepEqual(reads, [], 'a glance never acknowledges any report')

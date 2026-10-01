@@ -9,6 +9,7 @@ import { BEAT_MS, forkStoppedReason, readVitals, type Vitals, type VitalsMark } 
 import { logProblem } from './crash'
 import { profileName } from './profile'
 import { rendererAnsweredAt } from './renderWatch'
+import { mainPerformanceBeat, startMainPerformance } from './mainPerformance'
 
 const REFORK_MS = 10_000
 const MAX_REFORKS_PER_HOUR = 5
@@ -106,21 +107,22 @@ function fork(): void {
 }
 
 export function startMainWatch(): void {
-  if (process.env.PF_NO_WATCHDOG === '1' || child || stopped) return
+  if (beatTimer || child || stopped) return
+  startMainPerformance(join(app.getPath('userData'), 'main-performance.log'), app.getVersion())
   // A deliberate app quit is not a frozen main process. Stop its child before heartbeat
   // timers end, so a slow normal shutdown never becomes a relaunch.
   app.once('will-quit', stopMainWatch)
-  fork()
+  if (process.env.PF_NO_WATCHDOG !== '1') fork()
   beatTimer = setInterval(() => {
-    if (!child) return
     const now = Date.now()
     const mem = process.memoryUsage()
     const cpu = process.cpuUsage()
     const { vitals, mark } = readVitals(prevMark, now, mem, cpu.user + cpu.system, rendererAnsweredAt())
     prevMark = mark
     latestVitals = vitals
+    mainPerformanceBeat(now, vitals)
     beatsSent++
-    child.postMessage({ t: 'beat', now, vitals })
+    child?.postMessage({ t: 'beat', now, vitals })
   }, BEAT_MS)
   beatTimer.unref()
   // An unpackaged-only drill proves the child can recover a main thread that cannot run

@@ -1064,8 +1064,33 @@ button.row-lane:hover { color: var(--text); }
 .row-sub .meta { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-sub .meta.row-agent { display: inline-flex; align-items: center; gap: 5px; flex: 0 1 auto; }
 .row-sub .meta + .meta::before { content: '\00b7'; margin: 0 6px; opacity: 0.7; }
-.row-sub .meta.row-workers { flex: 1 1 100%; white-space: normal; overflow-wrap: anywhere; }
-.row-sub .meta.row-workers::before { content: none; }
+.workers { margin-top: 7px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); overflow: hidden; }
+.workers summary { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; padding: 7px 9px; cursor: pointer; font-size: 11px; list-style: none; color: var(--muted); }
+.workers summary::-webkit-details-marker { display: none; }
+.workers summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; border-radius: 10px; }
+.workers-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--muted); flex: 0 0 auto; }
+.workers-active .workers-dot { background: var(--accent); animation: worker-breathe 2.8s ease-in-out infinite; }
+.workers-label { color: var(--text); font-weight: 550; }
+.workers-count { margin-left: auto; font-variant-numeric: tabular-nums; }
+.workers-chevron { transition: transform 160ms ease; }
+.workers[open] .workers-chevron { transform: rotate(180deg); }
+.workers-preview { flex-basis: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-left: 12px; }
+.workers[open] .workers-preview { display: none; }
+.workers-body { padding: 0 9px 8px; animation: worker-arrive 160ms ease-out; }
+.workers-list { list-style: none; padding: 0; margin: 0; max-height: 240px; overflow-y: auto; }
+.worker { padding: 8px 0; border-top: 1px solid var(--line); }
+.worker-heading, .worker-meta { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.worker-name { flex: 1; min-width: 0; color: var(--text); font-size: 11px; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.worker-state { font-size: 10px; color: var(--muted); }
+.worker-running .worker-state { color: var(--accent-text); }
+.worker-meta { margin-top: 4px; color: var(--muted); font-size: 10px; }
+.worker-meta > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.worker-time { margin-left: auto; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.workers-note { font-size: 10px; color: var(--muted); line-height: 1.45; margin: 6px 0 0; }
+.pane > .workers { flex-shrink: 0; margin: 0 8px 5px; }
+@keyframes worker-breathe { 50% { opacity: .45; } }
+@keyframes worker-arrive { from { opacity: .5; transform: translateY(-2px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .workers-active .workers-dot, .workers-body { animation: none; } .workers-chevron { transition: none; } }
 .row-sub .meta.jobs { color: var(--accent); }
 .row-state .elapsed, .row-sub .elapsed {
   margin: 0; padding: 0; border: none; background: none; box-shadow: none;
@@ -1332,6 +1357,7 @@ html:is(.hi-refresh, .on-battery) .num-wrap:has(> .num.attn)::before,
 html:is(.hi-refresh, .on-battery) .lane-row.stuck::before { animation: none !important; opacity: 1; }
 
 html:is(.hi-refresh, .on-battery) .num.live::after,
+html:is(.hi-refresh, .on-battery) .workers-active .workers-dot,
 html:is(.hi-refresh, .on-battery) .row.asking::before,
 html:is(.hi-refresh, .on-battery) .dot.working,
 html:is(.hi-refresh, .on-battery) .dot.connecting,
@@ -4989,9 +5015,9 @@ html.handheld .link-down-retry { min-height: 44px; padding: 0 14px; }
   gap: 10px; pointer-events: none;
   /* Never taller than the window: with five cards up the top one would otherwise be
      drawn off-screen, which is the same bug in a different direction. */
-  max-height: calc(100vh - 36px); overflow: hidden;
+  max-height: calc(100vh - 36px); overflow-y: auto;
 }
-.corner-stack > * { pointer-events: auto; }
+.corner-stack > * { pointer-events: auto; flex-shrink: 0; }
 /* Inside the stack a card is a row, not a fixed thing in a corner. Every one of these
    keeps its own width, padding and border - only the placement is taken away. */
 .corner-stack > .autoclear-card,
@@ -5214,3 +5240,33 @@ html.handheld .card-x { width: 44px; height: 44px; top: 0; right: 0; font-size: 
 .fr-note { font-size: 11.5px; line-height: 1.4; color: var(--muted); overflow-wrap: anywhere; }
 .fr-go { align-self: flex-start; margin-top: 4px; }
 /* ---- end first-run card ------------------------------------------------------------- */
+
+/* Keep choices stay beside the sessions they protect. Native inputs retain keyboard
+   and assistive-technology behavior; only their drawn box is customized. */
+.sessions-section { flex-wrap: wrap; }
+.keep-all, .session-keep-open {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 24px;
+  color: var(--muted); font-size: 11px; font-weight: 500;
+  white-space: nowrap; text-transform: none; letter-spacing: normal; cursor: pointer;
+}
+.keep-all { order: 2; flex-basis: 100%; }
+.session-keep-open { margin-top: 3px; }
+.keep-all:hover, .session-keep-open:hover,
+.keep-all:has(:checked), .session-keep-open:has(:checked) { color: var(--text); }
+.keep-checkbox {
+  appearance: none; -webkit-appearance: none; flex: none; display: grid; place-content: center;
+  width: 15px; height: 15px; margin: 0; border: 1px solid var(--muted);
+  border-radius: 4px; background: var(--surface); color: var(--accent-on); cursor: pointer;
+}
+.keep-checkbox:checked, .keep-checkbox:indeterminate { border-color: var(--accent); background: var(--accent); }
+.keep-checkbox::before {
+  content: ''; width: 7px; height: 4px; border-left: 1.8px solid currentColor;
+  border-bottom: 1.8px solid currentColor; margin-bottom: 2px; transform: rotate(-45deg); visibility: hidden;
+}
+.keep-checkbox:checked::before { visibility: visible; }
+.keep-checkbox:indeterminate::before {
+  visibility: visible; width: 7px; height: 0; border-left: 0; transform: none;
+}
+.keep-checkbox:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.keep-all:has(:disabled), .session-keep-open:has(:disabled) { opacity: .5; cursor: default; }
+.keep-checkbox:disabled { cursor: default; }

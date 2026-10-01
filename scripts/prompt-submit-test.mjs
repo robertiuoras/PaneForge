@@ -1308,6 +1308,77 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
     `pasted=${pasted(unknown.p, later)}, rows=${ledger(unknown.pane.id).length}\n${logOf(unknown.pane.id)}`)
   manager.kill(unknown.pane.id)
 
+  // All waiting followers share the retained owner's negative native scan. Count
+  // real 2 MiB reads, including invalidation without a terminal repaint.
+  const scanHeld = open()
+  appendFileSync(scanHeld.file, (JSON.stringify({ type: 'event_msg', payload: { text: 'x'.repeat(4000) } }) + '\n').repeat(600))
+  scanHeld.p.onWrite = data => { if (data.includes(payload)) scanHeld.p.say(frame(payload)) }
+  const scanHead = queue(scanHeld)
+  ok(await waitFor(scanHead), 'scan fixture retains an unconfirmed typed head')
+  const fs = req('node:fs')
+  const originalFs = { openSync: fs.openSync, readSync: fs.readSync, statSync: fs.statSync }
+  const scanFds = new Set()
+  let scans = 0, statChecks = 0, failedStats = 0, failedReads = 0, failStat = false, failRead = false, frozenStat
+  fs.openSync = (file, ...args) => {
+    const fd = originalFs.openSync(file, ...args)
+    if (String(file) === scanHeld.file) scanFds.add(fd)
+    else scanFds.delete(fd)
+    return fd
+  }
+  fs.readSync = (fd, buf, ...args) => {
+    if (scanFds.has(fd) && buf.length === 2 * 1024 * 1024 && failRead) {
+      failedReads++
+      throw new Error('fixture read unavailable')
+    }
+    const got = originalFs.readSync(fd, buf, ...args)
+    if (scanFds.has(fd) && buf.length === 2 * 1024 * 1024) scans++
+    return got
+  }
+  fs.statSync = (file, ...args) => {
+    if (String(file) === scanHeld.file) {
+      statChecks++
+      if (failStat) { failedStats++; throw new Error('fixture stat unavailable') }
+      if (frozenStat) return frozenStat
+    }
+    return originalFs.statSync(file, ...args)
+  }
+  try {
+    const initialReturns = returnsOf(scanHeld.p)
+    for (let n = 0; n < 8; n++) queue(scanHeld, `scan follower ${n}`, 300)
+    ok(await waitFor(() => statChecks >= 32) && scans === 1 && ledger(scanHeld.pane.id).length === 9,
+      'eight followers poll an unchanged rollout repeatedly but share one 2 MiB negative scan', `stats=${statChecks}, scans=${scans}`)
+    scanHeld.received(payload.replace('first', 'wrong'))
+    ok(await waitFor(() => scans === 2) && ledger(scanHeld.pane.id).length === 9,
+      'a delayed append invalidates the shared miss without accepting a different prompt')
+    const beforeRewrite = originalFs.statSync(scanHeld.file)
+    writeFileSync(scanHeld.file, readFileSync(scanHeld.file, 'utf8').replace('wrong line:', 'other line:'))
+    utimesSync(scanHeld.file, beforeRewrite.atime, beforeRewrite.mtime)
+    ok(await waitFor(() => scans === 3) && originalFs.statSync(scanHeld.file).size === beforeRewrite.size &&
+      ledger(scanHeld.pane.id).length === 9,
+      'a same-size rewrite with restored mtime invalidates the miss through file change identity')
+    const unchangedStat = originalFs.statSync(scanHeld.file)
+    failStat = true
+    ok(await waitFor(() => failedStats >= 8), 'unavailable stat is retried without discarding the retained intent')
+    writeFileSync(scanHeld.file, readFileSync(scanHeld.file, 'utf8').replace('other line:', 'first line:'))
+    // Simulate the same signature returning after a transient stat failure. The
+    // failed check must have cleared its prior miss, so this receipt is still read.
+    frozenStat = unchangedStat
+    failRead = true
+    failStat = false
+    ok(await waitFor(() => failedReads >= 8) && scans === 3 && ledger(scanHeld.pane.id).length === 9,
+      'transient read failure is retried with the same signature and preserves every intent')
+    failRead = false
+    scanHeld.p.say(frame('a foreign draft still owns the composer'))
+    ok(await waitFor(() => ledger(scanHeld.pane.id).length === 8) && scans === 4 &&
+      ledger(scanHeld.pane.id).every(row => row.text.startsWith('scan follower ') && !row.typed) &&
+      returnsOf(scanHeld.p) === initialReturns && scanHeld.p.writes.filter(data => data.includes(payload)).length === 1,
+      'a receipt after stat recovery acknowledges only the head and never repastes its waiting followers', `scans=${scans}`)
+    console.log(`receipt scan regression: 8 followers, ${statChecks} stat checks, ${scans} scans across 4 file states`)
+  } finally {
+    Object.assign(fs, originalFs)
+    manager.kill(scanHeld.pane.id)
+  }
+
   const finalLF = open()
   const terminated = payload + '\n'
   finalLF.p.onWrite = data => {

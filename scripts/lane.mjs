@@ -3096,6 +3096,9 @@ function firstLine(out) {
 
 /** A command that never started, as opposed to one that ran and disagreed with the code. */
 function cannotRun(out) {
+  // A completed suite verdict wins over an injected ENOENT/missing-module error inside
+  // its output. Those errors are also legitimate things for a regression test to exercise.
+  if (/^FAIL[ \t]+\S+/m.test(out)) return false
   // `Tests deferred:` is scripts/test-remote.mjs finding the PC unreachable. Cached as red,
   // it pinned master as failing on its commit after the PC came back (2026-09-23).
   return /is not recognized|command not found|ENOENT|Cannot find module|npm ERR! missing script|sh: .*: not found|Tests deferred:/i.test(out)

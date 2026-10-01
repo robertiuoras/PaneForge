@@ -1,4 +1,5 @@
 import { appendLog, flushLogsOnExit } from './logWrite'
+import { measureMainTask } from './mainPerformance'
 import { profileRenderer, reloadRenderer } from './renderCost'
 import { execFile } from 'node:child_process'
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -808,7 +809,7 @@ const phone = new PhoneServer({
     const cfg = getConfig()
     setConfigStrict({ phone: { ...cfg.phone!, nativePromptReceipts: list } })
   },
-  sessions: () => manager.list(),
+  sessions: () => localSessions(),
   sessionBuffer: (id) => manager.buffer(id),
   semanticConversation: (id, agent, cursor) => nativeTranscriptPage(id, agent, cursor),
   sleepSession: (id) => Boolean(manager.sleep(id, 'manual', { source: 'api' })),
@@ -816,9 +817,12 @@ const phone = new PhoneServer({
     const current = getConfig().pinnedPanes ?? []
     const next = keepOpen ? [...new Set([...current, id])] : current.filter((pinned) => pinned !== id)
     if (next.join(',') !== current.join(',')) setConfig({ pinnedPanes: next })
+    if (keepOpen) manager.cancelAutoClear(id, 'cancelled')
+    send('config:changed', getConfig())
+    send('sessions:changed', allSessions())
     return true
   },
-  isKeepOpen: (id) => (getConfig().pinnedPanes ?? []).includes(id),
+  isKeepOpen: keptOpen,
   wakeSession: (id) => manager.wake(id),
   sendNativePrompt: (id, text) => manager.sendNativePrompt(id, text),
   onIdle: () => manager.returnSizes(),
@@ -1185,7 +1189,7 @@ function raiseAttention(s: Session): void {
 // machines involved.
 
 const remote = new Remote({
-  list: () => manager.list(),
+  list: () => localSessions(),
   buffer: (id) => manager.buffer(id),
   log: (id, bytes) => freshReplay(history.tail(id, bytes), manager.buffer(id)),
   // A person typed this on the paired machine's mirror, and this desk never saw the
@@ -1213,9 +1217,12 @@ const remote = new Remote({
     const current = getConfig().pinnedPanes ?? []
     const next = keepOpen ? [...new Set([...current, id])] : current.filter((pinned) => pinned !== id)
     if (next.join(',') !== current.join(',')) setConfig({ pinnedPanes: next })
+    if (keepOpen) manager.cancelAutoClear(id, 'cancelled')
+    send('config:changed', getConfig())
+    send('sessions:changed', allSessions())
     return true
   },
-  isKeepOpen: (id) => (getConfig().pinnedPanes ?? []).includes(id),
+  isKeepOpen: keptOpen,
   armCloseWhenDone: (id) => manager.armCloseWhenDone(id),
   kill: (id) => manager.kill(id),
   restart: (id) => continuationOwnsSource(id) ? null : manager.restart(id),
@@ -1295,9 +1302,13 @@ const screenViews = new ScreenViews(
 screenViews.on('sessions', () => send('sessions:changed', allSessions()))
 remote.on('screen', (e) => screenViews.onRemote(e))
 
-/** Local panes and mirrored ones, as one list. This is what the renderer ever sees. */
+function localSessions(): Session[] {
+  return manager.list().map(s => ({ ...s, keepOpen: keptOpen(s.id) }))
+}
+
+/** Local panes and mirrored ones, as one list. */
 function allSessions(): Session[] {
-  return [...manager.list(), ...remote.sessions(), ...screenViews.sessions()]
+  return [...localSessions(), ...remote.sessions(), ...screenViews.sessions()]
 }
 // A finished chat's report carries the number on its card, counted from this same list.
 setReviewDesk(allSessions)
@@ -1627,6 +1638,20 @@ ipcMain.on('sessions:active', (_e, id: unknown) => manager.setActive(typeof id =
 // (`shared/finishedDigest.ts`). Flushed on the same 15s tick as the sweep that feeds it.
 const finishedDigest = new FinishedDigest()
 manager.digestPending = (id) => finishedDigest.has(id)
+/**
+ * A person said to keep this pane open - the card's "Keep this pane open"
+ * (`config.pinnedPanes`). Every automatic close asks this: the idle clock (renderer), the
+ * finished-pane sweep and `pf tidy`, `reviews:record`'s close, the dead/asleep sweeps and
+ * `--close-when-done`. Robert, 2026-09-29: "mark a session as keep open so auto close won't
+ * close it ... some work long running I need to see result and also continue the session".
+ */
+function keptOpen(id: string): boolean {
+  return (getConfig().pinnedPanes ?? []).includes(id)
+}
+manager.keptOpen = keptOpen
+function doneReadings(): ReturnType<typeof manager.doneReadings> {
+  return manager.doneReadings().map((r) => (keptOpen(r.id) ? { ...r, kept: true } : r))
+}
 manager.replyFor = (id, agent) => {
   const file = transcriptFor(id)
   return file ? readReply(agent, file) : undefined
@@ -1652,7 +1677,7 @@ function doneCloseDeps(): DoneCloseDeps {
       const v = capacityVerdict()
       return doneQuietMs(sleepPressureOf(v.level, v.why))
     },
-    readings: () => manager.doneReadings(),
+    readings: doneReadings,
     setClosing: (id, at) => manager.setDoneClosingAt(id, at),
     folderOf: (id, since) => {
       const cwd = manager.list().find((x) => x.id === id)?.cwd
@@ -1684,7 +1709,7 @@ function doneCloseDeps(): DoneCloseDeps {
     log: (line) => appendLog(join(app.getPath('userData'), 'done-close.log'), `[${new Date().toISOString()}] ${line}\n`, { rotateAt: 64 * 1024 })
   }
 }
-setInterval(() => {
+setInterval(() => measureMainTask('done-close', () => {
   try {
     sweepDoneClose(doneCloseDeps())
   } catch (e) {
@@ -1692,7 +1717,7 @@ setInterval(() => {
   }
   for (const opener of finishedDigest.flush((o) => manager.openChildrenOf(o), (o, text) => manager.tellPane(o, text)))
     console.info(`done-close: told ${opener} what the panes it opened did`)
-}, 15_000).unref()
+}), 15_000).unref()
 /**
  * `pf tidy`: every pane whose card says finished (`Session.finished`) that the sweep above
  * would close - the same refusals, only not the quiet wait, because somebody asking to
@@ -1707,7 +1732,7 @@ ipcMain.handle('sessions:closeDone', async (_e, dry: unknown) => {
     ...doneCloseDeps(),
     enabled: () => true,
     quietMs: () => 0,
-    readings: () => manager.doneReadings().filter((r) => finished.has(r.id)),
+    readings: () => doneReadings().filter((r) => finished.has(r.id)),
     dry: dry === true
   })
 })
@@ -1745,6 +1770,7 @@ ipcMain.handle('reviews:record', (_e, input: import('../shared/reviews').ReviewI
   if (input.closeSession === true) {
     if (review.closedAt || review.closeBlocked) close.reason = review.closedAt ? 'close was already completed' : review.closeBlocked
     else if (!session) close.reason = 'session is already closed'
+    else if (keptOpen(session.id)) close.reason = 'kept open by hand'
     else if (!resumeIdFor(session.id)) close.reason = 'close requires a stable native provider session ID'
     else if (input.kind !== 'result' || input.proof !== 'measured' || !input.evidence?.length || input.workPreserved !== true || input.noRemainingWork !== true || !input.capturedAt) close.reason = 'close requires measured result evidence, work preservation, no remaining work, and a captured timestamp'
     else if (Date.parse(input.capturedAt) > Date.now()) close.reason = 'captured timestamp is in the future'
@@ -2365,7 +2391,7 @@ function exitedFacts(): ExitedFact[] {
     ask: s.ask,
     handingOff: s.handingOff,
     lastKeyboard: Math.max(s.lastKeyboard ?? 0, touchedAt.get(s.id) ?? 0) || undefined,
-    keepOpen: s.keepOpen
+    keepOpen: s.keepOpen || keptOpen(s.id)
   }))
 }
 /**
@@ -2424,6 +2450,7 @@ function removeFinished(removals: { id: string; reason: string }[]): void {
 // finished one does, INTO REVIEW, rather than only into History. Robert, 2026-09-25: a
 // quiet pane "just close sessions after a bit of time", with Review as the way back.
 ipcMain.handle('sessions:closeIntoReview', (_e, id: string, reason: string) => {
+  if (keptOpen(id)) return
   // Only a local agent pane has a conversation to keep; a screen view, a mirror or a stale
   // id is closed exactly the way `sessions:kill` closes it.
   if (!remote.owns(id) && !screenViews.owns(id) && manager.list().some((s) => s.id === id)) {
@@ -2439,13 +2466,13 @@ ipcMain.handle('sessions:clearFinished', () => {
 })
 // The automatic half: the same facts the button reads, checked on its own clock so a
 // pane nobody presses the button on still leaves the sidebar ten minutes after it dies.
-setInterval(() => {
+setInterval(() => measureMainTask('exited-close', () => {
   const facts = exitedFacts()
   const now = Date.now()
   // Sleeping panes only when finished panes close themselves at all (Settings).
   const asleep = getConfig().autoCloseDone !== false ? asleepSweep(facts, now) : []
   removeFinished([...exitedSweep(facts, now), ...asleep])
-}, 30_000).unref()
+}), 30_000).unref()
 ipcMain.handle('sessions:buffer', (_e, id: string) =>
   remote.owns(id) ? remote.buffer(id) : manager.buffer(id)
 )
@@ -2801,6 +2828,9 @@ ipcMain.handle('config:set', (_e, patch: Partial<Config>) => {
   )
     patch = { ...patch, discordSettingsAt: Date.now() }
   const next = setConfig(patch)
+  if (patch.pinnedPanes) {
+    for (const id of next.pinnedPanes ?? []) manager.cancelAutoClear(id, 'cancelled')
+  }
   // An edited custom agent changes what is launchable, so the availability cache
   // must not outlive the edit.
   if (patch.customAgents) invalidateAgents()
@@ -3126,7 +3156,7 @@ function sweepCopies(repos: string[], gap: number): void {
 // lane command, so the ones that come unstuck by themselves do it overnight too. Both
 // the interval and laneRetry are no-ops on a machine with no PaneForge checkout, and it
 // returns immediately unless a lane is conflicted or waiting to go out.
-setInterval(() => {
+setInterval(() => measureMainTask('lane-maintenance', () => {
   laneRetry(lanePanes())
   // And the lanes held by chats that are not here any more: a killed pane never runs its
   // SessionEnd hook, so its lane sat held - and blocking the release - for twelve hours.
@@ -3134,7 +3164,7 @@ setInterval(() => {
   // Same clock, and the copies nothing has freed up since: no git here, the list of
   // projects with copies is read off disk, and each is swept at most every six hours.
   sweepCopies(ledgerRepos(lanePanes()), COPIES_EVERY_MS)
-}, 60_000).unref()
+}), 60_000).unref()
 
 // A pane ending is when a copy most often stops being needed: its chat let go, and nothing
 // else may be in it. Only the projects of the panes that ended are swept, and not at once -
@@ -3633,10 +3663,17 @@ ipcMain.handle('remote:handoffCancel', (_e, id: string) => handoffQueue.drop(Str
 // the only part a person can stop. Payload is re-read here because the phone server reaches
 // this channel too - see `readAutoClearAsk`.
 // The same body answers a request FILE from the shipped hook (`autoclearRequests.ts`).
+const keptContexts = new Map<string, string>()
 function autoClearAsk(raw: unknown): { ok: boolean; reason?: string } {
   const ask = readAutoClearAsk(raw)
   if (!ask) return { ok: false, reason: 'that is not an autoclear request' }
   if (remote.owns(ask.paneId)) return { ok: false, reason: 'that pane lives on another device' }
+  if (keptOpen(ask.paneId)) return { ok: false, reason: 'kept open by hand' }
+  const keptContext = keptContexts.get(ask.paneId)
+  if (keptContext && keptContext === resumeIdFor(ask.paneId)) {
+    return { ok: false, reason: 'you chose to keep this session; clear it manually when ready' }
+  }
+  keptContexts.delete(ask.paneId)
   // The hook says WHAT to type, this end says how this CLI spells "start again" - the same
   // ask from a codex pane has to send `/new`.
   //
@@ -3675,7 +3712,12 @@ function autoClearAsk(raw: unknown): { ok: boolean; reason?: string } {
   return manager.armAutoClear(ask.paneId, { ...ask, prompt: resumeBrief(ask, briefAnchor(ask, handoff?.path ?? null, (p) => existsSync(p))), command })
 }
 ipcMain.handle('autoclear:ask', (_e, raw: unknown) => autoClearAsk(raw))
-ipcMain.handle('autoclear:cancel', (_e, id: string) => manager.cancelAutoClear(String(id), 'cancelled'))
+ipcMain.handle('autoclear:cancel', (_e, id: string) => {
+  const paneId = String(id)
+  const conversation = resumeIdFor(paneId)
+  if (conversation) keptContexts.set(paneId, conversation)
+  return manager.cancelAutoClear(paneId, 'cancelled')
+})
 ipcMain.handle('autoclear:takeover', (_e, id: string) => manager.takeOver(String(id)))
 // The renderer runs from file:// in production, which is not a secure context, so
 // navigator.clipboard is unavailable there. Terminal copy/paste goes through here.

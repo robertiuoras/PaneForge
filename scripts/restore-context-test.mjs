@@ -27,7 +27,7 @@ import { fileURLToPath } from 'node:url'
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const tsc = (await import('typescript')).default
 
-/** Compile one dependency-free main-process module and hand back its exports. */
+/** Compile one main-process module with the bounded dependencies below. */
 function load(file, exportNames) {
   const src = readFileSync(join(root, file), 'utf8')
   const js = tsc.transpileModule(src, {
@@ -43,8 +43,8 @@ function load(file, exportNames) {
   return module.exports
 }
 
-// The modules under test import only node builtins; give the compiled CommonJS a
-// require that can reach them and nothing else.
+// Restore behavior uses node builtins and task instrumentation. Timing is exercised
+// with the real writer in main-performance-test, so keep this fixture synchronous.
 const builtins = new Map()
 function require_(id) {
   if (!builtins.has(id)) throw new Error(`unexpected import: ${id}`)
@@ -57,6 +57,7 @@ for (const id of ['node:fs', 'node:os', 'node:path', 'node:child_process', 'elec
     /* electron is not importable outside the app - nothing under test needs it */
   }
 }
+builtins.set('./mainPerformance', { measureMainTask: (_task, run) => run() })
 
 const T = load('src/main/transcripts.ts', [
   'noteSession',

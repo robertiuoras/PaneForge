@@ -22,6 +22,7 @@ import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, r
 import { homedir } from 'node:os'
 import { basename, join, sep } from 'node:path'
 import { execFile } from 'node:child_process'
+import { measureMainTask } from './mainPerformance'
 
 /** Claude Code and Antigravity keep transcripts we can name a session from. */
 const SUPPORTED = new Set(['claude', 'antigravity'])
@@ -287,7 +288,7 @@ function transcripts(dir: string): Listed[] {
  * pty bytes pass through, so it was the lag a keystroke felt. `reads.head` counts, so a
  * test can prove a file is not read again for an answer that cannot change.
  */
-export const reads = { head: 0 }
+export const reads = { head: 0, codexProofBytes: 0 }
 const head = Buffer.alloc(HEAD_BYTES)
 function readHead(file: string): string | null {
   let fd = -1
@@ -1074,8 +1075,49 @@ export async function claimCodexFromProcess(id: string, pid: number | undefined)
 
 /** A Codex user message this pane actually submitted, never a loose text search. */
 function codexSaidByPane(file: string, lines: string[]): boolean {
+  return measureMainTask('codex-proof', () => codexProofIn(file, lines))
+}
+
+// A pending prompt can be asked about several times in each one-second idle sweep.
+// Re-reading and parsing the entire growing rollout on each miss made four actual
+// conversations cost 170ms per pass (2026-09-30). Keep only the current query and its
+// complete-line offset: no agent output or accumulated message index is retained.
+const codexProofs = new Map<string, {
+  dev: number; ino: number; size: number; mtimeMs: number
+  lines: string[]; offset: number; matched: boolean
+}>()
+const CODEX_PROOFS_KEEP = 64
+
+function codexProofIn(file: string, lines: string[]): boolean {
+  let fd = -1
   try {
-    for (const line of readFileSync(file, 'utf8').split('\n')) {
+    const stat = statSync(file)
+    let scan = codexProofs.get(file)
+    if (!scan || scan.dev !== stat.dev || scan.ino !== stat.ino || stat.size < scan.size ||
+      (stat.size === scan.size && stat.mtimeMs !== scan.mtimeMs) ||
+      scan.lines.length !== lines.length || scan.lines.some((line, i) => line !== lines[i])) {
+      scan = { dev: stat.dev, ino: stat.ino, size: 0, mtimeMs: 0, lines: [...lines], offset: 0, matched: false }
+    }
+    codexProofs.delete(file)
+    codexProofs.set(file, scan)
+    while (codexProofs.size > CODEX_PROOFS_KEEP) codexProofs.delete(codexProofs.keys().next().value as string)
+    if (scan.matched) return true
+    if (scan.size === stat.size && scan.mtimeMs === stat.mtimeMs) return false
+    fd = openSync(file, 'r')
+    const buf = Buffer.alloc(stat.size - scan.offset)
+    const n = readSync(fd, buf, 0, buf.length, scan.offset)
+    reads.codexProofBytes += n
+    // Retry a short read and an unfinished final row. In particular, a UTF-8 codepoint
+    // split across appends must be decoded only once the complete row is available.
+    if (n !== buf.length) return false
+    const end = buf.lastIndexOf(0x0a)
+    scan.size = stat.size
+    scan.mtimeMs = stat.mtimeMs
+    scan.offset += end + 1
+    for (const line of buf.toString('utf8').split('\n')) {
+      // Tool output dominates these files. These literal JSON values are required by
+      // the parsed predicate below; filtering first cannot introduce a false match.
+      if (!line.includes('\\u') && (!line.includes('"response_item"') || !line.includes('"user"') || !line.includes('"input_text"'))) continue
       let row: { type?: string; payload?: { type?: string; role?: string; content?: unknown } }
       try {
         row = JSON.parse(line) as { type?: string; payload?: { type?: string; role?: string; content?: unknown } }
@@ -1087,10 +1129,16 @@ function codexSaidByPane(file: string, lines: string[]): boolean {
       const texts = Array.isArray(content)
         ? content.filter((part): part is { type?: string; text?: string } => typeof part === 'object' && part !== null).filter((part) => part.type === 'input_text' && typeof part.text === 'string').map((part) => part.text as string)
         : []
-      if (texts.some((text) => saidByPane(text, lines))) return true
+      if (texts.some((text) => saidByPane(text, lines))) {
+        scan.matched = true
+        return true
+      }
     }
   } catch {
+    codexProofs.delete(file)
     return false
+  } finally {
+    if (fd >= 0) closeSync(fd)
   }
   return false
 }
@@ -1132,22 +1180,97 @@ export function codexTranscriptPath(cwd: string, resumeId: string): string | nul
  * because this is only used seconds after Enter was sent.
  */
 export function codexAcceptedPrompt(id: string, prompt: string, since: number): boolean {
-  return codexPromptReceipt(id, prompt, since) !== null
+  return Boolean(codexPromptReceipt(id, prompt, since))
 }
 
-export function codexPromptReceipt(id: string, prompt: string, since: number): { transcriptAt: number } | null {
+export function codexPromptReceipt(id: string, prompt: string, since: number): { transcriptAt: number } | null | undefined {
   return codexReceiptIn(transcriptFor(id), prompt, since)
 }
 
+/** Async acceptance is not an answer. Require the exact still-unanswered native call,
+ * including old calls outside the tail and calls preceding a newer independent question. */
+export function codexQuestionPending(cwd: string, conversationId: string, toolUseId: string, questionCount: number): boolean {
+  const file = codexTranscriptPath(cwd, conversationId)
+  if (!file || !toolUseId.trim() || !Number.isInteger(questionCount) || questionCount < 1) return false
+  let fd = -1, pending = '', matches = false, calls = 0, ended = false
+  let activeTurn: string | undefined, questionTurn: string | undefined
+  const consume = (line: string) => {
+    if (!line.includes('session_meta') && !line.includes('event_msg') && !line.includes(toolUseId) && !line.includes('send_user_message_question_reply')) return
+    try {
+      const row = JSON.parse(line), p = row.payload
+      if (row.type === 'session_meta') { matches = p?.id === conversationId; return }
+      if (row.type === 'event_msg') {
+        const turnId = typeof p?.turn_id === 'string' && p.turn_id.trim() ? p.turn_id : undefined
+        if (p?.type === 'task_started') activeTurn = turnId
+        // The native live editor drops outstanding drafts at the owning turn's end.
+        // An unrelated, truncated or unbound lifecycle row is not closure proof.
+        if ((p?.type === 'task_complete' || p?.type === 'turn_aborted') && turnId && activeTurn === turnId) {
+          if (questionTurn === turnId) ended = true
+          activeTurn = undefined
+        }
+        return
+      }
+      if (row.type !== 'response_item' || !p) return
+      if (p.type === 'function_call' && p.call_id === toolUseId) {
+        if (!/^(?:functions\.)?request_user_input_async$/.test(p.name ?? '')) { ended = true; return }
+        const args = JSON.parse(p.arguments)
+        if (!Array.isArray(args.questions) || args.questions.length !== questionCount) { ended = true; return }
+        calls++
+        const turnId = p.internal_chat_message_metadata_passthrough?.turn_id
+        if (typeof turnId === 'string' && turnId && turnId === activeTurn) questionTurn = turnId
+      }
+      if (p.type === 'function_call_output' && p.call_id === toolUseId) {
+        let result
+        try { result = typeof p.output === 'string' ? JSON.parse(p.output) : p.output } catch { ended = true; return }
+        if (p.is_error || result?.accepted !== true) ended = true
+      }
+      if (p.type !== 'message' || p.role !== 'user' || !Array.isArray(p.content)) return
+      for (const part of p.content) {
+        if (part.type !== 'input_text' || typeof part.text !== 'string') continue
+        const start = '<send_user_message_question_reply>', end = '</send_user_message_question_reply>'
+        if (!part.text.startsWith(start) || !part.text.endsWith(end)) continue
+        const replies = JSON.parse(part.text.slice(start.length, -end.length))
+        if (!Array.isArray(replies)) continue
+        for (const reply of replies) {
+          if (typeof reply.answer !== 'string' || !reply.answer.trim() || typeof reply.questionItemId !== 'string') continue
+          const key = JSON.parse(reply.questionItemId)
+          if (Array.isArray(key) && key.length === 3 && key[0] === 'request_user_input_async' && key[1] === toolUseId &&
+            Number.isInteger(key[2]) && key[2] >= 0 && key[2] < questionCount) ended = true
+        }
+      }
+    } catch { /* A partial or unrelated row cannot prove a pending call. */ }
+  }
+  try {
+    fd = openSync(file, 'r')
+    const chunk = Buffer.alloc(64 * 1024)
+    // Decode complete lines together so a chunk boundary cannot split UTF-8 JSON.
+    let bytes = Buffer.alloc(0), read
+    while ((read = readSync(fd, chunk, 0, chunk.length, null)) > 0) {
+      bytes = Buffer.concat([bytes, chunk.subarray(0, read)])
+      let at
+      while ((at = bytes.indexOf(10)) >= 0) {
+        consume(bytes.subarray(0, at).toString('utf8'))
+        bytes = bytes.subarray(at + 1)
+      }
+    }
+    pending = bytes.toString('utf8')
+    if (pending) consume(pending)
+    return matches && calls === 1 && !ended
+  } catch { return false } finally { if (fd >= 0) closeSync(fd) }
+}
+
 /** Recovery must use the original conversation, even when the restored pane changed. */
-export function codexConversationReceipt(cwd: string, conversationId: string, prompt: string, since: number): { transcriptAt: number } | null {
+export function codexConversationReceipt(cwd: string, conversationId: string, prompt: string, since: number): { transcriptAt: number } | null | undefined {
   if (!Number.isFinite(since) || since <= 0) return null
   return codexReceiptIn(codexTranscriptPath(cwd, conversationId), prompt, since)
 }
 
-function codexReceiptIn(file: string | null, prompt: string, since: number): { transcriptAt: number } | null {
+// Null is a completed negative scan; undefined is an unavailable read that must be retried.
+function codexReceiptIn(file: string | null, prompt: string, since: number): { transcriptAt: number } | null | undefined {
   if (!file || !prompt) return null
-  for (const line of tailLines(file, PROMPT_RECEIPT_BYTES)) {
+  const lines = tailLines(file, PROMPT_RECEIPT_BYTES)
+  if (lines === null) return undefined
+  for (const line of lines) {
     let row: { timestamp?: string | number; type?: string; payload?: { type?: string; role?: string; content?: unknown } }
     try {
       row = JSON.parse(line) as typeof row
@@ -1169,8 +1292,8 @@ function codexReceiptIn(file: string | null, prompt: string, since: number): { t
   return null
 }
 
-/** The whole lines in the last `bytes` of a file (a cut first line dropped); none when unreadable. */
-function tailLines(file: string, bytes: number): string[] {
+/** The whole lines in the last `bytes` of a file (a cut first line dropped); null when unreadable. */
+function tailLines(file: string, bytes: number): string[] | null {
   let fd = -1
   try {
     const size = statSync(file).size
@@ -1178,6 +1301,7 @@ function tailLines(file: string, bytes: number): string[] {
     const buf = Buffer.alloc(size - start)
     fd = openSync(file, 'r')
     const read = readSync(fd, buf, 0, buf.length, start)
+    if (read !== buf.length) return null
     let text = buf.toString('utf8', 0, read)
     if (start > 0) {
       const firstLine = text.indexOf('\n')
@@ -1186,7 +1310,7 @@ function tailLines(file: string, bytes: number): string[] {
     }
     return text.split('\n')
   } catch {
-    return []
+    return null
   } finally {
     if (fd >= 0) closeSync(fd)
   }
@@ -1220,7 +1344,7 @@ export function claudeAcceptedPrompt(pid: number | undefined, prompt: string, si
   const row = first ? cliSession(pid) : null
   const file = row && transcriptPath(row.cwd, row.sessionId)
   if (!first || !file) return false
-  for (const line of tailLines(file, PROMPT_RECEIPT_BYTES)) {
+  for (const line of tailLines(file, PROMPT_RECEIPT_BYTES) ?? []) {
     if (!line.includes('"user"') && !line.includes('"queue-operation"') && !line.includes('"queued_command"')) continue
     let rec: {
       type?: string

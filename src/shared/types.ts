@@ -153,6 +153,10 @@ export interface CodexWorker {
   model?: string
   effort?: string
   state: 'running' | 'completed' | 'interrupted' | 'unknown' | 'stale'
+  /** Native event times only; an absent start never becomes an estimated duration. */
+  startedAt?: number
+  endedAt?: number
+  updatedAt?: number
 }
 export interface CodexWorkerReading {
   workers: CodexWorker[]
@@ -555,6 +559,8 @@ export interface Session {
   subagent?: string
   /** Native Codex child visibility only; does not alter process close/move/sleep guards. */
   codexWorkers?: CodexWorkerReading
+  /** Claude's existing transcript reader observes background tasks only. */
+  claudeWorkers?: CodexWorkerReading
   /**
    * How many turns this pane has finished on THIS machine - counted at `endRun`, never
    * carried across a move (the far end starts its own pane, at zero).

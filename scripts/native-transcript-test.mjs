@@ -21,7 +21,7 @@ const fixtureCodexHome = join(work, 'codex')
 
 const out = join(work, 'transcripts.cjs')
 buildSync({ absWorkingDir: root, entryPoints: ['src/main/transcripts.ts'], bundle: true, format: 'cjs', platform: 'node', outfile: out, define: { 'process.env.CODEX_HOME': JSON.stringify(fixtureCodexHome) } })
-const { codexAcceptedPrompt, codexConversationReceipt, noteSession, noteSubmittedPrompt, resumeIdFor, forgetSession, projectDir, nativeTranscriptPage } = createRequire(import.meta.url)(out)
+const { codexAcceptedPrompt, codexConversationReceipt, codexQuestionPending, noteSession, noteSubmittedPrompt, resumeIdFor, forgetSession, projectDir, nativeTranscriptPage } = createRequire(import.meta.url)(out)
 const cwd = '/Users/native/Projects/reader'
 const line = (value) => JSON.stringify(value)
 const claudeRow = (type, content, extra = {}) => line({ type, timestamp: '2026-09-09T01:02:03.000Z', message: { role: type, content }, ...extra })
@@ -201,6 +201,46 @@ try {
   assert.ok(giant.nextCursor && Number(giant.nextCursor) < 300 * 1024, 'oversized row makes strict older progress')
   forgetSession('giant-pane')
 
+  const questionId = 'ab345678-1234-1234-1234-123456789abc'
+  const questionFile = join(fixtureCodexHome, 'sessions', '2026', '09', '09', 'questions.jsonl')
+  const call = id => line({ timestamp:'2026-09-01T00:00:00Z', type:'response_item', payload:{type:'function_call',name:'functions.request_user_input_async',call_id:id,arguments:JSON.stringify({questions:[{title:'Synthetic one'},{title:'Synthetic two'}]})}})
+  const reply = (id,index,answer='safe synthetic answer') => line({type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text:'<send_user_message_question_reply>'+JSON.stringify([{questionItemId:JSON.stringify(['request_user_input_async',id,index]),answer}])+'</send_user_message_question_reply>'}]}})
+  const questionRows = [line({type:'session_meta',payload:{id:questionId,cwd,timestamp:'2026-09-01T00:00:00Z'}}),call('old-call'),
+    line({type:'response_item',payload:{type:'function_call_output',call_id:'old-call',output:'{"accepted":true}'}}),
+    ...Array.from({length:150},()=>line({type:'event_msg',payload:{text:'x'.repeat(65536)}})),call('new-call')]
+  writeFileSync(questionFile,questionRows.join('\n')+'\n')
+  assert.equal(codexQuestionPending(cwd,questionId,'old-call',2),true,'old unanswered call outside8MiB tail stays actionable')
+  assert.equal(codexQuestionPending(cwd,questionId,'new-call',2),true,'second question does not supersede first')
+  for(const [id,count] of [['missing',2],['old-call',1],['old-call',3]]) assert.equal(codexQuestionPending(cwd,questionId,id,count),false)
+  for(const index of [true,1.5,-1,2,'0']) appendFileSync(questionFile,reply('old-call',index)+'\n')
+  appendFileSync(questionFile,reply('old-call',0,'')+'\n')
+  assert.equal(codexQuestionPending(cwd,questionId,'old-call',2),true,'invalid/empty receipts do not answer an item')
+  appendFileSync(questionFile,reply('old-call',0)+'\n')
+  assert.equal(codexQuestionPending(cwd,questionId,'old-call',2),false,'partial answer refuses whole-payload replay')
+  assert.equal(codexQuestionPending(cwd,questionId,'new-call',2),true,'other exact question remains pending')
+  appendFileSync(questionFile,line({type:'response_item',payload:{type:'function_call_output',call_id:'new-call',output:'{"error":"interrupted"}'}})+'\n')
+  assert.equal(codexQuestionPending(cwd,questionId,'new-call',2),false,'native failure ends exact call')
+  assert.equal(codexQuestionPending('/wrong/cwd',questionId,'old-call',2),false,'wrong owner fails closed')
+  const lifecycle = (type, turnId) => line({type:'event_msg',payload:{type,...(turnId===undefined?{}:{turn_id:turnId})}})
+  const boundCall = (id, turnId) => { const row=JSON.parse(call(id));row.payload.internal_chat_message_metadata_passthrough={turn_id:turnId};return line(row) }
+  const meta = line({type:'session_meta',payload:{id:questionId,cwd,timestamp:'2026-09-01T00:00:00Z'}})
+  const checkLifecycle = (rows, expected, reason) => {
+    writeFileSync(questionFile,[meta,...rows].join('\n')+'\n')
+    assert.equal(codexQuestionPending(cwd,questionId,'turn-call',2),expected,reason)
+  }
+  for(const end of ['task_complete','turn_aborted']) {
+    checkLifecycle([lifecycle('task_started','own-turn'),boundCall('turn-call','own-turn'),lifecycle(end,'own-turn')],false,`${end}: exact owning turn closes the live question`)
+    checkLifecycle([lifecycle('task_started','own-turn'),boundCall('turn-call','own-turn'),lifecycle(end,'unrelated')],true,`${end}: unrelated turn keeps question`)
+    checkLifecycle([lifecycle('task_started','own-turn'),boundCall('turn-call','own-turn'),lifecycle(end)],true,`${end}: missing end identity keeps question`)
+    checkLifecycle([boundCall('turn-call','own-turn'),lifecycle(end,'own-turn')],true,`${end}: missing ordered start cannot prove closure`)
+    checkLifecycle([lifecycle('task_started','own-turn'),call('turn-call'),lifecycle(end,'own-turn')],true,`${end}: missing call turn metadata cannot prove closure`)
+    checkLifecycle([lifecycle('task_started','own-turn'),boundCall('turn-call','different'),lifecycle(end,'own-turn')],true,`${end}: mismatched call turn keeps question`)
+    checkLifecycle([lifecycle('task_started','own-turn'),lifecycle(end,'own-turn'),boundCall('turn-call','own-turn')],true,`${end}: earlier end cannot close later question`)
+    checkLifecycle([lifecycle('task_started','own-turn'),lifecycle(end,'own-turn'),boundCall('turn-call','own-turn'),lifecycle(end,'own-turn')],true,`${end}: duplicate end cannot bind a question after its turn ended`)
+    checkLifecycle([lifecycle('task_started','own-turn'),boundCall('turn-call','own-turn'),lifecycle('task_started','next-turn'),lifecycle(end,'next-turn')],true,`${end}: next turn end cannot close older question`)
+  }
+  checkLifecycle([lifecycle('task_started','own-turn'),boundCall('turn-call','own-turn'),'{"type":"event_msg","payload":{"type":"task_complete","turn_id":'],true,'partial lifecycle row keeps question')
+  checkLifecycle([lifecycle('task_started','own-turn'),boundCall('turn-call','own-turn'),boundCall('turn-call','own-turn')],false,'duplicated call identity is not actionable')
   console.log('native transcript: OK')
 } finally {
   for (const [key, value] of Object.entries(before)) value === undefined ? delete process.env[key] : process.env[key] = value

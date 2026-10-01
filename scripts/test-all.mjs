@@ -149,6 +149,7 @@ const TESTS = [
   ['continuation', 'continuation-test.mjs'],
   ['claim', 'transcript-claim-test.mjs'],
   ['cliclaim', 'transcript-cli-claim-test.mjs'],
+  ['mainperformance', 'main-performance-test.mjs'],
   ['codexprocessclaim', 'codex-process-claim-test.mjs'],
   ['clearclaim', 'transcript-clear-test.mjs'],
   ['quitwords', 'quit-words-test.mjs'],
