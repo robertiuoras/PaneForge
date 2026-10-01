@@ -53,9 +53,18 @@ function mainCheckoutOf(dir: string): string | null {
   }
 }
 
-/** Where a lane's checkout lives, the same shape `laneDir` in `scripts/lane.mjs` builds. */
+/** Where a lane's checkout lives, for legacy ledger entries without a recorded folder. */
 function laneDirOf(main: string, laneId: string): string {
   return laneId === 'main' ? main : join(dirname(main), `${basename(main)}-${laneId}`)
+}
+
+/** A stored cwd is useful only when it still belongs to this ledger's repository. */
+function heldFolder(main: string, laneId: string, cwd?: string): string {
+  if (cwd) {
+    const heldMain = mainCheckoutOf(cwd)
+    if (heldMain && resolve(heldMain) === resolve(main)) return cwd
+  }
+  return laneDirOf(main, laneId)
 }
 
 /** Every repo on this machine with a lane ledger - same roots `laneBoard.ts` scans. */
@@ -138,14 +147,14 @@ export function ledgerTakenFolders(paneId: string, over: (pane: string) => boole
   try {
     const out: string[] = []
     for (const main of ledgerRepos()) {
-      let state: { lanes?: Record<string, { pane?: string }> }
+      let state: { lanes?: Record<string, { pane?: string; cwd?: string }> }
       try {
         state = JSON.parse(readFileSync(join(main, '.git', 'paneforge-lanes.json'), 'utf8'))
       } catch {
         continue
       }
       for (const [id, c] of Object.entries(state.lanes ?? {})) {
-        if (c.pane && c.pane !== paneId && !over(c.pane)) out.push(laneDirOf(main, id))
+        if (c.pane && c.pane !== paneId && !over(c.pane)) out.push(heldFolder(main, id, c.cwd))
       }
     }
     return out

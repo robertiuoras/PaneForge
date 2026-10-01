@@ -118,6 +118,17 @@ const scenario = (panes, extra = {}) => {
   ok(told().length === 1 && told()[0][1][0] === 's2-b' && told()[0][1][1] === PROMPT, 'open pane: the whole prompt is told to that pane', JSON.stringify(told()))
 }
 
+// Duplicate native owners must not receive an arbitrary continuation.
+{
+  scenario([
+    { id: 's70-original', status: 'working', resumeId: CHAT },
+    { id: 's78-duplicate', status: 'idle', resumeId: CHAT }
+  ])
+  const r = await pf(['continue', CHAT, '--prompt-file', promptFile, '--json'])
+  ok(r.code === 1 && /multiple running panes/.test(r.err), 'duplicate native owners: refused', r.err)
+  ok(told().length === 0 && started().length === 0, 'duplicate native owners: no prompt or third process')
+}
+
 // ---- asleep pane: woken, then told -------------------------------------------------------
 {
   scenario([{ id: 's3-c', title: 'Fix the footer', status: 'exited', asleep: 123, resumeId: CHAT }], {
@@ -189,7 +200,7 @@ const scenario = (panes, extra = {}) => {
   mkdirSync(copy, { recursive: true })
   scenario([], {
     'sessions:start': ([req], desk) => {
-      const s = { id: 's21-copy', title: req.title, cwd: copy, status: 'starting', agent: req.agent }
+      const s = { id: 's21-copy', title: req.title, cwd: copy, status: 'starting', agent: req.agent, resumeId: req.resumeId }
       desk.push(s)
       return s
     },
@@ -218,6 +229,21 @@ const scenario = (panes, extra = {}) => {
   ok(/no longer on this computer/.test(r.err) && /nothing was sent/.test(r.err), 'lost file: one plain line says so', r.err)
   ok(calls.some(([c, a]) => c === 'sessions:kill' && a[0] === 's22-lost'), 'lost file: the empty pane it made is closed')
   ok(told().length === 0 && r.out === '', 'lost file: nothing told, nothing on stdout')
+}
+
+// ---- a start with a different or missing conversation is kept and never told -----------------
+for (const returnedResumeId of ['bbbbbbbb-0000-0000-0000-000000000000', undefined]) {
+  scenario([], {
+    'sessions:start': ([req], desk) => {
+      const s = { id: 's24-wrong', title: req.title, cwd: req.cwd, status: 'starting', agent: req.agent, resumeId: returnedResumeId }
+      desk.push(s)
+      return s
+    }
+  })
+  const r = await pf(['continue', CHAT, '--prompt-file', promptFile, '--json'])
+  ok(r.code === 1 && /different conversation/.test(r.err) && /pane was kept/.test(r.err), 'wrong resumed chat: refused with the pane preserved', r.err)
+  ok(told().length === 0, 'wrong resumed chat: the GuardDeck prompt is never sent to it')
+  ok(!calls.some(([c]) => c === 'sessions:kill'), 'wrong resumed chat: the unexpected pane is kept for inspection')
 }
 
 // ---- refusals: nothing started, nothing told ------------------------------------------------

@@ -973,6 +973,10 @@ if (cmd === 'list') {
       await tryCall('sessions:kill', [pane.id])
       fail(1, `the saved conversation for chat ${resumeId} is no longer on this computer (${pane.laneNote ?? 'it could not be resumed'}); nothing was sent`)
     }
+    // A successful start is not proof that it resumed THIS conversation. Do not send a
+    // GuardDeck prompt into a fresh or sibling chat, and keep that pane intact for review.
+    if (pane.resumeId !== resumeId)
+      fail(1, `the pane opened for chat ${resumeId} resumed a different conversation; nothing was sent and the pane was kept`)
     // Claude reads a conversation out of the folder it runs in, and a busy folder gets its
     // own copy - see `pf open --resume`.
     const landed = pane.cwd ?? h.cwd

@@ -106,3 +106,9 @@ Turn rung `turnsPlan` (3 turns here, verdict not `ok`, past `keepLocal`, `queuea
 ONE per sweep. Mac verdict adds `compressorLevel`, stray `next dev` = `PaneUsage.devMb`
 in `paneCost`, dirty same-name copy -> `landingCopy` takes a clean free one. `overlap()` reads
 `origin/lane-*`.
+
+Automatic handoff only selects supported Claude/Codex conversations with proven portable
+folders and unfinished work. Running turns may queue; delivery waits for drafts, subagents
+and background jobs. Idle work requires a fresh pane/native-conversation-bound handoff;
+finished, exited, shell and unverified idle panes stay local. Main rechecks that handoff
+and new activity before delivery and before ending the source. Receiver closure saves Review first.

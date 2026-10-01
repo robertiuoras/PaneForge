@@ -22,7 +22,7 @@ import {
   shell } from 'electron'
 import { startMainWatch, stopMainWatch } from './mainWatch'
 import { SessionManager, setSilenceAlert, type WriteOrigin } from './sessions'
-import { acknowledgeReview, listReviews, noteReviewClose, recordReview, reviewCloseArmAction, reviewOpenTarget, sendReviewNotice, setReviewDesk, type ReviewCloseArm } from './reviews'
+import { onReviewChanged, onReviewRecorded, reviewForPeer, reviewsForPeer, storeRemoteReview, acknowledgeReview, listReviews, noteReviewClose, recordReview, reviewCloseArmAction, reviewOpenTarget, sendReviewNotice, setReviewDesk, type ReviewCloseArm } from './reviews'
 import { ComputeReviews, computeResult } from './computeReviews'
 import { mayNotify, noticesDir, readReply, sweepDoneClose, type DoneCloseDeps } from './doneClose'
 import { doneQuietMs, doneReviewId, finishedCard } from '../shared/doneClose'
@@ -78,7 +78,7 @@ import type { ClientNamed, DiffScope, EffortChoice, PhoneState , LaneBoard} from
 import { detectLane, isWorktreeOf, laneExtras, LANE_LABELS, resolveLane, seedLane } from './lanes'
 import { hideCopyFolder } from './hideCopy'
 import { gitRun, isRead } from './gitRun'
-import { inspectLaneFolders, laneWork, returnToBase, trackTyped } from './laneWork'
+import { inspectLaneFolders, laneWork, returnToBase, samePath, trackTyped } from './laneWork'
 import { attachLaneOwners, laneBoards, laneEngine, laneReclaim, laneRetry, ledgerRepos, mainCheckout, markGone } from './laneBoard'
 import type { LanePane } from './laneBoard'
 import { resolveRevealTarget } from './revealPath'
@@ -1184,6 +1184,8 @@ function raiseAttention(s: Session): void {
 // machines involved.
 
 const remote = new Remote({
+  listReviews: (cursor) => reviewsForPeer(cursor),
+  onReview: (listener) => onReviewRecorded((record) => listener(reviewForPeer(record))),
   list: () => manager.list(),
   buffer: (id) => manager.buffer(id),
   log: (id, bytes) => history.tail(id, bytes) || manager.buffer(id),
@@ -1278,6 +1280,7 @@ const remote = new Remote({
     return () => manager.off('attention', cb)
   }
 })
+onReviewChanged(() => send('reviews:changed'))
 
 /**
  * The other machine's screen in a pane (src/main/screenStream.ts): sink panes this desk
@@ -1293,6 +1296,11 @@ const screenViews = new ScreenViews(
 )
 screenViews.on('sessions', () => send('sessions:changed', allSessions()))
 remote.on('screen', (e) => screenViews.onRemote(e))
+const receivePeerReview = (peer: { id: string; name: string; platform: string }, review: unknown) => {
+  try { storeRemoteReview(review, peer) } catch (err) { console.warn(`remote review rejected - ${(err as Error).message}`) }
+}
+remote.on('reviews', ({ peer, reviews }) => { for (const review of reviews) receivePeerReview(peer, review) })
+remote.on('review', ({ peer, review }) => receivePeerReview(peer, review))
 
 /** Local panes and mirrored ones, as one list. This is what the renderer ever sees. */
 function allSessions(): Session[] {
@@ -1639,6 +1647,10 @@ manager.onFinished = (meta, opener) => {
     personSteps: []
   })
 }
+manager.onCloseWhenDone = (id) => {
+  const deps = doneCloseDeps()
+  sweepDoneClose({ ...deps, enabled: () => true, readings: () => deps.readings().filter(r => (r as typeof r & { id: string }).id === id) })
+}
 function doneCloseDeps(): DoneCloseDeps {
   return {
     openerOf: (id) => manager.openerOf(id),
@@ -1938,12 +1950,36 @@ async function laneFor(
   // whether or not auto-laning is on. See detectLane: git proves it, the name never does.
   const known = async (r: StartSessionRequest): Promise<StartSessionRequest> =>
     r.lane ? r : { ...r, lane: await detectLane(r.cwd) }
-  if (!getConfig().autoLane) return known(req)
+  if (!getConfig().autoLane && !(req.resume && req.resumeId)) return known(req)
+  // Older relocated panes retain the folder where their exact conversation was
+  // verified. New exact resumes below must keep their requested physical checkout.
+  const resumeCwd = req.resume && req.resumeId ? req.resumeCwd ?? req.cwd : undefined
   // An asleep pane wears `status: 'exited'` but is one press from being an agent in
   // that folder again. Two client chats were restored asleep into `clients` and a
   // third opened from History landed there too, because neither counted (2026-09-04):
   // all three woke into one checkout. A folder with a sleeping pane in it is taken.
   const taken = [...takenFolders(manager.list(), except), ...ledgerTakenFolders(except ?? '', holdOver), ...extraTaken]
+
+  if (req.resume && req.resumeId) {
+    const other = manager.list().find((s) => s.id !== except && s.resumeId === req.resumeId && (s.status !== 'exited' || s.asleep))
+    if (other) throw new Error(`This conversation is already open in ${other.title || other.id}. Continue that chat instead.`)
+    // Exact continuation owns its existing files. A spare checkout cannot replace
+    // uncommitted work, even when the transcript can be read from the old folder.
+    const checkoutOf = async (folder: string): Promise<string> => {
+      let at = resolve(folder)
+      while (!existsSync(at) && dirname(at) !== at) at = dirname(at)
+      const top = await landGit(at, ['rev-parse', '--show-toplevel'])
+      return top.ok && top.out ? top.out : folder
+    }
+    const [original, occupied] = await Promise.all([checkoutOf(req.cwd), Promise.all(taken.map(checkoutOf))])
+    if (occupied.some((folder) => samePath(folder, original))) {
+      throw new Error(`This conversation's folder is still in use: ${req.cwd}. Finish the occupying chat before continuing here. No replacement copy was opened.`)
+    }
+    const originalReq = await known(req)
+    return originalReq.lane
+      ? { ...originalReq, laneEnv: originalReq.laneEnv ?? (await laneExtras(req.cwd, originalReq.lane)).env }
+      : originalReq
+  }
 
   // Reopening a pane that was in a lane, when the lane turned out to hold nothing and
   // the project folder is free again: the lane was only ever there to keep two agents
@@ -1954,6 +1990,7 @@ async function laneFor(
     return {
       ...req,
       cwd: home,
+      resumeCwd,
       lane: undefined,
       laneEnv: undefined,
       laneNote: `Nobody else is in ${basename(home)} - back in the project's own folder`
@@ -1972,6 +2009,7 @@ async function laneFor(
   return {
     ...req,
     cwd: lane.cwd,
+    resumeCwd,
     lane: lane.lane,
     laneEnv: lane.env,
     // The card is read by somebody who has never used git: a copy NUMBER, never the slot
@@ -3499,7 +3537,7 @@ function runHandoff(device: string, request: HandoffRequest): Promise<HandoffIte
       deviceName: (dev) => remote.peerName(dev),
       selfDevice: () => getConfig().remote.id,
       busy: paneBusy,
-      queue: (id, dev, closeAfter) => handoffQueue.add(id, dev, closeAfter),
+      queue: (id, dev, closeAfter, automatic) => handoffQueue.add(id, dev, closeAfter, automatic),
       interrupt: (id) => interruptTurn(id),
       stage: (id, stage) => manager.setHandoffStage(id, stage),
       log: logHandoff,
@@ -3527,8 +3565,8 @@ function runHandoff(device: string, request: HandoffRequest): Promise<HandoffIte
 const handoffQueue = new HandoffQueue({
   list: () => manager.list(),
   busy: paneBusy,
-  send: (id, device, closeAfter) =>
-    runHandoff(device, { ids: [id], closeReceiverWhenDone: closeAfter, waitForTurn: false }),
+  send: (id, device, closeAfter, automatic) =>
+    runHandoff(device, { ids: [id], closeReceiverWhenDone: closeAfter, waitForTurn: false, automatic }),
   mark: (id, on, queuedAt) => manager.setHandingOff(id, on, queuedAt),
   deviceName: (dev) => remote.peerName(dev),
   config: () => getConfig().autoHandoff ?? DEFAULT_AUTO_HANDOFF,
@@ -3582,7 +3620,7 @@ manager.on('sessions', () => queueMicrotask(() => {
 
 ipcMain.handle(
   'remote:handoff',
-  (_e, device: string, ids?: string[], closeReceiverWhenDone?: boolean, waitForTurn?: boolean, now?: boolean) => {
+  (_e, device: string, ids?: string[], closeReceiverWhenDone?: boolean, waitForTurn?: boolean, now?: boolean, automatic?: boolean) => {
     // A script that packs every argument into one array reaches here with `device` as
     // that array. `String()` turned it into "id,pane,false,true", which queued a pane for
     // a machine that does not exist and tried every other pane on the desk (ids undefined
@@ -3593,7 +3631,8 @@ ipcMain.handle(
       ids: Array.isArray(ids) && ids.length ? ids.map(String) : undefined,
       closeReceiverWhenDone: closeReceiverWhenDone === true,
       waitForTurn: waitForTurn !== false && now !== true,
-      now: now === true
+      now: now === true,
+      automatic: automatic === true
     })
   }
 )

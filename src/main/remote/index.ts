@@ -36,6 +36,7 @@ import { RemoteClient, joinId, splitId } from './client'
 import { dropSelf, isSelfPeer, pairAskingOn } from './peers'
 import { makeInvite, readInvite } from './invite'
 import { APPROVE_MS, Conn, deriveKey, newCode, type Msg, type PeerIdentity } from './wire'
+import type { ReviewRecord } from '../../shared/reviews'
 
 export { joinId, splitId }
 
@@ -881,6 +882,12 @@ export class Remote extends EventEmitter {
     client.on('typed', (sessionId: string, line: string, origin: string) => this.emit('typed', sessionId, line, origin))
     client.on('reset', (sessionId: string, snapshot?: string) => this.emit('reset', sessionId, snapshot))
     client.on('attention', (s: Session) => this.emit('attention', s))
+    client.on('reviews', (reviews: ReviewRecord[]) =>
+      this.emit('reviews', { peer: client.identity() ?? { id, name: client.peer.name, platform: 'unknown', version: '' }, reviews })
+    )
+    client.on('review', (review: ReviewRecord) =>
+      this.emit('review', { peer: client.identity() ?? { id, name: client.peer.name, platform: 'unknown', version: '' }, review })
+    )
     client.on('status', () => this.changed())
     client.on('desk', () => this.emit('desk'))
     if (this.deskReport) client.sendDesk(this.deskReport)

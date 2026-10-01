@@ -75,6 +75,12 @@ opened; unpaired = pairing page; wrong codes lock; cookie `hmac(deviceId, code)`
   decision/blocker (`docs/reviews-runtime-contract.md`); save request+evidence+identity
   before an evidence-gated close; quiet time/sleep/exit never means done; reports persist
   after closing; reading one never approves it.
+- Peer Review replication (`main/reviews.ts`, `main/remote/`): the owner sends only its
+  durable records over the authenticated link, 20 at a time with a cursor after reconnect.
+  The receiver validates and saves an idempotent local replica under `remote_<device>_<id>`;
+  replicas never echo and their file paths never leave the owner. `origin` is display-only,
+  so reopening remains an operation on the owning PC. `test:remote` includes multi-page
+  catch-up.
 - `test:phone`, `test:phoneview`; `window.__pf[id].term.buffer`. Not built: B1, H2.
 
 ## The other machine's screen is one click away

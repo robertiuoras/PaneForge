@@ -573,12 +573,12 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                       autoHandoff: { ...DEFAULT_AUTO_HANDOFF, ...config.autoHandoff, enabled: v }
                     })
                   }
-                  label="Move a finished pane to a paired device when this machine is full"
-                  hint="When memory or load says this machine is under pressure, or it runs more panes than the number below, a pane that has finished its turn moves to a device that is online and has the same project: a plain terminal, or a Claude or Codex conversation that can be picked up again over there. It waits for the turn to end, shows a countdown you can stop, and never moves the pane you are looking at, one asking you a question, one kept on this machine, or one whose request is about this Mac - its files, its screen, its browser. Off: nothing moves, and idle panes are paused here instead."
+                  label="Move unfinished work to a paired device when this machine is full"
+                  hint="Ongoing work can move when its project is available on the other device. It waits for the current turn, background work and subagents, then shows a countdown you can stop. Finished or stopped conversations stay here and close into Review when safe. Questions, unsent prompts, local files and work using this screen stay here."
                 />
                 {config.autoHandoff?.enabled !== false && (
                   <div className="setting">
-                    <label>Shell panes this machine runs itself</label>
+                    <label>Panes this machine runs itself</label>
                     <input
                       className="search"
                       type="number"
@@ -597,11 +597,9 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                       }
                     />
                     <p className="hint">
-                      The automatic shell budget. Past this many shell panes on this machine,
-                      eligible idle shells can move to a paired device and come back as
-                      mirrors. Agent panes are deliberately excluded, including panes that
-                      are mid-turn. 0 turns the budget off. With nothing paired and online it
-                      does nothing at all.
+                      Above this many panes, portable unfinished work can move to a paired
+                      device after its turn and background work finish. Completed work stays
+                      here. 0 turns the budget off; without an online paired device nothing moves.
                     </p>
                   </div>
                 )}
@@ -653,8 +651,8 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
                         }
                       })
                     }
-                    label="...and move a quiet shell over there even when there is still room"
-                    hint={`This clock only considers plain shell panes. After ${IDLE_OFFLOAD_MINUTES} quiet minutes, an eligible shell can move to a paired device even when memory is fine. Agent conversations stay here automatically, so this clock never creates an unconfirmed remote copy. Shells still refuse when focused, busy, asking a question, remote, or the last pane, and return as mirrors after a successful move.`}
+                    label="...and move quiet unfinished work even when there is still room"
+                    hint={`After ${IDLE_OFFLOAD_MINUTES} quiet minutes, a portable conversation with recorded unfinished work can move to a paired device. Finished conversations stay here. Questions, background jobs, subagents and the pane you are using prevent a move.`}
                   />
                 )}
                 <Switch

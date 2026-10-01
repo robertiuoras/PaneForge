@@ -934,8 +934,9 @@ export async function resolveLane(cwd: string, taken: string[]): Promise<Lane> {
 
   // Read on a toast by somebody who has never used git: "No free lane ... lane pool" had
   // Robert asking whether the lane was closed (2026-09-24). `test:reopenhold`.
+  const folderNeed = subfolder ? ` with ${basename(cwd)} in it` : ''
   throw new Error(
-    `Another chat is already working in ${name}, and there is no spare copy of ${name} with ${basename(cwd)} in it. ` +
+    `Another chat is already working in ${name}, and there is no spare copy of ${name}${folderNeed}. ` +
       `Close the other ${name} chat, then open this again.`
   )
 }

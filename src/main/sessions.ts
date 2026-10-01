@@ -19,7 +19,7 @@ import { memoryPrelude } from './board'
 import { endAll, gistFor, noteCols, recordData, recordEnd, recordStart, sizeOf, tail } from './history'
 import { jobTable } from './backJobs'
 import { backJobInfo, backJobWaitOnly } from './usage'
-import { forgetHandoff, handoffFor } from './handoffSteps'
+import { forgetHandoff, handoffFor, verifiedPaneHandoff } from './handoffSteps'
 import { handoffOpenAfter } from '../shared/handoffSteps'
 import { workShot } from './changedNothing'
 import { changedNothingWhy, changedNothingWords } from '../shared/changedNothing'
@@ -829,6 +829,8 @@ export class SessionManager extends EventEmitter {
    * the old one-line notice.
    */
   onFinished: ((meta: Session, opener: string) => void) | null = null
+  /** Agent closure must persist its report through the normal Review sweep. */
+  onCloseWhenDone: ((id: string) => void) | null = null
   /** The last reply in a pane's transcript, for `Session.finished`. Set by index.ts, which knows where transcripts live. */
   replyFor: ((id: string, agent: string) => { text: string; runningAgents?: number; promptAt?: number } | undefined) | null = null
 
@@ -2379,6 +2381,10 @@ export class SessionManager extends EventEmitter {
   private sweepCloseWhenDone(live: Live, now: number, quiet: number): void {
     const { meta } = live
     if (!doneEnough({ ...meta, busyUntil: live.busyUntil }, quiet, now)) return
+    if (meta.agent !== 'shell') {
+      this.onCloseWhenDone?.(meta.id)
+      return
+    }
     const told = live.req.reportTo
     const opener = this.openerOf(meta.id)
     if (opener) {
@@ -4642,6 +4648,9 @@ export class SessionManager extends EventEmitter {
       if (reply?.promptAt && reply.promptAt > (live.promptAt ?? 0)) live.promptAt = reply.promptAt
       const hand = handoffFor(meta.cwd, meta.id, now)
       const open = handoffOpenAfter(hand, live.promptAt)
+      const nativeId = resumeIdFor(meta.id)
+      const verified = !!nativeId && !!verifiedPaneHandoff(meta.cwd, meta.id, meta.agent, nativeId, now)?.open
+      if (meta.handoffVerified !== verified) { meta.handoffVerified = verified; changed = true }
       if (open !== meta.handoffOpen) {
         meta.handoffOpen = open
         changed = true

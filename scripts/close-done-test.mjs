@@ -75,6 +75,8 @@ ok(/doneEnough\(\{ \.\.\.meta, busyUntil: live\.busyUntil \}, quiet, now\)/.test
 // goes with it.
 const body = sessions.slice(sessions.indexOf('private sweepCloseWhenDone'), sessions.indexOf('/** Start a countdown that was queued'))
 ok(body.indexOf('queuePrompt') < body.indexOf('this.kill(meta.id)'), 'the opener is told before the pane is killed')
+ok(body.indexOf('this.onCloseWhenDone?.(meta.id)') < body.indexOf('this.kill(meta.id)'), 'agent arms use report-first close before shell kill path')
+ok(/if \(meta.agent !== 'shell'\) \{[\s\S]*?onCloseWhenDone\?\.\(meta.id\)[\s\S]*?return/.test(body), 'agent arms cannot fall through to unreported closure')
 ok(/PF_PANE: id/.test(sessions), 'every pane knows which pane it is, so `pf` can name the opener')
 
 const ctl = readFileSync(join(root, 'scripts/pf-ctl.mjs'), 'utf8')

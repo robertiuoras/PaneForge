@@ -141,13 +141,13 @@ import {
 import { deskNow } from '../../shared/away'
 import {
   autoHandoffPlan,
+  automaticQueueable,
   SLEEPS_SOON_LEAD_MS,
   TURNS_BEFORE_MOVE,
   turnsPlan,
   idleOffloadPlan,
   offloadMinutes,
   movable as handoffMovable,
-  queueable as handoffQueueable,
   DEFAULT_AUTO_HANDOFF,
   endsOnArrival,
   staysHere,
@@ -2647,6 +2647,9 @@ export default function App(): JSX.Element {
         id: s.id,
         agent: s.agent,
         state: fleetState(s),
+        finished: s.finished,
+        handoffOpen: s.handoffOpen,
+        handoffVerified: s.handoffVerified,
         lastKeyboard: s.lastKeyboard,
         lastOutput: s.lastOutput,
         // Looking at a pane is using it, for a move exactly as for a close.
@@ -2657,7 +2660,7 @@ export default function App(): JSX.Element {
         handingOff: !!s.handingOff,
         // A live question is drawn on a screen and lives in no transcript: resuming over
         // there comes back with the question gone and nobody asked. Never moved.
-        asking: !!s.ask || !!s.bell,
+        asking: !!s.ask || !!s.bell || !!s.drafting,
         // The app itself owes this pane a prompt - see `AutoPane.owedPrompt`.
         owedPrompt: !!s.owedPrompt,
         // Only the budget rule reads this, and only to pick a busy pane LAST. When one is
@@ -2791,7 +2794,7 @@ export default function App(): JSX.Element {
       // Both rungs below refuse it, so asking the peers about it is a round trip over the
       // link for an empty plan. See `AutoPane.sleepsSoon`.
       if (p.sleepsSoon) return false
-      if (over) return handoffQueueable(p)
+      if (over) return automaticQueueable(p)
       return (
         !p.visible &&
         handoffMovable(p) &&
@@ -2853,7 +2856,7 @@ export default function App(): JSX.Element {
         !p.focused &&
         !p.remote &&
         !p.handingOff &&
-        handoffQueueable(p) &&
+        automaticQueueable(p) &&
         !((handoffBlocked.current[p.id] ?? 0) > now)
     )
     if (!worthAsking) return
@@ -4437,11 +4440,12 @@ export default function App(): JSX.Element {
           // and the close was the handoff taking the copy here down, but this file never
           // said so.
           const live = sessionsRef.current.find((x) => x.id === move.id)
-          if (!live || live.remote) {
-            api.logReclaim({ event: 'move-skipped', id: move.id, device: move.deviceName, reason: live ? 'it is already on another machine' : 'the pane was gone by the deadline' })
+          const fresh = handoffPanesRef.current().find((p) => p.id === move.id)
+          if (!live || live.remote || !fresh || fresh.focused || fresh.handingOff || !automaticQueueable(fresh)) {
+            api.logReclaim({ event: 'move-skipped', id: move.id, device: move.deviceName, reason: live ? 'the pane is no longer safe or unfinished work to move' : 'the pane was gone by the deadline' })
             continue
           }
-          const items = await api.handoffToDevice(move.device, [move.id], false, true).catch((error) => [{
+          const items = await api.handoffToDevice(move.device, [move.id], true, true, false, true).catch((error) => [{
             id: move.id,
             title: live.title,
             ok: false,

@@ -23,6 +23,7 @@ export default function ReviewDialog({ onHistory, onReopen, onClose }: Props): J
   const dialog = useDialogFocus()
   const [records, setRecords] = useState<ReviewRecord[]>([])
   const [filter, setFilter] = useState<ReviewFilter | null>(null)
+  const [day, setDay] = useState<'today' | 'all'>('today')
   const [query, setQuery] = useState('')
   const [openId, setOpenId] = useState<string | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
@@ -42,9 +43,11 @@ export default function ReviewDialog({ onHistory, onReopen, onClose }: Props): J
       })
     }
     load()
+    const offReviews = api.onReviewsChanged(load)
     const refresh = window.setInterval(load, 60_000)
     return () => {
       mounted = false
+      offReviews()
       window.clearInterval(refresh)
     }
   }, [])
@@ -59,8 +62,10 @@ export default function ReviewDialog({ onHistory, onReopen, onClose }: Props): J
     const matched = q
       ? byFilter.filter((r) => `${r.title} ${r.cwd} ${r.prompt} ${r.report} ${r.provider}`.toLowerCase().includes(q))
       : byFilter
-    return [...matched].sort((a, b) => timeOf(b) - timeOf(a))
-  }, [visible, activeFilter, q])
+    return [...matched]
+      .filter((r) => day === 'all' || activeFilter === 'needs' || sameDay(timeOf(r), Date.now()))
+      .sort((a, b) => timeOf(b) - timeOf(a))
+  }, [visible, activeFilter, q, day])
 
   useEffect(() => {
     if (openId && !rows.some((r) => r.id === openId)) setOpenId(null)
@@ -79,7 +84,7 @@ export default function ReviewDialog({ onHistory, onReopen, onClose }: Props): J
       <div ref={dialog} className="dialog wide tall review-dialog" role="dialog" aria-modal="true" aria-labelledby="review-title" onMouseDown={(e) => e.stopPropagation()}>
         <div className="dialog-head">
           <strong id="review-title">Review</strong>
-          <span className="hint">Finished sessions on this machine</span>
+          <span className="hint">Finished sessions, including saved peer reports</span>
           <button className="ghost small" onClick={onClose}>Close</button>
         </div>
 
@@ -87,6 +92,10 @@ export default function ReviewDialog({ onHistory, onReopen, onClose }: Props): J
           <button className={activeFilter === 'needs' ? 'on' : ''} onClick={() => setFilter('needs')}>Needs you</button>
           <button className={activeFilter === 'done' ? 'on' : ''} onClick={() => setFilter('done')}>Done</button>
           <button className={activeFilter === 'all' ? 'on' : ''} onClick={() => setFilter('all')}>All</button>
+        </div>
+        <div className="review-days" role="group" aria-label="Date">
+          <button className={day === 'today' ? 'on' : ''} onClick={() => setDay('today')}>Today</button>
+          <button className={day === 'all' ? 'on' : ''} onClick={() => setDay('all')}>All dates</button>
         </div>
 
         <input
@@ -103,8 +112,10 @@ export default function ReviewDialog({ onHistory, onReopen, onClose }: Props): J
               const open = openId === r.id
               const status = statusWord(r)
               const accent = status === 'Needs you' || status === 'Blocked'
+              const heading = day === 'all' && (i === 0 || !sameDay(timeOf(r), timeOf(rows[i - 1])))
               return (
                 <article className="review-row-wrap" key={r.id}>
+                  {heading && <h2 className="review-day-heading">{dayName(timeOf(r))}</h2>}
                   <button
                     type="button"
                     className="review-row"
@@ -122,6 +133,7 @@ export default function ReviewDialog({ onHistory, onReopen, onClose }: Props): J
                       {r.paneNumber ?? ''}
                     </span>
                     <strong className="review-project">{folderName(r.cwd)}</strong>
+                    {r.origin && <span className="review-origin" title={`Saved from ${r.origin.name}`}>{r.origin.name}</span>}
                     <span className="review-ask">{firstLine(r.prompt)}</span>
                     <span className="review-result">{firstLine(r.report)}</span>
                     {r.context && (
@@ -170,7 +182,7 @@ export default function ReviewDialog({ onHistory, onReopen, onClose }: Props): J
                         </div>
                       )}
                       <div className="review-actions">
-                        <button className="primary small" onClick={() => onReopen(r)} title="Opens this chat again in its folder, where it left off">Continue</button>
+                        {!r.origin && <button className="primary small" onClick={() => onReopen(r)} title="Opens this chat again in its folder, where it left off">Continue</button>}
                         <button
                           className="ghost small"
                           onClick={() => {
@@ -215,4 +227,14 @@ export default function ReviewDialog({ onHistory, onReopen, onClose }: Props): J
 
 function timeOf(r: ReviewRecord): number {
   return Date.parse(r.closedAt ?? r.completedAt ?? r.createdAt)
+}
+function sameDay(a: number, b: number): boolean {
+  const x = new Date(a), y = new Date(b)
+  return x.getFullYear() === y.getFullYear() && x.getMonth() === y.getMonth() && x.getDate() === y.getDate()
+}
+function dayName(at: number): string {
+  const today = Date.now()
+  if (sameDay(at, today)) return 'Today'
+  if (sameDay(at, today - 86_400_000)) return 'Yesterday'
+  return new Date(at).toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long' })
 }

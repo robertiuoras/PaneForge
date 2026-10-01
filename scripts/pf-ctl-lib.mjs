@@ -710,6 +710,9 @@ export function movePrompt(briefPath) {
 export function continueTarget(resumeId, panes, history) {
   const mine = (panes ?? []).filter((p) => p.resumeId === resumeId)
   const local = mine.filter((p) => !String(p.id).startsWith('@'))
+  const running = local.filter((p) => !p.asleep && p.status !== 'exited')
+  if (running.length > 1)
+    return { error: `chat ${resumeId} has multiple running panes (${running.map((p) => p.id).join(', ')}); resolve its owner before continuing - nothing was sent` }
   const live = local.find((p) => !p.asleep && p.status !== 'exited')
   if (live) return { action: 'tell', pane: live }
   const asleep = local.find((p) => p.asleep)

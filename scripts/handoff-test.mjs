@@ -431,6 +431,82 @@ ok(
 )
 rmSync(join(repo, 'handoff-safety.txt'))
 
+// ---------------------------------------------------- automatic handoff races
+// Automatic offload has no person watching the card. These cases must refuse before
+// `pushRepo` can create an auto-sync commit, or queue while the work is still alive.
+// The verified-idle fixture deliberately writes no handoff file: a stale in-memory count
+// must never substitute for a fresh pane-scoped handoff on disk.
+console.log('automatic handoff refusal and races')
+{
+  const automaticHead = git(repo, 'rev-parse', 'HEAD')
+  const automaticStatus = git(repo, 'status', '--porcelain')
+  let automaticDeliveries = 0
+  const automaticKills = []
+  const automaticBase = (pane) => ({
+    ...sender,
+    list: () => [pane],
+    snapshot: () => [{ cwd: repo, title: pane.title, agent: pane.agent, resumeId: 'conv123', scrollbackId: pane.id }],
+    kill: (id) => automaticKills.push(id),
+    deliver: async () => { automaticDeliveries++; return { ok: true, resumed: true, notes: [] } }
+  })
+  for (const [label, pane] of [
+    ['a completed conversation', { id: 'automatic-complete', title: 'complete', cwd: repo, agent: 'claude', status: 'idle', finished: true, lastOutput: 0, createdAt: 0 }],
+    ['a shell pane', { id: 'automatic-shell', title: 'shell', cwd: repo, agent: 'shell', status: 'idle', finished: false, lastOutput: 0, createdAt: 0 }],
+    ['an idle pane whose handoff count is unverified', { id: 'automatic-unverified', title: 'unverified', cwd: repo, agent: 'claude', status: 'idle', finished: false, handoffOpen: 1, handoffVerified: false, lastOutput: 0, createdAt: 0 }]
+  ]) {
+    const result = await sendHandoff(automaticBase(pane), 'pc', { ids: [pane.id], automatic: true })
+    ok(`${label} is refused automatically before mutation`, result[0]?.ok === false && automaticDeliveries === 0 && automaticKills.length === 0 && git(repo, 'rev-parse', 'HEAD') === automaticHead && git(repo, 'status', '--porcelain') === automaticStatus, result[0]?.error)
+  }
+  const staleDisk = { id: 'automatic-stale-disk', title: 'stale handoff', cwd: repo, agent: 'claude', status: 'idle', finished: false, handoffOpen: 1, handoffVerified: true, lastOutput: 0, createdAt: 0 }
+  const stale = await sendHandoff(automaticBase(staleDisk), 'pc', { ids: [staleDisk.id], automatic: true })
+  ok('an automatically eligible idle pane without a fresh exact handoff on disk refuses before mutation', stale[0]?.ok === false && /No fresh handoff/.test(stale[0]?.error ?? '') && automaticDeliveries === 0 && automaticKills.length === 0 && git(repo, 'rev-parse', 'HEAD') === automaticHead && git(repo, 'status', '--porcelain') === automaticStatus, stale[0]?.error)
+
+  const queued = []
+  for (const [label, extra] of [
+    ['background job', { backJob: true }],
+    ['subagent', { subagent: true }],
+    ['draft prompt', { drafting: true }]
+  ]) {
+    const pane = { id: `queue-${label}`, title: label, cwd: repo, agent: 'claude', status: 'idle', lastOutput: 0, createdAt: 0, ...extra }
+    const result = await sendHandoff({
+      ...automaticBase(pane),
+      queue: (id, device, closeWhenDone, automatic) => queued.push([id, device, closeWhenDone, automatic])
+    }, 'pc', { ids: [pane.id], automatic: true })
+    ok(`an automatic ${label} queues rather than delivering or closing its source`, result[0]?.pending === true && automaticDeliveries === 0 && automaticKills.length === 0, result[0]?.error)
+  }
+  ok('queued active work retains its automatic flag for the later safety gate', queued.length === 3 && queued.every(([, device, closeWhenDone, automatic]) => device === 'pc' && closeWhenDone === false && automatic === true), JSON.stringify(queued))
+
+  for (const [label, change] of [
+    ['a new background job', (pane) => ({ ...pane, backJob: true })],
+    ['new keyboard input', (pane) => ({ ...pane, lastKeyboard: 99 })]
+  ]) {
+    let current = { id: `late-${label}`, title: label, cwd: repo, agent: 'claude', status: 'idle', lastKeyboard: 0, lastOutput: 0, createdAt: 0 }
+    const beforeDelivery = automaticDeliveries
+    const result = await sendHandoff({
+      ...automaticBase(current),
+      list: () => [current],
+      tailOf: () => { current = change(current); return 'tail' }
+    }, 'pc', { ids: [current.id] })
+    ok(`${label} during preparation refuses before remote delivery or source close`, result[0]?.ok === false && /changed while preparing/.test(result[0]?.error ?? '') && automaticDeliveries === beforeDelivery && automaticKills.length === 0, result[0]?.error)
+  }
+
+  let acknowledged = { id: 'late-ack', title: 'acknowledged', cwd: repo, agent: 'claude', status: 'idle', lastKeyboard: 0, lastOutput: 0, createdAt: 0 }
+  const acknowledgedKills = []
+  const acknowledgedMoved = []
+  const afterAck = await sendHandoff({
+    ...automaticBase(acknowledged),
+    list: () => [acknowledged],
+    kill: (id) => acknowledgedKills.push(id),
+    moved: (id, device) => acknowledgedMoved.push([id, device]),
+    deliver: async () => {
+      automaticDeliveries++
+      acknowledged = { ...acknowledged, lastKeyboard: 1 }
+      return { ok: true, resumed: true, notes: [] }
+    }
+  }, 'pc', { ids: [acknowledged.id] })
+  ok('new activity after the receiver acknowledges keeps the source pane alive', afterAck[0]?.ok === true && afterAck[0]?.sourceKept === true && acknowledgedKills.length === 0 && acknowledgedMoved.length === 1, JSON.stringify(afterAck[0]))
+}
+
 // ---------------------------------------------------------------- Codex transcript transport
 // This is intentionally a synthetic rollout under a temporary CODEX_HOME. It proves the
 // wire/import contract without reading, writing, or needing a real user's Codex sessions.
