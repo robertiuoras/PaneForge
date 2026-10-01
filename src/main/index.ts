@@ -31,7 +31,7 @@ import { FinishedDigest, summaryOf } from '../shared/finishedDigest'
 import { DataPump } from './dataPump'
 import { freshReplay } from '../shared/freshReplay'
 import { DiscordPresence } from './discordPresence'
-import { countPresence, needsTokens, newerSettings, wholeDesk, type PresenceCounts } from '../shared/discordRpc'
+import { countPresence, needsTokens, newerSettings, presenceAllowed, wholeDesk, type PresenceCounts } from '../shared/discordRpc'
 import { tokenCounting, tokenSpend, tokenSpendFresh } from './tokenUsage'
 import { promptReview, promptsForSession, recordPromptReview, removePromptReview } from './promptReview'
 import { readPulls } from './pulls'
@@ -970,7 +970,8 @@ manager.on('sessions', () => {
 const appStartedAt = Date.now()
 let discordReachable = false
 const presence = new DiscordPresence({
-  enabled: getConfig().discordPresence,
+  // A test copy never speaks for the desk (`presenceAllowed`).
+  enabled: presenceAllowed(getConfig().discordPresence, profileName()),
   style: getConfig().discordStyle,
   // The Discord tab reports Discord's own answer rather than guessing from the switch,
   // so every change of that answer has to reach an open Settings dialog by itself.
@@ -1028,7 +1029,7 @@ function adoptDiscordSettings(): void {
   )
   if (!newer) return
   const next = setConfig({ discordPresence: newer.on, discordStyle: newer.style, discordSettingsAt: newer.at })
-  presence.configure(next.discordPresence, next.discordStyle)
+  presence.configure(presenceAllowed(next.discordPresence, profileName()), next.discordStyle)
   send('config:changed', next)
 }
 // A card that goes on its own is a row in the list, never a pane that just vanished:
@@ -2844,7 +2845,7 @@ ipcMain.handle('config:set', (_e, patch: Partial<Config>) => {
   if (patch.providerKeys || patch.openrouterKey !== undefined) invalidateAgents()
   if (patch.saveHistory !== undefined) history.setHistoryEnabled(patch.saveHistory)
   if (patch.discordPresence !== undefined || patch.discordStyle !== undefined) {
-    presence.configure(next.discordPresence, next.discordStyle)
+    presence.configure(presenceAllowed(next.discordPresence, profileName()), next.discordStyle)
     presence.update(presenceCounts())
   }
   if (patch.silenceAlertMin !== undefined) setSilenceAlert(patch.silenceAlertMin)
