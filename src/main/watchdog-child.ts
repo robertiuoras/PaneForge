@@ -27,10 +27,13 @@ import {
   HANG_MS,
   silenceLine,
   machineBusyPct,
+  READ_MACHINE_AFTER_MS,
+  STARVED_HANG_FACTOR,
   type CpuTimes,
   type MainWatchState,
   type Vitals
 } from '../shared/mainWatch'
+import { readPressure } from './memory'
 
 interface Hello {
   t: 'hello'
@@ -56,6 +59,10 @@ let beatsReceived = 0
 let prevCpus: CpuTimes[] = cpus().map((c) => ({ ...c.times }))
 let acted = false
 const startedAt = Date.now()
+/** The machine reported memory pressure on the last tick of a silence (see `STARVED_HANG_FACTOR`). */
+let starved = false
+/** When the "waiting instead of relaunching" line was written for the current silence; 0 = not yet. */
+let starvedSaidAt = 0
 
 const port = process.parentPort
 
@@ -66,6 +73,12 @@ port.on('message', (e) => {
     hello = msg as Hello
     hangMs = (hello.hangMs ?? 0) > 0 ? hello.hangMs ?? 0 : 0
   } else if (msg.t === 'beat') {
+    if (starvedSaidAt && hello) {
+      const silentS = Math.round((watch.silentTicks * BEAT_MS) / 1000)
+      void note(hello, `main: beating again after ${silentS}s of silence while memory was short - not relaunched, every pane kept`)
+    }
+    starvedSaidAt = 0
+    starved = false
     watch = beat(watch)
     beatsReceived++
     // Tolerate a beat with no vitals: an older main, or one that failed to compute them.
@@ -76,9 +89,22 @@ port.on('message', (e) => {
 const timer = setInterval(() => {
   const now = Date.now()
   const nowCpus = cpus().map((c) => ({ ...c.times }))
-  const next = decide(watch, now, hangMs || HANG_MS)
+  const limit = hangMs || HANG_MS
+  // Only a silence asks about memory, and early: the reading is cached and refreshed in the
+  // background, so asking from 10 s on means the answer at 75 s is a fresh one.
+  starved = watch.receivedBeat && watch.silentTicks * BEAT_MS >= READ_MACHINE_AFTER_MS && readPressure() !== 'normal'
+  const next = decide(watch, now, limit, starved)
   watch = next.state
   if (next.action !== 'act') {
+    const silentMs = watch.silentTicks * BEAT_MS
+    if (starved && !starvedSaidAt && hello && silentMs >= limit) {
+      starvedSaidAt = now
+      const waitMin = Math.round((limit * STARVED_HANG_FACTOR) / 60_000)
+      void note(
+        hello,
+        `main: no heartbeat for ${Math.round(silentMs / 1000)}s, but the machine is short of memory (${Math.round(freemem() / 1048576)}MB free of ${Math.round(totalmem() / 1048576)}MB) - waiting up to ${waitMin} min instead of relaunching, which would end every pane`
+      )
+    }
     prevCpus = nowCpus
     return
   }

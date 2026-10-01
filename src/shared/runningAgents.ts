@@ -30,6 +30,19 @@ export interface AgentScan {
   answered: Map<string, string>
   /** tool_use ids a task-notification has said stopped */
   notified: Set<string>
+  /**
+   * Background `Bash` commands (`run_in_background`). Tracked APART from the agents: what
+   * `runningAgents()` returns and when it refuses is unchanged. Only `pendingBackground`
+   * reads this.
+   */
+  shells: Map<string, { id?: string; at: number | null; label?: string }>
+  /**
+   * tool_use id -> launch time of a background task whose `<task-notification>` was only
+   * ENQUEUED/DEQUEUED: the conversation has not acted on it yet. If the CLI dies in that
+   * window nobody ever will (pane 2, 2026-10-01: the notification was enqueued 08:24:32Z,
+   * dequeued 08:25:41Z, the app was killed 08:25:54Z, and the pane came back asleep).
+   */
+  undelivered: Map<string, number | null>
 }
 
 export interface RunningAgent {
@@ -52,7 +65,7 @@ export interface RunningAgent {
 export const AGENT_MAX_AGE_MS = 3 * 60 * 60_000
 
 export function newAgentScan(): AgentScan {
-  return { launched: new Map(), answered: new Map(), notified: new Set() }
+  return { launched: new Map(), answered: new Map(), notified: new Set(), shells: new Map(), undelivered: new Map() }
 }
 
 const NOTIFIED = /<tool-use-id>([^<]+)<\/tool-use-id>/g
@@ -60,6 +73,9 @@ const ASYNC = /Async agent launched[\s\S]*?agentId:\s*([A-Za-z0-9_-]+)/
 const RESUMED = /"resumedAgentId"\s*:\s*"([^"]+)"/
 /** A `Workflow` graph runs in-process like a subagent and ends in the same task-notification. */
 const WORKFLOW = /Workflow launched in background\.\s*Task ID:\s*([A-Za-z0-9_-]+)/
+
+/** A `Bash` with `run_in_background` answers with this and ends its turn's wait. */
+const SHELL_STARTED = /Command running in background with ID:\s*([A-Za-z0-9_-]+)/
 
 function textOf(content: unknown): string {
   if (typeof content === 'string') return content
@@ -72,7 +88,24 @@ export function scanAgentLines(scan: AgentScan, text: string): void {
   for (const line of text.split('\n')) {
     if (!line) continue
     if (line.includes('<task-notification>')) {
+      // Was this line the conversation ACTING on the notification, or only the queue
+      // holding it? Claude Code writes `queue-operation` enqueue/dequeue rows when the
+      // notification is queued, and a user row / `queued_command` attachment / a
+      // `remove` (absorbed mid-turn) when it reaches the model.
+      let queued = false
+      try {
+        const o = JSON.parse(line) as { type?: unknown; operation?: unknown }
+        queued = o.type === 'queue-operation' && (o.operation === 'enqueue' || o.operation === 'dequeue')
+      } catch { /* an unreadable line is not proof of anything pending */ }
       for (const m of line.matchAll(NOTIFIED)) {
+        const known = scan.shells.get(m[1]) ?? scan.launched.get(m[1])
+        if (known) {
+          if (queued) scan.undelivered.set(m[1], known.at)
+          else {
+            scan.undelivered.delete(m[1])
+            scan.shells.delete(m[1])
+          }
+        } else if (!queued) scan.undelivered.delete(m[1])
         scan.notified.add(m[1])
         // Finished: nothing about it is needed again, so a long conversation's maps do
         // not grow with every agent it ever ran.
@@ -104,6 +137,18 @@ export function scanAgentLines(scan: AgentScan, text: string): void {
           at: Number.isFinite(at) ? at : null,
           label: graph ?? (typeof input.description === 'string' && input.description.trim() ? input.description.trim().slice(0, 80) : undefined)
         })
+      } else if (c.type === 'tool_use' && c.name === 'Bash' && typeof c.id === 'string' && (c.input as { run_in_background?: unknown } | undefined)?.run_in_background === true) {
+        const input = c.input as { description?: unknown }
+        const at = j.timestamp ? Date.parse(j.timestamp) : NaN
+        scan.shells.set(c.id, {
+          at: Number.isFinite(at) ? at : null,
+          label: typeof input.description === 'string' && input.description.trim() ? input.description.trim().slice(0, 80) : undefined
+        })
+      } else if (c.type === 'tool_result' && typeof c.tool_use_id === 'string' && scan.shells.has(c.tool_use_id)) {
+        const sh = scan.shells.get(c.tool_use_id)!
+        const m = c.is_error ? null : SHELL_STARTED.exec(textOf(c.content))
+        if (m) sh.id = m[1]
+        else scan.shells.delete(c.tool_use_id)
       } else if (c.type === 'tool_result' && typeof c.tool_use_id === 'string' && scan.launched.has(c.tool_use_id)) {
         const id = c.tool_use_id
         if (c.is_error) {
@@ -149,6 +194,34 @@ export function runningAgents(scan: AgentScan, opts: { since?: number; now?: num
     out.push({ id: agent, toolUseId, via: l.via, at: l.at, label: l.label })
   }
   return out
+}
+
+export interface PendingBackground {
+  agents: RunningAgent[]
+  shells: Array<{ toolUseId: string; id?: string; at: number | null; label?: string }>
+  /** background tasks whose notification the conversation has not acted on yet */
+  undelivered: number
+}
+
+/**
+ * Everything a pane's CLI still owes work to: its running agents, its background shell
+ * commands, and notifications that were queued but never reached the model. Same `since` /
+ * age rules as `runningAgents`. This is what a restart must not lose; the refusals
+ * (`runningAgents`) are unchanged.
+ */
+export function pendingBackground(scan: AgentScan, opts: { since?: number; now?: number } = {}): PendingBackground {
+  const live = (at: number | null) =>
+    !(at != null && opts.since != null && at < opts.since) && !(at != null && opts.now != null && opts.now - at > AGENT_MAX_AGE_MS)
+  const shells: PendingBackground['shells'] = []
+  for (const [toolUseId, sh] of scan.shells) if (sh.id && live(sh.at)) shells.push({ toolUseId, ...sh })
+  let undelivered = 0
+  for (const at of scan.undelivered.values()) if (live(at)) undelivered++
+  return { agents: runningAgents(scan, opts), shells, undelivered }
+}
+
+export function hasPendingBackground(scan: AgentScan, opts: { since?: number; now?: number } = {}): boolean {
+  const p = pendingBackground(scan, opts)
+  return p.agents.length > 0 || p.shells.length > 0 || p.undelivered > 0
 }
 
 /** One-shot form over a whole transcript's text - what the tests and the hook port read. */
