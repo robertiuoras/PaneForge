@@ -49,6 +49,7 @@ export const SURFACE: Surface = {
   createProject: ['invoke', 'projects:create'],
   routeProjects: ['invoke', 'projects:route'],
   listAgents: ['invoke', 'agents:list', true],
+  includedAccounts: ['invoke', 'agents:includedAccounts'],
   listSessions: ['invoke', 'sessions:list'],
   contextUsage: ['invoke', 'sessions:contextUsage'],
   prepareContinuation: ['invoke', 'sessions:prepareContinuation'],

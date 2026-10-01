@@ -38,6 +38,7 @@ import AppearanceTab from './AppearanceTab'
 import DiscordTab from './DiscordTab'
 import SoundsTab from './SoundsTab'
 import InstallConsole from './InstallConsole'
+import IncludedAccounts from './IncludedAccounts'
 import VaultDialog from './VaultDialog'
 import { BLURBS } from '@shared/blurbs'
 import Select from './Select'
@@ -73,7 +74,7 @@ const TABS: { id: Tab; label: string; note: string; find: string }[] = [
   { id: 'general', label: 'General', note: 'Folders, fonts, alerts', find: 'projects root folder agent font size copy select chime notify game mode worktree lane close startup transcript history' },
   { id: 'appearance', label: 'Appearance', note: 'Colours and density', find: 'theme colour color accent palette dark light preset tint contrast corners rounding density compact swatch' },
   { id: 'sounds', label: 'Sounds', note: 'What the alerts play', find: 'sound audio chime bell alert volume mute noise cat meow dog bark animal arcade coin laser upload custom mp3 wav file ringtone notification' },
-  { id: 'agents', label: 'Agents', note: 'The CLIs you run', find: 'claude codex antigravity copilot cursor install uninstall model custom cli path' },
+  { id: 'agents', label: 'Agents', note: 'The CLIs you run', find: 'claude codex antigravity copilot cursor install uninstall model custom cli path account subscription login plan switch' },
   { id: 'voice', label: 'Voice', note: 'Dictation', find: 'microphone mic speech whisper dictate push to talk language model' },
   { id: 'discord', label: 'Discord', note: 'What your profile shows', find: 'discord presence rich activity status profile look style switch waiting tokens link button template project elapsed idle' },
   { id: 'system', label: 'System', note: 'Updates and startup', find: 'update administrator admin uac restore restart reopen version download install' }
@@ -933,6 +934,7 @@ export default function SettingsDialog({ config, agents, onChange, onClose }: Pr
 
           {tab === 'agents' && (
             <>
+              <IncludedAccounts />
               <div className="setting">
                 <div className="setting-row">
                   <label>Agents on this machine</label>

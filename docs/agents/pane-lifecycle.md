@@ -128,6 +128,13 @@ foreign autoclear left alone) -> `<userData>/autoclear-requests/<pane>.json` ->
 `shared/autoclear.ts` refusals; `main/sessions.ts` re-checks (`dropFor`) each tick. `## Next steps:
 None` respected. Resume: `queuePrompt` on IDLE COMPOSER; `keep.arm()` 120ms.
 
+The quiet floor (`ARM_QUIET_MS`, at arm, expiry and the arm lead) reads `Live.contentAt`, not
+`meta.lastOutput`: every pty byte EXCEPT a digits-only footer counter tick on a pane not mid-turn
+(`contentStampAfter`/`isCounterRepaint`). A finished pane carrying a background agent repaints
+its timer every second and was held 115 times, never cleared (s72, 2026-10-02). Anything not
+provably a tick still stamps, so a second Stop-hook reply still holds. `test:autoclear`,
+`node scripts/test-all.mjs autoclearmanager`.
+
 ## The screen stays on while a pane works
 
 `shared/awake.ts` + `main/awake.ts` `powerSaveBlocker` while mid-turn/asking (`test:awake`).

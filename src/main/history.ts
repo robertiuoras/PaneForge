@@ -29,6 +29,8 @@ import { app } from 'electron'
 // nobody notices - a transcript and its tee disagreeing about the same run.
 import { stripAnsi as strip } from '../shared/ansi'
 import { gistOf, noteAskInto } from '../shared/gist'
+import { humanTitle } from '../shared/cliTitle'
+import { projectOf } from '../shared/place'
 import type { HistoryEntry, HistoryHit, Session } from '../shared/types'
 import { logProblem } from './crash'
 import { firstAskIn } from './promptArchive'
@@ -222,11 +224,12 @@ export function chatNameFor(resumeId: string): { title: string; about?: string }
         if (!f.endsWith('.json')) continue
         try {
           const e = JSON.parse(readFileSync(join(dir(), f), 'utf8')) as HistoryEntry
-          if (!e.resumeId || !e.title) continue
+          const title = e.title && humanTitle(e.title)
+          if (!e.resumeId || !title) continue
           const at = e.endedAt ?? e.startedAt ?? 0
           const was = map.get(e.resumeId)
           if (was && was.at >= at) continue
-          map.set(e.resumeId, { title: e.title, about: e.gist, at })
+          map.set(e.resumeId, { title, about: e.gist, at })
         } catch {
           /* one unreadable row must not blank the rest */
         }
@@ -583,8 +586,28 @@ export function list(): HistoryEntry[] {
       // back to when it started, which keeps it at the top where it belongs.
       .sort((a, b) => (b.endedAt ?? b.startedAt) - (a.endedAt ?? a.startedAt))
       .map(backfill)
+      .map(readable)
   } catch {
     return []
+  }
+}
+
+/**
+ * A row's title with its ids taken out, read-time like the folder recovery above: a chat
+ * closed before `humanTitle` existed still says `auto-close bug in s42-mupfazgj` in its file.
+ * Another chat it names by id is named by that chat's own title where History has it.
+ */
+function readable(e: HistoryEntry, _i: number, all: HistoryEntry[]): HistoryEntry {
+  const title = humanTitle(e.title, (id) => (id === e.id ? undefined : all.find((o) => o.id === id)?.title))
+  return title === e.title ? e : { ...e, title: title || projectOf(e.cwd) }
+}
+
+/** The title History saved for a pane, as written; undefined when it has no row. */
+export function titleOf(id: string): string | undefined {
+  try {
+    return (JSON.parse(readFileSync(metaFile(id), 'utf8')) as HistoryEntry).title || undefined
+  } catch {
+    return undefined
   }
 }
 

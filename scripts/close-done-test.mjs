@@ -64,6 +64,7 @@ is(doneEnough({ ...done, ask: { title: 'Which?' } }, QUIET, NOW), false, 'never 
 is(doneEnough({ ...done, drafting: true }, QUIET, NOW), false, 'never a pane whose prompt failed before submission')
 is(doneEnough({ ...done, job: 'npm' }, QUIET, NOW), false, 'never while a command is running in front of the tty')
 is(doneEnough({ ...done, backJob: 'npm' }, QUIET, NOW), false, 'never while the agent left something running in the background')
+is(doneEnough({ ...done, serving: 'node' }, QUIET, NOW), false, 'never while something it runs is listening on a port - a dev server is quiet on purpose')
 is(doneEnough({ ...done, status: 'exited' }, QUIET, NOW), false, 'an ended pane has nothing to close')
 is(doneEnough({ ...done, asleep: NOW - 1000 }, QUIET, NOW), false, 'and a SLEEPING pane is being kept, not finished')
 
