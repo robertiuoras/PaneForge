@@ -9,7 +9,7 @@
 
 import { buildSync } from 'esbuild'
 import { strict as assert } from 'node:assert'
-import { mkdirSync, rmSync } from 'node:fs'
+import { mkdirSync, rmSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -19,6 +19,20 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const work = join(tmpdir(), 'pf-autohandoff-test')
 rmSync(work, { recursive: true, force: true })
 mkdirSync(work, { recursive: true })
+
+// Exercise the actual main-process gate, including completion bells from Codex.
+{
+  const source = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
+  const gate = source.match(/function paneBusy\(s: Session\): boolean \{[\s\S]*?\n\}/)?.[0]
+  assert.ok(gate, 'the handoff busy gate exists')
+  const file = join(work, 'busy.cjs')
+  buildSync({ stdin: { contents: `${gate}\nexport { paneBusy }`, loader: 'ts' }, format: 'cjs', platform: 'node', outfile: file })
+  const { paneBusy } = createRequire(import.meta.url)(file)
+  assert.equal(paneBusy({ status: 'idle', finished: true, bell: true }), false, 'an unread completed reply may transfer')
+  for (const held of [{ status: 'working' }, { status: 'starting' }, { status: 'idle', bell: true }, { status: 'idle', finished: true, ask: {} }, { status: 'idle', finished: true, stalledSince: 1 }]) {
+    assert.equal(paneBusy(held), true, 'active, unresolved or asking panes remain held')
+  }
+}
 
 const outfile = join(work, 'autohandoff.bundle.cjs')
 buildSync({

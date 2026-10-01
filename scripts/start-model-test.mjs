@@ -12,7 +12,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-const { withDefaultModel, agentOf } = await import('../src/shared/startModel.ts')
+const { withDefaultModel, routeCodexStart, agentOf } = await import('../src/shared/startModel.ts')
 
 let pass = 0
 const t = (name, fn) => {
@@ -56,16 +56,54 @@ t('the request is not mutated', () => {
   assert.equal(req.model, undefined)
 })
 
+t('an ordinary new Codex ask starts on Sol with adaptive effort', () => {
+  const req = routeCodexStart({ agent: 'codex', prompt: 'Summarize the public FlutterFlow partner program from official sources in a concise research note' })
+  assert.equal(req.model, 'gpt-6-sol')
+  assert.deepEqual(req.effort, { mode: 'auto' })
+  assert.equal(withDefaultModel(req, { codex: 'gpt-6-astra' }).model, 'gpt-6-sol')
+})
+t('explicit small asks use Sol and can start low', () => {
+  for (const prompt of ['Quick: list the panes', 'Fix a typo.', 'Rename the label?']) {
+    const req = routeCodexStart({ agent: 'codex', prompt })
+    assert.equal(req.model, 'gpt-6-sol')
+  }
+})
+t('hard problems and ambiguous short asks retain Astra', () => {
+  for (const prompt of ['Debug the auth error', 'Fix the bugs', 'Bugfix?', 'Why has this failed?', 'Help with this', 'Help with FlutterFlow MCP setup']) {
+    const req = routeCodexStart({ agent: 'codex', prompt })
+    assert.equal(req.model, 'gpt-6-astra', prompt)
+  }
+})
+t('explicit model, explicit effort and resume are never rerouted', () => {
+  assert.equal(routeCodexStart({ agent: 'codex', model: 'gpt-6-astra', prompt: 'Quick: list' }).model, 'gpt-6-astra')
+  assert.equal(routeCodexStart({ agent: 'codex', effort: { mode: 'manual', manual: 'high' }, prompt: 'Quick: list' }).model, undefined)
+  const resumed = routeCodexStart({ agent: 'codex', resume: true, prompt: 'Quick: list' })
+  assert.equal(resumed.model, undefined)
+  assert.equal(withDefaultModel(resumed, { codex: 'gpt-6-astra' }).model, undefined)
+})
+t('an unprompted Codex pane begins adaptive effort without choosing a model', () => {
+  const req = routeCodexStart({ agent: 'codex' })
+  assert.equal(req.model, undefined)
+  assert.deepEqual(req.effort, { mode: 'auto' })
+})
+
 // Every launcher that starts a NEW pane in main goes through the rule.
 const main = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
 t('sessions:start / startMany / pf open start through it', () => {
-  assert.match(main, /(?:manager\.start|startComputeAware)\(withDefaultModel\(lane, getConfig\(\)\.defaultModels\)\)/)
+  assert.ok(/startComputeAware\(withDefaultModel\(routeCodexStart\(lane\), getConfig\(\)\.defaultModels\)\)/.test(main))
 })
 t("a paired desk's guest launch starts through it", () => {
-  assert.match(main, /startSession: async \(req\) => \{[\s\S]{0,400}?return (?:manager\.start|startComputeAware)\(withDefaultModel\(await laneFor\(req\), getConfig\(\)\.defaultModels\)\)/)
+  assert.ok(/startSession: async \(req\) => \{[\s\S]{0,400}?return startComputeAware\(withDefaultModel\(routeCodexStart\(await laneFor\(req\)\), getConfig\(\)\.defaultModels\)\)/.test(main))
 })
-t('PaneForge --open starts through it', () => {
-  assert.match(main, /async function openRequest[\s\S]{0,400}withDefaultModel\(/)
+t('the new-session dialog only pins a model after an explicit selection', () => {
+  const dialog = readFileSync(join(root, 'src/renderer/src/components/NewSessionDialog.tsx'), 'utf8')
+  assert.ok(/model: modelSelected \? model \|\| undefined : undefined/.test(dialog))
+  assert.ok(/setModelSelected\(Boolean\(m\)\)/.test(dialog))
+})
+t('the launch effort uses the first prompt and overrides the global Codex config', () => {
+  const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
+  assert.ok(/function startEffort\(req: StartSessionRequest\)[\s\S]{0,220}classifyEffort\(req.prompt\)\.level/.test(sessions))
+  assert.ok(/effort: req\.effort \? startEffort\(req\) : undefined/.test(sessions))
 })
 
 console.log(`start-model: ${pass} checks passed`)

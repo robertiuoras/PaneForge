@@ -122,6 +122,7 @@
     "test:discordbrand": "node scripts/discord-brand-test.mjs",
     "test:remote": "node scripts/remote-test.mjs",
     "test:paneanswer": "node scripts/pane-answer-test.mjs",
+    "test:includedaccounts": "node scripts/included-accounts-test.mjs",
     "test:remoteversion": "node scripts/remote-version-test.mjs",
     "test:deadlink": "node scripts/deadlink-test.mjs",
     "test:handoff": "node scripts/handoff-test.mjs && node scripts/handoff-notify-test.mjs",

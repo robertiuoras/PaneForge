@@ -106,6 +106,7 @@ import { codexWorkersFor, forgetCodexWorkers } from './codexWorkers'
 import {
   EFFORT_PRESS_GAP_MS,
   EFFORT_SETTLE_MS,
+  classifyEffort,
   confirmEffort,
   decideBeforeTurn,
   planEffortKeys,
@@ -127,7 +128,9 @@ import { continueAfterRestore, restoredClock } from '../shared/restoreTurn'
  * transcript can be quiet-then-busy several times before it really settles.
  */
 const RESTORE_CONTINUE_MS = Number(process.env.PF_RESTORE_CONTINUE_MS ?? 8000)
-import { killPaneStrays, trackStrays } from './strays'
+import { killPaneStrays, trackStrays, type ProcRecord, type StrayRecord } from './strays'
+import { listeningPids } from './deadDev'
+import { servingPanes } from '../shared/serving'
 import {
   clearsConversation,
   feedSubmitLine,
@@ -417,6 +420,11 @@ export function setSilenceAlert(minutes: number | undefined): void {
 /** What a new Codex pane is launched thinking at, when the reading is on for it. */
 const EFFORT_START = 'medium'
 
+function startEffort(req: StartSessionRequest): string {
+  if (req.effort?.mode === 'manual' && req.effort.manual) return req.effort.manual
+  return req.prompt ? classifyEffort(req.prompt).level : EFFORT_START
+}
+
 /**
  * The card's half of a pane's effort state: the level the rollout has CONFIRMED, the plain
  * words for why, and the levels this model offers so the right-click menu can list them.
@@ -441,7 +449,7 @@ function effortStart(req: StartSessionRequest, agent: Agent): EffortState | unde
     manual: req.effort.manual,
     // What the `-c model_reasoning_effort` flag on the spawn asked for. It is a starting
     // point for the arithmetic and not a claim: the first rollout line confirms it.
-    launched: EFFORT_START,
+    launched: startEffort(req),
     reason: "waiting for Codex's first reply"
   }
 }
@@ -733,6 +741,7 @@ export class SessionManager extends EventEmitter {
    */
   private autoClearPending = new Map<string, AutoClearArm>()
   private tableJobsBusy = false
+  private servingBusy = false
   private seq = 0
   /** The app is quitting: no more IPC, no more idle sweeps, teardown runs once. */
   private down = false
@@ -748,7 +757,8 @@ export class SessionManager extends EventEmitter {
     setInterval(() => this.sweepTableJobs(), TABLE_JOB_MS).unref()
     // Write down what the panes have started, while their parent links still say so.
     // Asked for the pids each sample rather than handed them: see strays.ts.
-    trackStrays(() => this.roots())
+    // ...and, off the same table, which panes are serving something. See `sweepServing`.
+    trackStrays(() => this.roots(), (procs, ledger) => this.sweepServing(procs, ledger))
   }
 
   /**
@@ -832,6 +842,7 @@ export class SessionManager extends EventEmitter {
         drafting: m.drafting,
         job: m.job,
         backJob: m.backJob,
+        serving: m.serving,
         backWaitOnly: backJobWaitOnly(m.id),
         focused: personLooking(m.id === this.activeId, this.windowFocused(), this.deskWatched()),
         lastKeyboard: m.lastKeyboard,
@@ -3820,6 +3831,7 @@ export class SessionManager extends EventEmitter {
     const m = live.meta
     if (this.keptOpen?.(id)) return { closed: false, reason: 'kept open by hand' }
     if (m.status !== 'idle' || m.runSince || live.busyUntil > Date.now() || m.job || (m.backJob && !backJobWaitOnly(id)) || m.subagent) return { closed: false, reason: 'session is busy or has a background job' }
+    if (m.serving) return { closed: false, reason: `session is serving (${m.serving})` }
     const held = closeHeldBy({ ...m, ask: m.ask || heldByGuardDeck(id, readGuardDeckQuestions(), Date.now(), m.agent === 'codex' ? resumeIdFor(id) : undefined) })
     if (held.length) return { closed: false, reason: `session has ${held.join(', ')}` }
     if (m.lastKeyboard > reportedAt) return { closed: false, reason: 'newer user input exists' }
@@ -3917,7 +3929,7 @@ export class SessionManager extends EventEmitter {
         resume: req.resume,
         resumeId: req.resumeId,
         model: req.model,
-        effort: req.effort ? EFFORT_START : undefined
+        effort: req.effort ? startEffort(req) : undefined
       }),
       ...pfPrimerArgs(spec.id)
     ]
@@ -5402,6 +5414,44 @@ export class SessionManager extends EventEmitter {
     } finally {
       pending.checking = false
     }
+  }
+
+  /**
+   * Which panes are serving something, off the strays sampler's table (`shared/serving.ts`).
+   *
+   * The sampler runs every 30 s whether or not the window can be seen - unlike the usage
+   * sampler behind `backJob`, which stops with a hidden window, and a hidden window is how
+   * the other desk spends its day. One `lsof`/`netstat` per sample on top of a table that
+   * was being read anyway. A socket reading that came back empty is a FAILED reading - no
+   * machine listens on nothing - so it leaves every pane as it was rather than calling
+   * every server stopped.
+   */
+  private sweepServing(procs: ProcRecord[], ledger: ReadonlyMap<string, StrayRecord[]>): void {
+    if (this.servingBusy) return
+    this.servingBusy = true
+    void listeningPids()
+      .then((listening) => {
+        if (!listening.size) return
+        const serving = servingPanes(
+          procs,
+          listening,
+          [...this.sessions.values()]
+            .filter((l) => l.meta.status !== 'exited' && l.proc)
+            .map((l) => ({ id: l.meta.id, pid: l.proc?.pid ?? 0, recorded: ledger.get(l.meta.id) ?? [] }))
+        )
+        let changed = false
+        for (const live of this.sessions.values()) {
+          const next = serving.get(live.meta.id)
+          if (live.meta.serving === next) continue
+          live.meta.serving = next
+          changed = true
+        }
+        if (changed) this.emitSessions()
+      })
+      .catch(() => {})
+      .finally(() => {
+        this.servingBusy = false
+      })
   }
 
   private sweepIdle(): void {

@@ -42,6 +42,7 @@ const TESTS = [
   ['freshreplay', 'fresh-replay-test.mjs'],
   ['codexworkers', 'codex-workers-test.mjs'],
   ['paneanswer', 'pane-answer-test.mjs'],
+  ['includedaccounts', 'included-accounts-test.mjs'],
   ['remotesuite', 'test-remote-test.mjs'],
   ['testchrome', 'test-chrome-test.mjs'],
   ['promptreview', 'prompt-review-test.mjs'],

@@ -17,7 +17,8 @@ import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname } from 'node:path'
 import { createServer } from 'node:net'
-import { createRequire } from 'node:module'
+import { createRequire, syncBuiltinESMExports } from 'node:module'
+import os from 'node:os'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const out = mkdtempSync(join(tmpdir(), 'pf-remote-'))
@@ -50,6 +51,7 @@ function bundle() {
   writeFileSync(
     entry,
     [
+      `export { localAddresses, broadcastAddresses } from ${JSON.stringify(join(root, 'src/main/remote/discover.ts').replace(/\\/g, '/'))}`,
       `export { RemoteHost } from ${JSON.stringify(join(root, 'src/main/remote/host.ts').replace(/\\/g, '/'))}`,
       `export { RemoteClient } from ${JSON.stringify(join(root, 'src/main/remote/client.ts').replace(/\\/g, '/'))}`,
       `export { newCode } from ${JSON.stringify(join(root, 'src/main/remote/wire.ts').replace(/\\/g, '/'))}`,
@@ -192,6 +194,23 @@ async function until(fn, ms = 8000) {
 
 async function main() {
   const mod = await import(pathToFileURL(bundle()).href)
+  const originalInterfaces = os.networkInterfaces
+  try {
+    os.networkInterfaces = () => { throw new Error('ERR_SYSTEM_ERROR: adapter changing') }
+    syncBuiltinESMExports()
+    ok('adapter enumeration failure leaves local addresses unavailable', mod.localAddresses().length === 0)
+    ok('adapter enumeration failure keeps global discovery broadcast', JSON.stringify(mod.broadcastAddresses()) === '["255.255.255.255"]')
+    os.networkInterfaces = () => ({ test: [
+      { family: 'IPv4', internal: false, address: '192.168.1.8', netmask: '255.255.255.0' },
+      { family: 'IPv4', internal: false, address: '100.78.1.77', netmask: '255.255.255.255' }
+    ] })
+    syncBuiltinESMExports()
+    ok('address enumeration recovers on the next refresh with Tailnet first', mod.localAddresses().join(',') === '100.78.1.77,192.168.1.8')
+    ok('subnet discovery recovers on the next refresh', mod.broadcastAddresses().includes('192.168.1.255'))
+  } finally {
+    os.networkInterfaces = originalInterfaces
+    syncBuiltinESMExports()
+  }
   const { RemoteHost, RemoteClient, newCode, makeInvite, readInvite, INVITE_MINUTES, isSelfPeer, dropSelf, liveWatch } =
     mod
 

@@ -119,7 +119,7 @@ const RESOLVED = /\b(works now|fixed|all good|passing|that's it|thats it|thanks|
 export const HIGH: Array<[RegExp, string]> = [
   [/\b(security|auth|token|secret|credential|permission|vulnerab\w*|injection)\b/, 'security-sensitive'],
   [
-    /\b(why|diagnos\w*|investigat\w*|root cause|debug\w*|flaky|intermittent|race|deadlock|regression|crash\w*|hang\w*|leak\w*)\b/,
+    /\b(why|diagnos\w*|investigat\w*|root cause|debug\w*|bug\w*|fail\w*|error\w*|hotfix|flaky|intermittent|race|deadlock|regression|crash\w*|hang\w*|leak\w*)\b/,
     'hard diagnosis'
   ],
   [
@@ -130,7 +130,7 @@ export const HIGH: Array<[RegExp, string]> = [
 ]
 
 export const LOW =
-  /\b(rename|typo|format|lint|indent|comment|what is|where is|show me|list|find|grep|print|read|open|explain this line|bump|add import|remove unused|wording|label)\b/
+  /\b(quick|rename|typo|format|lint|indent|comment|what is|where is|show me|list|find|grep|print|read|open|explain this line|bump|add import|remove unused|wording|label)\b/
 
 /** The longest an ask can be and still be a lookup. Past this it is work. */
 export const LOW_MAX_CHARS = 160
