@@ -11,7 +11,7 @@
 //
 //   node scripts/close-done-test.mjs
 
-import { buildSync } from 'esbuild'
+import { buildSync, transformSync } from 'esbuild'
 import { strict as assert } from 'node:assert'
 import { mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -95,6 +95,76 @@ const surface = readFileSync(join(root, 'src/shared/surface.ts'), 'utf8')
 ok(/'sessions:closeWhenDone'/.test(surface), "...on the one list both ends build from, or it would not compile")
 ok(/cmd === 'close-when-done'/.test(ctl), 'pf close-when-done arms it')
 ok(/close-when-done needs a pane/.test(ctl), '...and refuses by name when it cannot tell which pane')
+
+// ------------------------------------------------- an automatic clear on its way in
+// 2026-10-01, Mac 0.8.232: two `--close-when-done` panes lane.mjs opened were killed while
+// their own autoclear was on its way in, and the handoff's open steps went with them.
+// s28-mupc5ct1: countdown armed 13:04:36.682Z, close-request 84ms later. s57-mupk43r8
+// ("Finish preserved work"): settle hold logged 14:03:24.438Z, close-request 179ms later,
+// three next steps not done. The sweep read `doneEnough` and nothing the app still owed the
+// pane. The real method bodies run here, `owesPrompt` included, so a copy cannot drift.
+{
+  const methodBody = (sig) => {
+    const at = sessions.indexOf(sig)
+    assert.ok(at >= 0, `real method exists: ${sig.trim()}`)
+    return sessions.slice(at, sessions.indexOf('\n  }\n', at) + 4)
+  }
+  const code = transformSync(
+    `class Fixture { ${methodBody('  private owesPrompt(live: Live)')} ${methodBody('  private sweepCloseWhenDone(')} }`,
+    { loader: 'ts' },
+  ).code
+  const Fixture = new Function('doneEnough', `${code}; return Fixture`)(doneEnough)
+  const kills = []
+  const told = []
+  const manager = new Fixture()
+  manager.autoClearPending = new Map()
+  manager.autoClearArmTimers = new Map()
+  manager.keptOpen = () => false
+  manager.openerOf = () => 'opener'
+  manager.queuePrompt = (id, text) => told.push([id, text])
+  manager.kill = (id) => kills.push(id)
+  const at = Date.now()
+  const pane = () => ({
+    meta: { id: 'pane', title: 'Finish preserved work', cwd: '/fixture', status: 'idle', printed: at - 60_000 },
+    req: { closeWhenDone: true },
+    busyUntil: 0,
+  })
+  const sweep = (live) => manager.sweepCloseWhenDone(live, Date.now(), QUIET)
+
+  const queued = pane()
+  manager.autoClearPending.set('pane', { seconds: 15 })
+  sweep(queued)
+  is(kills, [], 'a clear asked for during the turn keeps the pane open (s57-mupk43r8)')
+  manager.autoClearPending.clear()
+
+  const holding = pane()
+  manager.autoClearArmTimers.set('pane', 0)
+  sweep(holding)
+  is(kills, [], '...and so does the settle hold in front of its countdown')
+  manager.autoClearArmTimers.clear()
+
+  const counting = pane()
+  counting.meta.autoClearAt = Date.now() + 15_000
+  sweep(counting)
+  is(kills, [], '...and the countdown itself (s28-mupc5ct1, killed 84ms after it armed)')
+
+  const handover = pane()
+  handover.meta.handoverUntil = Date.now() + 30_000
+  sweep(handover)
+  is(kills, [], '...and the handover between `/clear` and the resume prompt')
+
+  const owed = pane()
+  owed.meta.owedPrompt = true
+  sweep(owed)
+  is(kills, [], '...and a queued prompt that has not landed yet')
+  is(told, [], 'the opener is told nothing while the pane is still owed a prompt')
+
+  // The resume turn ran and finished: nothing owed, quiet again. Now it is done.
+  const resumed = pane()
+  sweep(resumed)
+  is(kills, ['pane'], 'once the resume turn has finished, the pane closes itself as asked')
+  is(told.length, 1, '...and the opener is told, once')
+}
 
 rmSync(work, { recursive: true, force: true })
 console.log(`close-done: ${checks} checks passed`)

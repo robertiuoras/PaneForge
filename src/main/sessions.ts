@@ -2663,6 +2663,10 @@ export class SessionManager extends EventEmitter {
   private sweepCloseWhenDone(live: Live, now: number, quiet: number): void {
     const { meta } = live
     if (this.keptOpen?.(meta.id)) return
+    // An automatic clear on its way in is not a finished job: closing then loses the
+    // handoff's open steps (2026-10-01, s57-mupk43r8 and s28-mupc5ct1, killed 179ms and
+    // 84ms into it). After the resume turn ends nothing is owed and the pane closes.
+    if (this.owesPrompt(live)) return
     if (!doneEnough({ ...meta, busyUntil: live.busyUntil }, quiet, now)) return
     const told = live.req.reportTo
     const opener = this.openerOf(meta.id)

@@ -3585,7 +3585,10 @@ compile. Never add a channel to a transport; add it there.
   out of its turn, no question, no shell command, no background job left — that last read comes off a
   4s process table, so the pane must stay finished `CLOSE_DONE_QUIET_MS` (8s) rather than closing on
   the turn's edge. The opener is told through `queuePrompt` and BEFORE the kill, because `kill()`
-  deletes the request that names it. `npm run test:closedone`.
+  deletes the request that names it. Never while the app owes the pane a prompt (`owesPrompt`: an
+  autoclear queued, holding, counting down or handing over): 2026-10-01 s57-mupk43r8 and s28-mupc5ct1
+  were killed 179ms and 84ms into their own clear and lost the handoff's open steps; the pane closes
+  after the resume turn instead. `npm run test:closedone`.
 - `npm run test:phone` (server + surface parity); `npm run test:phoneview` needs a running copy. A
   pane's text is in `window.__pf[id].term.buffer`, never in the DOM.
 - Not built: headless host (B1), phone-first diff (H2).
