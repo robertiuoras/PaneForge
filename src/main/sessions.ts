@@ -4576,7 +4576,7 @@ export class SessionManager extends EventEmitter {
               return settle('sent')
             }
             if (claudeTook(still)) {
-              acLog(`${id} prompt submitted - a turn started and Claude Code wrote it down`)
+              acLog(`${id} prompt submitted - Claude transcript receipt (its turn had begun)`)
               return settle('sent')
             }
           }

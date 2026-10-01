@@ -807,7 +807,11 @@ const ANSWERING =
     const until = Date.now() + budget + 600
     while (Date.now() < until && !settles) await sleep(50)
     await logSays(pane.id, /prompt submitted|UNSENT/)
-    const qpLog = (() => { try { return readFileSync(join(work, 'userData', 'queued-prompts.log'), 'utf8').split('\n').filter((l) => l.includes(pane.id)).join('\n') } catch { return '' } })()
+    // The ledger line is appended apart from the app log line: wait for it too (2026-10-01,
+    // a pressured Mac read the ledger with only `accepted` in it).
+    const qpRead = () => { try { return readFileSync(join(work, 'userData', 'queued-prompts.log'), 'utf8').split('\n').filter((l) => l.includes(pane.id)).join('\n') } catch { return '' } }
+    for (const end = Date.now() + 2000; Date.now() < end && !/queued prompt submitted|LOST/.test(qpRead()); ) await sleep(40)
+    const qpLog = qpRead()
     ok(!/UNSENT/.test(logOf(pane.id)) && /Claude transcript receipt/.test(logOf(pane.id)),
       'a prompt Claude wrote down is submitted even when the pane is typed into afterwards', logOf(pane.id))
     ok(!/LOST/.test(qpLog) && /queued prompt submitted/.test(qpLog), 'and queued-prompts.log says submitted, not LOST', qpLog)
@@ -1255,7 +1259,8 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
   }
   const open = () => {
     const conversation = `12345678-1234-1234-1234-${String(++fixture).padStart(12, '0')}`
-    const file = join(process.env.CODEX_HOME, 'sessions', '2026', '09', '30', `queue-${fixture}.jsonl`)
+    // Real Codex naming: codexTranscriptPath opens only `rollout-<time>-<id>.jsonl` (09252fd8).
+    const file = join(process.env.CODEX_HOME, 'sessions', '2026', '09', '30', `rollout-2026-09-30T01-02-03-${conversation}.jsonl`)
     mkdirSync(dirname(file), { recursive: true })
     writeFileSync(file, JSON.stringify({ type: 'session_meta', payload: { id: conversation, cwd: root, timestamp: new Date().toISOString() } }) + '\n')
     const pane = manager.start({ cwd: root, agent: 'codex', resume: true, resumeId: conversation })
