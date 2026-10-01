@@ -157,14 +157,6 @@ export function dropLine(row: QueuedPrompt, why: QueueDrop): string {
   return `${row.id} queued prompt LOST (${why}: ${DROP_WORDS[why]}) - ${preview(row.text)}`
 }
 
-/**
- * The line written when a prompt logged LOST then shows up in the conversation: the
- * verdict was early, not wrong about what had been seen, and this is the correction.
- */
-export function landedLine(id: string, text: string, lateMs: number): string {
-  return `${id} queued prompt landed after all, ${Math.round(lateMs / 1000)}s after it was called LOST - ${preview(text)}`
-}
-
 /** The line written when a prompt IS typed and proven, so the pair reads as a ledger. */
 export function sentLine(row: QueuedPrompt): string {
   return `${row.id} queued prompt submitted - ${preview(row.text)}`

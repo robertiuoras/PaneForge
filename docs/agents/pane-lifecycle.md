@@ -39,8 +39,7 @@ newer); busy waits; idle with no turn gets another return. `/clear` no boot pati
 `ARM_QUIET_MS` 15s, `ARM_CLEAR_LEAD_MS` 120ms. Codex `gpt-5.1-codex*` = `400 not supported`.
 Claude with a pid file (`claudeReceiptReadable`): ONLY the transcript user row says sent (a paste
 placeholder is still in the box; a `/clear` footer is not a turn). Still starting (`deferring`):
-one return, then wait for the row - more returns become composer characters. LOST Claude prompt:
-read on for `PROMPT_LATE_MS` 120s; a late row logs `queued prompt landed after all`.
+one return, then wait for the row - more returns become composer characters.
 
 ## A pane says what its handoff has left
 

@@ -150,6 +150,7 @@ const BOOTING = '\x1b[2m• Starting MCP servers (0/4): codex_apps, node_repl (0
 const COMPOSER = '\r\n\x1b[2m › Use /skills to list available skills\x1b[0m\r\n'
 
 const manager = new SessionManager()
+{ const realKill = manager.kill.bind(manager); manager.kill = (id, by) => { const st = manager.sessions.get(id)?.meta.status; const r = realKill(id, by); if (manager.sessions.has(id)) console.log('PROBE KILL REFUSED', id, st, String(by)); return r } }
 const started = manager.start({ cwd: root, agent: 'shell', prompt: PROMPT })
 const proc = manager.sessions.get(started.id).proc
 const typed = () => proc.writes.join('')

@@ -68,7 +68,7 @@ import { LIVE_REPLAY_LIMIT } from '../shared/freshReplay'
 import { paintedWidth, RESTORE_MARK_TEXT } from '../shared/replayWidth'
 import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, SUBMIT_GAP_MS, armDecision, clearChunks, hasFreshPaneHandoff, resumeOf, dropFor, dropWords, expiryDecision, queuedPromptDecision, quietEnoughToArm, standDownFor, type DropReason, type QueuedPromptVerdict } from '../shared/autoclear'
 import { acLog } from './autoclearLog'
-import { dropAllFor, noteAccepted, noteNativeAccepted, noteTyped, noteDropped, noteLanded, noteSubmitted, noteWithheld, owedAfterRestore, owedCount, stillOwed, typedOwed } from './queuedPrompts'
+import { dropAllFor, noteAccepted, noteNativeAccepted, noteTyped, noteDropped, noteSubmitted, noteWithheld, owedAfterRestore, owedCount, stillOwed, typedOwed } from './queuedPrompts'
 import type { QueueDrop } from '../shared/queuedPrompts'
 import { logReclaim } from './activationLog'
 import { guardPtyPipes } from './closedPipe'
@@ -289,13 +289,6 @@ const PROMPT_ENTER_TRIES = ms('PF_PROMPT_ENTER_TRIES', 6)
  */
 const PROMPT_STARTUP_MS = ms('PF_PROMPT_STARTUP_MS', 60_000)
 const PROMPT_PIDFILE_MS = ms('PF_PROMPT_PIDFILE_MS', 10_000)
-/**
- * How long a Claude prompt called LOST is still looked for in its conversation. After the
- * two app restarts of 2026-10-01 (6:26pm, 6:54pm) 14 of 15 resumed panes' `continue` was
- * logged LOST and then landed: user rows from 7s before the verdict (s20-mupase0a) to 80s
- * after it (s11-mupasdoz), with 20 CLIs resuming at once on a pressured Mac.
- */
-const PROMPT_LATE_MS = ms('PF_PROMPT_LATE_MS', 120_000)
 /**
  * The wait budget for the resume prompt after an automatic `/clear`, which is not the
  * budget an ordinary launch prompt gets.
@@ -4294,7 +4287,6 @@ export class SessionManager extends EventEmitter {
     // 'sent' closes the ledger only with submission proof. An unconfirmed typed CLI
     // prompt stays recoverable and keeps its composer owner after this wait ends.
     let settled = false
-    let watchLate = (): void => {}
     let curtainReleased = false
     // The draft hold our own return set (see `write`). Dropped once the prompt is proven
     // sent; an unsent or withheld prompt keeps it, so no automatic close or clear reads a
@@ -4329,9 +4321,6 @@ export class SessionManager extends EventEmitter {
       }
       this.setOwedPrompt(id, owedCount(id) > 0)
       onSettled?.(end)
-      // Only a prompt the ledger let go (logged LOST) is looked for afterwards; one still owed
-      // under this key is kept for the idle sweep to reconcile, never called LOST.
-      if (end === 'unsent' && !stillOwed(key)) watchLate()
     }
     let deadline = Date.now() + Math.max(0, budgetMs) + Math.max(0, extraDelay)
     // `lastKeyboard` as it stands NOW, which is after whatever write queued this prompt -
@@ -4474,27 +4463,6 @@ export class SessionManager extends EventEmitter {
       proof !== 'idle' &&
       live.meta.agent === 'claude' &&
       claudeAcceptedPrompt(live.proc?.pid, prompt, (typedTextAt || firstReturnAt) - 1000)
-    // A PROMPT CALLED LOST CAN STILL LAND (see PROMPT_LATE_MS). The verdict stands and
-    // nothing is typed again, but the conversation is read for a while longer, and a row
-    // that turns up is written into the log beside the LOST line - so the ledger never says
-    // lost about a prompt Claude answered. Somebody typing in the pane ends the look: a
-    // `continue` they typed is theirs, not the late arrival of this one.
-    watchLate = () => {
-      if (proof === 'idle' || !(typedTextAt || firstReturnAt)) return
-      const since = Date.now()
-      // ...and only in the process it was typed into: a restart or wake within the window
-      // starts a new keyboard clock, and its `continue` is not this prompt either.
-      const proc = this.sessions.get(id)?.proc
-      const look = (): void => {
-        const live = this.sessions.get(id)
-        if (!live || live.proc !== proc || live.meta.agent !== 'claude' || (live.meta.lastKeyboard ?? 0) > mark ||
-          Date.now() - since > PROMPT_LATE_MS) return
-        if (!claudeTook(live)) return void setTimeout(look, PROMPT_CONFIRM_MS)
-        acLog(`${id} prompt landed after all, ${Math.round((Date.now() - since) / 1000)}s after it was left UNSENT - Claude transcript receipt`)
-        noteLanded(id, prompt, Date.now() - since)
-      }
-      look()
-    }
     // ONLY THE RECEIPT SAYS SENT, once there is one to read. A turn clock and an empty-looking
     // box both said "submitted" over prompts that never went in: 2026-10-01 08:14:53Z, pane
     // s54-mup9d0za, a 4958-char brief sat in the composer as `[Pasted text #1 +30 lines]` for

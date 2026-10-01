@@ -13,7 +13,6 @@ import {
   carryOver,
   clearQueued,
   dropLine,
-  landedLine,
   newQueueKey,
   noteQueued,
   owedTo,
@@ -143,11 +142,6 @@ export function noteDropped(key: string, why: QueueDrop): void {
   const row = load()[key]
   if (row) qpLog(dropLine(row, why))
   save(clearQueued(load(), key))
-}
-
-/** A prompt already logged LOST turned up in its conversation afterwards. */
-export function noteLanded(id: string, text: string, lateMs: number): void {
-  qpLog(landedLine(id, text, lateMs))
 }
 
 /**
