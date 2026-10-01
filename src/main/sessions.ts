@@ -2301,6 +2301,7 @@ export class SessionManager extends EventEmitter {
       if (!startupChoice) queued.foreign = true
       if (data === '\x03' || data === '\x15') this.cancelCodexQueued(id)
     }
+    if (origin !== 'app' && (data === '\x03' || data === '\x15')) this.cancelClaudeTyped(id)
     // Before a byte moves: a submitted prompt is a turn boundary, and a turn boundary is
     // the one moment a Codex pane's reasoning effort may be changed. An `app` write
     // (a queued prompt, an automatic clear) is a turn too, so it takes the same path.
@@ -4172,6 +4173,26 @@ export class SessionManager extends EventEmitter {
     else noteDropped(owner.key, 'abandoned')
     if (this.codexQueued.get(id) === owner) this.codexQueued.delete(id)
     this.setOwedPrompt(id, owedCount(id) > 0)
+  }
+
+  /**
+   * The Claude half of `cancelCodexQueued`. A typed Claude prompt whose returns were
+   * swallowed stays owed until its transcript row (`settle`), and every follow-up waits
+   * behind it. A person's Ctrl-U or Ctrl-C empties that box: the prompt is abandoned, not
+   * owed, unless Claude Code already wrote it down. Rows a live wait is still typing are
+   * that wait's to settle.
+   */
+  private cancelClaudeTyped(id: string): void {
+    const live = this.sessions.get(id)
+    if (!live || live.meta.agent !== 'claude') return
+    let changed = false
+    for (const row of typedOwed(id)) {
+      if (this.promptWaits.has(row.key) || row.typed?.proof !== 'receipt') continue
+      if (claudeAcceptedPrompt(live.proc?.pid, row.text, row.typed.at - 1000)) noteSubmitted(row.key)
+      else noteDropped(row.key, 'abandoned')
+      changed = true
+    }
+    if (changed) this.setOwedPrompt(id, owedCount(id) > 0)
   }
 
   /**

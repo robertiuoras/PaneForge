@@ -1914,8 +1914,9 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
 // Enter can be swallowed while the CLI boots. A pending draft must outlive that
 // attempt and keep every automatic-close path blocked until the screen is empty.
 // A prompt this app typed is no different: once its returns are given up as swallowed
-// its owed flag drops, and the hold is all that keeps a closer off the box. Claude and
-// grok only: a Codex prompt keeps its composer owner, and so its owed flag, as well.
+// its owed flag drops, and the hold is all that keeps a closer off the box. Grok only: a
+// Codex prompt keeps its composer owner and a typed Claude prompt its transcript-receipt
+// row, and so their owed flag, as well (lane h, 51801fd2).
 for (const [agent, origin] of [['codex', 'desk'], ['claude', 'desk'], ['grok', 'desk'], ['claude', 'app'], ['grok', 'app']]) {
   const pane = manager.start({ cwd: root, agent: 'shell' })
   const live = manager.sessions.get(pane.id)
@@ -1936,7 +1937,8 @@ for (const [agent, origin] of [['codex', 'desk'], ['claude', 'desk'], ['grok', '
     manager.queuePrompt(pane.id, 'Keep this unsent prompt safe', 0, 40, () => settled++, 5000)
     const until = Date.now() + 6000
     while (!settled && Date.now() < until) await sleep(40)
-    ok(settled === 1 && await logSays(pane.id, /returns were swallowed/) && !live.meta.owedPrompt && live.meta.drafting === true,
+    const owedAsExpected = agent === 'claude' ? live.meta.owedPrompt === true : !live.meta.owedPrompt
+    ok(settled === 1 && await logSays(pane.id, /returns were swallowed/) && owedAsExpected && live.meta.drafting === true,
       `${agent} (app): a queued prompt whose returns were swallowed keeps the draft hold`,
       `settled=${settled} owed=${live.meta.owedPrompt} drafting=${live.meta.drafting}\n${logOf(pane.id)}`)
     live.proc.onWrite = undefined
