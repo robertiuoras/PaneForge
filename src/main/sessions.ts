@@ -691,7 +691,7 @@ export class SessionManager extends EventEmitter {
   private answering = new Set<string>()
   private pendingAnswers = new Map<string, string[]>()
   // An unconfirmed Codex draft still owns the composer after its bounded wait ends.
-  private codexQueued = new Map<string, { key: string; live: Live; proc: Live['proc']; prompt: string; since: number; writing: boolean; foreign: boolean; proof: 'receipt' | 'idle'; conversationId?: string; receiptCwd?: string; commandOutputAt?: number; recovered?: boolean; receiptMiss?: string }>()
+  private codexQueued = new Map<string, { key: string; live: Live; proc: Live['proc']; prompt: string; since: number; writing: boolean; foreign: boolean; proof: 'receipt' | 'idle'; conversationId?: string; receiptCwd?: string; commandOutputAt?: number; answerKeyboard?: number; recovered?: boolean; receiptMiss?: string }>()
   /**
    * Shell children at the last table read. Also used on POSIX for background jobs
    * and for distinguishing an interactive Codex wrapper from an ordinary node job.
@@ -2172,6 +2172,9 @@ export class SessionManager extends EventEmitter {
             // Codex 0.157 Enter submits/steers an active turn; Tab queues it.
             live!.effortPassThrough = true
             try { this.write(id, '\r', 'app') } finally { live!.effortPassThrough = false }
+            const waiting = this.codexQueued.get(id)
+            if (waiting && waiting.live === live && waiting.proc === proc && !waiting.since && !waiting.foreign)
+              waiting.answerKeyboard = live!.meta.lastKeyboard
             const confirm = () => {
               try {
                 if (!same()) { finish('uncertain', 'Pane changed before transcript confirmation'); return }
@@ -4121,7 +4124,8 @@ export class SessionManager extends EventEmitter {
     const owner = original?.meta.agent === 'codex' ?
       { key, live: original, proc: original.proc, prompt, since: 0, writing: false, foreign: false,
         proof: proof === 'idle' ? 'idle' as const : 'receipt' as const, conversationId: undefined as string | undefined,
-        receiptCwd: original.meta.cwd, commandOutputAt: undefined as number | undefined } : undefined
+        receiptCwd: original.meta.cwd, commandOutputAt: undefined as number | undefined,
+        answerKeyboard: undefined as number | undefined } : undefined
     if (owner && !this.codexQueued.has(id)) this.codexQueued.set(id, owner)
     // Called exactly once, however this ends - typed and submitted, dropped, or the pane
     // gone. The handover curtain is raised on it, and a curtain with an exit this does not
@@ -4182,7 +4186,12 @@ export class SessionManager extends EventEmitter {
         composerIdle,
         expired: Date.now() >= deadline,
         tookOver: (live.meta.tookOverAt ?? 0) > takenMark,
-        personExpired: Date.now() >= personDeadline,
+        // An authenticated answer is steering this same turn, not a person claiming
+        // the composer. Keep waiting through delayed questions; actual drafting or
+        // foreign input still restores the person's existing far ceiling.
+        personExpired: Date.now() >= personDeadline && !(owner?.answerKeyboard !== undefined &&
+          owner.answerKeyboard === live.meta.lastKeyboard && !owner.foreign &&
+          !live.meta.drafting && !live.typed?.trim()),
         turnLive:
           Boolean(live.meta.runSince) ||
           live.busyUntil > Date.now() ||

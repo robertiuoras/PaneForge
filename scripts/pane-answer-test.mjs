@@ -10,12 +10,14 @@ try {
   const source = readFileSync('src/main/sessions.ts', 'utf8')
   const methods = source.slice(source.indexOf('  answerStatus('), source.indexOf('  draftOf('))
   const ownershipWrite = source.slice(source.indexOf('  write(id: string,'), source.indexOf('    // Before a byte moves:', source.indexOf('  write(id: string,')))
+  const queueVerdict = source.slice(source.indexOf('    const verdict = (live: Live,'), source.indexOf('    // The busy read is of the LAST THING PAINTED', source.indexOf('    const verdict = (live: Live,')))
   const fixture = `
 import { PaneAnswers } from ${JSON.stringify(resolve('src/main/paneAnswers.ts'))}
 import { feedDraft, newDraft } from ${JSON.stringify(resolve('src/shared/draft.ts'))}
 import { ASK_PROMPT, composerHeld } from ${JSON.stringify(resolve('src/shared/busy.ts'))}
 import { stripAnsi as strip } from ${JSON.stringify(resolve('src/shared/ansi.ts'))}
 import { isTerminalReply } from ${JSON.stringify(resolve('src/shared/terminalProtocol.ts'))}
+import { queuedPromptDecision } from ${JSON.stringify(resolve('src/shared/autoclear.ts'))}
 type WriteOrigin='app'|'desk'
 const REPAINT_GRACE_MS=100
 const app={getPath:()=>${JSON.stringify(work)}}
@@ -34,7 +36,8 @@ const setTimeout=(f)=>{tasks.push(f);return {unref(){}}}
 export class Harness {
   sessions=new Map(); answering=new Set(); pendingAnswers=new Map(); codexQueued=new Map(); autoClearPending=new Set(); autoClearArmTimers=new Map(); answerLedger; writes=[]
   setOwedPrompt(id,v){this.sessions.get(id).meta.owedPrompt=v}
-  write(id,text){const l=this.sessions.get(id);this.writes.push(text);l.draft=feedDraft(l.draft,text).state}
+  write(id,text){const l=this.sessions.get(id);this.writes.push(text);l.draft=feedDraft(l.draft,text).state;if(text==='\\r')l.meta.lastKeyboard=clock}
+  queueVerdict(id, composerIdle=false){const live=this.sessions.get(id),owner=this.codexQueued.get(id),mark=0,takenMark=0,deadline=0,personDeadline=0,PERSON_QUIET_MS=120;${queueVerdict}return verdict(live,composerIdle)}
   cancelCodexQueued(){throw Error('No cancellation expected')}
   ${ownershipWrite.replace('  write(', 'ownershipWrite(')}
   }
@@ -42,6 +45,7 @@ ${methods}
 }
 export function fresh(){const h=new Harness();h.sessions.set('s1-test',{req:{},meta:{cwd:'fixture',agent:'codex',status:'working',runSince:100},proc:{pid:1},draft:newDraft(),typed:'',buffer:{read:()=> 'Working · esc to interrupt'}});native='11111111-1111-1111-1111-111111111111';received=false;recover=false;recovery=undefined;pendingQuestion=true;endedQuestions.clear();owed=0;clock=1000;tasks.length=0;return h}
 export function expire(){clock+=120001}
+export function age(){clock+=7*86400000}
 export function endQuestion(toolUseId){if(toolUseId)endedQuestions.add(toolUseId);else pendingQuestion=false}
 export function queue(h, active={}){const live=h.sessions.get('s1-test');owed=1;live.meta.owedPrompt=true;const row={live,proc:live.proc,key:'retained',prompt:'Synthetic ownership receipt',since:0,writing:false,foreign:false,...active};h.codexQueued.set('s1-test',row);return row}
 export function recoverIdentity(wait){recover=true;recovery=wait}
@@ -52,7 +56,7 @@ export { PaneAnswers }
 `
   writeFileSync(join(work, 'fixture.ts'), fixture)
   buildSync({ entryPoints:[join(work,'fixture.ts')], bundle:true, platform:'node', format:'cjs', outfile:join(work,'fixture.cjs'), logLevel:'silent' })
-  const {fresh,tick,identity,receipt,recoverIdentity,queue,endQuestion,expire,PaneAnswers}=createRequire(import.meta.url)(join(work,'fixture.cjs'))
+  const {fresh,tick,identity,receipt,recoverIdentity,queue,endQuestion,expire,age,PaneAnswers}=createRequire(import.meta.url)(join(work,'fixture.cjs'))
   let seq=0
   const request=()=>({paneId:'s1-test',expectedConversationId:'11111111-1111-1111-1111-111111111111',requestId:`test-${++seq}`,toolUseId:`call-${seq}`,questionCount:1,text:'Synthetic answer\nsecond line'})
   let h=fresh(), r=request()
@@ -126,10 +130,19 @@ export { PaneAnswers }
   assert.equal(h.answerStatus(r).state,'confirmed', 'a waiting queued prompt permits exact process identity recovery and answer')
   assert.equal(h.codexQueued.get(r.paneId),queued); assert.equal(queued.prompt,'Synthetic ownership receipt')
   assert.equal(queued.since,0); assert.equal(queued.foreign,false); assert.equal(h.sessions.get(r.paneId).meta.owedPrompt,true)
+  assert.equal(queued.answerKeyboard,h.sessions.get(r.paneId).meta.lastKeyboard,'authenticated answer records its own turn boundary')
+  age()
+  assert.equal(h.queueVerdict(r.paneId),'wait','queued intent survives seven days behind an authenticated answer turn')
+  h.sessions.get(r.paneId).meta.runSince=undefined; h.sessions.get(r.paneId).busyUntil=0
+  assert.equal(h.queueVerdict(r.paneId,true),'type','the same retained intent can deliver after the answer turn finishes')
+  h.sessions.get(r.paneId).draft={text:'human draft',certain:true};h.sessions.get(r.paneId).meta.drafting=true
+  assert.equal(h.queueVerdict(r.paneId,true),'abandon','a real human draft retains its existing far ceiling and is never pasted over')
+  h.sessions.get(r.paneId).draft=undefined;h.sessions.get(r.paneId).meta.drafting=false
   h.answering.add(r.paneId);h.ownershipWrite(r.paneId,'synthetic answer','app')
   assert.equal(queued.foreign,false,'actual write ownership guard preserves waiting queue during authenticated answer')
   h.ownershipWrite(r.paneId,'human typing','desk')
   assert.equal(queued.foreign,true,'actual human write still takes queue composer ownership')
+  assert.equal(h.queueVerdict(r.paneId,true),'abandon','foreign editing restores the person-owned expiry even at the same keyboard timestamp')
   for(const active of [{since:100},{writing:true},{foreign:true}]) {
     h=fresh(); r=request(); queue(h,active)
     assert.equal(h.answerPane(r).state,'rejected','active/edited queue ownership refuses answer'); assert.equal(h.writes.length,0)
