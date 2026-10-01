@@ -23,7 +23,7 @@ import { which } from './which'
 import { specFor } from './agents'
 import { pfEnv, pfPrimerArgs } from './pfAccess'
 import { memoryPrelude } from './board'
-import { endAll, gistFor, noteCols, recordData, recordEnd, recordStart, sizeOf, tail } from './history'
+import { endAll, gistFor, noteCols, recordData, recordEnd, recordStart, sizeOf, tail, titleOf } from './history'
 import { jobTable } from './backJobs'
 import { backJobInfo, backJobWaitOnly } from './usage'
 import { forgetHandoff, handoffFor } from './handoffSteps'
@@ -35,7 +35,7 @@ import { trustAgyWorkspace } from './agyTrust'
 import { trustCodexFolder } from './codexTrust'
 import { ASK_WINDOW, CLIENTS_DIR, clientLabel, mayRename } from '../shared/clientName'
 import { appNamedTitle } from './activity'
-import { nextTitle, titlesIn, type CliTitles } from '../shared/cliTitle'
+import { humanTitle, nextTitle, titlesIn, type CliTitles } from '../shared/cliTitle'
 import { earlierTitles } from './cliChain'
 import { chromeCdpFor } from '../shared/peerChrome'
 import type { ClientNamed } from '../shared/types'
@@ -1069,7 +1069,8 @@ export class SessionManager extends EventEmitter {
       // still working on PaneForge, and the `-a` is a slot id this app invented. The
       // copy is already said by the chip beside the name (`copy 2`), so the folder
       // spelling here was the machinery leaking onto the card twice.
-      title: req.title && !oldGuess ? req.title : projectOf(req.cwd, req.lane),
+      // An opener's name (`pf open --title`, a saved desk) loses its ids like every other one.
+      title: (req.title && !oldGuess && humanTitle(req.title, this.chatTitles(id))) || projectOf(req.cwd, req.lane),
       autoTitled: oldGuess ? undefined : req.autoTitled,
       cwd: req.cwd,
       agent,
@@ -1278,6 +1279,14 @@ export class SessionManager extends EventEmitter {
           : undefined
     if (!found || found.slug === s.clientSlug) return
     this.nameTo(live, clientLabel(found), 'client', from, found.slug)
+  }
+
+  /**
+   * Another chat's name, for `humanTitle` to put where a title says its id: a pane on this
+   * desk, else one History remembers. Never `self` - a chat is not named after itself.
+   */
+  private chatTitles(self: string): (paneId: string) => string | undefined {
+    return (paneId) => (paneId === self ? undefined : (this.sessions.get(paneId)?.meta.title ?? titleOf(paneId)))
   }
 
   /** Whether a pane still wears the name the app gave it at birth: its folder or project. */
@@ -1874,8 +1883,10 @@ export class SessionManager extends EventEmitter {
 
   rename(id: string, title: string): void {
     const s = this.sessions.get(id)
-    if (!s || !title.trim()) return
-    s.meta.title = title.trim().slice(0, 60)
+    // `pf rename` is mostly another chat naming this one, and chats write ids.
+    const named = s ? humanTitle(title.trim(), this.chatTitles(id)) : ''
+    if (!s || !named) return
+    s.meta.title = named.slice(0, 60)
     // A manual name is authoritative even when it happens to equal the folder label.
     s.meta.autoTitled = undefined
     this.emitSessions()
@@ -5206,7 +5217,14 @@ export class SessionManager extends EventEmitter {
     live.titleRead = { path, offset, at: now, seen: read }
     const s = live.meta
     const pane = { title: s.title, autoTitled: s.autoTitled, appDefault: this.appDefault(s) }
-    const next = nextTitle(pane, read, prev?.seen, projectOf(s.cwd, s.lane), s.clientOff ? undefined : () => earlierTitles(path))
+    const next = nextTitle(
+      pane,
+      read,
+      prev?.seen,
+      projectOf(s.cwd, s.lane),
+      s.clientOff ? undefined : () => earlierTitles(path),
+      this.chatTitles(s.id)
+    )
     if (!next) return
     // A person's `/rename` is theirs to make; an old save's "do not name this pane" only
     // holds the app's own naming back.
