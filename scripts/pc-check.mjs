@@ -38,7 +38,9 @@ env.CLAUDE_SESSION_ID ||= env.CODEX_THREAD_ID || env.PF_SESSION_ID || env.PF_PAN
 const SSH_DROPPED = 3 // rbuild: "cannot reach <host>"
 let run
 for (let attempt = 1; attempt <= 3; attempt++) {
-  run = spawnSync(process.execPath, [join(homedir(), '.claude', 'rbuild.mjs'), '--repo', root, '--', ...argv], {
+  // rbuild's 30 min default killed test:lanes part way twice (2026-10-02, 42 files, lane-heal
+  // alone takes 7 min on the PC); 7200 is rbuild's ceiling.
+  run = spawnSync(process.execPath, [join(homedir(), '.claude', 'rbuild.mjs'), '--repo', root, '--timeout-seconds', '7200', '--', ...argv], {
     env,
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024
@@ -50,10 +52,14 @@ for (let attempt = 1; attempt <= 3; attempt++) {
 
 const out = `${run.stdout ?? ''}${run.stderr ?? ''}`.split('\n')
 const keep = out.filter((l) =>
-  /error TS|\bFAIL\b|✗|not ok|failed|Error:|passed|all good|checks? ok|rbuild: exit|cannot reach/i.test(l)
+  /error TS|\bFAIL\b|✗|not ok|failed|Error:|passed|all good|checks? ok|rbuild: exit|rbuild: timed_out|cannot reach/i.test(l)
 )
 // rbuild's own exit line alone says nothing: `npm error Missing script: "test:x"` matched no
 // pattern and a run printed only `rbuild: exit 1` (2026-09-23). Then the tail is the answer.
 const said = keep.some((l) => !/rbuild: exit/.test(l))
 console.log((said ? keep : out.slice(-20)).join('\n'))
+// A red run whose last words match none of those patterns (rbuild's time limit, a test that
+// dies silently) printed only the suites that passed and exit 1 (test:lanes, 2026-10-02).
+// Red runs show the tail too.
+if (said && run.status !== 0) console.log(`--- last 30 lines ---\n${out.slice(-30).join('\n')}`)
 process.exit(run.status ?? 1)

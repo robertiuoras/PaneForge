@@ -26,7 +26,7 @@ import { memoryPrelude } from './board'
 import { endAll, gistFor, noteCols, recordData, recordEnd, recordStart, sizeOf, tail, titleOf } from './history'
 import { jobTable } from './backJobs'
 import { backJobInfo, backJobWaitOnly } from './usage'
-import { forgetHandoff, handoffFor } from './handoffSteps'
+import { forgetHandoff, handoffFor, verifiedPaneHandoff } from './handoffSteps'
 import { handoffOpenAfter } from '../shared/handoffSteps'
 import { workShot } from './changedNothing'
 import { changedNothingWhy, changedNothingWords } from '../shared/changedNothing'
@@ -919,6 +919,8 @@ export class SessionManager extends EventEmitter {
    * the old one-line notice.
    */
   onFinished: ((meta: Session, opener: string) => void) | null = null
+  /** Agent closure must persist its report through the normal Review sweep. */
+  onCloseWhenDone: ((id: string) => void) | null = null
   /** A person kept this pane open (`config.pinnedPanes`); `--close-when-done` leaves it. Set by index.ts. */
   keptOpen: ((id: string) => boolean) | null = null
   /** The last reply in a pane's transcript, for `Session.finished`. Set by index.ts, which knows where transcripts live. */
@@ -1212,6 +1214,14 @@ export class SessionManager extends EventEmitter {
       // be resumed" on a pane that had only ever slept). One restart with the pane asleep
       // was enough to lose it for good.
       noteSession(id, req.resumeCwd ?? req.cwd, agent, req.resume ? req.resumeId : undefined)
+      // ...and it gets its History row now. This branch used to return before `recordStart`,
+      // so a pane that stayed asleep until the idle countdown closed it had no row for
+      // `recordEnd` to stamp: its `resumeId` was never saved and `pf continue` answered "no
+      // chat <id> ... History has no record of it" (2026-10-02: after a crash 0.8.232 restored
+      // 11 panes asleep, s3-mupvhztd..s11-mupvhzza; history/ held s3-mupvhztd.log and no .json).
+      // `recordStart` keeps an earlier row's gist and asks, and `wake()` calling it again is the
+      // same rewrite a restarted live pane gets.
+      recordStart(meta)
       this.emitSessions()
       return meta
     }
@@ -2727,6 +2737,10 @@ export class SessionManager extends EventEmitter {
     // Startup output and an unsent composer are not a completed agent response either.
     if (this.owesPrompt(live) || (meta.agent !== 'shell' && meta.finished !== true)) return
     if (!doneEnough({ ...meta, busyUntil: live.busyUntil }, quiet, now)) return
+    if (meta.agent !== 'shell') {
+      this.onCloseWhenDone?.(meta.id)
+      return
+    }
     const told = live.req.reportTo
     const opener = this.openerOf(meta.id)
     if (opener) {
@@ -5547,6 +5561,9 @@ export class SessionManager extends EventEmitter {
       if (reply?.promptAt && reply.promptAt > (live.promptAt ?? 0)) live.promptAt = reply.promptAt
       const hand = handoffFor(meta.cwd, meta.id, now)
       const open = handoffOpenAfter(hand, live.promptAt)
+      const nativeId = resumeIdFor(meta.id)
+      const verified = !!nativeId && !!verifiedPaneHandoff(meta.cwd, meta.id, meta.agent, nativeId, now)?.open
+      if (meta.handoffVerified !== verified) { meta.handoffVerified = verified; changed = true }
       if (open !== meta.handoffOpen) {
         meta.handoffOpen = open
         changed = true

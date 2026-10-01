@@ -68,6 +68,10 @@ async function reviewApi(name, { production = false } = {}) {
 }
 
 const api = await reviewApi('reviews')
+const published = []
+const changed = []
+api.onReviewRecorded((r) => published.push(r.id))
+api.onReviewChanged((r) => changed.push(r.id))
 const native = { title: 'Pane title', provider: 'codex', cwd: temp, nativeSessionId: 'native_1' }
 const input = {
   id: 'done_1', sessionId: 'pane_1', nativeSessionId: 'native_1', kind: 'result',
@@ -79,6 +83,7 @@ const input = {
 
 const first = api.recordReview(input, native)
 assert.equal(first.nativeSessionId, 'native_1')
+assert.ok(published.includes(first.id) && changed.includes(first.id), 'an owner record is published remotely and refreshes Review')
 assert.match(readFileSync(first.reportPath, 'utf8'), /&lt;done&gt;/)
 assert.equal(api.recordReview(input, native).id, first.id)
 rmSync(first.reportPath)
@@ -98,6 +103,80 @@ assert.equal(api.acknowledgeReview(decision.id, true).clearedAttention, false)
 assert.equal(api.listReviews().find(r => r.id === decision.id).attention, true)
 assert.equal(api.reviewOpenTarget('done_1', -1), first.reportPath)
 assert.equal(api.reviewOpenTarget('done_1', 0), 'https://example.test/a')
+
+// An authenticated peer's report survives locally, but never carries a Windows path or
+// enables a local reopen. A repeated catch-up is idempotent.
+const portable = api.reviewForPeer(first)
+const replica = api.storeRemoteReview(portable, { id: 'pc_1', name: 'PC', platform: 'win32' })
+assert.equal(replica.id, 'remote_pc_1_done_1')
+assert.equal(replica.origin.name, 'PC')
+assert.equal(replica.reportPath.endsWith('remote_pc_1_done_1.html'), true)
+assert.equal(api.reviewOpenTarget(replica.id, -1), replica.reportPath)
+assert.equal(api.storeRemoteReview(portable, { id: 'pc_1', name: 'PC', platform: 'win32' }).id, replica.id)
+const updatedReplica = api.storeRemoteReview(
+  { ...portable, closedAt: '2026-01-01T00:02:00.000Z', reviewedAt: '2026-01-01T00:03:00.000Z' },
+  { id: 'pc_1', name: 'Renamed PC', platform: 'win32' },
+)
+assert.equal(updatedReplica.closedAt, '2026-01-01T00:02:00.000Z', 'a close update does not conflict with the original report')
+assert.equal(updatedReplica.reviewedAt, '2026-01-01T00:03:00.000Z', 'a peer acknowledgement does not conflict with the original report')
+const publishedBeforeReplicaRead = published.length
+api.acknowledgeReview(updatedReplica.id, false)
+assert.equal(published.length, publishedBeforeReplicaRead, 'a local replica read state is never reflected back to its owner')
+assert.ok(changed.includes(updatedReplica.id), 'a replica write or local read state refreshes Review immediately')
+const publishedBeforeOwnerClose = published.length
+api.noteReviewClose(first.id, undefined, '2026-01-01T00:04:00.000Z')
+assert.equal(published.length, publishedBeforeOwnerClose + 1, 'an owner close update is published to the paired Mac')
+assert.equal(api.reviewForPeer({ ...first, links: [{ label: 'local', url: 'file:///tmp/secret.txt' }] }).links.length, 0)
+assert.equal(api.reviewsForPeer().list.some(r => r.id === replica.id), false, 'a replica is never reflected to another peer')
+assert.throws(() => api.storeRemoteReview({ ...portable, id: 'bad id' }, { id: 'pc_1', name: 'PC', platform: 'win32' }), /Invalid remote review id/)
+
+// A complete report, prompt and evidence cross the peer link. Pages use UTF-8 bytes rather
+// than string length, and remain inside wire.ts's eight MiB encrypted frame.
+const fullUnicode = '😀'.repeat(50_000)
+const fullEvidence = '😀'.repeat(5_000)
+for (let n = 0; n < 18; n++) {
+  api.recordReview({ ...input, id: `unicode_${n}`, report: fullUnicode, prompt: fullUnicode, evidence: [fullEvidence] }, native)
+}
+let cursor
+let peerRows = []
+do {
+  const page = api.reviewsForPeer(cursor)
+  assert.ok(Buffer.byteLength(JSON.stringify({ t: 'reviews', list: page.list, cursor: page.cursor }), 'utf8') < 8 * 1024 * 1024, 'each UTF-8 peer frame stays below 8 MiB')
+  peerRows.push(...page.list)
+  cursor = page.cursor
+} while (cursor)
+const fullRow = peerRows.find((r) => r.id === 'unicode_0')
+assert.equal(fullRow.report, fullUnicode, 'the full report is retained for the peer')
+assert.equal(fullRow.prompt, fullUnicode, 'the full prompt is retained for the peer')
+assert.deepEqual(fullRow.evidence, [fullEvidence], 'the full evidence is retained for the peer')
+assert.ok(peerRows.length >= 20, 'pagination eventually sends every owner record')
+
+// Every legal field can need JSON escaping. URL normalisation can grow a legal Unicode URL
+// to nine times its input length, so include all thirty links in the largest saved record.
+// The full record remains under the actual eight MiB wire cap and its cursor reaches later work.
+const escaped = '\u0000'.repeat(100_000)
+const escapedEvidence = Array.from({ length: 40 }, () => '\u0000'.repeat(10_000))
+const unicodeUrl = `https://example.test/${'\u1100'.repeat(3979)}`
+const expandedLinks = Array.from({ length: 30 }, (_, index) => ({ label: `Evidence ${index + 1}`, url: unicodeUrl }))
+const escapedStored = api.recordReview({ ...input, id: 'escaped_max', report: escaped, prompt: escaped, evidence: escapedEvidence, links: expandedLinks }, { ...native, provider: 'p'.repeat(200) })
+assert.ok(escapedStored.links.every((link) => link.url.length > unicodeUrl.length), 'saved Unicode URLs retain their normalised form')
+api.recordReview({ ...input, id: 'after_escaped_max', report: 'later record' }, native)
+let escapedCursor
+const escapedRows = []
+do {
+  const page = api.reviewsForPeer(escapedCursor)
+  assert.ok(Buffer.byteLength(JSON.stringify({ t: 'reviews', list: page.list, cursor: page.cursor }), 'utf8') < 8 * 1024 * 1024, 'the complete escaped record remains inside its peer frame')
+  escapedRows.push(...page.list)
+  escapedCursor = page.cursor
+} while (escapedCursor)
+const escapedRow = escapedRows.find((r) => r.id === 'escaped_max')
+assert.equal(escapedRow.report, escaped, 'the largest report is not clipped')
+assert.deepEqual(escapedRow.evidence, escapedEvidence, 'the largest evidence list is not clipped')
+assert.deepEqual(escapedRow.links, escapedStored.links, 'normalised Unicode links are not dropped during peer pagination')
+assert.ok(escapedRows.some((r) => r.id === 'after_escaped_max'), 'the cursor proceeds after the largest record')
+
+const importedExpanded = api.storeRemoteReview(api.reviewForPeer(escapedStored), { id: 'pc_unicode', name: 'PC', platform: 'win32' })
+assert.deepEqual(importedExpanded.links, escapedStored.links, 'the receiver accepts the owner\'s normalised URL and provider limits')
 
 const report = `## Findings
 
@@ -154,12 +233,13 @@ await build({
 })
 const dialogHtml = join(temp, 'review-dialog.html')
 const css = readFileSync(join(repo, 'src/renderer/src/styles.css'), 'utf8')
-writeFileSync(dialogHtml, `<!doctype html><meta charset="utf-8"><style>:root{--text:#eee;--muted:#aaa;--accent:#f0a868;--line:#444;--surface-2:#222}body{margin:0}${css}</style><div id="root"></div><script>window.opened=[];window.api={listReviews:async()=>({reviews:${JSON.stringify([formatted]).replace(/</g, '\\u003c')}}),openReview:async(id,url)=>{window.opened.push([id,url]);return {opened:true}}};</script><script src="review-dialog.js"></script>`)
+writeFileSync(dialogHtml, `<!doctype html><meta charset="utf-8"><style>:root{--text:#eee;--muted:#aaa;--accent:#f0a868;--line:#444;--surface-2:#222}body{margin:0}${css}</style><div id="root"></div><script>window.opened=[];window.api={listReviews:async()=>({reviews:${JSON.stringify([formatted]).replace(/</g, '\\u003c')}}),openReview:async(id,url)=>{window.opened.push([id,url]);return {opened:true}},onReviewsChanged:()=>()=>{}};</script><script src="review-dialog.js"></script>`)
 const chromePath = testChrome()
 assert.ok(chromePath, 'rendering checks require the PC test browser')
 const profile = join(temp, 'chrome-profile')
 const chrome = spawn(chromePath, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check', '--disable-extensions', 'about:blank'], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] })
 let ws
+let renderFailure
 try {
   const socket = await new Promise((resolve, reject) => {
     let stderr = ''
@@ -186,11 +266,13 @@ try {
       ws.send(JSON.stringify({ id, method, params, sessionId }))
     })
   }
+  // Review opens on today's reports; the fixture's report is dated 1 Jan 2026, so the
+  // render loop presses "All dates" to reach it, as a person would.
   for (const [view, html] of [['Review', dialogHtml], ['saved page', formatted.reportPath]]) {
     const { pathToFileURL } = await import('node:url')
     await browser.send('Emulation.setDeviceMetricsOverride', { width: 560, height: 900, deviceScaleFactor: 1, mobile: false })
     await browser.send('Page.navigate', { url: pathToFileURL(html).href })
-    await browser.evaluate(`new Promise((resolve,reject)=>{const limit=Date.now()+5000;function ready(){if(document.querySelector(${JSON.stringify(view === 'Review' ? '.review-markdown' : '.report')})){resolve(true);return}const row=document.querySelector('.review-row');if(row&&row.getAttribute('aria-expanded')!=='true')row.click();if(Date.now()>limit){reject(new Error('report did not render'));return}requestAnimationFrame(ready)}ready()})`)
+    await browser.evaluate(`new Promise((resolve,reject)=>{const limit=Date.now()+5000;function ready(){if(document.querySelector(${JSON.stringify(view === 'Review' ? '.review-markdown' : '.report')})){resolve(true);return}const row=document.querySelector('.review-row');if(!row){const all=[...document.querySelectorAll('.review-days button')].find((b)=>b.textContent==='All dates');if(all&&!all.classList.contains('on'))all.click()}if(row&&row.getAttribute('aria-expanded')!=='true')row.click();if(Date.now()>limit){reject(new Error('report did not render'));return}requestAnimationFrame(ready)}ready()})`)
     const metrics = await browser.evaluate(`(() => {
       const report = document.querySelector(${JSON.stringify(view === 'Review' ? '.review-markdown' : '.report')})
       const list = report.querySelector('ul'), code = report.querySelector('pre'), quote = report.querySelector('blockquote')
@@ -214,8 +296,18 @@ try {
     console.log(`review rendering passed: ${view} headings, bold, nested lists, quotes, links, tables and code observed at 560px`)
   }
   browser.send = send
+} catch (error) {
+  renderFailure = error
+  throw error
 } finally {
-  await closeTestChrome(chrome, profile, ws)
+  // A browser that will not shut down must not replace the render failure that brought us
+  // here: 2026-10-02's PC run said only "Test Chrome did not exit" for "report did not render".
+  try {
+    await closeTestChrome(chrome, profile, ws)
+  } catch (error) {
+    if (!renderFailure) throw error
+    console.error(`(test Chrome teardown also failed: ${error?.message ?? error})`)
+  }
 }
 
 mkdirSync(join(temp, 'history'), { recursive: true })

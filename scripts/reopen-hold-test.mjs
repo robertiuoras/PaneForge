@@ -18,9 +18,9 @@
 //
 //   node scripts/reopen-hold-test.mjs
 
-import { buildSync } from 'esbuild'
+import { buildSync, transformSync } from 'esbuild'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -91,7 +91,9 @@ writeFileSync(
   JSON.stringify({
     lanes: {
       main: { session: '01a0d200-90fc-7691-b5fb-e6fb61ad6e97', cwd: eugenie, pane: CLOSED, visitor: true },
-      a: { session: '1d5f0797-4773-4283-98ca-5e5006c72fe5', cwd: join(projects, 'clients-a', 'clients', 'alison'), pane: LIVE }
+      // Ledger keys are allocation slots, not physical folder names. This chat has kept
+      // copy a while its current slot is f; wake must reserve the recorded folder.
+      f: { session: '1d5f0797-4773-4283-98ca-5e5006c72fe5', cwd: join(projects, 'clients-a', 'clients', 'alison'), pane: LIVE }
     }
   })
 )
@@ -166,6 +168,46 @@ ok(
   ledgerTakenFolders('', over).some((t) => same(t, repo))
 )
 
+// Execute the real placement entry point against synthetic git checkouts. Exact
+// resumes never call the allocator or return-to-base, including clean checkouts.
+const main = readFileSync(join(repoRoot, 'src/main/index.ts'), 'utf8')
+const start = main.indexOf('async function laneFor(')
+const end = main.indexOf('\n/**', start)
+let occupants = []
+let folders = []
+let config = { autoLane: true }
+const deps = {
+  getConfig: () => config, detectLane: async () => 'a',
+  manager: { list: () => occupants }, takenFolders: () => folders,
+  ledgerTakenFolders: () => [], holdOver: () => false,
+  resolve, dirname, existsSync, samePath: same,
+  landGit: async (cwd, args) => { try { return { ok: true, out: git(cwd, ...args) } } catch { return { ok: false, out: '' } } },
+  laneExtras: async () => ({ env: {} }),
+  returnToBase: () => { throw new Error('unexpected relocation') },
+  resolveLane: () => { throw new Error('unexpected allocation') }
+}
+const compiled = transformSync(main.slice(start, end), { loader: 'ts' }).code
+const place = new Function(...Object.keys(deps), `${compiled}; return laneFor`)(...Object.values(deps))
+const request = { cwd: eugenie, agent: 'codex', resume: true, resumeId: 'native-original' }
+let result = await place(request)
+ok('exact resume keeps its untracked original folder', result.cwd === eugenie)
+folders = [join(repo, 'clients', 'alison')]
+try { await place(request); refusal = '' } catch (e) { refusal = e.message }
+ok('exact resume refuses another chat in the same checkout, including sibling client folders', /still in use/.test(refusal), refusal)
+config = { autoLane: false }
+result = await place(request)
+ok('with copies turned off, an exact resume opens in its own folder beside the other chat', result.cwd === eugenie && !result.laneNote, result)
+config = { autoLane: true }
+folders = []
+occupants = [{ id: 'existing', title: 'Original owner', resumeId: request.resumeId, status: 'idle' }]
+try { await place(request); refusal = '' } catch (e) { refusal = e.message }
+ok('exact resume refuses a second process with the same native identity', /already open/.test(refusal), refusal)
+result = await place(request, [], 'existing')
+ok('waking the same owner excludes its own identity', result.cwd === eugenie)
+occupants = []
+result = await place({ ...request, cwd: join(projects, 'clients-a') })
+ok('even a clean exact resume stays in its original copy', same(result.cwd, join(projects, 'clients-a')))
+
 // A restored pane gets a NEW id, so its own pre-restart claim looks like somebody else's
 // (pane 2, 2026-10-02 18:34Z). The claim carries the Claude conversation the pane is in.
 const CONVO = '1651028c-3346-45d0-9765-b9931fbc6378'
@@ -183,4 +225,4 @@ if (failed) {
   console.log(`\nreopen-hold: ${failed} FAILED`)
   process.exit(1)
 }
-console.log('\nreopen-hold: 16 ok')
+console.log('\nreopen-hold: all checks passed')

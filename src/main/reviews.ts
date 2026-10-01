@@ -74,6 +74,49 @@ export function reviewCloseArmAction(
 }
 const validId = (v: unknown) =>
   typeof v === "string" && /^[A-Za-z0-9_-]{1,120}$/.test(v);
+const PEER_REVIEW_COUNT = 20,
+  // wire.ts allows an eight MiB encrypted frame. The cipher adds only its 16-byte tag,
+  // so this leaves room for the message envelope while retaining the largest legal record:
+  // escaped report/evidence plus thirty percent-encoded Unicode URLs is under five MiB.
+  PEER_REVIEW_PAGE_BYTES = 8 * 1024 * 1024 - 32 * 1024,
+  REVIEW_LINK_RAW_URL_MAX = 4_000,
+  // URL normalisation percent-encodes every UTF-8 byte. A legal three-byte Unicode
+  // character expands to nine ASCII characters in the saved payload.
+  REVIEW_LINK_URL_MAX = REVIEW_LINK_RAW_URL_MAX * 9;
+const reviewListeners = new Set<(review: ReviewRecord) => void>();
+const reviewChangeListeners = new Set<(review: ReviewRecord) => void>();
+/** Subscribe the authenticated remote host to newly saved owner records. */
+export function onReviewRecorded(listener: (review: ReviewRecord) => void): () => void {
+  reviewListeners.add(listener);
+  return () => reviewListeners.delete(listener);
+}
+/** Notify this machine's Review view after either an owner or a peer record is written. */
+export function onReviewChanged(listener: (review: ReviewRecord) => void): () => void {
+  reviewChangeListeners.add(listener);
+  return () => reviewChangeListeners.delete(listener);
+}
+function changedReview(record: ReviewRecord): void {
+  for (const listener of reviewChangeListeners) {
+    try {
+      listener(record);
+    } catch (err) {
+      // The write already succeeded. A closed renderer must not make the durable record
+      // look like it failed to save.
+      console.warn(`review refresh failed - ${(err as Error).message}`);
+    }
+  }
+}
+function publishReview(record: ReviewRecord): void {
+  for (const listener of reviewListeners) {
+    try {
+      listener(record);
+    } catch (err) {
+      // The local report is already durable. A dead peer must not turn a completed
+      // local record into an apparent failure.
+      console.warn(`review peer publish failed - ${(err as Error).message}`);
+    }
+  }
+}
 const kinds: ReviewKind[] = ["result", "decision", "blocked", "closed"],
   proofs: ReviewProof[] = ["measured", "claimed", "unverified"];
 const fileExt = new Set([
@@ -92,7 +135,8 @@ const fileExt = new Set([
 ]);
 const root = () => join(app.getPath("userData"), "reviews"),
   jsonPath = (id: string) => join(root(), `${id}.json`),
-  htmlPath = (id: string) => join(root(), `${id}.html`);
+  htmlPath = (id: string) => join(root(), `${id}.html`),
+  remoteId = (device: string, id: string) => `remote_${device}_${id}`;
 const receiptPath = (id: string) =>
   join(homedir(), ".claude", "guarddeck", "result-receipts", `${id}.json`);
 const esc = (s: string) =>
@@ -129,14 +173,14 @@ function reviewLinks(value: unknown): ReviewLink[] {
     if (!link || typeof link !== "object")
       throw new Error("Invalid review link");
     const label = need((link as ReviewLink).label, 300, "review link label"),
-      raw = need((link as ReviewLink).url, 4000, "review link URL");
+      raw = need((link as ReviewLink).url, REVIEW_LINK_RAW_URL_MAX, "review link URL");
     let u: URL;
     try {
       u = new URL(raw);
     } catch {
       throw new Error("Invalid review link URL");
     }
-    if (u.protocol === "http:" || u.protocol === "https:")
+    if ((u.protocol === "http:" || u.protocol === "https:") && u.href.length <= REVIEW_LINK_URL_MAX)
       return { label, url: u.href };
     if (u.protocol !== "file:" || u.hostname)
       throw new Error("Unsupported review link URL");
@@ -155,6 +199,114 @@ function reviewEvidence(value: unknown): string[] {
   if (!Array.isArray(value) || value.length > 40)
     throw new Error("Invalid review evidence");
   return value.map((v) => need(v, 10000, "review evidence"));
+}
+function remoteText(value: unknown, max: number, name: string, empty = false): string {
+  if (typeof value !== "string" || value.length > max || (!empty && !value.trim()))
+    throw new Error(`Invalid remote review ${name}`);
+  return value.trim();
+}
+function remoteTime(value: unknown, name: string): string | undefined {
+  if (value === undefined) return undefined;
+  const at = iso(value);
+  if (!at) throw new Error(`Invalid remote review ${name}`);
+  return at;
+}
+/**
+ * Copy a peer's saved result into this device's Review store. The peer owns reopening and
+ * its original files: file links are intentionally not copied across machines. The local
+ * replica makes the report readable after a reconnect or app restart.
+ */
+export function storeRemoteReview(
+  value: unknown,
+  peer: { id: string; name: string; platform: string },
+): ReviewRecord {
+  const source = remoteText(peer.id, 100, "device id");
+  if (!validId(source)) throw new Error("Invalid remote review device id");
+  if (!value || typeof value !== "object") throw new Error("Invalid remote review");
+  const v = value as Record<string, unknown>;
+  const id = remoteText(v.id, 160, "id");
+  if (!validId(id)) throw new Error("Invalid remote review id");
+  const kind = v.kind;
+  const proof = v.proof;
+  if (!kinds.includes(kind as ReviewKind) || !proofs.includes(proof as ReviewProof))
+    throw new Error("Invalid remote review kind or proof");
+  const links = Array.isArray(v.links) && v.links.length <= 30
+    ? v.links.flatMap((link) => {
+        if (!link || typeof link !== "object") return [];
+        const l = link as Record<string, unknown>;
+        if (typeof l.label !== "string" || typeof l.url !== "string" || l.label.length > 300 || l.url.length > REVIEW_LINK_URL_MAX) return [];
+        try {
+          const u = new URL(l.url);
+          return (u.protocol === "http:" || u.protocol === "https:") && u.href.length <= REVIEW_LINK_URL_MAX
+            ? [{ label: l.label.trim(), url: u.href }]
+            : [];
+        } catch { return []; }
+      })
+    : [];
+  const evidence = Array.isArray(v.evidence) && v.evidence.length <= 40
+    ? v.evidence.map((e) => remoteText(e, 10_000, "evidence")) : [];
+  const localId = remoteId(source, id);
+  if (!validId(localId)) throw new Error("Invalid remote review key");
+  const createdAt = remoteTime(v.createdAt, "creation time");
+  if (!createdAt) throw new Error("Invalid remote review creation time");
+  const record: ReviewRecord = {
+    id: localId,
+    sessionId: remoteText(v.sessionId, 160, "session id"),
+    nativeSessionId: remoteText(v.nativeSessionId, 160, "native session id"),
+    kind: kind as ReviewKind,
+    proof: proof as ReviewProof,
+    report: remoteText(v.report, 100_000, "report"),
+    prompt: remoteText(v.prompt, 100_000, "prompt", true),
+    lane: typeof v.lane === "string" && v.lane.length <= 300 ? v.lane.trim() : undefined,
+    evidence,
+    links,
+    completedAt: remoteTime(v.completedAt, "completion time"),
+    capturedAt: remoteTime(v.capturedAt, "capture time"),
+    title: remoteText(v.title, 1_000, "title"),
+    provider: remoteText(v.provider, 200, "provider"),
+    // This is display-only for a remote record. App.tsx checks origin before reopening.
+    cwd: remoteText(v.cwd, 4_000, "cwd"),
+    reportPath: htmlPath(localId),
+    createdAt,
+    closedAt: remoteTime(v.closedAt, "closed time"),
+    reviewedAt: remoteTime(v.reviewedAt, "reviewed time"),
+    attention: kind === "result" && !remoteTime(v.reviewedAt, "reviewed time"),
+    paneNumber: typeof v.paneNumber === "number" && Number.isInteger(v.paneNumber) && v.paneNumber > 0 ? v.paneNumber : undefined,
+    app: v.app === "paneforge-next" ? "paneforge-next" : "paneforge",
+    origin: { id: source, name: remoteText(peer.name, 200, "device name"), platform: remoteText(peer.platform, 50, "platform") },
+  };
+  const old = read(localId);
+  if (old?.payloadHash && old.payloadHash !== digest(record)) throw new Error("Conflicting remote review ID");
+  record.payloadHash = digest(record);
+  atomic(jsonPath(localId), JSON.stringify(record, null, 2));
+  atomic(htmlPath(localId), page(record));
+  changedReview(record);
+  return record;
+}
+/** A bounded, portable review payload for the encrypted peer link. */
+export function reviewForPeer(r: ReviewRecord): ReviewRecord {
+  return {
+    ...r,
+    // A file URL names a path on the owner, never a usable path on the receiving Mac.
+    links: (r.links ?? []).filter((l) => /^https?:\/\//i.test(l.url)),
+  };
+}
+/** Local owner records only. Replicas must never be reflected back to another peer. */
+export function reviewsForPeer(cursor?: string): { list: ReviewRecord[]; cursor?: string } {
+  const owner = listReviews().filter((r) => !r.origin);
+  const previous = cursor === undefined ? -1 : owner.findIndex((r) => r.id === cursor);
+  if (cursor !== undefined && previous < 0) return { list: [] };
+  const start = previous + 1;
+  const list: ReviewRecord[] = [];
+  for (const record of owner.slice(start, start + PEER_REVIEW_COUNT)) {
+    const portable = reviewForPeer(record);
+    // Count UTF-8 bytes, not JavaScript code units: emoji-heavy evidence is otherwise able
+    // to exceed the remote frame even when its character count appears small.
+    if (Buffer.byteLength(JSON.stringify({ t: "reviews", list: [...list, portable], cursor: record.id }), "utf8") > PEER_REVIEW_PAGE_BYTES) break;
+    list.push(portable);
+  }
+  const next = start + list.length;
+  return { list, cursor: next < owner.length && list.length ? list[list.length - 1].id : undefined };
 }
 /** "4:10pm Sun 27 Sep", this computer's clock. */
 function when(at: string) {
@@ -190,6 +342,7 @@ function immutable(r: ReviewRecord) {
     // report is the same report even when the card has moved or the chat has said more.
     paneNumber,
     app,
+    origin,
     context,
     sessionTokens,
     ...rest
@@ -463,7 +616,10 @@ export function recordReview(
   atomic(base.reportPath, page(base));
   base.payloadHash = digest(base);
   atomic(jsonPath(base.id), JSON.stringify(base, null, 2));
-  return hold ? base : spoolNotice(base);
+  const saved = hold ? base : spoolNotice(base);
+  publishReview(saved);
+  changedReview(saved);
+  return saved;
 }
 /** The GuardDeck card of a row recorded with `hold`, under the row's own `notify` and gate. */
 export function sendReviewNotice(id: string): void {
@@ -508,12 +664,16 @@ export function acknowledgeReview(id: string, reviewed: boolean) {
     r.reviewedAt = at;
     r.attention = false;
     atomic(jsonPath(id), JSON.stringify(r, null, 2));
+    if (!r.origin) publishReview(r);
+    changedReview(r);
     return { ok: true, clearedAttention: true };
   }
   rmSync(receiptPath(id), { force: true });
   delete r.reviewedAt;
   r.attention = true;
   atomic(jsonPath(id), JSON.stringify(r, null, 2));
+  if (!r.origin) publishReview(r);
+  changedReview(r);
   return { ok: true, clearedAttention: false };
 }
 export function noteReviewClose(
@@ -527,6 +687,8 @@ export function noteReviewClose(
   else delete r.closeBlocked;
   if (closedAt) r.closedAt = closedAt;
   atomic(jsonPath(id), JSON.stringify(r, null, 2));
+  if (!r.origin) publishReview(r);
+  changedReview(r);
 }
 export function reviewOpenTarget(
   id: string,

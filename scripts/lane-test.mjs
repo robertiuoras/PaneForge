@@ -123,6 +123,13 @@ await waitFor(join(laneB, 'node_modules'))
 ok('a lane nobody is in is reused rather than piling up folders', (await resolveLane(repo, [repo])).cwd === laneA)
 ok('a lane asked for another lane still branches off the main repo', (await resolveLane(laneA, [laneA])).cwd === join(root, 'demo-b'))
 
+writeFileSync(join(repo, '.lanes.json'), JSON.stringify({ pool: ['main', 'a', 'b'] }))
+let rootPoolRefusal = ''
+try { await resolveLane(repo, [repo, laneA, laneB]) }
+catch (error) { rootPoolRefusal = error.message }
+ok('a full root pool does not describe the project folder as a required nested folder',
+  /no spare copy of demo\./.test(rootPoolRefusal) && !/with demo in it/.test(rootPoolRefusal), rootPoolRefusal)
+
 const plain = join(root, 'plain')
 mkdirSync(plain, { recursive: true })
 const shared = (await resolveLane(plain, [plain]))

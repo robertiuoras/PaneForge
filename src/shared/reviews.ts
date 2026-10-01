@@ -60,6 +60,8 @@ export interface ReviewRecord extends ReviewInput {
   context?: ReviewContext;
   /** Whole-session spend: input + cache creation + output over every reply; cache reads left out. */
   sessionTokens?: number;
+  /** A report copied from its owning PaneForge device. Absent means this device owns it. */
+  origin?: { id: string; name: string; platform: string };
 }
 
 const CLAUDE_WINDOW = 200_000,
