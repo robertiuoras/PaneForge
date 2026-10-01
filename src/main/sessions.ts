@@ -693,7 +693,7 @@ export class SessionManager extends EventEmitter {
   private answering = new Set<string>()
   private pendingAnswers = new Map<string, string[]>()
   // An unconfirmed Codex draft still owns the composer after its bounded wait ends.
-  private codexQueued = new Map<string, { key: string; live: Live; proc: Live['proc']; prompt: string; since: number; writing: boolean; foreign: boolean; proof: 'receipt' | 'idle'; conversationId?: string; receiptCwd?: string; commandOutputAt?: number; answerKeyboard?: number; recovered?: boolean; receiptMiss?: string }>()
+  private codexQueued = new Map<string, { key: string; live: Live; proc: Live['proc']; prompt: string; since: number; writing: boolean; foreign: boolean; proof: 'receipt' | 'idle'; conversationId?: string; receiptCwd?: string; commandOutputAt?: number; answerKeyboard?: number; recovered?: boolean; receiptMiss?: string; hold?: Live['draftConfirmation'] }>()
   /**
    * Shell children at the last table read. Also used on POSIX for background jobs
    * and for distinguishing an interactive Codex wrapper from an ordinary node job.
@@ -2127,6 +2127,10 @@ export class SessionManager extends EventEmitter {
     this.pendingAnswers.set(id, pending)
     this.setOwedPrompt(id, true)
     let ownsComposer = false
+    // The draft hold this answer's own Enter set (see `write`). A confirmed answer is
+    // out of the box, and a hold left behind would park the next queued answer until
+    // the turn it is steering ends.
+    let answerHold: Live['draftConfirmation']
     const finish = (state: PaneAnswerReceipt['state'], reason?: string, transcriptAt?: number) => {
       const pending = this.pendingAnswers.get(id)
       if (pending) {
@@ -2135,6 +2139,7 @@ export class SessionManager extends EventEmitter {
         if (!pending.length) this.pendingAnswers.delete(id)
       }
       if (ownsComposer) this.answering.delete(id)
+      if (state === 'confirmed') this.releaseDraftHold(live, answerHold)
       if (this.sessions.get(id) === live) this.setOwedPrompt(id, owedCount(id) > 0 || this.pendingAnswers.has(id))
       try {
         ledger.update(req, { state, reason, ...(state === 'confirmed' ? { confirmedAt: Date.now(), transcriptAt } : {}) })
@@ -2175,8 +2180,10 @@ export class SessionManager extends EventEmitter {
               finish('uncertain', 'Composer or pane changed after paste; Enter withheld'); return
             }
             // Codex 0.157 Enter submits/steers an active turn; Tab queues it.
+            const priorHold = live!.draftConfirmation
             live!.effortPassThrough = true
             try { this.write(id, '\r', 'app') } finally { live!.effortPassThrough = false }
+            if (live!.draftConfirmation !== priorHold) answerHold = live!.draftConfirmation
             const waiting = this.codexQueued.get(id)
             if (waiting && waiting.live === live && waiting.proc === proc && !waiting.since && !waiting.foreign)
               waiting.answerKeyboard = live!.meta.lastKeyboard
@@ -2245,10 +2252,14 @@ export class SessionManager extends EventEmitter {
       backslashNewline: continuesOnBackslash(live.meta.agent)
     })
     // Keep the automatic-close/clear hold after Enter until a fresh screen proves
-    // the box empty. Startup and paste handling can swallow that very key. Not for an
-    // `app` write: a queued prompt's return is confirmed by its own receipt, and holding
-    // the box as a draft would stall the very next queued prompt (a model switch's resume).
-    if (origin !== 'app' && live.meta.agent !== 'shell' && whole.submitted.length &&
+    // the box empty. Startup and paste handling can swallow that very key, and a prompt
+    // this app typed is no exception: once its owed flag drops, the hold is all that
+    // keeps every closer off a box still holding it. `queuePrompt` and `answerPane` drop
+    // their own hold the moment a receipt proves the prompt went in. Not for an app
+    // slash command (`/clear`, `/model ...`): it prints its own answer and hands the box
+    // straight back, and holding the box would stall the resume queued right behind it.
+    if (live.meta.agent !== 'shell' && whole.submitted.length &&
+        !(origin === 'app' && isSlashCommand(whole.submitted.join('\n'))) &&
         (whole.submitted.some((line) => line.trim()) || !live.draft.certain)) {
       live.draftConfirmation = {
         prompt: live.draft.certain ? whole.submitted.join('\n') : '',
@@ -4142,7 +4153,7 @@ export class SessionManager extends EventEmitter {
       { key, live: original, proc: original.proc, prompt, since: 0, writing: false, foreign: false,
         proof: proof === 'idle' ? 'idle' as const : 'receipt' as const, conversationId: undefined as string | undefined,
         receiptCwd: original.meta.cwd, commandOutputAt: undefined as number | undefined,
-        answerKeyboard: undefined as number | undefined } : undefined
+        answerKeyboard: undefined as number | undefined, hold: undefined as Live['draftConfirmation'] } : undefined
     if (owner && !this.codexQueued.has(id)) this.codexQueued.set(id, owner)
     // Called exactly once, however this ends - typed and submitted, dropped, or the pane
     // gone. The handover curtain is raised on it, and a curtain with an exit this does not
@@ -4152,6 +4163,10 @@ export class SessionManager extends EventEmitter {
     // prompt stays recoverable and keeps its composer owner after this wait ends.
     let settled = false
     let curtainReleased = false
+    // The draft hold our own return set (see `write`). Dropped once the prompt is proven
+    // sent; an unsent or withheld prompt keeps it, so no automatic close or clear reads a
+    // box still holding the whole prompt as empty after the owed flag drops below.
+    let ownHold: Live['draftConfirmation']
     const releaseCurtain = (): void => {
       if (curtainReleased) return
       curtainReleased = true
@@ -4171,6 +4186,7 @@ export class SessionManager extends EventEmitter {
         else noteDropped(key, end)
         if (this.codexQueued.get(id) === owner) this.codexQueued.delete(id)
       }
+      if (end === 'sent') this.releaseDraftHold(this.sessions.get(id), ownHold)
       this.setOwedPrompt(id, owedCount(id) > 0)
       onSettled?.()
     }
@@ -4189,19 +4205,32 @@ export class SessionManager extends EventEmitter {
     // it, it gives up and says so, rather than sitting owed for ever.
     const personDeadline = Date.now() + PERSON_WAIT_MAX_MS + Math.max(0, extraDelay)
     const ourWrite = (data: string): void => {
+      const priorHold = this.sessions.get(id)?.draftConfirmation
       if (owner) owner.writing = true
       try { this.write(id, data, 'app') } finally { if (owner) owner.writing = false }
       const after = this.sessions.get(id)
       if (after) mark = Math.max(mark, after.meta.lastKeyboard ?? 0)
+      if (after?.draftConfirmation && after.draftConfirmation !== priorHold) {
+        ownHold = after.draftConfirmation
+        // A retained Codex prompt is promoted by whichever prompt queues behind it,
+        // so that wait has to be able to drop this hold too.
+        if (owner) owner.hold = ownHold
+      }
     }
     // A follow-up received during an existing turn must wait for that turn, even
     // though its last keystroke predates `mark`. The boot timeout is not permission
     // to paste into a running conversation. Autoclear owns its own handover wait.
     const queuedLive = this.sessions.get(id)
     // Not behind a prompt of ours still held in this composer: its own return stamped
-    // `runSince`, and that retained owner already gates this one until its receipt.
+    // `runSince`, and that retained owner already gates this one until its receipt (and
+    // re-arms this wait when the receipt comes, below). Only a live owner of this very
+    // process counts: a recovered one was typed by the process before, and a stale one is
+    // about to be dropped, so neither says whose turn is running now.
+    const held = this.codexQueued.get(id)
+    const behindOurs = Boolean(held && held !== owner && held.since && queuedLive && held.live === queuedLive &&
+      held.proc === queuedLive.proc && !held.recovered && stillOwed(held.key))
     let waitingForTurn = proof === 'turn' && Boolean(queuedLive?.meta.runSince) && !queuedLive?.meta.handoverUntil &&
-      !this.codexQueued.get(id)?.since
+      !behindOurs
     const verdict = (live: Live, composerIdle: boolean): QueuedPromptVerdict => {
       // An authenticated answer is steering this same turn, not a person claiming
       // the composer. Keep waiting through delayed questions; actual drafting or
@@ -4702,6 +4731,11 @@ export class SessionManager extends EventEmitter {
         if (previous && previousAccepted) {
           noteSubmitted(previous.key)
           this.codexQueued.delete(id)
+          this.releaseDraftHold(live, previous.hold)
+          // It went in, so a turn running now is its answer: this prompt waits for that
+          // turn like any other follow-up rather than steering into it. Not behind a
+          // command, which starts no turn - `runSince` there is our own return's stamp.
+          if (proof === 'turn' && previous.proof === 'receipt') waitingForTurn = true
         }
         if (settled) return
         if (this.sessions.get(id) !== live || live.proc !== owner.proc) return settle('replaced')
@@ -5073,6 +5107,20 @@ export class SessionManager extends EventEmitter {
       .finally(() => {
         this.tableJobsBusy = false
       })
+  }
+
+  /**
+   * Drop the draft hold an app write set, once that very submission is proven sent.
+   * Only that hold: a person's later Enter sets its own, and theirs still waits for the
+   * screen in `confirmDraft`, whose arithmetic this repeats.
+   */
+  private releaseDraftHold(live: Live | undefined, hold: Live['draftConfirmation']): void {
+    if (!live || !hold || live.draftConfirmation !== hold || this.sessions.get(live.meta.id) !== live) return
+    live.draftConfirmation = undefined
+    const drafting = !live.draft.certain || Boolean(live.draft.text.trim())
+    if (drafting === Boolean(live.meta.drafting)) return
+    live.meta.drafting = drafting || undefined
+    this.emitSessions()
   }
 
   private async confirmDraft(live: Live): Promise<void> {

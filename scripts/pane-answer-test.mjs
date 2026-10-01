@@ -10,6 +10,7 @@ try {
   const source = readFileSync('src/main/sessions.ts', 'utf8')
   const methods = source.slice(source.indexOf('  answerStatus('), source.indexOf('  draftOf('))
   const ownershipWrite = source.slice(source.indexOf('  write(id: string,'), source.indexOf('    // Before a byte moves:', source.indexOf('  write(id: string,')))
+  const releaseHold = source.slice(source.indexOf('  private releaseDraftHold('), source.indexOf('  private async confirmDraft(')).replace('  private releaseDraftHold(', '  releaseDraftHold(')
   const queueVerdict = source.slice(source.indexOf('    const queuedLive = this.sessions.get(id)'), source.indexOf('    // The busy read is of the LAST THING PAINTED', source.indexOf('    const verdict = (live: Live,')))
   const fixture = `
 import { PaneAnswers } from ${JSON.stringify(resolve('src/main/paneAnswers.ts'))}
@@ -36,14 +37,16 @@ const setTimeout=(f)=>{tasks.push(f);return {unref(){}}}
 export class Harness {
   sessions=new Map(); answering=new Set(); pendingAnswers=new Map(); codexQueued=new Map(); autoClearPending=new Set(); autoClearArmTimers=new Map(); answerLedger; writes=[]
   setOwedPrompt(id,v){this.sessions.get(id).meta.owedPrompt=v}
-  write(id,text){const l=this.sessions.get(id);this.writes.push(text);l.draft=feedDraft(l.draft,text).state;if(text==='\\r')l.meta.lastKeyboard=clock}
+  write(id,text){const l=this.sessions.get(id);this.writes.push(text);const fed=feedDraft(l.draft,text);l.draft=fed.state;if(fed.submitted.some(x=>x.trim())){l.draftConfirmation={prompt:fed.submitted.join('\\n'),since:clock,afterOutput:0};l.meta.drafting=true}if(text==='\\r')l.meta.lastKeyboard=clock}
+  emitSessions(){}
+  ${releaseHold}
   queueVerdict(id, composerIdle=false){const proof='turn',live=this.sessions.get(id),owner=this.codexQueued.get(id),mark=0,takenMark=0,deadline=0,personDeadline=0,PERSON_QUIET_MS=120;${queueVerdict}return verdict(live,composerIdle)}
   cancelCodexQueued(){throw Error('No cancellation expected')}
   ${ownershipWrite.replace('  write(', 'ownershipWrite(')}
   }
 ${methods}
 }
-export function fresh(){const h=new Harness();h.sessions.set('s1-test',{req:{},meta:{cwd:'fixture',agent:'codex',status:'working',runSince:100},proc:{pid:1},draft:newDraft(),typed:'',buffer:{read:()=> 'Working · esc to interrupt'}});native='11111111-1111-1111-1111-111111111111';received=false;recover=false;recovery=undefined;pendingQuestion=true;endedQuestions.clear();owed=0;clock=1000;tasks.length=0;return h}
+export function fresh(){const h=new Harness();h.sessions.set('s1-test',{req:{},meta:{id:'s1-test',cwd:'fixture',agent:'codex',status:'working',runSince:100},proc:{pid:1},draft:newDraft(),typed:'',buffer:{read:()=> 'Working · esc to interrupt'}});native='11111111-1111-1111-1111-111111111111';received=false;recover=false;recovery=undefined;pendingQuestion=true;endedQuestions.clear();owed=0;clock=1000;tasks.length=0;return h}
 export function expire(){clock+=120001}
 export function age(){clock+=7*86400000}
 export function endQuestion(toolUseId){if(toolUseId)endedQuestions.add(toolUseId);else pendingQuestion=false}
@@ -64,7 +67,10 @@ export { PaneAnswers }
   assert.equal(h.answerPane(r).state,'waiting'); tick(); tick()
   assert.deepEqual(h.writes,[`\x1b[200~${r.text}\x1b[201~`,'\r'])
   assert.equal(h.answerStatus(r).state,'submitted')
+  assert.equal(h.sessions.get(r.paneId).meta.drafting,true,'the answer’s own Enter holds the box like any other')
   receipt(); tick(); assert.equal(h.answerStatus(r).state,'confirmed')
+  assert.ok(!h.sessions.get(r.paneId).meta.drafting && !h.sessions.get(r.paneId).draftConfirmation,
+    'a confirmed answer drops its own draft hold, so the next queued answer is not parked behind it')
   assert.equal(h.answerPane(r).state,'confirmed'); assert.equal(h.writes.length,2)
   assert.throws(()=>h.answerPane({...r,text:'different'}),/different text/)
   assert.throws(()=>h.answerStatus({...r,expectedConversationId:'22222222-2222-2222-2222-222222222222'}),/identity mismatch/)

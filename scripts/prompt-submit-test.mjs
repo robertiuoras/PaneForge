@@ -1228,6 +1228,10 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
   ok(await waitFor(() => hintSettled() === 1) &&
     hinted.p.writes.filter(data => data === '\x1b[200~' + payload + '\x1b[201~').length === 1 && ledger(hinted.pane.id).length === 0,
     'native dim placeholder permits one multiline paste proven by its exact native receipt', logOf(hinted.pane.id))
+  // Its own Enter set a draft hold; the receipt is the proof that releases it, not a
+  // later screen reading, or the next queued prompt sits behind a box already empty.
+  ok(!hinted.live.meta.drafting && !hinted.live.draftConfirmation,
+    'a prompt proven sent by its receipt drops its own draft hold at once', JSON.stringify(hinted.live.draftConfirmation))
   manager.kill(hinted.pane.id)
 
   const literalDraft = open()
@@ -1360,10 +1364,40 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
     if (data.includes(later)) unknown.p.say(frame(later))
     if (data === '\r') unknown.received(later)
   }
+  // The receipt says the held prompt went in, so the turn still on the clock is its
+  // answer, and an idle-looking composer mid-turn is no licence to steer into it.
+  const idleAt = Date.now()
+  await waitFor(() => Date.now() - idleAt >= 600)
+  ok(!pasted(unknown.p, later) && blockedNext() === 0,
+    'a follow-up behind a held prompt that is then accepted waits for that prompt’s turn', logOf(unknown.pane.id))
+  unknown.live.meta.runSince = undefined
+  unknown.live.busyUntil = 0
   ok(await waitFor(() => pasted(unknown.p, later) && ledger(unknown.pane.id).length === 0) && blockedNext() === 1,
     'a late exact receipt promotes the retained second prompt without another queue call',
     `pasted=${pasted(unknown.p, later)}, rows=${ledger(unknown.pane.id).length}\n${logOf(unknown.pane.id)}`)
   manager.kill(unknown.pane.id)
+
+  // A stale owner - another process's, about to be dropped - says nothing about whose
+  // turn is running. A follow-up queued during that turn still waits for it to end.
+  const stale = open()
+  stale.live.meta.runSince = Date.now() - 1000
+  stale.live.busyUntil = Date.now() + 60_000
+  manager.codexQueued.set(stale.pane.id, { key: 'an-old-process-row', live: stale.live, proc: {}, prompt: 'old process prompt',
+    since: Date.now() - 5000, writing: false, foreign: true, proof: 'receipt' })
+  const staleNext = 'typed only after the running turn ends'
+  stale.p.onWrite = data => {
+    if (data.includes(staleNext)) stale.p.say(frame(staleNext))
+    if (data === '\r') stale.received(staleNext)
+  }
+  const staleSettled = queue(stale, staleNext, 300)
+  const staleAt = Date.now()
+  await waitFor(() => Date.now() - staleAt >= 700)
+  ok(!pasted(stale.p, staleNext), 'a stale held owner does not let a follow-up into a turn already running', logOf(stale.pane.id))
+  stale.live.meta.runSince = undefined
+  stale.live.busyUntil = 0
+  ok(await waitFor(() => staleSettled() === 1 && pasted(stale.p, staleNext)),
+    'and that follow-up is typed when the turn ends', logOf(stale.pane.id))
+  manager.kill(stale.pane.id)
 
   // All waiting followers share the retained owner's negative native scan. Count
   // real 2 MiB reads, including invalidation without a terminal repaint.
@@ -1517,6 +1551,13 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
       `explicit ${JSON.stringify(cancel)} cancellation removes the matching durable intent`)
     canceled.live.meta.runSince = undefined
     canceled.live.busyUntil = 0
+    // Our own Enter left a draft hold, and a cancel is not proof the box is empty: the
+    // screen is. The redraw a cancel key causes falls in that key's repaint grace and
+    // stamps no output, so the proof is the CLI's next paint once the grace is over, read
+    // the way the idle sweep reads it. Only then may the next prompt go in.
+    canceled.live.repaintUntil = 0
+    canceled.p.say(frame(''))
+    await manager.confirmDraft(canceled.live)
     const next = `after explicit cancellation ${JSON.stringify(cancel)}`
     canceled.p.onWrite = data => {
       if (data.includes(next)) canceled.p.say(frame(next))
@@ -1661,38 +1702,76 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
   manager.kill(pane.id)
 }
 
+// An app slash command takes no draft hold. `/clear` (autoclear writes it straight to the
+// pty) hands the box back with its own answer, and a hold on it would park the resume
+// queued right behind it until a sweep happened to read the box empty.
+{
+  const pane = manager.start({ cwd: root, agent: 'shell' })
+  const live = manager.sessions.get(pane.id)
+  live.meta.agent = 'grok'
+  live.proc.say(COMPOSER)
+  manager.write(pane.id, '/clear\r', 'app')
+  ok(!live.meta.drafting && !live.draftConfirmation, 'an app slash command takes no draft hold', JSON.stringify(live.draftConfirmation))
+  live.meta.runSince = undefined
+  live.busyUntil = 0
+  live.proc.say(COMPOSER)
+  manager.queuePrompt(pane.id, 'Continue the handoff after the clear.', 0, 40, undefined, 5000)
+  const until = Date.now() + 3000
+  while (!live.proc.writes.join('').includes('after the clear') && Date.now() < until) await sleep(40)
+  ok(live.proc.writes.join('').includes('after the clear'), 'and the resume queued behind it goes in', logOf(pane.id))
+  manager.kill(pane.id)
+}
+
 // Enter can be swallowed while the CLI boots. A pending draft must outlive that
 // attempt and keep every automatic-close path blocked until the screen is empty.
-for (const agent of ['codex', 'claude', 'grok']) {
+// A prompt this app typed is no different: once its returns are given up as swallowed
+// its owed flag drops, and the hold is all that keeps a closer off the box. Claude and
+// grok only: a Codex prompt keeps its composer owner, and so its owed flag, as well.
+for (const [agent, origin] of [['codex', 'desk'], ['claude', 'desk'], ['grok', 'desk'], ['claude', 'app'], ['grok', 'app']]) {
   const pane = manager.start({ cwd: root, agent: 'shell' })
   const live = manager.sessions.get(pane.id)
   live.meta.agent = agent
-  manager.write(pane.id, 'Keep this unsent prompt safe', 'desk')
-  manager.write(pane.id, '\r', 'desk')
-  ok(live.meta.drafting === true, `${agent}: Enter alone keeps the draft hold`)
   const frame = (text) => `\x1b[2J\x1b[H${'─'.repeat(60)}\r\n❯ ${text}\r\n${'─'.repeat(60)}\r\n\x1b[2;${3 + text.length}H`
   const paint = (text) => {
     live.buffer.set(text)
     live.meta.lastOutput = Math.max(Date.now(), live.meta.lastOutput + 1)
   }
+  if (origin === 'desk') {
+    manager.write(pane.id, 'Keep this unsent prompt safe', 'desk')
+    manager.write(pane.id, '\r', 'desk')
+    ok(live.meta.drafting === true, `${agent}: Enter alone keeps the draft hold`)
+  } else {
+    // The CLI draws the typed prompt in its box and then eats every return.
+    live.proc.onWrite = (data) => { if (data.includes('Keep this unsent prompt safe')) live.proc.say(frame('Keep this unsent prompt safe')) }
+    live.proc.say(frame(''))
+    let settled = 0
+    manager.queuePrompt(pane.id, 'Keep this unsent prompt safe', 0, 40, () => settled++, 5000)
+    const until = Date.now() + 6000
+    while (!settled && Date.now() < until) await sleep(40)
+    ok(settled === 1 && await logSays(pane.id, /returns were swallowed/) && !live.meta.owedPrompt && live.meta.drafting === true,
+      `${agent} (app): a queued prompt whose returns were swallowed keeps the draft hold`,
+      `settled=${settled} owed=${live.meta.owedPrompt} drafting=${live.meta.drafting}\n${logOf(pane.id)}`)
+    live.proc.onWrite = undefined
+  }
+  const name = origin === 'app' ? `${agent} (app)` : agent
   paint(frame('Keep this unsent prompt safe'))
   await manager.confirmDraft(live)
   live.meta.status = 'idle'
   live.meta.runSince = undefined
   live.busyUntil = 0
-  ok(!manager.closeAfterResult(pane.id, Date.now()).closed, `${agent}: swallowed Enter refuses Review close`)
+  ok(!manager.closeAfterResult(pane.id, Date.now()).closed, `${name}: swallowed Enter refuses Review close`)
   paint('\x1b[2J\x1b[HStarting agent...')
   await manager.confirmDraft(live)
-  ok(live.meta.drafting === true, `${agent}: unreadable startup frame preserves draft`)
+  ok(live.meta.drafting === true, `${name}: unreadable startup frame preserves draft`)
   paint(frame(''))
   const reading = manager.confirmDraft(live)
   manager.write(pane.id, 'A newer draft', 'desk')
   await reading
-  ok(live.meta.drafting === true, `${agent}: stale empty reading cannot clear newer input`)
+  ok(live.meta.drafting === true, `${name}: stale empty reading cannot clear newer input`)
   manager.write(pane.id, '\x15', 'desk')
   paint(frame(''))
   await manager.confirmDraft(live)
-  ok(!live.meta.drafting, `${agent}: confirmed empty composer releases the hold`)
+  ok(!live.meta.drafting, `${name}: confirmed empty composer releases the hold`)
   manager.kill(pane.id)
 }
 
