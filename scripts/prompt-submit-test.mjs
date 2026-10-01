@@ -974,8 +974,11 @@ const ANSWERING =
     if (person) manager.write(pane.id, 'carry on\r', 'phone')
     await sleep(rowAfterMs)
     received(name)
-    await sleep(Number(process.env.PF_PROMPT_CONFIRM_MS) * 3)
-    const qp = (() => { try { return readFileSync(join(work, 'userData', 'queued-prompts.log'), 'utf8').split('\n').filter((l) => l.includes(pane.id)).join('\n') } catch { return '' } })()
+    const qpNow = () => { try { return readFileSync(join(work, 'userData', 'queued-prompts.log'), 'utf8').split('\n').filter((l) => l.includes(pane.id)).join('\n') } catch { return '' } }
+    // Until the late line or past the whole late window, not three confirm windows: on a busy
+    // PC (2026-10-01, returns 0.9s apart for a planned 0.2s) the line came after 0.6s.
+    for (const until = Date.now() + Number(process.env.PF_PROMPT_LATE_MS) + 3000; Date.now() < until && !/landed after all/.test(qpNow()); ) await sleep(50)
+    const qp = qpNow()
     manager.kill(pane.id)
     return { log: logOf(pane.id), qp }
   }
