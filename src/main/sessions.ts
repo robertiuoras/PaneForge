@@ -2693,9 +2693,8 @@ export class SessionManager extends EventEmitter {
     // Startup output and an unsent composer are not a completed agent response either.
     if (this.owesPrompt(live) || (meta.agent !== 'shell' && meta.finished !== true)) return
     if (!doneEnough({ ...meta, busyUntil: live.busyUntil }, quiet, now)) return
-    // With nothing wired to take it (a bare manager, as in test:promptsubmit), it closes here.
-    if (meta.agent !== 'shell' && this.onCloseWhenDone) {
-      this.onCloseWhenDone(meta.id)
+    if (meta.agent !== 'shell') {
+      this.onCloseWhenDone?.(meta.id)
       return
     }
     const told = live.req.reportTo
