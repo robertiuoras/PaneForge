@@ -996,14 +996,16 @@ function preservedCheckout(state, lane) {
 }
 
 function recoveryBrief(key, r) {
-  const cli = `node ${JSON.stringify(join(here, 'lane.mjs'))} --repo ${JSON.stringify(MAIN)}`
+  // The subcommand comes first: the entry reads it from argv[0], so a leading `--repo`
+  // made every command in this brief `Unknown command "--repo"` (2026-10-01, pane 22).
+  const cli = (sub) => `node ${JSON.stringify(join(here, 'lane.mjs'))} ${sub} --repo ${JSON.stringify(MAIN)}`
   return `Complete preserved abandoned work in ${MAIN}. Recovery key: ${key}. Pinned commit: ${r.commit}.
 You are not alone. Preserve other owners, staged edits, private files and task intent. This is verification and authorized integration only; NEVER cut, tag, publish or install a release. Use the existing included native CLI provider route, no API credentials or pool fallback.
 First read AGENTS.md and lane docs, back up the target files/index/ref before any repair. ${r.problem ?? ''} Missing/foreign worktrees or an empty index with tracked HEAD files require preservation and diagnosis; NEVER auto-stage deletions, reset, remove or reconstruct files on that evidence.
-${r.ref ? `Review the pinned ref ${r.ref} at ${r.commit} against current trunk by content. Do not cherry-pick a moved ref or blindly merge by name. Claim an empty ordinary lane, assert its heldBy is your actual native conversation ID, then explicitly park --ref ${JSON.stringify(r.ref)} --lane <slot> before resuming reviewed intent. If no safe slot or ambiguous intent, record blocked/reviewed disposition.` : `Claim the exact lane: ${cli} claim --prefer ${r.lane} --cwd ${JSON.stringify(laneDir(r.lane))} --session <actual-native-id>. Assert the returned lane/dir and fresh status heldBy; a fallback slot is NOT authority to edit the original. If ownership changed, stop.`}
-Bind this recovery after the ownership readback: ${cli} recover --key ${JSON.stringify(key)} --session <actual-native-id> --disposition begin${r.ref ? ' --lane <claimed-slot>' : ''}.
-Review intent and content equivalence, finish only intended work, run the repository's required PC checks (no Mac build/full-check fallback), obtain independent review, and commit verified work. Save a JSON receipt with commit, nonempty checks array of {command, exitCode: 0}, and review: {reviewer: <independent owner>, result: "accepted"}. Then ${cli} recover --key ${JSON.stringify(key)} --session <actual-native-id> --disposition verified --receipt <json-file>; normal ready requires this pinned verification before integration.
-Run ${cli} ready --session <actual-native-id> --lane <owned-slot>. Read the real merge/push outcome and remote inclusion, then ${cli} recover --key ${JSON.stringify(key)} --session <actual-native-id> --disposition complete. A ready flag is not completion. Version-mode publication remains for Robert's publisher.
+${r.ref ? `Review the pinned ref ${r.ref} at ${r.commit} against current trunk by content. Do not cherry-pick a moved ref or blindly merge by name. Claim an empty ordinary lane, assert its heldBy is your actual native conversation ID, then explicitly park --ref ${JSON.stringify(r.ref)} --lane <slot> before resuming reviewed intent. If no safe slot or ambiguous intent, record blocked/reviewed disposition.` : `Claim the exact lane: ${cli('claim')} --prefer ${r.lane} --cwd ${JSON.stringify(laneDir(r.lane))} --session <actual-native-id>. Assert the returned lane/dir and fresh status heldBy; a fallback slot is NOT authority to edit the original. If ownership changed, stop.`}
+Bind this recovery after the ownership readback: ${cli('recover')} --key ${JSON.stringify(key)} --session <actual-native-id> --disposition begin${r.ref ? ' --lane <claimed-slot>' : ''}.
+Review intent and content equivalence, finish only intended work, run the repository's required PC checks (no Mac build/full-check fallback), obtain independent review, and commit verified work. Save a JSON receipt with commit, nonempty checks array of {command, exitCode: 0}, and review: {reviewer: <independent owner>, result: "accepted"}. Then ${cli('recover')} --key ${JSON.stringify(key)} --session <actual-native-id> --disposition verified --receipt <json-file>; normal ready requires this pinned verification before integration.
+Run ${cli('ready')} --session <actual-native-id> --lane <owned-slot>. Read the real merge/push outcome and remote inclusion, then ${cli('recover')} --key ${JSON.stringify(key)} --session <actual-native-id> --disposition complete. A ready flag is not completion. Version-mode publication remains for Robert's publisher.
 If blocked or content already equivalent, save a JSON receipt with reason/evidence and use --disposition blocked or reviewed with --receipt <file>. Keep the pinned work preserved. Do not leave an acknowledgment loop or silently abandon this pane.`
 }
 
@@ -1033,10 +1035,10 @@ function dispatchCompletion() {
       // A stopped turn, sleeping CLI, relocated pane or unknown open result is not death.
       if (active.pane === '?' || (active.owner && living.has(active.owner)) || (active.lane && state.lanes[active.lane]) || panes.ids.includes(active.pane) || now() - active.at < RETRY_MS) return null
       const current = active.ref ? parkedCommit(active.ref) : gitSafe(MAIN, 'rev-parse', '--verify', laneBranch(active.lane)).out
-      if (active.status === 'dispatching' || current !== active.commit || (active.attempts ?? 1) >= 3) {
+      if (active.status === 'dispatching' || !active.owner || current !== active.commit || (active.attempts ?? 1) >= 3) {
         const interrupted = active.status === 'dispatching'
         active.status = 'blocked'
-        active.reason = interrupted ? 'interrupted pane delivery requires explicit inspection' : current !== active.commit ? 'completion owner ended after the pinned commit changed; explicit review required' : 'completion owner ended repeatedly; explicit review required'
+        active.reason = interrupted ? 'interrupted pane delivery requires explicit inspection' : !active.owner ? 'completion pane ended without an adopted native owner; delivery and task intent require explicit inspection' : current !== active.commit ? 'completion owner ended after the pinned commit changed; explicit review required' : 'completion owner ended repeatedly; explicit review required'
         delete state.recovery.active; writeRecovery(state)
       } else resume = { ...active, owner: null }
     }
@@ -2323,7 +2325,11 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
   const unfinished = new Set(order.filter((id) => {
     if (state.lanes[id]) return false
     const work = laneWork(id)
-    return work.dirty || (work.ahead > 0 && !state.ready[id])
+    // `main` is the trunk itself: its `ahead` counts unreleased commits that are already
+    // on the release branch, not lane work waiting to be merged, so only a letter lane
+    // with unready commits is preserved work. (A checkout missing the release TAG counts
+    // the whole history there and would never hand out `main`.)
+    return work.dirty || (id !== 'main' && work.ahead > 0 && !state.ready[id])
   }))
   const spare = order.filter((id) => !state.lanes[id] && !state.conflicts[id] && !unfinished.has(id))
   // A lane whose FOLDER another chat is standing in is the last one to hand out.

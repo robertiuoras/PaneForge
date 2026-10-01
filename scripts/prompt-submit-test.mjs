@@ -81,7 +81,7 @@ module.exports={spawn:(file,args,opts)=>({
 
 buildSync({
   absWorkingDir: root,
-  stdin: { contents: `export { SessionManager } from './src/main/sessions'; export { forgetQueuedPrompts, noteAccepted, noteTyped } from './src/main/queuedPrompts'`, resolveDir: root },
+  stdin: { contents: `export { SessionManager } from './src/main/sessions'; export { forgetQueuedPrompts, noteAccepted, noteTyped } from './src/main/queuedPrompts'; export { claudeAcceptedPrompt } from './src/main/transcripts'`, resolveDir: root },
   bundle: true,
   format: 'cjs',
   platform: 'node',
@@ -104,7 +104,7 @@ buildSync({
 })
 
 const req = createRequire(join(work, 'x.cjs'))
-const { SessionManager, forgetQueuedPrompts, noteAccepted, noteTyped } = req('./sessions.bundle.cjs')
+const { SessionManager, claudeAcceptedPrompt, forgetQueuedPrompts, noteAccepted, noteTyped } = req('./sessions.bundle.cjs')
 
 const fail = []
 const ok = (c, n, detail) => {
@@ -129,8 +129,8 @@ const logOf = (id) => {
 }
 // On the PC a line can land after the keystrokes it describes, so a reading waits for it
 // rather than racing it.
-const logSays = async (id, re) => {
-  const until = Date.now() + 2000
+const logSays = async (id, re, waitMs = 2000) => {
+  const until = Date.now() + waitMs
   while (Date.now() < until && !re.test(logOf(id))) await sleep(40)
   return re.test(logOf(id))
 }
@@ -741,6 +741,26 @@ const ANSWERING =
     appendFileSync(join(proj, `${sessionId}.jsonl`), JSON.stringify({ type: 'user', message: { role: 'user',
       content: '\n\n<pasted_content id="7c1e">\n' + BRIEF + '\n</pasted_content id="7c1e">' },
     timestamp: at.toISOString(), sessionId }) + '\n')
+  // A long paste is stored as several pasted_content chunks, each cut at whitespace
+  // (2026-10-01, claude-memory-c e885a4ad: a 3589-char brief as four ~1050-char chunks).
+  // The whole payload is still the receipt; a first line alone, or one changed word, is not.
+  {
+    cli('sess-chunked'); hooksDone('sess-chunked')
+    const long = Array.from({ length: 160 }, (_, i) => `word${i}`).join(' ') + '\n\n' +
+      Array.from({ length: 160 }, (_, i) => `more${i}`).join(' ')
+    const cut = long.indexOf(' ', 1000) + 1
+    const row = (content) => appendFileSync(join(proj, 'sess-chunked.jsonl'), JSON.stringify({ type: 'user',
+      message: { role: 'user', content }, timestamp: new Date().toISOString(), sessionId: 'sess-chunked' }) + '\n')
+    const since = Date.now() - 1000
+    row(long.split('\n')[0])
+    ok(!claudeAcceptedPrompt(4242, long, since), 'a first line alone is not the receipt for a long paste')
+    row('\n\n<pasted_content id="0167">\n' + long.slice(0, cut) + '\n</pasted_content id="0167">\n\n\n' +
+      '<pasted_content id="0167">\n' + long.slice(cut).replace('more42 ', 'more4x ') + '\n</pasted_content id="0167">')
+    ok(!claudeAcceptedPrompt(4242, long, since), 'a chunked paste with one word changed is not the receipt')
+    row('\n\n<pasted_content id="0167">\n' + long.slice(0, cut) + '\n</pasted_content id="0167">\n\n\n' +
+      '<pasted_content id="0167">\n' + long.slice(cut) + '\n</pasted_content id="0167">')
+    ok(claudeAcceptedPrompt(4242, long, since), 'a long paste stored as several chunks is the receipt')
+  }
   const receipt = async (name, paint, stallMs = 0) => {
     cli(name)
     hooksDone(name, 60_000)
@@ -920,7 +940,9 @@ const ANSWERING =
     }
     await sleep(budget + 600)
     await logSays(pane.id, /prompt submitted|UNSENT|return withheld/)
-    const out = { log: logOf(pane.id), qp: qpOf(pane.id), returns: returnsOf(p), asking: Boolean(manager.sessions.get(pane.id).meta.ask) }
+    const retained = Object.values(JSON.parse(readFileSync(join(work, 'userData', 'queued-prompts.json'), 'utf8')))
+      .filter(row => row.id === pane.id)
+    const out = { log: logOf(pane.id), qp: qpOf(pane.id), returns: returnsOf(p), asking: Boolean(manager.sessions.get(pane.id).meta.ask), retained }
     manager.kill(pane.id)
     return out
   }
@@ -934,7 +956,9 @@ const ANSWERING =
   const askOnly = await asked('sess-ask-only', null, true)
   ok(askOnly.returns === 1, 'a question on screen with no receipt still gets no more returns', `${askOnly.returns} returns\n${askOnly.log}`)
   ok(/selector on screen, return withheld/.test(askOnly.log), 'and the log says the return was withheld', askOnly.log)
-  ok(!/LOST/.test(askOnly.qp) && /not proven/.test(askOnly.qp), 'queued-prompts.log says not proven, not LOST', askOnly.qp)
+  ok(!/LOST|queued prompt submitted/.test(askOnly.qp) && askOnly.retained.length === 1 &&
+    askOnly.retained[0].text === BRIEF && Boolean(askOnly.retained[0].typed),
+    'a question without a native receipt retains the full typed intent without calling it lost or submitted', askOnly.qp)
 
   const enqOnly = await asked('sess-enqueue-only', enqueue, false)
   ok(enqOnly.returns === 1 && /Claude transcript receipt/.test(enqOnly.log),
@@ -945,6 +969,95 @@ const ANSWERING =
       commandMode: 'prompt', origin: { kind: 'human' }, humanTurn: true } }, false)
   ok(attOnly.returns === 1 && /Claude transcript receipt/.test(attOnly.log),
     'a queued_command attachment alone is a receipt too', `${attOnly.returns} returns\n${attOnly.log}`)
+
+  cli('sess-unconfirmed-clock'); hooksDone('sess-unconfirmed-clock', 60_000)
+  const clockPane = manager.start({ cwd: root, agent: 'claude' })
+  const clockLive = manager.sessions.get(clockPane.id)
+  clockLive.proc.say(IDLE)
+  clockLive.proc.onWrite = data => {
+    if (data === '\r') {
+      clockLive.meta.runSince = Date.now()
+      clockLive.proc.say('\x1b[2J\x1b[HStarting MCP servers (0/4) (12s · esc to interrupt)\r\n')
+    }
+  }
+  let clockSettles = 0
+  manager.queuePrompt(clockPane.id, BRIEF, 0, 40, () => clockSettles++, 1200)
+  await sentReturnAt(clockLive.proc)
+  await logSays(clockPane.id, /prompt left UNSENT/, confirmBudget + 5000)
+  ok(clockSettles === 1 && clockLive.meta.owedPrompt && !/prompt submitted/.test(logOf(clockPane.id)),
+    'a turn clock and unreadable startup paint cannot confirm a Claude prompt without its native receipt', logOf(clockPane.id))
+  manager.kill(clockPane.id)
+
+  cli('sess-sole-review'); hooksDone('sess-sole-review', 60_000)
+  const solePane = manager.start({ cwd: root, agent: 'claude' })
+  const soleLive = manager.sessions.get(solePane.id)
+  soleLive.proc.say(IDLE)
+  soleLive.proc.onWrite = data => {
+    if (data.includes(BRIEF)) soleLive.proc.say('\x1b[2J\x1b[H❯ [Pasted text #1 +7 lines]\r\nRemoved 4 invisible characters · review and press Enter to send\r\n')
+  }
+  manager.queuePrompt(solePane.id, BRIEF, 0, 40, undefined, 1200)
+  await logSays(solePane.id, /return withheld/)
+  queued('sess-sole-review', { type: 'user', message: { role: 'user', content: BRIEF.split('\n')[0] } })
+  manager.sweepIdle()
+  ok(soleLive.meta.owedPrompt, 'a sole withheld prompt remains owed after a partial native receipt')
+  received('sess-sole-review')
+  manager.sweepIdle()
+  ok(!soleLive.meta.owedPrompt && !returnsOf(soleLive.proc) && soleLive.proc.writes.filter(data => data.includes(BRIEF)).length === 1,
+    'a sole withheld prompt reconciles its full native receipt without a follower or replay', logOf(solePane.id))
+  manager.kill(solePane.id)
+
+  // The two failed real recovery panes never received an accepted prompt or a reply.
+  // Their invisible-character review composer must remain an unfinished task.
+  cli('sess-review-hold'); hooksDone('sess-review-hold', 60_000)
+  const reviewPane = manager.start({ cwd: root, agent: 'claude' })
+  const reviewLive = manager.sessions.get(reviewPane.id)
+  reviewLive.proc.say(IDLE)
+  manager.armCloseWhenDone(reviewPane.id)
+  manager.sweepCloseWhenDone(reviewLive, Date.now(), 10_000)
+  ok(manager.sessions.has(reviewPane.id), 'an idle startup composer with no completed reply cannot close')
+  reviewLive.proc.onWrite = data => {
+    if (data.includes(BRIEF)) reviewLive.proc.say('\x1b[2J\x1b[H❯ [Pasted text #1 +7 lines]\r\nRemoved 4 invisible characters · review and press Enter to send\r\n')
+  }
+  let reviewSettles = 0
+  manager.queuePrompt(reviewPane.id, BRIEF, 0, 40, () => reviewSettles++, 1200)
+  await logSays(reviewPane.id, /return withheld/)
+  const rowsFor = id => Object.values(JSON.parse(readFileSync(join(work, 'userData', 'queued-prompts.json'), 'utf8'))).filter(row => row.id === id)
+  ok(reviewSettles === 1 && returnsOf(reviewLive.proc) === 0 && rowsFor(reviewPane.id)[0]?.typed && reviewLive.meta.owedPrompt,
+    'an altered pasted prompt is durably retained without blindly approving the review', logOf(reviewPane.id))
+  reviewLive.meta.finished = true // Even an older completed reply cannot dispose of owed intent.
+  manager.sweepCloseWhenDone(reviewLive, Date.now(), 10_000)
+  ok(manager.sessions.has(reviewPane.id), 'typed but unconfirmed intent prevents explicit completion and closure')
+
+  cli('sess-review-restored'); hooksDone('sess-review-restored', 60_000)
+  const restored = manager.start({ cwd: root, agent: 'claude' })
+  const restoredLive = manager.sessions.get(restored.id)
+  restoredLive.proc.say(IDLE)
+  forgetQueuedPrompts(); manager.deliverOwed(reviewPane.id, restored.id)
+  manager.kill(reviewPane.id)
+  const follower = 'A separate follow-up must wait for the original exact receipt.'
+  manager.queuePrompt(restored.id, follower, 0, 40, undefined, 400)
+  await sleep(650)
+  ok(rowsFor(restored.id).some(row => row.text === BRIEF && row.typed) && !restoredLive.proc.writes.some(data => data.includes(BRIEF) || data.includes(follower)),
+    'a restored Claude process never replays uncertain typed intent or appends a follower')
+  queued('sess-review-restored', { type: 'user', message: { role: 'user', content: BRIEF.split('\n')[0] } })
+  await sleep(350)
+  ok(rowsFor(restored.id).some(row => row.text === BRIEF) && !restoredLive.proc.writes.some(data => data.includes(follower)),
+    'a matching first line with missing payload is not a native delivery receipt')
+  restoredLive.proc.onWrite = data => {
+    if (data.includes(follower)) queued('sess-review-restored', { type: 'user', message: { role: 'user', content: follower } })
+  }
+  received('sess-review-restored')
+  await logSays(restored.id, /Claude transcript receipt/)
+  ok(rowsFor(restored.id).length === 0 && restoredLive.proc.writes.filter(data => data.includes(follower)).length === 1 && !restoredLive.proc.writes.some(data => data.includes(BRIEF)),
+    'only the entire native payload releases the retained owner and permits one follower paste', logOf(restored.id))
+  const oldReply = manager.replyFor
+  manager.replyFor = id => id === restored.id ? { text: 'Completed the requested recovery and verified it.' } : undefined
+  restoredLive.meta.status = 'idle'; restoredLive.meta.runSince = undefined; restoredLive.meta.drafting = false
+  restoredLive.meta.lastOutput = Date.now() - 10_000; restoredLive.footerEndedAt = Date.now() - 10_000
+  restoredLive.busyUntil = 0; restoredLive.typed = ''
+  manager.armCloseWhenDone(restored.id); manager.sweepIdle()
+  ok(!manager.sessions.has(restored.id), 'a genuine completed reply with no owed intent still closes normally')
+  manager.replyFor = oldReply
 
   // A queue record for some OTHER message is no receipt: the empty box still gets its returns.
   const other = await asked('sess-queued-other', { type: 'queue-operation', operation: 'enqueue',
@@ -1145,6 +1258,33 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
     startup.p.writes.filter(data => data === '\x1b[200~' + payload + '\x1b[201~').length === 1 && ledger(startup.pane.id).length === 0,
     'startup replies preserve one multiline delivery confirmed by the exact native receipt',logOf(startup.pane.id))
   manager.kill(startup.pane.id)
+
+  const trusted = open()
+  queue(trusted)
+  trusted.p.say('\x1b[2J\x1b[HDo you trust the contents of this directory?\r\n› 1. Yes, proceed\r\n  2. No, exit\r\nEnter to select\r\n')
+  manager.write(trusted.pane.id, '\r', 'desk')
+  const trustForeign = manager.codexQueued.get(trusted.pane.id)?.foreign
+  trusted.p.say(frame(''))
+  trusted.p.onWrite = data => {
+    if (data.includes(payload)) trusted.p.say(frame(payload))
+    if (data === '\r') trusted.received(payload)
+  }
+  ok(await waitFor(() => ledger(trusted.pane.id).length === 0) && !trustForeign &&
+    trusted.p.writes.filter(data => data === '\x1b[200~' + payload + '\x1b[201~').length === 1,
+    'a pre-paste trust choice preserves the empty checked composer and exact queued delivery', logOf(trusted.pane.id))
+  manager.kill(trusted.pane.id)
+
+  const foreignTrust = open()
+  queue(foreignTrust, payload, 300)
+  manager.write(foreignTrust.pane.id, 'human', 'desk')
+  foreignTrust.p.say('\x1b[2J\x1b[HDo you trust the contents of this directory?\r\n› 1. Yes, proceed\r\n  2. No, exit\r\nEnter to select\r\n')
+  manager.write(foreignTrust.pane.id, '\r', 'desk')
+  const stillForeign = manager.codexQueued.get(foreignTrust.pane.id)?.foreign
+  foreignTrust.p.say(frame(''))
+  await sleep(420)
+  ok(stillForeign && !pasted(foreignTrust.p),
+    'accepting a trust chooser never clears genuine earlier user ownership', logOf(foreignTrust.pane.id))
+  manager.kill(foreignTrust.pane.id)
 
   for (const [name,data,tagged] of [
     ['typing','human',false],['arrow','\x1b[D',false],['Shift-F3','\x1b[1;2R',false],

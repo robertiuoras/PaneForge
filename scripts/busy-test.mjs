@@ -397,5 +397,8 @@ const rc = '❯ \n───────\n⏵⏵ bypass permissions on (shift+tab
 if (readsBusy(rc)) { console.error('rc connecting must not read as busy'); process.exit(1) }
 if (!composerHeld(rc)) { console.error('rc connecting must hold the composer'); process.exit(1) }
 if (composerHeld('❯ \n5h 42% · wk 38% · Fable 41%/rc\n⏵⏵ bypass permissions on')) { console.error('a connected /rc badge is not a hold'); process.exit(1) }
-console.log('composer hold: 3 ok')
+const review = '❯ [Pasted text #1 +7 lines]\nRemoved 4 invisible characters · review and press Enter to send'
+if (!composerHeld(review) || readsBusy(review)) { console.error('an altered paste must hold the composer without claiming work'); process.exit(1) }
+if (composerHeld('❯ \nReady to send')) { console.error('a normal idle composer is not a review hold'); process.exit(1) }
+console.log('composer hold: 5 ok')
 console.log(`\nall ${total} frames read correctly`)

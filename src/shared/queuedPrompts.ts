@@ -30,7 +30,7 @@ export interface QueuedPrompt {
   at: number
   /** The folder the pane was in, so a dropped prompt can be found by project. */
   cwd?: string
-  /** Once bytes may have reached Codex, recovery requires this exact native receipt. */
+  /** Once bytes may have reached the CLI, recovery requires this exact native receipt. */
   typed?: { at: number; conversationId?: string; proof: 'receipt' | 'idle' }
 }
 

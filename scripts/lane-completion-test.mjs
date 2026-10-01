@@ -1,6 +1,6 @@
 // Real Git regressions for verified completion of preserved orphan work.
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync, watch } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync, watch } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -67,11 +67,39 @@ check('repeated and concurrent clocks reserve exactly one completion pane', f.re
 check('dispatch preserves HEAD, staging, loose bytes and private file', before.head === git(f.dir, 'rev-parse', 'HEAD') && before.index === git(f.dir, 'write-tree') && before.bytes === readFileSync(join(f.dir, 'source.txt'), 'utf8') && readFileSync(join(f.dir, 'private.txt'), 'utf8') === 'preserve me\n')
 const key = f.state().recovery.active
 check('completion brief requires ownership, PC verification and remote inclusion', /heldBy/.test(f.requests()[0]?.prompt ?? '') && /PC checks/.test(f.requests()[0]?.prompt ?? '') && /remote inclusion/.test(f.requests()[0]?.prompt ?? ''))
-const got = f.run('claim', '--prefer', 'a', '--cwd', f.dir, '--session', 'completion-owner')
-check('actual completion owner receives the exact preserved lane', got.code === 0 && JSON.parse(got.out).lane === 'a')
+// The completion pane is given nothing but the brief, so the positive steps below run its
+// commands exactly as written: each `node "<lane.mjs>" ...` up to the punctuation that ends
+// it, placeholders filled, from a folder outside any repo. 2026-10-01, pane 22: the brief put
+// `--repo` first and every command in it answered `Unknown command "--repo"`.
+const brief = (() => {
+  const prompt = f.requests()[0]?.prompt ?? '', commands = []
+  for (let at = prompt.indexOf('node "'); at >= 0; at = prompt.indexOf('node "', at + 1)) {
+    const word = /\s*("(?:[^"\\]|\\.)*"|[^\s"]+)/y, argv = []
+    word.lastIndex = at + 'node'.length
+    for (let m; (m = word.exec(prompt)); ) {
+      const last = !m[1].startsWith('"') && /[.;,]$/.test(m[1])
+      const token = last ? m[1].slice(0, -1) : m[1]
+      argv.push(token.startsWith('"') ? JSON.parse(token) : token)
+      if (last) break
+    }
+    commands.push(argv)
+  }
+  return commands
+})()
+const briefed = (sub, disposition, fill = {}) => {
+  const argv = brief.find((c) => c.includes(sub) && (!disposition || c.includes(disposition)))
+  if (!argv) return { code: null, out: '', err: `no ${sub} ${disposition ?? ''} command in the brief` }
+  const fills = { '<actual-native-id>': 'completion-owner', ...fill }
+  const r = spawnSync(process.execPath, argv.map((a) => fills[a] ?? a), { cwd: root, env: f.env, encoding: 'utf8', timeout: 90_000 })
+  return { code: r.status, out: r.stdout, err: r.stderr }
+}
+check('every command in the brief names its subcommand first', brief.length === 5 && brief.every((c) => /lane\.mjs$/.test(c[0]) && /^[a-z]+$/.test(c[1]) && c.includes('--repo')), JSON.stringify(brief))
+const got = briefed('claim')
+check('actual completion owner receives the exact preserved lane', got.code === 0 && JSON.parse(got.out).lane === 'a', got.out + got.err)
 check('claim alone cannot bypass the recovery binding/verification gate', f.run('ready', '--session', 'completion-owner', '--lane', 'a').code !== 0)
 check('bind rejects a foreign owner', f.run('recover', '--key', key, '--session', 'intruder', '--disposition', 'begin').code !== 0)
-check('bind records actual held ownership', f.run('recover', '--key', key, '--session', 'completion-owner', '--disposition', 'begin').code === 0)
+const bound = briefed('recover', 'begin')
+check('bind records actual held ownership', bound.code === 0, bound.err)
 git(f.dir, 'add', 'source.txt', 'private.txt'); git(f.dir, 'commit', '-qm', 'reviewed fixture intent')
 check('ready refuses recovered work before verification', f.run('ready', '--session', 'completion-owner', '--lane', 'a').code !== 0)
 check('a ready flag alone is never a completion receipt', f.run('recover', '--key', key, '--session', 'completion-owner', '--disposition', 'complete').code !== 0)
@@ -79,10 +107,11 @@ const proof = join(f.repo, '.git', 'proof.json')
 writeFileSync(proof, JSON.stringify({ commit: git(f.dir, 'rev-parse', 'HEAD'), checks: [{ command: 'failed check', exitCode: 1 }], review: { reviewer: 'independent', result: 'accepted' } }))
 check('a failed check receipt cannot authorize ready', f.run('recover', '--key', key, '--session', 'completion-owner', '--disposition', 'verified', '--receipt', proof).code !== 0)
 writeFileSync(proof, JSON.stringify({ commit: git(f.dir, 'rev-parse', 'HEAD'), checks: [{ command: 'fixture byte/index preservation assertions', exitCode: 0 }], review: { reviewer: 'independent fixture assertions', result: 'accepted' } }))
-check('verification pins current owned commit with check/review receipt', f.run('recover', '--key', key, '--session', 'completion-owner', '--disposition', 'verified', '--receipt', proof).code === 0)
-const ready = f.run('ready', '--session', 'completion-owner', '--lane', 'a')
+const verified = briefed('recover', 'verified', { '<json-file>': proof })
+check('verification pins current owned commit with check/review receipt', verified.code === 0, verified.err)
+const ready = briefed('ready', null, { '<owned-slot>': 'a' })
 check('normal ready integrates verified work', ready.code === 0, ready.out + ready.err)
-const complete = f.run('recover', '--key', key, '--session', 'completion-owner', '--disposition', 'complete')
+const complete = briefed('recover', 'complete')
 check('completion requires and records actual remote inclusion', complete.code === 0 && f.state().recovery.items[key].remoteCommit === git(f.remote, 'rev-parse', 'master'), complete.err)
 
 for (const kind of ['quiet-live', 'sleeping', 'unknown', 'empty-index', 'missing', 'foreign', 'clean-ahead', 'pane-subdir', 'process-subdir', 'problem-process', 'unknown-process']) {
@@ -145,7 +174,7 @@ check('a quiet native completion owner prevents takeover', resumed.requests().le
 writeFileSync(resumed.beat, JSON.stringify({ at: Date.now(), chats: [] })); resumed.run('retry')
 check('known-ended completion owner resumes with the same pinned key', resumed.requests().length === 2 && resumed.state().recovery.active === resumedKey)
 age(); resumed.run('retry'); age(); resumed.run('retry'); resumed.run('retry')
-check('repeated completion exits become a durable bounded blocker', resumed.requests().length === 3 && resumed.state().recovery.items[resumedKey].status === 'blocked' && !resumed.state().recovery.active)
+check('an unadopted replacement exit is blocked without replaying its task', resumed.requests().length === 2 && resumed.state().recovery.items[resumedKey].status === 'blocked' && !resumed.state().recovery.active && /without an adopted native owner/.test(resumed.state().recovery.items[resumedKey].reason))
 
 const preclock = fixture('preclock-clean-orphan')
 writeFileSync(join(preclock.dir, 'intent.txt'), 'orphan before clock'); git(preclock.dir, 'add', 'intent.txt'); git(preclock.dir, 'commit', '-qm', 'unready clean intent')
@@ -227,8 +256,12 @@ writeFileSync(hook.cli, "if (process.argv[2] !== 'release') await import('./lane
 copyFileSync(join(here, 'run-hidden.vbs'), join(hook.repo, 'scripts', 'run-hidden.vbs'))
 hook.env.PF_PANE = 'same-pane'
 const callHook = (event, session) => spawnSync(process.execPath, [join(hook.repo, 'scripts', 'lane-hook.mjs'), `--event=${event}`], { cwd: hook.dir, env: hook.env, encoding: 'utf8', input: JSON.stringify({ session_id: session, cwd: hook.dir, tool_name: 'Write', tool_input: { file_path: join(hook.dir, 'source.txt') } }) })
+// The chat's pane is open in its lane, as it is in real use. Without it the sweep the hook
+// starts first removes this empty, unheld folder on a Mac (lsof can see no program in it);
+// Windows has no lsof, so the sweep fails closed there and the fixture never noticed.
+writeFileSync(hook.panes, `guard-pane\ttitle\tclaude\tworking\t${hook.dir}\n`)
 const guarded = callHook('pretool', 'guard-owner')
-check('a guard-only first claim registers its repository', guarded.status === 0 && JSON.parse(readFileSync(hook.env.LANE_REGISTRY, 'utf8')).sessions['guard-owner'].includes(hook.repo), guarded.stderr)
+check('a guard-only first claim registers its repository', guarded.status === 0 && JSON.parse(readFileSync(hook.env.LANE_REGISTRY, 'utf8')).sessions['guard-owner'].includes(realpathSync(hook.repo)), guarded.stderr)
 writeFileSync(join(hook.dir, 'source.txt'), 'dirty guard-only intent')
 callHook('end', 'guard-owner')
 check('guard-only SessionEnd stamps the actual owner ended synchronously', Number.isFinite(hook.state().lanes.a?.ended))

@@ -1326,8 +1326,10 @@ function tailLines(file: string, bytes: number): string[] | null {
  * logged 5/5 and then 3/5 LOST while every one was answered. The CLI's own user row is the
  * receipt, found the way `claudeStartup` finds the transcript (the pid file names it).
  *
- * Matched on the prompt's first non-blank line, not the whole text: a paste is stored
- * wrapped in `<pasted_content id=..>` tags, and split across several when long.
+ * Require the entire payload. A partial or altered paste is not delivery proof. A long
+ * paste is stored as several `<pasted_content>` chunks split at whitespace (2026-10-01,
+ * a 3589-char brief became four ~1050-char chunks), so the comparison drops the tags and
+ * all whitespace: every non-blank character of the prompt, in order, or no receipt.
  *
  * A prompt typed while Claude is mid-turn is QUEUED, and no user row is written for it
  * until the turn absorbs it. Its receipt is the queue's own record, written the moment the
@@ -1338,12 +1340,34 @@ function tailLines(file: string, bytes: number): string[] | null {
  * pane s9-mujbz9vp's queued prompt got five more returns at 04:55:21-37Z that answered an
  * AskUserQuestion drawn over it, and was logged LOST.
  */
-const RECEIPT_MATCH_CHARS = 60
+const PASTE_TAG = /<\/?pasted_content id="[^"]*">/g
+const receiptText = (text: string): string => text.replace(PASTE_TAG, '').replace(/\s+/g, '')
+/**
+ * A held prompt is asked about every second (`sweepIdle`) and on every queue tick until it
+ * lands, and one read of a 3.4 MB transcript took 12ms median, 55ms p90 on the main thread
+ * (2026-10-01). A no stands until the conversation grows; transcripts only append.
+ */
+const receiptMisses = new Map<string, number>()
 export function claudeAcceptedPrompt(pid: number | undefined, prompt: string, since: number): boolean {
-  const first = prompt.split('\n').map((line) => line.trim()).find(Boolean)?.slice(0, RECEIPT_MATCH_CHARS)
-  const row = first ? cliSession(pid) : null
+  const wanted = receiptText(prompt)
+  const row = wanted ? cliSession(pid) : null
   const file = row && transcriptPath(row.cwd, row.sessionId)
-  if (!first || !file) return false
+  if (!file) return false
+  let size = -1
+  try {
+    size = statSync(file).size
+  } catch {
+    return false
+  }
+  const asked = `${file}\0${since}\0${wanted}`
+  if (receiptMisses.get(asked) === size) return false
+  if (claudeReceiptIn(file, wanted, since)) return true
+  if (receiptMisses.size >= 200) receiptMisses.clear()
+  receiptMisses.set(asked, size)
+  return false
+}
+
+function claudeReceiptIn(file: string, wanted: string, since: number): boolean {
   for (const line of tailLines(file, PROMPT_RECEIPT_BYTES) ?? []) {
     if (!line.includes('"user"') && !line.includes('"queue-operation"') && !line.includes('"queued_command"')) continue
     let rec: {
@@ -1377,7 +1401,7 @@ export function claudeAcceptedPrompt(pid: number | undefined, prompt: string, si
       : Array.isArray(content)
         ? content.map((part) => (typeof part === 'object' && part !== null && typeof (part as { text?: unknown }).text === 'string' ? (part as { text: string }).text : '')).join('\n')
         : ''
-    if (text.includes(first)) return true
+    if (receiptText(text).includes(wanted)) return true
   }
   return false
 }

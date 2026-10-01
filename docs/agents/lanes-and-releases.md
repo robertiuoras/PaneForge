@@ -50,6 +50,9 @@ there, PreToolUse refuses elsewhere. `node scripts/lane.mjs status --repo <dir>`
   clean-ahead HEAD/index until explicit adoption; damaged recovery folders require backup
   and diagnosis before claim. It never auto-stages deletions or reconstructs folders
   (`test:lanecompletion`).
+  If a completion pane ends before adopting a native owner, the pinned task becomes
+  durably blocked for explicit delivery/intent inspection. An unconfirmed launch is not
+  completion and does not trigger another automatic replay.
 - `recover --key <pinned-key> --session <native-id> --disposition begin [--lane <slot>]`
   binds an actual ordinary claim. `verified --receipt <json>` needs the current commit,
   nonempty successful `{command, exitCode: 0}` checks and accepted independent

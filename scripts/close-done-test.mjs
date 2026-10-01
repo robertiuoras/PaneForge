@@ -74,6 +74,8 @@ ok(/doneEnough\(\{ \.\.\.meta, busyUntil: live\.busyUntil \}, quiet, now\)/.test
 // Told BEFORE the kill: `kill()` deletes the session, and the request naming who to tell
 // goes with it.
 const body = sessions.slice(sessions.indexOf('private sweepCloseWhenDone'), sessions.indexOf('/** Start a countdown that was queued'))
+ok(/this\.owesPrompt\(live\)/.test(body), 'an owed or uncertain prompt refuses the explicit close path')
+ok(/meta\.agent !== 'shell' && meta\.finished !== true/.test(body), 'startup paint without a completed native reply refuses the explicit close path')
 ok(body.indexOf('queuePrompt') < body.indexOf('this.kill(meta.id)'), 'the opener is told before the pane is killed')
 ok(/PF_PANE: id/.test(sessions), 'every pane knows which pane it is, so `pf` can name the opener')
 
