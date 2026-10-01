@@ -179,7 +179,7 @@ import {
 } from './restore'
 import { ACTIVATION_SETTLE_MS, revealOnActivation } from '../shared/activation'
 import { OFFLOAD_ASK_MS, placeNewPane, preferRemoteOf, REMOTE_START_ACK_MS } from '../shared/offloadFirst'
-import { logActivation, logOffload, logReclaim, logFix, logHandoff } from './activationLog'
+import { logActivation, logOffload, logReclaim, logFix, logHandoff, logAwake } from './activationLog'
 import { projectNameOf, projectOn } from '../shared/capacity'
 import { staysHere } from '../shared/autoHandoff'
 import { listActivity, markActivitySeen, noteActivity, onActivityChange } from './activity'
@@ -2621,7 +2621,10 @@ const displayAwake = startDisplayAwake({
       lastKeyboard: s.lastKeyboard
     })),
   enabled: () => getConfig().keepDisplayAwake !== false,
-  log: (line) => console.log(`[awake] ${line}`)
+  log: (line) => {
+    console.log(`[awake] ${line}`)
+    logAwake(line)
+  }
 })
 
 onDeskChanged = (): void => {

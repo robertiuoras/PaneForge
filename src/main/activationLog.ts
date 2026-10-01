@@ -97,6 +97,15 @@ export function logModelAdvice(entry: Record<string, unknown>): void {
   write('model-advice.log', entry)
 }
 
+/**
+ * Every caffeinate start, stop and exit, one line each. 21 live `caffeinate -i` children
+ * piled up under one PaneForge (2026-10-01) with nothing on disk saying when each was
+ * started or why the app lost track of it.
+ */
+export function logAwake(line: string): void {
+  write('awake.log', { line: `[awake] ${line}` })
+}
+
 export function logActivation(entry: Record<string, unknown>): void {
   write('activation.log', entry)
 }
