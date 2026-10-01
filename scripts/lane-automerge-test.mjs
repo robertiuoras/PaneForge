@@ -20,7 +20,13 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { installLane } from './lane-fixture.mjs'
-import { mergeAutoConflicts, mergeImportConflicts, mergeMarkdownConflicts } from './lane-merge.mjs'
+import {
+  mergeAutoConflicts,
+  mergeImportConflicts,
+  mergeJsonListAdds,
+  mergeMarkdownConflicts,
+  mergeTableRowConflicts
+} from './lane-merge.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const root = join(tmpdir(), 'paneforge-automerge-test')
@@ -270,6 +276,76 @@ ok('anything that is not an object member refuses the file', mergeAutoConflicts(
 
 // The rule is scoped: a .ts file full of ignore-looking lines is not an ignore file.
 ok('a source file is not treated as a list', mergeAutoConflicts(gitignoreHunk, 'lib/thing.ts') === null)
+
+// ------------------------------------------- generated indexes: one row, one entry per lane
+
+// 2026-10-02, 3:49am: two "Two chats changed the same lines" alerts at once. One was
+// research-lab, where every research chat adds its finding to CATALOG.md (one table row)
+// and library/index.json (one entry) at the same spot, so ANY two research chats at once
+// conflicted: 11 of its 46 lane merges since 2026-09-18, and the catalog and index were 12
+// of its 14 refused files. Nothing in them to decide - each side only added its own row.
+// The base is what tells an added row from a rewritten one, so both rules need it.
+
+const d3 = (ours, base, theirs) =>
+  ['| Research | Checked |', '|---|---|', '<<<<<<< ours', ...ours, '||||||| base', ...base, '=======', ...theirs, '>>>>>>> theirs', '| [Old](old.md) | 2026-09-01 |', ''].join('\n')
+const rowA = '| [Wispr vs light dictation](a.md) | 2026-10-02 |'
+const rowB = '| [WordPress editing](b.md) | 2026-10-01 |'
+const rows = mergeTableRowConflicts(d3([rowA], [], [rowB]))
+ok('two chats each adding a table row keep both rows, ours first', rows?.split('\n').slice(2, 4).join('\n') === `${rowA}\n${rowB}`, rows)
+ok('and no marker survives', rows !== null && !/^(<{7}|\|{7}|={7}|>{7})/m.test(rows), rows)
+ok(
+  'a row one side REWROTE is a decision (research-lab 4c61956), so it still asks',
+  mergeTableRowConflicts(d3(['| [AI diagnostic offer](x.md) | 2026-09-20 |', rowA], ['| [AI diagnostic offer](x.md) | 2026-09-20 |'], ['| [AI diagnostic and agency offers](x.md) | 2026-09-20 |'])) === null
+)
+ok('without the base nobody can tell added from rewritten, so it asks', mergeTableRowConflicts(hunk([rowA], [rowB])) === null)
+ok('a header rule inside the hunk is a new table, not a row: it asks', mergeTableRowConflicts(d3([rowA, '|---|---|'], [], [rowB])) === null)
+ok('prose beside the rows is not a row: it asks', mergeTableRowConflicts(d3([rowA], [], [rowB, 'A paragraph about it.'])) === null)
+
+const entry = (id, title) => ({ id, kind: 'research', title, tags: [], feed: '' })
+const old = entry('catalog:old', 'Old finding')
+const asFile = (list) => JSON.stringify(list, null, 1) + '\n'
+const joined = mergeJsonListAdds(asFile([old]), asFile([entry('catalog:a', 'Wispr'), old]), asFile([entry('catalog:b', 'WordPress'), old]))
+ok(
+  'two chats each adding an entry keep both, written the way the file was',
+  joined === asFile([entry('catalog:a', 'Wispr'), entry('catalog:b', 'WordPress'), old]),
+  joined
+)
+ok(
+  'the same id added twice with two different bodies still asks',
+  mergeJsonListAdds(asFile([old]), asFile([entry('catalog:a', 'one'), old]), asFile([entry('catalog:a', 'two'), old])) === null
+)
+ok(
+  'an entry one side CHANGED still asks',
+  mergeJsonListAdds(asFile([old]), asFile([entry('catalog:a', 'Wispr'), old]), asFile([{ ...old, title: 'Renamed' }])) === null
+)
+ok(
+  'an entry one side REMOVED still asks',
+  mergeJsonListAdds(asFile([old, entry('catalog:z', 'z')]), asFile([old, entry('catalog:z', 'z'), entry('catalog:a', 'a')]), asFile([old])) === null
+)
+ok(
+  'a file not written the way JSON.stringify writes it is never rewritten',
+  mergeJsonListAdds(asFile([old]), JSON.stringify([entry('catalog:a', 'a'), old]) + '\n', asFile([entry('catalog:b', 'b'), old])) === null
+)
+ok('entries with no id cannot be told apart, so it asks', mergeJsonListAdds('[]\n', '[\n 1\n]\n', '[\n 2\n]\n') === null)
+
+// End to end, as research-lab had it: a lane and master each add their finding to both files.
+const CATALOG = (extra) => ['# Catalog', '', '| Research | Checked |', '|---|---|', ...extra, '| [Old](old.md) | 2026-09-01 |', ''].join('\n')
+mkdirSync(join(repo, 'library'), { recursive: true })
+commit(repo, 'CATALOG.md', CATALOG([]), 'catalog')
+commit(repo, 'library/index.json', asFile([old]), 'index')
+const third = JSON.parse(lane('claim', '--session', 'sess-d').out)
+git(third.dir, 'merge', '-q', 'master')
+writeFileSync(join(third.dir, 'library', 'index.json'), asFile([entry('catalog:a', 'Wispr'), old]))
+commit(third.dir, 'CATALOG.md', CATALOG([rowA]), 'lane files its finding')
+writeFileSync(join(repo, 'library', 'index.json'), asFile([entry('catalog:b', 'WordPress'), old]))
+commit(repo, 'CATALOG.md', CATALOG([rowB]), 'master files another finding')
+const filed = lane('ready', '--session', 'sess-d')
+ok('a lane that only added its own catalog row and index entry finishes by itself', filed.code === 0, filed.err || filed.out)
+ok('and is not left conflicted', laneOf(third.lane).conflicted === false)
+const cat = readFileSync(join(third.dir, 'CATALOG.md'), 'utf8')
+ok('the catalog has both rows', cat.includes(rowA) && cat.includes(rowB) && !/^(<{7}|\|{7}|={7}|>{7})/m.test(cat), cat)
+const idx = readFileSync(join(third.dir, 'library', 'index.json'), 'utf8')
+ok('the index has both entries, still valid JSON', (() => { try { return JSON.parse(idx).length === 3 } catch { return false } })(), idx)
 
 console.log(failed ? `\n${failed} failed` : '\nall good')
 process.exit(failed ? 1 : 0)

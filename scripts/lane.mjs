@@ -50,11 +50,13 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
   rmdirSync,
+  rmSync,
   statSync,
   symlinkSync,
   unlinkSync,
@@ -64,7 +66,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { fileURLToPath } from 'node:url'
 import { homedir, hostname, tmpdir } from 'node:os'
 import { closeTestApps } from './test-app.mjs'
-import { mergeAutoConflicts, mergeImportConflicts } from './lane-merge.mjs'
+import { mergeAutoConflicts, mergeImportConflicts, mergeJsonListAdds, mergeTableRowConflicts } from './lane-merge.mjs'
 import {
   CLAIM_NS,
   LOCK_REF,
@@ -1464,13 +1466,58 @@ function autoResolve(dir, files) {
     } catch {
       return []
     }
-    const merged = mergeAutoConflicts(text, f)
+    const merged = mergeAutoConflicts(text, f) ?? mergeFromSides(dir, f)
     if (merged === null) return []
     writes.push([join(dir, f), merged])
   }
   if (!writes.length) return []
   for (const [p, text] of writes) writeFileSync(p, text)
   return files
+}
+
+/**
+ * The rules that need the three whole versions rather than the markers: a generated JSON
+ * list (git cuts its hunks mid-entry) and table rows (only the base tells an added row from
+ * a rewritten one). Read from the index stages an open merge holds - 1 base, 2 ours, 3
+ * theirs - so it is the same on the lane side and the release side. null = not settled.
+ */
+function mergeFromSides(dir, f) {
+  const json = f.endsWith('.json')
+  if (!json && !f.endsWith('.md')) return null
+  const run = (args) =>
+    execFileSync('git', args, { windowsHide: true,
+      cwd: dir,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: hookTimeout(GIT_TIMEOUT_MS),
+      killSignal: 'SIGKILL',
+      maxBuffer: 64 * 1024 * 1024
+    })
+  let base, ours, theirs
+  try {
+    // Raw, not through git(): its trim() would eat the file's last newline.
+    ;[base, ours, theirs] = [1, 2, 3].map((n) => run(['show', `:${n}:${f}`]))
+  } catch {
+    return null // added on both sides, deleted on one: no base, nothing to settle
+  }
+  if (json) return mergeJsonListAdds(base, ours, theirs)
+  const tmp = mkdtempSync(join(tmpdir(), 'pf-merge-'))
+  try {
+    const paths = [['ours', ours], ['base', base], ['theirs', theirs]].map(([name, text]) => {
+      writeFileSync(join(tmp, name), text)
+      return join(tmp, name)
+    })
+    let diff3
+    try {
+      diff3 = run(['merge-file', '-p', '--diff3', '-L', 'ours', '-L', 'base', '-L', 'theirs', ...paths])
+    } catch (e) {
+      // It exits with the number of conflicts, and that is the case this is for.
+      diff3 = e.status > 0 && e.status < 128 && typeof e.stdout === 'string' ? e.stdout : null
+    }
+    return diff3 === null ? null : mergeTableRowConflicts(diff3)
+  } finally {
+    rmSync(tmp, { recursive: true, force: true })
+  }
 }
 
 /**
