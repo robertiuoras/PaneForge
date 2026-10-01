@@ -320,9 +320,9 @@ function typedAt(p) {
   return p.lastKeyboard && p.lastKeyboard > born + 1000 ? p.lastKeyboard : 0
 }
 
-/** The same test "Clear finished" applies (src/shared/exitedSweep.ts `isFinished`). */
+/** The same test "Clear finished" applies (src/shared/exitedSweep.ts `isFinished`), owed prompt included. */
 export function isFinishedPane(p) {
-  if (isRemote(p) || p.status !== 'exited' || p.asleep || p.keepOpen || p.ask || p.handingOff || !p.exitedAt) return false
+  if (isRemote(p) || p.status !== 'exited' || p.asleep || p.keepOpen || p.ask || p.handingOff || p.owedPrompt || !p.exitedAt) return false
   if (p.lastKeyboard && p.lastKeyboard > p.exitedAt) return false
   return true
 }

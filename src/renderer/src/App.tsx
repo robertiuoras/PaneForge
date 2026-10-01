@@ -4369,6 +4369,8 @@ export default function App(): JSX.Element {
     // closed). Same failure as the two readings of the close clock on 2026-09-01.
     if (s.ask) return false
     if (s.drafting) return false
+    // The app still owes this pane a prompt (2026-10-02: six restored panes closed here, prompt LOST).
+    if (s.owedPrompt) return false
     if (s.runSince !== undefined) return false
     if (s.handingOff) return false
     const st = fleetState(s)

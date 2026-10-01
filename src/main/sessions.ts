@@ -1753,6 +1753,10 @@ export class SessionManager extends EventEmitter {
     live.buffer.push(clean)
     this.attach(live)
     recordStart(live.meta)
+    // The rows a pane restored ASLEEP was carried (`deliverOwed(old, new, false)`) are typed
+    // now that it has a composer, exactly as `restart()` does. Without this the pane wore
+    // `owedPrompt` for good once woken and its prompt was never typed (2026-10-02 review).
+    this.deliverOwed(id, id)
     this.emitSessions()
     return live.meta
   }
@@ -1937,7 +1941,8 @@ export class SessionManager extends EventEmitter {
   deliverOwed(oldId: string, newId: string, queue = true): number {
     const owed = owedAfterRestore(oldId, newId)
     // A pane that came back ASLEEP has no composer to type into, so the rows are carried
-    // onto its new id and left there: `wake()` calls this again with `queue` on. Typing
+    // onto its new id and left there: `wake()` calls this again with `queue` on (it did not
+    // until 2026-10-02 - the comment said so, the code never did). Typing
     // into a pane with no process is how a recovered prompt would be lost a second time.
     if (queue) {
       for (const row of owed) {
@@ -1962,8 +1967,11 @@ export class SessionManager extends EventEmitter {
         }
         this.queuePrompt(newId, row.text, 0, PROMPT_START_MS, undefined, PROMPT_WAIT_MAX_MS, 'turn', row.key)
       }
-      this.setOwedPrompt(newId, owedCount(newId) > 0)
     }
+    // Asleep or not: a pane carrying owed rows says so, so every sweep and reclaim refusal
+    // sees it. Before, an asleep pane held rows with `owedPrompt` false and was closed
+    // (2026-10-02 18:44Z, six prompts LOST).
+    this.setOwedPrompt(newId, owedCount(newId) > 0)
     return owed.length
   }
 

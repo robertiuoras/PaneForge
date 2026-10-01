@@ -208,6 +208,18 @@ occupants = []
 result = await place({ ...request, cwd: join(projects, 'clients-a') })
 ok('even a clean exact resume stays in its original copy', same(result.cwd, join(projects, 'clients-a')))
 
+// A restored pane gets a NEW id, so its own pre-restart claim looks like somebody else's
+// (pane 2, 2026-10-02 18:34Z). The claim carries the Claude conversation the pane is in.
+const CONVO = '1651028c-3346-45d0-9765-b9931fbc6378'
+writeFileSync(
+  join(repo, '.git', 'paneforge-lanes.json'),
+  JSON.stringify({ lanes: { main: { session: CONVO, cwd: repo, pane: 's60-before-restart' } } })
+)
+ok('a claim by another conversation still holds the folder', ledgerTakenFolders('s1-new', () => false, 'other-convo').some((t) => same(t, repo)))
+ok("the waking pane's own pre-restart claim (same conversation) does not hold it",
+  !ledgerTakenFolders('s1-new', () => false, CONVO).some((t) => same(t, repo)))
+ok('with no conversation known the claim holds as before', ledgerTakenFolders('s1-new', () => false).some((t) => same(t, repo)))
+
 rmSync(root, { recursive: true, force: true })
 if (failed) {
   console.log(`\nreopen-hold: ${failed} FAILED`)

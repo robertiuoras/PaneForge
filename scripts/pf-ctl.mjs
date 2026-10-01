@@ -477,7 +477,7 @@ function placeTranscript(cwd, id) {
 if (cmd === 'list') {
   const list = await sessions()
   // The number leads, because it is the name on the card. See `resolve`.
-  for (const s of list) console.log([cardNumber(list, s.id), s.id, s.status, s.title, s.cwd].join('\t'))
+  for (const s of list) console.log([cardNumber(list, s.id), s.id, s.asleep ? 'asleep' : s.status, s.title, s.cwd].join('\t'))
 } else if (cmd === 'agents') {
   // The running app's own catalogue, so an agent the person added is here too, and
   // "installed" is this computer's answer rather than a list baked into this file.

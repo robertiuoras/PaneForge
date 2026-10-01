@@ -80,7 +80,7 @@ assert.match(mainIndex, /cwd: lane\.cwd,\s+resumeCwd,/, 'a resumed conversation 
 assert.match(mainIndex, /const file = req\.resumeId \? resumableTranscript\(req\.resumeCwd \?\? req\.cwd, req\.resumeId, req\.agent\) : null/, 'silent restore validates the selected provider transcript')
 assert.match(mainIndex, /const held = spec\.resumeId \? resumableTranscript\(spec\.resumeCwd \?\? spec\.cwd, spec\.resumeId, spec\.agent\) : null/, 'History restore validates the selected provider transcript')
 assert.match(mainIndex, /const unavailable = req\.agent !== 'shell' && !named/, 'a saved agent pane with no verified id becomes unavailable')
-assert.match(mainIndex, /const asleep = unavailable \|\| req\.asleep/, 'unavailable restore is a process-free asleep placeholder')
+assert.match(mainIndex, /const asleep = unavailable \|\| \(req\.asleep && !owed\)/, 'unavailable restore is a process-free asleep placeholder')
 assert.match(mainIndex, /\r?\n\s+asleep,\r?\n/, '...and that is the reading the pane is started with')
 assert.match(mainIndex, /Saved conversation could not be verified\. It remains asleep/, 'the placeholder explains it was preserved instead of replaced')
 
