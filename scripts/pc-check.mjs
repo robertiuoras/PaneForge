@@ -12,11 +12,15 @@
  * environment, a `--session` flag before `--repo` was shipped to the PC as the command
  * itself, and one ssh reset killed a run that simply needed a retry. This does all of that.
  *
- * Names: `typecheck` and `test` are npm scripts; anything else is `test:<name>`.
+ * Names: `typecheck` and `test` are npm scripts; anything else is `test:<name>`, or, for a
+ * suite `scripts/test-all.mjs` knows with no npm alias (nativetranscript, 2026-10-02: the
+ * chain died on `Missing script` after every real suite had passed, and read as a failure),
+ * `node scripts/test-all.mjs <name>`.
  * Output: failing lines, every "N/N checks passed"-style total, and rbuild's exit line.
  * Exit code is the PC's.
  */
 import { spawnSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -27,8 +31,14 @@ if (!names.length) {
   console.error('usage: node scripts/pc-check.mjs <typecheck|test|all|suite...>')
   process.exit(2)
 }
-const scripts = names.flatMap((n) => (n === 'all' ? ['typecheck', 'test'] : [n === 'typecheck' || n === 'test' ? n : `test:${n}`]))
-const argv = scripts.flatMap((s, i) => (i ? ['&&', 'npm', 'run', s] : ['npm', 'run', s]))
+const aliases = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).scripts ?? {}
+const commands = names.flatMap((n) =>
+  n === 'all' ? [['npm', 'run', 'typecheck'], ['npm', 'run', 'test']]
+  : n === 'typecheck' || n === 'test' ? [['npm', 'run', n]]
+  : aliases[`test:${n}`] ? [['npm', 'run', `test:${n}`]]
+  : [['node', 'scripts/test-all.mjs', n]]
+)
+const argv = commands.flatMap((c, i) => (i ? ['&&', ...c] : c))
 
 // rbuild refuses without a native session id; any stable id for this run is enough to key
 // its GuardDeck admission, and a pane always has one of these.
@@ -50,7 +60,7 @@ for (let attempt = 1; attempt <= 3; attempt++) {
 
 const out = `${run.stdout ?? ''}${run.stderr ?? ''}`.split('\n')
 const keep = out.filter((l) =>
-  /error TS|\bFAIL\b|✗|not ok|failed|Error:|passed|all good|checks? ok|rbuild: exit|cannot reach/i.test(l)
+  /error TS|\bFAIL\b|✗|not ok|failed|Error:|passed|all good|all ok|checks? ok|Missing script|rbuild: exit|cannot reach/i.test(l)
 )
 // rbuild's own exit line alone says nothing: `npm error Missing script: "test:x"` matched no
 // pattern and a run printed only `rbuild: exit 1` (2026-09-23). Then the tail is the answer.
