@@ -39,6 +39,55 @@ export function decide(state: MainWatchState, now: number, hangMs = HANG_MS): { 
 }
 
 /**
+ * A main process the OS has starved of memory is not a frozen one.
+ *
+ * 2026-10-01 08:25Z: main went 76s without a beat while the Mac had 196MB free and was 98%
+ * busy, and `ps` read main at 0.0% cpu with 928KB resident: paged out and waiting for memory,
+ * not stuck in its own code. The relaunch ended every chat mid-turn, then cold-started them
+ * all on the same starving machine (first output 3.5-14s a pane, 0.5s a few minutes before).
+ * So when the machine is short of memory and main is not burning cpu, the silence gets
+ * STARVED_FACTOR times the grace before the relaunch; one beat in between ends the wait.
+ */
+export const STARVED_FACTOR = 4
+
+export interface Starvation {
+  /** macOS `kern.memorystatus_vm_pressure_level` (1 normal, 2 warn, 4 critical); null elsewhere or unread. */
+  pressure: number | null
+  freeMb: number
+  totalMb: number
+  /** Main's own %cpu as `ps` reads it; null when unread (Windows, or a `ps` that timed out). */
+  mainCpuPct: number | null
+}
+
+export function starved(s: Starvation): boolean {
+  // macOS keeps free pages near zero on a healthy machine, so there only the kernel's own
+  // pressure level counts. Elsewhere free memory is what the OS calls available.
+  const short = s.pressure !== null ? s.pressure >= 2 : s.totalMb > 0 && s.freeMb / s.totalMb < 0.05
+  const spinning = s.mainCpuPct !== null && s.mainCpuPct >= 50
+  return short && !spinning
+}
+
+/** `ps -o time=,%cpu=,rss=,state=` -> the %cpu column, or null. */
+export function psCpuPct(line: string): number | null {
+  const cpu = Number(line.trim().split(/\s+/)[1])
+  return Number.isFinite(cpu) ? cpu : null
+}
+
+function starvationText(s: Starvation): string {
+  const pressure = s.pressure !== null ? `pressure ${s.pressure}, ` : ''
+  const cpu = s.mainCpuPct !== null ? `, main at ${s.mainCpuPct}% cpu` : ''
+  return `${pressure}${s.freeMb}MB free of ${s.totalMb}MB${cpu}`
+}
+
+export function starvedWaitLine(silentS: number, limitS: number, s: Starvation, pid: number): string {
+  return `main: no heartbeat for ${silentS}s on a machine short of memory (${starvationText(s)}) - waiting up to ${limitS}s before relaunching (pid ${pid})`
+}
+
+export function starvedBackLine(silentS: number, pid: number): string {
+  return `main: beating again after ${silentS}s of silence on a machine short of memory - no relaunch (pid ${pid})`
+}
+
+/**
  * What main says about itself with every beat.
  *
  * Four lines in a week (2026-09-18 to 09-23) said only "stopped (0)" or "no heartbeat for

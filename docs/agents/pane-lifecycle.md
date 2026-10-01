@@ -135,3 +135,11 @@ START_COLS)`, user-initiated; `window.__pf[id].redraw()`.
 `shared/recover.ts` (`test:recover`) keys on `The response above may be incomplete.`; never
 after rate/usage limit, credit, auth, overload; `> ` quoted error is talk (`promptBox`); three
 in a row stops; new output only; sends via `queuePrompt`.
+
+## A frozen main is relaunched; a starved one is waited on
+
+`watchdog-child.ts` relaunches after `HANG_MS` (75s) without a beat, which ends every chat
+mid-turn. First it reads the machine (`shared/mainWatch.ts` `starved`, `scripts/main-watch-test.mjs`): Mac
+pressure >= 2 (elsewhere < 5% free) and main under 50% cpu = paged out, not stuck; the wait
+becomes `STARVED_FACTOR` (4) x the grace, a beat ends it (`beating again ... no relaunch`).
+2026-10-01 08:25Z: 196MB free, main 0% cpu 928KB resident; the relaunch cold-started 16 chats.
