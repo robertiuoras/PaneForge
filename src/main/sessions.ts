@@ -68,7 +68,7 @@ import { LIVE_REPLAY_LIMIT } from '../shared/freshReplay'
 import { paintedWidth, RESTORE_MARK_TEXT } from '../shared/replayWidth'
 import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, SUBMIT_GAP_MS, armDecision, clearChunks, hasFreshPaneHandoff, resumeOf, dropFor, dropWords, expiryDecision, queuedPromptDecision, quietEnoughToArm, standDownFor, type DropReason, type QueuedPromptVerdict } from '../shared/autoclear'
 import { acLog } from './autoclearLog'
-import { dropAllFor, noteAccepted, noteNativeAccepted, noteTyped, noteDropped, noteSubmitted, noteWithheld, owedAfterRestore, owedCount, stillOwed } from './queuedPrompts'
+import { dropAllFor, noteAccepted, noteNativeAccepted, noteTyped, noteDropped, noteLanded, noteSubmitted, noteWithheld, owedAfterRestore, owedCount, stillOwed } from './queuedPrompts'
 import type { QueueDrop } from '../shared/queuedPrompts'
 import { logReclaim } from './activationLog'
 import { guardPtyPipes } from './closedPipe'
@@ -96,7 +96,7 @@ export interface AutoClearArm {
   tokens?: number
 }
 import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from './pipe'
-import { claimFromCli, claimCodexFromProcess, claudeAcceptedPrompt, claudeStartup, codexAcceptedPrompt, codexConversationReceipt, codexPromptReceipt, codexQuestionPending, forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeEvidence, resumeIdFor, transcriptFor, transcriptPath } from './transcripts'
+import { claimFromCli, claimCodexFromProcess, claudeAcceptedPrompt, claudeReceiptReadable, claudeStartup, codexAcceptedPrompt, codexConversationReceipt, codexPromptReceipt, codexQuestionPending, forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeEvidence, resumeIdFor, transcriptFor, transcriptPath } from './transcripts'
 import { recordPromptReview } from './promptReview'
 import { liveModelFor } from './paneModel'
 import { backgroundAgentsFor, backgroundWorkerReadingFor, forgetBackgroundAgents, noteBackgroundAgents } from './runningAgents'
@@ -289,6 +289,13 @@ const PROMPT_ENTER_TRIES = ms('PF_PROMPT_ENTER_TRIES', 6)
  */
 const PROMPT_STARTUP_MS = ms('PF_PROMPT_STARTUP_MS', 60_000)
 const PROMPT_PIDFILE_MS = ms('PF_PROMPT_PIDFILE_MS', 10_000)
+/**
+ * How long a Claude prompt called LOST is still looked for in its conversation. After the
+ * two app restarts of 2026-10-01 (6:26pm, 6:54pm) 14 of 15 resumed panes' `continue` was
+ * logged LOST and then landed: user rows from 7s before the verdict (s20-mupase0a) to 80s
+ * after it (s11-mupasdoz), with 20 CLIs resuming at once on a pressured Mac.
+ */
+const PROMPT_LATE_MS = ms('PF_PROMPT_LATE_MS', 120_000)
 /**
  * The wait budget for the resume prompt after an automatic `/clear`, which is not the
  * budget an ordinary launch prompt gets.
@@ -4164,6 +4171,7 @@ export class SessionManager extends EventEmitter {
     // 'sent' closes the ledger only with submission proof. An unconfirmed typed Codex
     // prompt stays recoverable and keeps its composer owner after this wait ends.
     let settled = false
+    let watchLate = (): void => {}
     let curtainReleased = false
     const releaseCurtain = (): void => {
       if (curtainReleased) return
@@ -4186,6 +4194,7 @@ export class SessionManager extends EventEmitter {
       }
       this.setOwedPrompt(id, owedCount(id) > 0)
       onSettled?.()
+      if (end === 'unsent') watchLate()
     }
     let deadline = Date.now() + Math.max(0, budgetMs) + Math.max(0, extraDelay)
     // `lastKeyboard` as it stands NOW, which is after whatever write queued this prompt -
@@ -4295,6 +4304,61 @@ export class SessionManager extends EventEmitter {
       proof !== 'idle' &&
       live.meta.agent === 'claude' &&
       claudeAcceptedPrompt(live.proc?.pid, prompt, (typedTextAt || firstReturnAt) - 1000)
+    // A PROMPT CALLED LOST CAN STILL LAND (see PROMPT_LATE_MS). The verdict stands and
+    // nothing is typed again, but the conversation is read for a while longer, and a row
+    // that turns up is written into the log beside the LOST line - so the ledger never says
+    // lost about a prompt Claude answered. Somebody typing in the pane ends the look: a
+    // `continue` they typed is theirs, not the late arrival of this one.
+    watchLate = () => {
+      if (proof === 'idle' || !(typedTextAt || firstReturnAt)) return
+      const since = Date.now()
+      // ...and only in the process it was typed into: a restart or wake within the window
+      // starts a new keyboard clock, and its `continue` is not this prompt either.
+      const proc = this.sessions.get(id)?.proc
+      const look = (): void => {
+        const live = this.sessions.get(id)
+        if (!live || live.proc !== proc || live.meta.agent !== 'claude' || (live.meta.lastKeyboard ?? 0) > mark ||
+          Date.now() - since > PROMPT_LATE_MS) return
+        if (!claudeTook(live)) return void setTimeout(look, PROMPT_CONFIRM_MS)
+        acLog(`${id} prompt landed after all, ${Math.round((Date.now() - since) / 1000)}s after it was left UNSENT - Claude transcript receipt`)
+        noteLanded(id, prompt, Date.now() - since)
+      }
+      look()
+    }
+    // ONLY THE RECEIPT SAYS SENT, once there is one to read. A turn clock and an empty-looking
+    // box both said "submitted" over prompts that never went in: 2026-10-01 08:14:53Z, pane
+    // s54-mup9d0za, a 4958-char brief sat in the composer as `[Pasted text #1 +30 lines]` for
+    // 2m47s after the log said it had left; 08:50:43Z, s11-mup9scpm, "a turn started" was the
+    // busy footer of a `/clear` that then wiped the typed resume prompt. With Claude Code's pid
+    // file naming its conversation, no user row is no prompt; the screen is only read without one.
+    const receiptOnly = (live: Live): boolean =>
+      proof !== 'idle' && live.meta.agent === 'claude' && claudeReceiptReadable(live.proc?.pid)
+    // A RETURN TAKEN WHILE CLAUDE CODE STARTS IS HELD, NOT LOST. The CLI runs the submit once
+    // its SessionStart hooks are done - 17s in for s54, 65s in for s27-mupamiv8 (user row at
+    // +72s, with no further key) - and every return sent meanwhile goes INTO the composer as a
+    // character: s54's returns 2-5 came back as "Removed 4 invisible characters - review and
+    // press Enter to send", which stopped the held submit until Robert pressed Enter 3 minutes
+    // later. Of 2026-10-01's fresh panes, the ones given one return landed; the ones given
+    // five or six were logged UNSENT and landed 44-97s later, or sat for minutes. So while a
+    // young process may still be starting, the confirm waits for the receipt and sends nothing.
+    let saidDeferring = false
+    const deferring = (live: Live): boolean => {
+      if (proof === 'idle' || live.meta.agent !== 'claude') return false
+      const born = live.proc ? procStarted.get(live.proc) : undefined
+      if (born === undefined || Date.now() - born >= PROMPT_STARTUP_MS || claudeStartup(live.proc?.pid) === 'started') return false
+      // With no pid file there is no receipt to wait for. One is born 3-19s after spawn on
+      // this Mac (2026-10-01; none yet at +10s in the dev proof), so a process past twice
+      // the pid-file wait without one - a CLI that writes none for this pid - gets its
+      // returns as before rather than a minute of silence.
+      if (!claudeReceiptReadable(live.proc?.pid) && Date.now() - born >= PROMPT_PIDFILE_MS * 2) return false
+      if (!saidDeferring) {
+        saidDeferring = true
+        acLog(`${id} return taken while Claude Code is still starting - no more returns until it has (up to ${Math.round((born + PROMPT_STARTUP_MS - Date.now()) / 1000)}s)`)
+      }
+      // The window to prove it in starts again once the start is over.
+      confirmUntil = Math.max(confirmUntil, Date.now() + PROMPT_CONFIRM_MS * PROMPT_ENTER_TRIES)
+      return true
+    }
     const codexTook = (): boolean => Boolean(owner?.since && (owner.conversationId ?
       codexConversationReceipt(owner.receiptCwd, owner.conversationId, prompt, owner.since) :
       codexAcceptedPrompt(id, prompt, owner.since)))
@@ -4493,8 +4557,14 @@ export class SessionManager extends EventEmitter {
           repaint(still)
           const heldNow = proof !== 'idle' ? promptStillInBox(painted, prompt) : null
           if (proof !== 'idle' && still.meta.agent !== 'codex' && heldNow !== true && (still.meta.runSince ?? 0) >= typedAt) {
-            acLog(`${id} prompt submitted - a turn started`)
-            return settle('sent')
+            if (!receiptOnly(still)) {
+              acLog(`${id} prompt submitted - a turn started`)
+              return settle('sent')
+            }
+            if (claudeTook(still)) {
+              acLog(`${id} prompt submitted - a turn started and Claude Code wrote it down`)
+              return settle('sent')
+            }
           }
           // ...AND SOMEBODY TYPING AFTERWARDS DOES NOT UN-SEND IT. 2026-09-27 05:37Z, pane
           // s27-mujdy58r: the launch prompt is a user row in its transcript at 05:37:06.4, a
@@ -4555,7 +4625,13 @@ export class SessionManager extends EventEmitter {
             // nobody had sent, with the app's own log ending at that write. So a busy pane
             // is now WAITED OUT rather than counted as a submit; only a turn, a person, or
             // the deadline ends this.
-            if (Date.now() >= confirmUntil) {
+            // A receipt is asked for on every tick rather than at the end: a pane painting
+            // its answer is the common case, and the wait it ends can be a minute long.
+            if (claudeTook(still)) {
+              acLog(`${id} prompt submitted - Claude transcript receipt`)
+              return settle('sent')
+            }
+            if (!deferring(still) && Date.now() >= confirmUntil) {
               // ...AND A PANE THAT IS ANSWERING IS NOT A PANE THAT WAS NEVER ASKED. The turn
               // proof above cannot fire for the app's own return - `ourWrite('\r')` runs
               // `beginRun`, which stamps `runSince` a hair BEFORE `typedAt` is read - so it
@@ -4578,13 +4654,15 @@ export class SessionManager extends EventEmitter {
                 acLog(`${id} prompt submitted - Claude transcript receipt`)
                 return settle('sent')
               }
-              if (box === false && !typedIntoTurn && still.meta.agent !== 'codex') {
+              const noRecord = receiptOnly(still)
+              if (box === false && !typedIntoTurn && still.meta.agent !== 'codex' && !noRecord) {
                 acLog(`${id} prompt submitted - it is no longer in the composer`)
                 return settle('sent')
               }
               acLog(
                 `${id} prompt left UNSENT: still painting ${PROMPT_CONFIRM_MS * PROMPT_ENTER_TRIES}ms after the return` +
-                  (box ? ', and the composer still holds it' : typedIntoTurn ? ', typed over a turn already running' : ', and no composer could be read')
+                  (box ? ', and the composer still holds it' : noRecord ? ', and Claude Code has no record of it' :
+                    typedIntoTurn ? ', typed over a turn already running' : ', and no composer could be read')
               )
               return settle('unsent')
             }
@@ -4596,6 +4674,8 @@ export class SessionManager extends EventEmitter {
             acLog(`${id} prompt submitted - Claude transcript receipt`)
             return settle('sent')
           }
+          // ...or held by a Claude Code still starting, which sends it itself when it is done.
+          if (deferring(still)) return confirm()
           // Otherwise the return was eaten. Send another.
           if (tries + 1 >= PROMPT_ENTER_TRIES) {
             acLog(`${id} prompt left UNSENT: ${PROMPT_ENTER_TRIES} returns were swallowed`)

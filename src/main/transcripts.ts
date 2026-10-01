@@ -1356,6 +1356,16 @@ function tailLines(file: string, bytes: number): string[] | null {
  * AskUserQuestion drawn over it, and was logged LOST.
  */
 const RECEIPT_MATCH_CHARS = 60
+
+/**
+ * Can `claudeAcceptedPrompt` answer for this process at all - does Claude Code's pid file
+ * name its conversation? Then a missing user row means the prompt did not go in, whatever
+ * the screen says; without one only the screen is left to read.
+ */
+export function claudeReceiptReadable(pid: number | undefined): boolean {
+  return cliSession(pid) !== null
+}
+
 export function claudeAcceptedPrompt(pid: number | undefined, prompt: string, since: number): boolean {
   const first = prompt.split('\n').map((line) => line.trim()).find(Boolean)?.slice(0, RECEIPT_MATCH_CHARS)
   const row = first ? cliSession(pid) : null

@@ -46,6 +46,7 @@ process.env.PF_PROMPT_ENTER_TRIES ??= '3'
 // `typing anyway`, not `finished starting` (2026-09-28, 1 of 280 red).
 process.env.PF_PROMPT_STARTUP_MS ??= '3000'
 process.env.PF_PROMPT_PIDFILE_MS ??= '800'
+process.env.PF_PROMPT_LATE_MS ??= '1500'
 process.env.PF_CLAUDE_SETTLE_MS ??= '200'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -129,8 +130,8 @@ const logOf = (id) => {
 }
 // On the PC a line can land after the keystrokes it describes, so a reading waits for it
 // rather than racing it.
-const logSays = async (id, re) => {
-  const until = Date.now() + 2000
+const logSays = async (id, re, waitMs = 2000) => {
+  const until = Date.now() + waitMs
   while (Date.now() < until && !re.test(logOf(id))) await sleep(40)
   return re.test(logOf(id))
 }
@@ -868,6 +869,150 @@ const ANSWERING =
     manager.kill(pane.id)
   }
 
+  // "SUBMITTED" WITH NO USER ROW. 2026-10-01 08:14:53Z, pane s54-mup9d0za: a 4958-char brief
+  // sat in the composer as `[Pasted text #1 +30 lines]` while the log said "it is no longer in
+  // the composer" - the composer was read for the brief's words, which a placeholder does not
+  // have - and Claude Code's transcript got it 2m47s later, when Robert pressed Enter. The pane
+  // paints over the whole window, so only the final reading decides.
+  const LONG = Array.from({ length: 30 }, (_, i) => `${i + 1}. BRIEF LINE ${i + 1}: carry this step out and prove it.`).join('\n')
+  const unproven = async (name, composer) => {
+    cli(name)
+    hooksDone(name, 60_000)
+    const pane = manager.start({ cwd: root, agent: 'claude' })
+    const p = manager.sessions.get(pane.id).proc
+    let settles = 0
+    manager.queuePrompt(pane.id, LONG, 0, 40, () => settles++, 5000)
+    p.say(IDLE)
+    await sentReturnAt(p)
+    const frame = '\x1b[2J\x1b[H✻ Working… (3s · esc to interrupt)\r\n' + RULE + '\r\n' + composer + '\r\n' + RULE + '\r\n'
+    for (const until = Date.now() + budget + 800; Date.now() < until && !settles; ) {
+      p.say(frame)
+      await sleep(50)
+    }
+    await logSays(pane.id, /prompt submitted|UNSENT/)
+    manager.kill(pane.id)
+    return { log: logOf(pane.id), settles }
+  }
+  const held = await unproven('sess-paste-held', '❯ [Pasted text #1 +30 lines]')
+  ok(!/prompt submitted/.test(held.log) && /UNSENT/.test(held.log),
+    'a paste placeholder still in the composer is UNSENT, never "submitted"', held.log)
+  const gone = await unproven('sess-paste-gone', '❯ ')
+  ok(!/prompt submitted/.test(gone.log) && /UNSENT: .*no record of it/.test(gone.log),
+    'an empty composer with no user row in the transcript is UNSENT too, when the transcript can be read', gone.log)
+
+  // A RETURN TAKEN WHILE CLAUDE CODE STARTS IS HELD, NOT LOST. 2026-10-01, pane
+  // s27-mupamiv8: typed 10s in, six returns 4s apart, "UNSENT: 6 returns were swallowed" at
+  // +38s - and the user row at +72s, sent by Claude Code itself once its SessionStart hooks
+  // finished at +65s. s54 got five returns and four of them came back as "Removed 4 invisible
+  // characters - review and press Enter to send". A young Claude Code with a pid file and no
+  // transcript yet is given one return and waited for.
+  {
+    const name = 'sess-deferred'
+    cli(name)
+    const pane = manager.start({ cwd: root, agent: 'claude' })
+    const at = Date.now()
+    const p = manager.sessions.get(pane.id).proc
+    let settles = 0
+    manager.queuePrompt(pane.id, BRIEF, 0, 40, () => settles++, 5000)
+    p.say(IDLE)
+    await sentReturnAt(p)
+    p.say('\x1b[2J\x1b[H' + RULE + '\r\n❯ ' + BRIEF.split('\n')[0] + '\r\n' + RULE + '\r\n')
+    // Claude Code finishes starting at +1.9s and runs the submit it took.
+    while (Date.now() < at + 1900) await sleep(20)
+    const before = returnsOf(p)
+    received(name)
+    for (const until = Date.now() + budget + 1500; Date.now() < until && !settles; ) await sleep(50)
+    await logSays(pane.id, /prompt submitted|UNSENT/)
+    ok(before === 1 && returnsOf(p) === 1, 'one return while Claude Code starts, and no more',
+      `${before} before the row, ${returnsOf(p)} in all\n${logOf(pane.id)}`)
+    ok(/Claude transcript receipt/.test(logOf(pane.id)) && !/UNSENT/.test(logOf(pane.id)) && settles === 1,
+      'the submit Claude Code ran when it was ready is the receipt', logOf(pane.id))
+    ok(/still starting - no more returns/.test(logOf(pane.id)), 'the wait is written down', logOf(pane.id))
+    manager.kill(pane.id)
+  }
+
+  // ...and the wait ends: past the start ceiling a prompt still in the box gets its returns,
+  // and one that never got a row is UNSENT, never "submitted".
+  {
+    const name = 'sess-deferred-never'
+    cli(name)
+    const pane = manager.start({ cwd: root, agent: 'claude' })
+    const at = Date.now()
+    const p = manager.sessions.get(pane.id).proc
+    let settles = 0
+    manager.queuePrompt(pane.id, BRIEF, 0, 40, () => settles++, 5000)
+    p.say(IDLE)
+    await sentReturnAt(p)
+    p.say('\x1b[2J\x1b[H' + RULE + '\r\n❯ ' + BRIEF.split('\n')[0] + '\r\n' + RULE + '\r\n')
+    let second = 0
+    for (const until = at + Number(process.env.PF_PROMPT_STARTUP_MS) + budget * 3 + 2000; Date.now() < until && !settles; ) {
+      if (!second && returnsOf(p) > 1) second = Date.now()
+      await sleep(20)
+    }
+    await logSays(pane.id, /prompt submitted|UNSENT/)
+    ok(second - at >= Number(process.env.PF_PROMPT_STARTUP_MS) - 100,
+      'no second return until Claude Code is past its start', `second return at +${second ? second - at : '-'}ms\n${logOf(pane.id)}`)
+    ok(returnsOf(p) > 1 && /UNSENT/.test(logOf(pane.id)) && !/prompt submitted/.test(logOf(pane.id)),
+      'then it gets its returns, and with no row it is UNSENT', `${returnsOf(p)} returns\n${logOf(pane.id)}`)
+    manager.kill(pane.id)
+  }
+
+  // A PROMPT CALLED LOST CAN STILL LAND. After the 2026-10-01 restarts 14 of 15 resumed
+  // panes' `continue` was logged LOST and then answered, up to 80s later (s11-mupasdoz). The
+  // verdict stands, but a row that turns up afterwards is written beside it; one typed by a
+  // person in the meantime is theirs.
+  const lost = async (name, person, rowAfterMs = 300) => {
+    cli(name)
+    hooksDone(name, 60_000)
+    const pane = manager.start({ cwd: root, agent: 'claude' })
+    const p = manager.sessions.get(pane.id).proc
+    manager.queuePrompt(pane.id, BRIEF, 0, 40, () => {}, 5000)
+    p.say(IDLE)
+    // Three returns a confirm window apart before the verdict: ~1s here, past the 2s default
+    // on the PC's full-suite pool (2026-10-01: the row went in first and read "submitted").
+    await logSays(pane.id, /UNSENT/, 15_000)
+    if (person) manager.write(pane.id, 'carry on\r', 'phone')
+    await sleep(rowAfterMs)
+    received(name)
+    await sleep(Number(process.env.PF_PROMPT_CONFIRM_MS) * 3)
+    const qp = (() => { try { return readFileSync(join(work, 'userData', 'queued-prompts.log'), 'utf8').split('\n').filter((l) => l.includes(pane.id)).join('\n') } catch { return '' } })()
+    manager.kill(pane.id)
+    return { log: logOf(pane.id), qp }
+  }
+  const landed = await lost('sess-late')
+  ok(/landed after all, \d+s after it was left UNSENT/.test(landed.log) && /LOST[\s\S]*queued prompt landed after all/.test(landed.qp),
+    'a prompt that lands after its UNSENT verdict is written down as landed, after the LOST line', `${landed.log}\n${landed.qp}`)
+  const typed = await lost('sess-late-person', true)
+  ok(/UNSENT/.test(typed.log) && !/landed after all/.test(typed.log + typed.qp),
+    'a row after somebody typed in the pane is not claimed as the late prompt', `${typed.log}\n${typed.qp}`)
+  const tooLate = await lost('sess-late-expired', false, Number(process.env.PF_PROMPT_LATE_MS) + 600)
+  ok(/UNSENT/.test(tooLate.log) && !/landed after all/.test(tooLate.log + tooLate.qp),
+    'the look ends: a row after the late window is not claimed', `${tooLate.log}\n${tooLate.qp}`)
+
+  // ...and with no pid file there is no receipt to wait for: past twice the pid-file wait,
+  // the returns come back rather than a minute of nothing.
+  {
+    rmSync(pidFile, { force: true })
+    const pane = manager.start({ cwd: root, agent: 'claude' })
+    const at = Date.now()
+    const p = manager.sessions.get(pane.id).proc
+    let settles = 0
+    manager.queuePrompt(pane.id, BRIEF, 0, 40, () => settles++, 5000)
+    p.say(IDLE)
+    // Typing waits out the pid-file hold first; the PC's full-suite pool ran past 3s here.
+    await sentReturnAt(p, 10_000)
+    p.say('\x1b[2J\x1b[H' + RULE + '\r\n\u276f ' + BRIEF.split('\n')[0] + '\r\n' + RULE + '\r\n')
+    let second = 0
+    for (const until = at + Number(process.env.PF_PROMPT_STARTUP_MS); Date.now() < until && !second; ) {
+      if (returnsOf(p) > 1) second = Date.now()
+      await sleep(20)
+    }
+    ok(second && second - at < Number(process.env.PF_PROMPT_STARTUP_MS),
+      'a Claude Code with no pid file is not held for the whole start', `second return at +${second ? second - at : '-'}ms\n${logOf(pane.id)}`)
+    for (const until = Date.now() + budget * 2; Date.now() < until && !settles; ) await sleep(50)
+    manager.kill(pane.id)
+  }
+
   // A RETURN INTO A QUESTION IS AN ANSWER. 2026-09-27 04:55Z, pane s9-mujbz9vp: `pf tell`
   // typed into a Claude turn, Claude QUEUED it (a queue-operation enqueue, no user row), an
   // AskUserQuestion was drawn over it, and the retries' five returns answered all four
@@ -977,6 +1122,13 @@ const ANSWERING =
     'a wrapped composer is still one composer'
   )
   ok(promptStillInBox('\u23fa nothing that looks like a composer at all\n', P) === null, 'a frame with no composer answers null, never a guess')
+  // A long paste is drawn as a placeholder. Read for its words that composer "does not hold
+  // it", and a prompt still waiting was logged as gone.
+  ok(promptStillInBox('\u2022 Working (3s \u2022 esc to interrupt)\n\u203a [Pasted Content 959 chars]\n', P) === true,
+    'a Codex paste placeholder is the prompt still in the composer')
+  ok(promptStillInBox('\u276f [Pasted text #1 +26 lines]\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n', P) === true,
+    '...and so is a Claude one')
+  ok(promptStillInBox('\u2022 Working (3s \u2022 esc to interrupt)\n\u203a \n', P) === false, 'an empty Codex composer still reads as gone')
   ok(promptStillInBox('\u276f \n', 'go') === null, 'a prompt too short to recognise answers null')
 }
 
