@@ -826,7 +826,11 @@ const phone = new PhoneServer({
   wakeSession: (id) => manager.wake(id),
   sendNativePrompt: (id, text) => manager.sendNativePrompt(id, text),
   onIdle: () => manager.returnSizes(),
-  onChange: () => send('phone:changed', phoneState())
+  onChange: () => send('phone:changed', phoneState()),
+  log: (line) =>
+    appendLog(join(app.getPath('userData'), 'tunnel.log'), `${new Date().toISOString()} ${line}\n`, {
+      rotateAt: 200_000
+    })
 })
 
 /**
