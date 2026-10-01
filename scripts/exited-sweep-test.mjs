@@ -164,6 +164,11 @@ function dead(overrides = {}) {
   check('a question on screen stays', asleepSweep([nap({ ask: { q: 'x' } })], T).length === 0)
   check('an awake pane is not this rule', asleepSweep([nap({ asleep: undefined, status: 'idle' })], T).length === 0)
   check('the dead-pane sweep still never takes a sleeping one', exitedSweep([nap({ exitedAt: 1 })], T).length === 0)
+  // 2026-10-02: six crash-restored panes asleep with their "continue" owed were swept and
+  // the prompts logged LOST. Owed work keeps the card, asleep or dead.
+  check('a sleeping pane still owed a prompt stays', asleepSweep([nap({ owed: true })], T).length === 0)
+  check('a dead pane still owed a prompt stays', exitedSweep([dead({ owed: true })], NOW).length === 0)
+  check('and Clear finished leaves it too', clearFinishedNow([dead({ owed: true })]).length === 0)
 }
 
 // --- Keep open holds a dead pane too, against the clock and the button (2026-09-29) ---

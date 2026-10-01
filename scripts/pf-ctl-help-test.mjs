@@ -223,6 +223,8 @@ const row = (id, over = {}) => ({
   check('one typed into after it exited is not finished', !isFinishedPane({ ...dead, lastKeyboard: T - 1 * min }))
   check('one on another computer is not finished', !isFinishedPane({ ...dead, id: '@e/d' }))
   check('an idle pane is not finished', !isFinishedPane(row('i')))
+  check('an exited pane still owed a prompt is not finished', !isFinishedPane({ status: 'exited', exitedAt: 1, owedPrompt: true }))
+  check('the same pane without the owed prompt is finished', isFinishedPane({ status: 'exited', exitedAt: 1 }))
 }
 
 const RESUME = '849b009a-e33d-4189-8960-6240e8f72219'

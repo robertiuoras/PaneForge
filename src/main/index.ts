@@ -1125,7 +1125,7 @@ const limitWaves = startLimitWaves({
     void (async () => {
       // Placed again before it wakes, exactly as a press on its sleep chip does.
       try {
-        await manager.rehome(id, (req) => laneFor(req, ledgerTakenFolders(id, holdOver), id))
+        await manager.rehome(id, (req) => laneFor(req, [], id))
       } catch {
         /* the folder it slept in is still there */
       }
@@ -2038,7 +2038,11 @@ async function laneFor(
   // that folder again. Two client chats were restored asleep into `clients` and a
   // third opened from History landed there too, because neither counted (2026-09-04):
   // all three woke into one checkout. A folder with a sleeping pane in it is taken.
-  const taken = [...takenFolders(manager.list(), except), ...ledgerTakenFolders(except ?? '', holdOver), ...extraTaken]
+  // A pane's own earlier claim is not another chat's: restore issues new pane ids, so the
+  // ledger row from before a restart names an id nobody has any more but the SAME
+  // conversation. Pane 2 was moved into taskdriver.ai-b by its own claim (2026-10-02 18:34Z).
+  const conversation = req.resumeId ?? (except ? resumeIdFor(except) ?? manager.list().find((s) => s.id === except)?.resumeId : undefined)
+  const taken = [...takenFolders(manager.list(), except), ...ledgerTakenFolders(except ?? '', holdOver, conversation), ...extraTaken]
 
   // Reopening a pane that was in a lane, when the lane turned out to hold nothing and
   // the project folder is free again: the lane was only ever there to keep two agents
@@ -2433,7 +2437,7 @@ ipcMain.handle('sessions:wake', async (_e, id: string) => {
   if (continuationOwnsSource(id)) return null
   // A sleeping pane is placed again before it wakes: the folder it slept in may now be
   // another pane's (two client chats restored asleep into one checkout, 2026-09-04).
-  await manager.rehome(id, (req) => laneFor(req, ledgerTakenFolders(id, holdOver), id))
+  await manager.rehome(id, (req) => laneFor(req, [], id))
   return manager.wake(id)
 })
 ipcMain.handle('sessions:switchAgent', (_e, id: string, agent: string, model?: string) => {
@@ -2510,7 +2514,9 @@ function exitedFacts(): ExitedFact[] {
     ask: s.ask,
     handingOff: s.handingOff,
     lastKeyboard: Math.max(s.lastKeyboard ?? 0, touchedAt.get(s.id) ?? 0) || undefined,
-    keepOpen: s.keepOpen || keptOpen(s.id)
+    keepOpen: s.keepOpen || keptOpen(s.id),
+    // A pane the app still owes a prompt is not finished, asleep or not (2026-10-02).
+    owed: Boolean(s.owedPrompt)
   }))
 }
 /**
@@ -2570,6 +2576,13 @@ function removeFinished(removals: { id: string; reason: string }[]): void {
 // quiet pane "just close sessions after a bit of time", with Review as the way back.
 ipcMain.handle('sessions:closeIntoReview', (_e, id: string, reason: string) => {
   if (keptOpen(id)) return
+  // 2026-10-02 18:44Z: six crash-restored panes, each still owed its "continue", were closed
+  // by this countdown ("queued prompt LOST ... the pane closed before it was typed" x6).
+  // A pane that owes a prompt is not quiet; the countdown has no say over it.
+  if (manager.list().find((s) => s.id === id)?.owedPrompt || owedCount(id) > 0) {
+    logReclaim({ action: 'close-refused', pane: id, reason: 'owed-prompt' })
+    return
+  }
   // Only a local agent pane has a conversation to keep; a screen view, a mirror or a stale
   // id is closed exactly the way `sessions:kill` closes it.
   if (!remote.owns(id) && !screenViews.owns(id) && manager.list().some((s) => s.id === id)) {
@@ -4950,7 +4963,12 @@ function restorePanes(specs: StartSessionRequest[], previous = false): void {
         // only a verified conversation; explicit sleep remains authoritative below.
         const restored = { ...req, wasWorking: named && req.agent === 'codex'
           ? rolloutTurn(file).inProgress ?? req.wasWorking : req.wasWorking }
-        const asleep = unavailable || req.asleep || clash[i] || restoreAsleep(restored, i, recoverOn) || awake >= MAX_RESTORE
+        // Rows this pane is still owed, read from the OLD id before `deliverOwed` re-keys them.
+        // Owed work overrides every reason to sleep: asleep has no composer to type into, and
+        // a pane put asleep by an earlier restore keeps `asleep: true` in the next desk snapshot
+        // (2026-10-02: six panes woke mid-turn, were restored asleep, and lost their prompt).
+        const owed = req.scrollbackId ? owedCount(req.scrollbackId) : 0
+        const asleep = unavailable || (req.asleep && !owed) || clash[i] || restoreAsleep(restored, i, recoverOn, owed) || awake >= MAX_RESTORE
         if (!asleep) awake++
         const meta = manager.start({
           ...restored,
