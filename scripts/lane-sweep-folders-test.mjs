@@ -153,6 +153,11 @@ writeFileSync(
   JSON.stringify({ lanes: { f: { session: 'someone', cwd: laneF, claimed: Date.now() - 7 * HOUR, seen: Date.now() - 7 * HOUR } }, ready: {}, conflicts: {} }, null, 2)
 )
 const sleeper = posix ? spawn('sleep', ['3600'], { cwd: laneG, stdio: 'ignore' }) : null
+// Windows cannot list where programs run, and lane.mjs keeps every folder it cannot check.
+// There the test answers for it: nothing is running anywhere.
+const processes = join(root, 'processes.json')
+writeFileSync(processes, '[]\n')
+const asked = posix ? {} : { LANE_PROCESSES_FILE: processes }
 
 const lane = (env, ...args) => {
   try {
@@ -160,7 +165,7 @@ const lane = (env, ...args) => {
       cwd: repo,
       encoding: 'utf8',
       stdio: 'pipe',
-      env: { ...process.env, HOME: home, USERPROFILE: home, LANE_PANES_FILE: panesFile, ...env }
+      env: { ...process.env, HOME: home, USERPROFILE: home, LANE_PANES_FILE: panesFile, ...asked, ...env }
     }).trim()
   } catch (e) {
     return String(e.stdout ?? '') + String(e.stderr ?? '')
