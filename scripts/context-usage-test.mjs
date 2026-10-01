@@ -17,7 +17,9 @@ const now = Date.now(), stamp = (at = now) => new Date(at).toISOString()
 const meta = (session = id) => ({ type: 'session_meta', payload: { id: session, cwd, timestamp: stamp() } })
 const model = (name = 'model-a') => ({ type: 'turn_context', payload: { model: name } })
 const usage = (used = 600, window = 1000, at = now) => ({ type: 'event_msg', timestamp: stamp(at), payload: { type: 'token_count', info: { last_token_usage: { total_tokens: used }, total_token_usage: { total_tokens: 90000000 }, model_context_window: window } } })
-const file = join(dir, 'rollout-fixture.jsonl')
+// Real Codex naming: transcripts.ts opens only rollouts named `-<id>.jsonl` (09252fd8).
+const rolloutFor = (session) => join(dir, `rollout-2026-09-05T01-02-03-${session}.jsonl`)
+const file = rolloutFor(id)
 const write = (...rows) => writeFileSync(file, rows.map(x => JSON.stringify(x)).join('\n') + '\n')
 const out = join(work, 'reader.cjs')
 buildSync({ absWorkingDir: root, entryPoints: ['src/main/contextUsage.ts'], bundle: true, platform: 'node', format: 'cjs', outfile: out, logLevel: 'silent' })
@@ -30,7 +32,7 @@ try {
   equal(read(cwd, id, now)?.advisory, 'prepare', 'advisory prepare threshold')
   equal(read(cwd, other, now), null, 'another pane in same cwd cannot borrow usage')
   equal(read(cwd + '-other', id, now), null, 'wrong cwd refused')
-  writeFileSync(join(dir, 'other.jsonl'), [meta(other), model(), usage(100)].map(JSON.stringify).join('\n') + '\n')
+  writeFileSync(rolloutFor(other), [meta(other), model(), usage(100)].map(JSON.stringify).join('\n') + '\n')
   equal(read(cwd, other, now)?.percent, 10, 'two exact conversations keep distinct context')
   for (const bad of [usage(-1), usage(1001), usage(4, 0), usage(1, null), usage(4, 1000, now + 1), usage(4, 1000, now - 300001)]) {
     if (bad.payload.info.model_context_window === undefined) delete bad.payload.info.model_context_window
