@@ -234,6 +234,18 @@ for (const [name, before, alternate] of [
   term.dispose()
 }
 
+// --- a pane with a History row records its conversation id when it closes ------------
+// writeEnd finds no meta file for a pane that never had a row and silently does nothing,
+// which is how asleep-restored panes lost their resumeId (2026-10-02).
+rmSync(dir, { recursive: true, force: true })
+mkdirSync(dir, { recursive: true })
+h.recordStart({ id: 's-asleep', title: 't', cwd: '/x', agent: 'claude', createdAt: Date.now(), cols: 80, rows: 24 })
+h.recordEnd('s-asleep', 'conv-123')
+const asleepRow = JSON.parse(readFileSync(join(dir, 's-asleep.json'), 'utf8'))
+ok(asleepRow.resumeId === 'conv-123' && typeof asleepRow.endedAt === 'number', 'recordEnd on a pane with a row records resumeId', asleepRow)
+h.recordEnd('s-norow', 'conv-9')
+ok(!ids().includes('s-norow'), 'recordEnd without a row writes nothing (why the row must exist)', ids().join())
+
 rmSync(work, { recursive: true, force: true })
 console.log(fail.length ? `\n${fail.length} failed` : '\nall passed')
 process.exit(fail.length ? 1 : 0)
