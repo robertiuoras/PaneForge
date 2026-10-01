@@ -1960,8 +1960,11 @@ export class SessionManager extends EventEmitter {
         }
         this.queuePrompt(newId, row.text, 0, PROMPT_START_MS, undefined, PROMPT_WAIT_MAX_MS, 'turn', row.key)
       }
-      this.setOwedPrompt(newId, owedCount(newId) > 0)
     }
+    // Asleep or not: a pane carrying owed rows says so, so every sweep and reclaim refusal
+    // sees it. Before, an asleep pane held rows with `owedPrompt` false and was closed
+    // (2026-10-02 18:44Z, six prompts LOST).
+    this.setOwedPrompt(newId, owedCount(newId) > 0)
     return owed.length
   }
 

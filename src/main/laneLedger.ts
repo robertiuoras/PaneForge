@@ -8,7 +8,7 @@
 //                               the CLI's own SessionEnd hook parks it instead of releasing
 //                               it, and the idle sweep leaves it alone.
 //   ledgerWake(cwd, paneId)   - after the CLI is spawned again: the mark comes off.
-//   ledgerTakenFolders(paneId, over) - folders the ledger says ANOTHER chat holds right
+//   ledgerTakenFolders(paneId, over, conversation?) - folders the ledger says ANOTHER chat holds right
 //                               now, handed to `laneFor` as extra taken folders on wake, so
 //                               a pane never wakes into a checkout somebody else took. A
 //                               hold whose pane this app closed (`over`) holds nothing.
@@ -134,17 +134,24 @@ export function ledgerWake(cwd: string, paneId: string): void {
  * `over` says a hold's pane is already closed (`holdIsOver` in `shared/laneTaken.ts`): its
  * folder is free for the next pane now, not when the gone-sweep gets to it 15 minutes on.
  */
-export function ledgerTakenFolders(paneId: string, over: (pane: string) => boolean): string[] {
+export function ledgerTakenFolders(
+  paneId: string,
+  over: (pane: string) => boolean,
+  conversation?: string
+): string[] {
   try {
     const out: string[] = []
     for (const main of ledgerRepos()) {
-      let state: { lanes?: Record<string, { pane?: string }> }
+      let state: { lanes?: Record<string, { pane?: string; session?: string }> }
       try {
         state = JSON.parse(readFileSync(join(main, '.git', 'paneforge-lanes.json'), 'utf8'))
       } catch {
         continue
       }
       for (const [id, c] of Object.entries(state.lanes ?? {})) {
+        // A restored pane gets a new id, so its own pre-restart claim must not push it into
+        // a copy (pane 2, 2026-10-02 18:34Z). The claim's `session` is the conversation.
+        if (conversation && c.session === conversation) continue
         if (c.pane && c.pane !== paneId && !over(c.pane)) out.push(laneDirOf(main, id))
       }
     }

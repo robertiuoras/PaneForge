@@ -107,6 +107,8 @@ ok(
 // restore lag (measured 4.1-14.3s to a composer against 1.4s for one alone), and a
 // sleeping pane keeps its card, its place and its screen for nothing.
 ok('the pane being looked at comes back running', restoreAsleep({}, 0, true) === false)
+ok('a pane still owed a prompt is woken', restoreAsleep({}, 3, true, 1) === false)
+ok('...even with auto-continue off: a person or the app already queued those rows', restoreAsleep({}, 3, false, 1) === false)
 ok('every other pane comes back asleep', restoreAsleep({}, 1, true) === true)
 ok('...however many there are', restoreAsleep({}, 7, true) === true)
 // The refusals, which are the feature: a pane asleep must not be one with work in it.
@@ -163,7 +165,9 @@ ok(
 ok('a pane slept on purpose comes back asleep', /asleep: Boolean\(s\.meta\.asleep\)/.test(sessions))
 
 const index = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
-ok('the restore asks restoreAsleep with reconciled state, per pane, in order', /restoreAsleep\(restored, i, recoverOn\)/.test(index))
+ok('the restore asks restoreAsleep with reconciled state and the rows it still owes, per pane, in order', /restoreAsleep\(restored, i, recoverOn, owed\)/.test(index))
+ok('...the owed count is read from the old pane id BEFORE deliverOwed re-keys the rows',
+  index.indexOf('owedCount(req.scrollbackId') > 0 && index.indexOf('owedCount(req.scrollbackId') < index.indexOf('manager.deliverOwed(req.scrollbackId') && /req\.asleep && !owed/.test(index))
 // "Keep this pane open" is a promise about a pane, and a restored pane is a NEW session
 // with a new id - so the promise is carried across by the one field that names the pane
 // being replaced. Without this the pin was renderer state and every restart dropped it.
