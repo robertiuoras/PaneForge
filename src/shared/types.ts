@@ -1972,6 +1972,8 @@ export interface Config {
   firstChatStarted?: boolean
   /** folder scanned for projects */
   root: string
+  /** Profile-local exact client paths hidden only from project launchers. */
+  archivedClientPaths?: string[]
   presets: Preset[]
   defaultAgent: Agent
   /** model per agent id, remembered from the last launch ('' = the CLI's default) */
@@ -2372,6 +2374,8 @@ export interface Api {
   /** Aggregate GitHub installer-asset downloads, not unique people or IP telemetry. */
   ownerStats(): Promise<OwnerStats>
   listProjects(): Promise<Project[]>
+  listArchivedClients(): Promise<Project[]>
+  setClientArchived(path: string, archived: boolean): Promise<void>
   listSessionFolders(): Promise<Project[]>
   /** make a project folder from a typed name; null when the name may not be one */
   createProject(name: string): Promise<Project | null>
@@ -2414,6 +2418,8 @@ export interface Api {
   reorderSessions(ids: string[]): void
   /** Record why a pane was closed by a sweep, into `reclaim.log` under userData. */
   logReclaim(entry: Record<string, unknown>): void
+  /** One line into `handoff.log`: why the automatic move sweep moved nothing. */
+  logHandoff(line: string): void
   /** One line to `fix.log` per Fix run: the screen's signature before the repair. */
   logFix(entry: Record<string, unknown>): void
   /** What the app has done on its own lately, newest first. See `shared/activity.ts`. */

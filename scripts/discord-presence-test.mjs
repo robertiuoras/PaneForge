@@ -9,7 +9,7 @@
 //   node scripts/discord-presence-test.mjs
 
 import { buildSync } from 'esbuild'
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import net from 'node:net'
 import { tmpdir } from 'node:os'
@@ -68,6 +68,7 @@ const {
   withLook,
   pickLook,
   DISCORD_PRESETS,
+  presenceAllowed,
   wholeDesk
 } =
   req(outShared)
@@ -878,6 +879,18 @@ const counts = (running, total, names = ['PaneForge']) => ({
   client.disconnect()
   check('link: a machine that went away has said nothing', await until(() => client.peerDesk === undefined && host.deskReports().length === 0))
   host.stop()
+}
+
+// A test copy is not the desk: it must never reach the profile, whatever its switch says
+// (2026-10-01: a copy's own idle panes read "8 sessions idle" while 18 turns ran).
+{
+  check('copy: the installed app speaks when switched on', presenceAllowed(true, '') === true)
+  check('copy: the installed app stays quiet when switched off', presenceAllowed(false, '') === false)
+  check('copy: a named test copy stays quiet with the switch on', presenceAllowed(true, 'dev-f') === false)
+  const main = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
+  const raw = main.match(/presence\.configure\(\s*next\.discordPresence|enabled:\s*getConfig\(\)\.discordPresence/g) ?? []
+  check('copy: every place the app turns Discord on asks presenceAllowed', raw.length === 0, raw.join(' | '))
+  check('copy: ...and there are three of them', (main.match(/presenceAllowed\(/g) ?? []).length === 3)
 }
 
 console.log(failed ? `\n${failed} FAILED` : '\nall good')

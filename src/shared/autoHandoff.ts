@@ -711,6 +711,93 @@ export function budgetPlan(
 }
 
 /**
+ * WHY the move sweep found nothing, as counts, so handoff.log can say it.
+ *
+ * Until 2026-10-01 `sweepHandoff` returned without a word when nothing was eligible, so
+ * after the last move (Tue 29 Sep) handoff.log held only "background agent still running"
+ * refusals and could not say which of a dozen blockers was holding the desk. Each pane is
+ * counted ONCE, under the first blocker that stops it, in the order below; `candidates` is
+ * what is left. `over > 0` is the budget rung (any state in `queueable`, quiet for
+ * `BUDGET_QUIET_MS`, and `expensive`); otherwise the idle rung (`movable`, off screen,
+ * quiet for `minIdleMinutes`). `peerHolds` (eligible, but no online peer has the project)
+ * needs the peers and is only filled when they are passed.
+ */
+export interface SweepBlockers {
+  panes: number
+  candidates: number
+  remote: number
+  focused: number
+  cannotTravel: number
+  bgAgent: number
+  asking: number
+  machineBound: number
+  pinned: number
+  keepHere: number
+  working: number
+  cooldown: number
+  sleepsSoon: number
+  onScreen: number
+  quietTooShort: number
+  notExpensive: number
+  peerHolds: number
+}
+
+export function sweepBlockers(
+  panes: AutoPane[],
+  cfg: AutoHandoffConfig,
+  blocked: Record<string, number>,
+  now: number,
+  over: number,
+  peers?: OffloadCandidate[]
+): SweepBlockers {
+  const c: SweepBlockers = {
+    panes: panes.length, candidates: 0, remote: 0, focused: 0, cannotTravel: 0, bgAgent: 0,
+    asking: 0, machineBound: 0, pinned: 0, keepHere: 0, working: 0, cooldown: 0, sleepsSoon: 0,
+    onScreen: 0, quietTooShort: 0, notExpensive: 0, peerHolds: 0
+  }
+  const minQuiet = over > 0 ? BUDGET_QUIET_MS : Math.max(0, cfg.minIdleMinutes) * 60_000
+  for (const p of panes) {
+    const why: keyof SweepBlockers | null =
+      p.remote || p.handingOff ? 'remote'
+      : p.focused ? 'focused'
+      : !travels(p) ? 'cannotTravel'
+      : p.backJob || p.subagent ? 'bgAgent'
+      : p.asking || p.owedPrompt ? 'asking'
+      : p.machineBound || p.shareable === false ? 'machineBound'
+      : p.stayHere || pinnedByPrompt(p.ask, p.cwd) ? 'pinned'
+      : staysHere(cfg, p.projectName) ? 'keepHere'
+      : !(p.state === 'ready' || p.state === 'needsYou') ? 'working'
+      : (blocked[p.id] ?? 0) > now ? 'cooldown'
+      : p.sleepsSoon ? 'sleepsSoon'
+      : over === 0 && p.visible ? 'onScreen'
+      : now - quietSince(p) < minQuiet ? 'quietTooShort'
+      : over > 0 && !expensive(p, cfg) ? 'notExpensive'
+      : null
+    if (why) {
+      c[why]++
+      continue
+    }
+    if (peers && !hostFor(peers, p.projectName, p.arrivedFrom)) c.peerHolds++
+    else c.candidates++
+  }
+  return c
+}
+
+/** `sweep: <verdict> pressure=warn over=2 panes=7 bgAgent=3 keepHere=2 ...`, non-zero counts only. */
+export function sweepLine(verdict: string, level: string, over: number, c: SweepBlockers): string {
+  const parts = Object.entries(c)
+    .filter(([k, n]) => k !== 'panes' && n > 0)
+    .map(([k, n]) => `${k}=${n}`)
+  return `sweep: ${verdict} pressure=${level} over=${over} panes=${c.panes}${parts.length ? ' ' + parts.join(' ') : ''}`
+}
+
+/** A sweep line is written when its text changed, or at most every 5 minutes otherwise. */
+export const SWEEP_LOG_REPEAT_MS = 5 * 60_000
+export function sweepLogDue(prev: { text: string; at: number } | null, text: string, now: number): boolean {
+  return !prev || prev.text !== text || now - prev.at >= SWEEP_LOG_REPEAT_MS
+}
+
+/**
  * How many turns a pane must have finished on this machine before the turn-count rung may
  * offer it to the other one.
  *

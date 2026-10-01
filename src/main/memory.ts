@@ -51,6 +51,7 @@ let darwinAsking = false
  */
 let darwinCompressor: Pressure = 'normal'
 let darwinStatAsking = false
+let darwinCompressorMb: number | null = null
 function darwinPressure(): Pressure {
   const now = Date.now()
   if (!darwinAsking && now - darwinAskedAt >= SAMPLE_MS / 2) {
@@ -70,11 +71,20 @@ function darwinPressure(): Pressure {
         const shape = err ? null : parseVmStat(stdout, totalmem())
         // A failed or unparseable read leaves the LAST verdict rather than resetting it: a
         // fork that timed out on a thrashing machine is not evidence the machine recovered.
-        if (shape) darwinCompressor = compressorLevel(shape)
+        if (shape) {
+          darwinCompressor = compressorLevel(shape)
+          darwinCompressorMb = shape.compressorMb
+        }
       })
     }
   }
   return worstPressure(darwinLevel, darwinCompressor)
+}
+
+/** The last readings, kernel flag and compressor verdict apart, for `pressure.log`. */
+export function memoryReading(): { kernel: Pressure; compressor: Pressure; compressorMb: number | null } {
+  if (platform() !== 'darwin') return { kernel: readPressure(), compressor: 'normal', compressorMb: null }
+  return { kernel: darwinLevel, compressor: darwinCompressor, compressorMb: darwinCompressorMb }
 }
 
 /**

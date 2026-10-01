@@ -49,7 +49,9 @@ there, PreToolUse refuses elsewhere. `node scripts/lane.mjs status --repo <dir>`
   worktrees; subfolder panes/processes protect the whole checkout. Claims preserve unready
   clean-ahead HEAD/index until explicit adoption; damaged recovery folders require backup
   and diagnosis before claim. It never auto-stages deletions or reconstructs folders
-  (`test:lanecompletion`).
+  (`test:lanecompletion`). A worktree missing more than half of its HEAD files reads
+  `damaged` in `status`/`doctor` and is never handed to a chat, not even one standing in it
+  (`test:lanedamaged`).
 - `recover --key <pinned-key> --session <native-id> --disposition begin [--lane <slot>]`
   binds an actual ordinary claim. `verified --receipt <json>` needs the current commit,
   nonempty successful `{command, exitCode: 0}` checks and accepted independent

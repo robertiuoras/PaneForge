@@ -696,6 +696,20 @@ export function pastesClipboardImage(agent: string | undefined): boolean {
 }
 
 /**
+ * The keystroke that makes this agent read an image off the clipboard, on the machine its
+ * pty runs on.
+ *
+ * ^V everywhere except Claude Code on Windows. There Ctrl+V is the terminal's own paste
+ * and Claude Code's image key is Alt+V - read off 2.1.286's own keymap
+ * (`ve = xe ? "alt+v" : "ctrl+v"`, `xe` = windows or wsl), so a ^V on the PC pasted
+ * nothing at all. Codex 0.159.1 names Ctrl+V in its own tips and is left on it.
+ */
+export function imagePasteKey(agent: string | undefined, onWindows: boolean): string {
+  if (onWindows && !!agent && CLAUDE_CODE_AGENTS.has(agent)) return '\x1bv'
+  return '\x16'
+}
+
+/**
  * Does a `\` typed before Enter make a new line in this agent's prompt box instead of
  * sending it? Claude Code's does; Codex 0.155.1 sends the line (measured 2026-09-23). The
  * binary decides this too, so it is the same set. See `DraftOptions.backslashNewline`.

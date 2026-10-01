@@ -7,7 +7,7 @@ import { createRequire } from 'node:module'
 const require = createRequire(import.meta.url)
 const { Terminal } = require('@xterm/headless')
 const source = readFileSync(new URL('../src/renderer/src/components/TerminalPane.tsx', import.meta.url), 'utf8')
-const start = source.indexOf('const receiveReset = (')
+const start = source.indexOf('let widenForReset: (() => void) | null = null')
 const end = source.indexOf('\n    const writeData =', start)
 assert.ok(start > 0 && end > start)
 const callback = transformSync(source.slice(start, end), { loader: 'ts' }).code

@@ -50,6 +50,10 @@ const {
   endsOnArrival,
   travels,
   BUDGET_QUIET_MS,
+  sweepBlockers,
+  sweepLine,
+  sweepLogDue,
+  SWEEP_LOG_REPEAT_MS,
   SLEEPS_SOON_LEAD_MS
 } = createRequire(import.meta.url)(outfile)
 
@@ -1132,5 +1136,44 @@ checks += 3
   const memory = readFileSync(join(root, 'src/main/memory.ts'), 'utf8')
   assert.match(memory, /worstPressure\(darwinLevel, darwinCompressor\)/, 'the Mac verdict is the worse of the flag and the compressor')
   checks += 5
+}
+
+{
+  // The sweep verdict: WHY nothing moved, counted once per pane under its first blocker.
+  const cfg = { ...DEFAULT_AUTO_HANDOFF, keepHere: ['kept'], minIdleMinutes: 10 }
+  const a = (o) => pane({ agent: 'claude', resumeId: 'r', ...o })
+  const desk = [
+    a({ id: 'bg', backJob: 'build', state: 'ready' }),
+    a({ id: 'sub', subagent: 'Diagnose', state: 'ready' }),
+    a({ id: 'kept', projectName: 'kept' }),
+    a({ id: 'asking', asking: true, state: 'needsYou' }),
+    a({ id: 'working', state: 'working' }),
+    a({ id: 'fresh', lastKeyboard: NOW - 30_000 }),
+    a({ id: 'cheap', memMb: 20 }),
+    a({ id: 'big', memMb: 900 }),
+    a({ id: 'noconv', resumeId: undefined }),
+    a({ id: 'front', focused: true }),
+    a({ id: 'pc', remote: true })
+  ]
+  const c = sweepBlockers(desk, cfg, {}, NOW, 2)
+  eq('budget rung counts', [c.panes, c.bgAgent, c.keepHere, c.asking, c.working, c.quietTooShort, c.notExpensive, c.candidates, c.cannotTravel, c.focused, c.remote],
+    [11, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1])
+  eq('every pane counted exactly once', Object.entries(c).filter(([k]) => k !== 'panes').reduce((n, [, v]) => n + v, 0), 11)
+  eq('peerHolds when no peer has the project', sweepBlockers(desk, cfg, {}, NOW, 2, [{ device: 'pc', deviceName: 'PC', online: true, projects: [] }]).peerHolds, 1)
+  eq('a peer that has it leaves the candidate', sweepBlockers(desk, cfg, {}, NOW, 2, peers).candidates, 1)
+  eq('cooldown', sweepBlockers([a({ id: 'x', memMb: 900 })], cfg, { x: NOW + MIN }, NOW, 2).cooldown, 1)
+  // The idle rung: on screen and too-recent are separate blockers, and 'big' needs no cost.
+  const idle = sweepBlockers([a({ id: 's', visible: true }), a({ id: 't', lastKeyboard: NOW - 2 * MIN }), a({ id: 'u' })], cfg, {}, NOW, 0)
+  eq('idle rung counts', [idle.onScreen, idle.quietTooShort, idle.candidates], [1, 1, 1])
+  eq('the line', sweepLine('nothing eligible', 'warn', 2, c), 'sweep: nothing eligible pressure=warn over=2 panes=11 candidates=1 remote=1 focused=1 cannotTravel=1 bgAgent=2 asking=1 keepHere=1 working=1 quietTooShort=1 notExpensive=1')
+  // one line per change, or every five minutes, never one a minute
+  eq('first line is written', sweepLogDue(null, 'x', NOW), true)
+  eq('same text a minute later is not', sweepLogDue({ text: 'x', at: NOW }, 'x', NOW + MIN), false)
+  eq('changed text is', sweepLogDue({ text: 'x', at: NOW }, 'y', NOW + MIN), true)
+  eq('same text after 5 min is', sweepLogDue({ text: 'x', at: NOW }, 'x', NOW + SWEEP_LOG_REPEAT_MS), true)
+  const { readFileSync } = await import('node:fs')
+  const appSrc = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
+  assert.match(appSrc, /api\.logHandoff\(/, 'sweepHandoff writes its verdict to handoff.log')
+  checks++
 }
 console.log(`autohandoff: ${checks} checks passed`)

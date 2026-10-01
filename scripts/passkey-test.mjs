@@ -700,6 +700,8 @@ ok(!server.running, 'the gate test server stopped cleanly')
     'autoclear:cancel', 'autoclear:takeover',
     // Local starting-folder metadata only, like projects:list; no file or session writes.
     'projects:sessionFolders',
+    // Exact client visibility only: no folder, transcript, process or authority changes.
+    'projects:archivedClients', 'projects:archiveClient',
     // Welcome checklist facts: whether claude and git are on PATH and whether the CLI is
     // signed in, as booleans. Reads `~/.claude.json` for one key's presence; returns no
     // token, types nothing, reaches no pty.
@@ -791,6 +793,9 @@ ok(!server.running, 'the gate test server stopped cleanly')
     // is a bigger log file.
     'reclaim:log',
     'pane:fixlog',
+    // Reviewed 2026-10-01: one `sweep: ` line in this desk's own handoff log saying why the
+    // move sweep moved nothing. Other text is dropped; it starts and types nothing.
+    'handoff:log',
     // Reviewed 2026-09-23: stamps when a person last pressed a pane, which only HOLDS the
     // finished-pane sweep. It starts, stops and types nothing.
     'sessions:touched',

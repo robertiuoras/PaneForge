@@ -14,11 +14,34 @@
 ; uninstalling really does remove PaneForge rather than half of it.
 
 !macro killRunning
-  ; taskkill rather than nsProcess: no plugin to vendor, and /T takes the pane consoles
-  ; and the agent processes under them, which are what actually hold the exe open.
-  nsExec::Exec 'taskkill /F /T /IM PaneForge.exe'
-  Pop $0
-  Sleep 400
+  ; taskkill rather than nsProcess: no plugin to vendor.
+  ;
+  ; Never /T. An update's installer is a CHILD of the app: electron-updater starts it and
+  ; only then quits, so while the app is still closing, `taskkill /T /IM PaneForge.exe`
+  ; takes the installer down with the app's tree - nothing is installed and nothing starts
+  ; the app again. Measured on the PC 2026-10-01 with a stand-in parent and a detached
+  ; child running this line: with /T the child died, without it the child lived and the
+  ; parent still went. The PC sat on v0.8.231 that way, its app quitting to install every
+  ; two minutes and coming back only because a keep-alive relaunched the old version.
+  ;
+  ; Again until none is left (128 = no PaneForge.exe running), at most 10 passes. One pass
+  ; is not enough: the app runs its own scripts on its own exe (lane.mjs, pf-ctl.mjs), and a
+  ; script killed while it was starting a child leaves that child created SUSPENDED and
+  ; never resumed - after taskkill had already listed the processes. On the PC on 2026-09-30
+  ; such a `PaneForge.exe pf-ctl.mjs list` stub outlived the update, held the exe, and read
+  ; as "PaneForge is running" to the PC's keep-alive for 34 hours with no app up. A second
+  ; pass kills it: a suspended process ends like any other.
+  Push $1
+  StrCpy $1 0
+  killRunningAgain:
+    nsExec::Exec 'taskkill /F /IM PaneForge.exe'
+    Pop $0
+    StrCmp $0 "128" killRunningDone
+    Sleep 400
+    IntOp $1 $1 + 1
+    IntCmp $1 10 killRunningDone killRunningAgain killRunningDone
+  killRunningDone:
+  Pop $1
 !macroend
 
 !macro freeInstallDir
