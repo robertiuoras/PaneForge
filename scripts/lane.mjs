@@ -55,6 +55,7 @@ import {
   realpathSync,
   renameSync,
   rmdirSync,
+  rmSync,
   statSync,
   symlinkSync,
   unlinkSync,
@@ -5766,25 +5767,61 @@ function sweepOne(w) {
   if (newestTouch(w.dir, started, false) > started) throw new Error('kept at the last moment: something in it changed while it was being saved')
   if (git(w.dir, 'rev-parse', 'HEAD') !== head || workTree(w.dir, `${name}-again`) !== tree)
     throw new Error('kept at the last moment: its work changed while it was being saved')
-  // Windows has no lsof. A folder any program has open (as its folder, or a file in it)
-  // cannot be renamed there, so a rename there and back is the question asked instead.
-  if (process.platform === 'win32') {
-    const probe = `${w.dir}.sweep-probe`
-    try {
-      renameSync(w.dir, probe)
-    } catch {
-      throw new Error('kept at the last moment: a program has something in it open')
-    }
-    renameSync(probe, w.dir)
-  }
-
-  dropModulesLink(w.dir)
-  const removed = gitSafe(MAIN, 'worktree', 'remove', '--force', w.dir)
-  if (!removed.ok) throw new Error(`git would not remove it: ${firstLine(removed.out)}`)
-
   const on = /github\.com/i.test(gitSafe(MAIN, 'remote', 'get-url', 'origin').out) ? 'GitHub' : 'the server'
-  const saved = savedAs.length ? `its work is on ${on} as ${savedAs.join(' and ')}` : `everything in it was already on ${on}`
-  return `Removed the ${folderWords(w.dir)} folder (${saved}${archive ? `; files git does not keep are in ${archive}` : ''}).`
+  const saved = `${savedAs.length ? `its work is on ${on} as ${savedAs.join(' and ')}` : `everything in it was already on ${on}`}${archive ? `; files git does not keep are in ${archive}` : ''}`
+
+  // Moved aside whole, then deleted. `git worktree remove` ran under git()'s 20-second limit
+  // and was killed part way through a big folder: taskdriver.ai-c lost 36 of its 45 top-level
+  // entries at 6:23am on 2 Oct, kept its name and its registration, and a chat was then sent
+  // into the half-empty copy. A move is all or nothing, so the copy's own folder is either
+  // whole or gone, and whatever a stopped delete leaves sits under a name nothing opens
+  // until the next sweep finishes it. On Windows the move also answers what lsof answers
+  // elsewhere: a folder a program has something open in cannot be moved there.
+  dropModulesLink(w.dir)
+  if (isLink(join(w.dir, 'node_modules'))) throw new Error("its link to the main copy's dependencies could not be taken out, and deleting through it would delete those")
+  const aside = `${w.dir}${ASIDE}${Date.now()}`
+  try {
+    renameSync(w.dir, aside)
+  } catch (e) {
+    throw new Error(process.platform === 'win32' ? 'kept at the last moment: a program has something in it open' : `it could not be moved out of the way to be removed (${e.code ?? e.message})`)
+  }
+  // Written down before the delete starts: a sweep that dies part way still leaves the
+  // next one a note of what to finish.
+  const state = read()
+  state.leftovers = [...(state.leftovers ?? []), aside]
+  write(state)
+  // Its pointer into this project's git goes first, so nothing left behind can reach a copy
+  // git later gives the same name; then git forgets the folder, which frees its branch.
+  rmSync(join(aside, '.git'), { force: true })
+  gitSafe(MAIN, 'worktree', 'prune')
+  const stopped = deleteAside(aside)
+  if (stopped) {
+    const e = new Error(`the delete stopped part way (${stopped})`)
+    e.record = `Could not finish removing the ${folderWords(w.dir)} folder (${saved}). The delete stopped part way (${stopped}); what is left is in ${aside}, and the next clean-up tries again.`
+    throw e
+  }
+  return `Removed the ${folderWords(w.dir)} folder (${saved}).`
+}
+
+/** The ending a folder gets while it is being deleted (`sweepOne`). */
+const ASIDE = '.removing-'
+
+function isLink(p) {
+  try {
+    return lstatSync(p).isSymbolicLink()
+  } catch {
+    return false
+  }
+}
+
+/** Delete a folder moved aside by `sweepOne`. Null when it is gone, else why it stopped. */
+function deleteAside(dir) {
+  try {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 3 })
+    return null
+  } catch (e) {
+    return e.code ?? e.message
+  }
 }
 
 /**
@@ -5859,6 +5896,9 @@ function sweepSoon() {
   try {
     spawn(process.execPath, [fileURLToPath(import.meta.url), 'sweep', '--repo', MAIN], {
       cwd: MAIN,
+      // A hook's deadline is the hook's: inherited, it cuts every git call in a sweep that
+      // runs on long after the hook has returned.
+      env: { ...process.env, PANEFORGE_HOOK_DEADLINE: '' },
       detached: true,
       stdio: 'ignore',
       windowsHide: true
@@ -5877,6 +5917,25 @@ function sweepOnce({ dryRun }) {
   const all = worktreesOf()
   const ctx = { all, panes, procs: undefined }
   const removed = []
+  // What a stopped delete left (`sweepOne`) goes first. Its work was proven on origin before
+  // it was moved aside, and nothing opens a folder by that name, so no keep question applies.
+  for (const dir of read().leftovers ?? []) {
+    if (!existsSync(dir)) continue
+    const name = folderWords(dir).replace(/\.removing-\d+$/, '')
+    if (dryRun) {
+      out.push(`Would finish removing the ${name} folder: an earlier clean-up had to leave it part way.`)
+      continue
+    }
+    const stopped = deleteAside(dir)
+    if (stopped) {
+      // Written down once, by the sweep that moved it aside, with where its work went.
+      out.push(`Could not finish removing the ${name} folder: the delete stopped part way (${stopped}). What is left is in ${dir}, and the next clean-up tries again.`)
+      continue
+    }
+    const text = `Finished removing the ${name} folder, which an earlier clean-up had to leave part way.`
+    out.push(text)
+    removed.push(text)
+  }
   for (const w of all) {
     const name = folderWords(w.dir)
     if (w.prunable || !existsSync(w.dir)) continue
@@ -5893,13 +5952,18 @@ function sweepOnce({ dryRun }) {
       removed.push(sweepOne(w))
       out.push(removed[removed.length - 1])
     } catch (e) {
-      out.push(`Kept ${name}: ${e.message}.`)
+      out.push(e.record ?? `Kept ${name}: ${e.message}.`)
+      // A delete that started and stopped is written down: unrecorded, the half-empty
+      // taskdriver.ai-c of 2 Oct could only be traced back to a sweep by guesswork.
+      if (e.record) removed.push(e.record)
     }
   }
   if (!dryRun) {
     gitSafe(MAIN, 'worktree', 'prune')
-    if (removed.length) {
-      const state = read()
+    const state = read()
+    const left = (state.leftovers ?? []).filter((dir) => existsSync(dir))
+    if (removed.length || left.length !== (state.leftovers ?? []).length) {
+      state.leftovers = left
       state.swept = [...(state.swept ?? []), ...removed.map((text) => ({ at: now(), text }))].slice(-SWEEP_KEEP)
       write(state)
     }

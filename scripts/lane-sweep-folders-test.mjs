@@ -13,7 +13,7 @@
 //   node scripts/lane-sweep-folders-test.mjs
 
 import { execFileSync, spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -50,7 +50,7 @@ git(root, 'init', '-q', '--bare', '-b', 'master', origin)
 mkdirSync(join(repo, 'scripts'), { recursive: true })
 writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'demo', version: '0.0.1' }, null, 2) + '\n')
 writeFileSync(join(repo, '.gitignore'), '.env\nnode_modules\n.next\n')
-writeFileSync(join(repo, '.lanes.json'), JSON.stringify({ pool: ['main', 'c', 'd', 'e', 'f', 'g', 'h', 'm', 'u', 'w'], release: 'merge' }, null, 2) + '\n')
+writeFileSync(join(repo, '.lanes.json'), JSON.stringify({ pool: ['main', 'c', 'd', 'e', 'f', 'g', 'h', 'm', 'n', 'u', 'w'], release: 'merge' }, null, 2) + '\n')
 installLane(here, repo)
 git(repo, 'init', '-q', '-b', 'master')
 git(repo, 'config', 'user.email', 'test@example.com')
@@ -251,6 +251,45 @@ try {
   while (existsSync(laneH) && Date.now() < until) execFileSync(process.execPath, ['-e', 'setTimeout(() => {}, 500)'])
   ok('a due retry sweeps by itself', !existsSync(laneH), lane({}, 'doctor'))
   ok('...and takes the next six hours', Date.now() - Number(readFileSync(stampFile, 'utf8')) < HOUR)
+
+  // ------------------------------------------------------------ a delete that stops part way
+  // 2 Oct, 6:23am: the delete of taskdriver.ai-c was stopped after 36 of its 45 top-level
+  // entries, and the lane kept its name half empty. The folder is moved aside first now.
+  // POSIX only: a folder with no write permission is how this makes the delete stop, and
+  // Windows ignores that permission.
+  if (posix) {
+    const laneN = addTree('demo-n', 'lane-n')
+    const stuck = join(laneN, '.next', 'stuck')
+    mkdirSync(stuck, { recursive: true })
+    writeFileSync(join(stuck, 'cache.js'), 'build output\n')
+    age(laneN, 7 * HOUR)
+    chmodSync(stuck, 0o555)
+    const asides = () => readdirSync(root).filter((f) => f.startsWith('demo-n.removing-'))
+    const swept = () => JSON.parse(readFileSync(state, 'utf8')).swept ?? []
+    try {
+      const said = lane({}, 'sweep')
+      ok("a stopped delete never leaves the lane's own folder half there", !existsSync(laneN), said)
+      ok('what it left sits aside under a name nothing opens', asides().length === 1, readdirSync(root).join(' '))
+      ok("...holding no pointer into the project's git", asides().length === 1 && !existsSync(join(root, asides()[0], '.git')))
+      ok('the sweep says it stopped part way', /Could not finish removing the demo-n folder[\s\S]*the next clean-up tries again/.test(said), said)
+      ok('...and writes it down for doctor', /CLEANED UP[\s\S]*Could not finish removing the demo-n folder/.test(lane({}, 'doctor')))
+      lane({}, 'sweep')
+      const notes = swept().filter((r) => /Could not finish removing the demo-n folder/.test(r.text))
+      ok('a leftover that still will not go is written down once, not once per sweep', notes.length === 1, JSON.stringify(notes))
+      const back = lane({}, 'claim', '--session', 'n-chat', '--cwd', repo, '--prefer', 'n')
+      ok('a chat can take the lane again while the leftover waits', existsSync(join(laneN, '.lanes.json')), back)
+    } finally {
+      for (const d of [stuck, ...asides().map((a) => stuck.replace('demo-n', a))]) {
+        try {
+          chmodSync(d, 0o755)
+        } catch {
+          /* not there */
+        }
+      }
+    }
+    const finished = lane({}, 'sweep')
+    ok('the next sweep finishes the leftover', asides().length === 0 && /Finished removing the demo-n folder/.test(finished), finished)
+  }
 } finally {
   sleeper?.kill()
 }
