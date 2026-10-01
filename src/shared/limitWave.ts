@@ -125,8 +125,9 @@ export function limitStopOf(text: string, now: number, localZone?: string): Limi
   if (!said) return null
   const word = said[1]?.toLowerCase()
   const zone = localZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone
+  // Claude's reset is on the stop's own row: a later row saying "resets 2am" is somebody's prose.
   const claude = /resets\s*(?:([A-Za-z]{3})[a-z]*\.?\s*(\d{1,2})(?:st|nd|rd|th)?,?\s*(?:at\s*)?)?(\d{1,2})(?::(\d{2}))?\s*([ap]m)\s*(?:\(([^)]+)\))?/i.exec(
-    text.slice(said.index)
+    text.slice(said.index).split('\n')[0]
   )
   if (claude) {
     const [, mon, day, hh, mm, ap, tz] = claude
@@ -440,6 +441,8 @@ export function whyUnsent(end: string): string {
       return 'the chat in it was restarted before the message went in'
     case 'withheld':
       return 'a question was on its screen, so the message was not sent'
+    case 'gone':
+      return 'it was closed before the message went in'
     case 'wake-failed':
       return 'it was asleep and could not be woken'
     default:

@@ -1100,6 +1100,11 @@ manager.on('paneError', (s: Session, line: string, painted?: string) => {
   errorNotifier.schedule(s.id, () => ({ key: line, text: errorMessage(s.title, line, undefined) }))
 })
 
+// A stop repainted on a pane already reported: only a limit wave cares (see sessions.ts).
+manager.on('paneStopAgain', (s: Session, line: string, painted?: string) => {
+  if (!s.remote) limitWaves.stopped(s, line, painted)
+})
+
 /**
  * Usage-limit waves: the continue after the reset and the one phone push
  * (`shared/limitWave.ts` decides, `main/limitWaves.ts` acts). Only this desk's own panes -

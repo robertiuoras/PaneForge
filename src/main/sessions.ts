@@ -164,7 +164,7 @@ import { askSignature, CHOOSE_GAP_MS, keysForChoice, readAsk, sameAsk , stampMat
 import { stripAnsi as strip } from '../shared/ansi'
 import { silenceMs, stalledNow } from '../shared/alerts'
 import { DEFAULT_RECOVER, recover, TAIL_CHARS } from '../shared/recover'
-import { nextStop, turnSubmitted, type StopLatch } from '../shared/paneError'
+import { nextStop, stoppedLine, turnSubmitted, type StopLatch } from '../shared/paneError'
 import { wakeBytes } from '../shared/wakeScreen'
 import { getConfig } from './config'
 import { spawnQuiet } from './spawnQuiet'
@@ -1873,9 +1873,9 @@ export class SessionManager extends EventEmitter {
    * (`main/limitWaves.ts`). Most such panes are ASLEEP by then - the idle sweep sleeps a
    * pane after half an hour and a 5-hour limit is a long wait - and `queuePrompt` into a
    * pane with no process types into nothing, so it is woken first. A woken CLI repaints its
-   * conversation, old limit line and all, so the prompt waits the same beat a restored
-   * pane's continue does: long enough for that repaint to be read while its stop is still
-   * the one already reported. `done` gets `queuePrompt`'s own ending.
+   * conversation, old limit line and all; that repaint names a reset already gone, and
+   * `limitWaves.stopped` drops it as stale. The prompt waits the beat a restored pane's
+   * continue does. `done` gets `queuePrompt`'s own ending.
    */
   carryOn(id: string, text: string, done: (end: QueueDrop | 'sent' | 'withheld' | 'wake-failed') => void): void {
     const live = this.sessions.get(id)
@@ -1888,7 +1888,9 @@ export class SessionManager extends EventEmitter {
         return done('wake-failed')
       }
     }
-    this.queuePrompt(id, text, asleep ? RESTORE_CONTINUE_MS : 0, PROMPT_START_MS, done)
+    // No waiting behind a person: somebody typing in there has the pane, and a "carry on
+    // with what you were doing" landing after THEIR turn would steer it back to the old job.
+    this.queuePrompt(id, text, asleep ? RESTORE_CONTINUE_MS : 0, PROMPT_START_MS, done, PROMPT_WAIT_MAX_MS, 'turn', undefined, 0)
   }
 
   /** A native receipt may say queued only after the real recovery ledger is saved. */
@@ -4145,7 +4147,8 @@ export class SessionManager extends EventEmitter {
     onSettled?: (end: QueueDrop | 'sent' | 'withheld') => void,
     budgetMs = PROMPT_WAIT_MAX_MS,
     proof: PromptProof = 'turn',
-    known?: string
+    known?: string,
+    personWaitMs = PERSON_WAIT_MAX_MS
   ): void {
     if (!prompt) return onSettled?.('withheld')
     // The app owes this pane a prompt from here until `settle` below runs, whatever the
@@ -4210,7 +4213,7 @@ export class SessionManager extends EventEmitter {
     // turn", which is a different question and a much longer answer - a turn Robert starts
     // in a freshly cleared pane routinely runs ten minutes. Below it the prompt waits; at
     // it, it gives up and says so, rather than sitting owed for ever.
-    const personDeadline = Date.now() + PERSON_WAIT_MAX_MS + Math.max(0, extraDelay)
+    const personDeadline = Date.now() + personWaitMs + Math.max(0, extraDelay)
     const ourWrite = (data: string): void => {
       if (owner) owner.writing = true
       try { this.write(id, data, 'app') } finally { if (owner) owner.writing = false }
@@ -4828,6 +4831,13 @@ export class SessionManager extends EventEmitter {
     // and Codex wraps its date onto the row below.
     const stopped = nextStop(live.stop, painted)
     if (stopped) this.emit('paneError', live.meta, stopped, painted)
+    // Already reported, so no news for Telegram - but news for a limit wave. Claude Code
+    // continues a limit-stopped chat by itself, typing nothing through this app, so the
+    // latch never reopens and that turn hitting the limit again would be invisible.
+    else if (live.stop.reported) {
+      const again = stoppedLine(painted)
+      if (again) this.emit('paneStopAgain', live.meta, again, painted)
+    }
     const found = cfg.enabled
       ? recover({ painted, busy: false, tries: live.recoverTries }, cfg)
       : null

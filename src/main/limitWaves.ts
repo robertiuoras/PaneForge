@@ -109,6 +109,8 @@ export interface LimitWaveRunner {
   /**
    * A pane stopped. True when this is a limit with a reset - it is the wave's, and it does
    * NOT go to Telegram. False for every other stop, which keeps its Telegram message.
+   * Also called for a stop on a pane whose first stop was already reported (`paneStopAgain`),
+   * whose answer nobody reads: that one is only ever the wave's.
    */
   stopped(s: Session, line: string, painted?: string): boolean
   tick(): void
@@ -157,7 +159,10 @@ export function startLimitWaves(deps: LimitWaveDeps, opts: { timer?: boolean } =
       const t = now()
       const stop = limitStopOf(stopText(line, painted), t)
       if (stop === null) return false
-      if (stop === 'stale') {
+      // A stop as it happens names a reset still to come. One whose reset has been is a CLI
+      // repainting its conversation - a woken pane's `--resume` does exactly that, after its
+      // continue went in - and reading it as new would type the continue in a second time.
+      if (stop === 'stale' || stop.resetAt <= t) {
         deps.log({ action: 'stale', pane: s.id, line: line.slice(0, 160) })
         return true
       }

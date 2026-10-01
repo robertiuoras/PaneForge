@@ -60,6 +60,9 @@ const NOW = Date.UTC(2026, 9, 1, 11, 39)
   ok('codex wrapped date, year glued to the hour', cx?.provider === 'codex' && cx?.resetAt === Date.UTC(2026, 9, 6, 8, 53), cx && iso(cx.resetAt))
   ok('codex date already gone is stale',
     W.limitStopOf("You've hit your usage limit. try again at Sep 26th, 2026 8:27 PM.", NOW, BNE) === 'stale')
+  ok('claude: a "resets" on a LATER row is prose, not the reset',
+    W.limitStopOf("You've hit your session limit\nthe cron resets 2am (Australia/Brisbane)", NOW, BNE) === null)
+  ok('whyUnsent gone', W.whyUnsent('gone') === 'it was closed before the message went in')
   for (const line of ['API Error: 401 Invalid API key · Please run /login', 'Credit balance is too low', "You've hit your session limit",
     "You've hit your session limit · resets 9:40pm (Mars/Olympus_Mons)"]) {
     ok(`not a limit with a reset: ${line}`, W.limitStopOf(line, NOW, BNE) === null, W.limitStopOf(line, NOW, BNE))
@@ -250,6 +253,8 @@ const fresh = (over = {}) => ({ busy: false, turns: 5, drafting: false, ended: f
   runner.stopped(desk[2], limit)
   ok('auth stop is not (Telegram still called)', runner.stopped(desk[0], 'API Error: 401 Invalid API key · Please run /login') === false)
   ok('credit stop is not', runner.stopped(desk[0], 'Credit balance is too low') === false)
+  ok('a reset that has already been (a woken pane repainting) is no wave either',
+    runner.stopped(desk[0], "You've hit your session limit · resets 9:38pm (Australia/Brisbane)") === true && runner.waves.waves.length === 1)
   ok('stale limit: no Telegram and no wave', runner.stopped(desk[0], "You've hit your session limit · resets 4:40pm (Australia/Brisbane)") === true && runner.waves.waves.length === 1)
   t = DUE - 1000
   runner.tick()
