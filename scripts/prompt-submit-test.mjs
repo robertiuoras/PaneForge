@@ -17,6 +17,7 @@
 //
 //   node scripts/prompt-submit-test.mjs
 
+import { spawn } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -46,8 +47,12 @@ process.env.PF_PROMPT_ENTER_TRIES ??= '3'
 // 1500 the PC's full-suite pool (timers 300-650ms late) opened it AT the ceiling, which logs
 // `typing anyway`, not `finished starting` (2026-09-28, 1 of 280 red).
 process.env.PF_PROMPT_STARTUP_MS ??= '3000'
-process.env.PF_PROMPT_PIDFILE_MS ??= '800'
+process.env.PF_PROMPT_PIDFILE_MS ??= '1200'
 process.env.PF_CLAUDE_SETTLE_MS ??= '200'
+// The process-tree reading of the hooks (`hookState`): quiet after the last hook, and how
+// often the shared `ps` may run.
+process.env.PF_CLAUDE_HOOKS_QUIET_MS ??= '150'
+process.env.PF_CLAUDE_HOOKS_PS_MS ??= '50'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const work = mkdtempSync(join(tmpdir(), 'pf-prompt-submit-'))
@@ -136,7 +141,7 @@ const logSays = async (id, re, waitMs = 2000) => {
   return re.test(logOf(id))
 }
 // How long a held launch prompt waited, in seconds from the spawn, as the app logged it
-// (`still starting - typing anyway after 0.8s`, short wait or ceiling); -1 when it never said.
+// (`still starting - typing anyway after 1.2s`, short wait or ceiling); -1 when it never said.
 const shortWaitOf = async (id) => {
   const re = /still starting - typing anyway after ([\d.]+)s/
   if (!(await logSays(id, re))) return -1
@@ -543,6 +548,25 @@ const ANSWERING =
   manager.kill(answering.id)
 }
 
+// A Codex startup repaint can clear the visible composer without accepting a turn.
+// No native user row means no successful delivery, even with a fresh run clock.
+{
+  const pane = manager.start({ cwd: root, agent: 'shell' })
+  const live = manager.sessions.get(pane.id)
+  const proc = live.proc
+  manager.queuePrompt(pane.id, 'Native receipt required for this startup fixture', 0, 40, () => {}, 5000)
+  await sleep(120)
+  proc.say(COMPOSER)
+  await sentReturnAt(proc)
+  live.meta.agent = 'codex'
+  live.meta.runSince = Date.now() + 1
+  const until = Date.now() + Number(process.env.PF_PROMPT_CONFIRM_MS) * Number(process.env.PF_PROMPT_ENTER_TRIES) + 400
+  while (Date.now() < until) { proc.say(ANSWERING); await sleep(50) }
+  ok(await logSays(pane.id, /UNSENT/), 'Codex startup paint without a native row remains unverified', logOf(pane.id))
+  ok(!/prompt submitted/.test(logOf(pane.id)), 'neither a startup clock nor an empty composer proves Codex delivery', logOf(pane.id))
+  manager.kill(pane.id)
+}
+
 // ...and the failure this path exists for still reads as the failure. Same painting pane,
 // but the composer is holding the prompt: the return was eaten and nobody sent it.
 {
@@ -591,6 +615,11 @@ const ANSWERING =
   const proj = join(home, 'projects', root.replace(/[^A-Za-z0-9]/g, '-'))
   mkdirSync(join(home, 'sessions'), { recursive: true })
   mkdirSync(proj, { recursive: true })
+  // This desk runs a SessionStart hook, so hooks not seen yet are still to come (`hooksAwaited`).
+  const deskHooks = (on) => writeFileSync(join(home, 'settings.json'), JSON.stringify(on
+    ? { hooks: { SessionStart: [{ hooks: [{ type: 'command', command: 'true' }] }] } }
+    : { hooks: {} }))
+  deskHooks(true)
   const RULE = '─'.repeat(60)
   const IDLE = '\x1b[2J\x1b[H ▐▛███▜▌   Claude Code v2.1.281\r\n\r\n' + RULE + '\r\n❯ \r\n' + RULE +
     '\r\n  ⏵⏵ bypass permissions on (shift+tab to cycle)\r\n'
@@ -618,10 +647,11 @@ const ANSWERING =
     }
     return 0
   }
-  const open = () => {
+  const open = (pid, firstLookMs = 40) => {
     const pane = manager.start({ cwd: root, agent: 'claude' })
     const p = manager.sessions.get(pane.id).proc
-    manager.queuePrompt(pane.id, BRIEF, 0, 40, undefined, 5000)
+    if (pid) p.pid = pid
+    manager.queuePrompt(pane.id, BRIEF, 0, firstLookMs, undefined, 5000)
     p.say(IDLE)
     return { pane, p, at: Date.now() }
   }
@@ -642,8 +672,8 @@ const ANSWERING =
 
   // A CLI whose start is long over (the record written, the file quiet): nothing to wait for.
   cli('sess-done')
-  hooksDone('sess-done', 60_000)
   const b = open()
+  hooksDone('sess-done', 60_000)
   const bAt = await typedAt(b.p, 1200)
   // Not held is what the app logged, as for the shell pane below: a stopwatch here is the
   // PC pool's timer lag, not the gate.
@@ -672,9 +702,10 @@ const ANSWERING =
   // until the first prompt is in: panes s2, s15, s20, s26 and s27 (2026-09-26/27) had their
   // hooks done at +2-11s and their launch prompts held the whole minute, the file born only
   // at +62-67s after the app typed anyway. The pid file alone gets the short wait.
+  deskHooks(false)
   cli('sess-deferred')
   const f = open()
-  // The short wait is 800ms and the ceiling 3000, both counted from the spawn. Which one it
+  // The short wait is 1200ms and the ceiling 3000, both counted from the spawn. Which one it
   // was is the age the app logged, not a stopwatch started after `open()` returned: on the
   // PC the spawn itself took 300-500ms, so the prompt went in 488ms after `f.at` having
   // waited the full 800 (2026-09-28, 2 of 3 runs red with a 600ms floor).
@@ -685,6 +716,161 @@ const ANSWERING =
     `${fWaited}s waited\n${logOf(f.pane.id)}`)
   ok(await logSays(f.pane.id, /no pid file or transcript yet/), 'and the log says what it was waiting for', logOf(f.pane.id))
   manager.kill(f.pane.id)
+
+  // No pid file and nothing on disk, on a desk with no SessionStart hooks: the short wait from
+  // the spawn, as before - nothing would ever say more.
+  rmSync(pidFile, { force: true })
+  const g = open()
+  await typedAt(g.p, 2500)
+  const gWaited = await shortWaitOf(g.pane.id)
+  ok(gWaited >= 0.8 && gWaited < 2.4, 'a desk with no SessionStart hooks keeps the short wait', `${gWaited}s\n${logOf(g.pane.id)}`)
+  manager.kill(g.pane.id)
+  deskHooks(true)
+
+  // HOOKS NOT STARTED YET ARE STILL TO COME. At load average 50-137 (2026-10-02, 5 at once)
+  // a fresh CLI's first hook started at +11-25s; typed at the 10s short wait, 14 of 15 were
+  // left UNSENT and 4 never answered. On a desk that runs SessionStart hooks, no pid file yet
+  // holds past the short wait, and once it is there the short wait counts from it.
+  if (process.platform !== 'win32') {
+    const h = open()
+    const hEarly = await typedAt(h.p, 1500)
+    ok(!hEarly, 'no pid file yet, on a desk whose hooks will run, holds past the short wait', logOf(h.pane.id))
+    ok(await logSays(h.pane.id, /hooks have not started yet/), 'and the log says it is waiting for them to start', logOf(h.pane.id))
+    cli('sess-late-pid')
+    const hPid = Date.now()
+    const hAt = await typedAt(h.p, 2500)
+    ok(hAt > 0 && hAt - hPid >= 1000, 'a pid file with no hook seen gets the short wait from when it appeared, then the prompt goes in',
+      `${hAt ? hAt - hPid : '-'}ms after the pid file\n${logOf(h.pane.id)}`)
+    ok(typings(h.p) === 1, 'once')
+    manager.kill(h.pane.id)
+  }
+
+  // A RESUMED TRANSCRIPT HOLDS EVERY EARLIER START'S RECORDS. s41-mupyt5ez (2026-10-01,
+  // `--resume` at memory pressure 2) was typed at +4.6s off an old SessionStart record while
+  // the CLI still took in an old task notification. Only a record stamped since the spawn
+  // counts; the old file alone says nothing.
+  const resumedFile = join(proj, 'sess-resumed.jsonl')
+  const longAgo = new Date(Date.now() - 3_600_000)
+  writeFileSync(resumedFile, JSON.stringify({ type: 'attachment',
+    attachment: { type: 'hook_success', hookName: 'SessionStart:startup' }, timestamp: longAgo.toISOString() }) + '\n')
+  utimesSync(resumedFile, longAgo, longAgo)
+  cli('sess-resumed')
+  const rPane = manager.start({ cwd: root, agent: 'claude', resume: true, resumeId: 'sess-resumed' })
+  const rp = manager.sessions.get(rPane.id).proc
+  manager.queuePrompt(rPane.id, BRIEF, 0, 40, undefined, 5000)
+  rp.say(IDLE)
+  const rEarly = await typedAt(rp, 300)
+  ok(!rEarly, 'an old SessionStart record in a resumed transcript does not open the gate', logOf(rPane.id))
+  appendFileSync(resumedFile, JSON.stringify({ type: 'attachment',
+    attachment: { type: 'hook_success', hookName: 'SessionStart:resume' }, timestamp: new Date().toISOString() }) + '\n')
+  utimesSync(resumedFile, longAgo, longAgo)
+  const rAt = await typedAt(rp, 1500)
+  ok(rAt > 0 && !/typing anyway/.test(logOf(rPane.id)), 'this start\'s own record does', logOf(rPane.id))
+  ok(typings(rp) === 1, 'once')
+  manager.kill(rPane.id)
+  // The cases below expect the pid file the deferred case left: no transcript behind it.
+  cli('sess-deferred')
+
+  // THE HOOKS ARE OVER WHEN THE PROCESS TREE SAYS SO. With no transcript to read, every fresh
+  // pane waited the whole short wait: 67 of 72 opened 2026-10-01/02 typed at +10.0-10.2s with
+  // their hooks done at +2-5s. Claude Code runs each hook in a process group of its own and
+  // its MCP servers in the CLI's group (2.1.287, measured), so this fake CLI is a real process
+  // with one of each: the prompt goes in once the detached child has ended, before the short
+  // wait - and a hook that outlives the short wait does not lengthen it. Windows has no
+  // process groups: there the short wait is the answer, as the case above pins.
+  if (process.platform !== 'win32') {
+    // A real process standing in for Claude Code: an MCP-like child in its group, detached
+    // `hooks` ({at, ms} after it is up), and its pid file written `pidFileAt` ms in. `sleep`,
+    // not node, so a hook lives its `ms` and not a node boot more.
+    const fakeCli = async (sessionId, { hooks, pidFileAt = 0 }) => {
+      const plan = JSON.stringify({ hooks, pidFileAt, dir: join(home, 'sessions'), sessionId, cwd: root })
+      const proc = spawn(process.execPath, ['-e', `
+        const { spawn } = require('node:child_process')
+        const { writeFileSync } = require('node:fs')
+        const plan = JSON.parse(process.env.FAKE_CLI)
+        const t0 = Date.now()
+        const kids = [spawn('sleep', ['8'], { stdio: 'ignore' })]
+        console.log('up')
+        setTimeout(() => writeFileSync(plan.dir + '/' + process.pid + '.json',
+          JSON.stringify({ pid: process.pid, sessionId: plan.sessionId, cwd: plan.cwd, startedAt: t0, status: 'idle' })), plan.pidFileAt)
+        plan.hooks.forEach(({ at, ms }, i) => setTimeout(() => {
+          const hook = spawn('sleep', [String(ms / 1000)], { detached: true, stdio: 'ignore' })
+          kids.push(hook)
+          hook.on('exit', () => console.log('hook-ended ' + i + ' ' + Date.now()))
+        }, at))
+        process.on('SIGTERM', () => { for (const k of kids) { try { k.kill() } catch {} } process.exit() })
+        setTimeout(() => {}, 8000)`], { stdio: ['ignore', 'pipe', 'ignore'], env: { ...process.env, FAKE_CLI: plan } })
+      let out = ''
+      proc.stdout.on('data', (d) => (out += d))
+      const ended = (i) => Number(new RegExp(`hook-ended ${i} (\\d+)`).exec(out)?.[1] ?? 0)
+      const until = Date.now() + 5000
+      while (!out.includes('up') && Date.now() < until) await sleep(5)
+      return { proc, ended }
+    }
+    // Opens a pane on a fake CLI and waits for its prompt: typed when, and after which hook.
+    const run = async (sessionId, plan, firstLookMs = 40) => {
+      const cli = await fakeCli(sessionId, plan)
+      const pane = open(cli.proc.pid, firstLookMs)
+      const typed = await typedAt(pane.p, 4500)
+      await sleep(50)
+      return { ...pane, cli, typed, after: (i) => typed > 0 && cli.ended(i) > 0 && typed >= cli.ended(i),
+        why: (i) => `typed ${typed ? typed - pane.at : '-'}ms in, hook ${i} ended ${cli.ended(i) ? cli.ended(i) - pane.at : '-'}ms in\n${logOf(pane.pane.id)}`,
+        done: () => { manager.kill(pane.pane.id); cli.proc.kill() } }
+    }
+
+    const t = await run('sess-tree', { hooks: [{ at: 0, ms: 350 }] })
+    ok(t.after(0), 'a fresh CLI with no transcript is typed into once its hooks have ended, not while one runs', t.why(0))
+    ok((await logSays(t.pane.id, /finished starting/)) && !/typing anyway/.test(logOf(t.pane.id)),
+      'and that is the hooks ending, not the short wait running out', logOf(t.pane.id))
+    ok(typings(t.p) === 1, 'typed exactly once', String(typings(t.p)))
+    t.done()
+
+    // The first look at a fresh pane comes 2.5s in and an idle desk's hooks are over by +2.2s:
+    // read from the moment the prompt is queued, or a watch begun at that look sees no hook
+    // and the pane waits the whole short wait (dev copy 2026-10-02: 10.1s, hooks over +2.2s).
+    const e = await run('sess-tree-early', { hooks: [{ at: 0, ms: 350 }] }, 900)
+    ok(e.after(0) && !/waiting for Claude Code|typing anyway/.test(logOf(e.pane.id)),
+      'hooks over before the first look open the gate at that look, not at the short wait', e.why(0))
+    e.done()
+
+    // Nothing running yet is not "the hooks are over": one has to be seen first.
+    const late = await run('sess-tree-late', { hooks: [{ at: 400, ms: 300 }] })
+    ok(late.after(0), 'a hook that starts after the pid file is still waited for', late.why(0))
+    late.done()
+
+    // The quiet has to last: a gap between two hooks shorter than it is not the end.
+    const gap = await run('sess-tree-gap', { hooks: [{ at: 0, ms: 350 }, { at: 400, ms: 350 }] })
+    ok(gap.after(1), 'a short gap between two hooks does not open the gate', gap.why(1))
+    gap.done()
+
+    // Before its pid file the CLI runs short children of its own (a shell snapshot); a quiet
+    // spell after one of those is not its hooks being over.
+    const snap = await run('sess-tree-snap', { hooks: [{ at: 0, ms: 120 }, { at: 500, ms: 300 }], pidFileAt: 500 })
+    ok(snap.after(1), 'a child that ended before the pid file does not count as the hooks', snap.why(1))
+    snap.done()
+
+    // A hook seen still running at the short wait is a reading, not a guess: held until it
+    // ends. s38-mupyep73 (2026-10-01, a resume at memory pressure 2) was typed at the 10.1s
+    // short wait with its hooks running until +33s, and the prompt was lost.
+    const long = await run('sess-tree-long', { hooks: [{ at: 0, ms: 2000 }] })
+    const uWaited = Number(/finished starting after ([\d.]+)s/.exec(logOf(long.pane.id))?.[1] ?? -1)
+    ok(long.after(0) && uWaited > 1.2,
+      'a hook still running at the short wait holds the prompt until it ends', `${uWaited}s waited\n${long.why(0)}`)
+    long.done()
+
+    // ...and never past the ceiling.
+    const stuck = await run('sess-tree-stuck', { hooks: [{ at: 0, ms: 6000 }] })
+    const sWaited = await shortWaitOf(stuck.pane.id)
+    ok(stuck.typed > 0 && sWaited >= 3 && !stuck.cli.ended(0) && /typing anyway/.test(logOf(stuck.pane.id)),
+      'a hook that never ends holds it only up to the ceiling', `${sWaited}s waited\n${logOf(stuck.pane.id)}`)
+    stuck.done()
+
+    // Five at once, as a desk opens them: one shared reading, each pane its own answer.
+    const five = await Promise.all([0, 1, 2, 3, 4].map((i) => run(`sess-tree-five-${i}`, { hooks: [{ at: 0, ms: 300 + i * 60 }] })))
+    ok(five.every((f) => f.after(0)), 'five opened at once are each typed into after their own hooks', five.map((f) => f.why(0)).join('\n'))
+    ok(five.every((f) => typings(f.p) === 1), 'and each exactly once', five.map((f) => typings(f.p)).join(' '))
+    for (const f of five) f.done()
+  }
 
   // ONE PASTE, NOT A BURST. 2026-09-27 05:37:04Z, pane s26-mujdy43s: the 2116-char prompt
   // written raw reached the CLI as two 1024-byte reads and a 99-byte tail, Claude Code took
@@ -730,13 +916,15 @@ const ANSWERING =
     manager.kill(cx.id)
   }
 
-  // No pid file at all (a CLI that writes none): the short wait, then as before.
-  rmSync(pidFile, { force: true })
+  // No pid file at all (a CLI that writes none, so no sessions folder): the short wait, then
+  // as before - the hooks it runs are not awaited, or every prompt would sit the ceiling.
+  rmSync(join(home, 'sessions'), { recursive: true, force: true })
   const d = open()
   const dAt = await typedAt(d.p, 2500)
   const dWaited = await shortWaitOf(d.pane.id)
   ok(dAt > 0 && dWaited >= 0.8 && dWaited < 2.4, 'a CLI with no pid file costs only the short wait', `${dWaited}s waited\n${logOf(d.pane.id)}`)
   manager.kill(d.pane.id)
+  mkdirSync(join(home, 'sessions'), { recursive: true })
 
   // Restarted while it waited: `restart` re-keys the owed row and queues it again, so the
   // first wait stands down and the prompt goes into the new process ONCE. Before this, both
@@ -1101,6 +1289,8 @@ const ANSWERING =
   }
   received('sess-review-restored')
   await logSays(restored.id, /Claude transcript receipt/)
+  // The receipt is logged a few ms before the follower is typed: wait for the paste itself.
+  for (const until = Date.now() + 1500; Date.now() < until && !restoredLive.proc.writes.some(data => data.includes(follower)); ) await sleep(5)
   ok(rowsFor(restored.id).length === 0 && restoredLive.proc.writes.filter(data => data.includes(follower)).length === 1 && !restoredLive.proc.writes.some(data => data.includes(BRIEF)),
     'only the entire native payload releases the retained owner and permits one follower paste', logOf(restored.id))
   const oldReply = manager.replyFor

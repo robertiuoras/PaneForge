@@ -26,7 +26,7 @@ buildSync({
   platform: 'node',
   outfile: out
 })
-const { titlesIn, cardTitle, nextTitle } = createRequire(import.meta.url)(out)
+const { titlesIn, cardTitle, nextTitle, humanTitle } = createRequire(import.meta.url)(out)
 const chainOut = join(work, 'cliChain.cjs')
 buildSync({
   absWorkingDir: root,
@@ -322,6 +322,86 @@ check('the look back is only for a card on its folder name, and only for a hando
   assert.equal(nextTitle(card, read, read, 'taskdriver.ai', never), undefined)
   // Only the project again is not a handoff: nothing to continue.
   assert.equal(nextTitle(card, { ai: 'Taskdriver' }, undefined, 'taskdriver.ai', never), undefined)
+})
+
+// Robert, 2 Oct 2026, card 5 reading `PaneForge auto-close bug in s42-mupfazgj`: "too hard for
+// human to read ... u should know all future not s42-..". Every id below is off a REAL title -
+// `"aiTitle"` records in the Mac's transcripts that day, with how many times each was written.
+check('an id nobody can read comes out of a title, with the words that only pointed at it', () => {
+  for (const [t, want] of [
+    ['PaneForge auto-close bug in s42-mupfazgj', 'PaneForge auto-close bug'], // x35
+    ['s113-mufldnmu prompt lost on composer clear', 'Prompt lost on composer clear'], // x91
+    ['Handoff next steps session-handoff.pane-s107-mufjqpni', 'Handoff next steps'], // x60
+    ['Guarddeck deploy handoff: 024cca2 verification and job queue', 'Guarddeck deploy handoff: verification and job queue'],
+    ['GuardDeck build verification 1b88343', 'GuardDeck build verification'],
+    ['Release 6a64e3b2, egress cuts, alert delivery', 'Release, egress cuts, alert delivery'],
+    ['Upwork job alert ~022104694949835191162', 'Upwork job alert'], // x34
+    ['Meta pixel 633495490761992 facebook.com/tr request', 'Meta pixel facebook.com/tr request'], // x45
+    ['PaneForge task c94a32796cb5c01a part t1', 'PaneForge task part t1'],
+    ['NZBN register lookup 9429053734006', 'NZBN register lookup'],
+    ['Resume 1cbe8ee4-7ab9-4c22-ac86-c23b78b2a165 in pane 3', 'Resume in pane 3'],
+    ['Compare s42-mupfazgj and s75-mupowqz3 outputs', 'Compare outputs'],
+    ['Lost prompt (s42-mupfazgj)', 'Lost prompt'],
+    ['s42-mupfazgj', '']
+  ]) {
+    assert.equal(humanTitle(t), want, t)
+  }
+})
+
+check('a title with no id is worn exactly as it was', () => {
+  // Every title on the Mac's desk at 4:40am on 2 Oct (`pf list`), and words that only LOOK
+  // like ids: short hex, a version, a phone number, a word made of hex letters.
+  for (const t of [
+    'Finish preserved work',
+    'Push taskdriver main',
+    'X agent finds things',
+    'Caller logs, metrics + weekly review',
+    'Content notch alignment and archived tasks',
+    'Audit fix: money + jobs',
+    'Gemini Argon 4 research',
+    'paneforge-next',
+    'ai-accounts review leftovers',
+    'Angie C. | clients',
+    'Fix 2fa e2e tests',
+    'Upgrade to v0.8.233',
+    'Call 0412345678 back',
+    'Facade cleanup',
+    'Base64 decode, x86_64 build',
+    'Colour #f0a868 contrast',
+    'Budget 2026-10 report'
+  ]) {
+    assert.equal(humanTitle(t), t, t)
+  }
+})
+
+check('another chat is named by its own title, never by its id', () => {
+  const titles = { 's42-mupfazgj': 'Desk sweep', 's75-mupowqz3': 'Notes on 1b88343', 's9-abcdefgh': 'x'.repeat(50) }
+  const lookup = (id) => titles[id]
+  assert.equal(humanTitle('PaneForge auto-close bug in s42-mupfazgj', lookup), 'PaneForge auto-close bug in the Desk sweep chat')
+  assert.equal(humanTitle('Answer pane s42-mupfazgj', lookup), 'Answer the Desk sweep chat')
+  assert.equal(humanTitle("Merge the s42-mupfazgj chat's lane", lookup), "Merge the Desk sweep chat's lane")
+  assert.equal(humanTitle('s42-mupfazgj prompt lost', lookup), 'The Desk sweep chat prompt lost')
+  // Its title is cleaned too; an id the desk does not know comes out; a file name that
+  // only CONTAINS an id is not a chat.
+  assert.equal(humanTitle('Bug from s75-mupowqz3', lookup), 'Bug from the Notes chat')
+  assert.equal(humanTitle('Bug in s1-zzzzzzzz', lookup), 'Bug')
+  assert.equal(humanTitle('Handoff next steps session-handoff.pane-s42-mupfazgj', lookup), 'Handoff next steps')
+  // A name that would not fit on the card is not squeezed in: the reference goes instead.
+  assert.equal(humanTitle('Fix the crash in s9-abcdefgh', lookup), 'Fix the crash')
+})
+
+check('the agent title and a person rename both lose their ids', () => {
+  assert.deepEqual(cardTitle('Handoff next steps session-handoff.pane-s107-mufjqpni', 'PaneForge'), { title: '', continuing: true })
+  assert.deepEqual(cardTitle('PaneForge auto-close bug in s42-mupfazgj', 'PaneForge'), { title: 'PaneForge auto-close bug', continuing: false })
+  const card = { title: 'PaneForge', appDefault: true }
+  const lookup = (id) => (id === 's42-mupfazgj' ? 'Desk sweep' : undefined)
+  assert.deepEqual(nextTitle(card, { ai: 'PaneForge auto-close bug in s42-mupfazgj' }, undefined, 'PaneForge', undefined, lookup), {
+    title: 'PaneForge auto-close bug in the Desk sweep chat',
+    by: 'agent'
+  })
+  assert.deepEqual(nextTitle(card, { custom: 'Fix 1b88343 regression' }, undefined, 'PaneForge'), { title: 'Fix regression', by: 'person' })
+  // A rename to nothing but an id leaves the card as it was.
+  assert.equal(nextTitle(card, { custom: 's42-mupfazgj' }, undefined, 'PaneForge'), undefined)
 })
 
 console.log(`\n${n} checks passed`)

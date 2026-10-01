@@ -328,6 +328,9 @@ export function laneTip(lane: LaneBoardEntry, pane?: number): string {
   )
 }
 
+/** How long a clash is left to the chat the app hands it to before it is the person's. */
+export const CLASH_QUIET_MS = 10 * 60 * 1000
+
 /** How long finished work may wait to go into its project before that is worth a line. */
 export const WAITING_TOO_LONG_MS = 6 * 60 * 60 * 1000
 
@@ -349,14 +352,19 @@ export interface CopiesNotice {
  * "waiting for the other chats to finish so it can be merged in one go", which nobody has
  * to act on. So there are two lines left, and only these:
  *
- *  - two chats changed the same lines and no chat has taken the fix: one button hands it
- *    to a chat (the app also does that by itself as soon as one is free);
+ *  - two chats changed the same lines and no chat has taken the fix for CLASH_QUIET_MS:
+ *    one button hands it to a chat. Not before - the app hands every clash to a chat by
+ *    itself (LaneStrip), so a fresh one on screen was a button for a job already being
+ *    done: two of them at 3:49am on 2026-10-02, Robert: "would rather fixed permanently
+ *    than see these alerts ... but no silent failures";
  *  - finished work has waited WAITING_TOO_LONG_MS with the saving refused: the reason,
  *    which is worth a look, but no button, because saving can be a release in some projects.
  */
 export function copiesNotice(board: LaneBoard, now = Date.now()): CopiesNotice | null {
   const project = describePlace({ cwd: board.repo }).project
-  const clash = board.lanes.filter((l) => l.conflicted && !l.resolver && !l.peer)
+  const clash = board.lanes.filter(
+    (l) => l.conflicted && !l.resolver && !l.peer && now - (l.conflictSince ?? 0) >= CLASH_QUIET_MS
+  )
   if (clash.length)
     return {
       repo: board.repo,
