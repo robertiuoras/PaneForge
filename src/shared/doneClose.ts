@@ -19,8 +19,11 @@
 import { doneEnough, type DonePane } from './closeWhenDone'
 import { actionableNextSteps, personOwnedSteps } from './handoffSteps'
 
-/** What deciding needs to know, on top of what `closeWhenDone` already reads. */
-export interface DoneReading extends DonePane {
+/**
+ * What deciding needs to know, on top of what `closeWhenDone` already reads. The hand-off
+ * flags are `CloseHolds`', so the sweep refuses on `closeHeldBy` itself.
+ */
+export interface DoneReading extends DonePane, Pick<CloseHolds, 'handingOff' | 'handoffQueuedAt' | 'handoffOpen' | 'handoverUntil'> {
   agent: string
   /** A person is looking at this pane right now. */
   focused?: boolean
@@ -166,6 +169,11 @@ export function doneVerdict(reading: DoneReading, now = Date.now(), quietMs = AU
   const readQuiet = read ? now - Math.max(p.lookedAt ?? 0, p.lastKeyboard) >= READ_QUIET_MS : false
   if (quietMs !== 0 && ((read && !readQuiet) || (!read && quiet < quietMs))) return { close: false, reason: 'not quiet long enough' }
   if (!doneEnough(p, quiet, now)) return { close: false, reason: 'busy, asking, drafting or running something' }
+  // What `closeAfterResult` refuses on, refused here first: passed here and refused there,
+  // a held pane got a fresh 30-second countdown every sweep that never closed it (s48,
+  // 2026-10-01, twelve in eight minutes, held by a handoff with open steps).
+  const held = closeHeldBy(p, now)
+  if (held.length) return { close: false, reason: `session has ${held.join(', ')}` }
   if (p.reply === undefined) return { close: false, reason: 'reply not read' }
   const left = replyLeaves(p.reply, p.runningAgents)
   if (left) return { close: false, reason: left }
