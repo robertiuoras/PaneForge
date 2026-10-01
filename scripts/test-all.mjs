@@ -216,6 +216,7 @@ const TESTS = [
   ['lanedamaged', 'lane-damaged-test.mjs'],
   // taskdriver.ai's PC-proof gate; a ready lane's own check is what `ready` reports (macOS only).
   ['lanetaskdriver', 'lane-taskdriver-pc-test.mjs'],
+  ['lanetypecheckjob', 'lane-typecheck-job-test.mjs'],
   // A lane whose hooks rewrite its ledger every turn is not dirty forever.
   ['laneledger', 'lane-ledger-test.mjs'],
   ['issues', 'issues-dialog-test.mjs'],
