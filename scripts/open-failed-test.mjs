@@ -124,6 +124,7 @@ const at = (over) => ({
   ok(/logOffload\(failure\.log\)/.test(reporter) && /send\('handoff:moved', failure\.toast\)/.test(reporter), 'the reporter logs and toasts')
   const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
   ok(/startAction === 'send'/.test(app) && /flash\(reusedLine\(/.test(app), 'the dialog says when a client press went to the open chat')
+  ok(/s\.laneNote && !reused\.some\(/.test(app), "a reused chat's old lane note does not replace the reuse line")
   const client = readFileSync(join(root, 'src/main/remote/client.ts'), 'utf8')
   ok(/ask<Project\[\]>\(\{ t: 'projects' \}, 30_000\)/.test(client), 'the project list gets 30 s, past the measured 15.6 s')
 }

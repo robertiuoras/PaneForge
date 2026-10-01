@@ -1893,7 +1893,9 @@ export default function App(): JSX.Element {
       if (reused.length && !failed.length) flash(reusedLine(reused[0].session?.title ?? ''))
       // A launch that quietly moved folder has to say so once - the pane header and
       // the sidebar chip show where it landed, but only if you go looking.
-      const noted = started.filter((s) => s.laneNote)
+      // Not a reused chat: its `laneNote` was said when it opened, and flashing it again here
+      // replaced the `reusedLine` above with old news.
+      const noted = started.filter((s) => s.laneNote && !reused.some((r) => r.session?.id === s.id))
       if (noted.length === 1) {
         const s = noted[0]
         flash(s.lane ? `${s.cwd.split(/[\\/]/).pop()} - ${s.laneNote}` : (s.laneNote as string))
