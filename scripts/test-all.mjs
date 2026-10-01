@@ -50,6 +50,7 @@ const TESTS = [
   ['reviewlist', 'review-list-test.mjs'],
   ['doneclose', 'done-close-test.mjs'],
   ['replyread', 'reply-read-test.mjs'],
+  ['bgshell', 'background-shell-test.mjs'],
   ['claudemd', 'claudemd-size-test.mjs'],
   ['copylogic', 'copy-logic-test.mjs'],
   ['tokentally', 'token-tally-test.mjs'],

@@ -14,7 +14,7 @@
 
 import { closeSync, openSync, readSync, statSync } from 'node:fs'
 import { logHandoff } from './activationLog'
-import { AGENT_MAX_AGE_MS, agentWords, newAgentScan, runningAgents, scanAgentLines, type AgentScan } from '../shared/runningAgents'
+import { AGENT_MAX_AGE_MS, agentWords, hasPendingBackground, newAgentScan, runningAgents, scanAgentLines, type AgentScan } from '../shared/runningAgents'
 import type { CodexWorkerReading } from '../shared/types'
 
 const CHECK_MS = 3_000
@@ -125,6 +125,17 @@ export function backgroundWorkerReadingFor(paneId: string, since: number | undef
       startedAt: a.at ?? undefined
     }))
   }
+}
+
+/**
+ * Whether this pane's CLI still owed work to a background agent, a background shell command
+ * or a task notification not yet acted on - from the CACHED reading only (no I/O), so the
+ * desk snapshot can ask every pane cheaply. False when nothing was read or it was unreadable.
+ */
+export function pendingBackgroundFor(paneId: string, since: number | undefined, now = Date.now()): boolean {
+  const r = readings.get(paneId)
+  if (!r?.available) return false
+  return hasPendingBackground(r.scan, { since, now })
 }
 
 function wordsOf(r: Reading, since: number | undefined, now: number): string | undefined {
