@@ -430,7 +430,9 @@ manager.kill(cmd.id)
 // not. So the proof is the command's ANSWER, not the silence around it.
 // Answers the moment the return this queuePrompt sends was written, so a case can be
 // judged against the confirm window rather than against a wall-clock sleep.
-async function sentReturnAt(proc, waitMs = 3000) {
+// 10s, not 3s: on a shared PC (2026-10-01, returns 1.4s apart for a planned 0.2s) a 3s
+// wait threw, and the throw ends the FILE - every case after it never runs.
+async function sentReturnAt(proc, waitMs = 10_000) {
   const until = Date.now() + waitMs
   while (Date.now() < until) {
     if (proc.firstReturnAt !== undefined) return proc.firstReturnAt
@@ -1006,8 +1008,7 @@ const ANSWERING =
     let settles = 0
     manager.queuePrompt(pane.id, BRIEF, 0, 40, () => settles++, 5000)
     p.say(IDLE)
-    // Typing waits out the pid-file hold first; the PC's full-suite pool ran past 3s here.
-    await sentReturnAt(p, 10_000)
+    await sentReturnAt(p)
     p.say('\x1b[2J\x1b[H' + RULE + '\r\n\u276f ' + BRIEF.split('\n')[0] + '\r\n' + RULE + '\r\n')
     let second = 0
     for (const until = at + Number(process.env.PF_PROMPT_STARTUP_MS); Date.now() < until && !second; ) {
