@@ -335,6 +335,11 @@ manager.sendPrompt(hijack.id, LATER)
 // a stub that never says anything again leaves the last busy frame as the newest one.
 await sleep(200)
 hijackProc.say(COMPOSER)
+// The resume's own return started a turn, and a prompt queued during a turn waits for it
+// to end. The app ends it on the renderer's footer read; without that read only the 4s
+// quiet backstop does, on Windows (no foreground-job rule for a shell): measured 4331ms of
+// this 5000ms wait on a Mac with that rule off, past it on the PC's loaded pool. 369ms with it.
+manager.setBusyOnScreen(hijack.id, false, COMPOSER)
 for (const until = Date.now() + 5000; Date.now() < until && !hijackProc.writes.join('').includes(LATER); ) await sleep(40)
 ok(
   hijackProc.writes.join('').includes(LATER),
@@ -1399,6 +1404,47 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
     'and that follow-up is typed when the turn ends', logOf(stale.pane.id))
   manager.kill(stale.pane.id)
 
+  // The held prompt can prove ITSELF sent first: its own receipt check runs one confirm
+  // after its return, and a follow-up queued during that turn may not look until later.
+  // That settle removes the owner the follow-up was queued behind, while the turn the
+  // receipt proves is still running over Codex's empty box - and the follow-up's budget
+  // running out is no licence to steer into it.
+  const selfSent = open()
+  const heldFirst = 'held prompt that proves itself sent'
+  const heldNext = 'follow-up queued during the self-confirmed turn'
+  selfSent.p.onWrite = data => {
+    if (data.includes(heldFirst)) selfSent.p.say(frame(heldFirst))
+    if (data.includes(heldNext)) selfSent.p.say(frame(heldNext))
+    if (data !== '\r') return
+    if (pasted(selfSent.p, heldNext)) { selfSent.received(heldNext); return }
+    // The return went in: the box empties, the turn starts (its footer read as busy, so
+    // the 4s quiet backstop cannot end it mid-test), and the receipt is written.
+    selfSent.live.meta.runSince = Date.now()
+    selfSent.live.busyUntil = Date.now() + 60_000
+    selfSent.p.say(frame('', true))
+    selfSent.received(heldFirst)
+  }
+  const heldFirstSettled = queue(selfSent, heldFirst)
+  ok(await waitFor(() => returnsOf(selfSent.p) === 1), 'the held prompt is typed and its return sent', logOf(selfSent.pane.id))
+  // Queued after that return, first look 1.5s later: the held prompt's own confirm is
+  // 200ms after its return, and the PC's loaded pool runs timers 300-650ms late, so the
+  // order this case is about holds there too (asserted, not assumed). Its 300ms budget is
+  // spent by then, so the old code typed on that first look.
+  let heldNextSettled = 0
+  const heldNextAt = Date.now()
+  manager.queuePrompt(selfSent.pane.id, heldNext, 0, 1500, () => heldNextSettled++, 300)
+  ok(await waitFor(() => heldFirstSettled() === 1, 1400) && !manager.codexQueued.has(selfSent.pane.id) && heldNextSettled === 0,
+    'the held prompt confirms itself before the follow-up first looks', logOf(selfSent.pane.id))
+  await waitFor(() => Date.now() - heldNextAt >= 3000, 3200)
+  ok(!pasted(selfSent.p, heldNext) && heldNextSettled === 0 && Boolean(selfSent.live.meta.runSince),
+    'a follow-up behind a held prompt that confirmed itself waits for that prompt’s turn, past its own budget',
+    `pasted=${pasted(selfSent.p, heldNext)} settled=${heldNextSettled}\n${logOf(selfSent.pane.id)}`)
+  manager.setBusyOnScreen(selfSent.pane.id, false, '')
+  selfSent.p.say(frame(''))
+  ok(await waitFor(() => heldNextSettled === 1 && pasted(selfSent.p, heldNext) && ledger(selfSent.pane.id).length === 0),
+    'and it is typed once that turn ends', logOf(selfSent.pane.id))
+  manager.kill(selfSent.pane.id)
+
   // All waiting followers share the retained owner's negative native scan. Count
   // real 2 MiB reads, including invalidation without a terminal repaint.
   const scanHeld = open()
@@ -1549,15 +1595,15 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
     canceled.p.say(frame(''))
     ok(await waitFor(canceledSettled) && ledger(canceled.pane.id).length === 0,
       `explicit ${JSON.stringify(cancel)} cancellation removes the matching durable intent`)
+    canceled.live.meta.status = 'idle'
     canceled.live.meta.runSince = undefined
     canceled.live.busyUntil = 0
     // Our own Enter left a draft hold, and a cancel is not proof the box is empty: the
     // screen is. The redraw a cancel key causes falls in that key's repaint grace and
-    // stamps no output, so the proof is the CLI's next paint once the grace is over, read
-    // the way the idle sweep reads it. Only then may the next prompt go in.
-    canceled.live.repaintUntil = 0
-    canceled.p.say(frame(''))
-    await manager.confirmDraft(canceled.live)
+    // stamps no output, and nothing else is printed: the idle sweep reads that redraw.
+    ok(await waitFor(() => !canceled.live.draftConfirmation && !canceled.live.meta.drafting, 4000),
+      `the ${JSON.stringify(cancel)} redraw alone releases our own Enter's draft hold`,
+      `status=${canceled.live.meta.status} hold=${JSON.stringify(canceled.live.draftConfirmation)}`)
     const next = `after explicit cancellation ${JSON.stringify(cancel)}`
     canceled.p.onWrite = data => {
       if (data.includes(next)) canceled.p.say(frame(next))
@@ -1732,10 +1778,9 @@ for (const [agent, origin] of [['codex', 'desk'], ['claude', 'desk'], ['grok', '
   const live = manager.sessions.get(pane.id)
   live.meta.agent = agent
   const frame = (text) => `\x1b[2J\x1b[H${'─'.repeat(60)}\r\n❯ ${text}\r\n${'─'.repeat(60)}\r\n\x1b[2;${3 + text.length}H`
-  const paint = (text) => {
-    live.buffer.set(text)
-    live.meta.lastOutput = Math.max(Date.now(), live.meta.lastOutput + 1)
-  }
+  // Through the pty's own data path, so the reader sees every paint the app counts -
+  // the cancel key's redraw below lands in its repaint grace.
+  const paint = (text) => live.proc.say(text)
   if (origin === 'desk') {
     manager.write(pane.id, 'Keep this unsent prompt safe', 'desk')
     manager.write(pane.id, '\r', 'desk')
@@ -1773,6 +1818,81 @@ for (const [agent, origin] of [['codex', 'desk'], ['claude', 'desk'], ['grok', '
   await manager.confirmDraft(live)
   ok(!live.meta.drafting, `${name}: confirmed empty composer releases the hold`)
   manager.kill(pane.id)
+}
+
+// A CANCEL KEY'S REDRAW IS THE ONLY PROOF AN IDLE BOX GIVES. Ctrl-U and Ctrl-C are not
+// typing, so `write` gives them a repaint grace and the CLI's box-emptying redraw lands
+// inside it, stamping no output. An idle Claude/Codex composer prints nothing more on its
+// own, and the idle sweep had already read the box at that output with the prompt still
+// in it - so the hold, and `drafting`, stayed until the agent next printed, and a queued
+// follow-up waited behind a "person" for its whole 45 min. Driven through the pty's own
+// data path and the real 1s idle sweep: nothing here pokes the grace or the reader. The
+// bound is 4s from the redraw: one 1s sweep tick after the box has been quiet for a second
+// is 2s at most, and the PC's loaded pool runs timers 300-650ms late.
+{
+  const frame = (text) => `\x1b[2J\x1b[H${'─'.repeat(60)}\r\n❯ ${text}\r\n${'─'.repeat(60)}\r\n\x1b[2;${3 + text.length}H`
+  const stuck = 'Keep this prompt until the box is proven empty'
+  const typedIn = (live, text) => live.proc.writes.join('').includes(text)
+  const run = async (agent, origin, key) => {
+    const name = `${agent} (${origin}) ${key === '\x15' ? 'Ctrl-U' : 'Ctrl-C'}`
+    const pane = manager.start({ cwd: root, agent: 'shell' })
+    const live = manager.sessions.get(pane.id)
+    live.meta.agent = agent
+    live.proc.say(frame(''))
+    if (origin === 'desk') {
+      // A person's own prompt, its Enter swallowed: the CLI still draws it in the box.
+      manager.write(pane.id, stuck, 'desk')
+      manager.write(pane.id, '\r', 'desk')
+      live.proc.say(frame(stuck))
+    } else {
+      // This app's prompt, every return eaten.
+      live.proc.onWrite = (data) => { if (data.includes(stuck)) live.proc.say(frame(stuck)) }
+      let settled = 0
+      manager.queuePrompt(pane.id, stuck, 0, 40, () => settled++, 5000)
+      const until = Date.now() + 6000
+      while (!settled && Date.now() < until) await sleep(40)
+      live.proc.onWrite = undefined
+    }
+    live.meta.status = 'idle'
+    live.meta.runSince = undefined
+    live.busyUntil = 0
+    // The idle sweep reads the box, prompt still in it, once the pane has been quiet 1s.
+    await sleep(2300)
+    const heldBefore = live.meta.drafting === true && Boolean(live.draftConfirmation)
+    // Codex: a person's cancel key also cancels a waiting queued prompt of ours (by
+    // design), so its follow-up is queued after the release instead.
+    const next = `follow-up after ${name}`
+    const queueNext = () => {
+      live.proc.onWrite = (data) => { if (data.includes(next)) live.proc.say(frame(next)) }
+      manager.queuePrompt(pane.id, next, 0, 40, undefined, 5000)
+    }
+    let waited = true
+    if (agent !== 'codex') {
+      queueNext()
+      await sleep(300)
+      waited = !typedIn(live, next)
+    }
+    const hold = live.draftConfirmation
+    manager.write(pane.id, key, 'desk')
+    live.proc.say(frame('')) // the CLI's box-emptying redraw, inside that key's grace
+    const at = Date.now()
+    while (live.draftConfirmation === hold && Date.now() - at < 4000) await sleep(20)
+    const ms = Date.now() - at
+    // The follow-up may already be in, with its own Enter's hold: it is only typed once
+    // nothing is drafting, so that is the same proof.
+    const cleared = live.draftConfirmation !== hold && (!live.meta.drafting || typedIn(live, next))
+    ok(heldBefore && waited && cleared, `${name}: the box-emptying redraw alone releases the hold within 4s`,
+      `held=${heldBefore} waited=${waited} cleared=${cleared} after ${ms}ms, drafting=${live.meta.drafting} hold=${JSON.stringify(live.draftConfirmation)}`)
+    if (agent === 'codex') queueNext()
+    const until = Date.now() + 2000
+    while (!typedIn(live, next) && Date.now() < until) await sleep(40)
+    ok(typedIn(live, next), `${name}: and a queued follow-up then goes in`, logOf(pane.id))
+    manager.kill(pane.id)
+  }
+  await Promise.all([
+    run('claude', 'desk', '\x15'), run('codex', 'desk', '\x15'), run('claude', 'app', '\x15'),
+    run('grok', 'app', '\x15'), run('claude', 'desk', '\x03'), run('claude', 'app', '\x03')
+  ])
 }
 
 manager.killAll?.()

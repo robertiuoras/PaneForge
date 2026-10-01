@@ -37,7 +37,7 @@ const setTimeout=(f)=>{tasks.push(f);return {unref(){}}}
 export class Harness {
   sessions=new Map(); answering=new Set(); pendingAnswers=new Map(); codexQueued=new Map(); autoClearPending=new Set(); autoClearArmTimers=new Map(); answerLedger; writes=[]
   setOwedPrompt(id,v){this.sessions.get(id).meta.owedPrompt=v}
-  write(id,text){const l=this.sessions.get(id);this.writes.push(text);const fed=feedDraft(l.draft,text);l.draft=fed.state;if(fed.submitted.some(x=>x.trim())){l.draftConfirmation={prompt:fed.submitted.join('\\n'),since:clock,afterOutput:0};l.meta.drafting=true}if(text==='\\r')l.meta.lastKeyboard=clock}
+  write(id,text){const l=this.sessions.get(id);this.writes.push(text);const fed=feedDraft(l.draft,text);l.draft=fed.state;if(fed.submitted.some(x=>x.trim())){l.draftConfirmation={prompt:fed.submitted.join('\\n'),since:clock,afterPaint:0};l.meta.drafting=true}if(text==='\\r')l.meta.lastKeyboard=clock}
   emitSessions(){}
   ${releaseHold}
   queueVerdict(id, composerIdle=false){const proof='turn',live=this.sessions.get(id),owner=this.codexQueued.get(id),mark=0,takenMark=0,deadline=0,personDeadline=0,PERSON_QUIET_MS=120;${queueVerdict}return verdict(live,composerIdle)}
