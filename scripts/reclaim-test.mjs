@@ -1415,6 +1415,10 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   const doClose = app.slice(app.indexOf('const doClose = useCallback'), app.indexOf('const live = ids.filter((id) => stillCloseable(id))'))
   check('the close at the deadline refuses a kept or serving pane',
     /pinnedRef\.current\[id\] \|\| sessionsRef\.current\.find\(\(x\) => x\.id === id\)\?\.serving/.test(doClose) && /ids = ids\.filter\(\(id\) => !held\.includes\(id\)\)/.test(doClose))
+  // ...the CLOCK's close, that is. "Do it now" is a person choosing it on that card: refusing
+  // it made the card vanish and nothing close (review of the recovered lane-b work, 2026-10-02).
+  check('...but Do it now still closes what the person chose',
+    /const held = byPerson \? \[\] :/.test(doClose) && /doClose\(ids, mb, soon\?\.why, true\)/.test(app) && /doClose\(soon\.ids, mb, soon\.why\)\n/.test(app))
 }
 
 console.log(`reclaim: ${checks} checks passed`)

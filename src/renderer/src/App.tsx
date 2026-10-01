@@ -4415,12 +4415,14 @@ export default function App(): JSX.Element {
   )
 
   const doClose = useCallback(
-    (ids: string[], mb: number, why?: CloseSoon['why']) => {
+    (ids: string[], mb: number, why?: CloseSoon['why'], byPerson = false) => {
       dropSoon(ids)
       // Re-read at the deadline, not only at the arm: a Keep or a server that arrived during
       // the count reaches this closure through refs, and the effect that drops the card
-      // may not have run yet.
-      const held = ids.filter((id) => pinnedRef.current[id] || sessionsRef.current.find((x) => x.id === id)?.serving)
+      // may not have run yet. Only the clock is refused: "Do it now" is a person choosing
+      // this close on the card that names the pane, and refusing it would just make the
+      // card vanish with nothing closed.
+      const held = byPerson ? [] : ids.filter((id) => pinnedRef.current[id] || sessionsRef.current.find((x) => x.id === id)?.serving)
       if (held.length) {
         skipClose(held, 'it was kept open or started serving during the countdown')
         mb = Math.round((mb * (ids.length - held.length)) / ids.length)
@@ -4934,7 +4936,7 @@ export default function App(): JSX.Element {
       }
       const mb = pendingMb.current[key] ?? 0
       delete pendingMb.current[key]
-      doClose(ids, mb, soon?.why)
+      doClose(ids, mb, soon?.why, true)
     },
     [doClose, doMove, dropSoon]
   )
