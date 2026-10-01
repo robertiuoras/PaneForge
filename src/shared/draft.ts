@@ -481,3 +481,27 @@ export function composerWipe(draft: DraftState | undefined): string {
   const rounds = Math.min(24, Math.max(4, lines + 2))
   return '\x0b\x15\x7f'.repeat(rounds)
 }
+
+/** How long an unsent-draft flag sits untouched before the screen is asked about it. */
+export const DRAFT_RECHECK_IDLE_MS = 60_000
+/** ...and how often after that, per pane. */
+export const DRAFT_RECHECK_EVERY_MS = 30_000
+
+/**
+ * Is it time to read this pane's prompt box to see whether its draft flag still holds?
+ *
+ * `certain` goes false on any arrow, Home/End or Alt chord, and only Enter, Ctrl-C or Ctrl-U
+ * reset it - so a draft cleared any other way (Esc Esc, deleted a word at a time, sent from
+ * the phone) kept `drafting` set for good, and `drafting` holds a finished pane open. s42 on
+ * 1 Oct: finished 11:53pm Thu, held until Robert came back at 1:13am Fri. A minute of no
+ * keys on an idle agent pane, then a read every 30 s; `main/sessions.ts` `recheckDraft`
+ * clears the flag only on an EMPTY box read with nothing changed meanwhile.
+ */
+export function draftRecheckDue(
+  p: { drafting?: boolean; status: string; runSince?: number; agent: string; lastKeyboard: number },
+  lastCheck: number,
+  now: number
+): boolean {
+  return Boolean(p.drafting) && p.status === 'idle' && !p.runSince && p.agent !== 'shell' &&
+    now - p.lastKeyboard >= DRAFT_RECHECK_IDLE_MS && now - lastCheck >= DRAFT_RECHECK_EVERY_MS
+}

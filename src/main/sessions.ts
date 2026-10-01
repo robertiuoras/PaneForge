@@ -137,7 +137,7 @@ import {
   newSubmitLine,
   typeLine
 } from '../shared/slashTurn'
-import { feedDraft, newDraft, type DraftState } from '../shared/draft'
+import { draftRecheckDue, feedDraft, newDraft, type DraftState } from '../shared/draft'
 import { OutBuffer } from './outBuffer'
 import { allAgents, buildArgs, colourEnv, continuesOnBackslash, hasAgent, modelValue, resolveEnv } from '../shared/agents'
 import { homedir } from 'node:os'
@@ -660,6 +660,8 @@ interface Live {
   draft: DraftState
   /** Enter is an attempt, not proof that the CLI emptied its composer. */
   draftConfirmation?: { prompt: string; since: number; afterPaint: number; checkedPaint?: number; checking?: boolean }
+  /** When `recheckDraft` last read the box for a stale draft flag (`draftRecheckDue`). */
+  draftRecheckAt?: number
   /** When a slash command was submitted; 0 outside one. See SLASH_TURN_MS. */
   slashAt: number
   /**
@@ -5263,6 +5265,33 @@ export class SessionManager extends EventEmitter {
     this.emitSessions()
   }
 
+  /**
+   * A draft flag nothing has touched for a minute, held against the screen. An empty box
+   * clears it - only when nothing moved while the box was read (same process, same draft,
+   * no paint, no key), the same rule `confirmDraft` keeps, and never under a submission
+   * hold or a prompt still owed. `draftRecheckDue` says when.
+   */
+  private async recheckDraft(live: Live): Promise<void> {
+    const { draft, paintSeq: paint } = live
+    const keyboard = live.meta.lastKeyboard
+    if (live.draftConfirmation || live.meta.owedPrompt) return
+    live.draftRecheckAt = Date.now()
+    let box
+    try {
+      box = await composerOf(live.buffer.read(), live.cols, live.rows, live.meta.agent)
+    } catch {
+      return
+    }
+    if (!box || box.text.trim()) return
+    if (this.sessions.get(live.meta.id) !== live || live.draft !== draft || live.paintSeq !== paint ||
+        live.meta.lastKeyboard !== keyboard || live.draftConfirmation || live.meta.owedPrompt || !live.meta.drafting) return
+    live.draft = newDraft()
+    live.typed = ''
+    live.meta.drafting = undefined
+    this.emitSessions()
+    acLog(`${live.meta.id} unsent-draft flag cleared - its prompt box is empty on screen`)
+  }
+
   private async confirmDraft(live: Live): Promise<void> {
     const pending = live.draftConfirmation
     // Paints, not `lastOutput`: the redraw a cancel key causes stamps no output.
@@ -5325,6 +5354,10 @@ export class SessionManager extends EventEmitter {
       // Quiet by paint as well: a grace repaint stamps no output and may still be arriving.
       if (live.draftConfirmation && meta.status === 'idle' && !meta.runSince && quiet >= 1000 &&
           now - live.paintedAt >= 1000 && now - meta.lastKeyboard >= 1000) void this.confirmDraft(live)
+      // Never under a hold: a submission in flight is `confirmDraft`'s, and a prompt this app
+      // still owes is its queue's. This is only the flag left once both are gone.
+      if (!live.draftConfirmation && !meta.owedPrompt && draftRecheckDue(meta, live.draftRecheckAt ?? 0, now) &&
+          now - live.paintedAt >= 1000) void this.recheckDraft(live)
       if (this.markCwdGone(live, now)) changed = true
       // A dead pty whose folder has also gone is a card about nothing: no process to
       // go back to, and no directory left to resume in. Only that PAIR reaps. A live
