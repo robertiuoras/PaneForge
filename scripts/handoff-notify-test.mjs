@@ -210,6 +210,9 @@ function runPastCountdown(h) {
   ok('the queued-move chip is a button, not a label', at > 0 && opens.lastIndexOf('<button') > opens.lastIndexOf('<span'), 'the chip that reports the wait must be the control that ends it')
   ok('the chip presses stopMove', /stopMove\(s\)/.test(app))
   ok('the context menu and the phone sheet both offer it', (app.match(/'stop-move'/g) ?? []).length >= 2)
+  // A queued agent copy keeps its normal status: Robert, 2026-09-29, on the
+  // `copy opens when done` header tag: "i dont think its needed". Cancel stays in the menu.
+  ok('a queued agent copy wears no header tag', !app.includes('copy opens when done'))
   const main = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
   ok('the channel returns the queue answer rather than a bare true', /handoffCancel'[^\n]*handoffQueue\.drop\(String\(id\)\)\)/.test(main), 'remote:handoffCancel')
 }
