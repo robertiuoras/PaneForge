@@ -550,6 +550,15 @@ interface Live {
   /** epoch ms until which incoming output is treated as a repaint we triggered */
   repaintUntil: number
   /**
+   * Every data event, counted - the repaints inside `repaintUntil` too, which stamp no
+   * `lastOutput`. A cancel key (Ctrl-U, Ctrl-C) is not typing, so the CLI's box-emptying
+   * redraw lands in that grace, and an idle composer prints nothing after it: read off
+   * `lastOutput`, the draft hold never saw the box go empty. `confirmDraft` reads this.
+   */
+  paintSeq: number
+  /** When the newest data event arrived, grace repaints included. */
+  paintedAt: number
+  /**
    * When this pane was WOKEN, until its CLI prints something. 0 the rest of the time.
    *
    * Only there to be subtracted: `wake-printed` in reclaim.log is the gap between the
@@ -649,6 +658,8 @@ interface Live {
    * handed to the window as `typed` when it did not come from the window itself.
    */
   draft: DraftState
+  /** Enter is an attempt, not proof that the CLI emptied its composer. */
+  draftConfirmation?: { prompt: string; since: number; afterPaint: number; checkedPaint?: number; checking?: boolean }
   /** When a slash command was submitted; 0 outside one. See SLASH_TURN_MS. */
   slashAt: number
   /**
@@ -691,7 +702,7 @@ export class SessionManager extends EventEmitter {
   private answering = new Set<string>()
   private pendingAnswers = new Map<string, string[]>()
   // An unconfirmed Codex draft still owns the composer after its bounded wait ends.
-  private codexQueued = new Map<string, { key: string; live: Live; proc: Live['proc']; prompt: string; since: number; writing: boolean; foreign: boolean; proof: 'receipt' | 'idle'; conversationId?: string; receiptCwd?: string; commandOutputAt?: number; answerKeyboard?: number; recovered?: boolean; receiptMiss?: string }>()
+  private codexQueued = new Map<string, { key: string; live: Live; proc: Live['proc']; prompt: string; since: number; writing: boolean; foreign: boolean; proof: 'receipt' | 'idle'; conversationId?: string; receiptCwd?: string; commandOutputAt?: number; answerKeyboard?: number; recovered?: boolean; receiptMiss?: string; hold?: Live['draftConfirmation']; accepted?: boolean }>()
   /**
    * Shell children at the last table read. Also used on POSIX for background jobs
    * and for distinguishing an interactive Codex wrapper from an ordinary node job.
@@ -1110,6 +1121,8 @@ export class SessionManager extends EventEmitter {
       busyUntil: 0,
       ackedAt: 0,
       repaintUntil: 0,
+      paintSeq: 0,
+      paintedAt: 0,
       wokeAt: 0,
       turnPending: false,
       footerEndedAt: 0,
@@ -1384,6 +1397,7 @@ export class SessionManager extends EventEmitter {
     live.typed = ''
     live.submitLine = newSubmitLine()
     live.draft = newDraft()
+    live.draftConfirmation = undefined
     live.meta.drafting = undefined
     live.runner = specFor(live.meta.agent).bin
     live.jobName = null
@@ -2136,6 +2150,10 @@ export class SessionManager extends EventEmitter {
     this.pendingAnswers.set(id, pending)
     this.setOwedPrompt(id, true)
     let ownsComposer = false
+    // The draft hold this answer's own Enter set (see `write`). A confirmed answer is
+    // out of the box, and a hold left behind would park the next queued answer until
+    // the turn it is steering ends.
+    let answerHold: Live['draftConfirmation']
     const finish = (state: PaneAnswerReceipt['state'], reason?: string, transcriptAt?: number) => {
       const pending = this.pendingAnswers.get(id)
       if (pending) {
@@ -2144,6 +2162,7 @@ export class SessionManager extends EventEmitter {
         if (!pending.length) this.pendingAnswers.delete(id)
       }
       if (ownsComposer) this.answering.delete(id)
+      if (state === 'confirmed') this.releaseDraftHold(live, answerHold)
       if (this.sessions.get(id) === live) this.setOwedPrompt(id, owedCount(id) > 0 || this.pendingAnswers.has(id))
       try {
         ledger.update(req, { state, reason, ...(state === 'confirmed' ? { confirmedAt: Date.now(), transcriptAt } : {}) })
@@ -2184,8 +2203,10 @@ export class SessionManager extends EventEmitter {
               finish('uncertain', 'Composer or pane changed after paste; Enter withheld'); return
             }
             // Codex 0.157 Enter submits/steers an active turn; Tab queues it.
+            const priorHold = live!.draftConfirmation
             live!.effortPassThrough = true
             try { this.write(id, '\r', 'app') } finally { live!.effortPassThrough = false }
+            if (live!.draftConfirmation !== priorHold) answerHold = live!.draftConfirmation
             const waiting = this.codexQueued.get(id)
             if (waiting && waiting.live === live && waiting.proc === proc && !waiting.since && !waiting.foreign)
               waiting.answerKeyboard = live!.meta.lastKeyboard
@@ -2241,6 +2262,7 @@ export class SessionManager extends EventEmitter {
     // the one moment a Codex pane's reasoning effort may be changed. An `app` write
     // (a queued prompt, an automatic clear) is a turn too, so it takes the same path.
     if (this.holdForEffort(live, data, origin)) return
+    const writtenAt = Date.now()
     live.proc.write(data)
     // Rebuild the line being typed, before the isTyping gate: a lone backspace is not
     // "typing" to the gate below, but it still has to erase from this record.
@@ -2252,6 +2274,21 @@ export class SessionManager extends EventEmitter {
     const whole = feedDraft(live.draft, data, {
       backslashNewline: continuesOnBackslash(live.meta.agent)
     })
+    // Keep the automatic-close/clear hold after Enter until a fresh screen proves
+    // the box empty. Startup and paste handling can swallow that very key, and a prompt
+    // this app typed is no exception: once its owed flag drops, the hold is all that
+    // keeps every closer off a box still holding it. `queuePrompt` and `answerPane` drop
+    // their own hold the moment a receipt proves the prompt went in. Not for an app
+    // slash command (`/clear`, `/model ...`): it prints its own answer and hands the box
+    // straight back, and holding the box would stall the resume queued right behind it.
+    if (live.meta.agent !== 'shell' && whole.submitted.length &&
+        !(origin === 'app' && isSlashCommand(whole.submitted.join('\n'))) &&
+        (whole.submitted.some((line) => line.trim()) || !live.draft.certain)) {
+      live.draftConfirmation = {
+        prompt: live.draft.certain ? whole.submitted.join('\n') : '',
+        since: writtenAt, afterPaint: live.paintSeq
+      }
+    }
     live.draft = whole.state
     if (whole.submitted.some((line) => line.trim())) turnSubmitted(live.stop)
     // `typeLine` ignores Enter, so the `\` Claude Code just turned into a line break is still
@@ -2259,7 +2296,7 @@ export class SessionManager extends EventEmitter {
     if (whole.continued && live.typed.endsWith('\\')) live.typed = live.typed.slice(0, -1) + '\n'
     // A CLI owns its composer. An automatic stop cannot recover a typed line, so a known
     // draft and an edited line we cannot faithfully reconstruct both refuse it.
-    const drafting = !whole.state.certain || whole.state.text.trim().length > 0
+    const drafting = Boolean(live.draftConfirmation) || !whole.state.certain || whole.state.text.trim().length > 0
     const draftChanged = drafting !== Boolean(live.meta.drafting)
     live.meta.drafting = drafting || undefined
     for (const line of whole.submitted) {
@@ -3861,6 +3898,9 @@ export class SessionManager extends EventEmitter {
       // dead output into the fresh buffer.
       if (live.proc !== proc) return
       live.buffer.push(data)
+      // Before the repaint gate below: a repaint changes what the composer holds.
+      live.paintSeq++
+      live.paintedAt = Date.now()
       recordData(id, data)
       // A gate in the pane refusing a command is not output the pane produced and not
       // anything this app decided, but it costs the pane a whole round trip and nothing
@@ -4139,7 +4179,7 @@ export class SessionManager extends EventEmitter {
       { key, live: original, proc: original.proc, prompt, since: 0, writing: false, foreign: false,
         proof: proof === 'idle' ? 'idle' as const : 'receipt' as const, conversationId: undefined as string | undefined,
         receiptCwd: original.meta.cwd, commandOutputAt: undefined as number | undefined,
-        answerKeyboard: undefined as number | undefined } : undefined
+        answerKeyboard: undefined as number | undefined, hold: undefined as Live['draftConfirmation'], accepted: false } : undefined
     if (owner && !this.codexQueued.has(id)) this.codexQueued.set(id, owner)
     // Called exactly once, however this ends - typed and submitted, dropped, or the pane
     // gone. The handover curtain is raised on it, and a curtain with an exit this does not
@@ -4149,6 +4189,10 @@ export class SessionManager extends EventEmitter {
     // prompt stays recoverable and keeps its composer owner after this wait ends.
     let settled = false
     let curtainReleased = false
+    // The draft hold our own return set (see `write`). Dropped once the prompt is proven
+    // sent; an unsent or withheld prompt keeps it, so no automatic close or clear reads a
+    // box still holding the whole prompt as empty after the owed flag drops below.
+    let ownHold: Live['draftConfirmation']
     const releaseCurtain = (): void => {
       if (curtainReleased) return
       curtainReleased = true
@@ -4168,6 +4212,12 @@ export class SessionManager extends EventEmitter {
         else noteDropped(key, end)
         if (this.codexQueued.get(id) === owner) this.codexQueued.delete(id)
       }
+      if (end === 'sent') {
+        // Said on the owner itself, which outlives its removal above: a follow-up queued
+        // behind it holds the reference, and this proof may come before that one looks.
+        if (owner) owner.accepted = true
+        this.releaseDraftHold(this.sessions.get(id), ownHold)
+      }
       this.setOwedPrompt(id, owedCount(id) > 0)
       onSettled?.()
     }
@@ -4186,13 +4236,42 @@ export class SessionManager extends EventEmitter {
     // it, it gives up and says so, rather than sitting owed for ever.
     const personDeadline = Date.now() + PERSON_WAIT_MAX_MS + Math.max(0, extraDelay)
     const ourWrite = (data: string): void => {
+      const priorHold = this.sessions.get(id)?.draftConfirmation
       if (owner) owner.writing = true
       try { this.write(id, data, 'app') } finally { if (owner) owner.writing = false }
       const after = this.sessions.get(id)
       if (after) mark = Math.max(mark, after.meta.lastKeyboard ?? 0)
+      if (after?.draftConfirmation && after.draftConfirmation !== priorHold) {
+        ownHold = after.draftConfirmation
+        // A retained Codex prompt is promoted by whichever prompt queues behind it,
+        // so that wait has to be able to drop this hold too.
+        if (owner) owner.hold = ownHold
+      }
     }
-    const verdict = (live: Live, composerIdle: boolean): QueuedPromptVerdict =>
-      queuedPromptDecision({
+    // A follow-up received during an existing turn must wait for that turn, even
+    // though its last keystroke predates `mark`. The boot timeout is not permission
+    // to paste into a running conversation. Autoclear owns its own handover wait.
+    const queuedLive = this.sessions.get(id)
+    // Not behind a prompt of ours still held in this composer: its own return stamped
+    // `runSince`, and that retained owner already gates this one until its receipt (and
+    // re-arms this wait when the receipt comes, below). Only a live owner of this very
+    // process counts: a recovered one was typed by the process before, and a stale one is
+    // about to be dropped, so neither says whose turn is running now.
+    const held = this.codexQueued.get(id)
+    const behindOurs = Boolean(held && held !== owner && held.since && queuedLive && held.live === queuedLive &&
+      held.proc === queuedLive.proc && !held.recovered && stillOwed(held.key))
+    let waitingForTurn = proof === 'turn' && Boolean(queuedLive?.meta.runSince) && !queuedLive?.meta.handoverUntil &&
+      !behindOurs
+    // Re-armed once, when that held prompt is proven sent (see `tick`).
+    let heldTurnArmed = false
+    const verdict = (live: Live, composerIdle: boolean): QueuedPromptVerdict => {
+      // An authenticated answer is steering this same turn, not a person claiming
+      // the composer. Keep waiting through delayed questions; actual drafting or
+      // foreign input still restores the person's existing far ceiling.
+      const personExpired = Date.now() >= personDeadline && !(owner?.answerKeyboard !== undefined &&
+        owner.answerKeyboard === live.meta.lastKeyboard && !owner.foreign &&
+        !live.meta.drafting && !live.typed?.trim())
+      const decision = queuedPromptDecision({
         exists: true,
         lastKeyboard: live.meta.lastKeyboard,
         mark,
@@ -4200,17 +4279,21 @@ export class SessionManager extends EventEmitter {
         composerIdle,
         expired: Date.now() >= deadline,
         tookOver: (live.meta.tookOverAt ?? 0) > takenMark,
-        // An authenticated answer is steering this same turn, not a person claiming
-        // the composer. Keep waiting through delayed questions; actual drafting or
-        // foreign input still restores the person's existing far ceiling.
-        personExpired: Date.now() >= personDeadline && !(owner?.answerKeyboard !== undefined &&
-          owner.answerKeyboard === live.meta.lastKeyboard && !owner.foreign &&
-          !live.meta.drafting && !live.typed?.trim()),
+        personExpired,
         turnLive:
           Boolean(live.meta.runSince) ||
           live.busyUntil > Date.now() ||
           Date.now() - live.meta.lastOutput < PERSON_QUIET_MS
       })
+      if (decision === 'abandon') return decision
+      if (waitingForTurn) {
+        if (live.meta.runSince || live.busyUntil > Date.now()) {
+          return personExpired ? 'abandon' : 'wait'
+        }
+        waitingForTurn = false
+      }
+      return decision
+    }
     // The busy read is of the LAST THING PAINTED, never of a window of scrollback:
     // `esc to interrupt` printed during the boot stays in the buffer for ever, so a
     // fixed tail reports a pane as working long after it went quiet at its composer
@@ -4566,6 +4649,13 @@ export class SessionManager extends EventEmitter {
                 acLog(`${id} prompt submitted - it is no longer in the composer`)
                 return settle('sent')
               }
+              // Codex takes a return while it answers - the prompt waits as a follow-up - so a
+              // prompt still in its composer after the window is a return that did not go in,
+              // not one to guess about: the box says so. Another, within the same budget.
+              if (box === true && still.meta.agent === 'codex' && !typedIntoTurn && tries + 1 < PROMPT_ENTER_TRIES) {
+                acLog(`${id} return did not go in - the Codex composer still holds the prompt`)
+                return submit(tries + 1)
+              }
               acLog(
                 `${id} prompt left UNSENT: still painting ${PROMPT_CONFIRM_MS * PROMPT_ENTER_TRIES}ms after the return` +
                   (box ? ', and the composer still holds it' : typedIntoTurn ? ', typed over a turn already running' : ', and no composer could be read')
@@ -4673,7 +4763,21 @@ export class SessionManager extends EventEmitter {
         }
         if (previous && previousAccepted) {
           noteSubmitted(previous.key)
+          previous.accepted = true
           this.codexQueued.delete(id)
+          this.releaseDraftHold(live, previous.hold)
+          // It went in, so a turn running now is its answer: this prompt waits for that
+          // turn like any other follow-up rather than steering into it. Not behind a
+          // command, which starts no turn - `runSince` there is our own return's stamp.
+          if (proof === 'turn' && previous.proof === 'receipt') waitingForTurn = true
+        }
+        // ...and the same when the held prompt this one queued behind proved ITSELF sent
+        // (its own confirm can look first, and its settle removes it from the map above),
+        // or another follower found its receipt: the turn running now is still its answer,
+        // and Codex's box is empty mid-turn, so nothing else here would stop this one.
+        if (behindOurs && held?.accepted && !heldTurnArmed) {
+          heldTurnArmed = true
+          if (proof === 'turn' && held.proof === 'receipt') waitingForTurn = true
         }
         if (settled) return
         if (this.sessions.get(id) !== live || live.proc !== owner.proc) return settle('replaced')
@@ -4762,6 +4866,13 @@ export class SessionManager extends EventEmitter {
       // Bracketed, it is one paste however it is read: the same probe gave one
       // `[Pasted text #1 +26 lines]` and a user row holding every line. A slash command
       // stays keystrokes: it is a command only while typed, and `typeLine` reads it so.
+      // CODEX TOO. Typed raw, Codex reads a fast run of keys as a paste of its own and the
+      // return that follows it as a newline inside that paste: 2026-09-29 7:59:39am, pane
+      // s62-mulltgcs, a 959-char `pf tell` was typed, its one return went in a second later
+      // and the whole brief sat in the composer, never sent (a 1078-char one at 7:10 too).
+      // Bracketed, Codex takes it as ONE paste and the return as a key of its own. A long
+      // one shows as `[Pasted Content N chars]`, a placeholder `promptStillInBox` reads as
+      // the prompt still sitting there.
       if ((live.meta.agent === 'claude' || live.meta.agent === 'codex') && !prompt.trimStart().startsWith('/')) {
         ourWrite(`\x1b[200~${prompt}\x1b[201~`)
         // `typeLine` skips a paste whole, and the words asked - the pane's name is read
@@ -5040,6 +5151,54 @@ export class SessionManager extends EventEmitter {
       })
   }
 
+  /**
+   * Drop the draft hold an app write set, once that very submission is proven sent.
+   * Only that hold: a person's later Enter sets its own, and theirs still waits for the
+   * screen in `confirmDraft`, whose arithmetic this repeats.
+   */
+  private releaseDraftHold(live: Live | undefined, hold: Live['draftConfirmation']): void {
+    if (!live || !hold || live.draftConfirmation !== hold || this.sessions.get(live.meta.id) !== live) return
+    live.draftConfirmation = undefined
+    const drafting = !live.draft.certain || Boolean(live.draft.text.trim())
+    if (drafting === Boolean(live.meta.drafting)) return
+    live.meta.drafting = drafting || undefined
+    this.emitSessions()
+  }
+
+  private async confirmDraft(live: Live): Promise<void> {
+    const pending = live.draftConfirmation
+    // Paints, not `lastOutput`: the redraw a cancel key causes stamps no output.
+    const paint = live.paintSeq
+    if (!pending || pending.checking || paint <= pending.afterPaint || pending.checkedPaint === paint) return
+    const draft = live.draft
+    pending.checking = true
+    pending.checkedPaint = paint
+    try {
+      const box = await composerOf(live.buffer.read(), live.cols, live.rows, live.meta.agent)
+      // Both input and output can change while xterm replays. Never apply an old
+      // empty reading to newer text, or to a replaced process with the same pane id.
+      if (this.sessions.get(live.meta.id) !== live || live.draftConfirmation !== pending ||
+          live.draft !== draft || live.paintSeq !== paint) {
+        pending.checkedPaint = undefined
+        return
+      }
+      const accepted = pending.prompt && (
+        (live.meta.agent === 'codex' && codexAcceptedPrompt(live.meta.id, pending.prompt, pending.since)) ||
+        (live.meta.agent === 'claude' && claudeAcceptedPrompt(live.proc?.pid, pending.prompt, pending.since))
+      )
+      // A native receipt also proves submission when the idle CLI draws a hint in
+      // its otherwise empty box. Unknown providers keep the empty-screen requirement.
+      if (!accepted && (!box || box.text.trim())) return
+      live.draftConfirmation = undefined
+      live.meta.drafting = !draft.certain || Boolean(draft.text.trim()) || undefined
+      this.emitSessions()
+    } catch {
+      // An unreadable composer cannot authorise losing the draft.
+    } finally {
+      pending.checking = false
+    }
+  }
+
   private sweepIdle(): void {
     let changed = false
     const now = Date.now()
@@ -5051,6 +5210,9 @@ export class SessionManager extends EventEmitter {
     for (const live of this.sessions.values()) {
       const { meta } = live
       const quiet = now - meta.lastOutput
+      // Quiet by paint as well: a grace repaint stamps no output and may still be arriving.
+      if (live.draftConfirmation && meta.status === 'idle' && !meta.runSince && quiet >= 1000 &&
+          now - live.paintedAt >= 1000 && now - meta.lastKeyboard >= 1000) void this.confirmDraft(live)
       if (this.markCwdGone(live, now)) changed = true
       // A dead pty whose folder has also gone is a card about nothing: no process to
       // go back to, and no directory left to resume in. Only that PAIR reaps. A live

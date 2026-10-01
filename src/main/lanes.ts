@@ -917,8 +917,15 @@ export async function resolveLane(cwd: string, taken: string[]): Promise<Lane> {
       const existing = await git(repo, ['show-ref', '--verify', `refs/heads/${branch}`])
       const folder = await git(repo, ['cat-file', '-t', `${existing.ok ? branch : 'HEAD'}:${subfolder.replace(/\\/g, '/')}`])
       if (!folder.ok || folder.out !== 'tree') {
-        if (existing.ok) continue
-        throw new Error(notInCopy(cwd, name))
+        if (!existing.ok) throw new Error(notInCopy(cwd, name))
+        const current = await git(repo, ['cat-file', '-t', `HEAD:${subfolder.replace(/\\/g, '/')}`])
+        if (!current.ok || current.out !== 'tree') continue
+        // A removed copy can leave an old branch behind. Catch it up only by
+        // fast-forward, without touching an existing checkout or losing commits.
+        // Local fetch enforces both rules atomically (no force refspec), including
+        // refusal when another worktree has this branch checked out.
+        const caughtUp = await git(repo, ['fetch', '--no-tags', '--no-recurse-submodules', '--no-write-fetch-head', '.', `HEAD:refs/heads/${branch}`])
+        if (!caughtUp.ok) continue
       }
     }
     let made = await git(repo, ['worktree', 'add', '-b', branch, path])

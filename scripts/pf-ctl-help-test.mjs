@@ -219,6 +219,7 @@ const row = (id, over = {}) => ({
   const dead = row('d', { status: 'exited', exitedAt: T - 20 * min, lastKeyboard: T - 60 * min })
   check('an exited, untouched pane is finished', isFinishedPane(dead))
   check('a sleeping pane is not finished', !isFinishedPane({ ...dead, asleep: true }))
+  check('one kept open by hand is not finished', !isFinishedPane({ ...dead, keepOpen: true }))
   check('one typed into after it exited is not finished', !isFinishedPane({ ...dead, lastKeyboard: T - 1 * min }))
   check('one on another computer is not finished', !isFinishedPane({ ...dead, id: '@e/d' }))
   check('an idle pane is not finished', !isFinishedPane(row('i')))

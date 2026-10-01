@@ -42,7 +42,7 @@ import { mayReturnLane } from '../shared/laneReturn'
 import { revealTarget, within } from '../shared/reveal'
 import { revealTargetFor } from '../shared/revealPane'
 import { clientForText, rosterRoot } from './clients'
-import { createProject, listProjects, listSessionFolders } from './projects'
+import { createProject, listAllProjects, listArchivedClients, listProjects, listSessionFolders, setClientArchived } from './projects'
 import { routeCandidates } from './projectAliases'
 import { routePrompt } from '../shared/projectRoute'
 import { sendOrOpen } from '../shared/sendOrOpen'
@@ -57,7 +57,7 @@ import { addSound, pruneCustomSounds, removeSound, renameSound, soundData } from
 import { writeAttachments, readAttachIns } from './attach'
 import { AskNotifier, postAsk, telegramCreds } from './askNotify'
 import { errorMessage } from '../shared/paneError'
-import { type AttachIn, type AttachResult } from '../shared/attach'
+import { tooBig, type AttachIn, type AttachResult } from '../shared/attach'
 import { CHOOSE_GAP_MS, keysForChoice, sameAsk, stampMatches } from '../shared/choices'
 import { Remote } from './remote'
 import { readInvite } from './remote/invite'
@@ -179,7 +179,7 @@ import {
 } from './restore'
 import { ACTIVATION_SETTLE_MS, revealOnActivation } from '../shared/activation'
 import { knownToHave, OFFLOAD_ASK_MS, openFailure, placeNewPane, preferRemoteOf, REMOTE_START_ACK_MS, type KnownProjects } from '../shared/offloadFirst'
-import { logActivation, logOffload, logReclaim, logFix, logHandoff } from './activationLog'
+import { logActivation, logOffload, logReclaim, logFix, logHandoff, logAwake } from './activationLog'
 import { projectNameOf, projectOn } from '../shared/capacity'
 import { staysHere } from '../shared/autoHandoff'
 import { listActivity, markActivitySeen, noteActivity, onActivityChange } from './activity'
@@ -205,7 +205,7 @@ import { copyNumber } from '../shared/place'
 import { readBoard, writeMemory, writeTasks } from './board'
 import { vaultGraph, vaultInfo, vaultOpen } from './vault'
 import * as voice from './voice'
-import { installCommand, uninstallCommand, updateCommand } from '../shared/agents'
+import { imagePasteKey, installCommand, pastesClipboardImage, uninstallCommand, updateCommand } from '../shared/agents'
 import { installLaneHooks } from './laneHooks'
 import { assess, lagLevel, restorePlan, worstPressure, type Pressure } from '../shared/capacity'
 import { sleepPressureOf } from '../shared/reclaim'
@@ -213,6 +213,7 @@ import { restoreAsleep } from '../shared/restoreTurn'
 import { DEFAULT_RECOVER } from '../shared/recover'
 import type { UsageReport } from '../shared/usage'
 import { loadPerCore, readPressure, totalMb, watchPressure } from './memory'
+import { startPressureLog } from './pressureLog'
 import { backJobOf, backJobWaitOnly, trackUsage } from './usage'
 import type {
   Config,
@@ -1277,6 +1278,7 @@ const remote = new Remote({
   agents: () => Promise.resolve(listAgents()),
   jobs: () => ownJobs(),
   attachFiles: (files) => writeAttachments(files),
+  pasteImages: (id, files) => pasteImagesHere(id, files),
   onData: (cb) => {
     manager.on('data', cb)
     return () => manager.off('data', cb)
@@ -1535,6 +1537,14 @@ const stopPressure = watchPressure((p) => {
   publishCapacity()
 })
 manager.on('sessions', () => publishCapacity())
+// One line a minute into pressure.log: what held the memory when the desk was slow.
+const stopPressureLog = startPressureLog(() =>
+  manager.roots().map((r) => ({
+    id: r.id,
+    pid: r.pid,
+    status: localSessions().find((s) => s.id === r.id)?.status ?? 'unknown'
+  }))
+)
 
 // Whether anybody is at this machine. The renderer's idle clock freezes while nobody is,
 // so a pane is never closed during minutes a person had no chance to stop it in. Pushed on
@@ -1574,6 +1584,11 @@ startAway((a) => {
 }
 
 ipcMain.handle('projects:list', () => listProjects())
+ipcMain.handle('projects:archivedClients', () => listArchivedClients())
+ipcMain.handle('projects:archiveClient', (_e, path: string, archived: boolean) => {
+  setClientArchived(path, archived)
+  send('config:changed', getConfig())
+})
 ipcMain.handle('projects:sessionFolders', () => listSessionFolders())
 ipcMain.handle('projects:create', (_e, name: string) => createProject(name))
 ipcMain.handle('projects:route', (_e, text: string) => routeText(text))
@@ -2672,7 +2687,10 @@ const displayAwake = startDisplayAwake({
       lastKeyboard: s.lastKeyboard
     })),
   enabled: () => getConfig().keepDisplayAwake !== false,
-  log: (line) => console.log(`[awake] ${line}`)
+  log: (line) => {
+    console.log(`[awake] ${line}`)
+    logAwake(line)
+  }
 })
 
 onDeskChanged = (): void => {
@@ -3963,21 +3981,78 @@ ipcMain.handle(
       // before it sends any ^V, so a drop that turns out not to be all images leaves the
       // clipboard exactly as it was.
       if (src.probe) return true
-      // A test launch fails CLOSED, exactly as the text path does: a probe must never
-      // reach the real clipboard, and a half-configured fixture is a bug, not a fallback.
-      if (testClipboardFile || testClipboardDir) {
-        const file = testClipboardImageFile()
-        if (!clipboardFixtureActive() || !file) return false
-        writeFileSync(file, img.toPNG(), { mode: 0o600 })
-        return true
-      }
-      clipboard.writeImage(img)
-      return true
+      return putClipboardImage(img)
     } catch {
       return false
     }
   }
 )
+
+/** One decoded image onto this device's clipboard - or the test fixture's. */
+function putClipboardImage(img: Electron.NativeImage): boolean {
+  // A test launch fails CLOSED, exactly as the text path does: a probe must never
+  // reach the real clipboard, and a half-configured fixture is a bug, not a fallback.
+  if (testClipboardFile || testClipboardDir) {
+    const file = testClipboardImageFile()
+    if (!clipboardFixtureActive() || !file) return false
+    writeFileSync(file, img.toPNG(), { mode: 0o600 })
+    return true
+  }
+  clipboard.writeImage(img)
+  return true
+}
+
+/** Between two pasted images: long enough for the CLI to have read the first one. */
+const PASTE_GAP_MS = 250
+
+/**
+ * The batch on this desk's clipboard right now. The next waits for it, and for one gap
+ * after its last ^V: the CLI reads the clipboard some time after the key arrives, and a
+ * second batch landing in that window would be read twice in place of the first.
+ */
+let pasteChain: Promise<void> = Promise.resolve()
+
+/**
+ * Images from another desk, pasted into one of THIS desk's panes the way a drop here is:
+ * onto this machine's clipboard, then the agent's own image key, one at a time.
+ *
+ * Before this a screenshot pasted into a pane mirrored from the other desk arrived as a
+ * saved file's PATH, the one case in which a paste was always a path. ALL OR NOTHING, as
+ * the local drop is: one file that will not decode, or an agent that does not read the
+ * clipboard, saves the whole batch and answers with its paths and `pasted: 0` - the 0 is
+ * how the guest tells this from an older desk, which answers paths and nothing else.
+ */
+async function pasteImagesHere(id: string, files: AttachIn[]): Promise<AttachResult> {
+  const saved = (): AttachResult => ({ ...writeAttachments(files), pasted: 0 })
+  const agent = manager.list().find((s) => s.id === id)?.agent
+  const list = Array.isArray(files) ? files.filter((f) => f && typeof f.data === 'string') : []
+  if (!list.length || !pastesClipboardImage(agent) || tooBig(list)) return saved()
+  const imgs: Electron.NativeImage[] = []
+  for (const f of list) {
+    try {
+      const img = nativeImage.createFromBuffer(Buffer.from(f.data, 'base64'))
+      if (img.isEmpty()) return saved()
+      imgs.push(img)
+    } catch {
+      return saved()
+    }
+  }
+  const key = imagePasteKey(agent, process.platform === 'win32')
+  const before = pasteChain
+  let release = (): void => {}
+  pasteChain = new Promise<void>((r) => (release = r))
+  await before
+  try {
+    for (let i = 0; i < imgs.length; i++) {
+      if (!putClipboardImage(imgs[i])) return { paths: [], error: 'That image could not be put on the clipboard over there.' }
+      manager.write(id, key, 'phone')
+      if (i < imgs.length - 1) await new Promise((r) => setTimeout(r, PASTE_GAP_MS))
+    }
+  } finally {
+    setTimeout(release, PASTE_GAP_MS)
+  }
+  return { paths: [], pasted: imgs.length }
+}
 
 /** Remove the private clipboard fixture a disposable test app owns, never arbitrary paths. */
 function removeTestClipboard(): void {
@@ -4492,6 +4567,9 @@ ipcMain.handle('board:memory', (_e, path: string, memory: string) => writeMemory
 // --- history ---------------------------------------------------------------
 
 ipcMain.on('pane:fixlog', (_e, entry: Record<string, unknown>) => logFix(entry))
+ipcMain.on('handoff:log', (_e, line: unknown) => {
+  if (typeof line === 'string' && line.startsWith('sweep: ')) logHandoff(line.slice(0, 600))
+})
 ipcMain.on('reclaim:log', (_e, entry: Record<string, unknown>) => {
   logReclaim(entry)
   // Same line, twice: the file stays the place a week-old close is reconstructed from,
@@ -4670,7 +4748,7 @@ function applyVoiceHotkey(cfg: Config): void {
  */
 function routeText(text: string): RouteResult {
   if (!text || text.trim().length < 3) return { matches: [], confident: false }
-  return routePrompt(text, routeCandidates(listProjects()))
+  return routePrompt(text, routeCandidates(listAllProjects()))
 }
 
 /**
@@ -5377,6 +5455,7 @@ app.on('will-quit', (e) => {
   // Dropping the pipe is enough - Discord clears the presence when the client goes.
   presence.dispose()
   stopPressure()
+  stopPressureLog()
   stopAway()
   stopAutoClearWatch()
   stopAutoClearRequests()

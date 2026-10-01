@@ -39,7 +39,7 @@ buildSync({
   outfile
 })
 const require_ = createRequire(import.meta.url)
-const { splitReplay, paintedWidth, RESTORE_MARK_TEXT } = require_(outfile)
+const { splitReplay, paintedWidth, drawnWidth, RESTORE_MARK_TEXT } = require_(outfile)
 const { Terminal } = require_('@xterm/headless')
 
 let checks = 0
@@ -143,7 +143,10 @@ check('the first replay writes through the stage', pane.includes('writeStaged(b,
 // the first replay used to, so the button meant to mend a pane broke a mended one.
 check('...and so does Fix', pane.includes("writeStaged('\\x1bc' + bytes, () => {"))
 check('nothing on the pane writes a reset snapshot raw', !pane.includes("t.write('\\x1bc' + bytes"))
-check('and resizes inside the write callback, not after the call', /t\.write\(prep\(split\.before\), \(\) => \{\s*\n\s*t\.resize\(back/.test(pane))
+// The first thing the callback does is resize: back to the pane's width, or first to the
+// width its own output was drawn at (section 7), and back once that has been written.
+const beforeCallback = /t\.write\(prep\(split\.before\), \(\) => \{\s*\n\s*(?:if \(split\.afterCols && split\.after\) \{[\s\S]*?t\.resize\(split\.afterCols, backRows\)[\s\S]*?\}\s*\n\s*)?t\.resize\(back, backRows\)/
+check('and resizes inside the write callback, not after the call', beforeCallback.test(pane))
 check('a fit landing mid-replay is refused', pane.includes('if (replaying.current) return false'))
 check('the prop is compared, or the pane stops updating for it', pane.includes('a.replayCols === b.replayCols'))
 check('main records the width the restored bytes were painted at', sessions.includes('meta.replayCols = back.cols'))
@@ -293,8 +296,96 @@ check('the size is written on a debounced, unref-d timer, never on the resize it
 check('nothing sync on that path', !/writeFileSync\(metaFile\(id\), JSON\.stringify\(entry\), 'utf8'\)[\s\S]{0,80}sizeDirty/.test(history))
 check('the pane resizes its rows from the split', pane.includes('split.rows ?? t.rows'))
 check('...and tells splitReplay how tall it is now', pane.includes('splitReplay(b, replayColsRef.current, t.cols, replayRowsRef.current, t.rows)'))
-check('the stage resizes inside the write callback', /t\.write\(prep\(split\.before\), \(\) => \{\s*\n\s*t\.resize\(back, backRows\)/.test(pane))
+check('the stage resizes inside the write callback', beforeCallback.test(pane))
+check('...and the pane own output, when drawn wider, is narrowed inside ITS callback', /t\.write\(prep\(split\.after\), \(\) => \{\s*\n\s*t\.resize\(back, backRows\)/.test(pane))
 check('the rows prop is compared, or the pane stops updating for it', pane.includes('a.replayRows === b.replayRows'))
 check('the session carries the height to the renderer', types.includes('replayRows?: number'))
+
+// ------------------------------- 7. a pane narrowed since: its OWN output was wider
+
+// "After the restore mark is at the pane's width" holds until the pane is narrowed. A PC
+// pane mirrored on the Mac is borrowed down to the Mac's width; measured 2026-09-29, 2.9
+// MB after the mark was drawn at 143 and only the last 60 KB at 133. `drawnWidth` reads
+// that off the bytes: a Claude/Codex input box rule runs edge to edge, so it is the width.
+const RULE = '─'.repeat(143)
+eq('a rule is as wide as the terminal it was drawn in', drawnWidth(RULE), 143)
+eq('...and beats column moves that stop short of the edge', drawnWidth(`a\x1b[139Gb\r\n${RULE}\r\n`), 143)
+eq('...while a move past every rule still counts', drawnWidth(`\x1b[150Gx\r\n${RULE}`), 150)
+eq('short dashes in prose are not a rule', drawnWidth('a — b ─── c'), 0)
+
+// A synthetic frame in the shape ConPTY sends a PC Claude pane (no real text: the repo is
+// public). Every paint starts at home and rewrites every row; a partial update rewrites
+// one row by absolute position. Both assume the width they were drawn for: at 133 the
+// three 143-wide rows wrap, the paint scrolls the screen by three, and the next partial
+// update of the footer row lands one row below the footer that moved.
+const E = '\x1b'
+const ROWS = 12
+const FOOT = '  ⏵⏵ bypass permissions on (shift+tab to cycle)'
+const STATUS = '  ◆ model · folder · 18% of context used · ' + '░'.repeat(97)
+const paint = (k) => {
+  const rows = [`● step ${k} of the answer`, '', RULE, '❯ ', RULE, FOOT, STATUS]
+  while (rows.length < ROWS) rows.push('')
+  return `${E}[?25l${E}[H` + rows.map((r, i) => r + `${E}[K` + (i < ROWS - 1 ? '\r\n' : '')).join('') + `${E}[4;3H${E}[?25h`
+}
+const touch = (k) => `${E}[?25l${E}[6;1H${FOOT} · ${k}${E}[K${E}[4;3H${E}[?25h`
+let frames = ''
+for (let k = 0; k < 10; k++) frames += paint(k) + touch(k)
+eq('the synthetic status row really is wider than the pane', STATUS.length > 133, true)
+eq('...and its frames are drawn at 143', drawnWidth(frames), 143)
+const remote = `old screen${MARK}${frames}`
+
+// The arithmetic. Recorded 143 (the PC pane), now 133 (the Mac's borrow).
+const narrowed = splitReplay(remote, 143, 133, ROWS, ROWS)
+eq('output after the mark drawn wider than the pane carries that width', narrowed?.afterCols, 143)
+eq('...and the old half still stages at the recorded width', narrowed?.cols, 143)
+// Recorded at the pane's width, and only its own output wider: before this, no stage at all.
+const onlyAfter = splitReplay(remote, 133, 133, ROWS, ROWS)
+eq('a pane whose record matches but whose output was wider still stages it', onlyAfter?.afterCols, 143)
+eq('...with the old half at the pane own width', onlyAfter?.cols, 133)
+// The local pane that was never narrowed: its output is AT its width, and nothing changes.
+const atWidth = `old screen${MARK}${frames.replaceAll(RULE, '─'.repeat(133)).replace(/░{97}/g, '░'.repeat(87))}`
+eq('output drawn at exactly the pane width is left alone', splitReplay(atWidth, 133, 133, ROWS, ROWS), null)
+eq('...and carries no after-width when the old half does stage', splitReplay(atWidth, 159, 133, ROWS, ROWS)?.afterCols, undefined)
+
+// The result, in a real xterm, written the way `writeStaged` writes it.
+const footers = (t) => {
+  const b = t.buffer.active
+  let n = 0
+  for (let y = 0; y < b.length; y++) if (b.getLine(y)?.translateToString(true).includes('bypass permissions on')) n++
+  return n
+}
+const put = (t, s) => new Promise((res) => t.write(s, res))
+const stage = async (split, withAfterCols) => {
+  const t = new Terminal({ cols: 133, rows: ROWS, allowProposedApi: true, scrollback: 2000 })
+  t.resize(split.cols, ROWS)
+  await put(t, split.before)
+  if (withAfterCols && split.afterCols) {
+    t.resize(split.afterCols, ROWS)
+    await put(t, split.after)
+    t.resize(133, ROWS)
+  } else {
+    t.resize(133, ROWS)
+    await put(t, split.after)
+  }
+  return footers(t)
+}
+const straight = new Terminal({ cols: 133, rows: ROWS, allowProposedApi: true, scrollback: 2000 })
+await put(straight, remote)
+check('CONTROL - written at 133, the status footer is drawn twice', footers(straight) > 1, `${footers(straight)} footers`)
+const shipped = await stage(narrowed, false)
+check('CONTROL - the old stage (after the mark at the pane width) draws it twice too', shipped > 1, `${shipped} footers`)
+eq('written at the width it was drawn at and narrowed once, one footer', await stage(narrowed, true), 1)
+eq('...and the same for a pane whose record matched', await stage(onlyAfter, true), 1)
+
+// Fix: the widening waits for the history to ARRIVE. Measured 2026-09-29, Fix held a
+// mirrored pane at 143 for about 7 s of network round trip with fits refused, so the far
+// end's live frames landed at the wrong width.
+const redraw = pane.slice(pane.indexOf('const redrawHistory = async'), pane.indexOf('const redrawHistory = async') + 4000)
+const asked = redraw.indexOf('await api.replayHistory(sessionId)')
+check('Fix asks for its history', asked > 0)
+check('...and never resizes before that answer is in', !/t\.resize\(/.test(redraw.slice(0, redraw.indexOf('widenForReset = () =>'))))
+check('...the widening is handed to the reset that carries it', /widenForReset = \(\) => \{[\s\S]{0,300}t\.resize\(wide, t\.rows\)/.test(redraw))
+check('...which runs it as it lands', /const widen = widenForReset\s*\n\s*widenForReset = null\s*\n\s*widen\?\.\(\)/.test(pane))
+check('...and forgets it if the answer never comes', /finally \{\s*\n\s*widenForReset = null/.test(redraw))
 
 console.log(`replay-width: ${checks} checks passed`)

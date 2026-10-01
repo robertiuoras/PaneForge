@@ -143,6 +143,9 @@ import {
 import { deskNow } from '../../shared/away'
 import {
   autoHandoffPlan,
+  sweepBlockers,
+  sweepLine,
+  sweepLogDue,
   SLEEPS_SOON_LEAD_MS,
   TURNS_BEFORE_MOVE,
   turnsPlan,
@@ -1257,7 +1260,7 @@ export default function App(): JSX.Element {
   // session was simply absent from New Session, with nothing to explain why.
   useEffect(() => {
     api.listProjects().then(setProjects)
-  }, [config?.root, picking])
+  }, [config?.root, config?.archivedClientPaths, picking])
 
   // Re-probed whenever the custom list changes, and on every open of the picker, so
   // a CLI installed while the app was running shows up without a restart.
@@ -2565,6 +2568,14 @@ export default function App(): JSX.Element {
    */
   const handoffBlocked = useRef<Record<string, number>>({})
   const handoffSweeping = useRef(false)
+  // The last `sweep:` line written to handoff.log and when - see `sweepLogDue`.
+  const sweepNoted = useRef<{ text: string; at: number } | null>(null)
+  const noteSweep = useCallback((text: string): void => {
+    const at = Date.now()
+    if (!sweepLogDue(sweepNoted.current, text, at)) return
+    sweepNoted.current = { text, at }
+    api.logHandoff(text)
+  }, [])
 
   /**
    * Which folders' code could reach another machine, keyed by folder.
@@ -2734,7 +2745,9 @@ export default function App(): JSX.Element {
       panes: AutoPane[],
       make: (candidates: OffloadCandidate[], now: number) => AutoHandoff[],
       why: string,
-      cooldownMinutes: number
+      cooldownMinutes: number,
+      // Said when the sweep ends without arming anything, for the `sweep:` line.
+      empty?: (verdict: string, candidates: OffloadCandidate[]) => void
     ) => {
       if (handoffSweeping.current) return
       handoffSweeping.current = true
@@ -2752,7 +2765,10 @@ export default function App(): JSX.Element {
         try {
           const state = await api.remoteState()
           const online = state.peers.filter((p) => p.status === 'online')
-          if (!online.length) return
+          if (!online.length) {
+            empty?.('no other machine online', [])
+            return
+          }
           const candidates = await Promise.all(
             online.map(async (p) => ({
               device: p.id,
@@ -2764,7 +2780,10 @@ export default function App(): JSX.Element {
             }))
           )
           const plan = make(candidates, Date.now())
-          if (!plan.length) return
+          if (!plan.length) {
+            empty?.('no plan', candidates)
+            return
+          }
           // Nothing moves silently. The loop that used to run the moves here is `doMove`
           // now, behind the same countdown a close gets: named pane, named machine, and
           // `Keep it here` on it.
@@ -2787,9 +2806,12 @@ export default function App(): JSX.Element {
     // `ok` too - and it is then the only sweep that will, since both of the others are
     // readings about a machine in trouble.
     const over = Math.max(0, capacity.over ?? 0)
-    if (!over && capacity.level === 'ok') return
     const now = Date.now()
     const panes = handoffPanes()
+    // Every silent return below says why in handoff.log (`sweep:` lines, deduplicated).
+    const say = (verdict: string, peers?: OffloadCandidate[]): void =>
+      noteSweep(sweepLine(verdict, capacity.level, over, sweepBlockers(panes, cfg, handoffBlocked.current, now, over, peers)))
+    if (!over && capacity.level === 'ok') return say('desk is fine, nothing to give back')
     // The same eligibility the plan applies, asked here first so the peers are not called
     // over the link to find out there was nothing to move. Two shapes, because the budget
     // rule drops the idle wait and the on-screen refusal and takes busy panes as well.
@@ -2806,14 +2828,15 @@ export default function App(): JSX.Element {
         now - quietSince(p) >= Math.max(0, cfg.minIdleMinutes) * 60_000
       )
     })
-    if (!worthAsking) return
+    if (!worthAsking) return say('nothing eligible')
     runHandoffs(
       panes,
       (candidates, at) => autoHandoffPlan(panes, capacity, candidates, cfg, handoffBlocked.current, at),
       over ? `budget: ${over} pane(s) past ${cfg.keepLocal}` : `capacity: ${capacity.level}`,
-      cfg.cooldownMinutes
+      cfg.cooldownMinutes,
+      (verdict, peers) => say(verdict, peers)
     )
-  }, [capacity, handoffPanes, runHandoffs, config?.autoHandoff])
+  }, [capacity, handoffPanes, runHandoffs, noteSweep, config?.autoHandoff])
 
   // Twice: on a reading changing, and on a clock. A desk that is full and quiet emits no
   // session events at all - which is exactly the desk this exists for, and the one a

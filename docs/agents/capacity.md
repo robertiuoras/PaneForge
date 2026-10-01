@@ -106,3 +106,22 @@ Turn rung `turnsPlan` (3 turns here, verdict not `ok`, past `keepLocal`, `queuea
 ONE per sweep. Mac verdict adds `compressorLevel`, stray `next dev` = `PaneUsage.devMb`
 in `paneCost`, dirty same-name copy -> `landingCopy` takes a clean free one. `overlap()` reads
 `origin/lane-*`.
+
+## Logs to read when the desk is slow
+
+All under userData (Mac `~/Library/Application Support/claude-orchestrator/`), each size-capped.
+
+- `pressure.log`: one JSON line a minute (`shared/pressureLog.ts`, `main/pressureLog.ts`,
+  `test:pressurelog`): kernel flag and compressor verdict apart, load per core, compressor and
+  swap MB, per pane RSS/CPU/status, the 5 biggest non-pane processes, `caffeinateChildren`
+  (must be 0-2; 20 = the 2026-10-01 leak).
+- `awake.log`: every `[awake] caffeinate system|display started/stopping/exited` line
+  (`shared/caffeinateHold.ts`: an old child's late `exit` may not clear a newer child's slot).
+- `handoff.log` `sweep:` lines: why the move sweep armed nothing, counts per blocker
+  (`sweepBlockers`): bgAgent, keepHere, quietTooShort, notExpensive, peerHolds, working... Written
+  on change or every 5 min. No `sweep:` line for a minute = the sweep never ran (no `capacity`).
+- `offload.log` is where NEW panes were placed, not the idle rung. 2026-09-28..10-01: 175
+  `started`, all local ("you chose this machine"). `autoHandoff.offloadIdleMinutes` 0 = idle
+  rung off (as configured on this Mac); the background-agent refusal (`runningAgents.ts`)
+  measured 54 blocks, median 4.3 min, longest 76 min, 9 over 20 min: not "for hours", so
+  unchanged. Re-measure from `sweep:` lines before changing either.
