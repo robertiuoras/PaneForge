@@ -127,6 +127,29 @@ ${method('closeAfterResult', 'killAll')}
     writeFileSync(join(process.env.GD_QUESTIONS_DIR, 'new.json'), JSON.stringify(question()))
     assert.equal(h.closeAfterResult('synthetic-pane', now).closed, false, 'a question arriving after the sweep reading prevents the kill')
     assert.deepEqual(h.killed, [])
+
+    // s48-mupgz5iq, 1 Oct 9:58-10:06pm Gold Coast: a finished pane closeAfterResult holds (a
+    // handoff with open steps) got a 30-second close countdown on every sweep, twelve in all,
+    // each refused at its end and armed again. The sweep refuses on the same holds first.
+    records([]); h = fresh({ agent: 'claude', handoffOpen: 2 })
+    const heldReply = join(work, 'held.jsonl')
+    writeFileSync(heldReply, JSON.stringify({ type: 'assistant', isSidechain: false, message: { role: 'assistant', content: [{ type: 'text', text: 'Done.\n\n## Next steps\n- None' }] } }))
+    const clocks = []
+    const rows = []
+    const heldLines = []
+    const heldDeps = {
+      enabled: () => true, readings: () => h.doneReadings(), now: () => now,
+      transcriptFor: () => heldReply, resumeIdFor: () => 'synthetic-native', history: () => [],
+      titleOf: () => ({ title: 'held', cwd: '/Users/r/Projects/assistant', agent: 'claude' }), otherwiseBusy: () => null,
+      record: (input, native) => { rows.push(input.id); return { ...input, ...native, provider: 'claude', reportPath: '/x', createdAt: 'now', attention: false } },
+      notify: () => {}, close: (id, at) => h.closeAfterResult(id, at), noteClose: () => {}, writeNotice: () => {}, activity: () => {},
+      setClosing: (id, at) => clocks.push([id, at]), log: (l) => heldLines.push(l)
+    }
+    for (let i = 0; i < 3; i++) assert.deepEqual(main.sweepDoneClose(heldDeps), [])
+    assert.deepEqual(clocks.filter(([, at]) => at !== undefined), [], 'a held pane never gets a close countdown')
+    assert.deepEqual(rows, [], 'and no Review row')
+    assert.deepEqual(heldLines, ['synthetic-pane stays - session has a handoff with open steps'], 'the reason is logged once')
+    assert.deepEqual(h.killed, [])
     console.log('done-close: real manager preserves pending async questions at both boundaries, exact reopened identity and ordinary closure ok')
   } finally {
     if (previousDir === undefined) delete process.env.GD_QUESTIONS_DIR
