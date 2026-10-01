@@ -201,5 +201,22 @@ ok('offer up, that pane closed again: the offered panes still stand', deskToWrit
 ok('no offer: the live desk is written as it is, empty included', deskToWrite(null, []).length === 0)
 ok('no offer: live panes pass through untouched', deskToWrite(null, opened) === opened)
 
+// Review fixes 2026-10-02: a woken pane types what it was carried; laneFor skips its own claim.
+const wakeStart = sessions.indexOf('  wake(id: string)')
+const wakeBody = sessions.slice(wakeStart, sessions.indexOf('\n  /**', wakeStart))
+ok('wake() types the rows the pane was carried (deliverOwed(id, id))', wakeStart > 0 && wakeBody.includes('this.deliverOwed(id, id)'))
+const doStart = sessions.indexOf('  deliverOwed(oldId: string, newId: string, queue = true)')
+const doBody = sessions.slice(doStart, sessions.indexOf('\n  /**', doStart))
+const queueOpen = doBody.indexOf('if (queue) {')
+const queueClose = doBody.indexOf('\n    }\n', queueOpen)
+const owedAt = doBody.indexOf('this.setOwedPrompt(newId, owedCount(newId) > 0)')
+const returnAt = doBody.indexOf('return owed.length')
+ok('deliverOwed marks owedPrompt outside the queue block (asleep panes too)',
+  queueOpen > 0 && queueClose > queueOpen && owedAt > queueClose && owedAt < returnAt)
+ok('laneFor derives the pane conversation from req.resumeId', /const conversation = req\.resumeId \?\?/.test(index))
+ok('laneFor passes it to the ledger read', index.includes('ledgerTakenFolders(except ?? \'\', holdOver, conversation)'))
+ok('no rehome caller reads the ledger itself any more', index.split('laneFor(req, ledgerTakenFolders(').length - 1 === 0)
+ok('both rehome callers use laneFor(req, [], id)', index.split('laneFor(req, [], id)').length - 1 === 2)
+
 rmSync(work, { recursive: true, force: true })
 console.log(`restore-turn: ${n} checks passed`)

@@ -1125,7 +1125,7 @@ const limitWaves = startLimitWaves({
     void (async () => {
       // Placed again before it wakes, exactly as a press on its sleep chip does.
       try {
-        await manager.rehome(id, (req) => laneFor(req, ledgerTakenFolders(id, holdOver, resumeIdFor(id) ?? manager.list().find((s) => s.id === id)?.resumeId), id))
+        await manager.rehome(id, (req) => laneFor(req, [], id))
       } catch {
         /* the folder it slept in is still there */
       }
@@ -2038,7 +2038,11 @@ async function laneFor(
   // that folder again. Two client chats were restored asleep into `clients` and a
   // third opened from History landed there too, because neither counted (2026-09-04):
   // all three woke into one checkout. A folder with a sleeping pane in it is taken.
-  const taken = [...takenFolders(manager.list(), except), ...ledgerTakenFolders(except ?? '', holdOver), ...extraTaken]
+  // A pane's own earlier claim is not another chat's: restore issues new pane ids, so the
+  // ledger row from before a restart names an id nobody has any more but the SAME
+  // conversation. Pane 2 was moved into taskdriver.ai-b by its own claim (2026-10-02 18:34Z).
+  const conversation = req.resumeId ?? (except ? resumeIdFor(except) ?? manager.list().find((s) => s.id === except)?.resumeId : undefined)
+  const taken = [...takenFolders(manager.list(), except), ...ledgerTakenFolders(except ?? '', holdOver, conversation), ...extraTaken]
 
   // Reopening a pane that was in a lane, when the lane turned out to hold nothing and
   // the project folder is free again: the lane was only ever there to keep two agents
@@ -2433,7 +2437,7 @@ ipcMain.handle('sessions:wake', async (_e, id: string) => {
   if (continuationOwnsSource(id)) return null
   // A sleeping pane is placed again before it wakes: the folder it slept in may now be
   // another pane's (two client chats restored asleep into one checkout, 2026-09-04).
-  await manager.rehome(id, (req) => laneFor(req, ledgerTakenFolders(id, holdOver, resumeIdFor(id) ?? manager.list().find((s) => s.id === id)?.resumeId), id))
+  await manager.rehome(id, (req) => laneFor(req, [], id))
   return manager.wake(id)
 })
 ipcMain.handle('sessions:switchAgent', (_e, id: string, agent: string, model?: string) => {
