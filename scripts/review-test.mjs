@@ -233,12 +233,13 @@ await build({
 })
 const dialogHtml = join(temp, 'review-dialog.html')
 const css = readFileSync(join(repo, 'src/renderer/src/styles.css'), 'utf8')
-writeFileSync(dialogHtml, `<!doctype html><meta charset="utf-8"><style>:root{--text:#eee;--muted:#aaa;--accent:#f0a868;--line:#444;--surface-2:#222}body{margin:0}${css}</style><div id="root"></div><script>window.opened=[];window.api={listReviews:async()=>({reviews:${JSON.stringify([formatted]).replace(/</g, '\\u003c')}}),openReview:async(id,url)=>{window.opened.push([id,url]);return {opened:true}}};</script><script src="review-dialog.js"></script>`)
+writeFileSync(dialogHtml, `<!doctype html><meta charset="utf-8"><style>:root{--text:#eee;--muted:#aaa;--accent:#f0a868;--line:#444;--surface-2:#222}body{margin:0}${css}</style><div id="root"></div><script>window.opened=[];window.api={listReviews:async()=>({reviews:${JSON.stringify([formatted]).replace(/</g, '\\u003c')}}),openReview:async(id,url)=>{window.opened.push([id,url]);return {opened:true}},onReviewsChanged:()=>()=>{}};</script><script src="review-dialog.js"></script>`)
 const chromePath = testChrome()
 assert.ok(chromePath, 'rendering checks require the PC test browser')
 const profile = join(temp, 'chrome-profile')
 const chrome = spawn(chromePath, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check', '--disable-extensions', 'about:blank'], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] })
 let ws
+let renderFailure
 try {
   const socket = await new Promise((resolve, reject) => {
     let stderr = ''
@@ -265,11 +266,13 @@ try {
       ws.send(JSON.stringify({ id, method, params, sessionId }))
     })
   }
+  // Review opens on today's reports; the fixture's report is dated 1 Jan 2026, so the
+  // render loop presses "All dates" to reach it, as a person would.
   for (const [view, html] of [['Review', dialogHtml], ['saved page', formatted.reportPath]]) {
     const { pathToFileURL } = await import('node:url')
     await browser.send('Emulation.setDeviceMetricsOverride', { width: 560, height: 900, deviceScaleFactor: 1, mobile: false })
     await browser.send('Page.navigate', { url: pathToFileURL(html).href })
-    await browser.evaluate(`new Promise((resolve,reject)=>{const limit=Date.now()+5000;function ready(){if(document.querySelector(${JSON.stringify(view === 'Review' ? '.review-markdown' : '.report')})){resolve(true);return}const row=document.querySelector('.review-row');if(row&&row.getAttribute('aria-expanded')!=='true')row.click();if(Date.now()>limit){reject(new Error('report did not render'));return}requestAnimationFrame(ready)}ready()})`)
+    await browser.evaluate(`new Promise((resolve,reject)=>{const limit=Date.now()+5000;function ready(){if(document.querySelector(${JSON.stringify(view === 'Review' ? '.review-markdown' : '.report')})){resolve(true);return}const row=document.querySelector('.review-row');if(!row){const all=[...document.querySelectorAll('.review-days button')].find((b)=>b.textContent==='All dates');if(all&&!all.classList.contains('on'))all.click()}if(row&&row.getAttribute('aria-expanded')!=='true')row.click();if(Date.now()>limit){reject(new Error('report did not render'));return}requestAnimationFrame(ready)}ready()})`)
     const metrics = await browser.evaluate(`(() => {
       const report = document.querySelector(${JSON.stringify(view === 'Review' ? '.review-markdown' : '.report')})
       const list = report.querySelector('ul'), code = report.querySelector('pre'), quote = report.querySelector('blockquote')
@@ -293,8 +296,18 @@ try {
     console.log(`review rendering passed: ${view} headings, bold, nested lists, quotes, links, tables and code observed at 560px`)
   }
   browser.send = send
+} catch (error) {
+  renderFailure = error
+  throw error
 } finally {
-  await closeTestChrome(chrome, profile, ws)
+  // A browser that will not shut down must not replace the render failure that brought us
+  // here: 2026-10-02's PC run said only "Test Chrome did not exit" for "report did not render".
+  try {
+    await closeTestChrome(chrome, profile, ws)
+  } catch (error) {
+    if (!renderFailure) throw error
+    console.error(`(test Chrome teardown also failed: ${error?.message ?? error})`)
+  }
 }
 
 mkdirSync(join(temp, 'history'), { recursive: true })

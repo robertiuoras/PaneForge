@@ -1251,6 +1251,11 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
     asking: false,
     projectName: 'proj',
     memMb: 300,
+    // Unfinished work, the only kind rung 3 moves (`automaticWork`, Robert 2026-09-29):
+    // an idle conversation with a verified handoff that still lists open steps.
+    shareable: true,
+    handoffOpen: 1,
+    handoffVerified: true,
     ...extra
   })
   const soon = (quietMs, pressure) =>

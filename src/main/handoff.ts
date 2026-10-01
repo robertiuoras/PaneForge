@@ -356,7 +356,10 @@ export async function sendHandoff(deps: SendDeps, device: string, request: Hando
       })
       continue
     }
-    if (pane.subagent || pane.backJob || pane.owedPrompt || pane.drafting || (request.now !== true && deps.busy?.(pane))) {
+    // A NOW move still goes with an owed prompt pending (b525596d: `now` is unchanged by
+    // owedPrompt); a running background agent, background job or the person's own unsent
+    // text is never thrown away, NOW or not.
+    if (pane.subagent || pane.backJob || pane.drafting || (request.now !== true && (pane.owedPrompt || deps.busy?.(pane)))) {
       out.push({ id: pane.id, title: pane.title, ok: false, error: 'Work or an unsent prompt is still active; this conversation stays here', notes: [] })
       continue
     }
@@ -390,7 +393,9 @@ async function sendOne(deps: SendDeps, device: string, pane: Session, closeRecei
   const changed = () => {
     const current = deps.list().find((s) => s.id === pane.id)
     return !current || current.status === 'exited' || current.lastKeyboard !== inputAt ||
-      deps.busy?.(current) || current.subagent || current.backJob || current.owedPrompt || current.drafting ||
+      // An owed prompt counts only if it arrived DURING preparation: one already pending
+      // reaches here only on a NOW move, which goes regardless (sendHandoff).
+      deps.busy?.(current) || current.subagent || current.backJob || (current.owedPrompt && !pane.owedPrompt) || current.drafting ||
       (automatic && (!verifiedWork(current) || current.stayHere || current.focused || pinnedByPrompt(current.gist, current.cwd) ||
         !automaticWork({ ...current, state: 'ready' })))
   }

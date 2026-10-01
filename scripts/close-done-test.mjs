@@ -127,6 +127,11 @@ ok(/close-when-done needs a pane/.test(ctl), '...and refuses by name when it can
   manager.openerOf = () => 'opener'
   manager.queuePrompt = (id, text) => told.push([id, text])
   manager.kill = (id) => kills.push(id)
+  // An agent pane is closed through the Review-first done-close sweep (index.ts
+  // `onCloseWhenDone` -> `sweepDoneClose`), which saves its report, tells the opener and
+  // closes it. Handing it there IS the close this sweep decides.
+  const handedToReview = []
+  manager.onCloseWhenDone = (id) => handedToReview.push(id)
   const at = Date.now()
   const pane = () => ({
     meta: { id: 'pane', title: 'Finish preserved work', cwd: '/fixture', agent: 'claude', finished: true, status: 'idle', printed: at - 60_000 },
@@ -138,43 +143,46 @@ ok(/close-when-done needs a pane/.test(ctl), '...and refuses by name when it can
   const queued = pane()
   manager.autoClearPending.set('pane', { seconds: 15 })
   sweep(queued)
-  is(kills, [], 'a clear asked for during the turn keeps the pane open (s57-mupk43r8)')
+  is([...kills, ...handedToReview], [], 'a clear asked for during the turn keeps the pane open (s57-mupk43r8)')
   manager.autoClearPending.clear()
 
   const holding = pane()
   manager.autoClearArmTimers.set('pane', 0)
   sweep(holding)
-  is(kills, [], '...and so does the settle hold in front of its countdown')
+  is([...kills, ...handedToReview], [], '...and so does the settle hold in front of its countdown')
   manager.autoClearArmTimers.clear()
 
   const counting = pane()
   counting.meta.autoClearAt = Date.now() + 15_000
   sweep(counting)
-  is(kills, [], '...and the countdown itself (s28-mupc5ct1, killed 84ms after it armed)')
+  is([...kills, ...handedToReview], [], '...and the countdown itself (s28-mupc5ct1, killed 84ms after it armed)')
 
   const handover = pane()
   handover.meta.handoverUntil = Date.now() + 30_000
   sweep(handover)
-  is(kills, [], '...and the handover between `/clear` and the resume prompt')
+  is([...kills, ...handedToReview], [], '...and the handover between `/clear` and the resume prompt')
 
   const owed = pane()
   owed.meta.owedPrompt = true
   sweep(owed)
-  is(kills, [], '...and a queued prompt that has not landed yet')
+  is([...kills, ...handedToReview], [], '...and a queued prompt that has not landed yet')
   is(told, [], 'the opener is told nothing while the pane is still owed a prompt')
 
   // Quiet but no completed reply on record (startup paint): not done either.
   const unfinished = pane()
   unfinished.meta.finished = undefined
   sweep(unfinished)
-  is(kills, [], '...and a Claude pane whose reply has not completed')
+  is([...kills, ...handedToReview], [], '...and a Claude pane whose reply has not completed')
 
   // The resume turn ran and finished: nothing owed, quiet again. Now it is done.
   const resumed = pane()
   sweep(resumed)
-  is(kills, ['pane'], 'once the resume turn has finished, the pane closes itself as asked')
-  is(told.length, 1, '...and the opener is told, once')
+  is(handedToReview, ['pane'], 'once the resume turn has finished, the pane is handed to the Review-first close as asked')
+  is(kills, [], '...which closes it after saving its report, not this sweep directly')
+  is(told.length, 0, '...and the opener is told once, by that close (finishedDigest), not twice')
 }
+ok(/manager\.onCloseWhenDone = \(id\) => \{[\s\S]{0,200}?sweepDoneClose\(/.test(main), 'onCloseWhenDone runs the done-close sweep for that one pane')
+ok(/function doneCloseDeps\(\)[\s\S]{0,200}?openerOf: \(id\) => manager\.openerOf\(id\),\s*finished: \(opener, note\) => finishedDigest\.add\(opener, note\)/.test(main), '...whose deps tell the opener through its digest')
 
 rmSync(work, { recursive: true, force: true })
 console.log(`close-done: ${checks} checks passed`)

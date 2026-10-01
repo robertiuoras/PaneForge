@@ -120,7 +120,7 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
   // ...and one with nothing to resume, or an agent nobody named, stays: it would arrive as
   // a fresh agent wearing the old title.
   for (const agent of ['claude', 'codex', undefined]) {
-    const panes = [pane({ id: 'candidate', agent }), pane({ id: 'keep', agent })]
+    const panes = [pane({ id: 'candidate', agent, resumeId: undefined }), pane({ id: 'keep', agent, resumeId: undefined })]
     eq(`automatic pressure refuses ${agent ?? 'unknown'} agent identity`, ids(autoHandoffPlan(panes, over, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), '')
     eq(`automatic budget refuses ${agent ?? 'unknown'} agent identity`, ids(budgetPlan(panes, peers, { ...DEFAULT_AUTO_HANDOFF, budgetMinMb: 1 }, {}, NOW, 1)), '')
     eq(`automatic idle clock refuses ${agent ?? 'unknown'} agent identity`, ids(idleOffloadPlan(panes, peers, { ...DEFAULT_AUTO_HANDOFF, offloadIdleMinutes: 1 }, {}, NOW)), '')

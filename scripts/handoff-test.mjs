@@ -461,13 +461,33 @@ console.log('automatic handoff refusal and races')
   const stale = await sendHandoff(automaticBase(staleDisk), 'pc', { ids: [staleDisk.id], automatic: true })
   ok('an automatically eligible idle pane without a fresh exact handoff on disk refuses before mutation', stale[0]?.ok === false && /No fresh handoff/.test(stale[0]?.error ?? '') && automaticDeliveries === 0 && automaticKills.length === 0 && git(repo, 'rev-parse', 'HEAD') === automaticHead && git(repo, 'status', '--porcelain') === automaticStatus, stale[0]?.error)
 
+  // Robert 2026-09-29: a finished or stopped pane never moves automatically. An idle pane
+  // whose only activity is a background job, a subagent or an unsent draft, with no
+  // verified handoff of open steps, is stopped work: refused outright, nothing queued.
+  const stoppedQueue = []
+  for (const [label, extra] of [
+    ['background job', { backJob: true }],
+    ['subagent', { subagent: true }],
+    ['draft prompt', { drafting: true }]
+  ]) {
+    const pane = { id: `stopped-${label}`, title: label, cwd: repo, agent: 'claude', status: 'idle', lastOutput: 0, createdAt: 0, ...extra }
+    const result = await sendHandoff({
+      ...automaticBase(pane),
+      queue: (...args) => stoppedQueue.push(args)
+    }, 'pc', { ids: [pane.id], automatic: true })
+    ok(`a stopped pane with only a ${label} running is refused automatically, not queued`, result[0]?.ok === false && !result[0]?.pending && /No unfinished work/.test(result[0]?.error ?? '') && automaticDeliveries === 0 && automaticKills.length === 0, result[0]?.error)
+  }
+  ok('...and nothing was queued for them', stoppedQueue.length === 0, JSON.stringify(stoppedQueue))
+
+  // Unfinished work (a verified handoff with open steps) that also has live background
+  // work is queued, never delivered or closed while that work runs.
   const queued = []
   for (const [label, extra] of [
     ['background job', { backJob: true }],
     ['subagent', { subagent: true }],
     ['draft prompt', { drafting: true }]
   ]) {
-    const pane = { id: `queue-${label}`, title: label, cwd: repo, agent: 'claude', status: 'idle', lastOutput: 0, createdAt: 0, ...extra }
+    const pane = { id: `queue-${label}`, title: label, cwd: repo, agent: 'claude', status: 'idle', handoffOpen: 2, handoffVerified: true, lastOutput: 0, createdAt: 0, ...extra }
     const result = await sendHandoff({
       ...automaticBase(pane),
       queue: (id, device, closeWhenDone, automatic) => queued.push([id, device, closeWhenDone, automatic])

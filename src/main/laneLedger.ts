@@ -58,11 +58,26 @@ function laneDirOf(main: string, laneId: string): string {
   return laneId === 'main' ? main : join(dirname(main), `${basename(main)}-${laneId}`)
 }
 
-/** A stored cwd is useful only when it still belongs to this ledger's repository. */
+/** The checkout (main folder or copy) `dir` sits in: the nearest folder above it with a `.git`. */
+function checkoutOf(dir: string): string | null {
+  let at = resolve(dir)
+  for (;;) {
+    if (existsSync(join(at, '.git'))) return at
+    const up = dirname(at)
+    if (up === at) return null
+    at = up
+  }
+}
+
+/**
+ * The checkout a hold keeps, from its stored cwd when that still belongs to this ledger's
+ * repository. The CHECKOUT, not the cwd itself: a chat in `clients-a/clients/alison` holds
+ * all of copy a, and the copies board matches holds by exact copy folder (`inUse`).
+ */
 function heldFolder(main: string, laneId: string, cwd?: string): string {
   if (cwd) {
     const heldMain = mainCheckoutOf(cwd)
-    if (heldMain && resolve(heldMain) === resolve(main)) return cwd
+    if (heldMain && resolve(heldMain) === resolve(main)) return checkoutOf(cwd) ?? cwd
   }
   return laneDirOf(main, laneId)
 }
