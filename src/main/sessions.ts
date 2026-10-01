@@ -893,16 +893,6 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
-   * What it would take to open these panes again - used to carry the workspace
-   * across an update restart. The original launch prompt is dropped on purpose:
-   * replaying it would re-run work the agent already did before the restart.
-   *
-   * Exited panes are left out. They stay in the list so an ended run can be revived
-   * in place, but restoring one would silently start a fresh agent in a pane the
-   * user had already finished with - which is how a workspace grows a tab per
-   * update until the window is full of CLIs nobody asked for.
-   */
-  /**
    * A live Claude pane whose turn is over but whose CLI still owes work to a background
    * agent, a `run_in_background` shell command, or a task notification not yet acted on.
    * A restart kills that work with the process, so the pane must come back RESUMED and be
@@ -914,6 +904,16 @@ export class SessionManager extends EventEmitter {
     return pendingBackgroundFor(s.meta.id, procBorn.get(s.proc))
   }
 
+  /**
+   * What it would take to open these panes again - used to carry the workspace
+   * across an update restart. The original launch prompt is dropped on purpose:
+   * replaying it would re-run work the agent already did before the restart.
+   *
+   * Exited panes are left out. They stay in the list so an ended run can be revived
+   * in place, but restoring one would silently start a fresh agent in a pane the
+   * user had already finished with - which is how a workspace grows a tab per
+   * update until the window is full of CLIs nobody asked for.
+   */
   snapshot(): StartSessionRequest[] {
     return [...this.sessions.values()]
       // A SLEEPING pane is `exited` too and is not an ended run - it is a card somebody
