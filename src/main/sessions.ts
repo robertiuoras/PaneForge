@@ -839,6 +839,10 @@ export class SessionManager extends EventEmitter {
         // like any other.
         openedOthers: this.openChildrenOf(m.id) > 0 || this.digestPending(m.id),
         owedPrompt: this.owesPrompt(live),
+        handingOff: m.handingOff,
+        handoffQueuedAt: m.handoffQueuedAt,
+        handoffOpen: m.handoffOpen,
+        handoverUntil: m.handoverUntil,
         lookedAt: live.lookedAt || undefined
       }
     })
