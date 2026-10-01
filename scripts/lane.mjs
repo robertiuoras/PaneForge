@@ -33,6 +33,8 @@
 //   node scripts/lane.mjs ship [patch|minor|major] merge ready lanes, one release
 //   node scripts/lane.mjs autoship                 ship, but only if no chat is mid-work
 //   node scripts/lane.mjs retry                    re-try stuck lanes (the app, on a timer)
+//   node scripts/lane.mjs park --session <id> --lane <slot> --ref <ref>
+//                                                    remember a committed snapshot outside the pool
 //   node scripts/lane.mjs sweep [--dry-run]        remove unused checkout folders, work saved first
 //   node scripts/lane.mjs release --session <id>   give the lane back (SessionEnd)
 //
@@ -41,6 +43,7 @@
 // stops having any: whoever finishes last cuts the version, for everyone.
 
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
+import { randomUUID, createHash } from 'node:crypto'
 import {
   appendFileSync,
   copyFileSync,
@@ -121,10 +124,10 @@ function gitSafe(cwd, ...args) {
         return { ok: true, out: git(cwd, ...args) }
       } catch (again) {
         const retried = errText(again)
-        return { ok: false, out: retried, locked: lockedOut(retried) }
+        return { ok: false, out: retried, locked: lockedOut(retried), code: again.status ?? null }
       }
     }
-    return { ok: false, out, locked: lockedOut(out) }
+    return { ok: false, out, locked: lockedOut(out), code: e.status ?? null }
   }
 }
 
@@ -253,6 +256,7 @@ const own = resolve(join(here, '..'))
 const commonDir = resolve(asked ? resolve(asked) : own, git(asked ? resolve(asked) : own, 'rev-parse', '--git-common-dir'))
 const MAIN = dirname(commonDir)
 const STATE = join(commonDir, 'paneforge-lanes.json')
+const RECOVERY = join(commonDir, 'paneforge-recovery.json')
 
 /**
  * Is the repo being driven the checkout this script ships in?
@@ -534,6 +538,9 @@ function read() {
     s.release ??= null
     s.lastShip ??= null
     s.passed ??= {}
+    // Explicit snapshots parked outside the configured pool. Known parked naming
+    // conventions are inventoried for review, but never become lane work by discovery.
+    s.parkedWork ??= {}
     // Why the last automatic release did not go out. See noteHold below.
     s.hold ??= null
     // What THIS device last told the other one, so a turn ending can tell whether a
@@ -542,10 +549,31 @@ function read() {
     // What the OTHER devices last said, kept so a reader that must not touch the network
     // can still answer "who has the trunk". See the note in write().
     s.peers ??= null
-    return s
+    return readRecovery(s)
   } catch {
-    return { lanes: {}, ready: {}, conflicts: {}, passed: {}, release: null, lastShip: null, hold: null, peer: null, peers: null }
+    return readRecovery({ lanes: {}, ready: {}, conflicts: {}, passed: {}, parkedWork: {}, release: null, lastShip: null, hold: null, peer: null, peers: null })
   }
+}
+
+// Ordinary lane writers cannot overwrite a completion reservation read earlier.
+// Only the recovery-lock owner writes this separate transaction file.
+function readRecovery(state) {
+  state.recovery = { items: {} }
+  try {
+    if (existsSync(RECOVERY)) {
+      const r = JSON.parse(readFileSync(RECOVERY, 'utf8'))
+      if (!r || !r.items || Array.isArray(r.items) || typeof r.items !== 'object') throw new Error('invalid recovery state')
+      state.recovery = r
+    }
+  } catch { state.recoveryError = 'recovery ownership is unreadable; explicit diagnosis required' }
+  return state
+}
+
+function writeRecovery(state) {
+  if (state.recoveryError) throw new Error(state.recoveryError)
+  const tmp = `${RECOVERY}.${process.pid}.tmp`
+  writeFileSync(tmp, JSON.stringify(state.recovery, null, 2) + '\n', { mode: 0o600 })
+  renameSync(tmp, RECOVERY)
 }
 
 function write(state) {
@@ -562,7 +590,8 @@ function write(state) {
   // Write-then-rename: two hooks can fire at the same moment from two chats, and a
   // half-written state file would strand every lane at once.
   const tmp = `${STATE}.${process.pid}.tmp`
-  writeFileSync(tmp, JSON.stringify(state, null, 2) + '\n', 'utf8')
+  const { recovery, recoveryError, ...ledger } = state
+  writeFileSync(tmp, JSON.stringify(ledger, null, 2) + '\n', 'utf8')
   renameSync(tmp, STATE)
 }
 
@@ -874,23 +903,259 @@ function dropClaims(state, session) {
  * claim was dropped before this existed, or by an older version of this file). Returns the
  * markReady result, or null when there was nothing to rescue.
  */
-function drainLane(state, id) {
-  if (id === 'main') return null // master IS the release branch - its commits are already counted
-  if (state.ready[id] || state.conflicts[id]) return null
-  if (!existsSync(laneDir(id))) return null
-  const w = laneWork(id)
-  if (w.dirty || w.ahead === 0) return null
-  const caught = catchUp(id)
-  if (caught.conflicts.length) {
-    noteConflict(state.conflicts, id, caught.conflicts.join(', '))
-    return null
-  }
+// Unready abandoned work needs a verification owner, not an automatic ready mark.
+// These records are durable dispositions, keyed by the reviewed snapshot. In
+// particular, a blocked parked ref must not open a fresh pane every timer tick.
+function recoveryFor(state, session, lane) {
+  return Object.values(state.recovery?.items ?? {}).find((r) => r.owner === session && r.lane === lane && !['complete', 'reviewed'].includes(r.status))
+}
+
+function recoveryLiving() {
   try {
-    return markReady(state, id)
-  } catch {
-    /* nothing mergeable after the catch-up - leave the branch alone */
-    return null
+    const living = new Set()
+    let known = false
+    const see = (beat, pid) => {
+      if (!beat || !Number.isFinite(beat.at) || !Array.isArray(beat.chats) || !beat.chats.every((s) => typeof s === 'string')) throw new Error('invalid inventory')
+      if (pid) {
+        try { process.kill(pid, 0) } catch (e) {
+          if (e.code === 'ESRCH') return
+          throw e // permission/unknown is not dead-owner evidence
+        }
+      }
+      known = true
+      for (const session of beat.chats) living.add(session)
+    }
+    const legacy = join(commonDir, 'paneforge-panes.json')
+    if (existsSync(legacy)) {
+      const beats = JSON.parse(readFileSync(legacy, 'utf8'))
+      if (!beats || Array.isArray(beats) || typeof beats !== 'object') return null
+      for (const [id, beat] of Object.entries(beats)) {
+        const match = /^pf-(\d+)$/.exec(id)
+        if (!match) return null
+        see(beat, Number(match[1]))
+      }
+    }
+    const dir = join(commonDir, 'paneforge-panes')
+    if (existsSync(dir)) for (const name of readdirSync(dir)) {
+      if (name.endsWith('.tmp')) continue
+      const match = /^pf-(\d+)\.json$/.exec(name)
+      if (!match) return null
+      see(JSON.parse(readFileSync(join(dir, name), 'utf8')), Number(match[1]))
+    }
+    return known ? living : null
+  } catch { return null }
+}
+
+// A nonempty directory permits atomic takeover without unlinking a contender's lock.
+// The deterministic tombstone stays nonempty: a delayed stale observer cannot rename
+// a newly acquired live lock over it. Unknown or half-written owners fail closed.
+function recoveryLock() {
+  const path = join(commonDir, 'paneforge-recovery.lock')
+  const owner = join(path, 'owner')
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      mkdirSync(path, { mode: 0o700 })
+      const token = `${process.pid}:${randomUUID()}`
+      writeFileSync(owner, token, { mode: 0o600 })
+      return () => {
+        try {
+          if (readFileSync(owner, 'utf8') === token) { unlinkSync(owner); rmdirSync(path) }
+        } catch { /* an unknown lock is never removed */ }
+      }
+    } catch (e) {
+      if (e.code !== 'EEXIST') return null
+      try {
+        const token = readFileSync(owner, 'utf8')
+        const pid = Number(token.split(':')[0])
+        if (!Number.isInteger(pid) || pid < 1 || !token.includes(':')) return null
+        try { process.kill(pid, 0); return null } catch (error) { if (error.code !== 'ESRCH') return null }
+        const dead = `${path}.dead-${createHash('sha256').update(token).digest('hex')}`
+        // rename refuses to replace a nonempty destination, including on Windows.
+        renameSync(path, dead)
+      } catch { return null }
+    }
   }
+  return null
+}
+
+function preservedRecovery(state, lane) {
+  if (state.recoveryError) throw new Error(state.recoveryError)
+  return Object.values(state.recovery?.items ?? {}).find((r) => !r.ref && r.lane === lane && !['complete', 'reviewed'].includes(r.status))
+}
+
+function preservedCheckout(state, lane) {
+  const r = preservedRecovery(state, lane)
+  if (!r) return null
+  const dir = laneDir(lane)
+  const head = gitSafe(dir, 'rev-parse', 'HEAD')
+  const index = gitSafe(dir, 'ls-files', '-z')
+  const tree = gitSafe(dir, 'ls-tree', '-r', '--name-only', 'HEAD')
+  if (!isWorktree(dir) || !head.ok || !index.ok || !tree.ok || (!index.out && tree.out))
+    throw new Error('preserved recovery checkout needs backup and explicit diagnosis before claim; no automatic repair')
+  return dir
+}
+
+function recoveryBrief(key, r) {
+  // The subcommand comes first: the entry reads it from argv[0], so a leading `--repo`
+  // made every command in this brief `Unknown command "--repo"` (2026-10-01, pane 22).
+  const cli = (sub) => `node ${JSON.stringify(join(here, 'lane.mjs'))} ${sub} --repo ${JSON.stringify(MAIN)}`
+  return `Complete preserved abandoned work in ${MAIN}. Recovery key: ${key}. Pinned commit: ${r.commit}.
+You are not alone. Preserve other owners, staged edits, private files and task intent. This is verification and authorized integration only; NEVER cut, tag, publish or install a release. Use the existing included native CLI provider route, no API credentials or pool fallback.
+First read AGENTS.md and lane docs, back up the target files/index/ref before any repair. ${r.problem ?? ''} Missing/foreign worktrees or an empty index with tracked HEAD files require preservation and diagnosis; NEVER auto-stage deletions, reset, remove or reconstruct files on that evidence.
+${r.ref ? `Review the pinned ref ${r.ref} at ${r.commit} against current trunk by content. Do not cherry-pick a moved ref or blindly merge by name. Claim an empty ordinary lane, assert its heldBy is your actual native conversation ID, then explicitly park --ref ${JSON.stringify(r.ref)} --lane <slot> before resuming reviewed intent. If no safe slot or ambiguous intent, record blocked/reviewed disposition.` : `Claim the exact lane: ${cli('claim')} --prefer ${r.lane} --cwd ${JSON.stringify(laneDir(r.lane))} --session <actual-native-id>. Assert the returned lane/dir and fresh status heldBy; a fallback slot is NOT authority to edit the original. If ownership changed, stop.`}
+Bind this recovery after the ownership readback: ${cli('recover')} --key ${JSON.stringify(key)} --session <actual-native-id> --disposition begin${r.ref ? ' --lane <claimed-slot>' : ''}.
+Review intent and content equivalence, finish only intended work, run the repository's required PC checks (no Mac build/full-check fallback), obtain independent review, and commit verified work. Save a JSON receipt with commit, nonempty checks array of {command, exitCode: 0}, and review: {reviewer: <independent owner>, result: "accepted"}. Then ${cli('recover')} --key ${JSON.stringify(key)} --session <actual-native-id> --disposition verified --receipt <json-file>; normal ready requires this pinned verification before integration.
+Run ${cli('ready')} --session <actual-native-id> --lane <owned-slot>. Read the real merge/push outcome and remote inclusion, then ${cli('recover')} --key ${JSON.stringify(key)} --session <actual-native-id> --disposition complete. A ready flag is not completion. Version-mode publication remains for Robert's publisher.
+If blocked or content already equivalent, save a JSON receipt with reason/evidence and use --disposition blocked or reviewed with --receipt <file>. Keep the pinned work preserved. Do not leave an acknowledgment loop or silently abandon this pane.`
+}
+
+function dispatchCompletion() {
+  // A corrupt ledger must never be interpreted as no owners.
+  try { JSON.parse(readFileSync(STATE, 'utf8')) } catch { return null }
+  const state = read()
+  const living = recoveryLiving()
+  const panes = openPanes()
+  if (!living || !panes || state.release || state.recoveryError) return null
+  const dirs = panes.dirs
+  const processes = processDirs()
+  if (!processes) return null
+  state.recovery ??= { items: {} }
+  state.recovery.items ??= {}
+  const items = state.recovery.items
+  const active = items[state.recovery.active]
+  let resume = null
+  if (active && !['complete', 'reviewed', 'blocked'].includes(active.status)) {
+    if (active.status === 'ready') {
+      const remote = gitSafe(MAIN, 'ls-remote', '--exit-code', 'origin', `refs/heads/${MB}`)
+      const tip = remote.out.split(/\s/)[0]
+      if (remote.ok && /^[a-f0-9]{40,64}$/.test(tip) && gitSafe(MAIN, 'merge-base', '--is-ancestor', active.readyCommit, tip).ok) {
+        active.status = 'complete'; active.remoteCommit = tip; active.at = now(); delete state.recovery.active; writeRecovery(state)
+      } else return null
+    } else {
+      // A stopped turn, sleeping CLI, relocated pane or unknown open result is not death.
+      if (active.pane === '?' || (active.owner && living.has(active.owner)) || (active.lane && state.lanes[active.lane]) || panes.ids.includes(active.pane) || now() - active.at < RETRY_MS) return null
+      const current = active.ref ? parkedCommit(active.ref) : gitSafe(MAIN, 'rev-parse', '--verify', laneBranch(active.lane)).out
+      if (active.status === 'dispatching' || !active.owner || current !== active.commit || (active.attempts ?? 1) >= 3) {
+        const interrupted = active.status === 'dispatching'
+        active.status = 'blocked'
+        active.reason = interrupted ? 'interrupted pane delivery requires explicit inspection' : !active.owner ? 'completion pane ended without an adopted native owner; delivery and task intent require explicit inspection' : current !== active.commit ? 'completion owner ended after the pinned commit changed; explicit review required' : 'completion owner ended repeatedly; explicit review required'
+        delete state.recovery.active; writeRecovery(state)
+      } else resume = { ...active, owner: null }
+    }
+  }
+  // Conflict recovery owns its own pane; do not create a second completion owner.
+  if (Object.values(state.conflicts).some((c) => c.resolver || c.dispatch)) return null
+  const candidates = []
+  for (const id of POOL) {
+    if (id === 'main' || state.lanes[id] || state.ready[id] || state.conflicts[id]) continue
+    const dir = laneDir(id)
+    if ([...dirs, ...processes].some((d) => within(d, dir))) continue
+    const tip = gitSafe(MAIN, 'rev-parse', '--verify', laneBranch(id))
+    if (!tip.ok) continue
+    const diff = gitSafe(MAIN, 'cherry', MB, tip.out)
+    const merged = gitSafe(MAIN, 'merge-base', '--is-ancestor', tip.out, MB)
+    if (!diff.ok || (!merged.ok && merged.code !== 1)) continue
+    let problem = null
+    let dirt = ''
+    if (!existsSync(dir)) problem = 'The checkout is missing; pinned local commits must be backed up before rebuilding.'
+    else if (!isWorktree(dir)) problem = 'The folder is foreign or damaged; preserve it and diagnose before any repair.'
+    else {
+      const head = gitSafe(dir, 'rev-parse', 'HEAD')
+      const status = gitSafe(dir, ...WORK_STATUS)
+      const index = gitSafe(dir, 'ls-files', '-z')
+      const tree = gitSafe(dir, 'ls-tree', '-r', '--name-only', 'HEAD')
+      if (!head.ok || head.out !== tip.out || !status.ok || !index.ok || !tree.ok) continue
+      dirt = status.out
+      if (!index.out && tree.out) problem = 'HEAD has tracked files but the index is empty. Staged deletions are NOT established intent.'
+    }
+    if (!dirt && !/^\+ /m.test(diff.out) && merged.ok) continue
+    const key = `lane:${id}:${tip.out}`
+    if (!items[key] || resume?.key === key) candidates.push({ ...(resume?.key === key ? resume : {}), key, lane: id, commit: tip.out, problem })
+  }
+  discoveredParked(state)
+  for (const p of [...Object.values(state.parkedWork ?? {}), ...unregisteredWip(state)]) {
+    const key = `ref:${p.ref}:${p.commit}`
+    if (items[key] && resume?.key !== key) continue
+    const current = parkedCommit(p.ref)
+    if (!current || current !== p.commit) {
+      items[key] = { ...p, status: 'blocked', at: now(), reason: 'pinned ref moved or vanished; explicit review required' }
+      continue
+    }
+    const merged = gitSafe(MAIN, 'merge-base', '--is-ancestor', p.commit, MB)
+    if (merged.ok) { items[key] = { ...p, status: 'reviewed', at: now(), reason: 'included by trunk ancestry' }; continue }
+    if (merged.code !== 1) continue
+    candidates.push({ ...(resume?.key === key ? resume : {}), key, ref: p.ref, commit: p.commit, lane: null })
+  }
+  const r = candidates[0]
+  if (!r) { writeRecovery(state); return null }
+  const ctl = join(here, 'pf-ctl.mjs')
+  const log = process.env.LANE_COMPLETION_LOG
+  if (!log && (process.env.PF_CTL_NO_APP || !existsSync(ctl))) { writeRecovery(state); return null }
+  const dir = r.lane && !r.problem ? laneDir(r.lane) : MAIN
+  items[r.key] = { ...r, status: 'dispatching', at: now(), dispatcher: process.pid, attempts: (items[r.key]?.attempts ?? 0) + 1 }
+  state.recovery.active = r.key
+  writeRecovery(state) // reservation precedes any observable pane launch
+  const prompt = recoveryBrief(r.key, r)
+  let pane = null
+  if (log) {
+    appendFileSync(log, JSON.stringify({ key: r.key, dir, prompt }) + '\n')
+    pane = 'logged'
+  } else {
+    seedTrust(dir)
+    const opened = spawnSync(process.execPath, [ctl, 'open', dir, '--here', '--close-when-done', '--title', 'Finish preserved work', '--prompt', prompt], { encoding: 'utf8', timeout: 60_000, windowsHide: true })
+    if (opened.status === 0) pane = /(?:opened|sent to) (\S+)/.exec(opened.stdout ?? '')?.[1] ?? '?'
+  }
+  const fresh = read()
+  const reserved = fresh.recovery?.items?.[r.key]
+  if (reserved?.dispatcher !== process.pid) return null
+  if (!pane) {
+    reserved.status = 'blocked'
+    reserved.reason = 'pane open failed or timed out; inspect delivery before explicit retry'
+    delete fresh.recovery.active
+  } else { reserved.status = 'dispatched'; reserved.pane = pane }
+  writeRecovery(fresh)
+  return pane ? { key: r.key, pane } : null
+}
+
+function recover(session, key, disposition, receiptPath, wanted) {
+  if (!session || !key) throw new Error('recover needs an actual session and pinned key')
+  const unlock = recoveryLock()
+  if (!unlock) throw new Error('another recovery transaction owns this repository')
+  try {
+    const state = read()
+    const r = state.recovery?.items?.[key]
+    if (!r) throw new Error('unknown recovery key')
+    if (r.owner && r.owner !== session) throw new Error('another recovery owner holds this key')
+    if (disposition === 'begin') {
+      if (['complete', 'reviewed', 'blocked'].includes(r.status)) throw new Error('this snapshot has a durable disposition; review it explicitly before retry')
+      const lane = r.ref ? wanted : r.lane
+      if (!lane || state.lanes[lane]?.session !== session) throw new Error('claim the exact ordinary lane and verify its owner first')
+      if (r.ref && parkedCommit(r.ref) !== r.commit) throw new Error('pinned ref changed')
+      if (!r.ref && gitSafe(laneDir(lane), 'rev-parse', 'HEAD').out !== r.commit) throw new Error('pinned lane HEAD changed before adoption')
+      r.owner = session; r.lane = lane; r.status = 'owned'
+    } else if (disposition === 'complete') {
+      if (r.owner !== session || r.status !== 'ready' || !r.readyCommit) throw new Error('verified normal ready must precede completion')
+      const remote = gitSafe(MAIN, 'ls-remote', '--exit-code', 'origin', `refs/heads/${MB}`)
+      if (!remote.ok) throw new Error('cannot read remote inclusion')
+      const tip = remote.out.split(/\s/)[0]
+      if (!/^[a-f0-9]{40,64}$/.test(tip) || !gitSafe(MAIN, 'merge-base', '--is-ancestor', r.readyCommit, tip).ok) throw new Error('ready commit is not proven included in the remote trunk')
+      r.status = 'complete'; r.remoteCommit = tip
+    } else {
+      if (!['verified', 'blocked', 'reviewed'].includes(disposition) || !receiptPath) throw new Error('supply a verified/blocked/reviewed disposition and JSON receipt')
+      const receipt = JSON.parse(readFileSync(receiptPath, 'utf8'))
+      if (disposition === 'verified') {
+        const head = gitSafe(laneDir(r.lane), 'rev-parse', 'HEAD')
+        const checked = Array.isArray(receipt.checks) && receipt.checks.length && receipt.checks.every((c) => typeof c.command === 'string' && c.command.trim() && c.exitCode === 0)
+        const reviewed = typeof receipt.review?.reviewer === 'string' && receipt.review.reviewer.trim() && receipt.review.reviewer !== session && receipt.review.result === 'accepted'
+        if (r.owner !== session || state.lanes[r.lane]?.session !== session || !head.ok || receipt.commit !== head.out || !checked || !reviewed) throw new Error('verification receipt needs owned current commit, successful checks and accepted independent review')
+      } else if (!receipt.reason) throw new Error('blocked/reviewed receipt requires an exact reason')
+      r.receipt = receipt; r.status = disposition
+    }
+    r.at = now()
+    if (['complete', 'reviewed', 'blocked'].includes(r.status)) delete state.recovery.active
+    writeRecovery(state)
+    return r
+  } finally { unlock() }
 }
 
 /**
@@ -935,9 +1200,77 @@ function holdGivenUp(c) {
  * claim may conclude: a parked `main` is handed over in minutes (PARK_STEAL_MS, or at
  * once for a visitor) instead of the hour the silence sweep needs.
  */
-function park(session, { ended = false } = {}) {
+/** A parked ref is deliberately narrower than a git revision expression. */
+function parkedRef(raw) {
+  if (!raw) throw new Error('park needs --ref')
+  const ref = raw.startsWith('refs/') ? raw : raw.startsWith('origin/') ? `refs/remotes/${raw}` : `refs/heads/${raw}`
+  if (!/^refs\/(?:heads|remotes\/origin)\/[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(ref) || ref.includes('..') || ref.endsWith('/'))
+    throw new Error(`parked work needs a branch ref, not "${raw}"`)
+  return ref
+}
+
+function parkedCommit(ref) {
+  const r = gitSafe(MAIN, 'rev-parse', '--verify', '--quiet', `${ref}^{commit}`)
+  return r.ok && /^[0-9a-f]{40}$/i.test(r.out.trim()) ? r.out.trim() : null
+}
+
+// Inventory only the three established parked-work spellings. The slot in the name is a
+// useful recovery hint, not authority to alter a worktree: a ref can be an active branch,
+// stale backup, or already-integrated work. An operator must explicitly park it before
+// ordinary claim/cherry-pick/ready work can resume it.
+function discoveredParked(state) {
+  const r = gitSafe(MAIN, 'for-each-ref', '--format=%(refname)', 'refs/remotes/origin/lane-*', 'refs/remotes/origin/wip/lane-*', 'refs/remotes/origin/park/lane-*')
+  if (!r.ok) return []
+  const found = []
+  for (const ref of r.out.split('\n').filter(Boolean)) {
+    const m = /^refs\/remotes\/origin\/(?:lane-|wip\/lane-|park\/lane-)([A-Za-z0-9]+)-[A-Za-z0-9._-]+$/.exec(ref)
+    if (!m || !POOL.includes(m[1])) continue
+    const commit = parkedCommit(ref)
+    if (!commit) continue
+    found.push({ ref, commit, lane: m[1] })
+    if (state.parkedWork[ref]) continue
+    state.parkedWork[ref] = { ref, commit, lane: m[1], session: null, parkedAt: now(), discovered: true, reviewRequired: true }
+    reaped = true
+  }
+  return found
+}
+
+function unregisteredWip(state) {
+  const r = gitSafe(MAIN, 'for-each-ref', '--format=%(refname)', 'refs/heads/*-wip')
+  if (!r.ok) return []
+  return r.out
+    .split('\n')
+    .filter((ref) => /^refs\/heads\/[A-Za-z0-9][A-Za-z0-9._/-]*-wip$/.test(ref) && !state.parkedWork[ref])
+    .map((ref) => ({ ref, commit: parkedCommit(ref), action: 'inspect, then park --ref <ref> --lane <empty slot>' }))
+    .filter((p) => p.commit)
+}
+
+function registerParked(state, { ref: raw, lane, session }) {
+  if (!lane || lane === 'main' || !POOL.includes(lane)) throw new Error('parked work needs a non-main configured --lane')
+  const ref = parkedRef(raw)
+  const commit = parkedCommit(ref)
+  if (!commit) throw new Error(`cannot park ${raw}: that ref does not name a commit in this repository`)
+  const old = state.parkedWork[ref]
+  state.parkedWork[ref] = {
+    ref,
+    commit,
+    lane,
+    session: session ?? null,
+    parkedAt: old?.parkedAt ?? now()
+  }
+  return state.parkedWork[ref]
+}
+
+function park(session, { ended = false, ref, lane } = {}) {
   if (!session) throw new Error('park needs --session')
   const state = reap(read())
+  // Registering an external snapshot is independent of the Stop hook. In particular,
+  // it must not mark the caller's active lane parked or update its session lifecycle.
+  if (ref) {
+    const saved = registerParked(state, { ref, lane, session })
+    write(state)
+    return { saved }
+  }
   const parked = []
   for (const [id, c] of Object.entries(state.lanes)) {
     if (c.session !== session || c.parked) continue
@@ -974,6 +1307,7 @@ function park(session, { ended = false } = {}) {
 }
 
 function reap(state) {
+  discoveredParked(state)
   for (const [id, c] of Object.entries(state.lanes)) {
     // A lane reserved by a chat that only talked about PaneForge and never touched it.
     // Nothing can be lost - a tentative lane is by definition one nothing was written in -
@@ -1031,10 +1365,12 @@ function reap(state) {
       // sitting on a lane branch with nothing pointing at them. `shippable()` only counts
       // lanes that are marked ready, so the work was invisible until some later chat
       // happened to be handed that exact lane - days later, in the case this was found in.
-      // Draining uses releaseClaim's rule, because it is the same situation arriving by a
-      // worse road: committed and clean means it was meant to go out, uncommitted means
-      // nobody ever released half an edit.
-      drainLane(state, id)
+      // Preserved unready work is dispatched for verification, never declared finished
+      // merely because its checkout is clean and its commits survived.
+      // Silence alone is not a dead native conversation. The all-copy inventory,
+      // or an actual SessionEnd marker, must establish that this owner ended.
+      const living = recoveryLiving()
+      if (!c.ended && (!living || living.has(c.session))) continue
       dropClaims(state, c.session)
       delete state.lanes[id]
       closeLaneApps(laneDir(id))
@@ -1815,6 +2151,7 @@ function squatOf(cwd, id) {
 function claim(session, cwd, prefer, tentative = false, visitor = false) {
   if (!session) throw new Error('claim needs --session')
   const state = reap(read())
+  if (state.recoveryError) throw new Error(state.recoveryError)
   // Cheap, throttled, and the reason most conflicts never reach a human.
   retryConflicts(state)
 
@@ -1856,7 +2193,9 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
       return w.dirty || w.ahead > 0 || Boolean(state.ready[id]) || Boolean(state.conflicts[id])
     }
     const earlier = Object.entries(state.lanes)
-      .filter(([, c]) => c.pane === PANE && c.session !== session && c.ended)
+      // A folder missing most of its files (damageOf) is not work to carry on: the pane's
+      // new chat takes another lane and the earlier hold stays where it is for a person.
+      .filter(([id, c]) => c.pane === PANE && c.session !== session && c.ended && !laneWork(id).damaged)
       .map(([id, c]) => ({ id, c, work: hasWork(id) }))
       // Work first, then the most recently heard from.
       .sort((x, y) => y.work - x.work || (y.c.seen ?? 0) - (x.c.seen ?? 0))
@@ -1906,8 +2245,9 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
       // this branch used to hand the broken path straight back unchanged.
       if (id !== 'main') {
         try {
-          ensureWorktree(id)
-        } catch {
+          if (!preservedCheckout(state, id)) ensureWorktree(id)
+        } catch (error) {
+          if (preservedRecovery(state, id)) throw error
           /* reported by `doctor`; a claim that cannot rebuild still returns the lane */
         }
       }
@@ -1984,8 +2324,31 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
   // An absent owner does not make their unfinished edits available to a new task.
   // Keep explicit recovery (`wanted`) and same-session resumes above, but exclude
   // dirty orphans from every automatic choice, including last-resort fallbacks.
-  const unfinished = new Set(order.filter((id) => !state.lanes[id] && laneWork(id).dirty))
-  const spare = order.filter((id) => !state.lanes[id] && !state.conflicts[id] && !unfinished.has(id))
+  //
+  // A folder missing most of its files (`damageOf`) is the same, only stricter: it is also
+  // never handed to a chat that ASKS for it. `wanted` below goes around this chooser, and the
+  // hook derives `prefer` from the folder a chat is standing in, so a new chat standing in a
+  // damaged copy was handed it. Skipping it sends that chat to a working lane. Damaged
+  // implies dirty (the deletions are the dirt), so every other path that refuses dirty lanes
+  // (`idleEmpty`, the `main` takeover) already refuses it too; the other way in, carrying an
+  // ended chat's hold to the pane's next chat, is closed above.
+  const damaged = new Set()
+  const unfinished = new Set(order.filter((id) => {
+    if (state.lanes[id]) return false
+    const work = laneWork(id)
+    if (work.damaged) {
+      damaged.add(id)
+      return false
+    }
+    // `main` is the trunk itself: its `ahead` counts unreleased commits that are already
+    // on the release branch, not lane work waiting to be merged, so only a letter lane
+    // with unready commits is preserved work. (A checkout missing the release TAG counts
+    // the whole history there and would never hand out `main`.)
+    return work.dirty || (id !== 'main' && work.ahead > 0 && !state.ready[id])
+  }))
+  const spare = order.filter(
+    (id) => !state.lanes[id] && !state.conflicts[id] && !unfinished.has(id) && !damaged.has(id)
+  )
   // A lane whose FOLDER another chat is standing in is the last one to hand out.
   //
   // A hold records the chat's own cwd, and that is not always the lane it was given:
@@ -2023,7 +2386,7 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
   // Same rule as `pick`, and it has to be repeated here because `wanted` is the one path
   // that goes AROUND the chooser: a chat standing in `<repo>-a` asks for lane a by name,
   // and honouring that while a is mid-conflict hands it exactly what the tiers refuse.
-  const wanted = prefer && !state.lanes[prefer] && !state.conflicts[prefer] ? prefer : null
+  const wanted = prefer && !state.lanes[prefer] && !state.conflicts[prefer] && !damaged.has(prefer) ? prefer : null
   let free = (wanted && !squatted.has(wanted) ? wanted : null) ?? pick(spare) ?? wanted ?? spare[0]
   // A worktree is a cost - a second checkout, a branch, and a merge at the end - and a
   // chat alone in a repository should not pay it. `main` is the repository itself, so the
@@ -2111,7 +2474,9 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
     if (peerTrunk) {
       // Same chooser as the pool above, so there is one definition of "a lane worth
       // handing out" rather than a second one here that nothing exercises.
-      const spare = pick(order.filter((id) => id !== 'main' && !state.lanes[id] && !unfinished.has(id)))
+      const spare = pick(
+        order.filter((id) => id !== 'main' && !state.lanes[id] && !unfinished.has(id) && !damaged.has(id))
+      )
       // No letter left is not a reason to refuse a chat a checkout: the local ledger is
       // still the authority on this machine, and a shared trunk that is reported is a far
       // smaller problem than a chat that cannot start. The word travels either way -
@@ -2131,16 +2496,20 @@ function claim(session, cwd, prefer, tentative = false, visitor = false) {
     const why = [
       held.join(', '),
       stuck.length && `conflicted: ${stuck.join(', ')}`,
-      unfinished.size && `uncommitted: ${[...unfinished].join(', ')} (preserved; explicitly claim the original checkout to recover)`
+      unfinished.size && `uncommitted: ${[...unfinished].join(', ')} (preserved; explicitly claim the original checkout to recover)`,
+      damaged.size &&
+        `missing most of its files: ${[...damaged].join(', ')} (a copy that never finished being made; not handed to any chat - check it and move it out of the way)`
     ].filter(Boolean).join('; ')
     throw new Error(`all lanes busy: ${why}`)
   }
 
-  const dir = ensureWorktree(free)
+  const preserved = preservedCheckout(state, free)
+  const dir = preserved ?? ensureWorktree(free)
   enableRerere()
   // A lane is handed over clean and current, never mid-merge and never stale: whatever the
   // last chat left behind is settled here, before this one writes a line.
-  const healed = healLane(free)
+  const unreadyAhead = !state.ready[free] && laneWork(free).ahead > 0
+  const healed = preserved || unreadyAhead ? null : healLane(free)
   if (healed) {
     if (/conflicts with /.test(healed)) noteConflict(state.conflicts, free, healed)
     else delete state.conflicts[free]
@@ -2208,8 +2577,10 @@ function guard(session, path) {
 
   const state = reap(read())
   const holder = state.lanes[lane.id]
+  const conflict = state.conflicts[lane.id]
   if (holder?.session === session) {
     holder.seen = now()
+    if (conflict?.resolver === session) conflict.resolverAt = holder.seen
     // Writing in the lane is the moment a reservation becomes a real claim: this chat is
     // editing PaneForge, not talking about it, so the lane is now its lane - and a chat
     // that is writing has plainly not finished its turn, whatever `park` recorded.
@@ -2222,7 +2593,13 @@ function guard(session, path) {
   // A chat that took over a stuck conflict has to be able to write in that lane, even
   // though another session still nominally holds it. Without this the takeover is
   // advice rather than a mechanism.
-  if (state.conflicts[lane.id]?.resolver === session) return null
+  if (conflict?.resolver === session) {
+    // An adopted merge can take longer than ADOPT_MS. Authorized writes prove its
+    // resolver is still working; retry must not abort that resolver's draft.
+    conflict.resolverAt = now()
+    write(state)
+    return null
+  }
   if (!holder) {
     // Unclaimed checkout: claim THIS one for the session rather than refusing. An
     // agent that opened the repo directly, or was already working here before lanes
@@ -2552,7 +2929,44 @@ function laneWorkNow(id) {
   const dirty = Boolean(porcelain)
   const branch = id === 'main' ? MB : laneBranch(id)
   const ahead = id === 'main' ? unreleasedOnMaster() : aheadOf(laneBranch(id))
-  return { dirty, ahead, touchedAt: lastTouched(dir, porcelain, ahead > 0 ? branch : null) }
+  return { dirty, ahead, touchedAt: lastTouched(dir, porcelain, ahead > 0 ? branch : null), ...damageOf(dir, porcelain) }
+}
+
+/**
+ * A folder that IS a worktree but never finished being made: git still lists every file of
+ * the branch, almost none of them are on disk. Measured on taskdriver.ai-a 2026-09-30
+ * (8:45pm): 4,461 staged deletions, only `.claude/` and `..app/` left. `laneWorkNow` read
+ * that as `dirty: true, broken: false` - a chat mid-edit - and the folder was handed to a
+ * new chat, whose SessionStart hook crashed on a missing module because the scripts it runs
+ * were among the files that were gone.
+ *
+ * Damaged = more than half of the files tracked at HEAD are missing (deleted in the index or
+ * on disk). Nothing here repairs or stages anything: those deletions are not anybody's
+ * intent, and what is left in the folder is for a person to diagnose (recorded decision,
+ * docs/agents/lanes-and-releases.md: damaged folders are backed up and diagnosed, never
+ * rebuilt by the engine).
+ *
+ * Costs nothing for a normal lane: the porcelain is already in hand, and only a lane showing
+ * DAMAGED_MIN_DELETED deletions asks git anything more (one `ls-tree`). `ls-tree`, not
+ * `ls-files` - in this state the index has been emptied too, so it would answer "almost
+ * nothing is tracked" and nothing would be half gone. A failed count is "cannot tell", never
+ * "damaged".
+ */
+const DAMAGED_MIN_DELETED = 10
+function damageOf(dir, porcelain) {
+  let missing = 0
+  for (const line of porcelain.split('\n')) {
+    // `XY path`; X = index against HEAD, Y = disk against index. `git()` trims its output,
+    // so the first line may arrive with only one code (` D a` is `D a`) - either way a D
+    // there is "tracked at HEAD, gone now". `AD`/`RD` were never at HEAD under that name.
+    const m = /^([ MADRCUT?!]{1,2})[ \t]+/.exec(line)
+    if (m && m[1].includes('D') && !/^[ARC]/.test(m[1])) missing++
+  }
+  if (missing < DAMAGED_MIN_DELETED) return {}
+  const tree = gitSafe(dir, 'ls-tree', '-r', '--name-only', 'HEAD')
+  const tracked = tree.ok && tree.out ? tree.out.split('\n').length : 0
+  if (!tracked || missing * 2 <= tracked) return {}
+  return { damaged: true, missingFiles: missing, trackedFiles: tracked }
 }
 
 /**
@@ -2599,7 +3013,8 @@ function releaseHolds(state) {
 function busyDetail(id) {
   const w = laneWork(id)
   const what = []
-  if (w.dirty) what.push('uncommitted edits')
+  if (w.damaged) what.push('a folder missing most of its files')
+  else if (w.dirty) what.push('uncommitted edits')
   if (id !== 'main' && w.ahead > 0) what.push(`${w.ahead} unmerged commit${w.ahead === 1 ? '' : 's'}`)
   const age = w.touchedAt ? `, last touched ${Math.round((now() - w.touchedAt) / 60000)}m ago` : ''
   return `${id} (${what.join(' + ') || 'work'}${age})`
@@ -2746,6 +3161,9 @@ function firstLine(out) {
 
 /** A command that never started, as opposed to one that ran and disagreed with the code. */
 function cannotRun(out) {
+  // A completed suite verdict wins over an injected ENOENT/missing-module error inside
+  // its output. Those errors are also legitimate things for a regression test to exercise.
+  if (/^FAIL[ \t]+\S+/m.test(out)) return false
   // `Tests deferred:` is scripts/test-remote.mjs finding the PC unreachable. Cached as red,
   // it pinned master as failing on its commit after the PC came back (2026-09-23).
   return /is not recognized|command not found|ENOENT|Cannot find module|npm ERR! missing script|sh: .*: not found|Tests deferred:/i.test(out)
@@ -2790,35 +3208,235 @@ function installDeps() {
 
 const RBUILD = join(homedir(), '.claude', 'rbuild.mjs')
 
+/** How long one try waits on a PC job before handing the job to the next try. */
+const PC_WAIT_S = 900
+
 /**
- * On the Mac the typecheck runs on the PC through rbuild: nothing heavy runs on the laptop,
- * and a loaded Mac timed the local one out (see below). `undefined` means "not handled
- * here, run it locally"; null means it passed; a sentence means it did not.
+ * The tree id of everything rbuild would ship from `dir`: the commit plus every edit and
+ * new file .gitignore keeps, staged into a throwaway index so the real one is never
+ * touched. Null when git cannot say, and then nothing is reused.
+ */
+function workingTree(dir) {
+  const index = join(tmpdir(), `lane-tree-${process.pid}-${randomUUID()}`)
+  try {
+    const real = gitSafe(dir, 'rev-parse', '--git-path', 'index')
+    if (!real.ok) return null
+    // A copy of the real index keeps git's stat cache, so only changed files are re-read.
+    copyFileSync(resolve(dir, real.out), index)
+    const env = { ...process.env, GIT_INDEX_FILE: index }
+    const opts = { cwd: dir, env, encoding: 'utf8', windowsHide: true, timeout: 60_000 }
+    if (spawnSync('git', ['add', '-A'], opts).status !== 0) return null
+    const tree = spawnSync('git', ['write-tree'], opts)
+    return tree.status === 0 ? tree.stdout.trim() : null
+  } catch {
+    return null
+  } finally {
+    try {
+      unlinkSync(index)
+    } catch {}
+  }
+}
+
+/**
+ * On the Mac the typecheck and the test suite run on the PC through rbuild: nothing heavy
+ * runs on the laptop, and a loaded Mac timed the local ones out (see `typecheckFailure`).
  * A repo under the temp dir stays local: the fixture tests stub npm and must not reach the PC.
  */
-function remoteTypecheckFailure() {
-  if (process.platform !== 'darwin' || !existsSync(RBUILD)) return undefined
+function onPc() {
+  if (process.platform !== 'darwin' || !existsSync(RBUILD)) return false
   const tmp = tmpdir()
-  if ([tmp, `/private${tmp}`].some((t) => MAIN.startsWith(t))) return undefined
+  return ![tmp, `/private${tmp}`].some((t) => MAIN.startsWith(t))
+}
+
+/**
+ * One ledger entry - `[key]`, or `[key, sub]` inside an object - written onto the ledger AS
+ * IT IS NOW (null removes it), and onto `state` too because the caller goes on using it. A
+ * PC wait holds `state` for up to 15 minutes and must not write back a stale copy of
+ * everything else, same as the suite verdict below.
+ */
+function remember(state, [key, sub], value) {
+  const fresh = read()
+  for (const s of [state, fresh]) {
+    const box = sub === undefined ? s : (s[key] = { ...s[key] })
+    const name = sub ?? key
+    if (value) box[name] = value
+    else delete box[name]
+  }
+  write(fresh)
+}
+
+/** Queue `words` on the PC for `dir` without waiting: `{ id }`, or `{ failed }` with why not. */
+function submitPcJob(dir, words) {
   const at = process.argv.indexOf('--session')
   const session =
     (at >= 0 && process.argv[at + 1]) || process.env.CLAUDE_SESSION_ID || process.env.CODEX_THREAD_ID || `lane-${hostname()}`
-  const r = spawnSync(process.execPath, [RBUILD, '--repo', MAIN, '--session', session, 'typecheck'], { windowsHide: true,
+  const sent = spawnSync(process.execPath, [RBUILD, '--repo', dir, '--session', session, '--no-wait', ...words], {
+    windowsHide: true,
     encoding: 'utf8',
-    timeout: 1_200_000
+    timeout: 600_000
   })
-  if (r.status === 0) return null
-  const all = `${r.stdout ?? ''}${r.stderr ?? ''}`
-  const detail = all
+  const id = /rbuild: job ([0-9a-f-]{36}) saved/.exec(sent.stderr ?? '')?.[1]
+  if (id) return { id }
+  const all = `${sent.stdout ?? ''}${sent.stderr ?? ''}`
+  return { failed: all.trim() ? firstLine(all) : sent.error?.message || `exit ${sent.status}` }
+}
+
+/**
+ * Wait up to `seconds` on one PC job. `pending` while it is still queued or running - and
+ * when this waiter was itself killed, because the job keeps its place on the PC and a dead
+ * waiter is never a verdict on the code (dropping the job there queued a fresh one at the
+ * back, the livelock below). `why` is rbuild's own final line when it printed one.
+ */
+function waitPcJob(id, seconds = PC_WAIT_S) {
+  const r = spawnSync(process.execPath, [RBUILD, '--wait', id, String(seconds)], {
+    windowsHide: true,
+    encoding: 'utf8',
+    // The job's whole output comes back here; past the default 1 MB spawnSync kills rbuild.
+    maxBuffer: 64 * 1024 * 1024,
+    // rbuild ends its own wait at `seconds` (+120s for its ssh); this is only a backstop.
+    timeout: (seconds + 300) * 1000
+  })
+  const stderr = r.stderr ?? ''
+  const out = `${r.stdout ?? ''}${stderr}`
+  // The LAST status line: rbuild relays every PC progress line as `rbuild: <text>` too.
+  const final = stderr.match(/^rbuild: (succeeded|failed|timed_out|cancelled)\b.*$/gm)?.at(-1)
+  return {
+    pending: r.status === 75 || r.status == null,
+    status: r.status,
+    // rbuild names a job that ran and exited red `failed`; cancelled and timed_out never ran to a verdict.
+    ran: /^rbuild: failed\b/.test(final ?? ''),
+    out,
+    why: final ?? (out.trim() ? firstLine(out) : r.error?.message || `exit ${r.status}`)
+  }
+}
+
+/** A PC suite sentence that is not a verdict on the code: still queued, or the runner failed. */
+const PC_UNSETTLED = /test suite (is still waiting its turn on|could not (run on|be sent to)) the PC/
+
+const pcWaiting = (what, id) =>
+  `${MB}'s ${what} is still waiting its turn on the PC (job ${id.slice(0, 8)}), so nothing was released yet. ` +
+  `The next try waits on that same job rather than queueing another.`
+
+/**
+ * `undefined` means "not handled here, run it locally"; null means it passed; a sentence
+ * means it did not.
+ *
+ * One PC job per tree, remembered in the ledger (`state.typecheck`), and a try that runs
+ * out of time leaves it for the next try instead of queueing another. Measured 2026-10-01:
+ * with 25 jobs in the PC queue every try submitted a fresh job at the back, was killed
+ * 20 minutes later still queued (its ssh waiter orphaned, its job still bound to run for
+ * nobody), and the retry timer started over at the back - three copies of one master
+ * typecheck queued 09:32-09:50 and lane e's finished fix never merged. The wait now ends
+ * inside rbuild (`--wait` with a budget), so nothing is killed mid-connection.
+ */
+function remoteTypecheckFailure(state) {
+  if (!onPc()) return undefined
+  const tree = workingTree(MAIN)
+  // Fresh: another chat's try may have queued this tree's job since `state` was read.
+  const last = read().typecheck
+  const known = tree && last?.tree === tree ? last : null
+  if (known && 'verdict' in known) return known.verdict
+  let id = known?.id
+  if (!id) {
+    const sent = submitPcJob(MAIN, ['typecheck'])
+    if (sent.failed) {
+      return `${MB}'s typecheck could not be sent to the PC, so nothing was released - ${sent.failed}. That is the remote runner, not the code.`
+    }
+    id = sent.id
+    if (tree) remember(state, ['typecheck'], { tree, id, at: now() })
+  }
+  const r = waitPcJob(id)
+  if (r.pending) return pcWaiting('typecheck', id)
+  const detail = r.out
     .split('\n')
     .filter((l) => /error TS/.test(l))
     .slice(0, 3)
     .join('; ')
-  if (detail) return `${MB} does not typecheck, so it was not released - ${detail}. Fix it and it goes out by itself.`
-  return (
-    `${MB}'s typecheck could not run on the PC, so nothing was released - ${firstLine(all) || r.error?.message || `exit ${r.status}`}. ` +
-    `That is the remote runner, not the code.`
-  )
+  if (r.status === 0 || detail) {
+    const verdict = detail ? `${MB} does not typecheck, so it was not released - ${detail}. Fix it and it goes out by itself.` : null
+    if (tree) remember(state, ['typecheck'], { tree, id, at: now(), verdict })
+    return verdict
+  }
+  // Cancelled, timed out on the PC, or a job rbuild no longer knows: the next try sends a new one.
+  if (known || tree) remember(state, ['typecheck'], null)
+  return `${MB}'s typecheck could not run on the PC, so nothing was released - ${r.why}. That is the remote runner, not the code.`
+}
+
+/** test-all.mjs prints one line per check; the FAIL lines are the whole answer and the rest is noise. */
+function failLines(all) {
+  return all
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => /^(fail|FAIL|✗|not ok)\b/.test(l))
+    .slice(0, 4)
+    .join('; ')
+}
+
+/**
+ * The test suite of `dir` on the PC: one job per tree, remembered through `save` (master's
+ * in `state.pcSuite`, a lane's in `state.pcLaneSuite[id]`), whose last value is `known`.
+ * Not `state.suite`: every chat's installed lane.mjs still keys that one on the commit and
+ * runs the old blocking suite when it does not match, so sharing it would have each copy
+ * overwrite the other's record and queue the job again.
+ *
+ * The typecheck's livelock (above) with a worse ending. `npm test` on the Mac is
+ * test-remote.mjs, a blocking rbuild; the gate killed it at 20 minutes while it was still
+ * QUEUED behind 25 jobs, ran it again to "confirm", and cached "did not finish within 20
+ * minutes" as master's red verdict on the commit. Master only moves by a merge, which that
+ * verdict blocks: lanes e, i, d, a and f sat ready all evening (2026-10-01), and the lane
+ * fix below queued two more 20-minute kills per lane (one try took 1h45m).
+ *
+ * - `{ pending: id }`: still queued or running. Never cached, never confirmed; the next try
+ *   waits on that same id.
+ * - `{ cannot, why }`: the job never ran to a verdict (could not be sent, cancelled, timed
+ *   out on the PC, unknown to rbuild, tooling missing, or red with no failing check named
+ *   - a dependency install or an out-of-memory kill on the PC, which a tree can never fix
+ *   and caching would pin until a merge). Dropped, so the next try sends a new one.
+ * - `{ red }`: ran and failed checks it names, then failed again on one confirming job (the
+ *   confirm-once rule in `suiteFailure`; the confirming job is remembered too). Cached on
+ *   the tree.
+ * - null: passed. Cached on the tree.
+ *
+ * `known` must be a fresh read, not a `state` loaded before a 15-minute wait: two chats
+ * trying at once would each queue the same tree. `sendOnly` queues the job (or finds the
+ * cached answer) without waiting; `waitS` is the wait budget.
+ */
+function pcSuite(dir, known, save, { sendOnly = false, waitS = PC_WAIT_S } = {}) {
+  const tree = workingTree(dir)
+  const mine = tree && known?.tree === tree ? known : null
+  if (mine && 'ok' in mine) return mine.ok ? null : { red: mine.reason }
+  let id = mine?.id
+  let confirming = Boolean(mine?.confirming)
+  for (;;) {
+    if (!id) {
+      // The repo's own suite, as `npm test` on the PC runs it (test-all.mjs runs in place
+      // on Windows). The typecheck is its own gate, already passed for this tree.
+      const sent = submitPcJob(dir, ['--', 'npm', 'test'])
+      // The record is left as it is: after a red first job it still names that job, and
+      // the next try reads its answer again rather than running it again.
+      if (sent.failed) return { cannot: 'be sent to', why: sent.failed }
+      id = sent.id
+      if (tree) save({ tree, id, at: now(), ...(confirming && { confirming }) })
+    }
+    if (sendOnly) return { pending: id }
+    const r = waitPcJob(id, waitS)
+    if (r.pending) return { pending: id }
+    if (r.status === 0) {
+      if (tree) save({ tree, ok: true, at: now() })
+      return null
+    }
+    const failed = failLines(r.out)
+    if (!r.ran || cannotRun(r.out) || !failed) {
+      if (tree) save(null)
+      return { cannot: 'run on', why: r.why }
+    }
+    if (confirming) {
+      if (tree) save({ tree, ok: false, at: now(), reason: failed })
+      return { red: failed }
+    }
+    confirming = true
+    id = null
+  }
 }
 
 /** Empty when master compiles (or has no typecheck script), a sentence when it does not. */
@@ -2874,7 +3492,7 @@ function typecheckFailure(state) {
     const failed = installDeps()
     if (failed) return failed
   }
-  const remote = remoteTypecheckFailure()
+  const remote = remoteTypecheckFailure(state)
   if (remote !== undefined) return remote
   // One string + shell: npm on Windows is npm.cmd, which cannot be spawned directly.
   const r = spawnSync('npm run --silent typecheck', { windowsHide: true,
@@ -2933,6 +3551,9 @@ const SUITE_TIMEOUT_MS = 20 * 60 * 1000
  * decides where the next person looks. That case is deliberately NOT cached; a missing
  * node_modules is fixed outside this file and the next attempt should find out.
  *
+ * On the Mac it runs on the PC instead (`pcSuite`, cached in `state.pcSuite`) on the TREE
+ * rbuild ships - the commit plus whatever MAIN has uncommitted, which is what the PC tests.
+ *
  * `npm run ship` still bypasses all of it - it exists for a build somebody needs in their
  * hands now, and it is typed by a person who is watching.
  */
@@ -2949,6 +3570,16 @@ function suiteFailure(state) {
   // which exits 1 by design and would block every release in a repo that never had tests.
   const script = pkg.scripts?.test
   if (!script || /no test specified/i.test(script)) return null
+
+  if (onPc()) {
+    const v = pcSuite(MAIN, read().pcSuite, (rec) => remember(state, ['pcSuite'], rec))
+    if (!v) return null
+    if (v.pending) return pcWaiting('test suite', v.pending)
+    if (v.cannot) {
+      return `${MB}'s test suite could not ${v.cannot} the PC, so nothing was released - ${v.why}. That is the remote runner, not the code.`
+    }
+    return `${MB} fails its own test suite, so it was not released - ${v.red}. Fix it and it goes out by itself.`
+  }
 
   const head = gitSafe(MAIN, 'rev-parse', 'HEAD')
   const commit = head.ok ? head.out : null
@@ -3022,14 +3653,8 @@ function suiteFailure(state) {
       `Required tooling or remote transport is unavailable; this is not a code verdict.`
     )
   }
-  // test-all.mjs prints one line per check; the FAIL lines are the whole answer and the
-  // rest is noise. A suite with some other shape falls back to its first real line.
-  const failed = all
-    .split('\n')
-    .map((l) => l.trim())
-    .filter((l) => /^(fail|FAIL|✗|not ok)\b/.test(l))
-    .slice(0, 4)
-    .join('; ')
+  // A suite with some other shape than test-all.mjs falls back to its first real line.
+  const failed = failLines(all)
   const reason =
     r.signal || (r.status == null && !all.trim())
       ? `${MB}'s test suite did not finish within ${Math.round(SUITE_TIMEOUT_MS / 60000)} minutes, so nothing was released. Run \`npm test\` and see what hangs.`
@@ -3066,12 +3691,7 @@ function suiteFailureInLane(dir) {
   }
   const all = `${r.stdout ?? ''}${r.stderr ?? ''}`
   if (cannotRun(all)) return `could not run - ${firstLine(all)}`
-  const failed = all
-    .split('\n')
-    .map((l) => l.trim())
-    .filter((l) => /^(fail|FAIL|✗|not ok)\b/.test(l))
-    .slice(0, 4)
-    .join('; ')
+  const failed = failLines(all)
   return r.signal || (r.status == null && !all.trim())
     ? `did not finish within ${Math.round(SUITE_TIMEOUT_MS / 60000)} minutes`
     : failed || firstLine(all)
@@ -3090,21 +3710,41 @@ function suiteFailureInLane(dir) {
  * `ship()` will merge it and master inherits the fix.
  *
  * Returns the id of the first ready lane whose own suite passes, or null when none does
- * (with `tried` naming whether one was even eligible to ask, so the refusal can say so).
+ * (with `tried` naming whether one was even eligible to ask, so the refusal can say so, and
+ * `pending` whether one is still being tested on the PC).
+ *
+ * On the Mac each lane's tree is one remembered PC job, like master's (`state.pcLaneSuite`).
+ * Every job is queued before any is waited on: the PC runs several at once, and a local
+ * `npm test` per lane was a 20-minute kill per lane, twice (2026-10-01: one try, 1h45m).
  */
 function readyLaneFix(state) {
   const masterHead = gitSafe(MAIN, 'rev-parse', MB)
   if (!masterHead.ok) return { lane: null, tried: false }
-  let tried = false
-  for (const id of Object.keys(state.ready)) {
-    if (id === 'main') continue
-    const dir = laneDir(id)
-    if (!existsSync(dir)) continue
-    if (!gitSafe(MAIN, 'merge-base', '--is-ancestor', masterHead.out, laneBranch(id)).ok) continue
-    tried = true
-    if (!suiteFailureInLane(dir)) return { lane: id, tried }
+  const lanes = Object.keys(state.ready).filter(
+    (id) =>
+      id !== 'main' &&
+      existsSync(laneDir(id)) &&
+      gitSafe(MAIN, 'merge-base', '--is-ancestor', masterHead.out, laneBranch(id)).ok
+  )
+  const tried = lanes.length > 0
+  if (!onPc()) {
+    for (const id of lanes) if (!suiteFailureInLane(laneDir(id))) return { lane: id, tried }
+    return { lane: null, tried }
   }
-  return { lane: null, tried }
+  const ask = (id, opts) =>
+    pcSuite(laneDir(id), read().pcLaneSuite?.[id], (rec) => remember(state, ['pcLaneSuite', id], rec), opts)
+  for (const id of lanes) ask(id, { sendOnly: true })
+  // One wait budget for all of them, not one each: five queued lanes were 75 minutes a try.
+  // Past it, a lane only reads a cached answer and the next try waits on its job.
+  const until = now() + PC_WAIT_S * 1000
+  let pending = false
+  for (const id of lanes) {
+    const left = Math.round((until - now()) / 1000)
+    const v = ask(id, left > 0 ? { waitS: Math.max(60, left) } : { sendOnly: true })
+    if (!v) return { lane: id, tried }
+    if (v.pending) pending = true
+  }
+  return { lane: null, tried, pending }
 }
 
 /**
@@ -3153,6 +3793,10 @@ function autoshipRun(kind = 'auto', session = 'auto') {
   // against local tags, and a stale one turns "already released" into "release it again".
   syncTags()
   const state = reap(read())
+  if (state.recoveryError) return { shipped: false, reason: state.recoveryError }
+  if (RELEASE === 'version' && Object.values(state.recovery?.items ?? {}).some((r) => r.status === 'ready')) {
+    return { shipped: false, reason: 'verified recovered work awaits Robert’s release publisher' }
+  }
   // A conflict that has quietly stopped being a conflict should not keep work out of
   // this release: try them all again before deciding what is shippable.
   if (retryConflicts(state)) write(state)
@@ -3217,6 +3861,9 @@ function autoshipRun(kind = 'auto', session = 'auto') {
   // is ten times the cost and a tree that does not compile cannot pass it anyway.
   const red = suiteFailure(state)
   if (red) {
+    // No verdict yet - master's suite is still queued on the PC, or the runner failed.
+    // Testing every finished lane now would only queue more jobs behind it.
+    if (PC_UNSETTLED.test(red)) return { shipped: false, reason: red }
     // The lane that fixes a red master can never merge if the gate only ever asks
     // master, because master stays red until the merge that only happens once the gate
     // says yes - the deadlock this exists for. A ready lane already carries master's
@@ -3226,9 +3873,11 @@ function autoshipRun(kind = 'auto', session = 'auto') {
     if (!fix.lane) {
       return {
         shipped: false,
-        reason: fix.tried
-          ? `${red} The finished work waiting to ship was tried the same way and it still fails.`
-          : red
+        reason: fix.pending
+          ? `${red} The finished work waiting to ship is still being tested on the PC; the next try waits on the same jobs.`
+          : fix.tried
+            ? `${red} The finished work waiting to ship was tried the same way and it still fails.`
+            : red
       }
     }
   }
@@ -3382,6 +4031,10 @@ function ready(session, wanted) {
     id = wanted
   }
   if (!id) throw new Error('this session holds no lane')
+  const recovery = recoveryFor(state, session, id) ?? preservedRecovery(state, id)
+  if (recovery && (recovery.owner !== session || recovery.status !== 'verified' || recovery.receipt?.commit !== gitSafe(laneDir(id), 'rev-parse', 'HEAD').out)) {
+    throw new Error('recovered work requires a current verification receipt and independent review before ready')
+  }
   // Declaring work finished is the other way a reservation becomes real.
   if (state.lanes[id]) delete state.lanes[id].tentative
   // The same allowance catchUp makes: a lane dirty with nothing but the files its own
@@ -3405,6 +4058,10 @@ function ready(session, wanted) {
   }
 
   const marked = markReady(state, id)
+  if (recovery) {
+    recovery.status = 'ready'; recovery.readyCommit = state.ready[id].commit
+    writeRecovery(state)
+  }
   delete state.conflicts[id]
   write(state)
   // `ready` is the end of this lane's work, so the test copy it opened has nothing left
@@ -3452,7 +4109,7 @@ function releaseClaim(session, { gone = false } = {}) {
       // A chat that ends with committed, clean work meant that work to go out - it just
       // never said so. Uncommitted work is the opposite: nobody released half an edit.
       const w = laneWork(id)
-      if (!state.ready[id] && !w.dirty && w.ahead > 0) {
+      if (!gone && !recoveryFor(state, session, id) && !preservedRecovery(state, id) && !state.ready[id] && !w.dirty && w.ahead > 0) {
         // Same catch-up as `ready`, minus anyone to resolve a conflict: if it does not merge
         // cleanly it is recorded by name instead of being marked ready and failing later.
         const caught = catchUp(id)
@@ -4410,6 +5067,11 @@ function statusOf(state, session, held) {
         // The folder is there and is not a checkout of this repository - a leftover, or a
         // separate clone squatting on the lane's path. Nothing here merges or releases it.
         broken: Boolean(w.broken),
+        // The folder is a worktree of this repo and most of its files are gone (see
+        // damageOf). Separate from `broken`, which stays "not a worktree at all".
+        damaged: Boolean(w.damaged),
+        missingFiles: w.missingFiles ?? 0,
+        trackedFiles: w.trackedFiles ?? 0,
         ready: Boolean(state.ready[id]),
         conflicted: Boolean(state.conflicts[id]),
         // Enough for a hook (or PaneForge) to say "this one is stuck, and here is who
@@ -4433,10 +5095,31 @@ function statusOf(state, session, held) {
     }),
     // Why a finished lane has not gone out yet, in one field.
     blockedBy: releaseHolds(state),
+    // Registered or discovered recovery work is intentionally separate from `lanes`.
+    // Discovery is a review prompt only; ordinary claim/cherry-pick/ready owns resumption.
+    parkedWork: Object.values(state.parkedWork ?? {}).map((p) => {
+      const current = parkedCommit(p.ref)
+      return {
+        ...p,
+        present: Boolean(current),
+        moved: Boolean(current && current !== p.commit),
+        merged: Boolean(gitSafe(MAIN, 'merge-base', '--is-ancestor', p.commit, MB).ok),
+        action: gitSafe(MAIN, 'merge-base', '--is-ancestor', p.commit, MB).ok
+          ? 'already on trunk by ancestry; no recovery needed (a cherry-picked equivalent cannot be inferred)'
+          : p.reviewRequired
+            ? `inspect then park --ref ${p.ref.replace(/^refs\/remotes\//, '')} --lane <empty slot>`
+            : `claim a lane, cherry-pick ${p.commit.slice(0, 12)}, then ready`
+      }
+    }),
+    // A local *-wip branch gives no safe lane assignment. Show it without registering or
+    // merging it, so its owner can choose a slot explicitly.
+    unregisteredParked: unregisteredWip(state),
     pending: shippable(state),
     release: state.release,
     lastShip: state.lastShip,
-    passed: state.passed ?? {}
+    passed: state.passed ?? {},
+    recovery: state.recovery ?? null,
+    recoveryError: state.recoveryError ?? null
   }
 }
 
@@ -4522,7 +5205,12 @@ function doctor() {
       what.push(
         `its folder is NOT a worktree of this repo - a leftover or a separate clone at that path. Nothing here merges or releases what is in it`
       )
-    if (l.dirty) what.push('uncommitted edits')
+    if (l.damaged)
+      what.push(
+        `its folder is missing most of its files (${l.missingFiles} of ${l.trackedFiles}) - a copy that never finished being made. It is not handed to a new chat; check it and move it out of the way`
+      )
+    // The deletions of a damaged folder are not edits anybody made.
+    if (l.dirty && !l.damaged) what.push('uncommitted edits')
     if (l.ahead) what.push(`${l.ahead} commit${l.ahead === 1 ? '' : 's'} ${MB} does not have`)
     if (l.ready) what.push('finished, waiting for the next release')
     if (l.conflicted) what.push(`conflicts with ${MB} (${l.conflict?.detail || 'unknown files'})`)
@@ -4660,6 +5348,18 @@ function doctor() {
   }
   say()
 
+  // Status JSON reaches the board, but doctor is the existing human-facing recovery
+  // surface. Keep discovered snapshots unmistakably separate from lanes and releases.
+  if (s.parkedWork.length || s.unregisteredParked.length) {
+    say('PARKED WORK')
+    for (const p of s.parkedWork) {
+      const state = !p.present ? 'ref is gone' : p.moved ? 'ref moved' : p.merged ? 'already on trunk' : p.reviewRequired ? 'review required' : 'registered'
+      say(`  ${p.ref} (${p.commit.slice(0, 12)}): ${state}; ${p.action}`)
+    }
+    for (const p of s.unregisteredParked) say(`  ${p.ref} (${p.commit.slice(0, 12)}): unregistered; ${p.action}`)
+    say()
+  }
+
   // ---- debris: folders and branches that look like lanes and are not
   const registered = new Set(
     gitSafe(MAIN, 'worktree', 'list', '--porcelain')
@@ -4796,7 +5496,7 @@ function worktreesOf() {
  * be asked. Null stops the whole sweep: "no panes" and "no answer" must never read the same.
  * `LANE_PANES_FILE` stands in for the app in tests (the same five tab-separated columns).
  */
-function openPaneDirs() {
+function openPanes() {
   let out
   if (process.env.LANE_PANES_FILE) {
     try {
@@ -4817,25 +5517,34 @@ function openPaneDirs() {
     if (r.status !== 0) return null
     out = r.stdout ?? ''
   }
-  return out
-    .split('\n')
-    .map((l) => l.split('\t'))
+  const rows = out.split('\n').filter((l) => l.trim()).map((l) => l.split('\t'))
+  if (rows.some((c) => c.length < 5 || !c[0].trim() || !c[4].trim())) return null
+  return {
+    ids: rows.map((c) => c[0].trim()),
     // Every listed pane, `exited` included: an ASLEEP pane lists as exited and wakes back
     // into its folder, so a removed folder would be a pane resuming into nothing.
-    .filter((c) => c.length >= 5 && c[4].trim())
-    .map((c) => c[4].trim())
+    dirs: rows.map((c) => c[4].trim())
+  }
 }
+
+function openPaneDirs() { return openPanes()?.dirs ?? null }
 
 /**
  * Where every process on this computer is running from: a dev server or a terminal left in
  * a folder is somebody using it, pane or not. macOS/Linux only (`lsof`); an empty answer on
- * Windows leaves the pane check and the idle clock to decide. Null = could not be asked.
+ * Windows is unknown, so automatic recovery/sweep fail closed. Null = could not be asked.
  */
 function processDirs() {
-  if (process.platform === 'win32') return []
+  if (process.env.LANE_PROCESSES_FILE) {
+    try {
+      const dirs = JSON.parse(readFileSync(process.env.LANE_PROCESSES_FILE, 'utf8'))
+      return Array.isArray(dirs) && dirs.every((d) => typeof d === 'string' && isAbsolute(d)) ? dirs : null
+    } catch { return null }
+  }
+  if (process.platform === 'win32') return null
   const r = spawnSync('lsof', ['-a', '-d', 'cwd', '-Fn'], { windowsHide: true, encoding: 'utf8', timeout: 60_000, maxBuffer: 64 * 1024 * 1024 })
-  // lsof exits 1 whenever one process could not be read, and still lists every other one.
-  if (!r.stdout) return null
+  // A partial lsof answer is unknown activity, not an empty or complete inventory.
+  if (r.status !== 0 || !r.stdout) return null
   return r.stdout
     .split('\n')
     .filter((l) => l.startsWith('n/'))
@@ -5281,7 +5990,13 @@ try {
     const warn = overlap(session, arg('path'))
     if (warn) console.log(warn)
   } else if (cmd === 'ready') {
-    const r = ready(session, arg('lane'))
+    const snapshot = read()
+    if (snapshot.recoveryError) throw new Error(snapshot.recoveryError)
+    const recovering = Object.values(snapshot.recovery.items).some((r) => r.owner === session && !['complete', 'reviewed'].includes(r.status))
+    const unlock = recovering ? recoveryLock() : null
+    if (recovering && !unlock) throw new Error('another recovery transaction owns this repository')
+    let r
+    try { r = ready(session, arg('lane')) } finally { unlock?.() }
     console.log(`Lane ${r.lane} marked done${r.commits ? ` (${r.commits} commit${r.commits === 1 ? '' : 's'})` : ''}.`)
     sayRelease(r.release)
     // Work that just landed leaves a folder with nothing in it; it goes once its chat lets go.
@@ -5315,7 +6030,7 @@ try {
   } else if (cmd === 'park') {
     // The Stop hook: this chat's turn ended. Holds on clean lanes are marked parked so a
     // chat that needs one takes it in minutes; the mark clears itself on the next claim.
-    const r = park(session, { ended: argv.includes('--ended') })
+    const r = park(session, { ended: argv.includes('--ended'), ref: arg('ref'), lane: arg('lane') })
     console.log(JSON.stringify(r))
   } else if (cmd === 'autoship') sayRelease(autoship((argv[1] && !argv[1].startsWith('--') ? argv[1] : 'auto').toLowerCase(), session ?? 'auto'))
   else if (cmd === 'ship') {
@@ -5341,12 +6056,20 @@ try {
         `Promoted ${r.tag}. /releases/latest now serves it, and every stable install updates within the half hour.`
       )
     else console.log(`Not promoted: ${r.reason}`)
+  } else if (cmd === 'recover') {
+    console.log(JSON.stringify(recover(session, arg('key'), arg('disposition'), arg('receipt'), arg('lane'))))
   } else if (cmd === 'retry') {
+    const unlock = recoveryLock()
+    if (!unlock) process.exit(0)
+    try {
+    // Invalid state is unknown ownership, never an empty repository.
+    JSON.parse(readFileSync(STATE, 'utf8'))
     // Every other retry rides on a chat happening to run a lane command, so on a quiet
     // machine a conflict was never re-tried at all: it stayed on the strip long after the
     // change it disagreed with had shipped. The app calls this on a timer instead. When
     // master has not moved and RETRY_MS has not passed this is one `rev-parse` per lane.
     const state = reap(read())
+    if (state.recoveryError) throw new Error(state.recoveryError)
     // The timer is also what puts a main folder left on a side branch back, before anything
     // below merges into it. Said once when it changes, not on every tick.
     {
@@ -5354,24 +6077,8 @@ try {
       trunkHome(state)
       if (state.trunk && state.trunk.at !== before) console.log(state.trunk.text)
     }
-    // Lanes nobody holds that are still carrying commits: the backstop for every way a
-    // claim can disappear without its work being declared done. `reap` drains the claim it
-    // is dropping right now, but a lane orphaned before that existed - or by a kill between
-    // the drop and the drain - has no claim left to hang the rescue off. This finds those
-    // by looking at the branches instead of at the bookkeeping. It is one `git cherry` per
-    // free lane and it runs on the same clock as everything else here.
-    const drained = []
-    for (const id of POOL) {
-      if (state.lanes[id]) continue
-      if (drainLane(state, id)) drained.push(id)
-    }
-    if (drained.length) {
-      write(state)
-      console.log(
-        `Lane${drained.length === 1 ? '' : 's'} ${drained.join(', ')} had finished work and no chat - marked done, ` +
-          `so it goes out with the next release.`
-      )
-    }
+    // Conflicts retain their established resolver path. Unready orphan work below gets
+    // one preservation and verification owner instead of an unchecked ready mark.
     const before = Object.keys(state.conflicts)
     if (retryConflicts(state)) write(state)
     const cleared = before.filter((id) => !state.conflicts[id])
@@ -5383,6 +6090,8 @@ try {
       write(state)
       for (const o of sent) console.log(`Lane ${o.id} still conflicts and nobody is on it - opened a chat to settle it (${o.pane}).`)
     }
+    const completion = dispatchCompletion()
+    if (completion) console.log(`Preserved work ${completion.key} has one verification owner (${completion.pane}).`)
     // And then try the release, every time. Every other trigger is a chat doing something
     // - a `ready`, a session ending - so finished work that arrived during the cooldown
     // window sat on master until somebody typed, which on a quiet evening is the morning.
@@ -5393,7 +6102,7 @@ try {
     // PC), every SWEEP_EVERY_MS. Detached, because archiving one big folder took 7 minutes
     // on 2026-09-23 and the retry must not wait on it; what it removes lands in
     // `state.swept`, which doctor prints.
-    if (sweepDue()) sweepSoon()
+    if (sweepDue() && !Object.values(read().recovery?.items ?? {}).some((r) => r.status !== 'complete' && r.status !== 'reviewed')) sweepSoon()
     // Last, because the release above may be the one that needs describing.
     const described = reconcileNotes(reap(read()))
     if (described) console.log(`Wrote what changed onto the v${described} release page.`)
@@ -5417,6 +6126,7 @@ try {
         )
       else if (p?.reason) console.log(`Stable promotion of ${p.tag} waits: ${p.reason}`)
     }
+    } finally { unlock() }
   } else if (cmd === 'sweep') {
     if (argv.includes('--if-due') && !sweepDue()) process.exit(0)
     for (const line of sweep({ dryRun: argv.includes('--dry-run') })) console.log(line)

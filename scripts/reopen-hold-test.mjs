@@ -175,8 +175,9 @@ const start = main.indexOf('async function laneFor(')
 const end = main.indexOf('\n/**', start)
 let occupants = []
 let folders = []
+let config = { autoLane: true }
 const deps = {
-  getConfig: () => ({ autoLane: true }), detectLane: async () => 'a',
+  getConfig: () => config, detectLane: async () => 'a',
   manager: { list: () => occupants }, takenFolders: () => folders,
   ledgerTakenFolders: () => [], holdOver: () => false,
   resolve, dirname, existsSync, samePath: same,
@@ -193,6 +194,10 @@ ok('exact resume keeps its untracked original folder', result.cwd === eugenie)
 folders = [join(repo, 'clients', 'alison')]
 try { await place(request); refusal = '' } catch (e) { refusal = e.message }
 ok('exact resume refuses another chat in the same checkout, including sibling client folders', /still in use/.test(refusal), refusal)
+config = { autoLane: false }
+result = await place(request)
+ok('with copies turned off, an exact resume opens in its own folder beside the other chat', result.cwd === eugenie && !result.laneNote, result)
+config = { autoLane: true }
 folders = []
 occupants = [{ id: 'existing', title: 'Original owner', resumeId: request.resumeId, status: 'idle' }]
 try { await place(request); refusal = '' } catch (e) { refusal = e.message }

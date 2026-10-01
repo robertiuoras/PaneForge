@@ -52,6 +52,10 @@ const {
   automaticWork,
   automaticQueueable,
   BUDGET_QUIET_MS,
+  sweepBlockers,
+  sweepLine,
+  sweepLogDue,
+  SWEEP_LOG_REPEAT_MS,
   SLEEPS_SOON_LEAD_MS
 } = createRequire(import.meta.url)(outfile)
 
@@ -992,6 +996,44 @@ checks += 3
   check('an agent that outlasts the wait: given up with the reason', log2.some((l) => /gave up waiting after \d+ min - a background agent \(Visual review Design 4 pages\) is still running, so it stays here/.test(l)), log2)
   hq2.stop()
 
+  // A queued pane the app still owes a prompt - an automatic clear counting down, or its
+  // resume prompt - waits and starts no countdown, exactly like a running agent.
+  // s60-mulljm2l (2026-09-28 19:01Z) moved inside its clear's countdown and reached the PC
+  // un-cleared.
+  const log3 = []
+  const sent3 = []
+  let clock3 = NOW
+  const owedPane = [{ id: 'clearing', title: 'PaneForge', owedPrompt: true }]
+  const hq3 = new HandoffQueue({
+    list: () => owedPane,
+    busy: () => false,
+    send: async (id) => {
+      sent3.push(id)
+      return [{ id, ok: true }]
+    },
+    mark: () => {},
+    deviceName: () => 'PC',
+    config: () => DEFAULT_AUTO_HANDOFF,
+    log: (line) => log3.push(line),
+    now: () => clock3,
+    soon: (id, _device, at) => log3.push(`soon ${id} ${at === null ? 'null' : 'at'}`)
+  })
+  hq3.add('clearing', 'pc')
+  hq3.tick()
+  clock3 += 30_000
+  hq3.tick()
+  eq('the queue does not move a pane owed a prompt', sent3, [])
+  eq('...starts no countdown for it', log3.filter((l) => l === 'soon clearing at').length, 0)
+  eq('...keeps it queued', hq3.pending().map((p) => p.id), ['clearing'])
+  eq('...and says why in handoff.log, once', log3.filter((l) => l.includes('handoff: clearing still waiting - an automatic clear')).length, 1)
+  owedPane[0] = { id: 'clearing', title: 'PaneForge' }
+  hq3.tick()
+  eq('owed nothing and idle: a countdown, not a move', sent3, [])
+  clock3 += 16_000
+  hq3.tick()
+  eq('...then the move', sent3, ['clearing'])
+  hq3.stop()
+
   // Wiring the renderer and main must keep: the reading reaches every rung.
   const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
   assert.match(app, /subagent: s\.subagent,/, 'handoffPanes carries Session.subagent onto AutoPane')
@@ -1113,5 +1155,44 @@ checks += 3
   const memory = readFileSync(join(root, 'src/main/memory.ts'), 'utf8')
   assert.match(memory, /worstPressure\(darwinLevel, darwinCompressor\)/, 'the Mac verdict is the worse of the flag and the compressor')
   checks += 5
+}
+
+{
+  // The sweep verdict: WHY nothing moved, counted once per pane under its first blocker.
+  const cfg = { ...DEFAULT_AUTO_HANDOFF, keepHere: ['kept'], minIdleMinutes: 10 }
+  const a = (o) => pane({ agent: 'claude', resumeId: 'r', ...o })
+  const desk = [
+    a({ id: 'bg', backJob: 'build', state: 'ready' }),
+    a({ id: 'sub', subagent: 'Diagnose', state: 'ready' }),
+    a({ id: 'kept', projectName: 'kept' }),
+    a({ id: 'asking', asking: true, state: 'needsYou' }),
+    a({ id: 'working', state: 'working' }),
+    a({ id: 'fresh', lastKeyboard: NOW - 30_000 }),
+    a({ id: 'cheap', memMb: 20 }),
+    a({ id: 'big', memMb: 900 }),
+    a({ id: 'noconv', resumeId: undefined }),
+    a({ id: 'front', focused: true }),
+    a({ id: 'pc', remote: true })
+  ]
+  const c = sweepBlockers(desk, cfg, {}, NOW, 2)
+  eq('budget rung counts', [c.panes, c.bgAgent, c.keepHere, c.asking, c.working, c.quietTooShort, c.notExpensive, c.candidates, c.cannotTravel, c.focused, c.remote],
+    [11, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1])
+  eq('every pane counted exactly once', Object.entries(c).filter(([k]) => k !== 'panes').reduce((n, [, v]) => n + v, 0), 11)
+  eq('peerHolds when no peer has the project', sweepBlockers(desk, cfg, {}, NOW, 2, [{ device: 'pc', deviceName: 'PC', online: true, projects: [] }]).peerHolds, 1)
+  eq('a peer that has it leaves the candidate', sweepBlockers(desk, cfg, {}, NOW, 2, peers).candidates, 1)
+  eq('cooldown', sweepBlockers([a({ id: 'x', memMb: 900 })], cfg, { x: NOW + MIN }, NOW, 2).cooldown, 1)
+  // The idle rung: on screen and too-recent are separate blockers, and 'big' needs no cost.
+  const idle = sweepBlockers([a({ id: 's', visible: true }), a({ id: 't', lastKeyboard: NOW - 2 * MIN }), a({ id: 'u' })], cfg, {}, NOW, 0)
+  eq('idle rung counts', [idle.onScreen, idle.quietTooShort, idle.candidates], [1, 1, 1])
+  eq('the line', sweepLine('nothing eligible', 'warn', 2, c), 'sweep: nothing eligible pressure=warn over=2 panes=11 candidates=1 remote=1 focused=1 cannotTravel=1 bgAgent=2 asking=1 keepHere=1 working=1 quietTooShort=1 notExpensive=1')
+  // one line per change, or every five minutes, never one a minute
+  eq('first line is written', sweepLogDue(null, 'x', NOW), true)
+  eq('same text a minute later is not', sweepLogDue({ text: 'x', at: NOW }, 'x', NOW + MIN), false)
+  eq('changed text is', sweepLogDue({ text: 'x', at: NOW }, 'y', NOW + MIN), true)
+  eq('same text after 5 min is', sweepLogDue({ text: 'x', at: NOW }, 'x', NOW + SWEEP_LOG_REPEAT_MS), true)
+  const { readFileSync } = await import('node:fs')
+  const appSrc = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
+  assert.match(appSrc, /api\.logHandoff\(/, 'sweepHandoff writes its verdict to handoff.log')
+  checks++
 }
 console.log(`autohandoff: ${checks} checks passed`)

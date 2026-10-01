@@ -150,6 +150,10 @@ export class HandoffQueue {
       // A background agent still running inside the CLI holds the move exactly as a turn
       // does: the move ends the CLI here and the agent with it (s24-mud0n7wb, 2026-09-22).
       const held = pane?.subagent
+      // ...and so does a prompt the app still owes the pane - an automatic clear counting
+      // down, or its resume prompt. Moving it then carries the conversation over un-cleared
+      // and types the clear into the copy being closed (s60-mulljm2l, 2026-09-28).
+      const owed = Boolean(pane?.owedPrompt)
       const state = pane
         ? {
             // The queue's own reading of busy is the one that decides, not fleetState:
@@ -165,10 +169,15 @@ export class HandoffQueue {
             agent: pane.agent
           }
         : undefined
-      if (held && this.heldSaid.get(q.id) !== held) {
-        this.heldSaid.set(q.id, held)
-        this.deps.log(`handoff: ${q.id} still waiting - ${held} is still running, and moving now would stop it`)
-      } else if (!held) {
+      const holding = held
+        ? `${held} is still running, and moving now would stop it`
+        : owed
+          ? 'an automatic clear or a prompt the app is typing is on its way into it, and moving now would lose it'
+          : undefined
+      if (holding && this.heldSaid.get(q.id) !== holding) {
+        this.heldSaid.set(q.id, holding)
+        this.deps.log(`handoff: ${q.id} still waiting - ${holding}`)
+      } else if (!holding) {
         this.heldSaid.delete(q.id)
       }
       const verdict = queueVerdict(q, pane ? state : undefined, cfg, now)
@@ -203,7 +212,7 @@ export class HandoffQueue {
         this.deps.mark(q.id, false)
         this.deps.soon?.(q.id, q.device, null)
         const mins = Math.round((now - q.since) / 60000)
-        const why = held ? `${held} is still running` : 'still working'
+        const why = held ? `${held} is still running` : owed ? 'an automatic clear or a prompt the app was typing was still on its way into it' : 'still working'
         this.deps.log(`handoff: ${q.id} gave up waiting after ${mins} min - ${why}, so it stays here`)
         this.deps.notify?.(
           `${this.paneName(q.id, panes)} did not move to ${this.deps.deviceName(q.device)} - ${why} after ${mins} min, so it stays here`

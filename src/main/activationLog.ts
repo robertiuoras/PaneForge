@@ -68,6 +68,15 @@ export function logOffload(entry: Record<string, unknown>): void {
 }
 
 /**
+ * A usage-limit wave, one line per step: the stop and the reset it named, each continue
+ * typed and how it ended, and the one phone push with its exact words
+ * (`main/limitWaves.ts`). "Why did my phone say 8/10" is answered here.
+ */
+export function logLimitReset(entry: Record<string, unknown>): void {
+  write('limit-reset.log', entry)
+}
+
+/**
  * Every step of a pane moving to another machine, with how long it took. "It says moving
  * and never moves" arrived three times with nothing on disk to read: the sender's steps
  * went to console.info, which nobody keeps.
@@ -95,6 +104,15 @@ export function logEffort(entry: Record<string, unknown>): void {
  */
 export function logModelAdvice(entry: Record<string, unknown>): void {
   write('model-advice.log', entry)
+}
+
+/**
+ * Every caffeinate start, stop and exit, one line each. 21 live `caffeinate -i` children
+ * piled up under one PaneForge (2026-10-01) with nothing on disk saying when each was
+ * started or why the app lost track of it.
+ */
+export function logAwake(line: string): void {
+  write('awake.log', { line: `[awake] ${line}` })
 }
 
 export function logActivation(entry: Record<string, unknown>): void {

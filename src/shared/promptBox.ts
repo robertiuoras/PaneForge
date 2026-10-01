@@ -264,7 +264,8 @@ export function composerAt(
         // logical offset, which is especially visible through a delayed remote echo.
         if (
           !text.trim() &&
-          (/^ {2}\S.* · /.test(footer) ||
+          // Native custom status lines may be centred, not left-aligned at column 2.
+          (/^ {2,}\S.* · /.test(footer) ||
             /^ {2}(?:tab to queue message|esc to interrupt)\b.*\b\d+% context left$/.test(footer))
         ) {
           if (cursorRow < r) return { top, bottom: r - 1, width: opts.codexCols }

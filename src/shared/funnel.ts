@@ -92,3 +92,30 @@ export function funnelArgs(port: number): string[] {
 export function funnelOffArgs(): string[] {
   return ['funnel', '--https=443', 'off']
 }
+
+/**
+ * Which local port the public address (443) forwards to, read from
+ * `tailscale funnel status --json`: the number, 0 when nothing is on 443, or null when
+ * the answer cannot be read at all.
+ *
+ * The three-way answer is the point. Turning 443 off is only right when 443 is OURS,
+ * and a machine has exactly one 443: another copy of the app, or a copy started by hand,
+ * may own it on a different port. "Cannot tell" must read as "not ours", never as zero.
+ */
+export function funnelProxyPort(statusJson: string): number | null {
+  let s: { Web?: Record<string, { Handlers?: Record<string, { Proxy?: string }> }> }
+  try {
+    s = JSON.parse(statusJson)
+  } catch {
+    return null
+  }
+  if (!s || typeof s !== 'object') return null
+  for (const [key, web] of Object.entries(s.Web ?? {})) {
+    if (!key.endsWith(':443')) continue
+    const proxy = web?.Handlers?.['/']?.Proxy ?? ''
+    const m = /^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\]):(\d+)/i.exec(proxy)
+    // Something is on 443 but it is not a plain local proxy: not ours, and not zero.
+    return m ? Number(m[1]) : -1
+  }
+  return 0
+}

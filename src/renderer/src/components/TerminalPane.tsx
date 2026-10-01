@@ -6,14 +6,18 @@ import { Terminal, type ILink, type IMarker } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { WebglAddon } from '@xterm/addon-webgl'
-import { allAgents, continuesOnBackslash, pastesClipboardImage } from '../../../shared/agents'
+import { allAgents, continuesOnBackslash, imagePasteKey, pastesClipboardImage } from '../../../shared/agents'
 import { spriteReserve } from '../../../shared/mascot'
 import { mascotRect, onMascotRect } from '../mascotSpot'
 import { unwrapForClipboard } from '../unwrapCopy'
 import {
+  imagePathsInText,
+  OLDER_DESK,
+  olderDeskTypedPaths,
   pasteImageDrop,
   splitDropUris,
-  type AttachIn
+  type AttachIn,
+  type AttachResult
 } from '../../../shared/attach'
 import { FULL_SCROLLBACK } from '../../../shared/capacity'
 import { GRANT_GRACE_MS, nextResize, ptyOwed } from '../../../shared/shrinkFirst'
@@ -207,9 +211,10 @@ interface Props {
   /**
    * Which CLI is running in this pane.
    *
-   * Only used to decide what a dropped IMAGE becomes: Claude Code reads an image off the
-   * clipboard when it gets a ^V, so it can be handed the picture itself; the other twelve
-   * read a path off the prompt and would see nothing at all from a paste.
+   * Only used to decide what a dropped IMAGE becomes: Claude Code, Codex and
+   * Antigravity read an image off the clipboard when they get a ^V, so they can be
+   * handed the picture itself; other CLIs read a path off the prompt and would see
+   * nothing at all from a paste.
    */
   agent?: string
   /** Say something happened, in the window's own toast. */
@@ -330,7 +335,7 @@ function AskCountdown({
 
 // On macOS the clipboard lives on Cmd, which leaves Ctrl+C free to interrupt the agent.
 // Same detector the window-level shortcuts use, so the two halves cannot disagree.
-import { isMac } from '../platform'
+import { isMac, isWindows } from '../platform'
 import { isPhoneClient, viewerName } from '../client'
 
 /**
@@ -1372,7 +1377,7 @@ function TerminalPane({
   //
   // So both ends are read off the viewport's real box: where its right edge actually is,
   // plus however wide its scrollbar actually is at the scale it is actually drawn at.
-  const [track, setTrack] = useState({ top: 7, height: 0, right: 17 })
+  const [track, setTrack] = useState({ top: 7, height: 0, right: 17, scale: 1 })
   // Which tag just got clicked, so it can light up long enough to be seen.
   const [flash, setFlash] = useState(-1)
   /**
@@ -1513,6 +1518,12 @@ function TerminalPane({
     typePaths(paths)
   }
 
+  /** A mirrored pane's images typed as paths because the far desk is too old to paste them. */
+  const sayIfOlderDesk = (names: string[], res: AttachResult): void => {
+    if (olderDeskTypedPaths({ agent: agentRef.current, sessionId, names, res }, pastesClipboardImage))
+      toast.current?.(OLDER_DESK)
+  }
+
   /**
    * Hand files to the machine this pane's pty is on, and type the paths it answers with.
    *
@@ -1531,6 +1542,7 @@ function TerminalPane({
     if (!payload.length) return
     const res = await api.attachFiles(sessionId, payload)
     if (res.error) toast.current?.(res.error)
+    sayIfOlderDesk(payload.map((p) => p.name), res)
     typePaths(res.paths)
   }
 
@@ -1552,10 +1564,15 @@ function TerminalPane({
    * `shot.png` is exactly how a mixed batch gets this far: `pasteImageDrop` can only read
    * names and MIME types, and only a decode knows.
    */
-  const pasteImages = async (items: { file?: File; path?: string }[]): Promise<void> => {
+  const pasteImages = async (
+    items: { file?: File; path?: string }[],
+    instead?: () => void
+  ): Promise<void> => {
     /** What this drop does when anything at all goes wrong. Never silent, never partial. */
     const fallBack = async (why?: string): Promise<void> => {
       if (why) toast.current?.(why)
+      // A pasted path that would not decode goes back in as the text that was pasted.
+      if (instead) return instead()
       const files = items.map((i) => i.file).filter((f): f is File => !!f)
       const paths = items.map((i) => i.path).filter((p): p is string => !!p)
       if (files.length) await sendFiles(files)
@@ -1597,7 +1614,7 @@ function TerminalPane({
     for (let i = 0; i < loaded.length; i++) {
       try {
         if (!(await api.putImageOnClipboard(loaded[i]))) return fallBack()
-        api.write(sessionId, RAW_PASTE)
+        api.write(sessionId, imagePasteKey(agentRef.current, isWindows))
       } catch {
         return fallBack('That image reached the clipboard but the pane could not paste it.')
       }
@@ -1687,12 +1704,14 @@ function TerminalPane({
       // ...and the height is the DRAWN height for the same reason `top` is: `clientHeight`
       // answers the unscaled box, which stretched a mirror's track past its own screen.
       height: vb.height,
-      right: wb.right - vb.right + bar
+      right: wb.right - vb.right + bar,
+      scale
     }
     setTrack((p) =>
       Math.abs(p.top - next.top) < 0.5 &&
       Math.abs(p.height - next.height) < 0.5 &&
-      Math.abs(p.right - next.right) < 0.5
+      Math.abs(p.right - next.right) < 0.5 &&
+      Math.abs(p.scale - next.scale) < 0.001
         ? p
         : next
     )
@@ -2977,7 +2996,7 @@ function TerminalPane({
       const fromKeyboard = keyboardData === d
       keyboardData = null
       if (!fromKeyboard && isTerminalReply(d)) {
-        if (!asleepRef.current) api.write(sessionId, d)
+        if (!asleepRef.current) api.write(sessionId, d, true)
         return
       }
       // The curtain is up: the app is mid-handover and the resume prompt has not landed.
@@ -3060,6 +3079,31 @@ function TerminalPane({
 
     const pasteClipboard = (): void => {
       api.readClipboard().then((text) => {
+        // A copied image PATH (a screenshot's location out of a popup, a Finder path) is
+        // the picture to an agent that reads the clipboard, never the path. A mirrored
+        // pane sends the file over and the other desk pastes it there; a path on this
+        // desk would mean nothing to an agent running on that one.
+        const shots = text ? imagePathsInText(text) : null
+        // A mirrored shell or a CLI that reads no clipboard gets the text it was pasted.
+        if (shots && sessionId.startsWith('@') && pastesClipboardImage(agentRef.current)) {
+          void api
+            .attachPaths(sessionId, shots)
+            .then((res) => {
+              if (res.error) toast.current?.(res.error)
+              sayIfOlderDesk(shots, res)
+              if (res.paths.length) typePaths(res.paths)
+              else if (res.error) t.paste(text)
+            })
+            .catch(() => t.paste(text))
+          return
+        }
+        if (shots && pastesClipboardImage(agentRef.current)) {
+          void pasteImages(
+            shots.map((path) => ({ path })),
+            () => t.paste(text)
+          ).catch(() => t.paste(text))
+          return
+        }
         if (text) {
           t.paste(text)
           return
@@ -3071,12 +3115,15 @@ function TerminalPane({
         // from a ^V, and for a MIRRORED pane, whose agent reads the far desk's clipboard
         // and not this one.
         if (pastesClipboardImage(agentRef.current) && !sessionId.startsWith('@')) {
-          api.write(sessionId, RAW_PASTE)
+          api.write(sessionId, imagePasteKey(agentRef.current, isWindows))
           return
         }
         // It is saved as a file on the machine that owns this pty and the PATH is typed.
         void api.attachClipboardImage(sessionId).then((res) => {
+          // The other desk pasted it as a picture: another ^V would paste it twice.
+          if (res.pasted) return
           if (res.paths.length) {
+            sayIfOlderDesk(['clipboard.png'], res)
             typePaths(res.paths)
             return
           }
@@ -3356,7 +3403,7 @@ function TerminalPane({
      */
     const inputRows = (): { top: number; rows: InputRow[] } | null => {
       const b = t.buffer.active
-      if (b.type === 'alternate') return null
+      if (b.type === 'alternate' && agent !== 'codex') return null
       const cursorRow = b.baseY + b.cursorY
       const comp = composerAt(rowText, cursorRow, {
         codexCols: agent === 'codex' ? t.cols : undefined,
@@ -3386,6 +3433,9 @@ function TerminalPane({
         }
         return { top: comp.top, rows }
       }
+      // Codex now draws its native composer in the alternate screen. Only a proven
+      // composer is editable there; never treat a menu's cursor row as shell input.
+      if (b.type === 'alternate') return null
       let top = cursorRow
       while (top > 0 && b.getLine(top)?.isWrapped) top--
       let bottom = cursorRow
@@ -3469,7 +3519,7 @@ function TerminalPane({
      */
     const deleteSelection = (): 'done' | 'refused' | 'no' => {
       const pos = t.getSelectionPosition()
-      if (!pos || t.buffer.active.type === 'alternate') return 'no'
+      if (!pos) return 'no'
       // A run of backspaces into a chooser is the same mistake as a run of arrows, and
       // there is no line being edited to delete from anyway - see `askRef`.
       if (askRef.current) return 'no'
@@ -3542,7 +3592,7 @@ function TerminalPane({
       if (Math.abs(e.clientX - from.x) > 3 || Math.abs(e.clientY - from.y) > 3) {
         return clickNote('pointer-travelled')
       }
-      if (t.buffer.active.type === 'alternate') return clickNote('alternate-screen')
+      if (t.buffer.active.type === 'alternate' && agent !== 'codex') return clickNote('alternate-screen')
       const screen = el.querySelector('.xterm-screen') as HTMLElement | null
       if (!screen) return clickNote('no-screen')
       const r = screen.getBoundingClientRect()
@@ -3593,6 +3643,7 @@ function TerminalPane({
         }
         clickNote('outside-the-composer', { top: span.top, bottom, cursorRow, clickRow })
       } else clickNote('no-composer-found', { cursorRow, clickRow })
+      if (b.type === 'alternate') return clickNote('alternate-screen')
       if (t.getSelection()) return clickNote('selection-held', { cursorRow, clickRow })
       if (!sameLine(cursorRow, clickRow)) return clickNote('other-line', { cursorRow, clickRow })
       // Past the end of what is written is the end of what is written. Without this, a
@@ -3860,6 +3911,20 @@ function TerminalPane({
       // own schedule, so a resize issued straight after `write` can land before the bytes
       // it is meant to be wider than.
       t.write(prep(split.before), () => {
+        if (split.afterCols && split.after) {
+          // The pane's own output, drawn wider than the pane is now: it was narrowed since
+          // (a pane opened beside it, a mirror's borrow). Written at that width and narrowed
+          // once, still `replaying`, so xterm re-wraps it rather than clamping every line
+          // into the right edge - which is where a mirror's doubled footers came from.
+          t.resize(split.afterCols, backRows)
+          t.write(prep(split.after), () => {
+            t.resize(back, backRows)
+            replaying.current = false
+            reshape(t, f)
+            done()
+          })
+          return
+        }
         t.resize(back, backRows) // still `replaying`: not a narrowing to rewrap
         replaying.current = false
         // ...and a fit, because a resize that arrived while `replaying` was set was
@@ -3929,8 +3994,12 @@ function TerminalPane({
     let staleTries = 0
     let lastNudge = 0
     let settle2: number | undefined
-    /** How long a `false` must hold before it is believed. See the grace below. */
+    /** Confirm weak counter-only evidence before starting a turn. */
     const BUSY_SETTLE_MS = 1200
+    // Codex briefly removes its footer between tool/output bursts. Live audit readings
+    // went idle and back to working less than 1.3s later even with the old 1.2s grace.
+    // Keep the turn and its place in Running through a short pause. Questions bypass it.
+    const IDLE_SETTLE_MS = 8000
     /** How far past the grace the re-check is armed, so it cannot land a tick short. */
     const BUSY_SETTLE_STEP_MS = 350
     const checkBusy = (): void => {
@@ -4021,19 +4090,23 @@ function TerminalPane({
           return
         }
       } else onSince = 0
-      if (!now && busy) {
+      // Read the whole chooser before delaying completion: an actual question must
+      // reach main immediately, including changes to the selected answer.
+      const wide = now ? '' : screenText(t, ASK_ROWS)
+      const sig = wide ? askSignature(wide) : ''
+      if (!now && busy && !sig) {
         if (!offSince) offSince = at
-        if (at - offSince < BUSY_SETTLE_MS) {
+        if (at - offSince < IDLE_SETTLE_MS) {
           // ...and the confirming tick has to be ARMED, because every other check in
           // here is driven by output and a finished turn prints nothing more. The
-          // after-the-burst timer fires at 900ms, which is inside this 1200ms grace, so
-          // it deferred a second time and nothing ever asked again: the last thing main
+          // after-the-burst timer fires at 900ms, inside even the former 1200ms grace.
+          // Without this timer it deferred again and nothing ever asked: the last thing main
           // heard about the pane was `true`, its run clock kept counting, and the card
           // said Running for the rest of the day. Measured 2026-08-26 on this desk -
           // `attention-audit.log` has PaneForge at quietMs 1507149 with
           // busyOnScreen:true over the frame `✻ Baked for 7m 57s · done 3:08 PM`.
           window.clearTimeout(settle2)
-          settle2 = window.setTimeout(checkBusy, BUSY_SETTLE_MS - (at - offSince) + BUSY_SETTLE_STEP_MS)
+          settle2 = window.setTimeout(checkBusy, IDLE_SETTLE_MS - (at - offSince) + BUSY_SETTLE_STEP_MS)
           return
         }
       }
@@ -4051,15 +4124,6 @@ function TerminalPane({
       // a turn boundary the app read wrong is only corrected on the next one of these.
       const clock = now ? readsElapsedMs(text, true) : null
       const restate = clock ? 15_000 : BUSY_RESTATE
-      // A question's own frame, wide enough to hold the whole chooser. Only while the
-      // pane is idle - a chooser and a running agent are never on screen together, and
-      // this is the one place a wider translate would be paid for every tick of a turn.
-      const wide = now ? '' : screenText(t, ASK_ROWS)
-      // The SELECTION is part of the signature, not only the question. Answering walks
-      // the arrow from where it is now, so a person who arrowed at the desk while a
-      // phone was looking at the same pane would otherwise have the phone's button pick
-      // the wrong row - silently, and only ever by the distance they moved it.
-      const sig = wide ? askSignature(wide) : ''
       if (now === busy && sig === lastAsk && !(now && at - lastReport > restate)) return
       busy = now
       lastAsk = sig
@@ -4115,6 +4179,9 @@ function TerminalPane({
       setHandoverUntil(until > Date.now() ? until : 0)
     })
 
+    // Set by `redrawHistory` while its snapshot is on the way: widen when it LANDS, not
+    // when it is asked for. See there.
+    let widenForReset: (() => void) | null = null
     const receiveReset = (id: string, snapshot: string): void => {
       if (id !== sessionId) return
       if (dead) return
@@ -4122,6 +4189,9 @@ function TerminalPane({
         replayEvents.push(() => receiveReset(id, snapshot))
         return
       }
+      const widen = widenForReset
+      widenForReset = null
+      widen?.()
       if (initialReplay) {
         const settle = initialReplay
         initialReplay = undefined
@@ -4187,6 +4257,11 @@ function TerminalPane({
       writeStaged('\x1bc' + bytes, () => {
         pendingDataWrites--
         if (dead) return
+        // A capped transcript can be followed by a newer live tail with missing
+        // cursor state between them. Restore the native frame after this replay,
+        // just as after the first restore, rather than leaving Fix to the person.
+        needRestoreFix.current = true
+        armRestoreFix()
         if (scrollIntent.current === intent) {
           if (wasPinned) t.scrollToBottom()
           else {
@@ -4273,6 +4348,11 @@ function TerminalPane({
           agent,
           cols: t.cols,
           grid: t.rows,
+          buffer: b.type,
+          mouseTracking: t.modes.mouseTrackingMode,
+          bracketedPaste: t.modes.bracketedPasteMode,
+          viewportY: b.viewportY,
+          baseY: b.baseY,
           replayCols: replayColsRef.current ?? null,
           replayRows: replayRowsRef.current ?? null,
           mirror: mirrorRef.current,
@@ -4320,6 +4400,11 @@ function TerminalPane({
             cols: t.cols,
             grid: t.rows,
             buffer: t.buffer.active.type,
+            mouseTracking: t.modes.mouseTrackingMode,
+            bracketedPaste: t.modes.bracketedPasteMode,
+            viewportY: t.buffer.active.viewportY,
+            baseY: t.buffer.active.baseY,
+            sinceByteMs: lastByteAt.current ? Date.now() - lastByteAt.current : null,
             markersBefore,
             markersAfter: list.length,
             restored: Math.max(0, list.length - surviving)
@@ -4370,9 +4455,15 @@ function TerminalPane({
     let redrawingHistory = false
     const redrawHistory = async (): Promise<boolean> => {
       if (redrawingHistory || dead) return false
+      // A CLI on the ALTERNATE screen (Codex) has no scrollback for history to go into, and
+      // a replay opens with `ESC c`, which drops that screen along with the mouse and paste
+      // modes the CLI set once at its start and never sends again: the pane stops taking
+      // the wheel (2026-09-29, card 2). Codex keeps its own history (Ctrl+T); the repaint
+      // `repair` already asked for is the whole fix here.
+      if (t.buffer.active.type === 'alternate') return false
       redrawingHistory = true
-      const back = t.cols
-      const wide = Math.max(back, replayColsRef.current ?? 0, START_COLS)
+      let back = t.cols
+      let wide = back
       try {
         // Finish already queued terminal writes before changing their painted width.
         await new Promise<void>(resolve => t.write('', resolve))
@@ -4387,8 +4478,17 @@ function TerminalPane({
         // the borrow back above already hands the pty the desk's.
         if (!mirrorRef.current && !gridRef.current)
           api.resize(sessionId, back, t.rows, isPhoneClient(), viewerName())
-        replaying.current = true
-        if (wide !== back) t.resize(wide, t.rows)
+        // Widened when the snapshot ARRIVES, never while it is on the way. A mirror's comes
+        // over the link: measured 2026-09-29 on a PC pane mirrored at 133, Fix held this
+        // terminal at 143 for about 7 s with no fit allowed (`replaying`), so the far end's
+        // live frames landed at the wrong width - the right edge cut off, the status footer
+        // twice - and a second press in that time repaired nothing.
+        widenForReset = () => {
+          back = t.cols
+          wide = Math.max(back, replayColsRef.current ?? 0, START_COLS)
+          replaying.current = true
+          if (wide !== back) t.resize(wide, t.rows)
+        }
         // Main delivers the snapshot through the same ordered reset/data stream. Reading
         // a log here and then resetting could erase output that arrived during that read.
         const restored = await api.replayHistory(sessionId)
@@ -4399,6 +4499,7 @@ function TerminalPane({
         if (!dead) say(error instanceof Error ? error.message : 'History is unavailable from that device')
         return false
       } finally {
+        widenForReset = null
         redrawingHistory = false
         replaying.current = false
         if (!dead) {
@@ -4417,12 +4518,21 @@ function TerminalPane({
     paneRedraw.set(sessionId, redrawHistory)
     paneComposer.set(sessionId, () => {
       const b = t.buffer.active
-      if (b.type === 'alternate') return null
-      return composerText((row) => b.getLine(row)?.translateToString(true) ?? '', b.baseY + b.cursorY, {
+      if (b.type === 'alternate' && agent !== 'codex') return null
+      const cursor = b.baseY + b.cursorY
+      const text = composerText((row) => b.getLine(row)?.translateToString(true) ?? '', cursor, {
         codexCols: agent === 'codex' ? t.cols : undefined,
         maxUp: agent === 'codex' ? t.rows : undefined,
         maxDown: agent === 'codex' ? t.rows : undefined
       })
+      // Match main's native Codex hint reading: these words are empty only when the
+      // whole hint is dim and the caret precedes it. Identical typed words stay a draft.
+      if (agent === 'codex' && text === 'Ask Codex to do anything' && b.cursorX === 2 &&
+        b.getLine(cursor)?.translateToString(true) === `› ${text}` &&
+        Array.from(text).every((_, n) => Boolean(b.getLine(cursor)?.getCell(n + 2)?.isDim()))) {
+        return ''
+      }
+      return text
     })
     paneRepair.set(sessionId, repair)
     paneArmClear.set(sessionId, () => {
@@ -4984,6 +5094,7 @@ function TerminalPane({
           .attachPaths(sessionId, dropped)
           .then((res) => {
             if (res.error) toast.current?.(res.error)
+            sayIfOlderDesk(dropped, res)
             typePaths(res.paths)
           })
           .catch(() => toast.current?.('Could not send that file to the other device.'))
@@ -5159,6 +5270,34 @@ function TerminalPane({
       }}
       onDrop={onDrop}
     >
+      {marks.length > 0 && (
+        <details className="prompt-index" onKeyDown={event => {
+          if (event.key !== 'Escape') return
+          event.preventDefault()
+          event.stopPropagation()
+          event.currentTarget.open = false
+          event.currentTarget.querySelector('summary')?.focus()
+        }}>
+          <summary>Prompts · {marks.length}</summary>
+          <div className="prompt-index-list">
+            {marks.map((mark, index) => <button
+              key={mark.id}
+              title={mark.marker.line < 0
+                ? `${markLabel(mark, Math.max(railNow, mark.at))} · older than terminal scrollback · click to copy`
+                : markLabel(mark, Math.max(railNow, mark.at))}
+              onClick={event => {
+                if (mark.marker.line < 0) putOnClipboard(mark.full || mark.text, 'Prompt')
+                else jumpTo(mark)
+                const details = event.currentTarget.closest('details')
+                if (details) {
+                  details.open = false
+                  details.querySelector('summary')?.focus()
+                }
+              }}
+            >{index + 1}. {mark.text}</button>)}
+          </div>
+        </details>
+      )}
       <div
         className="xterm-host"
         ref={host}
@@ -5288,34 +5427,8 @@ function TerminalPane({
       {marks.length > 0 && (
         <div
           className="mark-rail"
-          style={{ top: track.top, height: track.height || undefined, right: track.right }}
+          style={{ top: track.top, height: track.height || undefined, right: track.right, '--rail-scale': track.scale } as React.CSSProperties}
         >
-          <details className="prompt-index" onKeyDown={event => {
-            if (event.key !== 'Escape') return
-            event.preventDefault()
-            event.stopPropagation()
-            event.currentTarget.open = false
-            event.currentTarget.querySelector('summary')?.focus()
-          }}>
-            <summary>Prompts · {marks.length}</summary>
-            <div className="prompt-index-list">
-              {marks.map((mark, index) => <button
-                key={mark.id}
-                title={mark.marker.line < 0
-                  ? `${markLabel(mark, Math.max(railNow, mark.at))} · older than terminal scrollback · click to copy`
-                  : markLabel(mark, Math.max(railNow, mark.at))}
-                onClick={event => {
-                  if (mark.marker.line < 0) putOnClipboard(mark.full || mark.text, 'Prompt')
-                  else jumpTo(mark)
-                  const details = event.currentTarget.closest('details')
-                  if (details) {
-                    details.open = false
-                    details.querySelector('summary')?.focus()
-                  }
-                }}
-              >{index + 1}. {mark.text}</button>)}
-            </div>
-          </details>
           {placed.map((p, i) => {
             if (!p) return null
             const { mark: m, top, hitUp, hitDown } = p

@@ -251,6 +251,19 @@ export function readDeskReport(raw: unknown): DeskReport | undefined {
 }
 
 /**
+ * Whether this copy of the app may put anything on the Discord profile at all.
+ *
+ * A test copy (`npm run try`, any named profile) is not anybody's desk. It starts with the
+ * switch the installed app had, reaches the same Discord, and is linked to none of the
+ * machines the real desk adds up, so its own handful of idle panes went on the profile
+ * while the real desk ran turns - "8 sessions idle" with 18 running (Robert, 2026-10-01:
+ * "not updated properly shows 8 idle session its completly wrong").
+ */
+export function presenceAllowed(on: boolean, profile: string): boolean {
+  return on && !profile
+}
+
+/**
  * Settings a linked machine has that a person changed more recently than the ones here,
  * or nothing. Newest wins and a tie keeps what is here, so two machines settle on one
  * answer and stay there.

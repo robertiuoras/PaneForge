@@ -339,7 +339,11 @@ export async function sendHandoff(deps: SendDeps, device: string, request: Hando
     }
     // Mid-turn: queued, never killed. `waitForTurn` defaults on - the caller has to say
     // out loud that an unfinished answer is expendable. A background agent still running
-    // inside the CLI (`Session.subagent`) is held the same way: the move would end it.
+    // inside the CLI (`Session.subagent`) is held the same way: the move would end it. So is
+    // a pane the app still owes a prompt (`Session.owedPrompt`) - an automatic clear
+    // counting down, or its resume prompt: the far end resumes the conversation un-cleared
+    // and the clear lands in the copy being closed (s60-mulljm2l, 2026-09-28). Not folded
+    // into `busy`, which also decides the `now` interrupt above.
     if (request.now !== true && request.waitForTurn !== false && (deps.busy?.(pane) || !!pane.subagent || !!pane.backJob || pane.owedPrompt || pane.drafting) && deps.queue) {
       deps.queue(pane.id, device, closeAfter, request.automatic)
       out.push({

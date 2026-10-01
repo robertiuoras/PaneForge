@@ -36,7 +36,7 @@ async function bundle(entry, name) {
   await build({ absWorkingDir: root, entryPoints: [entry], outfile: out, bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent', plugins: [stubs] })
   return require(out)
 }
-const { doneVerdict, doneReviewId, doneQuietMs, personLooking, replyFinished, closeHeldBy, finishedCard, wasRead, AUTO_CLOSE_QUIET_MS, READ_QUIET_MS } = await bundle('src/shared/doneClose.ts', 'shared.cjs')
+const { doneVerdict, doneReviewId, doneQuietMs, personLooking, replyFinished, closeHeldBy, wasRead, AUTO_CLOSE_QUIET_MS, READ_QUIET_MS } = await bundle('src/shared/doneClose.ts', 'shared.cjs')
 const { handoffOpenAfter } = await bundle('src/shared/handoffSteps.ts', 'handoffsteps.cjs')
 const digest = await bundle('src/shared/finishedDigest.ts', 'digest.cjs')
 const main = await bundle('src/main/doneClose.ts', 'main.cjs')
@@ -46,6 +46,116 @@ const finished = (over = {}) => ({
   agent: 'claude', printed: NOW - 600_000, status: 'idle', lastKeyboard: NOW - 400_000,
   turnEndedAt: NOW - AUTO_CLOSE_QUIET_MS - 1000, reply: 'Built it.\n\n## Next steps\n- None', runningAgents: 0, ...over
 })
+
+// A native async question finishes its terminal turn before GuardDeck receives the
+// answer. Exercise the manager's actual methods, with only their environment stubbed.
+{
+  const source = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
+  const method = (name, next) => {
+    const start = source.indexOf(`  ${name}(`)
+    const end = source.indexOf(`  ${next}(`, start)
+    assert.ok(start >= 0 && end > start, `real ${name} method exists`)
+    return source.slice(start, end)
+  }
+  const fixture = join(work, 'question-manager.ts')
+  writeFileSync(fixture, `
+import { heldByGuardDeck } from ${JSON.stringify(join(root, 'src/shared/autoAnswer.ts'))}
+import { guardDeckQuestions, readGuardDeckQuestions } from ${JSON.stringify(join(root, 'src/main/guardDeckQuestions.ts'))}
+import { closeHeldBy, personLooking } from ${JSON.stringify(join(root, 'src/shared/doneClose.ts'))}
+const backJobWaitOnly = () => false
+let native: string | undefined = 'synthetic-native'
+const resumeIdFor = () => native
+export const nativeClaim = (value: string | undefined) => { native = value }
+export class Harness {
+  sessions = new Map(); activeId = null; killed: unknown[] = []
+  windowFocused = () => false; deskWatched = () => false
+  openChildrenOf = () => 0; digestPending = () => false; owesPrompt = () => false
+  kill(id: string, by: string) { this.killed.push([id, by]); this.sessions.delete(id) }
+${method('doneReadings', 'turnRead')}
+${method('closeAfterResult', 'killAll')}
+}
+`)
+  const { Harness, nativeClaim } = await bundle(fixture, 'question-manager.cjs')
+  const now = Date.now()
+  let directory = 0
+  const previousDir = process.env.GD_QUESTIONS_DIR
+  const records = (values) => {
+    const dir = join(work, `questions-${directory++}`)
+    mkdirSync(dir)
+    values.forEach((value, i) => writeFileSync(join(dir, `${i}.json`), value === 'bad-json' ? '{' : JSON.stringify(value)))
+    process.env.GD_QUESTIONS_DIR = dir
+  }
+  const question = (over = {}) => ({ pane: { id: 'synthetic-pane' }, session_id: 'synthetic-native', state: 'open', created: new Date(now).toISOString(), ...over })
+  const fresh = (over = {}) => {
+    const h = new Harness()
+    h.sessions.set('synthetic-pane', { meta: { id: 'synthetic-pane', agent: 'codex', printed: now - 600_000, status: 'idle', lastKeyboard: now - 400_000, ...over }, busyUntil: 0, footerEndedAt: now - AUTO_CLOSE_QUIET_MS - 1000 })
+    return h
+  }
+  const verdict = (h) => doneVerdict({ ...h.doneReadings()[0], reply: 'PROBE_READY', runningAgents: 0 }, now)
+  try {
+    for (const state of ['open', 'sending', 'queued']) {
+      records([question({ state })])
+      const h = fresh()
+      assert.equal(verdict(h).close, false, `${state}: pending GuardDeck question keeps a finished native turn open`)
+      assert.deepEqual(h.closeAfterResult('synthetic-pane', now), { closed: false, reason: 'session has a question' }, `${state}: final close boundary also holds`)
+      assert.deepEqual(h.killed, [])
+    }
+    records([question({ pane: { id: 'previous-pane' } })])
+    let h = fresh()
+    assert.equal(verdict(h).close, false, 'a reopened pane of the same verified native conversation remains open')
+    assert.equal(h.closeAfterResult('synthetic-pane', now).closed, false)
+    for (const value of [
+      question({ pane: { id: 'other-pane' }, session_id: 'other-native' }),
+      question({ state: 'answered' }), question({ state: 'expired' }),
+      question({ created: new Date(now - 25 * 60 * 60_000).toISOString() }),
+      question({ created: undefined }), null, 'bad-json'
+    ]) {
+      records([value]); h = fresh()
+      assert.equal(verdict(h).close, true, 'foreign, resolved, expired or unreadable questions do not disable ordinary autoclose')
+      assert.deepEqual(h.closeAfterResult('synthetic-pane', now), { closed: true })
+      assert.deepEqual(h.killed, [['synthetic-pane', 'review']])
+    }
+    nativeClaim(undefined)
+    records([question({ pane: { id: 'other-pane' } })]); h = fresh()
+    assert.equal(verdict(h).close, true, 'matching a reopened pane requires a verified native identity')
+    nativeClaim('synthetic-native')
+    records([]); h = fresh({ ask: { question: 'terminal question' } })
+    assert.equal(verdict(h).close, false, 'terminal questions still hold')
+    assert.equal(h.closeAfterResult('synthetic-pane', now).closed, false)
+    records([]); h = fresh()
+    assert.equal(verdict(h).close, true)
+    writeFileSync(join(process.env.GD_QUESTIONS_DIR, 'new.json'), JSON.stringify(question()))
+    assert.equal(h.closeAfterResult('synthetic-pane', now).closed, false, 'a question arriving after the sweep reading prevents the kill')
+    assert.deepEqual(h.killed, [])
+
+    // s48-mupgz5iq, 1 Oct 9:58-10:06pm Gold Coast: a finished pane closeAfterResult holds (a
+    // handoff with open steps) got a 30-second close countdown on every sweep, twelve in all,
+    // each refused at its end and armed again. The sweep refuses on the same holds first.
+    records([]); h = fresh({ agent: 'claude', handoffOpen: 2 })
+    const heldReply = join(work, 'held.jsonl')
+    writeFileSync(heldReply, JSON.stringify({ type: 'assistant', isSidechain: false, message: { role: 'assistant', content: [{ type: 'text', text: 'Done.\n\n## Next steps\n- None' }] } }))
+    const clocks = []
+    const rows = []
+    const heldLines = []
+    const heldDeps = {
+      enabled: () => true, readings: () => h.doneReadings(), now: () => now,
+      transcriptFor: () => heldReply, resumeIdFor: () => 'synthetic-native', history: () => [],
+      titleOf: () => ({ title: 'held', cwd: '/Users/r/Projects/assistant', agent: 'claude' }), otherwiseBusy: () => null,
+      record: (input, native) => { rows.push(input.id); return { ...input, ...native, provider: 'claude', reportPath: '/x', createdAt: 'now', attention: false } },
+      notify: () => {}, close: (id, at) => h.closeAfterResult(id, at), noteClose: () => {}, writeNotice: () => {}, activity: () => {},
+      setClosing: (id, at) => clocks.push([id, at]), log: (l) => heldLines.push(l)
+    }
+    for (let i = 0; i < 3; i++) assert.deepEqual(main.sweepDoneClose(heldDeps), [])
+    assert.deepEqual(clocks.filter(([, at]) => at !== undefined), [], 'a held pane never gets a close countdown')
+    assert.deepEqual(rows, [], 'and no Review row')
+    assert.deepEqual(heldLines, ['synthetic-pane stays - session has a handoff with open steps'], 'the reason is logged once')
+    assert.deepEqual(h.killed, [])
+    console.log('done-close: real manager preserves pending async questions at both boundaries, exact reopened identity and ordinary closure ok')
+  } finally {
+    if (previousDir === undefined) delete process.env.GD_QUESTIONS_DIR
+    else process.env.GD_QUESTIONS_DIR = previousDir
+  }
+}
 
 // 1. The one shape that closes, and its person-only steps.
 {
@@ -67,6 +177,9 @@ const finished = (over = {}) => ({
   assert.equal(refuse({ agent: 'shell' }), 'shell pane')
   assert.equal(refuse({ turnEndedAt: 0 }), 'no finished turn')
   assert.equal(refuse({ focused: true }), 'somebody is looking at it')
+  // Robert, 2026-09-29: a pane he kept open for a long job must stay to be read and continued.
+  assert.equal(refuse({ kept: true }), 'kept open by hand')
+  assert.equal(refuse({ kept: true, lookedAt: NOW - 60_000, turnEndedAt: NOW - 90_000 }), 'kept open by hand', 'read does not undo a keep')
   assert.equal(refuse({ lastKeyboard: NOW - 10_000 }), 'not quiet long enough', 'typing restarts the clock')
   assert.equal(refuse({ turnEndedAt: NOW - 30_000 }), 'not quiet long enough')
   assert.match(refuse({ ask: { q: 'which?' } }), /busy, asking/)
@@ -108,6 +221,7 @@ const finished = (over = {}) => ({
     transcriptFor: () => transcript, resumeIdFor: () => 'native-q', history: () => [],
     titleOf: () => ({ title: 'quiet', cwd: '/Users/r/Projects/site', agent: 'claude' }), otherwiseBusy: () => null,
     record: (input, native) => ({ ...input, ...native, provider: 'claude', reportPath: '/x', createdAt: 'now', attention: false }),
+    notify: () => {}, markRead: () => {},
     close: (id) => { shut.push(id); return { closed: true } }, noteClose: () => {}, writeNotice: () => {}, activity: () => {},
     now: () => NOW, ...(quietMs ? { quietMs } : {})
   })
@@ -140,6 +254,7 @@ const finished = (over = {}) => ({
     transcriptFor: () => transcript, resumeIdFor: () => 'native-f', history: () => [],
     titleOf: () => ({ title: 'folder', cwd: '/Users/r/Projects/site', agent: 'claude' }), otherwiseBusy: () => null,
     record: (input, native) => ({ ...input, ...native, provider: 'claude', reportPath: '/x', createdAt: 'now', attention: false }),
+    notify: () => {}, markRead: () => {},
     close: () => ({ closed: true }), noteClose: () => {}, writeNotice: () => {}, activity: () => {},
     now: () => NOW, log: (l) => lines.push(l)
   }
@@ -268,13 +383,15 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
   assert.equal(typed.close, false, 'typing after the look restarts the 30 s')
   assert.equal(doneVerdict(finished({ turnEndedAt: ended, lookedAt: lookEnded, focused: true }), lookEnded + 31_000).reason, 'somebody is looking at it')
   assert.equal(doneVerdict(finished({ turnEndedAt: ended, lookedAt: lookEnded, reply: 'Which port?' }), lookEnded + 31_000).reason, 'the reply ends in a question', 'read never excuses a question')
-  assert.equal(doneVerdict(finished({ turnEndedAt: NOW - 90_000, lookedAt: NOW - 85_000 }), NOW, doneQuietMs('tight')).close, true, 'whichever wait ends first: tight pressure')
-  // (a) The card: only something left for a person who has not read it.
-  assert.equal(finishedCard(0, false), false, 'no person steps: no card')
-  assert.equal(finishedCard(2, false), true, 'person steps, unread: card')
-  assert.equal(finishedCard(2, true), false, 'person steps, read: no card')
-
-  // The sweep end to end: three panes, each closing.
+  assert.equal(doneVerdict(finished({ turnEndedAt: NOW - 90_000, lookedAt: NOW - 85_000 }), NOW, doneQuietMs('tight')).close, true, 'read quiet interval has elapsed under tight pressure')
+  assert.equal(doneVerdict(finished({ lookedAt: NOW - 1_000 }), NOW).close, false, 'old turn cannot override a recent look')
+  assert.equal(doneVerdict(finished({ lookedAt: NOW - 1_000 }), NOW, doneQuietMs('over')).close, false, 'pressure cannot override a recent look')
+  for (const reply of ['- **Unfinished:** tracking verification.', 'Seven tasks remain open.', 'The client job itself is not finished.', 'The check is queued.']) {
+    assert.equal(doneVerdict(finished({ reply }), NOW).close, false, reply)
+  }
+  assert.equal(doneVerdict(finished({ reply: 'The work is complete.' }), NOW).close, true)
+  // The sweep end to end, including the lost-report path: a selected pane was
+  // inferred read, but its answer had no person-only action and was never acknowledged.
   const transcript = (name, text) => {
     const f = join(work, `${name}.jsonl`)
     writeFileSync(f, JSON.stringify({ type: 'assistant', isSidechain: false, message: { role: 'assistant', content: [{ type: 'text', text }] } }))
@@ -282,6 +399,7 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
   }
   const files = {
     none: transcript('none', "That icon is uBlock Origin Lite, the ad blocker. The number is how many requests it has blocked."),
+    noneLooked: transcript('noneLooked', 'Research complete. The report contains the findings.'),
     steps: transcript('steps', 'Built it.\n\n## Next steps\n- Robert: approve the Vercel build'),
     stepsRead: transcript('stepsRead', 'Built it.\n\n## Next steps\n- Robert: approve the Vercel build')
   }
@@ -289,7 +407,8 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
   const readings = [
     { id: 'none', ...finished({ reply: undefined, runningAgents: undefined }) },
     { id: 'steps', ...finished({ reply: undefined, runningAgents: undefined }) },
-    { id: 'stepsRead', ...finished({ reply: undefined, runningAgents: undefined, turnEndedAt: at - 60_000, lookedAt: at - 31_000 }) }
+    { id: 'stepsRead', ...finished({ reply: undefined, runningAgents: undefined, turnEndedAt: at - 60_000, lookedAt: at - 31_000 }) },
+    { id: 'noneLooked', ...finished({ reply: undefined, runningAgents: undefined, turnEndedAt: at - 60_000, lookedAt: at - 31_000 }) }
   ]
   const cards = []
   const reads = []
@@ -309,17 +428,42 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
   // `dry` (pf tidy --dry-run): the same answer, nothing touched.
   const recordsBefore = []
   const dry = main.sweepDoneClose({ ...deps, dry: true, record: (i) => { recordsBefore.push(i); throw new Error('dry run wrote a row') } })
-  assert.deepEqual(dry, ['none', 'steps', 'stepsRead'], 'dry: what would close')
+  assert.deepEqual(dry, ['none', 'steps', 'stepsRead', 'noneLooked'], 'dry: what would close')
   assert.equal(shut.length + cards.length + reads.length + todos.length + lines.length + recordsBefore.length, 0, 'dry: no row, no close, no notice, no log line')
   // `quietMs: 0` is pf tidy's real run: the same refusals, no wait.
   assert.deepEqual(main.sweepDoneClose({ ...deps, dry: true, readings: () => [{ id: 'none', ...finished({ turnEndedAt: at - 20_000 }) }] }), [], 'not quiet: stays')
   assert.deepEqual(main.sweepDoneClose({ ...deps, dry: true, quietMs: () => 0, readings: () => [{ id: 'none', ...finished({ turnEndedAt: at - 20_000 }) }] }), ['none'], 'tidy asks without the quiet wait')
   assert.deepEqual(main.sweepDoneClose({ ...deps, dry: true, quietMs: () => 0, readings: () => [{ id: 'none', ...finished({ turnEndedAt: at - 20_000, reply: 'Which port?' }) }], transcriptFor: () => transcript('q', 'Which port?') }), [], 'and keeps every refusal')
-  assert.deepEqual(main.sweepDoneClose(deps), ['none', 'steps', 'stepsRead'])
-  assert.deepEqual(cards, [doneReviewId('steps', readings[1].turnEndedAt)], 'one card: the unread pane with a step left for the person')
-  assert.deepEqual(reads, [doneReviewId('stepsRead', readings[2].turnEndedAt)], 'the read pane is written as read')
+  assert.deepEqual(main.sweepDoneClose({ ...deps, readings: () => readings.map(r => ({ ...r, kept: true })) }), [], 'kept sessions never start a close warning')
+  assert.deepEqual(main.sweepDoneClose(deps), ['none', 'steps', 'stepsRead', 'noneLooked'])
+  assert.deepEqual(cards, readings.map(r => doneReviewId(r.id, r.turnEndedAt)), 'every closed result requests delivery, including a looked-at answer with no actions')
+  assert.deepEqual(reads, [], 'a glance never acknowledges any report')
   assert.equal(todos.length, 2, 'both panes with a person step still send their to-do')
-  assert.ok(lines.some((l) => l === `stepsRead finished and closed itself into Review (${doneReviewId('stepsRead', readings[2].turnEndedAt)}), read`))
+  assert.ok(lines.some((l) => l === `stepsRead finished and closed itself into Review (${doneReviewId('stepsRead', readings[2].turnEndedAt)}), looked at`))
+
+  // Automatic closure publishes a full warning, with cancellation and a fresh deadline.
+  let clock = at
+  let focused = false
+  const deadlines = []
+  const warned = { ...deps, readings: () => [{ ...readings[0], id: 'warning', focused }],
+    transcriptFor: () => files.none, now: () => clock,
+    setClosing: (id, deadline) => deadlines.push([id, deadline]) }
+  assert.deepEqual(main.sweepDoneClose(warned), [])
+  assert.equal(deadlines.at(-1)[1], at + 30_000)
+  clock += 29_000
+  assert.deepEqual(main.sweepDoneClose(warned), [])
+  focused = true
+  assert.deepEqual(main.sweepDoneClose(warned), [])
+  assert.equal(deadlines.at(-1)[1], undefined, 'returning to pane cancels warning')
+  focused = false
+  main.sweepDoneClose(warned)
+  assert.equal(deadlines.at(-1)[1], clock + 30_000, 'fresh warning after cancellation')
+  clock += 30_000
+  assert.deepEqual(main.sweepDoneClose(warned), ['warning'])
+  assert.equal(deadlines.at(-1)[1], undefined)
+  main.sweepDoneClose(warned)
+  main.sweepDoneClose({ ...warned, enabled: () => false })
+  assert.equal(deadlines.at(-1)[1], undefined, 'disabling cancels published clock')
 
   // (d) What held s93-muk43els at 17:52:44Z on 27 Sep (done-close.log 258): `handoffOpen` -
   // /Users/robertiuoras/Projects/assistant's session-handoff.md, another chat's, five steps
@@ -331,7 +475,7 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
   assert.equal(handoffOpenAfter(s93Hand, Date.parse('2026-09-27T17:48:01Z')), undefined, 's93: a handoff older than the prompt holds nothing')
   assert.deepEqual(closeHeldBy({ handoffOpen: handoffOpenAfter(s93Hand, Date.parse('2026-09-27T17:48:01Z')) }), [], 's93 closes')
   const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
-  assert.match(sessions, /const held = closeHeldBy\(m\)\r?\n\s+if \(held\.length\) return \{ closed: false, reason: `session has \$\{held\.join\(', '\)\}` \}/, 'closeAfterResult names the flags')
+  assert.match(sessions, /if \(held\.length\) return \{ closed: false, reason: `session has \$\{held\.join\(', '\)\}` \}/, 'closeAfterResult names the flags')
   assert.match(sessions, /personLooking\(true, this\.windowFocused\(\), this\.deskWatched\(\)\)\) seen\.lookedAt = now/, 'the sweep stamps who is looking')
   assert.match(sessions, /lookedAt: live\.lookedAt \|\| undefined/, 'and the reading carries it')
   const index = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
@@ -452,7 +596,8 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
   const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
   assert.doesNotMatch(sessions, /private openers = new Set/, 'no life-long set of openers')
   assert.match(sessions, /openedOthers: this\.openChildrenOf\(m\.id\) > 0 \|\| this\.digestPending\(m\.id\)/, 'open children or a waiting summary')
-  assert.match(sessions, /owedPrompt: Boolean\(m\.owedPrompt\) \|\| \(m\.handoverUntil \?\? 0\) > Date\.now\(\)/, 'a prompt being delivered is in the reading')
+  assert.match(sessions, /owedPrompt: this\.owesPrompt\(live\)/, 'a prompt being delivered is in the reading')
+  assert.match(sessions, /\(live\.meta\.handoverUntil \?\? 0\) > Date\.now\(\)/, '...the handover between /clear and its resume included')
   const index = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
   assert.match(index, /manager\.digestPending = \(id\) => finishedDigest\.has\(id\)/, 'index.ts says when a summary is waiting')
   // The real opener: s44-mujgi828 on 27 Sep (`desk-2026-09-28-sessions.json`), finished,

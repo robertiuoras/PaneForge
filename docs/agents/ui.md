@@ -36,7 +36,11 @@ conversation; housekeeping words cut (`cardTitle`), a continuation never replace
 name, a title that is only the project names nothing. `autoTitled` is saved with the desk and a
 handoff (and a continuation); on a desk/handoff restore (`scrollbackId`) a name the Activity
 list says the app gave (`appNamedTitle`) with no saved `autoTitled` goes back to the project name.
-`HOUSEKEEPING` is whole words; `session` only before a handoff word.
+`HOUSEKEEPING` is whole words; `session` only before a handoff word. A handoff-only title on a
+card still on its project name takes the newest work title of the conversations the SAME CLI
+process ran before it (`main/cliChain.ts` `earlierTitles`: the CLI stamps its start id as
+`session_id` on records of every conversation after a `/clear`; `startedAs`). Read once per
+conversation, never over an earned, person, opener or client name.
 
 ## A pane says how long it has been open
 
@@ -109,6 +113,13 @@ clean basename, ext from MAGIC BYTES; 5MB/batch; never auto-submitted. macOS dro
 
 ## History says what each session was working on
 
+Review's expanded report and saved HTML share `shared/reviewMarkdown.ts`: headings,
+lists, quotes, links, tables and code render as written. Raw HTML stays escaped; inline
+links open through `reviews:open` only when retained in the source report and validated
+as web pages or supported evidence files. Existing report HTML is rebuilt from its JSON
+source when opened, preserving its contents and read state. Internal `reviews` paths stay
+stable; people use Review and Open report, not the storage folder.
+
 Row = FIRST ask + count (`shared/gist.ts`, `test:gist`) from relayed keystrokes. Newest closed
 top (`endedAt ?? startedAt`); `closed 5 min ago`/date; green `open since`, red `closed …`.
 `View all` = `summaryFull`. Closed before recording = archive line or none. `/clear` ends a
@@ -170,3 +181,7 @@ Why: `docs/design-notes.md` "Settings → Discord since 2026-09-27".
 `shared/tips.ts`, `components/Tips.tsx`, `test:tips`. Silent during dialog/update/question/
 minimised/`FIRST_MS` 4 min; `EVERY_MS` 40 min; first and every fourth `offersOff` (Settings
 re-enables); each once before any twice; `seen` resets.
+
+Keep-open checkboxes live on every session card; Keep all open includes filtered sessions
+and writes mirrored choices on the owning device. Queued handoff text is omitted from cards;
+the existing handoff menu retains cancellation.

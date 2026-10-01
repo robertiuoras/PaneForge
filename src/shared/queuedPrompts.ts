@@ -30,6 +30,8 @@ export interface QueuedPrompt {
   at: number
   /** The folder the pane was in, so a dropped prompt can be found by project. */
   cwd?: string
+  /** Once bytes may have reached the CLI, recovery requires this exact native receipt. */
+  typed?: { at: number; conversationId?: string; proof: 'receipt' | 'idle' }
 }
 
 /** Every prompt currently owed, keyed by `key`. */
@@ -72,7 +74,13 @@ export function readStore(raw: unknown): QueuedPromptStore {
       key,
       text: row.text,
       at: typeof row.at === 'number' && Number.isFinite(row.at) ? row.at : 0,
-      cwd: typeof row.cwd === 'string' ? row.cwd : undefined
+      cwd: typeof row.cwd === 'string' ? row.cwd : undefined,
+      // Even malformed delivery metadata means delivery is uncertain, never untyped.
+      typed: row.typed !== undefined ? {
+        at: typeof row.typed?.at === 'number' && Number.isFinite(row.typed.at) && row.typed.at > 0 ? row.typed.at : 0,
+        conversationId: typeof row.typed?.conversationId === 'string' ? row.typed.conversationId : undefined,
+        proof: row.typed?.proof === 'idle' ? 'idle' : 'receipt'
+      } : undefined
     }
   }
   return out

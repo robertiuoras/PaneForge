@@ -2034,7 +2034,7 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:recover` | finishing a turn the transport cut in half: every real error string this desk has logged, and the refusals - a rate limit or an auth failure is never continued, and an error somebody QUOTED at an agent (which the CLI echoes back with no box around it) is a question about the bug, not the bug |
 | `npm run test:reclaim` | closing idle panes to give a full machine its memory back: pressure is the trigger and never a clock, a pane WAITING FOR A PERSON is never closed however quiet it looks, and the window is never emptied |
 | `npm run test:mascot` | what the mascot may do to somebody's panes: a number naming no pane closes nothing, a name contained in a longer one is dropped (`service` inside `service-a`), a count is not a pane number, and every suggestion is drawn from `reclaim.ts`'s own refusal set. The weight is in the four silences - it says nothing when the app's own clock is on, when one pane is stale, when the panes are cheap, or when they are minutes rather than hours old |
-| `npm run test:autohandoff` | moving a finished pane to the other machine instead of closing it — and the refusals that decide whether that is safe: a pane mid-turn is QUEUED rather than killed, a pane holding a live question is not moved at all, and a queue that runs out of patience expires rather than interrupting anything |
+| `npm run test:autohandoff` | moving unfinished agent work to the other machine (never a finished, stopped or shell pane, since 2026-10-02) — and the refusals that decide whether that is safe: a pane mid-turn is QUEUED rather than killed, a pane holding a live question is not moved at all, and a queue that runs out of patience expires rather than interrupting anything |
 | `npm run test:devlist` | what is serving right now, and which one a sentence names: a server and the child it spawned counted as ONE, a heap-size flag that is not a port, and the refusal that carries the feature - "close the dev" with three running picks none and prints the list |
 | `npm run test:devservers` | turning a running dev server back into the package.json script that started it, so it can be started again over there: the two real command shapes measured on this desk, and the drops — an ambiguous tool, a script the receiving repo does not have, and anything a shell would read |
 | `npm run test:macsign` | the signing that stops TCC resetting permissions every release |
@@ -3585,7 +3585,10 @@ compile. Never add a channel to a transport; add it there.
   out of its turn, no question, no shell command, no background job left — that last read comes off a
   4s process table, so the pane must stay finished `CLOSE_DONE_QUIET_MS` (8s) rather than closing on
   the turn's edge. The opener is told through `queuePrompt` and BEFORE the kill, because `kill()`
-  deletes the request that names it. `npm run test:closedone`.
+  deletes the request that names it. Never while the app owes the pane a prompt (`owesPrompt`: an
+  autoclear queued, holding, counting down or handing over): 2026-10-01 s57-mupk43r8 and s28-mupc5ct1
+  were killed 179ms and 84ms into their own clear and lost the handoff's open steps; the pane closes
+  after the resume turn instead. `npm run test:closedone`.
 - `npm run test:phone` (server + surface parity); `npm run test:phoneview` needs a running copy. A
   pane's text is in `window.__pf[id].term.buffer`, never in the DOM.
 - Not built: headless host (B1), phone-first diff (H2).
@@ -3773,6 +3776,23 @@ typos; no word-picker reads that. Every good name on either desk had come from
 - **Lane copies were never renamed.** A new pane in `PaneForge-a` is titled `projectOf`
   (`PaneForge`), but `mayRename` compared the folder basename (`PaneForge-a`), so client
   naming never ran there. `appDefault()` accepts either.
+- **A handoff's name is the job it continues (2026-09-29).** Robert, 9:15am: "the naming of
+  session so bad paneforge hard to see/understand". Cards 3 and 4 on the Mac wore
+  `taskdriver.ai` and `PaneForge`: their conversations were titled `Taskdriver AI handoff next
+  steps` / `PaneForge handoff next steps`, which name nothing, and the conversation before
+  was never read (the pane came back from a save, or the title rule arrived with an update).
+  An automatic handoff's next conversation is another handoff, so such a card never got a
+  name. Claude Code stamps the id it was STARTED with as `session_id` on attachment records of
+  every conversation after a `/clear` (~265 KB in, behind the SessionStart output); all 300
+  handoff-only conversations on the Mac over three days carried it. `earlierTitles` walks
+  that chain in the same folder, newest first, and the first title that names work wins:
+  card 3 -> `Taskdriver.ai release check and render validation`, card 4 -> `Session auto
+  close prevention`. 15-36 ms once per such conversation. Only onto a project name.
+- **A PC pane's rename is answered before it lands.** `sessions:rename` on a mirrored pane is
+  sent to the PC, and the new name arrives with the PC's next list; `pf rename` read the list
+  once, at once, and printed `answered but ... is still "assistant"` for a rename that landed
+  seconds later. It now waits up to 5 s for the list, and a link that could not carry the
+  frame answers `false` (`not connected`) instead of nothing. `test:pfrename`.
 
 ## A pane says how long it has been open (full rules, moved out of CLAUDE.md 2026-08-31)
 

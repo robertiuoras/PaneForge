@@ -48,6 +48,12 @@ it here` (`offload:answer`); `offloadAsk` = pressure dialog. Refusals above `alw
 localhost/port/dev server, screenshot/browser, "on my mac"/"locally"/"here"), dev server
 here, unmeasured/unshareable, no peer, `PEER_FULL_PANES` 8. Then `auto` under MEASURED
 pressure only (`worstPressure`); never pane count/battery. `test:offloadfirst`.
+A failed open, any caller: `reportOpenFailed` (`main/index.ts`) writes `{"event":"failed"}` to
+offload.log and toasts (`openFailure`), except when the window asked (it shows the row's `why`);
+`pf open` exits 1 with the reason. A device's project list is `projectsFor`: a list under 10 min
+old that names the project answers without asking (the PC takes 10-15 s); a failed ask is
+`deviceUnanswered` ("did not say which projects it has"), never "does not have". A client row
+that went to its open chat flashes `reusedLine`. `test:openfailed`.
 
 ## The phone is this window, served
 

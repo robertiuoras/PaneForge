@@ -322,7 +322,7 @@ function typedAt(p) {
 
 /** The same test "Clear finished" applies (src/shared/exitedSweep.ts `isFinished`). */
 export function isFinishedPane(p) {
-  if (isRemote(p) || p.status !== 'exited' || p.asleep || p.ask || p.handingOff || !p.exitedAt) return false
+  if (isRemote(p) || p.status !== 'exited' || p.asleep || p.keepOpen || p.ask || p.handingOff || !p.exitedAt) return false
   if (p.lastKeyboard && p.lastKeyboard > p.exitedAt) return false
   return true
 }

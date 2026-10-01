@@ -20,6 +20,7 @@ import { profileName } from "./profile";
 import { codexTranscriptPath, transcriptPath } from "./transcripts";
 import { cardNumber } from "../../scripts/pf-ctl-lib.mjs";
 import type { HistoryEntry } from "../shared/types";
+import { renderReviewMarkdown, reviewMarkdownLinks } from "../shared/reviewMarkdown";
 import {
   FULL_ADVICE,
   contextLevel,
@@ -313,30 +314,6 @@ function when(at: string) {
     h = d.getHours();
   return `${h % 12 || 12}:${String(d.getMinutes()).padStart(2, "0")}${h < 12 ? "am" : "pm"} ${d.toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short" }).replace(/,/g, "")}`;
 }
-/**
- * The reply as it was written, made readable: `**bold**`, `code` and `#` headings keep
- * their meaning instead of showing their marks. Everything is escaped first, so only these
- * fixed tags are ever added; a fenced code block is left exactly as written (its `#` is a
- * shell comment, not a heading).
- */
-function markdown(text: string) {
-  let fenced = false;
-  return esc(text)
-    .split("\n")
-    .map((line) => {
-      if (/^\s*```/.test(line)) {
-        fenced = !fenced;
-        return line;
-      }
-      if (fenced) return line;
-      const h = /^#{1,6}\s+(.*)$/.exec(line);
-      const body = (h ? h[1] : line)
-        .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-        .replace(/`([^`]+)`/g, "<code>$1</code>");
-      return h ? `<strong class="h">${body}</strong>` : body;
-    })
-    .join("\n");
-}
 /** GuardDeck's green / amber / red, on this page's dark background. */
 const LEVEL_COLOUR = { ok: "#35d07f", warn: "#f0b429", danger: "#ff8f8f" } as const;
 function contextLine(r: ReviewRecord) {
@@ -349,7 +326,7 @@ function page(r: ReviewRecord) {
   const num = r.paneNumber ? `<span class="num">${esc(String(r.paneNumber))}</span> ` : "";
   const list = (title: string, items: string[]) =>
     items.length ? `<h2>${title}</h2><ul>${items.join("")}</ul>` : "";
-  return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${r.paneNumber ? `${esc(String(r.paneNumber))} ` : ""}${esc(r.title)}</title><style>:root{color-scheme:dark}body{max-width:820px;margin:60px auto;padding:0 28px;background:#121416;color:#e9e9e6;font:16px/1.65 -apple-system,BlinkMacSystemFont,sans-serif}h1{font-size:32px;line-height:1.2;letter-spacing:-.025em;font-weight:800}.num{display:inline-block;min-width:1.4em;padding:0 .3em;margin-right:.15em;border-radius:8px;background:#f0a868;color:#121416;text-align:center;font-variant-numeric:tabular-nums}.meta{color:#adb0ac}.ctx{margin-top:-6px}h2{margin-top:32px;font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:#adb0ac}pre,.report{font:inherit;white-space:pre-wrap;overflow-wrap:anywhere;background:#1c1f21;border:1px solid #303437;border-radius:12px;padding:20px}.report strong{color:#fff}.report .h{color:#f0a868}code{font:14px ui-monospace,Menlo,monospace;background:#2a2e31;border-radius:5px;padding:1px 5px}a{color:#d6e5ec;text-underline-offset:4px}li{margin:8px 0}</style><h1>${num}${esc(r.title)}</h1><p class="meta">${esc(r.kind)} · ${esc(r.proof)} · finished ${esc(when(r.completedAt ?? r.createdAt))}</p>${contextLine(r)}<div class="report">${markdown(r.report)}</div><h2>Original prompt</h2><pre>${esc(r.prompt)}</pre>${list("Evidence", (r.evidence ?? []).map((e) => `<li>${esc(e)}</li>`))}${list("Links", (r.links ?? []).map((l) => `<li><a href="${esc(l.url)}">${esc(l.label)}</a></li>`))}`;
+  return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${r.paneNumber ? `${esc(String(r.paneNumber))} ` : ""}${esc(r.title)}</title><style>:root{color-scheme:dark}body{max-width:820px;margin:60px auto;padding:0 28px;background:#121416;color:#e9e9e6;font:16px/1.65 -apple-system,BlinkMacSystemFont,sans-serif}h1{font-size:32px;line-height:1.2;letter-spacing:-.025em;font-weight:800}.num{display:inline-block;min-width:1.4em;padding:0 .3em;margin-right:.15em;border-radius:8px;background:#f0a868;color:#121416;text-align:center;font-variant-numeric:tabular-nums}.meta{color:#adb0ac}.ctx{margin-top:-6px}h2{margin-top:32px;font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:#adb0ac}pre,.report{font:inherit;overflow-wrap:anywhere;background:#1c1f21;border:1px solid #303437;border-radius:12px;padding:20px}.report strong{color:#fff}.report :is(h1,h2,h3,h4,h5,h6){font-size:1.15em;text-transform:none;letter-spacing:normal;color:#f0a868;margin:24px 0 10px}.report p{margin:0 0 14px}.report>:first-child{margin-top:0}.report>:last-child{margin-bottom:0}.report blockquote{margin:14px 0;padding-left:16px;border-left:3px solid #f0a868;color:#adb0ac}.report pre{white-space:pre;overflow-x:auto;padding:14px}.report pre code{padding:0;background:none}.report table{border-collapse:collapse;display:block;overflow-x:auto}.report :is(th,td){padding:6px 10px;border:1px solid #303437;text-align:left}body>pre{white-space:pre-wrap}code{font:14px ui-monospace,Menlo,monospace;background:#2a2e31;border-radius:5px;padding:1px 5px}a{color:#d6e5ec;text-underline-offset:4px}li{margin:8px 0}</style><h1>${num}${esc(r.title)}</h1><p class="meta">${esc(r.kind)} · ${esc(r.proof)} · finished ${esc(when(r.completedAt ?? r.createdAt))}</p>${contextLine(r)}<div class="report">${renderReviewMarkdown(r.report)}</div><h2>Original prompt</h2><pre>${esc(r.prompt)}</pre>${list("Evidence", (r.evidence ?? []).map((e) => `<li>${esc(e)}</li>`))}${list("Links", (r.links ?? []).map((l) => `<li><a href="${esc(l.url)}">${esc(l.label)}</a></li>`))}`;
 }
 function immutable(r: ReviewRecord) {
   const {
@@ -398,6 +375,8 @@ function receipt(id: string) {
 function spoolNotice(record: ReviewRecord): ReviewRecord {
   if (
     !record.notify ||
+    iso(record.reviewedAt) ||
+    receipt(record.id) ||
     process.platform !== "darwin" ||
     !app.isPackaged ||
     profileName()
@@ -713,17 +692,24 @@ export function noteReviewClose(
 }
 export function reviewOpenTarget(
   id: string,
-  index: number,
+  index: number | string,
   history: HistoryEntry[] = [],
 ): string | null {
-  if (!validId(id) || !Number.isInteger(index)) return null;
+  if (!validId(id) || (typeof index !== "string" && !Number.isInteger(index))) return null;
   const old = id.startsWith("closed_")
     ? history.find((h) => `closed_${h.id}` === id && Boolean(h.endedAt))
     : undefined;
   const r = read(id) ?? (old ? closed(old) : null);
   if (!r) return null;
-  if (index === -1) return existsSync(r.reportPath) ? r.reportPath : null;
-  const link = (r.links ?? [])[index];
+  if (index === -1) {
+    // Rebuild the view from its retained source on open. Existing reports get the
+    // current formatting without rewriting their source or bulk-migrating the folder.
+    if (!old && r.reportPath === htmlPath(id)) atomic(r.reportPath, page(r));
+    return existsSync(r.reportPath) ? r.reportPath : null;
+  }
+  const link = typeof index === "string"
+    ? reviewMarkdownLinks(r.report).has(index) ? { url: index } : undefined
+    : (r.links ?? [])[index];
   if (!link) return null;
   try {
     const u = new URL(link.url);

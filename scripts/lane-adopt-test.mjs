@@ -109,9 +109,15 @@ mkdirSync(root, { recursive: true })
   commit(dir, 'app.js', 'console.log("lane")\n', 'feat: the work nobody could ship')
   commit(f.repo, 'app.js', 'console.log("master")\n', 'feat: master disagrees')
 
-  // Its chat stops answering, so the conflict belongs to nobody.
+  // Establish the real conflict through the owner's explicit completion attempt.
+  // A clock/status read preserves unverified orphan work without merging it now.
+  f.lane('ready', '--session', 'gone-chat', '--lane', 'a')
+  ok('the owner completion attempt records the real conflict', Boolean(f.state().conflicts.a), JSON.stringify(f.state().conflicts))
+
+  // The native session ended. Age alone does not prove that a quiet owner is dead.
   f.patchState((s) => {
     s.lanes.a.seen = Date.now() - DEAD
+    s.lanes.a.ended = Date.now() - DEAD
   })
   f.lane('status')
   ok('the lane has no chat left', !f.state().lanes.a, JSON.stringify(f.state().lanes))

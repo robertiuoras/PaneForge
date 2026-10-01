@@ -39,6 +39,9 @@ if (process.platform !== 'win32') {
 // name -> the script file, in the order they run. Cheapest first is deliberate: a broken
 // build should say so in a second rather than after the slow ones.
 const TESTS = [
+  ['freshreplay', 'fresh-replay-test.mjs'],
+  ['codexworkers', 'codex-workers-test.mjs'],
+  ['paneanswer', 'pane-answer-test.mjs'],
   ['remotesuite', 'test-remote-test.mjs'],
   ['testchrome', 'test-chrome-test.mjs'],
   ['promptreview', 'prompt-review-test.mjs'],
@@ -47,6 +50,7 @@ const TESTS = [
   ['reviewlist', 'review-list-test.mjs'],
   ['doneclose', 'done-close-test.mjs'],
   ['replyread', 'reply-read-test.mjs'],
+  ['bgshell', 'background-shell-test.mjs'],
   ['claudemd', 'claudemd-size-test.mjs'],
   ['copylogic', 'copy-logic-test.mjs'],
   ['tokentally', 'token-tally-test.mjs'],
@@ -62,6 +66,7 @@ const TESTS = [
   ['release', 'release-guard-test.mjs'],
   ['grid', 'grid-layout-test.mjs'],
   ['awake', 'awake-test.mjs'],
+  ['pressurelog', 'pressurelog-test.mjs'],
   ['suspend-save', 'suspend-save-test.mjs'],
   ['autoclear', 'autoclear-test.mjs'],
   ['autoclearmanager', 'autoclear-manager-test.mjs'],
@@ -120,6 +125,7 @@ const TESTS = [
   ['settingsearch', 'settings-search-test.mjs'],
   ['autoanswer', 'auto-answer-test.mjs'],
   ['asknotify', 'ask-notify-test.mjs'],
+  ['limitwave', 'limit-wave-test.mjs'],
   ['faultnotify', 'fault-notify-test.mjs'],
   ['spawnguard', 'spawn-guard-test.mjs'],
   ['promptsubmit', 'prompt-submit-test.mjs'],
@@ -146,6 +152,8 @@ const TESTS = [
   ['continuation', 'continuation-test.mjs'],
   ['claim', 'transcript-claim-test.mjs'],
   ['cliclaim', 'transcript-cli-claim-test.mjs'],
+  ['mainperformance', 'main-performance-test.mjs'],
+  ['codexprocessclaim', 'codex-process-claim-test.mjs'],
   ['clearclaim', 'transcript-clear-test.mjs'],
   ['quitwords', 'quit-words-test.mjs'],
   ['screenview', 'screen-view-test.mjs'],
@@ -166,6 +174,7 @@ const TESTS = [
   ['sleep', 'sleep-test.mjs'],
   ['wakeplan', 'wakeplan-test.mjs'],
   ['deviceopen', 'device-open-test.mjs'],
+  ['openfailed', 'open-failed-test.mjs'],
   ['mascot', 'mascot-test.mjs'],
   ['petmood', 'petmood-test.mjs'],
   ['tips', 'tips-test.mjs'],
@@ -197,13 +206,17 @@ const TESTS = [
   ['sessioncopies', 'session-copies-test.mjs'],
   ['lanevisitor', 'lane-visitor-test.mjs'],
   ['laneorphan', 'lane-orphan-test.mjs'],
+  ['laneparked', 'lane-parked-test.mjs'],
   ['lanework', 'lane-work-test.mjs'],
   ['lanemergehold', 'lane-mergehold-test.mjs'],
   // A cleared pane keeps its lane; an unrecorded open merge can be resolved; identical
   // dirt in main does not hold a merge (2026-09-28).
   ['lanecleared', 'lane-cleared-test.mjs'],
+  // A copy missing most of its files is damaged, never handed to a chat (2026-10-01).
+  ['lanedamaged', 'lane-damaged-test.mjs'],
   // taskdriver.ai's PC-proof gate; a ready lane's own check is what `ready` reports (macOS only).
   ['lanetaskdriver', 'lane-taskdriver-pc-test.mjs'],
+  ['lanetypecheckjob', 'lane-typecheck-job-test.mjs'],
   // A lane whose hooks rewrite its ledger every turn is not dirty forever.
   ['laneledger', 'lane-ledger-test.mjs'],
   ['issues', 'issues-dialog-test.mjs'],
@@ -221,6 +234,7 @@ const TESTS = [
   ['clientname', 'client-name-test.mjs'],
   ['renametrigger', 'rename-trigger-test.mjs'],
   ['clititle', 'cli-title-test.mjs'],
+  ['pfrename', 'pf-rename-test.mjs'],
   ['peerchrome', 'peer-chrome-test.mjs'],
   ['projectname', 'project-name-test.mjs'],
   ['historysearch', 'history-search-test.mjs'],
@@ -343,6 +357,7 @@ const TESTS = [
   ['gate', 'release-gate-test.mjs'],
   ['conflict', 'conflict-test.mjs'],
   ['lanedispatch', 'lane-dispatch-test.mjs'],
+  ['lanecompletion', 'lane-completion-test.mjs'],
   ['queuedprompt', 'queued-prompt-test.mjs']
 ]
 
@@ -472,9 +487,17 @@ const killChromeUnder = (root) => {
   }
   execSync(`pkill -9 -f -- "--user-data-dir=${root}"`, { stdio: 'ignore' })
 }
+// A root something still holds open (a Chrome not yet let go, a child whose working folder
+// is inside it) threw EPERM out of this `exit` handler, and a throw there exits 1: "20
+// tests passed" then red, on 2026-09-28. The verdict is the suites', not the cleanup's -
+// say it and leave the root to `sweepStaleRoots` below.
 const dropTmp = () => {
   try { killChromeUnder(TMP_ROOT) } catch {}
-  rmSync(TMP_ROOT, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+  try {
+    rmSync(TMP_ROOT, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+  } catch (err) {
+    console.error(`test-all: could not remove ${TMP_ROOT} (${err.code ?? err.message}); a later run removes it`)
+  }
 }
 // A run killed before `exit` - or one whose cleanup lost a race with a Chrome that had not
 // released its handles yet - leaves its root behind for good, because the name is unique

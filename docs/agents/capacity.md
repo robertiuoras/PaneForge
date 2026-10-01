@@ -80,7 +80,10 @@ normal/warn/critical, never zero (`test:capacity`).
 
 ## ...and before it closes one, it tries to move it
 
-Rungs: trim -> start next pane there -> move finished pane -> close. `shared/autoHandoff.ts`
+Rungs: trim -> start next pane there -> move UNFINISHED agent work -> close. `shared/autoHandoff.ts`
+(`automaticWork`: Claude/Codex, a turn running or a verified pane-bound handoff with open steps;
+finished/stopped/exited/shell/unverified idle panes never move automatically - Robert 2026-09-29,
+replacing the move-finished-panes rule on 2026-10-02)
 (`test:autohandoff`). `Machine.keepLocal` (`autoHandoff.keepLocal` 2) budget, `Verdict.over`,
 `budgetPlan`. Cost decides: `expensive()` = `AutoPane.job`, `budgetMinMb` 500, `budgetMinCpu`
 50%; dearest first; unmeasured = cheap; holds at `ok`. Only rule moving ON SCREEN; busy LAST
@@ -112,3 +115,22 @@ folders and unfinished work. Running turns may queue; delivery waits for drafts,
 and background jobs. Idle work requires a fresh pane/native-conversation-bound handoff;
 finished, exited, shell and unverified idle panes stay local. Main rechecks that handoff
 and new activity before delivery and before ending the source. Receiver closure saves Review first.
+
+## Logs to read when the desk is slow
+
+All under userData (Mac `~/Library/Application Support/claude-orchestrator/`), each size-capped.
+
+- `pressure.log`: one JSON line a minute (`shared/pressureLog.ts`, `main/pressureLog.ts`,
+  `test:pressurelog`): kernel flag and compressor verdict apart, load per core, compressor and
+  swap MB, per pane RSS/CPU/status, the 5 biggest non-pane processes, `caffeinateChildren`
+  (must be 0-2; 20 = the 2026-10-01 leak).
+- `awake.log`: every `[awake] caffeinate system|display started/stopping/exited` line
+  (`shared/caffeinateHold.ts`: an old child's late `exit` may not clear a newer child's slot).
+- `handoff.log` `sweep:` lines: why the move sweep armed nothing, counts per blocker
+  (`sweepBlockers`): bgAgent, keepHere, quietTooShort, notExpensive, peerHolds, working... Written
+  on change or every 5 min. No `sweep:` line for a minute = the sweep never ran (no `capacity`).
+- `offload.log` is where NEW panes were placed, not the idle rung. 2026-09-28..10-01: 175
+  `started`, all local ("you chose this machine"). `autoHandoff.offloadIdleMinutes` 0 = idle
+  rung off (as configured on this Mac); the background-agent refusal (`runningAgents.ts`)
+  measured 54 blocks, median 4.3 min, longest 76 min, 9 over 20 min: not "for hours", so
+  unchanged. Re-measure from `sweep:` lines before changing either.

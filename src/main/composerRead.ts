@@ -43,7 +43,15 @@ export async function composerOf(
     // Codex draws a borderless draft that only its own reading recognises; every other
     // CLI here draws a box or a rule, which the general walk finds.
     const codexCols = agent && /codex/i.test(agent) ? Math.max(20, cols) : undefined
-    return readComposer(lines, cursor, { codexCols })
+    const reading = readComposer(lines, cursor, { codexCols })
+    // Codex 0.159 paints its empty hint in dim cells, with the caret before it. Text
+    // alone is insufficient: a person can type these exact words and park at the start.
+    if (codexCols && reading?.rows === 1 && reading.text === 'Ask Codex to do anything' &&
+      cursor === reading.top && buf.cursorX === 2 &&
+      Array.from(reading.text).every((_, n) => Boolean(buf.getLine(reading.top)?.getCell(n + 2)?.isDim()))) {
+      return { ...reading, text: '' }
+    }
+    return reading
   } finally {
     term.dispose()
   }

@@ -79,7 +79,8 @@ armed one. `shared/markAnchor.ts` re-anchors tags (`test:markanchor`).
 ## A finished pane closes itself into Review
 
 `shared/doneClose.ts` (`test:doneclose`), `main/doneClose.ts`, 15s timer; `config.autoCloseDone`
-on. Closes when: agent pane, turn over (`footerEndedAt`), not LOOKED AT (`personLooking`),
+on. Never a kept pane (card's Keep open, `config.pinnedPanes`, `keptOpen` in `main/index.ts`: done-close, `pf tidy`,
+`reviews:record` close, exited/asleep sweeps, Clear finished, `--close-when-done`; memory pressure may only sleep it). Closes when: agent pane, turn over (`footerEndedAt`), not LOOKED AT (`personLooking`),
 quiet `doneQuietMs` (3 min, 1 min tight, 30s over) past turn end AND last key, OR read
 (`lookedAt`, stamped each second by `sweepIdle`, older than the turn = unread) and
 `READ_QUIET_MS` 30s past max(look, key); `doneEnough`, no prompt owed, opener only while its
@@ -91,8 +92,19 @@ failed read or one started before the turn ended is `'unread'` and refuses); a b
 label/done/fail words) holds nothing. Writes `result`/`unverified` review
 `done_<pane>_<turn s>` with `hold` (row, no card), then `closeAfterResult` (refusal names each
 flag, `closeHeldBy`). ONLY after a real close: each `personOwnedSteps` step a GuardDeck to-do,
-the result card (`sendReviewNotice`) iff `finishedCard` (person steps AND unread), a read row
-marked reviewed. `autoclose_*` rows (`reviews:record`) same rule via `heldCards`/
+the result card (`sendReviewNotice`) unless explicitly marked reviewed in Review or by a
+GuardDeck receipt. Looking at a pane only controls close timing; it never acknowledges a
+report or suppresses its delivery. Explicit unfinished/queued work in prose also holds the pane.
+Explicit `--close-when-done` also requires an actual completed agent reply and no owed
+prompt; an idle startup or trust composer is not completion. Claude's invisible-character
+review warning holds submission. Typed but unconfirmed Claude intent remains in the durable
+queue, blocks followers and is never pasted again on restore. Only a native receipt containing
+the entire payload releases it; a matching first line or a turn clock is insufficient
+(`test:promptsubmit`, `test:closedone`, `test:busy`). A pre-paste trust-choice Enter does not
+claim Codex's composer; existing empty, idle and unchanged checks still govern delivery.
+Once eligible, the automatic sweep publishes `doneClosingAt` and waits a fresh 30 seconds;
+any refusal cancels it. GuardDeck displays that deadline alongside the idle-close clock.
+An old turn never overrides the 30-second quiet period after a recent look. `autoclose_*` rows (`reviews:record`) same rule via `heldCards`/
 `cardAfterClose` (direct close, arm, `sessions:kill`). `pf tidy` = `sessions:closeDone`: same
 sweep over `Session.finished` panes, quiet 0, `dry` touches nothing. Opener told once: `finishedDigest.ts`. Review = ONE list (`ReviewDialog.tsx`,
 `shared/reviewList.ts`, `test:reviewlist`): Needs you/Done/All, row = number+project+ask+
@@ -101,6 +113,11 @@ shell undrawn (`fleet.ts` `idleShell`) till pressed/run; idle countdown still ta
 
 Explicit agent `closeWhenDone` arms use the same Review-first sweep and its safety gates,
 even when automatic closure is disabled. Shell closure retains its existing command semantics.
+
+Finished-turn sweeps publish a 30-second `doneClosingAt` before closing, rechecking every
+refusal on expiry; Keep open persists the pin. Local/remote pins also cancel an armed
+clear and refuse new automatic clears. Cancelling a clear holds the same native conversation
+for the lifetime of the app, until a manual fresh session changes its ID.
 
 ## A session that clears itself asks first
 
@@ -128,3 +145,19 @@ START_COLS)`, user-initiated; `window.__pf[id].redraw()`.
 `shared/recover.ts` (`test:recover`) keys on `The response above may be incomplete.`; never
 after rate/usage limit, credit, auth, overload; `> ` quoted error is talk (`promptBox`); three
 in a row stops; new output only; sends via `queuePrompt`.
+
+## A usage limit is one wave, continued after its reset, and one phone push
+
+`shared/limitWave.ts` decides, `main/limitWaves.ts` acts (`test:limitwave`). A `paneError`
+whose line (+ rows under it: Codex wraps its date) names a limit WITH a reset never goes to
+Telegram; no reset / auth / credit keep Telegram. Wave = provider + window + reset within
+`JITTER_MS` 2 min; mirrors excluded; `'stale'` (reset already gone: a `--resume` repaint) is
+dropped. Due = reset + `CONTINUE_AFTER_MS` (Claude 150s: Claude Code continues by itself
+38-116s after the reset; Codex 60s). At due: closed leaves the count; busy / `turnsHere` grew
+/ `continuationOwnsSource` = continuing, nothing typed; drafting, exited, `recover.enabled`
+off = not; else `carryOn` (wakes an asleep pane, `RESTORE_CONTINUE_MS`, `queuePrompt`).
+Continuing = `sent` then busy within `START_WITHIN_MS` 3 min; a second stop = not, same reset
+never re-queues. Push after `SETTLE_QUIET_MS` 60s quiet or `WAVE_DEADLINE_MS` 10 min: TaskDriver
+notify, token env then `~/.claude/todos-ingest.token`, `dedupe_key`
+`pf-limit-reset:<provider>:<resetISO>:<host>`; failed = retried `PUSH_RETRY_MS`, never marked
+sent. In memory only. `limit-reset.log`; `PF_TASKDRIVER_NOTIFY_URL` for tests.

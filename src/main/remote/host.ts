@@ -34,7 +34,7 @@ export interface HostBackend {
   list(): Session[]
   buffer(id: string): string
   log(id: string, bytes: number): string
-  write(id: string, data: string): void
+  write(id: string, data: string, terminalReply?: boolean): void
   /** Submit an app-dispatched job through the owner's composer-aware prompt path. */
   sendPrompt(id: string, text: string): void
   resize(
@@ -88,6 +88,8 @@ export interface HostBackend {
   jobs(): Promise<BackJob[]>
   /** files a guest wants put in front of one of THIS device’s panes */
   attachFiles(files: AttachIn[]): AttachResult
+  /** the same files PASTED into pane `id` as images; paths when they cannot be */
+  pasteImages?(id: string, files: AttachIn[]): Promise<AttachResult>
   /** subscribe to pty output; returns an unsubscribe */
   onData(cb: (id: string, data: string) => void): () => void
   /** A submitted prompt from another input surface, for mirrors that saw no keystrokes. */
@@ -532,7 +534,7 @@ export class RemoteHost extends EventEmitter {
         case 'write':
           // The writing viewer already registered this prompt from its own keystrokes.
           this.writingGuest = guest
-          try { this.backend.write(id, String(m.data ?? '')) }
+          try { this.backend.write(id, String(m.data ?? ''), m.terminalReply === true) }
           finally { this.writingGuest = null }
           return
         case 'prompt':
@@ -707,7 +709,14 @@ export class RemoteHost extends EventEmitter {
           // sentence in the result rather than a `failed` frame: the caller is a person
           // who just pasted something and wants to be told why, not a stack.
           const files = Array.isArray(m.files) ? (m.files as AttachIn[]) : []
-          conn.send({ t: 'filesdone', rid: m.rid, result: this.backend.attachFiles(files) })
+          const done = (result: AttachResult): void => conn.send({ t: 'filesdone', rid: m.rid, result })
+          // Images go in the way a drop on THIS desk puts them in: onto this machine's
+          // clipboard and the agent's own image key, so the agent shows a picture and not
+          // a path. Anything that is not all images, or an agent that does not read the
+          // clipboard, is saved and answered with paths, as it always was.
+          if (this.backend.pasteImages && id)
+            void this.backend.pasteImages(id, files).then(done, () => done({ ...this.backend.attachFiles(files), pasted: 0 }))
+          else done(this.backend.attachFiles(files))
           return
         }
         case 'ping':

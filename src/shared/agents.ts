@@ -670,9 +670,43 @@ const CLAUDE_CODE_AGENTS = new Set([
   'anthropic'
 ])
 
+/**
+ * Which CLIs read images directly off the OS clipboard on ^V.
+ *
+ * Claude Code reads an image off the clipboard when it gets a ^V; modern Codex (0.150+)
+ * and Antigravity CLI (1.2+) also read macOS/OS clipboard images on ^V.
+ *
+ * `openrouter`, `deepseek` and `glm` are Claude Code with a different base URL, so they
+ * read the clipboard too - the binary is what decides this, never the model behind it.
+ */
+const CLIPBOARD_IMAGE_AGENTS = new Set([
+  'claude',
+  'openrouter',
+  'deepseek',
+  'glm',
+  'claude-code',
+  'anthropic',
+  'codex',
+  'antigravity'
+])
+
 /** Would a raw ^V put an image in front of this agent, rather than nothing? */
 export function pastesClipboardImage(agent: string | undefined): boolean {
-  return !!agent && CLAUDE_CODE_AGENTS.has(agent)
+  return !!agent && CLIPBOARD_IMAGE_AGENTS.has(agent)
+}
+
+/**
+ * The keystroke that makes this agent read an image off the clipboard, on the machine its
+ * pty runs on.
+ *
+ * ^V everywhere except Claude Code on Windows. There Ctrl+V is the terminal's own paste
+ * and Claude Code's image key is Alt+V - read off 2.1.286's own keymap
+ * (`ve = xe ? "alt+v" : "ctrl+v"`, `xe` = windows or wsl), so a ^V on the PC pasted
+ * nothing at all. Codex 0.159.1 names Ctrl+V in its own tips and is left on it.
+ */
+export function imagePasteKey(agent: string | undefined, onWindows: boolean): string {
+  if (onWindows && !!agent && CLAUDE_CODE_AGENTS.has(agent)) return '\x1bv'
+  return '\x16'
 }
 
 /**

@@ -58,6 +58,15 @@ export interface ReplaySplit {
   cols: number
   /** the height it was painted at, or undefined when nothing recorded one */
   rows?: number
+  /**
+   * The width `after` was drawn at, when that is wider than the pane is now. "After the
+   * mark is at the pane's width" holds only until the pane is narrowed: measured
+   * 2026-09-29 on a PC Claude pane mirrored on the Mac, 2.9 MB after the mark was drawn
+   * at 143 and the last 60 KB at 133, the width the pane is now. Written at 133 it
+   * clamped into 10 status footers and 401 rows run into the right edge; at 143 and then
+   * narrowed, 1 footer and 251 (xterm re-wraps those, nothing is lost).
+   */
+  afterCols?: number
 }
 
 /**
@@ -109,13 +118,34 @@ export function splitReplay(
   // replayed into a 90-column pane - staged at 156 it loses 20 logical lines, at 157 none.
   const painted = paintedWidth(bytes)
   const wide = Math.max(wroteAt ?? 0, painted ? painted + 1 : 0)
-  if (wide < 20) return null
   const wrongHeight = Boolean(rows && rows > 0 && nowRows && nowRows > 0 && rows !== nowRows)
-  if (wide <= now && !wrongHeight) return null
-  const cols = Math.max(wide, now)
   // The LAST mark, not the first: a log tail can carry a mark from an earlier restart, and
   // everything before the newest one is old output either way.
   const i = bytes.lastIndexOf(RESTORE_MARK_TEXT)
   const cut = i === -1 ? bytes.length : i + RESTORE_MARK_TEXT.length
-  return { before: bytes.slice(0, cut), after: bytes.slice(cut), cols, rows: rows && rows > 0 ? rows : undefined }
+  const after = bytes.slice(cut)
+  const drawn = after ? drawnWidth(after) : 0
+  const afterCols = drawn > now ? drawn : undefined
+  if (wide < 20 && !afterCols) return null
+  if (wide <= now && !wrongHeight && !afterCols) return null
+  const cols = Math.max(wide, now)
+  return { before: bytes.slice(0, cut), after, cols, rows: rows && rows > 0 ? rows : undefined, afterCols }
 }
+
+/**
+ * The widest these bytes were DRAWN at: `paintedWidth`, or the longest horizontal rule in
+ * them, whichever is wider. Claude Code and Codex draw their input box's rules exactly as
+ * wide as the terminal, and a rule is the one thing a CLI draws edge to edge: on the log
+ * above the column moves reached 139 and the rules 143, the true width.
+ *
+ * No `+ 1` here, unlike the staged `before`: this decides whether a pane's own output was
+ * drawn wider than the pane, and output drawn AT the pane's width must stay unstaged.
+ */
+export function drawnWidth(bytes: string): number {
+  let max = paintedWidth(bytes)
+  RULES.lastIndex = 0
+  for (let m = RULES.exec(bytes); m; m = RULES.exec(bytes)) if (m[0].length > max) max = m[0].length
+  return max
+}
+
+const RULES = /[─━]{20,}/g

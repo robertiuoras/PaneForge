@@ -177,8 +177,29 @@ writeFileSync(join(repo, 'clients', 'new', 'README.md'), 'new client\n')
 git(repo, 'add', 'clients/new/README.md')
 git(repo, 'commit', '-qm', 'add new client')
 writeFileSync(join(repo, '.lanes.json'), JSON.stringify({ pool: ['main', 'c', 'd'] }))
-ok('a stale free branch is skipped for a lane that contains the new client',
-  (await resolveLane(join(repo, 'clients', 'new'), [repo])).cwd === join(root, 'demo-d', 'clients', 'new') && !existsSync(join(root, 'demo-c')))
+ok('a stale unmaterialized branch fast-forwards to open a tracked nested client with occupied checkouts',
+  (await resolveLane(join(repo, 'clients', 'new'), [repo, activeA, archivedB])).cwd === join(root, 'demo-c', 'clients', 'new') &&
+  git(repo, 'rev-parse', 'lane-c') === git(repo, 'rev-parse', 'HEAD'))
+git(repo, 'branch', 'lane-d', 'HEAD~1')
+const divergent = join(root, 'divergent')
+git(repo, 'worktree', 'add', divergent, 'lane-d')
+writeFileSync(join(divergent, 'unique.txt'), 'preserve this work\n')
+git(divergent, 'add', 'unique.txt')
+git(divergent, 'commit', '-qm', 'unique work')
+const uniqueHead = git(divergent, 'rev-parse', 'HEAD')
+git(repo, 'worktree', 'remove', divergent)
+writeFileSync(join(repo, '.lanes.json'), JSON.stringify({ pool: ['main', 'd', 'e'] }))
+ok('a divergent branch is preserved and skipped for a fresh permitted copy',
+  (await resolveLane(join(repo, 'clients', 'new'), [repo, activeA, archivedB])).cwd === join(root, 'demo-e', 'clients', 'new') &&
+  git(repo, 'rev-parse', 'lane-d') === uniqueHead && !existsSync(join(root, 'demo-d')))
+git(repo, 'branch', 'lane-f', 'HEAD~1')
+const heldElsewhere = join(root, 'held-elsewhere')
+git(repo, 'worktree', 'add', heldElsewhere, 'lane-f')
+const heldHead = git(heldElsewhere, 'rev-parse', 'HEAD')
+writeFileSync(join(repo, '.lanes.json'), JSON.stringify({ pool: ['main', 'f', 'g'] }))
+ok('a stale branch checked out elsewhere is not changed',
+  (await resolveLane(join(repo, 'clients', 'new'), [repo])).cwd === join(root, 'demo-g', 'clients', 'new') &&
+  git(heldElsewhere, 'rev-parse', 'HEAD') === heldHead && !existsSync(join(root, 'demo-f')))
 
 // The junction failure, in the two shapes that hit it.
 const realDep = join(repo, 'node_modules', 'left-pad', 'index.js')

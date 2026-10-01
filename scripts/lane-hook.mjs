@@ -550,6 +550,20 @@ if (event === 'pretool') {
   if (!repo) process.exit(0)
   const r = lane(repo, 'guard', '--session', session, '--path', String(path))
   if (r.code === 2 && r.out) deny(r.out)
+  if (r.code !== 0) deny(r.err || 'The lane guard could not establish ownership.')
+  // A first write may claim a repo without a prompt claim. Register that real
+  // ownership too, so SessionEnd stamps it ended before the detached release.
+  if (!(reg.sessions[session] ?? []).includes(repo)) {
+    const held = lane(repo, 'status', '--session', session, '--held')
+    try {
+      const info = JSON.parse(held.out)
+      if (held.code === 0 && info.lanes.some((l) => l.heldBy === session || l.conflict?.resolver === session)) {
+        reg.repos[repo] = { release: info.mode, own: info.own, seen: Date.now() }
+        reg.sessions[session] = [...new Set([...(reg.sessions[session] ?? []), repo])]
+        writeRegistry(reg)
+      }
+    } catch { /* an unknown status does not register somebody else's claim */ }
+  }
   process.exit(0)
 }
 

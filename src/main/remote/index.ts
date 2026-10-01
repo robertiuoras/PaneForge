@@ -299,11 +299,11 @@ export class Remote extends EventEmitter {
     return client.setKeepOpen(cut.local, keep)
   }
 
-  /** Forward a pane message to the device that owns it. Silent if it went away. */
-  send(id: string, msg: Msg): void {
+  /** Forward a pane message to the device that owns it. False when the link could not carry it. */
+  send(id: string, msg: Msg): boolean {
     const cut = splitId(id)
-    if (!cut) return
-    this.clients.get(cut.peer)?.send({ ...msg, id: cut.local })
+    if (!cut) return false
+    return this.clients.get(cut.peer)?.send({ ...msg, id: cut.local }) ?? false
   }
 
   /** Submit an app-dispatched prompt on the device that owns this mirrored pane. */

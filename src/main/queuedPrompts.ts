@@ -104,6 +104,25 @@ export function noteNativeAccepted(id: string, text: string, cwd?: string): stri
   return row.key
 }
 
+/** Persist uncertain delivery before the first native CLI paste. Failure forbids that paste. */
+export function noteTyped(key: string, typed: NonNullable<QueuedPrompt['typed']>): boolean {
+  const row = load()[key]
+  if (!row || row.typed) return false
+  const next = noteQueued(load(), { ...row, typed })
+  try {
+    const file = queuedPromptsPath()
+    mkdirSync(dirname(file), { recursive: true })
+    // sync-on-purpose: first-paste identity must reach disk before the following PTY
+    // write; a crash between those turns would make uncertain delivery replayable.
+    writeFileSync(file + '.tmp', JSON.stringify(next, null, 2), { mode: 0o600 })
+    renameSync(file + '.tmp', file)
+    store = next
+    return true
+  } catch {
+    return false
+  }
+}
+
 /** A turn proved it went in. */
 export function noteSubmitted(key: string): void {
   const row = load()[key]
@@ -171,6 +190,11 @@ export function dropAllFor(id: string, why: QueueDrop = 'gone'): number {
 /** How many prompts a pane is still owed - the reading `sendOrOpen` refuses on. */
 export function owedCount(id: string): number {
   return owedTo(load(), id).length
+}
+
+/** Typed intent must not be pasted again or have a later prompt appended to it. */
+export function typedOwed(id: string): QueuedPrompt[] {
+  return owedTo(load(), id).filter((row) => row.typed !== undefined)
 }
 
 /** Only for tests and for a fresh read after the file was replaced underneath us. */

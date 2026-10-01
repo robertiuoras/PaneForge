@@ -5,6 +5,8 @@
 // know so when i open again from history it just works".
 
 import { exitPlan, exitWords, LINGER_MS } from '../src/shared/exitClose.ts'
+import { readFileSync } from 'node:fs'
+import { transformSync } from 'esbuild'
 
 let failed = 0
 function ok(what, cond, extra) {
@@ -29,6 +31,7 @@ console.log('a program that ended takes its card with it')
 console.log('...and the four times it stays')
 {
   ok('a pane put to sleep is not a pane that exited', !exitPlan({ ...ran, asleep: true, exitCode: 0 }).close)
+  ok('a pane kept open by hand keeps its last screen', !exitPlan({ ...ran, kept: true, exitCode: 0 }).close)
   ok('one being moved to the other machine keeps its card', !exitPlan({ ...ran, handingOff: true, exitCode: 0 }).close)
   // Every pty dies on the way out. Closing panes then would write an empty desk over the
   // one that has to come back.
@@ -65,6 +68,23 @@ console.log('the list says what went')
   ok('and reads as one sentence', /taskdriver closed - it finished/.test(say), say)
   // Plain words: this is read by somebody who has never used a terminal.
   ok('no jargon in it', !/\b(pty|sigterm|exit code|process)\b/i.test(say), say)
+}
+
+// Pinning after exit but before its delayed removal must still save the card.
+{
+  const source = readFileSync(new URL('../src/main/sessions.ts', import.meta.url), 'utf8')
+  const start = source.indexOf('const go = (): void => {', source.indexOf('const say = exitWords'))
+  const end = source.indexOf('\n      if (plan.after)', start)
+  const code = transformSync(source.slice(start, end), { loader: 'ts' }).code
+  let pinned = false, removed = 0
+  const fake = { sessions: new Map([['pane', { meta: { status: 'exited' } }]]), keptOpen: () => pinned, emit() {}, kill() { removed++ } }
+  const go = new Function('id', 'say', code + ';return go').call(fake, 'pane', 'closed')
+  pinned = true
+  go()
+  ok('Keep pressed during the exit delay prevents removal', removed === 0)
+  pinned = false
+  go()
+  ok('an unpinned exited pane is still removed', removed === 1)
 }
 
 console.log(failed ? `\n${failed} failed` : '\nexitclose: all good')

@@ -17,6 +17,7 @@ import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname } from 'node:path'
 import { createServer } from 'node:net'
+import { createRequire } from 'node:module'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const out = mkdtempSync(join(tmpdir(), 'pf-remote-'))
@@ -212,6 +213,26 @@ async function main() {
   const mod = await import(pathToFileURL(bundle()).href)
   const { RemoteHost, RemoteClient, newCode, makeInvite, readInvite, INVITE_MINUTES, isSelfPeer, dropSelf, liveWatch } =
     mod
+
+  // An owner's capped snapshot has a short mode prefix BEFORE its full 400 KB tail.
+  // Exercise the actual receive path: pre-slicing it loses native scrolling on attach.
+  {
+    const mirror = new RemoteClient(
+      { id: 'MODES', name: 'Mode fixture', address: '127.0.0.1', port: 1, code: 'ABCD-EFGH', auto: false },
+      () => ({ id: 'LOCAL', name: 'Local fixture', platform: 'darwin', version: 'test' })
+    )
+    const { Terminal } = createRequire(import.meta.url)('@xterm/headless')
+    const term = new Terminal({ cols: 80, rows: 24, allowProposedApi: true })
+    const prefix = '\x1b[?1049;1003;1006;2004h'
+    mirror.receive({ t: 'buffer', id: 'native', data: prefix + '.'.repeat(400_000) })
+    const snapshot = mirror.buffer('native')
+    await new Promise(resolve => term.write(snapshot, resolve))
+    ok('clipped remote attach retains the native screen', term.buffer.active.type === 'alternate')
+    ok('clipped remote attach retains mouse reporting', term.modes.mouseTrackingMode === 'any')
+    ok('clipped remote attach retains bracketed paste', term.modes.bracketedPasteMode)
+    ok('clipped remote attach retains SGR mouse encoding', snapshot.startsWith(prefix))
+    term.dispose()
+  }
 
   // ------------------------------------------------------------------ pairing with self
   // The bug this test exists for: a device paired with its own id mirrors every one of its

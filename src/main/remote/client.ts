@@ -344,7 +344,9 @@ export class RemoteClient extends EventEmitter {
   }
 
   projects(): Promise<Project[]> {
-    return this.ask<Project[]>({ t: 'projects' })
+    // 30 s, not the 15 s default: the PC answered in 9.8 s and 12.1 s and once not within
+    // 15 s (2026-10-01), and a list that times out used to refuse `pf open --on` outright.
+    return this.ask<Project[]>({ t: 'projects' }, 30_000)
   }
 
   agents(): Promise<AgentInfo[]> {
@@ -582,7 +584,9 @@ export class RemoteClient extends EventEmitter {
       case 'buffer': {
         const id = String(m.id ?? '')
         this.buffers.set(id, new OutBuffer(BUFFER_LIMIT))
-        this.buffers.get(id)!.push(String(m.data ?? '').slice(-BUFFER_LIMIT))
+        // The owner can prepend mode restoration to a full-sized tail. Let OutBuffer
+        // parse that prefix before clipping, or native scrolling is lost on attach.
+        this.buffers.get(id)!.push(String(m.data ?? ''))
         // A reconnect replaces the scrollback wholesale, so the pane has to redraw
         // from it rather than append to what it already had.
         this.emit('reset', joinId(this.peer.id, id))

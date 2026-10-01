@@ -1,8 +1,9 @@
 // Electron's half of "do not sleep while a pane is working". Every judgement is in
 // shared/awake.ts; this file is the power API and the clock.
-import { spawn, execFile, type ChildProcess } from 'node:child_process'
+import { spawn, execFile } from 'node:child_process'
 import { powerSaveBlocker, screen } from 'electron'
 import { AwakeKeeper, type AwakePane } from '../shared/awake'
+import { CaffeinateHolds } from '../shared/caffeinateHold'
 
 /** How often the desk is re-read. A pane going quiet is not worth a faster clock. */
 export const AWAKE_TICK_MS = 30_000
@@ -58,62 +59,30 @@ export function startDisplayAwake(opts: {
   // Two separate holds. `-i` (system) runs whenever a pane is working so background work
   // keeps going; `-d` (display) runs only while someone is actually at the desk, so an
   // empty room gets a black screen instead of a drained battery.
-  let systemCaffeinate: ChildProcess | null = null
-  let displayCaffeinate: ChildProcess | null = null
-
-  function kill(which: 'system' | 'display'): void {
-    const proc = which === 'system' ? systemCaffeinate : displayCaffeinate
-    if (!proc) return
-    try {
-      opts.log?.(`caffeinate ${which} PID ${proc.pid} stopping`)
-      proc.kill('SIGTERM')
-    } catch {
-      // ignore
-    }
-    if (which === 'system') systemCaffeinate = null
-    else displayCaffeinate = null
-  }
+  const holds = new CaffeinateHolds(
+    (flag, watchPid) =>
+      // `-w <pid>` makes caffeinate exit when THAT process exits, and it is the only
+      // cleanup that survives us not getting to run any code. `process.once('exit')`
+      // below covers a graceful quit; it does not fire on SIGKILL, a renderer crash,
+      // or a force-quit, and on POSIX a child is not killed by its parent dying.
+      // Measured on Robert's Mac 2026-08-28: 19 orphaned caffeinate processes, ppid 1,
+      // the oldest 6h, enough on their own to stop the screen ever sleeping.
+      spawn('caffeinate', [flag, '-w', String(watchPid)], { stdio: 'ignore', detached: false }),
+    process.pid,
+    (line) => opts.log?.(line)
+  )
 
   function killCaffeinate(): void {
-    kill('system')
-    kill('display')
+    holds.stopAll()
   }
 
   function spawnCaffeinate(which: 'system' | 'display'): void {
     if (process.platform !== 'darwin') return
-    if ((which === 'system' ? systemCaffeinate : displayCaffeinate) !== null) return
-    // -i prevents idle SYSTEM sleep; -d prevents idle DISPLAY sleep.
-    const flag = which === 'system' ? '-i' : '-d'
-    try {
-      // `-w <pid>` makes caffeinate exit when THAT process exits, and it is the only
-      // cleanup that survives us not getting to run any code. `process.once('exit')`
-      // below covers a graceful quit; it does not fire on SIGKILL, a renderer crash,
-      // or a force-quit, and on POSIX a child is not killed by its parent dying
-      // (`detached: false` sets the process group, nothing more). Measured on Robert's
-      // Mac 2026-08-28: 19 orphaned caffeinate processes, ppid 1, the oldest 6h,
-      // every one of them an `-i`/`-d` pair from a PaneForge that had gone away, all
-      // still asserting PreventUserIdleDisplaySleep — enough on its own to stop the
-      // screen ever sleeping, lid open or shut.
-      const proc = spawn('caffeinate', [flag, '-w', String(process.pid)], {
-        stdio: 'ignore',
-        detached: false
-      })
-      if (which === 'system') systemCaffeinate = proc
-      else displayCaffeinate = proc
-      opts.log?.(`caffeinate ${which} started PID ${proc.pid}`)
-      proc.on('error', (err) => {
-        opts.log?.(`caffeinate ${which} error: ${err.message}`)
-        if (which === 'system') systemCaffeinate = null
-        else displayCaffeinate = null
-      })
-      proc.on('exit', (code) => {
-        opts.log?.(`caffeinate ${which} exited with code ${code}`)
-        if (which === 'system') systemCaffeinate = null
-        else displayCaffeinate = null
-      })
-    } catch (e) {
-      opts.log?.(`caffeinate ${which} spawn failed: ${e}`)
-    }
+    holds.start(which)
+  }
+
+  function kill(which: 'system' | 'display'): void {
+    holds.stop(which)
   }
 
   /** Turn the SCREEN hold on or off. Called after every tick, both ways round. */

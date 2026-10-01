@@ -50,6 +50,7 @@ import { unreadCount } from '@shared/activity'
 import { TextSheet } from './components/TextSheet'
 import { Segmented } from './components/Controls'
 import Elapsed, { formatElapsed, kb, useNow } from './components/Elapsed'
+import Workers from './components/Workers'
 import GitBadge from './components/GitBadge'
 import HistoryDialog from './components/HistoryDialog'
 import ReviewDialog from './components/ReviewDialog'
@@ -108,6 +109,7 @@ import {
   type OffloadCandidate,
   type Verdict
 } from '../../shared/capacity'
+import { reusedLine } from '../../shared/offloadFirst'
 import {
   CLOSE_COUNTDOWN_MS,
   MIN_COUNTDOWN_MS,
@@ -142,6 +144,9 @@ import { deskNow } from '../../shared/away'
 import {
   autoHandoffPlan,
   automaticQueueable,
+  sweepBlockers,
+  sweepLine,
+  sweepLogDue,
   SLEEPS_SOON_LEAD_MS,
   TURNS_BEFORE_MOVE,
   turnsPlan,
@@ -156,7 +161,7 @@ import {
   type AutoPane
 } from '../../shared/autoHandoff'
 import { fleetState, type FleetState } from '../../shared/fleet'
-import { canSleep, keptWords, sleepRefusal } from '../../shared/sleep'
+import { canSleep, sleepRefusal } from '../../shared/sleep'
 import { asleepChip } from '../../shared/sleepWords'
 import type { SleepReason } from '../../shared/types'
 import { idleQuitVerdict } from '../../shared/idlequit'
@@ -419,7 +424,7 @@ function CloseClock({
   const why = sleep
     ? `This machine is low on memory, so this quiet pane is going to sleep in ${words}. Its card and conversation stay - a press wakes it. Press to keep it awake.`
     : onKeep
-      ? `Quiet, so it closes into Review in ${words}. Review keeps its reply, and Continue brings the conversation back. Press to restart its clock.`
+      ? `Quiet, so it closes into Review in ${words}. Review keeps its reply, and Continue brings the conversation back. Press to keep it open until you close it.`
       : `The machine it runs on will close it in ${words} for being idle. Its desk decides that, not this one.`
   // The last minute is RED, on the same argument the card's own glow is: this is the app
   // about to do something to somebody's pane, and the moment it stops being a clock and
@@ -1255,7 +1260,7 @@ export default function App(): JSX.Element {
   // session was simply absent from New Session, with nothing to explain why.
   useEffect(() => {
     api.listProjects().then(setProjects)
-  }, [config?.root, picking])
+  }, [config?.root, config?.archivedClientPaths, picking])
 
   // Re-probed whenever the custom list changes, and on every open of the picker, so
   // a CLI installed while the app was running shows up without a restart.
@@ -1885,9 +1890,15 @@ export default function App(): JSX.Element {
           `${failed.length} of ${rows.length} folders could not be opened. ` +
             failed.map((r) => `${r.cwd.split(/[\\/]/).pop()}: ${r.why}`).join('; ')
         )
+      // A client row that went to the chat already open there says so: it is the one press
+      // that otherwise did nothing visible but close the dialog (`reusedLine`).
+      const reused = rows.filter((r) => (r.session as { startAction?: string } | undefined)?.startAction === 'send')
+      if (reused.length && !failed.length) flash(reusedLine(reused[0].session?.title ?? ''))
       // A launch that quietly moved folder has to say so once - the pane header and
       // the sidebar chip show where it landed, but only if you go looking.
-      const noted = started.filter((s) => s.laneNote)
+      // Not a reused chat: its `laneNote` was said when it opened, and flashing it again here
+      // replaced the `reusedLine` above with old news.
+      const noted = started.filter((s) => s.laneNote && !reused.some((r) => r.session?.id === s.id))
       if (noted.length === 1) {
         const s = noted[0]
         flash(s.lane ? `${s.cwd.split(/[\\/]/).pop()} - ${s.laneNote}` : (s.laneNote as string))
@@ -2557,6 +2568,14 @@ export default function App(): JSX.Element {
    */
   const handoffBlocked = useRef<Record<string, number>>({})
   const handoffSweeping = useRef(false)
+  // The last `sweep:` line written to handoff.log and when - see `sweepLogDue`.
+  const sweepNoted = useRef<{ text: string; at: number } | null>(null)
+  const noteSweep = useCallback((text: string): void => {
+    const at = Date.now()
+    if (!sweepLogDue(sweepNoted.current, text, at)) return
+    sweepNoted.current = { text, at }
+    api.logHandoff(text)
+  }, [])
 
   /**
    * Which folders' code could reach another machine, keyed by folder.
@@ -2729,7 +2748,9 @@ export default function App(): JSX.Element {
       panes: AutoPane[],
       make: (candidates: OffloadCandidate[], now: number) => AutoHandoff[],
       why: string,
-      cooldownMinutes: number
+      cooldownMinutes: number,
+      // Said when the sweep ends without arming anything, for the `sweep:` line.
+      empty?: (verdict: string, candidates: OffloadCandidate[]) => void
     ) => {
       if (handoffSweeping.current) return
       handoffSweeping.current = true
@@ -2747,7 +2768,10 @@ export default function App(): JSX.Element {
         try {
           const state = await api.remoteState()
           const online = state.peers.filter((p) => p.status === 'online')
-          if (!online.length) return
+          if (!online.length) {
+            empty?.('no other machine online', [])
+            return
+          }
           const candidates = await Promise.all(
             online.map(async (p) => ({
               device: p.id,
@@ -2759,7 +2783,10 @@ export default function App(): JSX.Element {
             }))
           )
           const plan = make(candidates, Date.now())
-          if (!plan.length) return
+          if (!plan.length) {
+            empty?.('no plan', candidates)
+            return
+          }
           // Nothing moves silently. The loop that used to run the moves here is `doMove`
           // now, behind the same countdown a close gets: named pane, named machine, and
           // `Keep it here` on it.
@@ -2782,9 +2809,12 @@ export default function App(): JSX.Element {
     // `ok` too - and it is then the only sweep that will, since both of the others are
     // readings about a machine in trouble.
     const over = Math.max(0, capacity.over ?? 0)
-    if (!over && capacity.level === 'ok') return
     const now = Date.now()
     const panes = handoffPanes()
+    // Every silent return below says why in handoff.log (`sweep:` lines, deduplicated).
+    const say = (verdict: string, peers?: OffloadCandidate[]): void =>
+      noteSweep(sweepLine(verdict, capacity.level, over, sweepBlockers(panes, cfg, handoffBlocked.current, now, over, peers)))
+    if (!over && capacity.level === 'ok') return say('desk is fine, nothing to give back')
     // The same eligibility the plan applies, asked here first so the peers are not called
     // over the link to find out there was nothing to move. Two shapes, because the budget
     // rule drops the idle wait and the on-screen refusal and takes busy panes as well.
@@ -2801,14 +2831,15 @@ export default function App(): JSX.Element {
         now - quietSince(p) >= Math.max(0, cfg.minIdleMinutes) * 60_000
       )
     })
-    if (!worthAsking) return
+    if (!worthAsking) return say('nothing eligible')
     runHandoffs(
       panes,
       (candidates, at) => autoHandoffPlan(panes, capacity, candidates, cfg, handoffBlocked.current, at),
       over ? `budget: ${over} pane(s) past ${cfg.keepLocal}` : `capacity: ${capacity.level}`,
-      cfg.cooldownMinutes
+      cfg.cooldownMinutes,
+      (verdict, peers) => say(verdict, peers)
     )
-  }, [capacity, handoffPanes, runHandoffs, config?.autoHandoff])
+  }, [capacity, handoffPanes, runHandoffs, noteSweep, config?.autoHandoff])
 
   // Twice: on a reading changing, and on a clock. A desk that is full and quiet emits no
   // session events at all - which is exactly the desk this exists for, and the one a
@@ -4875,19 +4906,42 @@ export default function App(): JSX.Element {
     [doClose, doMove, dropSoon]
   )
 
+  const [savingPins, setSavingPins] = useState(false)
+  const savingPinsRef = useRef(false)
+  const savePins = useCallback(async (ids: string[], keep: boolean) => {
+    if (savingPinsRef.current) return
+    savingPinsRef.current = true
+    setSavingPins(true)
+    try {
+      const current = await api.getConfig()
+      const next = new Set(current.pinnedPanes ?? [])
+      const localIds = new Set(sessions.filter(s => !s.remote && !s.id.startsWith('@')).map(s => s.id))
+      for (const id of ids) if (localIds.has(id)) keep ? next.add(id) : next.delete(id)
+      const saved = await api.setConfig({ pinnedPanes: [...next] })
+      pinsWritten.current = [...(saved.pinnedPanes ?? [])].sort().join(',')
+      setPinned(Object.fromEntries((saved.pinnedPanes ?? []).map(id => [id, true as const])))
+      setConfigState(saved)
+      for (const session of sessions.filter(s => s.remote && ids.includes(s.id))) {
+        const ok = await api.setRemoteKeepOpen(session.id, keep)
+        if (!ok) throw new Error(`Could not save on ${session.remote!.name}`)
+      }
+      if (keep) {
+        setCloseSoons(list => list.filter(plan => !plan.ids.some(id => ids.includes(id))))
+      }
+    } catch (error) {
+      flash(`Could not save keep-open preference: ${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      savingPinsRef.current = false
+      setSavingPins(false)
+    }
+  }, [sessions, flash])
+
   const keepOpen = useCallback((ids: string[]) => {
     // The third way an `armed` line ends without a close, and the only one somebody chose.
     skipClose(ids, 'you kept it open')
-    // Keep RESTARTS the pane's own quiet clock, nothing more: the pane is left alone for
-    // one close window and is then on the ordinary clock like any other. It used to be an
-    // hour-long hold that grew with each press and wore its own `kept` chip; Robert,
-    // 2026-09-25, "is it even needed we running things through review" - a closed pane is
-    // one Continue away in Review, so there is nothing an hour's hold protects.
-    const now = Date.now()
-    const hold = Math.max(1, configRef.current?.reclaim?.idleCloseMinutes || IDLE_CLOSE_MINUTES) * 60_000
-    for (const id of ids) {
-      keptUntil.current[id] = now + hold
-      api.logReclaim({ event: 'kept', id, name: paneWordRef.current(id), minutes: Math.round(hold / 60_000) })
+    // Keep is durable. A declined move only keeps its location; closing cards pin it.
+    if (!closeSoonsRef.current.some(c => c.move && c.ids.some(id => ids.includes(id)))) {
+      void savePins(ids, true)
     }
     // A move called off needs the handoff sweeps' OWN hold as well, or the next minute
     // tick arms the identical countdown again - which is the shape that gets a feature
@@ -4896,7 +4950,7 @@ export default function App(): JSX.Element {
     // for the life of this window: the person has said where that pane works, and the
     // Handoff button is theirs whenever they change their mind (Robert 2026-09-10: "only
     // offer it once for the move over if i cancel it then i can just move it myself at a
-    // later time"). The hold above is for the CLOSE clock only.
+    // later time").
     if (closeSoonsRef.current.some((c) => c.move && c.ids.some((id) => ids.includes(id)))) {
       for (const id of ids) {
         handoffBlocked.current[id] = Number.POSITIVE_INFINITY
@@ -4907,10 +4961,9 @@ export default function App(): JSX.Element {
     // Only the card that named these panes. Answering one of two cards leaves the other
     // counting, which is the whole point of there being two of them.
     setCloseSoons((list) => list.filter((c) => !c.ids.some((id) => ids.includes(id))))
-    // `keptUntil` is a ref, so nothing about this reaches the effect that publishes the
-    // deadline. Without this the chip goes on counting down to the close Keep just moved.
+    // Remove the cancelled countdown from the published pane state too.
     publishClosingRef.current()
-  }, [])
+  }, [savePins])
 
   /**
    * The queued-move countdown's own Keep/Move, checked first because it is a different
@@ -4985,47 +5038,10 @@ export default function App(): JSX.Element {
     publishClosingRef.current()
   }, [])
 
-  const [savingPins, setSavingPins] = useState(false)
-  const savingPinsRef = useRef(false)
-  const savePins = useCallback(async (ids: string[], keep: boolean) => {
-    if (savingPinsRef.current) return
-    savingPinsRef.current = true
-    setSavingPins(true)
-    try {
-      const current = await api.getConfig()
-      const next = new Set(current.pinnedPanes ?? [])
-      const localIds = new Set(sessions.filter(s => !s.remote && !s.id.startsWith('@')).map(s => s.id))
-      for (const id of ids) if (localIds.has(id)) keep ? next.add(id) : next.delete(id)
-      const saved = await api.setConfig({ pinnedPanes: [...next] })
-      pinsWritten.current = [...(saved.pinnedPanes ?? [])].sort().join(',')
-      setPinned(Object.fromEntries((saved.pinnedPanes ?? []).map(id => [id, true as const])))
-      setConfigState(saved)
-      if (keep) {
-        setCloseSoons(list => list.filter(plan => !plan.ids.some(id => ids.includes(id))))
-      }
-    } catch (error) {
-      flash(`Could not save keep-open preference: ${error instanceof Error ? error.message : String(error)}`)
-    } finally {
-      savingPinsRef.current = false
-      setSavingPins(false)
-    }
-  }, [sessions, flash])
   const togglePin = useCallback((id: string) => {
-    const session = sessions.find((s) => s.id === id)
-    if (!session?.remote) {
-      void savePins([id], !pinnedRef.current[id])
-      return
-    }
-    if (savingPinsRef.current) return
-    savingPinsRef.current = true
-    setSavingPins(true)
-    void api.setRemoteKeepOpen(id, !session.keepOpen)
-      .catch((error) => flash(`Could not change Keep open on ${session.remote!.name}: ${error instanceof Error ? error.message : String(error)}`))
-      .finally(() => {
-        savingPinsRef.current = false
-        setSavingPins(false)
-      })
-  }, [sessions, savePins, flash])
+    const session = sessions.find(s => s.id === id)
+    void savePins([id], !(session?.remote ? session.keepOpen : pinnedRef.current[id]))
+  }, [sessions, savePins])
 
   // What is serving on this machine, for the mascot's "what dev servers are running" and
   // for stopping one by name. Held rather than polled: the reading costs a whole process
@@ -5402,52 +5418,28 @@ export default function App(): JSX.Element {
                           anybody: how long is left, and the press that stops it. Never
                           beside a question or a move - a pane holding either is refused by
                           `idleCloseAt` outright, so the three can never be true at once. */}
-                      {alarmAt(s.id) ?? s.closingAt ? (
+                      {!(s.remote ? s.keepOpen : pinned[s.id]) && (s.doneClosingAt ?? alarmAt(s.id) ?? s.closingAt) ? (
                         // While the 15s countdown card is up, the CHIP shows that card's
                         // deadline and not the idle clock's. They are two readings of one
                         // decision and they disagreed on screen - the card counted down
                         // while the chip sat at `closes 0:01` (reported 2026-08-28). The
                         // armed countdown is the one that is about to act, so it wins.
                         <CloseClock
-                          at={alarmAt(s.id) ?? (s.closingAt as number)}
+                          at={s.doneClosingAt ?? alarmAt(s.id) ?? (s.closingAt as number)}
                           // A countdown card naming this pane may be a plan to SLEEP it,
                           // and the chip says which.
                           sleep={alarmSleeps(s.id)}
                           onKeep={() => keepOpen([s.id])}
                         />
-                      ) : (s.remote ? s.keepOpen : pinned[s.id]) ? (
-                        // A switch with no reading is a switch nobody can tell they pressed:
-                        // pinning a pane removes the only thing on the card that was about
-                        // the idle clock, so it takes that place rather than leaving a gap.
-                        // A pin, not a `kept open` box: the word cost a whole chip on
-                        // every kept card for a fact that never changes while you look.
-                        <button
-                          type="button"
-                          className="row-kept"
-                          aria-label={keptWords(Boolean(s.asleep))}
-                          title={
-                            `${keptWords(Boolean(s.asleep))}: ` +
-                            (s.asleep
-                              ? 'this pane is never closed for being idle - its card stays even while it sleeps.'
-                              : 'this pane is never closed for being idle.') +
-                            ' Press to put it back on the clock.'
-                          }
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            togglePin(s.id)
-                          }}
-                        >
-                          <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
-                            <path d="M6 2h4l-.6 4.2L12 8.6V10H8.7v4L8 15l-.7-1v-4H4V8.6l2.6-2.4z" fill="currentColor" />
-                          </svg>
-                        </button>
                       ) : null}
                       {/* A pane on its way out says so, and says it here for the same reason
                           the chip above is here: the sub-line has no room and this is
                           transient - it takes the clock's place for the few seconds a move
                           lasts, or for as long as a queued pane's turn runs. It cannot appear
                           beside "asks you": a pane holding a question is never moved. */}
-                      {s.handingOff ? (
+                      {/* Queued agent copies keep their normal status; cancellation is
+                          available from the session menu without a persistent header tag. */}
+                      {s.handingOff && (!s.handoffQueuedAt || s.agent === 'shell') ? (
                         s.handoffQueuedAt ? (
                           // Waiting for its own turn to end, which is as long as the agent
                           // takes. Drawn as a clock rather than as the word `moving`: a
@@ -5463,17 +5455,13 @@ export default function App(): JSX.Element {
                           <button
                             type="button"
                             className="chip handoff-queued"
-                            title={s.agent !== 'shell' ? 'Opens a copy on the paired device after this turn. Press to cancel.' : 'Waiting for this turn to end. Press to keep it here.'}
+                            title="Waiting for this turn to end. Press to keep it here."
                             onClick={(e) => {
                               e.stopPropagation()
                               stopMove(s)
                             }}
                           >
-                            {s.agent !== 'shell' ? (
-                              <>copy opens when done <Elapsed className="handoff-elapsed" since={s.handoffQueuedAt} title="Queued for handoff" /></>
-                            ) : (
-                              <>moves when done <Elapsed className="handoff-elapsed" since={s.handoffQueuedAt} title="Queued for handoff" /></>
-                            )}
+                            moves when done <Elapsed className="handoff-elapsed" since={s.handoffQueuedAt} title="Queued for handoff" />
                           </button>
                         ) : (
                           // Which half is running and for how long: a move is a repo push
@@ -5592,7 +5580,7 @@ export default function App(): JSX.Element {
                     const model = s.model ? agentModelLabel(spec, s.model) : ''
                     return (
                       <span className="meta row-agent" title={(spec?.label ?? s.agent) + (s.model ? ` · ${s.model}` : '')}>
-                        {model || (spec?.label ?? s.agent)}
+                        {s.agent === 'codex' ? 'Lead: ' : ''}{model || (spec?.label ?? s.agent)}
                         {s.effort ? ` ${effortChip(s.effort)}${s.effort.pending ? '…' : ''}` : ''}
                       </span>
                     )
@@ -5632,6 +5620,16 @@ export default function App(): JSX.Element {
                         )
                       })()}
                 </div>
+                <Workers session={s} spec={agents.find(a => a.id === s.agent)} />
+                <label className="session-keep-open" title="Keep open until you close it"
+                  onClick={e => e.stopPropagation()} onPointerDown={e => e.stopPropagation()}>
+                  <input type="checkbox" className="keep-checkbox"
+                    aria-label={`Keep ${s.title} open`}
+                    checked={Boolean(s.remote ? s.keepOpen : pinned[s.id])}
+                    disabled={savingPins}
+                    onChange={() => togglePin(s.id)} />
+                  <span>Keep open</span>
+                </label>
               </div>
               {s.status === 'exited' && (
                 <button
@@ -5846,7 +5844,7 @@ export default function App(): JSX.Element {
             chips on the session cards below. Renders nothing without a lane-using repo. */}
         <LaneStrip boards={laneBoards} sessions={sessions} onFocus={setActiveId} />
 
-        <div className="section">
+        <div className="section sessions-section">
           {/* "Running" read as "these are all busy" on a list of idle panes. */}
           <span className="section-title">
             Sessions ({shownSessions.length}{shownSessions.length === sessions.length ? '' : `/${sessions.length}`})
@@ -5854,6 +5852,13 @@ export default function App(): JSX.Element {
           {/* Badges and the empty-everything button travel together, hard right. One
               wrapper rather than three margin rules: whichever of them are showing, the
               rest keep their place. */}
+          <label className="keep-all" title="Select all sessions to keep open, including sessions hidden by the filter">
+            <input type="checkbox" className="keep-checkbox" aria-label="Keep all sessions open" disabled={savingPins || !sessions.length}
+              ref={el => { if (el) el.indeterminate = sessions.some(s => s.remote ? s.keepOpen : pinned[s.id]) && !sessions.every(s => s.remote ? s.keepOpen : pinned[s.id]) }}
+              checked={sessions.length > 0 && sessions.every(s => s.remote ? s.keepOpen : pinned[s.id])}
+              onChange={e => void savePins(sessions.map(s => s.id), e.target.checked)} />
+            <span>Keep all open</span>
+          </label>
           <span className="section-tail">
             {/* The desk's total, beside the pane count it belongs to: panes plus the app
                 itself, which is the figure that answers "what would quitting give me
@@ -6601,6 +6606,7 @@ export default function App(): JSX.Element {
               </span>
               </>)}
             </div>
+            <Workers session={s} spec={agents.find(a => a.id === s.agent)} />
             {s.screen ? (
               <ScreenPane
                 session={s}
@@ -6864,6 +6870,9 @@ export default function App(): JSX.Element {
         <ReviewDialog
           onHistory={() => { setReview(false); setHistory(true) }}
           onReopen={(r) => {
+            // A report copied from the other machine: its conversation lives over there, and
+            // resuming its id here would open a chat this desk has no transcript for.
+            if (r.origin) return
             setReview(false)
             start([{ cwd: r.cwd, title: r.title.replace(/ \(closed session\)$/, ''), agent: r.provider as Agent, resume: true, resumeId: r.nativeSessionId, where: 'local' }])
           }}
@@ -7182,10 +7191,10 @@ export default function App(): JSX.Element {
               {
                 key: 'pin',
                 disabled: savingPins,
-                label: (s.remote ? s.keepOpen : pinned[s.id]) ? 'Let it close when idle' : 'Keep this pane open',
+                label: (s.remote ? s.keepOpen : pinned[s.id]) ? 'Let it close by itself' : 'Keep this pane open',
                 hint: (s.remote ? s.keepOpen : pinned[s.id])
-                  ? 'the idle clocks may sleep or close it again'
-                  : 'no idle clock sleeps or closes it - only a machine short of memory does'
+                  ? 'it may close into Review again once it is finished or idle'
+                  : 'it stays until you close it, even after it finishes - a machine short of memory may only put it to sleep'
                 ,
                 run: () => togglePin(s.id)
               },
@@ -7514,6 +7523,13 @@ export default function App(): JSX.Element {
           hand already is. Order is urgency - a countdown that is about to take something
           away sits nearest the corner, a tip sits furthest from it. */}
       <div className={'corner-stack' + (petHere ? ' beside-pet' : '')}>
+      {sessions.filter(s => s.doneClosingAt && !(s.remote ? s.keepOpen : pinned[s.id])).map(s => (
+        <div className="autoclear-card" role="status" key={`review-${s.id}`}>
+          <span>{s.title} will move to Review. Reopen it there to continue.</span>
+          <CloseClock at={s.doneClosingAt!} onKeep={() => keepOpen([s.id])} />
+          <button className="autoclear-keep" onClick={() => keepOpen([s.id])}>Keep open</button>
+        </div>
+      ))}
       <AutoClearToast
         panes={sessions}
         numberOf={(id) => sessions.findIndex((x) => x.id === id) + 1}

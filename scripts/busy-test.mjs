@@ -12,7 +12,9 @@
 //
 //   node scripts/busy-test.mjs
 
-import { buildSync } from 'esbuild'
+import { buildSync, transformSync } from 'esbuild'
+import { runInNewContext } from 'node:vm'
+import { strict as assert } from 'node:assert'
 import { mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
@@ -331,6 +333,48 @@ for (const [frame, want] of reasons) {
 // assertion because the timing lives in a React effect a node test cannot mount, and a
 // green rules test over a pane that reports the first frame it sees proves nothing.
 const pane = readFileSync(join(root, 'src/renderer/src/components/TerminalPane.tsx'), 'utf8')
+// Run the actual renderer transition code with a controlled clock. Parser fixtures
+// alone missed the brief missing-footer frames that moved live sessions between groups.
+const transitionSource = pane.slice(pane.indexOf('    let busy = false'), pane.indexOf('\n    /**\n     * The link to the other device', pane.indexOf('    let busy = false')))
+let at = 100_000
+let frame = 'Esc to interrupt · 12s'
+const reports = []
+let armed = 0
+const tick = runInNewContext(transformSync(`${transitionSource}\ncheckBusy`, { loader: 'ts' }).code, {
+  Date: { now: () => at },
+  window: { clearTimeout() {}, setTimeout(_fn, ms) { armed = ms; return 1 } },
+  sawOutput: true, mirrorRef: { current: false }, autoFixRef: { current: false },
+  sessionId: 'synthetic-turn', t: { cols: 120, rows: 30, buffer: { active: { type: 'normal', baseY: 0, length: 30 } } },
+  BUSY_ROWS: 8, ASK_ROWS: 30, BUSY_RESTATE: 120_000,
+  screenText: () => frame,
+  busyEvidence: (text) => { const reason = busyReason(text); return reason ? { reason } : null },
+  staleSignature: () => '', dueForRepaint: () => false, readsElapsedMs,
+  askSignature: (text) => text.includes('Enter to select') ? 'permission' : '',
+  api: { setBusy: (_id, busy) => reports.push(busy), redraw() {} }
+})
+tick()
+assert.deepEqual(reports, [true], 'running starts immediately')
+frame = 'partial answer\n› Ask Codex to do anything'
+at += 100; tick()
+assert.ok(armed > 0, 'a silent completion gets a scheduled confirming read')
+at += 1300; tick()
+assert.deepEqual(reports, [true], 'the observed short gap does not finish the turn')
+at += 4000; tick()
+assert.deepEqual(reports, [true], 'a brief tool pause stays in Running')
+frame = 'Esc to interrupt · 18s'; tick()
+assert.deepEqual(reports, [true], 'resuming does not create a new turn')
+frame = 'answer complete\n› Ask Codex to do anything'
+at += 100; tick()
+at += 7999; tick()
+assert.deepEqual(reports, [true], 'a new pause gets its own full grace')
+at += 1; tick()
+assert.deepEqual(reports, [true, false], 'a sustained end is reported once')
+tick()
+assert.deepEqual(reports, [true, false], 'idle does not repeatedly finish')
+frame = 'Esc to interrupt · 1s'; at += 1; tick()
+frame = 'Enter to select · ↑/↓ to navigate · Esc to cancel'; at += 1; tick()
+assert.deepEqual(reports, [true, false, true, false], 'a real question bypasses the grace')
+console.log('busy transitions: 9 checks passed')
 for (const [needle, why] of [
   ["reason === 'counter'", 'the counter-only reading is singled out'],
   ['settle2 = window.setTimeout(checkBusy, BUSY_SETTLE_MS', 'the confirming tick is ARMED, not left to output that never comes']
@@ -353,5 +397,8 @@ const rc = '❯ \n───────\n⏵⏵ bypass permissions on (shift+tab
 if (readsBusy(rc)) { console.error('rc connecting must not read as busy'); process.exit(1) }
 if (!composerHeld(rc)) { console.error('rc connecting must hold the composer'); process.exit(1) }
 if (composerHeld('❯ \n5h 42% · wk 38% · Fable 41%/rc\n⏵⏵ bypass permissions on')) { console.error('a connected /rc badge is not a hold'); process.exit(1) }
-console.log('composer hold: 3 ok')
+const review = '❯ [Pasted text #1 +7 lines]\nRemoved 4 invisible characters · review and press Enter to send'
+if (!composerHeld(review) || readsBusy(review)) { console.error('an altered paste must hold the composer without claiming work'); process.exit(1) }
+if (composerHeld('❯ \nReady to send')) { console.error('a normal idle composer is not a review hold'); process.exit(1) }
+console.log('composer hold: 5 ok')
 console.log(`\nall ${total} frames read correctly`)
