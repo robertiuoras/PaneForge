@@ -973,6 +973,44 @@ checks += 3
   check('an agent that outlasts the wait: given up with the reason', log2.some((l) => /gave up waiting after \d+ min - a background agent \(Visual review Design 4 pages\) is still running, so it stays here/.test(l)), log2)
   hq2.stop()
 
+  // A queued pane the app still owes a prompt - an automatic clear counting down, or its
+  // resume prompt - waits and starts no countdown, exactly like a running agent.
+  // s60-mulljm2l (2026-09-28 19:01Z) moved inside its clear's countdown and reached the PC
+  // un-cleared.
+  const log3 = []
+  const sent3 = []
+  let clock3 = NOW
+  const owedPane = [{ id: 'clearing', title: 'PaneForge', owedPrompt: true }]
+  const hq3 = new HandoffQueue({
+    list: () => owedPane,
+    busy: () => false,
+    send: async (id) => {
+      sent3.push(id)
+      return [{ id, ok: true }]
+    },
+    mark: () => {},
+    deviceName: () => 'PC',
+    config: () => DEFAULT_AUTO_HANDOFF,
+    log: (line) => log3.push(line),
+    now: () => clock3,
+    soon: (id, _device, at) => log3.push(`soon ${id} ${at === null ? 'null' : 'at'}`)
+  })
+  hq3.add('clearing', 'pc')
+  hq3.tick()
+  clock3 += 30_000
+  hq3.tick()
+  eq('the queue does not move a pane owed a prompt', sent3, [])
+  eq('...starts no countdown for it', log3.filter((l) => l === 'soon clearing at').length, 0)
+  eq('...keeps it queued', hq3.pending().map((p) => p.id), ['clearing'])
+  eq('...and says why in handoff.log, once', log3.filter((l) => l.includes('handoff: clearing still waiting - an automatic clear')).length, 1)
+  owedPane[0] = { id: 'clearing', title: 'PaneForge' }
+  hq3.tick()
+  eq('owed nothing and idle: a countdown, not a move', sent3, [])
+  clock3 += 16_000
+  hq3.tick()
+  eq('...then the move', sent3, ['clearing'])
+  hq3.stop()
+
   // Wiring the renderer and main must keep: the reading reaches every rung.
   const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
   assert.match(app, /subagent: s\.subagent,/, 'handoffPanes carries Session.subagent onto AutoPane')

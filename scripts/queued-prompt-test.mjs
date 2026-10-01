@@ -92,6 +92,25 @@ t('a pane owing nothing carries nothing', () => {
   assert.deepEqual(carryOver(load(), 'sX', 'sY').prompts, [])
 })
 
+t('typed delivery identity and paste time survive disk reload and restore re-keying', () => {
+  const key = accept('typed-old', 'first\n  second\n\nlast', 9)
+  const row = load()[key]
+  row.typed = { at: 12345, conversationId: 'original-native-conversation', proof: 'receipt' }
+  save(noteQueued(load(), row))
+  const moved = carryOver(load(), 'typed-old', 'typed-new')
+  save(moved.store)
+  assert.deepEqual(owedTo(load(), 'typed-new')[0].typed, row.typed)
+  assert.equal(owedTo(load(), 'typed-new')[0].text, row.text)
+})
+
+t('malformed typed metadata stays uncertain rather than becoming replayable', () => {
+  for (const typed of [null, {}, { at: NaN }, { at: -1 }]) {
+    const rows = readStore({ k: { id: 's', text: 'held', at: 1, typed } })
+    assert.equal(rows.k.typed.at, 0)
+    assert.equal(rows.k.typed.proof, 'receipt')
+  }
+})
+
 // ---------------------------------------------------------------------------
 // A half-written or hand-edited file must never stop the app, and must never invent a
 // prompt: an unreadable ledger reads as empty, and a row with no text is not a prompt.

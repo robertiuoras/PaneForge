@@ -17,7 +17,7 @@
 
 import { buildSync } from 'esbuild'
 import { strict as assert } from 'node:assert'
-import { mkdirSync, rmSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -167,5 +167,66 @@ eq('with nothing typed', emptyOut?.text, '')
 
 // No bytes at all is a pane that has printed nothing - nothing to read, and saying so.
 eq('an empty stream is refused', await composerOf('', cols, rows), null)
+
+// Native Codex 0.159: alternate screen, bold marker, dim hint, caret before the hint.
+// The literal alone must never erase a genuine draft, including one with Home pressed.
+const hint = 'Ask Codex to do anything'
+const codexPaint = (text, style, caret = 2) =>
+  `${ESC}[?1049h${ESC}[2J${ESC}[56;1H${ESC}[48;2;213;231;208m${ESC}[1m›${ESC}[22m ${style}${text}${ESC}[0m${ESC}[58;1H  GPT-6.1-Sol · 50% left${ESC}[56;${caret + 1}H`
+const readCodex = raw => composerOf(raw, 73, 59, 'codex')
+eq('native dim Codex hint with caret before it is an empty composer',
+  (await readCodex(codexPaint(hint, `${ESC}[2m`)))?.text, '')
+eq('the same words typed normally remain a draft even with the caret at the start',
+  (await readCodex(codexPaint(hint, '')))?.text, hint)
+eq('dim same-string text with a caret after it is preserved conservatively',
+  (await readCodex(codexPaint(hint, `${ESC}[2m`, hint.length + 2)))?.text, hint)
+eq('partially dim same-string text is not treated as a placeholder',
+  (await readCodex(codexPaint(`A${ESC}[22m${hint.slice(1)}`, `${ESC}[2m`)))?.text, hint)
+eq('other dim text at the start remains a draft',
+  (await readCodex(codexPaint('Ask Codex to do anything else', `${ESC}[2m`)))?.text, 'Ask Codex to do anything else')
+const repaintedHint = codexPaint(hint, `${ESC}[2m`) + codexPaint(hint, '')
+eq('regular draft repaint replaces the earlier identical dim hint', (await readCodex(repaintedHint))?.text, hint)
+
+// Exercise the renderer's actual reader: Codex now keeps its native composer in
+// the alternate screen. A blanket alternate-screen refusal hid unsent drafts.
+const promptFile = join(work, 'prompt.bundle.cjs')
+buildSync({ absWorkingDir: root, entryPoints: ['src/shared/promptBox.ts'], bundle: true, format: 'cjs', platform: 'node', outfile: promptFile })
+const { composerText } = require_(promptFile)
+const paneSource = readFileSync(join(root, 'src/renderer/src/components/TerminalPane.tsx'), 'utf8')
+const start = paneSource.indexOf('paneComposer.set(sessionId, () => {')
+const end = paneSource.indexOf('\n    paneRepair.set', start)
+assert.ok(start > 0 && end > start, 'renderer composer reader is present')
+const register = new Function('t', 'agent', 'composerText', 'paneComposer', 'sessionId', paneSource.slice(start, end))
+const terminal = new Terminal({ cols, rows, allowProposedApi: true })
+await new Promise(resolve => terminal.write(`${ESC}[?1049h${ESC}[5;1H› keep this unsent draft${ESC}[7;1H  gpt-6.1-sol · 50% left${ESC}[5;25H`, resolve))
+const readers = new Map()
+register(terminal, 'codex', composerText, readers, 'native')
+eq('native alternate-screen Codex draft is readable', readers.get('native')(), 'keep this unsent draft')
+eq('reading preserves the native screen', terminal.buffer.active.type, 'alternate')
+register(terminal, 'claude', composerText, readers, 'other')
+eq('other alternate-screen applications are still refused', readers.get('other')(), null)
+terminal.dispose()
+
+// sessions:draft prefers this live renderer reader over main's replay reader. Exercise
+// the same native hint fixtures through its actual registration, not a second parser.
+const liveCodex = new Terminal({ cols: 73, rows: 59, allowProposedApi: true })
+register(liveCodex, 'codex', composerText, readers, 'hint')
+const liveRead = async raw => {
+  await new Promise(resolve => liveCodex.write(raw, resolve))
+  return readers.get('hint')()
+}
+eq('live screen reads the native dim hint as an empty composer',
+  await liveRead(codexPaint(hint, `${ESC}[2m`)), '')
+eq('live screen preserves identical normally typed words with Home pressed',
+  await liveRead(codexPaint(hint, '')), hint)
+eq('live screen preserves dim same-string text with the caret after it',
+  await liveRead(codexPaint(hint, `${ESC}[2m`, hint.length + 2)), hint)
+eq('live screen preserves partially dim same-string text',
+  await liveRead(codexPaint(`A${ESC}[22m${hint.slice(1)}`, `${ESC}[2m`)), hint)
+eq('live screen preserves other dim text with the caret at the start',
+  await liveRead(codexPaint('Ask Codex to do anything else', `${ESC}[2m`)), 'Ask Codex to do anything else')
+eq('live screen reads a regular repaint of the former hint as a real draft',
+  await liveRead(repaintedHint), hint)
+liveCodex.dispose()
 
 console.log(`composer read: ${checks} checks passed`)

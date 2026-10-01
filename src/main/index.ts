@@ -1,4 +1,5 @@
 import { appendLog, flushLogsOnExit } from './logWrite'
+import { measureMainTask } from './mainPerformance'
 import { profileRenderer, reloadRenderer } from './renderCost'
 import { execFile } from 'node:child_process'
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -25,9 +26,10 @@ import { SessionManager, setSilenceAlert, type WriteOrigin } from './sessions'
 import { acknowledgeReview, listReviews, noteReviewClose, recordReview, reviewCloseArmAction, reviewOpenTarget, sendReviewNotice, setReviewDesk, type ReviewCloseArm } from './reviews'
 import { ComputeReviews, computeResult } from './computeReviews'
 import { mayNotify, noticesDir, readReply, sweepDoneClose, type DoneCloseDeps } from './doneClose'
-import { doneQuietMs, doneReviewId, finishedCard } from '../shared/doneClose'
+import { doneQuietMs, doneReviewId } from '../shared/doneClose'
 import { FinishedDigest, summaryOf } from '../shared/finishedDigest'
 import { DataPump } from './dataPump'
+import { freshReplay } from '../shared/freshReplay'
 import { DiscordPresence } from './discordPresence'
 import { countPresence, needsTokens, newerSettings, wholeDesk, type PresenceCounts } from '../shared/discordRpc'
 import { tokenCounting, tokenSpend, tokenSpendFresh } from './tokenUsage'
@@ -145,7 +147,7 @@ import {
 import { codexContextUsage, receivedContinuation } from './contextUsage'
 import { rolloutTurn } from './effort'
 import { startContinuation } from './continuation'
-import { handoffCandidates, personOwnedSteps } from '../shared/handoffSteps'
+import { handoffCandidates } from '../shared/handoffSteps'
 import { receiveHandoff, sendHandoff, shareable, type LandedCopy } from './handoff'
 import { RESUME_CONFIRM_MS } from '../shared/resumeCheck'
 import { briefAnchor, clearCommandFor, hasFreshPaneHandoff, readAsk as readAutoClearAsk, resumeBrief } from '../shared/autoclear'
@@ -1189,12 +1191,12 @@ function raiseAttention(s: Session): void {
 const remote = new Remote({
   list: () => localSessions(),
   buffer: (id) => manager.buffer(id),
-  log: (id, bytes) => logTail(id, bytes),
+  log: (id, bytes) => freshReplay(history.tail(id, bytes), manager.buffer(id)),
   // A person typed this on the paired machine's mirror, and this desk never saw the
   // keystrokes - so it needs telling on `pane:typed`, exactly as a phone's line does.
   // Without an origin here it defaulted to `desk`, and a pane driven from another
   // machine got no rail tag and no row in the prompt archive.
-  write: (id, data) => manager.write(id, data, 'phone'),
+  write: (id, data, terminalReply) => manager.write(id, data, 'phone', terminalReply),
   onTyped: (cb) => {
     manager.on('submitted', cb)
     return () => manager.off('submitted', cb)
@@ -1300,10 +1302,8 @@ const screenViews = new ScreenViews(
 screenViews.on('sessions', () => send('sessions:changed', allSessions()))
 remote.on('screen', (e) => screenViews.onRemote(e))
 
-const reviewClosing = new Map<string, { turn: number; at: number }>()
-
 function localSessions(): Session[] {
-  return manager.list().map(s => ({ ...s, keepOpen: keptOpen(s.id), reviewCloseAt: reviewClosing.get(s.id)?.at }))
+  return manager.list().map(s => ({ ...s, keepOpen: keptOpen(s.id) }))
 }
 
 /** Local panes and mirrored ones, as one list. */
@@ -1448,6 +1448,8 @@ ipcMain.handle('owner:stats', (e) => {
 ipcMain.on('pane:tell', (_e, ref: string, text: string) => {
   manager.tellPane(String(ref), String(text))
 })
+ipcMain.handle('pane:answer', (_e, req) => manager.answerPane(req))
+ipcMain.handle('pane:answerStatus', (_e, req) => manager.answerStatus(req))
 
 ipcMain.handle('devs:list', async (_e, panes: Array<{ id: string; pane: number; name: string }>) => {
   const roots = manager.roots()
@@ -1628,8 +1630,8 @@ ipcMain.handle('sessions:watchCompute', (_e, id: string, job: string, owner: str
   return { watching: true, pane: id, job }
 })
 ipcMain.handle('reviews:ack', (_e, id: string, reviewed: boolean) => acknowledgeReview(String(id), reviewed === true))
-ipcMain.handle('reviews:open', async (_e, id: string, index: number) => {
-  const target = reviewOpenTarget(String(id), Number(index), history.list())
+ipcMain.handle('reviews:open', async (_e, id: string, index: number | string) => {
+  const target = reviewOpenTarget(String(id), typeof index === 'string' ? index : Number(index), history.list())
   return { opened: target ? /^https?:/.test(target) ? await openLink(target, 'review') : await openLocal(target, 'review') : false }
 })
 // The pane the person is looking at. A finished pane is never closed under them.
@@ -1681,6 +1683,7 @@ function doneCloseDeps(): DoneCloseDeps {
       return doneQuietMs(sleepPressureOf(v.level, v.why))
     },
     readings: doneReadings,
+    setClosing: (id, at) => manager.setDoneClosingAt(id, at),
     folderOf: (id, since) => {
       const cwd = manager.list().find((x) => x.id === id)?.cwd
       return cwd ? gitCached(cwd, since) : null
@@ -1698,7 +1701,6 @@ function doneCloseDeps(): DoneCloseDeps {
         : null,
     record: (input, native) => recordReview(input, native, true),
     notify: sendReviewNotice,
-    markRead: (id) => void acknowledgeReview(id, true),
     close: (id, at) => manager.closeAfterResult(id, at),
     noteClose: noteReviewClose,
     writeNotice: (path, body) => {
@@ -1712,36 +1714,15 @@ function doneCloseDeps(): DoneCloseDeps {
     log: (line) => appendLog(join(app.getPath('userData'), 'done-close.log'), `[${new Date().toISOString()}] ${line}\n`, { rotateAt: 64 * 1024 })
   }
 }
-setInterval(() => {
+setInterval(() => measureMainTask('done-close', () => {
   try {
-    const eligible = new Set<string>()
-    let changed = false
-    sweepDoneClose({
-      ...doneCloseDeps(),
-      countdown: (id, turn) => {
-        eligible.add(id)
-        const pending = reviewClosing.get(id)
-        if (!pending || pending.turn !== turn) {
-          reviewClosing.set(id, { turn, at: Date.now() + 30_000 })
-          changed = true
-          return false
-        }
-        return Date.now() >= pending.at
-      }
-    })
-    for (const id of reviewClosing.keys()) {
-      if (!eligible.has(id) || !manager.list().some(s => s.id === id)) {
-        reviewClosing.delete(id)
-        changed = true
-      }
-    }
-    if (changed) send('sessions:changed', allSessions())
+    sweepDoneClose(doneCloseDeps())
   } catch (e) {
     console.warn(`done-close: sweep failed - ${(e as Error).message}`)
   }
   for (const opener of finishedDigest.flush((o) => manager.openChildrenOf(o), (o, text) => manager.tellPane(o, text)))
     console.info(`done-close: told ${opener} what the panes it opened did`)
-}, 15_000).unref()
+}), 15_000).unref()
 /**
  * `pf tidy`: every pane whose card says finished (`Session.finished`) that the sweep above
  * would close - the same refusals, only not the quiet wait, because somebody asking to
@@ -1766,10 +1747,10 @@ ipcMain.handle('sessions:closeDone', async (_e, dry: unknown) => {
  * `reviews:record` instead: claude-config's autoclose (`autoclose_*`). Its close is tried
  * there, retried on an arm, or done by its own `sessions:kill` fallback, so all three ask.
  */
-const heldCards = new Map<string, { reviewId: string; steps: number; turn: number }>()
+const heldCards = new Map<string, { reviewId: string; turn: number }>()
 /**
- * Read BEFORE the pane closes (whether the person saw this turn goes with it); call the
- * answer with whether it closed. A card held for an earlier turn is dropped unsent.
+ * Capture the turn BEFORE the pane closes; call the answer with whether it closed.
+ * A card held for an earlier turn is dropped unsent. Focus never acknowledges it.
  */
 function cardAfterClose(paneId: string): (closed: boolean) => void {
   const held = heldCards.get(paneId)
@@ -1778,8 +1759,7 @@ function cardAfterClose(paneId: string): (closed: boolean) => void {
     if (!held || !closed) return
     heldCards.delete(paneId)
     if (!turn || turn.endedAt !== held.turn) return
-    if (turn.read) acknowledgeReview(held.reviewId, true)
-    if (finishedCard(held.steps, turn.read)) sendReviewNotice(held.reviewId)
+    sendReviewNotice(held.reviewId)
   }
 }
 ipcMain.handle('reviews:record', (_e, input: import('../shared/reviews').ReviewInput) => {
@@ -1789,7 +1769,7 @@ ipcMain.handle('reviews:record', (_e, input: import('../shared/reviews').ReviewI
   const native = session ? { title: session.title, provider: session.agent, cwd: session.cwd, nativeSessionId: resumeIdFor(session.id) ?? session.id } : { title: old!.title, provider: old!.agent, cwd: old!.cwd, nativeSessionId: old!.resumeId ?? old!.id }
   const chat = session && session.agent !== 'shell' && input.notify === true && input.closeSession === true ? session : undefined
   const review = recordReview(input, native, Boolean(chat))
-  if (chat) heldCards.set(chat.id, { reviewId: review.id, steps: personOwnedSteps(input.report).length, turn: manager.turnRead(chat.id)?.endedAt ?? 0 })
+  if (chat) heldCards.set(chat.id, { reviewId: review.id, turn: manager.turnRead(chat.id)?.endedAt ?? 0 })
   if (old?.endedAt) noteReviewClose(review.id, undefined, new Date(old.endedAt).toISOString())
   let close: { closed: boolean; reason?: string } = { closed: false }
   if (input.closeSession === true) {
@@ -2491,13 +2471,13 @@ ipcMain.handle('sessions:clearFinished', () => {
 })
 // The automatic half: the same facts the button reads, checked on its own clock so a
 // pane nobody presses the button on still leaves the sidebar ten minutes after it dies.
-setInterval(() => {
+setInterval(() => measureMainTask('exited-close', () => {
   const facts = exitedFacts()
   const now = Date.now()
   // Sleeping panes only when finished panes close themselves at all (Settings).
   const asleep = getConfig().autoCloseDone !== false ? asleepSweep(facts, now) : []
   removeFinished([...exitedSweep(facts, now), ...asleep])
-}, 30_000).unref()
+}), 30_000).unref()
 ipcMain.handle('sessions:buffer', (_e, id: string) =>
   remote.owns(id) ? remote.buffer(id) : manager.buffer(id)
 )
@@ -2528,24 +2508,16 @@ ipcMain.handle('app:tourSample', (_e, on: boolean) => (on ? addSample() : dropSa
 ipcMain.handle('app:tourCheck', (_e, script: string) =>
   tourCheck(script, (p) => send('app:tourCheckLine', p))
 )
-/**
- * A pane's recent output: its log's tail, or the live buffer when there is no log - or when
- * the log stopped recording at its cap (`history.recording`), because that tail is then old
- * output, and replayed it puts a screen from hours ago over the live one.
- */
-function logTail(id: string, bytes: number): string {
-  return (history.recording(id) ? history.tail(id, bytes) : '') || manager.buffer(id)
-}
 ipcMain.handle('sessions:log', (_e, id: string, bytes?: number) => {
   const want = Math.min(Math.max(Number(bytes) || 2_000_000, 1), 8 * 1024 * 1024)
   if (remote.owns(id)) return remote.log(id, want)
-  return logTail(id, want)
+  return freshReplay(history.tail(id, want), manager.buffer(id))
 })
 ipcMain.handle('sessions:replay', async (_e, id: string) => {
   if (remote.owns(id)) return remote.replayHistory(id)
   if (!manager.list().some((session) => session.id === id)) return false
   pump.flushOne(id)
-  const raw = logTail(id, 4 * 1024 * 1024)
+  const raw = freshReplay(history.tail(id, 4 * 1024 * 1024), manager.buffer(id))
   send('pane:reset', id, raw)
   return true
 })
@@ -2604,9 +2576,9 @@ ipcMain.on('sessions:attention-clear', (_e, id: string) =>
   remote.owns(id) ? remote.send(id, { t: 'ack' }) : manager.clearAttention(id)
 )
 /** Bytes into a pane, wherever that pane lives. The one path anything here types through. */
-function writePane(id: string, data: string, origin: WriteOrigin = 'desk'): void {
+function writePane(id: string, data: string, origin: WriteOrigin = 'desk', terminalReply = false): void {
   if (remote.owns(id)) {
-    remote.send(id, { t: 'write', data })
+    remote.send(id, { t: 'write', data, ...(terminalReply ? { terminalReply: true } : {}) })
     return
   }
   watchForClear(id, data)
@@ -2618,14 +2590,14 @@ function writePane(id: string, data: string, origin: WriteOrigin = 'desk'): void
   // session". The one thing typing must still prevent is being typed OVER, and that is
   // handled where it can be handled honestly: `expiryDecision` returns 'wait' for an
   // unsent draft, so the timer asks again rather than the countdown disappearing.
-  manager.write(id, data, origin)
+  manager.write(id, data, origin, terminalReply)
 }
 
 // A phone's write arrives through `ipcTap`'s stand-in event, whose sender reports itself
 // gone; the window's own sender is live. That one bit decides whether the rail in this
 // window already tagged the line (it typed it) or needs telling (`pane:typed`).
-ipcMain.on('pty:write', (e, id: string, data: string) =>
-  writePane(id, data, e.sender?.isDestroyed?.() ? 'phone' : 'desk')
+ipcMain.on('pty:write', (e, id: string, data: string, terminalReply?: boolean) =>
+  writePane(id, data, e.sender?.isDestroyed?.() ? 'phone' : 'desk', terminalReply === true)
 )
 // The DESK window only, never `send()`. `send` broadcasts to the phone first, and a
 // phone's own submitted line already ran through its renderer's `feedInput` on the way
@@ -3189,7 +3161,7 @@ function sweepCopies(repos: string[], gap: number): void {
 // lane command, so the ones that come unstuck by themselves do it overnight too. Both
 // the interval and laneRetry are no-ops on a machine with no PaneForge checkout, and it
 // returns immediately unless a lane is conflicted or waiting to go out.
-setInterval(() => {
+setInterval(() => measureMainTask('lane-maintenance', () => {
   laneRetry(lanePanes())
   // And the lanes held by chats that are not here any more: a killed pane never runs its
   // SessionEnd hook, so its lane sat held - and blocking the release - for twelve hours.
@@ -3197,7 +3169,7 @@ setInterval(() => {
   // Same clock, and the copies nothing has freed up since: no git here, the list of
   // projects with copies is read off disk, and each is swept at most every six hours.
   sweepCopies(ledgerRepos(lanePanes()), COPIES_EVERY_MS)
-}, 60_000).unref()
+}), 60_000).unref()
 
 // A pane ending is when a copy most often stops being needed: its chat let go, and nothing
 // else may be in it. Only the projects of the panes that ended are swept, and not at once -

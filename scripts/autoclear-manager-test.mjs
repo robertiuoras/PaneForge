@@ -127,6 +127,45 @@ try {
     assert.deepEqual(sent, ['first line \nsecond'], 'the next Enter sends both lines once')
     assert.equal(live.turnPending, true, 'and that Enter starts the turn')
   }
+  // An automatic clear on its way in is a prompt the app owes the pane, from the ask to the
+  // moment /clear is typed, or a move carries the conversation away un-cleared. The shape
+  // of s60-mulljm2l (Mac 0.8.230, 2026-09-28 19:01Z): it printed 31ms before the ask, was
+  // held 9969ms, then counted down 15s - and a move to the PC fired inside the countdown.
+  {
+    global.__pfHandoff = valid()
+    const manager = new SessionManager()
+    const { id } = manager.start({ cwd: root, agent: 'claude' })
+    const live = manager.sessions.get(id)
+    live.meta.runSince = undefined
+    live.turnPending = false
+    const ask15 = { prompt: 'continue', steps: ['continue work'], seconds: 15 }
+    const owed = () => manager.list().find((s) => s.id === id)?.owedPrompt === true
+    assert.equal(owed(), false, 'an idle pane with nothing on its way is owed nothing')
+
+    live.meta.lastOutput = Date.now() - 31
+    const start = timers.length
+    assert.match(manager.armAutoClear(id, ask15).reason ?? '', /settle/, 'a pane that printed 31ms ago is held, not armed')
+    const hold = timers.slice(start).find((t) => t.ms > 9_000 && t.ms <= 9_969)
+    assert.ok(hold, 'the settle hold is ~9969ms')
+    assert.equal(owed(), true, 'list() says owedPrompt during the settle hold')
+
+    live.meta.lastOutput = Date.now() - 12_000
+    hold.fn()
+    assert.ok(live.meta.autoClearAt, 'the hold ends in an armed countdown')
+    assert.ok(timers.slice(start).some((t) => t.ms === 15_000), 'the countdown is 15s')
+    assert.equal(owed(), true, 'list() says owedPrompt during the countdown')
+    assert.equal(manager.sleep(id, 'pressure'), null, 'sleep() reads it the same way and refuses mid-countdown')
+
+    manager.cancelAutoClear(id, 'cancelled')
+    assert.equal(owed(), false, 'Keep stands the clear down and the pane is owed nothing again')
+
+    // The ask that arrives mid-turn and waits for it to end is owed too.
+    live.meta.runSince = Date.now()
+    assert.match(manager.armAutoClear(id, ask15).reason ?? '', /queued/, 'a mid-turn ask waits for the turn')
+    assert.equal(owed(), true, 'list() says owedPrompt while the ask waits for the turn')
+    manager.cancelAutoClear(id, 'cancelled')
+    assert.equal(owed(), false, 'and not once that ask is dropped')
+  }
   console.log('autoclear manager: delayed handoff and draft guards behaved')
 } finally {
   global.setTimeout = realTimers

@@ -39,6 +39,9 @@ if (process.platform !== 'win32') {
 // name -> the script file, in the order they run. Cheapest first is deliberate: a broken
 // build should say so in a second rather than after the slow ones.
 const TESTS = [
+  ['freshreplay', 'fresh-replay-test.mjs'],
+  ['codexworkers', 'codex-workers-test.mjs'],
+  ['paneanswer', 'pane-answer-test.mjs'],
   ['remotesuite', 'test-remote-test.mjs'],
   ['testchrome', 'test-chrome-test.mjs'],
   ['promptreview', 'prompt-review-test.mjs'],
@@ -146,6 +149,8 @@ const TESTS = [
   ['continuation', 'continuation-test.mjs'],
   ['claim', 'transcript-claim-test.mjs'],
   ['cliclaim', 'transcript-cli-claim-test.mjs'],
+  ['mainperformance', 'main-performance-test.mjs'],
+  ['codexprocessclaim', 'codex-process-claim-test.mjs'],
   ['clearclaim', 'transcript-clear-test.mjs'],
   ['quitwords', 'quit-words-test.mjs'],
   ['screenview', 'screen-view-test.mjs'],
@@ -197,6 +202,7 @@ const TESTS = [
   ['sessioncopies', 'session-copies-test.mjs'],
   ['lanevisitor', 'lane-visitor-test.mjs'],
   ['laneorphan', 'lane-orphan-test.mjs'],
+  ['laneparked', 'lane-parked-test.mjs'],
   ['lanework', 'lane-work-test.mjs'],
   ['lanemergehold', 'lane-mergehold-test.mjs'],
   // A cleared pane keeps its lane; an unrecorded open merge can be resolved; identical
@@ -344,6 +350,7 @@ const TESTS = [
   ['gate', 'release-gate-test.mjs'],
   ['conflict', 'conflict-test.mjs'],
   ['lanedispatch', 'lane-dispatch-test.mjs'],
+  ['lanecompletion', 'lane-completion-test.mjs'],
   ['queuedprompt', 'queued-prompt-test.mjs']
 ]
 
@@ -473,9 +480,17 @@ const killChromeUnder = (root) => {
   }
   execSync(`pkill -9 -f -- "--user-data-dir=${root}"`, { stdio: 'ignore' })
 }
+// A root something still holds open (a Chrome not yet let go, a child whose working folder
+// is inside it) threw EPERM out of this `exit` handler, and a throw there exits 1: "20
+// tests passed" then red, on 2026-09-28. The verdict is the suites', not the cleanup's -
+// say it and leave the root to `sweepStaleRoots` below.
 const dropTmp = () => {
   try { killChromeUnder(TMP_ROOT) } catch {}
-  rmSync(TMP_ROOT, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+  try {
+    rmSync(TMP_ROOT, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+  } catch (err) {
+    console.error(`test-all: could not remove ${TMP_ROOT} (${err.code ?? err.message}); a later run removes it`)
+  }
 }
 // A run killed before `exit` - or one whose cleanup lost a race with a Chrome that had not
 // released its handles yet - leaves its root behind for good, because the name is unique

@@ -50,6 +50,7 @@ import { unreadCount } from '@shared/activity'
 import { TextSheet } from './components/TextSheet'
 import { Segmented } from './components/Controls'
 import Elapsed, { formatElapsed, kb, useNow } from './components/Elapsed'
+import Workers from './components/Workers'
 import GitBadge from './components/GitBadge'
 import HistoryDialog from './components/HistoryDialog'
 import ReviewDialog from './components/ReviewDialog'
@@ -5383,25 +5384,14 @@ export default function App(): JSX.Element {
                           anybody: how long is left, and the press that stops it. Never
                           beside a question or a move - a pane holding either is refused by
                           `idleCloseAt` outright, so the three can never be true at once. */}
-                      <input
-                        type="checkbox"
-                        className="session-keep-open"
-                        aria-label={`Keep ${s.title} open`}
-                        title="Keep open until you close it"
-                        checked={Boolean(s.remote ? s.keepOpen : pinned[s.id])}
-                        disabled={savingPins}
-                        onClick={e => e.stopPropagation()}
-                        onPointerDown={e => e.stopPropagation()}
-                        onChange={() => togglePin(s.id)}
-                      />
-                      {!(s.remote ? s.keepOpen : pinned[s.id]) && (s.reviewCloseAt ?? alarmAt(s.id) ?? s.closingAt) ? (
+                      {!(s.remote ? s.keepOpen : pinned[s.id]) && (s.doneClosingAt ?? alarmAt(s.id) ?? s.closingAt) ? (
                         // While the 15s countdown card is up, the CHIP shows that card's
                         // deadline and not the idle clock's. They are two readings of one
                         // decision and they disagreed on screen - the card counted down
                         // while the chip sat at `closes 0:01` (reported 2026-08-28). The
                         // armed countdown is the one that is about to act, so it wins.
                         <CloseClock
-                          at={s.reviewCloseAt ?? alarmAt(s.id) ?? (s.closingAt as number)}
+                          at={s.doneClosingAt ?? alarmAt(s.id) ?? (s.closingAt as number)}
                           // A countdown card naming this pane may be a plan to SLEEP it,
                           // and the chip says which.
                           sleep={alarmSleeps(s.id)}
@@ -5414,7 +5404,34 @@ export default function App(): JSX.Element {
                           lasts, or for as long as a queued pane's turn runs. It cannot appear
                           beside "asks you": a pane holding a question is never moved. */}
                       {s.handingOff ? (
-                        s.handoffQueuedAt ? null : (
+                        s.handoffQueuedAt ? (
+                          // Waiting for its own turn to end, which is as long as the agent
+                          // takes. Drawn as a clock rather than as the word `moving`: a
+                          // ten-minute build under a chip that says moving reads as a broken
+                          // handoff, which is exactly how three of these were reported.
+                          // The word on it is `moves when done`, not `waiting`: on its
+                          // own `waiting` named nothing it was waiting FOR and read as a
+                          // stuck pane (Robert, 2026-09-04, on a card that had said it
+                          // for seven minutes).
+                          // ...and it is the control that undoes it. The wait is minutes
+                          // long by construction, so the chip that reports it is the one
+                          // place somebody is already looking when they change their mind.
+                          <button
+                            type="button"
+                            className="chip handoff-queued"
+                            title={s.agent !== 'shell' ? 'Opens a copy on the paired device after this turn. Press to cancel.' : 'Waiting for this turn to end. Press to keep it here.'}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              stopMove(s)
+                            }}
+                          >
+                            {s.agent !== 'shell' ? (
+                              <>copy opens when done <Elapsed className="handoff-elapsed" since={s.handoffQueuedAt} title="Queued for handoff" /></>
+                            ) : (
+                              <>moves when done <Elapsed className="handoff-elapsed" since={s.handoffQueuedAt} title="Queued for handoff" /></>
+                            )}
+                          </button>
+                        ) : (
                           // Which half is running and for how long: a move is a repo push
                           // and then a link transfer, and either can be the slow one. The
                           // steps are in handoff.log under the app's data folder.
@@ -5531,7 +5548,7 @@ export default function App(): JSX.Element {
                     const model = s.model ? agentModelLabel(spec, s.model) : ''
                     return (
                       <span className="meta row-agent" title={(spec?.label ?? s.agent) + (s.model ? ` · ${s.model}` : '')}>
-                        {model || (spec?.label ?? s.agent)}
+                        {s.agent === 'codex' ? 'Lead: ' : ''}{model || (spec?.label ?? s.agent)}
                         {s.effort ? ` ${effortChip(s.effort)}${s.effort.pending ? '…' : ''}` : ''}
                       </span>
                     )
@@ -5571,6 +5588,16 @@ export default function App(): JSX.Element {
                         )
                       })()}
                 </div>
+                <Workers session={s} spec={agents.find(a => a.id === s.agent)} />
+                <label className="session-keep-open" title="Keep open until you close it"
+                  onClick={e => e.stopPropagation()} onPointerDown={e => e.stopPropagation()}>
+                  <input type="checkbox" className="keep-checkbox"
+                    aria-label={`Keep ${s.title} open`}
+                    checked={Boolean(s.remote ? s.keepOpen : pinned[s.id])}
+                    disabled={savingPins}
+                    onChange={() => togglePin(s.id)} />
+                  <span>Keep open</span>
+                </label>
               </div>
               {s.status === 'exited' && (
                 <button
@@ -5794,10 +5821,11 @@ export default function App(): JSX.Element {
               wrapper rather than three margin rules: whichever of them are showing, the
               rest keep their place. */}
           <label className="keep-all" title="Select all sessions to keep open, including sessions hidden by the filter">
-            <input type="checkbox" aria-label="Keep all sessions open" disabled={savingPins || !sessions.length}
+            <input type="checkbox" className="keep-checkbox" aria-label="Keep all sessions open" disabled={savingPins || !sessions.length}
+              ref={el => { if (el) el.indeterminate = sessions.some(s => s.remote ? s.keepOpen : pinned[s.id]) && !sessions.every(s => s.remote ? s.keepOpen : pinned[s.id]) }}
               checked={sessions.length > 0 && sessions.every(s => s.remote ? s.keepOpen : pinned[s.id])}
               onChange={e => void savePins(sessions.map(s => s.id), e.target.checked)} />
-            Keep all open
+            <span>Keep all open</span>
           </label>
           <span className="section-tail">
             {/* The desk's total, beside the pane count it belongs to: panes plus the app
@@ -6546,6 +6574,7 @@ export default function App(): JSX.Element {
               </span>
               </>)}
             </div>
+            <Workers session={s} spec={agents.find(a => a.id === s.agent)} />
             {s.screen ? (
               <ScreenPane
                 session={s}
@@ -7459,10 +7488,10 @@ export default function App(): JSX.Element {
           hand already is. Order is urgency - a countdown that is about to take something
           away sits nearest the corner, a tip sits furthest from it. */}
       <div className={'corner-stack' + (petHere ? ' beside-pet' : '')}>
-      {sessions.filter(s => s.reviewCloseAt && !(s.remote ? s.keepOpen : pinned[s.id])).map(s => (
+      {sessions.filter(s => s.doneClosingAt && !(s.remote ? s.keepOpen : pinned[s.id])).map(s => (
         <div className="autoclear-card" role="status" key={`review-${s.id}`}>
           <span>{s.title} will move to Review. Reopen it there to continue.</span>
-          <CloseClock at={s.reviewCloseAt!} onKeep={() => keepOpen([s.id])} />
+          <CloseClock at={s.doneClosingAt!} onKeep={() => keepOpen([s.id])} />
           <button className="autoclear-keep" onClick={() => keepOpen([s.id])}>Keep open</button>
         </div>
       ))}

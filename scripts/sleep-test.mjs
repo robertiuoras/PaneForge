@@ -204,9 +204,14 @@ const deps = {
   // The fixture runs the method body outside its module, so it has to supply them.
   ...listsFromTypes()
 }
-const method = transformSync(`class Fixture { ${sleepBody} }`, { loader: 'ts' }).code
+// sleep() reads `owedPrompt` through the same helper list() does, so the fixture carries it.
+const owesAt = sessions.indexOf('  private owesPrompt(live: Live)')
+const owesBody = sessions.slice(owesAt, sessions.indexOf('\n  }\n', owesAt) + 4)
+const method = transformSync(`class Fixture { ${owesBody} ${sleepBody} }`, { loader: 'ts' }).code
 const Fixture = new Function(...Object.keys(deps), `${method}; return Fixture`)(...Object.values(deps))
 const manager = new Fixture()
+manager.autoClearPending = new Map()
+manager.autoClearArmTimers = new Map()
 const live = {
   meta: { id: 'pane', agent: 'codex', cwd: '/fixture', status: 'idle' },
   req: {}, busyUntil: 0, buffer: { push: (text) => events.push(['buffer', text]) },
@@ -383,7 +388,7 @@ is(
   const chip = app.slice(app.indexOf('function CloseClock('), app.indexOf('const api = window.api'))
   assert.match(chip, /sleep \? 'sleeps' : 'closes'/, 'the chip has a word for a sleep countdown')
   assert.match(chip, /going to sleep/, '...and its hover says what a sleep keeps')
-  const row = app.slice(app.indexOf('at={s.reviewCloseAt ?? alarmAt(s.id)'), app.indexOf('onKeep={() => keepOpen([s.id])}'))
+  const row = app.slice(app.indexOf('at={s.doneClosingAt ?? alarmAt(s.id)'), app.indexOf('onKeep={() => keepOpen([s.id])}'))
   assert.match(row, /sleep=\{alarmSleeps\(s\.id\)\}/, 'the row tells the chip whether the armed countdown is a sleep')
   const at = app.indexOf('if (soon.sleep) {', app.indexOf('// One timer per card'))
   const deadline = app.slice(at, app.indexOf('const mb = pendingMb.current[key] ?? 0', at))

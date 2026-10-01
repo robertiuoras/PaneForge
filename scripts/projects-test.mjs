@@ -100,6 +100,18 @@ const alone = checkoutOwners([
 ])
 ok('a suffix on its own proves nothing', alone.size === 0, [...alone.keys()].join(', '))
 
+const cloneOwners = checkoutOwners([
+  { name: 'research-lab', isGit: true, origin: 'https://github.com/example/research-lab.git' },
+  { name: 'research-lab-d', isGit: true, branch: 'lane-d', origin: 'https://github.com/example/research-lab/' },
+  { name: 'research-lab-a', isGit: true, branch: 'main', origin: 'https://github.com/example/research-lab.git' },
+  { name: 'research-lab-b', isGit: true, branch: 'lane-b', origin: 'https://github.com/other/research-lab.git' },
+  { name: 'research-lab-c', isGit: true, branch: 'lane-z', origin: 'https://github.com/example/research-lab.git' },
+  { name: 'research-lab-e', isGit: true, branch: 'lane-e' },
+  { name: 'other-f', isGit: true, branch: 'lane-f', origin: 'https://github.com/example/research-lab.git' }
+])
+ok('a standalone engine lane clone folds under its canonical project', cloneOwners.get('research-lab-d') === 'research-lab')
+ok('same-origin independent clones, other remotes, wrong branches and missing evidence stay visible', cloneOwners.size === 1)
+
 // The list is read from disk on every call, so the only way a project can be missing
 // is the renderer never asking again. It used to ask once at startup, which means a
 // repo created by an agent an hour into the session was absent from New Session until
@@ -187,6 +199,15 @@ ok('a suffix on its own proves nothing', alone.size === 0, [...alone.keys()].joi
     ok('changed root does not lose the restore control', listArchivedClients(join(desk, 'absent')).some((p) => p.path === clientPath))
     setClientArchived(clientPath, false, join(desk, 'absent'))
     ok('restore works after the projects root changes', listProjects(desk).some((p) => p.path === clientPath) && listArchivedClients(desk).length === 0)
+    for (const name of ['research-lab', 'research-lab-d', 'research-lab-a', 'research-lab-e']) {
+      mkdirSync(join(desk, name, '.git'), { recursive: true })
+      writeFileSync(join(desk, name, '.git', 'HEAD'), `ref: refs/heads/${name === 'research-lab-d' ? 'lane-d' : name === 'research-lab-e' ? 'lane-e' : 'main'}\n`)
+      writeFileSync(join(desk, name, '.git', 'config'), name === 'research-lab-e' ? '[remote "upstream"]\n url = https://github.com/example/research-lab.git\n' : '[remote "origin"]\n url = https://github.com/example/research-lab.git\n')
+    }
+    const clones = listProjects(desk)
+    ok('disk discovery labels a standalone lane clone for the existing copies fold', clones.find(r => r.name === 'research-lab-d')?.checkoutOf === 'research-lab')
+    ok('disk discovery keeps independent clones and missing origin metadata visible', !clones.find(r => r.name === 'research-lab-a')?.checkoutOf && !clones.find(r => r.name === 'research-lab-e')?.checkoutOf)
+    ok('the explicit lane clone path remains available', clones.some(r => r.path === join(desk, 'research-lab-d')))
     // The real shape on this desk: the client work is a repository of its own, and the
     // roster is the `clients` folder inside it - `Projects/clients/clients/<who>`.
     const nested = mkdtempSync(join(tmpdir(), 'pf-nested-'))

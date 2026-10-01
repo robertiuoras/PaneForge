@@ -112,19 +112,23 @@ const callbackEnd = app.indexOf(', [sessions, flash])', callbackStart)
 const callback = transformSync(`const save = ${app.slice(callbackStart, callbackEnd)}`, { loader: 'ts', format: 'cjs' }).code
 let savedPins = ['existing']
 const remoteCalls = [], errors = []
+const savingStates = []
 let remoteOK = true
+let configGate
 const ref = { current: false }
 const desk = [{ id: 'visible' }, { id: 'filtered-out' }, { id: '@pc/one', remote: { name: 'PC' } }]
 const api = {
-  getConfig: async () => ({ pinnedPanes: savedPins }),
+  getConfig: async () => { if (configGate) await configGate; return { pinnedPanes: savedPins } },
   setConfig: async patch => { savedPins = patch.pinnedPanes; return patch },
   setRemoteKeepOpen: async (id, keep) => { remoteCalls.push([id, keep]); return remoteOK }
 }
 const save = new Function('api', 'sessions', 'savingPinsRef', 'setSavingPins', 'pinsWritten', 'setPinned', 'setConfigState', 'setCloseSoons', 'flash', callback + '; return save')(
-  api, desk, ref, () => {}, { current: '' }, () => {}, () => {}, () => {}, e => errors.push(e))
+  api, desk, ref, value => savingStates.push(value), { current: '' }, () => {}, () => {}, () => {}, e => errors.push(e))
 await save(desk.map(s => s.id), true)
 assert.deepEqual(savedPins, ['existing', 'visible', 'filtered-out'])
 assert.deepEqual(remoteCalls, [['@pc/one', true]])
+await save(['visible'], false)
+assert.deepEqual(savedPins, ['existing', 'filtered-out'], 'unchecking one session preserves every other selection')
 await save(desk.map(s => s.id), false)
 assert.deepEqual(savedPins, ['existing'])
 remoteOK = false
@@ -132,6 +136,15 @@ await save(['@pc/one'], true)
 assert.match(errors[0], /Could not save on PC/)
 assert.equal(ref.current, false, 'failed remote write releases the save lock')
 check('select-all persists hidden local panes, uses the remote owner, and reports failure', true)
+let resumeConfig
+configGate = new Promise(resolve => { resumeConfig = resolve })
+const pending = save(['visible'], true)
+assert.equal(savingStates.at(-1), true, 'controls disable while the saved preference is pending')
+await save(['filtered-out'], true)
+resumeConfig()
+await pending
+assert.deepEqual(savedPins, ['existing', 'visible'], 'a second press cannot race the pending selection')
+assert.equal(savingStates.at(-1), false, 'controls enable after the write finishes')
 
 // A renderer timer queued before the pin was saved cannot close the now-kept pane.
 const closeStart = index.indexOf("ipcMain.handle('sessions:closeIntoReview'")

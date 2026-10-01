@@ -21,7 +21,7 @@ const fixtureCodexHome = join(work, 'codex')
 
 const out = join(work, 'transcripts.cjs')
 buildSync({ absWorkingDir: root, entryPoints: ['src/main/transcripts.ts'], bundle: true, format: 'cjs', platform: 'node', outfile: out, define: { 'process.env.CODEX_HOME': JSON.stringify(fixtureCodexHome) } })
-const { codexAcceptedPrompt, noteSession, forgetSession, projectDir, nativeTranscriptPage } = createRequire(import.meta.url)(out)
+const { codexAcceptedPrompt, codexConversationReceipt, codexQuestionPending, noteSession, noteSubmittedPrompt, resumeIdFor, forgetSession, projectDir, nativeTranscriptPage } = createRequire(import.meta.url)(out)
 const cwd = '/Users/native/Projects/reader'
 const line = (value) => JSON.stringify(value)
 const claudeRow = (type, content, extra = {}) => line({ type, timestamp: '2026-09-09T01:02:03.000Z', message: { role: type, content }, ...extra })
@@ -125,7 +125,75 @@ try {
   assert.equal(codex.messages[4].blocks[0].phase, 'call'); assert.equal(codex.messages[5].blocks[0].phase, 'result')
   assert.equal(codex.messages[5].blocks[0].state, 'error'); assert.equal(codex.messages[5].blocks[0].output, 'failed exactly\n')
   assert.equal(codex.rawOutput, codexRows.slice(1).join('\n'), 'correlation metadata never changes raw JSONL')
+  appendFileSync(codexFile, line({ timestamp: '2026-09-09T01:03:00.000Z', type: 'response_item', payload: {
+    type: 'message', role: 'user', content: [{ type: 'input_text', text: 'fragment' }, { type: 'input_text', text: 'other text' }]
+  } }) + '\n')
+  assert.equal(codexAcceptedPrompt('codex-pane', 'fragment', 0), false, 'a matching fragment of a different message is not exact delivery')
   forgetSession('codex-pane')
+
+  // New Codex panes have no public resumeId yet. Identity must come from a unique
+  // native user row this pane submitted, never cwd or expectedConversationId alone.
+  const newPane = 's-new-codex'
+  noteSession(newPane, cwd, 'codex')
+  assert.equal(resumeIdFor(newPane), undefined, 'a same-folder rollout alone proves no identity')
+  noteSubmittedPrompt(newPane, 'queued follow-up receipt')
+  const duplicate = join(dirname(codexFile), 'duplicate.jsonl')
+  const otherId = '23456789-1234-1234-1234-123456789abc'
+  writeFileSync(duplicate, codexRows.join('\n').replaceAll(codexId, otherId) + '\n')
+  assert.equal(resumeIdFor(newPane), undefined, 'ambiguous native evidence fails closed')
+  rmSync(duplicate)
+  assert.equal(resumeIdFor(newPane), codexId, 'a unique actual native row identifies a new pane without a resumeId')
+  writeFileSync(codexFile, codexRows.join('\n').replaceAll(codexId, otherId) + '\n')
+  assert.equal(resumeIdFor(newPane), otherId, 'changed native metadata invalidates the old conversation claim')
+  forgetSession(newPane)
+
+  // A resumed pane must not follow an older identical row while its new receipt is
+  // pending. This is the same cwd and exact multiline payload in both conversations.
+  const resumedCwd = '/Users/native/Projects/resumed-reader'
+  const resumedId = '34567890-1234-1234-1234-123456789abc'
+  const olderId = '45678901-1234-1234-1234-123456789abc'
+  const resumedFile = join(dirname(codexFile), 'resumed.jsonl')
+  const olderFile = join(dirname(codexFile), 'older-same-prompt.jsonl')
+  const repeated = 'repeat the exact first line\n  and this indented second line\n\nlast line'
+  const pasteAt = Date.now()
+  const codexMetaRow = id => line({ type: 'session_meta', payload: { id, cwd: resumedCwd, timestamp: new Date(pasteAt - 1000).toISOString() } })
+  const codexUserRow = (text, at) => line({ timestamp: new Date(at).toISOString(), type: 'response_item', payload: {
+    type: 'message', role: 'user', content: [{ type: 'input_text', text }]
+  } })
+  writeFileSync(resumedFile, codexMetaRow(resumedId) + '\n')
+  writeFileSync(olderFile, codexMetaRow(olderId) + '\n' + codexUserRow(repeated, pasteAt - 1) + '\n')
+  noteSession('explicit-resumed', resumedCwd, 'codex', resumedId)
+  noteSubmittedPrompt('explicit-resumed', repeated)
+  assert.equal(resumeIdFor('explicit-resumed'), resumedId, 'pending receipt preserves the explicitly resumed native claim')
+  assert.equal(codexAcceptedPrompt('explicit-resumed', repeated, pasteAt), false, 'an older identical row in another rollout cannot acknowledge this paste')
+  appendFileSync(resumedFile, codexUserRow(repeated, pasteAt + 350) + '\n')
+  assert.equal(codexAcceptedPrompt('explicit-resumed', repeated, pasteAt), true, 'the exact delayed multiline receipt is read from the authoritative conversation')
+  const terminated = 'a coordination handoff\n  preserve its indentation\n\nfinal instruction\n'
+  appendFileSync(resumedFile, codexUserRow(terminated.slice(0, -1), pasteAt + 400) + '\n')
+  assert.equal(codexAcceptedPrompt('explicit-resumed', terminated, pasteAt), true, 'Codex omitting exactly the final LF acknowledges the original paste')
+  assert.deepEqual(codexConversationReceipt(resumedCwd, resumedId, terminated, pasteAt), { transcriptAt: pasteAt + 400 }, 'recovery recognizes the final-LF receipt in the original conversation')
+  assert.equal(codexConversationReceipt(resumedCwd, olderId, terminated, pasteAt), null, 'a final-LF receipt cannot cross native conversations')
+  assert.equal(codexConversationReceipt(cwd, resumedId, terminated, pasteAt), null, 'a final-LF receipt cannot cross project directories')
+  assert.equal(codexConversationReceipt(resumedCwd, resumedId, terminated, pasteAt + 401), null, 'a final-LF receipt must still follow the actual paste')
+  for (const altered of [terminated + '\n', terminated + ' ', terminated.replace('instruction', 'different instruction'), terminated.replace('\n  ', '\n '), terminated.replace(/\n/g, ''), terminated.slice(0, -1) + '\r\n']) {
+    assert.equal(codexAcceptedPrompt('explicit-resumed', altered, pasteAt), false, 'extra whitespace or substantive differences never acknowledge another prompt')
+  }
+  // Re-noting is the existing /new, /clear and /resume invalidation boundary. Inferred
+  // claims must still follow a uniquely verified conversation change afterwards.
+  noteSession('explicit-resumed', resumedCwd, 'codex')
+  const movedPrompt = 'a unique prompt after explicitly changing conversation'
+  appendFileSync(olderFile, codexUserRow(movedPrompt, pasteAt + 500) + '\n')
+  noteSubmittedPrompt('explicit-resumed', movedPrompt)
+  assert.equal(resumeIdFor('explicit-resumed'), undefined, 'explicit invalidation clears authority while shared historical proof stays ambiguous')
+  forgetSession('explicit-resumed')
+  noteSession('inferred-movement', resumedCwd, 'codex')
+  noteSubmittedPrompt('inferred-movement', movedPrompt)
+  assert.equal(resumeIdFor('inferred-movement'), olderId, 'unique actual native evidence still establishes an inferred claim')
+  const movedBack = 'another unique prompt after an inferred conversation change'
+  appendFileSync(resumedFile, codexUserRow(movedBack, pasteAt + 700) + '\n')
+  noteSubmittedPrompt('inferred-movement', movedBack)
+  assert.equal(resumeIdFor('inferred-movement'), resumedId, 'inferred claims retain deliberate verified conversation-change behavior')
+  forgetSession('inferred-movement')
 
   // A giant unbroken record must still return a smaller cursor, never the same one.
   const giantId = 'claude-giant'; const giantFile = join(claudeDir, `${giantId}.jsonl`)
@@ -136,6 +204,46 @@ try {
   assert.ok(giant.nextCursor && Number(giant.nextCursor) < 300 * 1024, 'oversized row makes strict older progress')
   forgetSession('giant-pane')
 
+  const questionId = 'ab345678-1234-1234-1234-123456789abc'
+  const questionFile = join(fixtureCodexHome, 'sessions', '2026', '09', '09', 'questions.jsonl')
+  const call = id => line({ timestamp:'2026-09-01T00:00:00Z', type:'response_item', payload:{type:'function_call',name:'functions.request_user_input_async',call_id:id,arguments:JSON.stringify({questions:[{title:'Synthetic one'},{title:'Synthetic two'}]})}})
+  const reply = (id,index,answer='safe synthetic answer') => line({type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text:'<send_user_message_question_reply>'+JSON.stringify([{questionItemId:JSON.stringify(['request_user_input_async',id,index]),answer}])+'</send_user_message_question_reply>'}]}})
+  const questionRows = [line({type:'session_meta',payload:{id:questionId,cwd,timestamp:'2026-09-01T00:00:00Z'}}),call('old-call'),
+    line({type:'response_item',payload:{type:'function_call_output',call_id:'old-call',output:'{"accepted":true}'}}),
+    ...Array.from({length:150},()=>line({type:'event_msg',payload:{text:'x'.repeat(65536)}})),call('new-call')]
+  writeFileSync(questionFile,questionRows.join('\n')+'\n')
+  assert.equal(codexQuestionPending(cwd,questionId,'old-call',2),true,'old unanswered call outside8MiB tail stays actionable')
+  assert.equal(codexQuestionPending(cwd,questionId,'new-call',2),true,'second question does not supersede first')
+  for(const [id,count] of [['missing',2],['old-call',1],['old-call',3]]) assert.equal(codexQuestionPending(cwd,questionId,id,count),false)
+  for(const index of [true,1.5,-1,2,'0']) appendFileSync(questionFile,reply('old-call',index)+'\n')
+  appendFileSync(questionFile,reply('old-call',0,'')+'\n')
+  assert.equal(codexQuestionPending(cwd,questionId,'old-call',2),true,'invalid/empty receipts do not answer an item')
+  appendFileSync(questionFile,reply('old-call',0)+'\n')
+  assert.equal(codexQuestionPending(cwd,questionId,'old-call',2),false,'partial answer refuses whole-payload replay')
+  assert.equal(codexQuestionPending(cwd,questionId,'new-call',2),true,'other exact question remains pending')
+  appendFileSync(questionFile,line({type:'response_item',payload:{type:'function_call_output',call_id:'new-call',output:'{"error":"interrupted"}'}})+'\n')
+  assert.equal(codexQuestionPending(cwd,questionId,'new-call',2),false,'native failure ends exact call')
+  assert.equal(codexQuestionPending('/wrong/cwd',questionId,'old-call',2),false,'wrong owner fails closed')
+  const lifecycle = (type, turnId) => line({type:'event_msg',payload:{type,...(turnId===undefined?{}:{turn_id:turnId})}})
+  const boundCall = (id, turnId) => { const row=JSON.parse(call(id));row.payload.internal_chat_message_metadata_passthrough={turn_id:turnId};return line(row) }
+  const meta = line({type:'session_meta',payload:{id:questionId,cwd,timestamp:'2026-09-01T00:00:00Z'}})
+  const checkLifecycle = (rows, expected, reason) => {
+    writeFileSync(questionFile,[meta,...rows].join('\n')+'\n')
+    assert.equal(codexQuestionPending(cwd,questionId,'turn-call',2),expected,reason)
+  }
+  for(const end of ['task_complete','turn_aborted']) {
+    checkLifecycle([lifecycle('task_started','own-turn'),boundCall('turn-call','own-turn'),lifecycle(end,'own-turn')],false,`${end}: exact owning turn closes the live question`)
+    checkLifecycle([lifecycle('task_started','own-turn'),boundCall('turn-call','own-turn'),lifecycle(end,'unrelated')],true,`${end}: unrelated turn keeps question`)
+    checkLifecycle([lifecycle('task_started','own-turn'),boundCall('turn-call','own-turn'),lifecycle(end)],true,`${end}: missing end identity keeps question`)
+    checkLifecycle([boundCall('turn-call','own-turn'),lifecycle(end,'own-turn')],true,`${end}: missing ordered start cannot prove closure`)
+    checkLifecycle([lifecycle('task_started','own-turn'),call('turn-call'),lifecycle(end,'own-turn')],true,`${end}: missing call turn metadata cannot prove closure`)
+    checkLifecycle([lifecycle('task_started','own-turn'),boundCall('turn-call','different'),lifecycle(end,'own-turn')],true,`${end}: mismatched call turn keeps question`)
+    checkLifecycle([lifecycle('task_started','own-turn'),lifecycle(end,'own-turn'),boundCall('turn-call','own-turn')],true,`${end}: earlier end cannot close later question`)
+    checkLifecycle([lifecycle('task_started','own-turn'),lifecycle(end,'own-turn'),boundCall('turn-call','own-turn'),lifecycle(end,'own-turn')],true,`${end}: duplicate end cannot bind a question after its turn ended`)
+    checkLifecycle([lifecycle('task_started','own-turn'),boundCall('turn-call','own-turn'),lifecycle('task_started','next-turn'),lifecycle(end,'next-turn')],true,`${end}: next turn end cannot close older question`)
+  }
+  checkLifecycle([lifecycle('task_started','own-turn'),boundCall('turn-call','own-turn'),'{"type":"event_msg","payload":{"type":"task_complete","turn_id":'],true,'partial lifecycle row keeps question')
+  checkLifecycle([lifecycle('task_started','own-turn'),boundCall('turn-call','own-turn'),boundCall('turn-call','own-turn')],false,'duplicated call identity is not actionable')
   console.log('native transcript: OK')
 } finally {
   for (const [key, value] of Object.entries(before)) value === undefined ? delete process.env[key] : process.env[key] = value
