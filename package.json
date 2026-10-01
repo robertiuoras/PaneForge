@@ -200,6 +200,7 @@
     "test:reviewlist": "node scripts/review-list-test.mjs",
     "test:doneclose": "node scripts/done-close-test.mjs",
     "test:replyread": "node scripts/reply-read-test.mjs",
+    "test:bgshell": "node scripts/background-shell-test.mjs",
     "test:reviewload": "node scripts/review-load-test.mjs",
     "test:promptreview": "node scripts/prompt-review-test.mjs",
     "test:overlayfilter": "node scripts/overlay-filter-test.mjs",
