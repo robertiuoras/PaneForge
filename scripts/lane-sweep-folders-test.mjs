@@ -13,17 +13,17 @@
 //   node scripts/lane-sweep-folders-test.mjs
 
 import { execFileSync, spawn } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { installLane } from './lane-fixture.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
-// realpath: macOS says /var/folders where git and lsof say /private/var/folders.
-const root = join(realpathSync(tmpdir()), 'paneforge-lane-sweep-folders-test')
-rmSync(root, { recursive: true, force: true })
-mkdirSync(root, { recursive: true })
+// realpath: macOS says /var/folders where git and lsof say /private/var/folders. A folder of
+// its own per run: two runs on the shared PC used to share one, and the second deleted the
+// first's mid-run ("a branch named 'lane-h' already exists").
+const root = mkdtempSync(join(realpathSync(tmpdir()), 'paneforge-lane-sweep-folders-test-'))
 const home = join(root, 'home')
 mkdirSync(home)
 const panesFile = join(root, 'panes.tsv')
@@ -299,5 +299,6 @@ try {
   sleeper?.kill()
 }
 
-console.log(failed ? `\n${failed} failed` : '\nall sweep-folder checks passed')
+console.log(failed ? `\n${failed} failed; the folders are left in ${root}` : '\nall sweep-folder checks passed')
+if (!failed) rmSync(root, { recursive: true, force: true })
 process.exit(failed ? 1 : 0)
