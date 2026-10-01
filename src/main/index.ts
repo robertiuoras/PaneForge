@@ -117,6 +117,7 @@ import {
 } from './profile'
 import { snapPlan } from '../shared/deskSnap'
 import { crashTestHook, installCrashGuard, logProblem, onCrashReport } from './crash'
+import { startBreathing, lastBreath } from './lastBreath'
 import { onOpenProblem, openLink, openLocal } from './openUrl'
 import { openScreen, screenCan } from './screenView'
 import type { ScreenPeer } from '../shared/screenView'
@@ -369,6 +370,7 @@ function logQuit(): void {
   quitLogged = true
   notePanes()
   updateLog('quit', quitReason(), `${panesAtQuit} pane(s) open`)
+  lastBreath(quitReason())
 }
 /** The words for the log line, including the case where nothing in the app fired. */
 function quitReason(): string {
@@ -5137,6 +5139,13 @@ app.whenReady().then(() => {
     send('update:changed', s)
   }, cfg.autoUpdate)
   setInterval(idleInstallCheck, IDLE_INSTALL_CHECK_MS).unref()
+  // Before the desk line, which can only say "left by a crash or a kill": this one says
+  // which, from the last heartbeat and macOS's own hang/crash reports (shared/lastBreath.ts).
+  if (app.hasSingleInstanceLock())
+    startBreathing((line) => {
+      updateLog('death', line)
+      logProblem('death', line)
+    })
   offerRestore()
   // Only the copy that owns the window: a launch that lost the lock is on its way out,
   // and starting a pane in it puts an agent in a process that is about to exit.

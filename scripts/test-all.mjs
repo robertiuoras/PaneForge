@@ -153,6 +153,7 @@ const TESTS = [
   ['codexprocessclaim', 'codex-process-claim-test.mjs'],
   ['clearclaim', 'transcript-clear-test.mjs'],
   ['quitwords', 'quit-words-test.mjs'],
+  ['lastbreath', 'last-breath-test.mjs'],
   ['screenview', 'screen-view-test.mjs'],
   ['screenstream', 'screen-stream-test.mjs'],
   ['rendercost', 'rendercost-test.mjs'],
