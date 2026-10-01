@@ -114,6 +114,36 @@ ok('off names the same port the on did, or it takes nothing down', () => {
   assert.deepEqual(shared.funnelOffArgs(), ['funnel', '--https=443', 'off'])
 })
 
+// Copied from the real `tailscale funnel status --json` on the Mac, 2026-10-01.
+const realFunnelStatus = JSON.stringify({
+  TCP: { 443: { HTTPS: true }, 9333: { TCPForward: '127.0.0.1:9333' } },
+  Web: {
+    'roberts-macbook-pro.tail6c8b58.ts.net:443': { Handlers: { '/': { Proxy: 'http://127.0.0.1:7312' } } }
+  },
+  AllowFunnel: { 'roberts-macbook-pro.tail6c8b58.ts.net:443': true }
+})
+
+console.log('funnelProxyPort')
+ok('reads the port 443 forwards to from the real shape', () => {
+  assert.equal(shared.funnelProxyPort(realFunnelStatus), 7312)
+})
+ok('nothing on 443 is 0, not unknown', () => {
+  assert.equal(shared.funnelProxyPort('{}'), 0)
+  assert.equal(shared.funnelProxyPort(JSON.stringify({ TCP: { 9333: { TCPForward: '127.0.0.1:9333' } } })), 0)
+})
+ok('unreadable output is null, never 0', () => {
+  assert.equal(shared.funnelProxyPort(''), null)
+  assert.equal(shared.funnelProxyPort('No serve config'), null)
+})
+ok('a 443 that is not a local proxy is somebody else\'s', () => {
+  const j = JSON.stringify({ Web: { 'x.ts.net:443': { Handlers: { '/': { Text: 'hi' } } } } })
+  assert.equal(shared.funnelProxyPort(j), -1)
+})
+ok('only 443 counts: another funnel port is not ours to read', () => {
+  const j = JSON.stringify({ Web: { 'x.ts.net:10000': { Handlers: { '/': { Proxy: 'http://127.0.0.1:3000' } } } } })
+  assert.equal(shared.funnelProxyPort(j), 0)
+})
+
 console.log('Funnel')
 const stub = (script) => {
   const calls = []
@@ -184,15 +214,47 @@ await okAsync('what tailscaled really published beats what we asked for', async 
   assert.equal(r.url, 'https://renamed.tail6c8b58.ts.net')
 })
 
+const funnelOn = (port) => [
+  ['funnel status --json', { out: realFunnelStatus.replace('7312', String(port)), err: '', code: 0 }],
+  ['status --json', { out: status(), err: '', code: 0 }]
+]
+
 await okAsync('stopping says so to tailscaled - nothing else ever will', async () => {
   // `funnel --bg` is a setting tailscaled keeps, not a child process, so no exit and no
   // crash takes it down. If this call is ever dropped, a public address survives the app.
-  const s = stub([])
-  await new main.Funnel(s.deps).stop()
+  const s = stub(funnelOn(7312))
+  const f = new main.Funnel(s.deps)
+  await f.start(7312)
+  await f.stop()
   assert.ok(
     s.calls.some((c) => c === 'funnel --https=443 off'),
     `expected an off call, got ${JSON.stringify(s.calls)}`
   )
+})
+
+await okAsync('stopping leaves a funnel that points at another port alone', async () => {
+  const s = stub(funnelOn(10000))
+  const f = new main.Funnel(s.deps)
+  await f.start(7312)
+  await f.stop()
+  assert.ok(!s.calls.some((c) => c.includes('off')), `turned off a funnel that was not ours: ${JSON.stringify(s.calls)}`)
+})
+
+await okAsync('stopping when the status cannot be read leaves it up', async () => {
+  const s = stub([
+    ['funnel status --json', { out: '', err: 'boom', code: 1 }],
+    ['status --json', { out: status(), err: '', code: 0 }]
+  ])
+  const f = new main.Funnel(s.deps)
+  await f.start(7312)
+  await f.stop()
+  assert.ok(!s.calls.some((c) => c.includes('off')), JSON.stringify(s.calls))
+})
+
+await okAsync('stopping something this run never started runs nothing', async () => {
+  const s = stub([])
+  await new main.Funnel(s.deps).stop()
+  assert.equal(s.calls.length, 0)
 })
 
 writeFileSync(join(out, 'done'), '')

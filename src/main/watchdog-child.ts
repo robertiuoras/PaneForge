@@ -27,16 +27,13 @@ import {
   HANG_MS,
   silenceLine,
   machineBusyPct,
-  psCpuPct,
-  STARVED_FACTOR,
-  starved,
-  starvedBackLine,
-  starvedWaitLine,
+  READ_MACHINE_AFTER_MS,
+  STARVED_HANG_FACTOR,
   type CpuTimes,
   type MainWatchState,
-  type Starvation,
   type Vitals
 } from '../shared/mainWatch'
+import { readPressure } from './memory'
 
 interface Hello {
   t: 'hello'
@@ -62,10 +59,10 @@ let beatsReceived = 0
 let prevCpus: CpuTimes[] = cpus().map((c) => ({ ...c.times }))
 let acted = false
 const startedAt = Date.now()
-/** This silence fell on a machine short of memory, so it gets STARVED_FACTOR times the grace. */
-let starvedWait = false
-/** The pressure reading is out; ticks hold their place until it answers. */
-let reading = false
+/** The machine reported memory pressure on the last tick of a silence (see `STARVED_HANG_FACTOR`). */
+let starved = false
+/** When the "waiting instead of relaunching" line was written for the current silence; 0 = not yet. */
+let starvedSaidAt = 0
 
 const port = process.parentPort
 
@@ -76,10 +73,12 @@ port.on('message', (e) => {
     hello = msg as Hello
     hangMs = (hello.hangMs ?? 0) > 0 ? hello.hangMs ?? 0 : 0
   } else if (msg.t === 'beat') {
-    // Wall time since the last beat: a tick gap (this helper paged out too) resets the tick count.
-    const silentMs = last ? Date.now() - last.at : watch.silentTicks * BEAT_MS
-    if (starvedWait && hello) void note(hello, starvedBackLine(Math.round(silentMs / 1000), hello.pid))
-    starvedWait = false
+    if (starvedSaidAt && hello) {
+      const silentS = Math.round((watch.silentTicks * BEAT_MS) / 1000)
+      void note(hello, `main: beating again after ${silentS}s of silence while memory was short - not relaunched, every pane kept`)
+    }
+    starvedSaidAt = 0
+    starved = false
     watch = beat(watch)
     beatsReceived++
     // Tolerate a beat with no vitals: an older main, or one that failed to compute them.
@@ -89,86 +88,36 @@ port.on('message', (e) => {
 
 const timer = setInterval(() => {
   const now = Date.now()
-  // Keep the tick clock moving while the reading is out, so its wait never looks like a sleep.
-  if (reading) {
-    watch = { ...watch, lastTickAt: now }
-    return
-  }
   const nowCpus = cpus().map((c) => ({ ...c.times }))
   const limit = hangMs || HANG_MS
-  const next = decide(watch, now, starvedWait ? limit * STARVED_FACTOR : limit)
+  // Only a silence asks about memory, and early: the reading is cached and refreshed in the
+  // background, so asking from 10 s on means the answer at 75 s is a fresh one.
+  starved = watch.receivedBeat && watch.silentTicks * BEAT_MS >= READ_MACHINE_AFTER_MS && readPressure() !== 'normal'
+  const next = decide(watch, now, limit, starved)
+  watch = next.state
   if (next.action !== 'act') {
-    watch = next.state
+    const silentMs = watch.silentTicks * BEAT_MS
+    if (starved && !starvedSaidAt && hello && silentMs >= limit) {
+      starvedSaidAt = now
+      const waitMin = Math.round((limit * STARVED_HANG_FACTOR) / 60_000)
+      void note(
+        hello,
+        `main: no heartbeat for ${Math.round(silentMs / 1000)}s, but the machine is short of memory (${Math.round(freemem() / 1048576)}MB free of ${Math.round(totalmem() / 1048576)}MB) - waiting up to ${waitMin} min instead of relaunching, which would end every pane`
+      )
+    }
     prevCpus = nowCpus
     return
   }
-  const h = hello
-  if (starvedWait || !h) {
-    watch = next.state
-    clearInterval(timer)
-    act(now, prevCpus, nowCpus)
-    return
-  }
-  // First time past the grace: a machine short of memory gets the longer wait, once.
-  watch = { ...next.state, acted: false }
-  reading = true
-  const cpusBefore = prevCpus
-  void readStarvation(h).then((s) => {
-    reading = false
-    // A beat that arrived during the reading already settled this silence.
-    if (watch.silentTicks === 0) return
-    if (starved(s)) {
-      starvedWait = true
-      void note(h, starvedWaitLine(Math.round((watch.silentTicks * BEAT_MS) / 1000), Math.round((limit * STARVED_FACTOR) / 1000), s, h.pid))
-      return
-    }
-    watch = { ...watch, acted: true }
-    clearInterval(timer)
-    act(Date.now(), cpusBefore, cpus().map((c) => ({ ...c.times })))
-  })
+  clearInterval(timer)
+  act(now, prevCpus, nowCpus)
 }, BEAT_MS)
-
-/**
- * Is the machine short of memory, and is main idle rather than spinning? Bounded: any
- * reading that has not answered in three seconds counts as unread.
- */
-function readStarvation(h: Hello): Promise<Starvation> {
-  const run = (cmd: string, args: string[]): Promise<string | null> =>
-    new Promise((resolve) => {
-      const timer = setTimeout(() => resolve(null), 3_000)
-      try {
-        execFile(cmd, args, { timeout: 2_500, windowsHide: true }, (err, stdout) => {
-          clearTimeout(timer)
-          resolve(err || !stdout ? null : String(stdout))
-        })
-      } catch {
-        clearTimeout(timer)
-        resolve(null)
-      }
-    })
-  const mac = h.platform === 'darwin'
-  return Promise.all([
-    mac ? run('/usr/sbin/sysctl', ['-n', 'kern.memorystatus_vm_pressure_level']) : Promise.resolve(null),
-    h.platform === 'win32' ? Promise.resolve(null) : run('ps', ['-o', 'time=,%cpu=,rss=,state=', '-p', String(h.pid)])
-  ]).then(([level, ps]) => {
-    const read = level === null ? NaN : Number(level.trim())
-    return {
-      // A Mac whose level did not answer counts as not short: its free memory says nothing.
-      pressure: mac ? (Number.isFinite(read) ? read : 0) : null,
-      freeMb: Math.round(freemem() / 1048576),
-      totalMb: Math.round(totalmem() / 1048576),
-      mainCpuPct: ps === null ? null : psCpuPct(ps)
-    }
-  })
-}
 
 function act(now: number, cpusBefore: CpuTimes[], cpusAfter: CpuTimes[]): void {
   const h = hello
   if (!h) return
   acted = true
   const silent = Math.round((watch.silentTicks * BEAT_MS) / 1000)
-  const how = h.packaged ? 'relaunching' : 'stopping it, this is a development copy so it will not be reopened'
-  const what = starvedWait ? `${how}, after the longer wait for a machine short of memory` : how
+  const what = h.packaged ? 'relaunching' : 'stopping it, this is a development copy so it will not be reopened'
   // Disk can be why the main process wedged. The evidence writes are best effort and share
   // one six-second budget, after which recovery proceeds even if their I/O is still stuck.
   let recovered = false
