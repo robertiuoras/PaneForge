@@ -36,7 +36,11 @@ conversation; housekeeping words cut (`cardTitle`), a continuation never replace
 name, a title that is only the project names nothing. `autoTitled` is saved with the desk and a
 handoff (and a continuation); on a desk/handoff restore (`scrollbackId`) a name the Activity
 list says the app gave (`appNamedTitle`) with no saved `autoTitled` goes back to the project name.
-`HOUSEKEEPING` is whole words; `session` only before a handoff word.
+`HOUSEKEEPING` is whole words; `session` only before a handoff word. A handoff-only title on a
+card still on its project name takes the newest work title of the conversations the SAME CLI
+process ran before it (`main/cliChain.ts` `earlierTitles`: the CLI stamps its start id as
+`session_id` on records of every conversation after a `/clear`; `startedAs`). Read once per
+conversation, never over an earned, person, opener or client name.
 
 ## A pane says how long it has been open
 

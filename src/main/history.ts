@@ -304,9 +304,19 @@ export function sizeOf(id: string): { cols: number; rows: number } {
   }
 }
 
+/**
+ * Whether this pane's log still takes its output. Past MAX_LOG_BYTES `recordData` drops
+ * every chunk, so the file's tail is from whenever that happened and not what the pane
+ * shows now: measured 2026-09-29, card 2 (Codex, 8,389,454 B) - Fix replayed that stale
+ * tail over the live frame.
+ */
+export function recording(id: string): boolean {
+  return (sizes.get(id) ?? 0) <= MAX_LOG_BYTES
+}
+
 export function recordData(id: string, chunk: string): void {
   if (!enabled) return
-  if ((sizes.get(id) ?? 0) > MAX_LOG_BYTES) return
+  if (!recording(id)) return
   let next = (pending.get(id) ?? '') + chunk
   while (Buffer.byteLength(next) > MAX_PENDING_BYTES) {
     // Slice by code points, then re-check byte length: terminal output is often Unicode.

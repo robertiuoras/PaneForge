@@ -20,6 +20,7 @@
 import { readFileSync } from 'node:fs'
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { mock } from 'node:test'
 import { buildSync } from 'esbuild'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -194,6 +195,29 @@ for (let i = 0; i < 6; i++) {
 }
 ok(returns() === beforeBusy, 'no more returns once the pane says it is working', `${beforeBusy} -> ${returns()}`)
 ok(returns() <= 3, 'the retries are capped', String(returns()))
+
+// Follow-ups queued during an existing turn wait beyond the boot deadline.
+mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() })
+try {
+  const followup = manager.start({ cwd: root, agent: 'shell' })
+  const live = manager.sessions.get(followup.id)
+  const p = live.proc
+  live.meta.runSince = Date.now() - 1000
+  live.busyUntil = Date.now() + 5000
+  p.say(COMPOSER)
+  manager.queuePrompt(followup.id, 'follow up after this turn', 0, 0, undefined, 40)
+  manager.queuePrompt(followup.id, 'a separate second follow up', 0, 0, undefined, 40)
+  mock.timers.tick(2000)
+  ok(p.writes.length === 0, 'a follow-up waits past the boot budget for an already running turn')
+  live.meta.runSince = undefined
+  live.busyUntil = 0
+  mock.timers.tick(200)
+  ok(p.writes.includes('follow up after this turn'), 'the follow-up is typed when that existing turn ends')
+  ok(!p.writes.includes('a separate second follow up'), 'the next queued message is not appended to the first paste')
+  manager.kill(followup.id)
+} finally {
+  mock.timers.reset()
+}
 
 // 5. A pane opened with no prompt is never typed at at all.
 const bare = manager.start({ cwd: root, agent: 'shell' })
@@ -437,34 +461,30 @@ async function sentReturnAt(proc, waitMs = 3000) {
   return Date.now()
 }
 
-const eaten = manager.start({ cwd: root, agent: 'shell' })
-const eatenProc = manager.sessions.get(eaten.id).proc
-let eatenDone = 0
-manager.queuePrompt(eaten.id, '/model opus', 0, 40, () => eatenDone++, 5000, 'idle')
-await sleep(120)
-eatenProc.say(COMPOSER)
-// The return goes in and the pane stays exactly as it was - quiet at its composer, with
-// nothing printed. The old code settled on that silence within one poll (40ms here).
-// Timed off the RETURN, never off a fixed sleep: the give-up settle lands
-// PROMPT_CONFIRM_MS x PROMPT_ENTER_TRIES after it, and on a loaded Windows box a
-// 400ms sleep overshot far enough to reach that give-up and read it as a landing
-// (2026-09-10, test:pc). Three polls is still long past the single poll the old bug
-// settled in, and the elapsed guard makes a slow machine FAIL rather than pass.
-const eatenReturnAt = await sentReturnAt(eatenProc)
-await sleep(Number(process.env.PF_PROMPT_POLL_MS) * 3)
-const sinceReturn = Date.now() - eatenReturnAt
-const confirmBudget = Number(process.env.PF_PROMPT_CONFIRM_MS) * Number(process.env.PF_PROMPT_ENTER_TRIES)
-ok(
-  eatenDone === 0 && sinceReturn < confirmBudget,
-  'a command that printed nothing has not landed',
-  `settles=${eatenDone}, ${sinceReturn}ms after the return, budget ${confirmBudget}ms\n${logOf(eaten.id)}`
-)
-ok(
-  eatenProc.writes.some((w) => w === '\r'),
-  'and the return really was sent, so the silence is the pane\'s answer and not a missing keystroke',
-  JSON.stringify(eatenProc.writes)
-)
-manager.kill(eaten.id)
+// Control only this case's clock: the assertion must happen before its deadline,
+// regardless of how late Windows schedules the test process.
+mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() })
+try {
+  const eaten = manager.start({ cwd: root, agent: 'shell' })
+  const eatenProc = manager.sessions.get(eaten.id).proc
+  let eatenDone = 0
+  manager.queuePrompt(eaten.id, '/model opus', 0, 40, () => eatenDone++, 5000, 'idle')
+  mock.timers.tick(120)
+  eatenProc.say(COMPOSER)
+  for (let elapsed = 0; elapsed < 3000 && !returnsOf(eatenProc); elapsed += 10) mock.timers.tick(10)
+  const eatenReturnAt = Date.now()
+  mock.timers.tick(Number(process.env.PF_PROMPT_POLL_MS) * 3)
+  const sinceReturn = Date.now() - eatenReturnAt
+  const confirmBudget = Number(process.env.PF_PROMPT_CONFIRM_MS) * Number(process.env.PF_PROMPT_ENTER_TRIES)
+  ok(eatenDone === 0 && sinceReturn < confirmBudget,
+    'a command that printed nothing has not landed', `settles=${eatenDone}, ${sinceReturn}ms after the return`)
+  ok(returnsOf(eatenProc) === 1,
+    'and the return really was sent, so the silence is the pane\'s answer and not a missing keystroke',
+    JSON.stringify(eatenProc.writes))
+  manager.kill(eaten.id)
+} finally {
+  mock.timers.reset()
+}
 
 // THE PROMPT WENT IN AND THE APP SAID IT DID NOT.
 //
@@ -683,6 +703,18 @@ const ANSWERING =
     await typedAt(shp, 1500)
     ok(shp.writes.find((x) => x.includes('RESEARCH QUESTION')) === BRIEF, 'a shell pane gets the text as it was', JSON.stringify(shp.writes))
     manager.kill(sh.id)
+    // Codex as well. 2026-09-29 7:59:39am, pane s62-mulltgcs: a 959-char `pf tell` typed
+    // as keys, Codex read the burst as a paste and the return after it as a newline, and
+    // the brief sat unsent in the composer.
+    const cx = manager.start({ cwd: root, agent: 'codex' })
+    const cxp = manager.sessions.get(cx.id).proc
+    manager.queuePrompt(cx.id, BRIEF, 0, 40, undefined, 5000)
+    cxp.say(COMPOSER)
+    await typedAt(cxp, 1500)
+    const cw = cxp.writes.find((x) => x.includes('RESEARCH QUESTION')) ?? ''
+    ok(cw === '\x1b[200~' + BRIEF + '\x1b[201~', 'a Codex prompt goes in as one bracketed paste too', JSON.stringify(cw.slice(0, 40)))
+    ok(!cxp.writes.some((x) => x.includes('\x1b[201~\r')), 'and its return is a write of its own', JSON.stringify(cxp.writes))
+    manager.kill(cx.id)
   }
 
   // No pid file at all (a CLI that writes none): the short wait, then as before.
@@ -822,30 +854,40 @@ const ANSWERING =
     const name = 'sess-receipt-late-after-hand'
     hooksDone(name, 60_000)
     cli(name)
-    const pane = manager.start({ cwd: root, agent: 'claude' })
-    const p = manager.sessions.get(pane.id).proc
-    let settles = 0
-    manager.queuePrompt(pane.id, BRIEF, 0, 40, () => settles++, 5000)
-    p.say(IDLE)
-    const ret = await sentReturnAt(p)
-    rmSync(pidFile, { force: true })
-    manager.write(pane.id, 'x\r', 'phone')
-    // The PC's timers ran 1.4s late here (2026-09-28): its first look came after the whole
-    // confirm window had closed and said UNSENT. Holding the loop past the window makes that
-    // the case on every machine.
-    for (const spin = Date.now() + budget + 200; Date.now() < spin; );
-    await logSays(pane.id, /asking again|UNSENT/)
-    const firstLook = logOf(pane.id)
-    received(name, new Date(ret + 53))
-    cli(name)
-    const until = Date.now() + budget + 600
-    while (Date.now() < until && !settles) await sleep(50)
+    mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() })
+    let pane
+    try {
+      pane = manager.start({ cwd: root, agent: 'claude' })
+      const p = manager.sessions.get(pane.id).proc
+      let settles = 0
+      manager.queuePrompt(pane.id, BRIEF, 0, 40, () => settles++, 5000)
+      p.say(IDLE)
+      for (let elapsed = 0; elapsed < 5000 && !returnsOf(p); elapsed += 10) mock.timers.tick(10)
+      ok(returnsOf(p) === 1, 'late-receipt fixture sent its initial return')
+      const ret = Date.now()
+      rmSync(pidFile, { force: true })
+      mock.timers.setTime(ret + 1)
+      manager.write(pane.id, 'x\r', 'phone')
+      // This case has no observed newer turn. The fake clock makes the app's
+      // own bookkeeping exactly equal to the return timestamp; keep that from
+      // satisfying the separate new-turn proof before the receipt is checked.
+      manager.sessions.get(pane.id).meta.runSince = ret - 1
+      // Move the clock beyond the deadline without running its overdue callback.
+      // Deliver the receipt between the first and second looks, not after an async log write.
+      mock.timers.setTime(ret + budget + 200)
+      mock.timers.tick(0)
+      ok(settles === 0, 'the first look without a receipt does not settle it', String(settles))
+      received(name, new Date(ret + 53))
+      cli(name)
+      mock.timers.tick(Number(process.env.PF_PROMPT_CONFIRM_MS))
+      ok(returnsOf(p) === 1, 'and no return went in on top of that line', `${returnsOf(p)} returns`)
+      ok(settles === 1, 'it settles once', String(settles))
+    } finally {
+      mock.timers.reset()
+    }
     await logSays(pane.id, /prompt submitted|UNSENT/)
-    ok(!/UNSENT/.test(firstLook), 'the first look without a receipt does not settle it', firstLook)
     ok(/Claude transcript receipt \(then the pane was typed into by hand\)/.test(logOf(pane.id)) && !/UNSENT/.test(logOf(pane.id)),
       'a receipt readable a tick later still counts after a line from outside', logOf(pane.id))
-    ok(returnsOf(p) === 1, 'and no return went in on top of that line', `${returnsOf(p)} returns`)
-    ok(settles === 1, 'it settles once', String(settles))
     ok(/a phone write submitted while a prompt is owed: "<1>\\r" \(2 bytes, line of \d+ chars\)/.test(logOf(pane.id)), 'the outside line is logged with its shape and origin, never its words', logOf(pane.id))
     manager.kill(pane.id)
   }
@@ -975,6 +1017,13 @@ const ANSWERING =
     'a wrapped composer is still one composer'
   )
   ok(promptStillInBox('\u23fa nothing that looks like a composer at all\n', P) === null, 'a frame with no composer answers null, never a guess')
+  // A long paste is drawn as a placeholder. Read for its words that composer "does not hold
+  // it", and a prompt still waiting was logged as gone.
+  ok(promptStillInBox('\u2022 Working (3s \u2022 esc to interrupt)\n\u203a [Pasted Content 959 chars]\n', P) === true,
+    'a Codex paste placeholder is the prompt still in the composer')
+  ok(promptStillInBox('\u276f [Pasted text #1 +26 lines]\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n', P) === true,
+    '...and so is a Claude one')
+  ok(promptStillInBox('\u2022 Working (3s \u2022 esc to interrupt)\n\u203a \n', P) === false, 'an empty Codex composer still reads as gone')
   ok(promptStillInBox('\u276f \n', 'go') === null, 'a prompt too short to recognise answers null')
 }
 
@@ -1031,6 +1080,8 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
   // agent is answering is written off as unsent.
   ok(/promptStillInBox\(painted, prompt\)/.test(fn), 'the give-up reads the composer before it calls a prompt unsent')
   ok(/codexAcceptedPrompt\(id, prompt, typedAt - 1000\)/.test(fn), 'an exact native Codex user row proves a queued follow-up was accepted')
+  ok(/box === true && still\.meta\.agent === 'codex'[^\n]*\n[\s\S]{0,200}return submit\(tries \+ 1\)/.test(fn),
+    'a Codex composer still holding the prompt at the deadline gets another return, not UNSENT')
   ok(/box === false/.test(fn) && /settle\('sent'\)/.test(fn), 'an empty composer settles it as sent')
 
   ok(!/Date\.now\(\) >= deadline\)/.test(fn), 'the confirm may not expire on the WAIT deadline')
@@ -1113,6 +1164,41 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
   ok(!live.proc.writes.join('').includes('after a clear'), 'a busy line younger than the stale window still holds the prompt', JSON.stringify(live.proc.writes))
   await sleep(1400)
   ok(live.proc.writes.join('').includes('after a clear'), 'a busy line nothing has repainted for the stale window does not', JSON.stringify(live.proc.writes))
+  manager.kill(pane.id)
+}
+
+// Enter can be swallowed while the CLI boots. A pending draft must outlive that
+// attempt and keep every automatic-close path blocked until the screen is empty.
+for (const agent of ['codex', 'claude', 'grok']) {
+  const pane = manager.start({ cwd: root, agent: 'shell' })
+  const live = manager.sessions.get(pane.id)
+  live.meta.agent = agent
+  manager.write(pane.id, 'Keep this unsent prompt safe', 'desk')
+  manager.write(pane.id, '\r', 'desk')
+  ok(live.meta.drafting === true, `${agent}: Enter alone keeps the draft hold`)
+  const frame = (text) => `\x1b[2J\x1b[H${'─'.repeat(60)}\r\n❯ ${text}\r\n${'─'.repeat(60)}\r\n\x1b[2;${3 + text.length}H`
+  const paint = (text) => {
+    live.buffer.set(text)
+    live.meta.lastOutput = Math.max(Date.now(), live.meta.lastOutput + 1)
+  }
+  paint(frame('Keep this unsent prompt safe'))
+  await manager.confirmDraft(live)
+  live.meta.status = 'idle'
+  live.meta.runSince = undefined
+  live.busyUntil = 0
+  ok(!manager.closeAfterResult(pane.id, Date.now()).closed, `${agent}: swallowed Enter refuses Review close`)
+  paint('\x1b[2J\x1b[HStarting agent...')
+  await manager.confirmDraft(live)
+  ok(live.meta.drafting === true, `${agent}: unreadable startup frame preserves draft`)
+  paint(frame(''))
+  const reading = manager.confirmDraft(live)
+  manager.write(pane.id, 'A newer draft', 'desk')
+  await reading
+  ok(live.meta.drafting === true, `${agent}: stale empty reading cannot clear newer input`)
+  manager.write(pane.id, '\x15', 'desk')
+  paint(frame(''))
+  await manager.confirmDraft(live)
+  ok(!live.meta.drafting, `${agent}: confirmed empty composer releases the hold`)
   manager.kill(pane.id)
 }
 

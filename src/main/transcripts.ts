@@ -1032,7 +1032,7 @@ export function codexTranscriptPath(cwd: string, resumeId: string): string | nul
  */
 export function codexAcceptedPrompt(id: string, prompt: string, since: number): boolean {
   const file = transcriptFor(id)
-  if (!file || !prompt) return false
+  if (!file || !prompt.trim()) return false
   for (const line of tailLines(file, PROMPT_RECEIPT_BYTES)) {
     let row: { timestamp?: string | number; type?: string; payload?: { type?: string; role?: string; content?: unknown } }
     try {
@@ -1046,7 +1046,9 @@ export function codexAcceptedPrompt(id: string, prompt: string, since: number): 
     const content = row.payload.content
     if (!Array.isArray(content)) continue
     if (content.some((part) => typeof part === 'object' && part !== null &&
-      (part as { type?: string }).type === 'input_text' && (part as { text?: string }).text === prompt)) return true
+      (part as { type?: string }).type === 'input_text' &&
+      typeof (part as { text?: unknown }).text === 'string' &&
+      (part as { text: string }).text.trim() === prompt.trim())) return true
   }
   return false
 }

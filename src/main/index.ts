@@ -1189,7 +1189,7 @@ function raiseAttention(s: Session): void {
 const remote = new Remote({
   list: () => localSessions(),
   buffer: (id) => manager.buffer(id),
-  log: (id, bytes) => history.tail(id, bytes) || manager.buffer(id),
+  log: (id, bytes) => logTail(id, bytes),
   // A person typed this on the paired machine's mirror, and this desk never saw the
   // keystrokes - so it needs telling on `pane:typed`, exactly as a phone's line does.
   // Without an origin here it defaulted to `desk`, and a pane driven from another
@@ -2347,9 +2347,13 @@ ipcMain.handle('sessions:switchAgent', (_e, id: string, agent: string, model?: s
   if (continuationOwnsSource(id)) return null
   return manager.switchAgent(id, agent, model)
 })
-ipcMain.handle('sessions:rename', (_e, id: string, title: string) =>
-  remote.owns(id) ? remote.send(id, { t: 'rename', title }) : manager.rename(id, title)
-)
+// A pane on another desk is renamed by that desk, and the new name comes back with its next
+// list - so this only says whether the rename left: false = the link could not carry it.
+ipcMain.handle('sessions:rename', (_e, id: string, title: string) => {
+  if (remote.owns(id)) return remote.send(id, { t: 'rename', title })
+  manager.rename(id, title)
+  return true
+})
 // A pane that has finished what it was opened for, said while it is open rather than
 // asked for at the open. The rule that decides WHEN is `shared/closeWhenDone.ts`.
 ipcMain.handle('sessions:closeWhenDone', (_e, id: string, reportTo?: string) =>
@@ -2524,16 +2528,24 @@ ipcMain.handle('app:tourSample', (_e, on: boolean) => (on ? addSample() : dropSa
 ipcMain.handle('app:tourCheck', (_e, script: string) =>
   tourCheck(script, (p) => send('app:tourCheckLine', p))
 )
+/**
+ * A pane's recent output: its log's tail, or the live buffer when there is no log - or when
+ * the log stopped recording at its cap (`history.recording`), because that tail is then old
+ * output, and replayed it puts a screen from hours ago over the live one.
+ */
+function logTail(id: string, bytes: number): string {
+  return (history.recording(id) ? history.tail(id, bytes) : '') || manager.buffer(id)
+}
 ipcMain.handle('sessions:log', (_e, id: string, bytes?: number) => {
   const want = Math.min(Math.max(Number(bytes) || 2_000_000, 1), 8 * 1024 * 1024)
   if (remote.owns(id)) return remote.log(id, want)
-  return history.tail(id, want) || manager.buffer(id)
+  return logTail(id, want)
 })
 ipcMain.handle('sessions:replay', async (_e, id: string) => {
   if (remote.owns(id)) return remote.replayHistory(id)
   if (!manager.list().some((session) => session.id === id)) return false
   pump.flushOne(id)
-  const raw = history.tail(id, 4 * 1024 * 1024) || manager.buffer(id)
+  const raw = logTail(id, 4 * 1024 * 1024)
   send('pane:reset', id, raw)
   return true
 })
@@ -2593,7 +2605,10 @@ ipcMain.on('sessions:attention-clear', (_e, id: string) =>
 )
 /** Bytes into a pane, wherever that pane lives. The one path anything here types through. */
 function writePane(id: string, data: string, origin: WriteOrigin = 'desk'): void {
-  if (remote.owns(id)) return remote.send(id, { t: 'write', data })
+  if (remote.owns(id)) {
+    remote.send(id, { t: 'write', data })
+    return
+  }
   watchForClear(id, data)
   // Nothing typed here stands a countdown down any more. It used to: a write carrying one
   // printable character cancelled the pane's own /clear outright, which meant the card

@@ -29,6 +29,7 @@ import { trustCodexFolder } from './codexTrust'
 import { ASK_WINDOW, CLIENTS_DIR, clientLabel, mayRename } from '../shared/clientName'
 import { appNamedTitle } from './activity'
 import { nextTitle, titlesIn, type CliTitles } from '../shared/cliTitle'
+import { earlierTitles } from './cliChain'
 import { chromeCdpFor } from '../shared/peerChrome'
 import type { ClientNamed } from '../shared/types'
 
@@ -128,6 +129,7 @@ import {
   typeLine
 } from '../shared/slashTurn'
 import { feedDraft, newDraft, type DraftState } from '../shared/draft'
+import { composerOf } from './composerRead'
 import { OutBuffer } from './outBuffer'
 import { allAgents, buildArgs, colourEnv, continuesOnBackslash, hasAgent, modelValue, resolveEnv } from '../shared/agents'
 import { homedir } from 'node:os'
@@ -639,6 +641,8 @@ interface Live {
    * handed to the window as `typed` when it did not come from the window itself.
    */
   draft: DraftState
+  /** Enter is an attempt, not proof that the CLI emptied its composer. */
+  draftConfirmation?: { prompt: string; since: number; afterOutput: number; checkedOutput?: number; checking?: boolean }
   /** When a slash command was submitted; 0 outside one. See SLASH_TURN_MS. */
   slashAt: number
   /**
@@ -1323,6 +1327,7 @@ export class SessionManager extends EventEmitter {
     live.typed = ''
     live.submitLine = newSubmitLine()
     live.draft = newDraft()
+    live.draftConfirmation = undefined
     live.meta.drafting = undefined
     live.runner = specFor(live.meta.agent).bin
     live.jobName = null
@@ -2028,6 +2033,7 @@ export class SessionManager extends EventEmitter {
     // the one moment a Codex pane's reasoning effort may be changed. An `app` write
     // (a queued prompt, an automatic clear) is a turn too, so it takes the same path.
     if (this.holdForEffort(live, data, origin)) return
+    const writtenAt = Date.now()
     live.proc.write(data)
     // Rebuild the line being typed, before the isTyping gate: a lone backspace is not
     // "typing" to the gate below, but it still has to erase from this record.
@@ -2039,6 +2045,15 @@ export class SessionManager extends EventEmitter {
     const whole = feedDraft(live.draft, data, {
       backslashNewline: continuesOnBackslash(live.meta.agent)
     })
+    // Keep the automatic-close/clear hold after Enter until a fresh screen proves
+    // the box empty. Startup and paste handling can swallow that very key.
+    if (live.meta.agent !== 'shell' && whole.submitted.length &&
+        (whole.submitted.some((line) => line.trim()) || !live.draft.certain)) {
+      live.draftConfirmation = {
+        prompt: live.draft.certain ? whole.submitted.join('\n') : '',
+        since: writtenAt, afterOutput: live.meta.lastOutput
+      }
+    }
     live.draft = whole.state
     if (whole.submitted.some((line) => line.trim())) turnSubmitted(live.stop)
     // `typeLine` ignores Enter, so the `\` Claude Code just turned into a line break is still
@@ -2046,7 +2061,7 @@ export class SessionManager extends EventEmitter {
     if (whole.continued && live.typed.endsWith('\\')) live.typed = live.typed.slice(0, -1) + '\n'
     // A CLI owns its composer. An automatic stop cannot recover a typed line, so a known
     // draft and an edited line we cannot faithfully reconstruct both refuse it.
-    const drafting = !whole.state.certain || whole.state.text.trim().length > 0
+    const drafting = Boolean(live.draftConfirmation) || !whole.state.certain || whole.state.text.trim().length > 0
     const draftChanged = drafting !== Boolean(live.meta.drafting)
     live.meta.drafting = drafting || undefined
     for (const line of whole.submitted) {
@@ -3917,8 +3932,13 @@ export class SessionManager extends EventEmitter {
       const after = this.sessions.get(id)
       if (after) mark = Math.max(mark, after.meta.lastKeyboard ?? 0)
     }
-    const verdict = (live: Live, composerIdle: boolean): QueuedPromptVerdict =>
-      queuedPromptDecision({
+    // A follow-up received during an existing turn must wait for that turn, even
+    // though its last keystroke predates `mark`. The boot timeout is not permission
+    // to paste into a running conversation. Autoclear owns its own handover wait.
+    const queuedLive = this.sessions.get(id)
+    let waitingForTurn = proof === 'turn' && Boolean(queuedLive?.meta.runSince) && !queuedLive?.meta.handoverUntil
+    const verdict = (live: Live, composerIdle: boolean): QueuedPromptVerdict => {
+      const decision = queuedPromptDecision({
         exists: true,
         lastKeyboard: live.meta.lastKeyboard,
         mark,
@@ -3932,6 +3952,15 @@ export class SessionManager extends EventEmitter {
           live.busyUntil > Date.now() ||
           Date.now() - live.meta.lastOutput < PERSON_QUIET_MS
       })
+      if (decision === 'abandon') return decision
+      if (waitingForTurn) {
+        if (live.meta.runSince || live.busyUntil > Date.now()) {
+          return Date.now() >= personDeadline ? 'abandon' : 'wait'
+        }
+        waitingForTurn = false
+      }
+      return decision
+    }
     // The busy read is of the LAST THING PAINTED, never of a window of scrollback:
     // `esc to interrupt` printed during the boot stays in the buffer for ever, so a
     // fixed tail reports a pane as working long after it went quiet at its composer
@@ -4160,6 +4189,13 @@ export class SessionManager extends EventEmitter {
                 acLog(`${id} prompt submitted - it is no longer in the composer`)
                 return settle('sent')
               }
+              // Codex takes a return while it answers - the prompt waits as a follow-up - so a
+              // prompt still in its composer after the window is a return that did not go in,
+              // not one to guess about: the box says so. Another, within the same budget.
+              if (box === true && still.meta.agent === 'codex' && !typedIntoTurn && tries + 1 < PROMPT_ENTER_TRIES) {
+                acLog(`${id} return did not go in - the Codex composer still holds the prompt`)
+                return submit(tries + 1)
+              }
               acLog(
                 `${id} prompt left UNSENT: still painting ${PROMPT_CONFIRM_MS * PROMPT_ENTER_TRIES}ms after the return` +
                   (box ? ', and the composer still holds it' : typedIntoTurn ? ', typed over a turn already running' : ', and no composer could be read')
@@ -4269,7 +4305,14 @@ export class SessionManager extends EventEmitter {
       // Bracketed, it is one paste however it is read: the same probe gave one
       // `[Pasted text #1 +26 lines]` and a user row holding every line. A slash command
       // stays keystrokes: it is a command only while typed, and `typeLine` reads it so.
-      if (live.meta.agent === 'claude' && !prompt.trimStart().startsWith('/')) {
+      // CODEX TOO. Typed raw, Codex reads a fast run of keys as a paste of its own and the
+      // return that follows it as a newline inside that paste: 2026-09-29 7:59:39am, pane
+      // s62-mulltgcs, a 959-char `pf tell` was typed, its one return went in a second later
+      // and the whole brief sat in the composer, never sent (a 1078-char one at 7:10 too).
+      // Bracketed, Codex takes it as ONE paste and the return as a key of its own. A long
+      // one shows as `[Pasted Content N chars]`, a placeholder `promptStillInBox` reads as
+      // the prompt still sitting there.
+      if ((live.meta.agent === 'claude' || live.meta.agent === 'codex') && !prompt.trimStart().startsWith('/')) {
         ourWrite(`\x1b[200~${prompt}\x1b[201~`)
         // `typeLine` skips a paste whole, and the words asked - the pane's name is read
         // from them at the return - are the prompt all the same.
@@ -4487,7 +4530,7 @@ export class SessionManager extends EventEmitter {
     live.titleRead = { path, offset, at: now, seen: read }
     const s = live.meta
     const pane = { title: s.title, autoTitled: s.autoTitled, appDefault: this.appDefault(s) }
-    const next = nextTitle(pane, read, prev?.seen, projectOf(s.cwd, s.lane))
+    const next = nextTitle(pane, read, prev?.seen, projectOf(s.cwd, s.lane), s.clientOff ? undefined : () => earlierTitles(path))
     if (!next) return
     // A person's `/rename` is theirs to make; an old save's "do not name this pane" only
     // holds the app's own naming back.
@@ -4546,6 +4589,39 @@ export class SessionManager extends EventEmitter {
       })
   }
 
+  private async confirmDraft(live: Live): Promise<void> {
+    const pending = live.draftConfirmation
+    const output = live.meta.lastOutput
+    if (!pending || pending.checking || output <= pending.afterOutput || pending.checkedOutput === output) return
+    const draft = live.draft
+    pending.checking = true
+    pending.checkedOutput = output
+    try {
+      const box = await composerOf(live.buffer.read(), live.cols, live.rows, live.meta.agent)
+      // Both input and output can change while xterm replays. Never apply an old
+      // empty reading to newer text, or to a replaced process with the same pane id.
+      if (this.sessions.get(live.meta.id) !== live || live.draftConfirmation !== pending ||
+          live.draft !== draft || live.meta.lastOutput !== output) {
+        pending.checkedOutput = undefined
+        return
+      }
+      const accepted = pending.prompt && (
+        (live.meta.agent === 'codex' && codexAcceptedPrompt(live.meta.id, pending.prompt, pending.since)) ||
+        (live.meta.agent === 'claude' && claudeAcceptedPrompt(live.proc?.pid, pending.prompt, pending.since))
+      )
+      // A native receipt also proves submission when the idle CLI draws a hint in
+      // its otherwise empty box. Unknown providers keep the empty-screen requirement.
+      if (!accepted && (!box || box.text.trim())) return
+      live.draftConfirmation = undefined
+      live.meta.drafting = !draft.certain || Boolean(draft.text.trim()) || undefined
+      this.emitSessions()
+    } catch {
+      // An unreadable composer cannot authorise losing the draft.
+    } finally {
+      pending.checking = false
+    }
+  }
+
   private sweepIdle(): void {
     let changed = false
     const now = Date.now()
@@ -4557,6 +4633,7 @@ export class SessionManager extends EventEmitter {
     for (const live of this.sessions.values()) {
       const { meta } = live
       const quiet = now - meta.lastOutput
+      if (live.draftConfirmation && meta.status === 'idle' && !meta.runSince && quiet >= 1000 && now - meta.lastKeyboard >= 1000) void this.confirmDraft(live)
       if (this.markCwdGone(live, now)) changed = true
       // A dead pty whose folder has also gone is a card about nothing: no process to
       // go back to, and no directory left to resume in. Only that PAIR reaps. A live

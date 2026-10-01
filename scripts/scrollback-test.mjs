@@ -181,6 +181,29 @@ ok(
   `${hugeBack.length}`
 )
 
+// A log at its cap stops recording (`recordData` drops everything past it), so its tail
+// is OLD output from then on. 2026-09-29, card 2 (Codex, 8,389,454 B): Fix replayed that
+// stale tail, reset first, over the live frame - 110 rows became 66 of an old screen.
+ok(h.recording('capped'), 'a pane with no log yet is recording')
+for (let i = 0; i < 9; i++) {
+  h.recordData('capped', 'old output\n'.repeat(95_326)) // ~1 MiB a go, under the pending cap
+  await h.flush()
+}
+ok(!h.recording('capped'), 'a log past its cap has stopped recording')
+h.recordData('capped', 'NEWEST FRAME\n')
+await h.flush()
+ok(!h.tail('capped', 4096).includes('NEWEST FRAME'), 'CONTROL - its tail does not have what the pane printed since')
+const main = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
+const replay = main.slice(main.indexOf("ipcMain.handle('sessions:replay'"), main.indexOf("ipcMain.handle('sessions:replay'") + 600)
+ok(/logTail\(id, 4 \* 1024 \* 1024\)/.test(replay) && !/history\.tail\(/.test(replay), 'Fix replays through logTail, never the raw log tail')
+ok(/function logTail[\s\S]{0,200}history\.recording\(id\) \? history\.tail\(id, bytes\) : ''\) \|\| manager\.buffer\(id\)/.test(main),
+  'and logTail takes the live buffer when the log stopped recording')
+ok(/log: \(id, bytes\) => logTail\(id, bytes\)/.test(main), 'a mirror asking for history gets the same answer')
+const pane = readFileSync(join(root, 'src/renderer/src/components/TerminalPane.tsx'), 'utf8')
+const redraw = pane.slice(pane.indexOf('const redrawHistory = async'), pane.indexOf('const redrawHistory = async') + 1200)
+ok(/if \(t\.buffer\.active\.type === 'alternate'\) return false\s*\n\s*redrawingHistory = true/.test(redraw),
+  'Fix replays no history into a CLI on the alternate screen (it has no scrollback, and the reset drops its modes)')
+
 rmSync(work, { recursive: true, force: true })
 console.log(fail.length ? `\n${fail.length} failed` : '\nall good')
 process.exit(fail.length ? 1 : 0)

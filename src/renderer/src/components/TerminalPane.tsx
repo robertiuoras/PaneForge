@@ -3860,6 +3860,20 @@ function TerminalPane({
       // own schedule, so a resize issued straight after `write` can land before the bytes
       // it is meant to be wider than.
       t.write(prep(split.before), () => {
+        if (split.afterCols && split.after) {
+          // The pane's own output, drawn wider than the pane is now: it was narrowed since
+          // (a pane opened beside it, a mirror's borrow). Written at that width and narrowed
+          // once, still `replaying`, so xterm re-wraps it rather than clamping every line
+          // into the right edge - which is where a mirror's doubled footers came from.
+          t.resize(split.afterCols, backRows)
+          t.write(prep(split.after), () => {
+            t.resize(back, backRows)
+            replaying.current = false
+            reshape(t, f)
+            done()
+          })
+          return
+        }
         t.resize(back, backRows) // still `replaying`: not a narrowing to rewrap
         replaying.current = false
         // ...and a fit, because a resize that arrived while `replaying` was set was
@@ -4115,6 +4129,9 @@ function TerminalPane({
       setHandoverUntil(until > Date.now() ? until : 0)
     })
 
+    // Set by `redrawHistory` while its snapshot is on the way: widen when it LANDS, not
+    // when it is asked for. See there.
+    let widenForReset: (() => void) | null = null
     const receiveReset = (id: string, snapshot: string): void => {
       if (id !== sessionId) return
       if (dead) return
@@ -4122,6 +4139,9 @@ function TerminalPane({
         replayEvents.push(() => receiveReset(id, snapshot))
         return
       }
+      const widen = widenForReset
+      widenForReset = null
+      widen?.()
       if (initialReplay) {
         const settle = initialReplay
         initialReplay = undefined
@@ -4370,9 +4390,15 @@ function TerminalPane({
     let redrawingHistory = false
     const redrawHistory = async (): Promise<boolean> => {
       if (redrawingHistory || dead) return false
+      // A CLI on the ALTERNATE screen (Codex) has no scrollback for history to go into, and
+      // a replay opens with `ESC c`, which drops that screen along with the mouse and paste
+      // modes the CLI set once at its start and never sends again: the pane stops taking
+      // the wheel (2026-09-29, card 2). Codex keeps its own history (Ctrl+T); the repaint
+      // `repair` already asked for is the whole fix here.
+      if (t.buffer.active.type === 'alternate') return false
       redrawingHistory = true
-      const back = t.cols
-      const wide = Math.max(back, replayColsRef.current ?? 0, START_COLS)
+      let back = t.cols
+      let wide = back
       try {
         // Finish already queued terminal writes before changing their painted width.
         await new Promise<void>(resolve => t.write('', resolve))
@@ -4387,8 +4413,17 @@ function TerminalPane({
         // the borrow back above already hands the pty the desk's.
         if (!mirrorRef.current && !gridRef.current)
           api.resize(sessionId, back, t.rows, isPhoneClient(), viewerName())
-        replaying.current = true
-        if (wide !== back) t.resize(wide, t.rows)
+        // Widened when the snapshot ARRIVES, never while it is on the way. A mirror's comes
+        // over the link: measured 2026-09-29 on a PC pane mirrored at 133, Fix held this
+        // terminal at 143 for about 7 s with no fit allowed (`replaying`), so the far end's
+        // live frames landed at the wrong width - the right edge cut off, the status footer
+        // twice - and a second press in that time repaired nothing.
+        widenForReset = () => {
+          back = t.cols
+          wide = Math.max(back, replayColsRef.current ?? 0, START_COLS)
+          replaying.current = true
+          if (wide !== back) t.resize(wide, t.rows)
+        }
         // Main delivers the snapshot through the same ordered reset/data stream. Reading
         // a log here and then resetting could erase output that arrived during that read.
         const restored = await api.replayHistory(sessionId)
@@ -4399,6 +4434,7 @@ function TerminalPane({
         if (!dead) say(error instanceof Error ? error.message : 'History is unavailable from that device')
         return false
       } finally {
+        widenForReset = null
         redrawingHistory = false
         replaying.current = false
         if (!dead) {
