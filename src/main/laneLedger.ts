@@ -133,18 +133,26 @@ export function ledgerWake(cwd: string, paneId: string): void {
 /**
  * `over` says a hold's pane is already closed (`holdIsOver` in `shared/laneTaken.ts`): its
  * folder is free for the next pane now, not when the gone-sweep gets to it 15 minutes on.
+ *
+ * `conversation` is the chat the asking pane resumes. A hold written by that same chat is
+ * its own, whatever pane id it names: a restart gives every restored pane a new id, so the
+ * hold still names the old one, which this app never saw and History never ended, and the
+ * wake read it as somebody else's. 2026-10-01 6:28pm: after the watchdog relaunch, chat 3
+ * (PaneForge-b, hold `s23-mup2zzuo`, now `s3-mup9scda`) and chat 2 (taskdriver.ai) were
+ * both moved out of their own folders by their own holds on the first press.
  */
-export function ledgerTakenFolders(paneId: string, over: (pane: string) => boolean): string[] {
+export function ledgerTakenFolders(paneId: string, over: (pane: string) => boolean, conversation?: string): string[] {
   try {
     const out: string[] = []
     for (const main of ledgerRepos()) {
-      let state: { lanes?: Record<string, { pane?: string }> }
+      let state: { lanes?: Record<string, { pane?: string; session?: string }> }
       try {
         state = JSON.parse(readFileSync(join(main, '.git', 'paneforge-lanes.json'), 'utf8'))
       } catch {
         continue
       }
       for (const [id, c] of Object.entries(state.lanes ?? {})) {
+        if (conversation && c.session === conversation) continue
         if (c.pane && c.pane !== paneId && !over(c.pane)) out.push(laneDirOf(main, id))
       }
     }

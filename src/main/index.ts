@@ -1976,7 +1976,7 @@ async function laneFor(
   // that folder again. Two client chats were restored asleep into `clients` and a
   // third opened from History landed there too, because neither counted (2026-09-04):
   // all three woke into one checkout. A folder with a sleeping pane in it is taken.
-  const taken = [...takenFolders(manager.list(), except), ...ledgerTakenFolders(except ?? '', holdOver), ...extraTaken]
+  const taken = [...takenFolders(manager.list(), except), ...ledgerTakenFolders(except ?? '', holdOver, req.resumeId), ...extraTaken]
 
   // Reopening a pane that was in a lane, when the lane turned out to hold nothing and
   // the project folder is free again: the lane was only ever there to keep two agents
@@ -2326,7 +2326,7 @@ ipcMain.handle('sessions:wake', (_e, id: string, by?: string) => {
   // A sleeping pane is placed again before it wakes: the folder it slept in may now be
   // another pane's (two client chats restored asleep into one checkout, 2026-09-04).
   const wake = (async (): Promise<Session | null> => {
-    await manager.rehome(id, (req) => laneFor(req, ledgerTakenFolders(id, holdOver), id))
+    await manager.rehome(id, (req) => laneFor(req, ledgerTakenFolders(id, holdOver, req.resumeId), id))
     return manager.wake(id, typeof by === 'string' ? by.slice(0, 24) : 'renderer')
   })().finally(() => wakesInFlight.delete(id))
   wakesInFlight.set(id, wake)
