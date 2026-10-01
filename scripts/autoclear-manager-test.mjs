@@ -11,7 +11,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const work = mkdtempSync(join(tmpdir(), 'pf-autoclear-manager-'))
 mkdirSync(join(work, 'userData'), { recursive: true })
 writeFileSync(join(work, 'electron.cjs'), `const p=require('node:path'); module.exports={app:{isPackaged:true,getVersion:()=> '1',getPath:()=>p.join(__dirname,'userData')},BrowserWindow:{getAllWindows:()=>[]},shell:{openPath:()=>{}},dialog:{}}`)
-writeFileSync(join(work, 'pty.cjs'), `const off={dispose(){}}; module.exports={spawn:()=>({pid:1,writes:[],onData(){return off},onExit(){return off},write(v){this.writes.push(v)},kill(){},resize(){}})}`)
+writeFileSync(join(work, 'pty.cjs'), `const off={dispose(){}}; module.exports={spawn:()=>({pid:1,writes:[],onData(cb){this.data=cb;return off},onExit(){return off},write(v){this.writes.push(v)},kill(){},resize(){}})}`)
 writeFileSync(join(work, 'handoff.cjs'), `module.exports={handoffFor:()=>global.__pfHandoff,forgetHandoff(){},clearHandoffCache(){}}`)
 await build({
   absWorkingDir: root, entryPoints: ['src/main/sessions.ts'], bundle: true, format: 'cjs', platform: 'node',
@@ -24,7 +24,9 @@ const realTimers = global.setTimeout
 const timers = []
 global.setTimeout = (fn, ms) => { const timer = { fn, ms, unref() {} }; timers.push(timer); return timer }
 global.clearTimeout = () => {}
-const NOW = Date.now()
+// "The pane last printed `ms` ago", for the stamp the quiet floor reads (`contentAt`) and the
+// raw one every other reading keeps (`meta.lastOutput`).
+const printedAgo = (live, ms) => { live.meta.lastOutput = Date.now() - ms; live.contentAt = live.meta.lastOutput }
 const valid = () => ({ path: '/memory/session-handoff.pane-pane1.md', mtimeMs: Date.now(), open: 1, steps: ['continue work'] })
 const bad = {
   missing: () => ({ path: null, mtimeMs: 0, open: 0, steps: [] }),
@@ -44,7 +46,7 @@ try {
     live.meta.id = 'pane1'
     manager.sessions.delete(started.id)
     manager.sessions.set('pane1', live)
-    live.meta.lastOutput = NOW - 10_000
+    printedAgo(live, 10_000)
     live.meta.runSince = undefined
     const armed = manager.armAutoClear('pane1', ask)
     assert.equal(armed.ok, true, `${label}: valid handoff first arms a countdown`)
@@ -64,7 +66,7 @@ try {
   live.meta.id = 'pane1'
   manager.sessions.delete(started.id)
   manager.sessions.set('pane1', live)
-  live.meta.lastOutput = NOW - 10_000
+  printedAgo(live, 10_000)
   live.meta.runSince = undefined
   manager.write('pane1', '\x1b[A', 'desk')
   assert.equal(live.typed, '', 'history recall leaves the legacy typed shadow empty')
@@ -97,7 +99,7 @@ try {
     live.meta.id = 'pane1'
     manager.sessions.delete(started.id)
     manager.sessions.set('pane1', live)
-    live.meta.lastOutput = NOW - 10_000
+    printedAgo(live, 10_000)
     live.meta.runSince = undefined
     global.__pfHandoff = valid()
     const start = timers.length
@@ -142,14 +144,14 @@ try {
     const owed = () => manager.list().find((s) => s.id === id)?.owedPrompt === true
     assert.equal(owed(), false, 'an idle pane with nothing on its way is owed nothing')
 
-    live.meta.lastOutput = Date.now() - 31
+    printedAgo(live, 31)
     const start = timers.length
     assert.match(manager.armAutoClear(id, ask15).reason ?? '', /settle/, 'a pane that printed 31ms ago is held, not armed')
     const hold = timers.slice(start).find((t) => t.ms > 9_000 && t.ms <= 9_969)
     assert.ok(hold, 'the settle hold is ~9969ms')
     assert.equal(owed(), true, 'list() says owedPrompt during the settle hold')
 
-    live.meta.lastOutput = Date.now() - 12_000
+    printedAgo(live, 12_000)
     hold.fn()
     assert.ok(live.meta.autoClearAt, 'the hold ends in an armed countdown')
     assert.ok(timers.slice(start).some((t) => t.ms === 15_000), 'the countdown is 15s')
@@ -165,6 +167,37 @@ try {
     assert.equal(owed(), true, 'list() says owedPrompt while the ask waits for the turn')
     manager.cancelAutoClear(id, 'cancelled')
     assert.equal(owed(), false, 'and not once that ask is dropped')
+  }
+  // The pty's own data events, end to end. s72 (2026-10-02 3:44-4:05am): a finished pane whose
+  // idle footer carried a background agent row repainted its timer every second, `lastOutput`
+  // was never 10s old, and the clear was held 115 times in 20 minutes. The chunks are the real
+  // shape out of that pane's log: a cursor hop, the title glyph, one digit.
+  {
+    global.__pfHandoff = valid()
+    const manager = new SessionManager()
+    const { id } = manager.start({ cwd: root, agent: 'claude' })
+    const live = manager.sessions.get(id)
+    live.meta.runSince = undefined
+    live.turnPending = false
+    live.meta.status = 'idle'
+    const ESC = '\x1b'
+    const tick = (d) => `${ESC}[2C${ESC}[8A${ESC}[?25h${ESC}]0;\u25d1 Taskdriver handoff continuation\x07${ESC}[?25l${ESC}[2D${ESC}[8B\r${ESC}[101C${ESC}[1A${ESC}[38;2;153;153;153m${d}${ESC}[39m\r\r\n`
+    const ask15 = { prompt: 'continue', steps: ['continue work'], seconds: 15 }
+    const verdict = () => { manager.cancelAutoClear(id, 'cancelled'); return manager.armAutoClear(id, ask15).reason ?? '' }
+
+    printedAgo(live, 30_000)
+    for (let d = 1; d <= 5; d++) live.proc.data(tick(d))
+    assert.ok(Date.now() - live.meta.lastOutput < 1000, 'the ticks are output: the raw stamp every other reading keeps still moves')
+    assert.ok(Date.now() - live.contentAt >= 29_000, 'but they are not what the quiet floor waits on')
+    assert.doesNotMatch(verdict(), /settle/, 'a finished pane with only a ticking footer is armed, not held for ever')
+    assert.ok(live.meta.autoClearAt, 'and the countdown is on screen')
+
+    manager.cancelAutoClear(id, 'cancelled')
+    printedAgo(live, 30_000)
+    live.proc.data(`${ESC}[1m  Checking the second thing now, the fix is in.${ESC}[22m\r\n`)
+    live.proc.data(tick(6))
+    assert.match(verdict(), /settle/, 'a reply printed a moment ago still holds the clear, ticks or not')
+    assert.equal(live.meta.autoClearAt, undefined, 'and no countdown is drawn over it')
   }
   console.log('autoclear manager: delayed handoff and draft guards behaved')
 } finally {

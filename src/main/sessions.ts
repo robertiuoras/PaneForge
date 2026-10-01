@@ -23,7 +23,7 @@ import { which } from './which'
 import { specFor } from './agents'
 import { pfEnv, pfPrimerArgs } from './pfAccess'
 import { memoryPrelude } from './board'
-import { endAll, gistFor, noteCols, recordData, recordEnd, recordStart, sizeOf, tail } from './history'
+import { endAll, gistFor, noteCols, recordData, recordEnd, recordStart, sizeOf, tail, titleOf } from './history'
 import { jobTable } from './backJobs'
 import { backJobInfo, backJobWaitOnly } from './usage'
 import { forgetHandoff, handoffFor } from './handoffSteps'
@@ -35,7 +35,7 @@ import { trustAgyWorkspace } from './agyTrust'
 import { trustCodexFolder } from './codexTrust'
 import { ASK_WINDOW, CLIENTS_DIR, clientLabel, mayRename } from '../shared/clientName'
 import { appNamedTitle } from './activity'
-import { nextTitle, titlesIn, type CliTitles } from '../shared/cliTitle'
+import { humanTitle, nextTitle, titlesIn, type CliTitles } from '../shared/cliTitle'
 import { earlierTitles } from './cliChain'
 import { chromeCdpFor } from '../shared/peerChrome'
 import type { ClientNamed } from '../shared/types'
@@ -66,7 +66,7 @@ import { dropStale, lentGrid, watchedBorrow, type Borrow } from '../shared/paneS
 import { START_COLS, START_ROWS } from '../shared/paneGrid'
 import { LIVE_REPLAY_LIMIT } from '../shared/freshReplay'
 import { paintedWidth, RESTORE_MARK_TEXT } from '../shared/replayWidth'
-import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, SUBMIT_GAP_MS, armDecision, clearChunks, hasFreshPaneHandoff, resumeOf, dropFor, dropWords, expiryDecision, queuedPromptDecision, quietEnoughToArm, standDownFor, type DropReason, type QueuedPromptVerdict } from '../shared/autoclear'
+import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, SUBMIT_GAP_MS, armDecision, clearChunks, contentStampAfter, hasFreshPaneHandoff, resumeOf, dropFor, dropWords, expiryDecision, queuedPromptDecision, quietEnoughToArm, standDownFor, type DropReason, type QueuedPromptVerdict } from '../shared/autoclear'
 import { acLog } from './autoclearLog'
 import { dropAllFor, noteAccepted, noteNativeAccepted, noteTyped, noteDropped, noteSubmitted, noteWithheld, owedAfterRestore, owedCount, stillOwed, typedOwed } from './queuedPrompts'
 import type { QueueDrop } from '../shared/queuedPrompts'
@@ -569,6 +569,14 @@ interface Live {
   paintSeq: number
   /** When the newest data event arrived, grace repaints included. */
   paintedAt: number
+  /**
+   * When this pane last SAID something: `meta.lastOutput` minus the once-a-second tick of a
+   * footer counter on a pane that is not mid-turn (`contentStampAfter`). Read by the three
+   * autoclear quiet gates and nothing else - a finished pane carrying a background agent
+   * repaints its timer for ever, and `lastOutput` on it is never 10s old (s72, 2026-10-02:
+   * 115 holds in 20 minutes, no clear). Reset wherever `lastOutput` is.
+   */
+  contentAt: number
   /**
    * When this pane was WOKEN, until its CLI prints something. 0 the rest of the time.
    *
@@ -1075,7 +1083,8 @@ export class SessionManager extends EventEmitter {
       // still working on PaneForge, and the `-a` is a slot id this app invented. The
       // copy is already said by the chip beside the name (`copy 2`), so the folder
       // spelling here was the machinery leaking onto the card twice.
-      title: req.title && !oldGuess ? req.title : projectOf(req.cwd, req.lane),
+      // An opener's name (`pf open --title`, a saved desk) loses its ids like every other one.
+      title: (req.title && !oldGuess && humanTitle(req.title, this.chatTitles(id))) || projectOf(req.cwd, req.lane),
       autoTitled: oldGuess ? undefined : req.autoTitled,
       cwd: req.cwd,
       agent,
@@ -1145,6 +1154,7 @@ export class SessionManager extends EventEmitter {
       repaintUntil: 0,
       paintSeq: 0,
       paintedAt: 0,
+      contentAt: Date.now(),
       wokeAt: 0,
       turnPending: false,
       footerEndedAt: 0,
@@ -1283,6 +1293,14 @@ export class SessionManager extends EventEmitter {
           : undefined
     if (!found || found.slug === s.clientSlug) return
     this.nameTo(live, clientLabel(found), 'client', from, found.slug)
+  }
+
+  /**
+   * Another chat's name, for `humanTitle` to put where a title says its id: a pane on this
+   * desk, else one History remembers. Never `self` - a chat is not named after itself.
+   */
+  private chatTitles(self: string): (paneId: string) => string | undefined {
+    return (paneId) => (paneId === self ? undefined : (this.sessions.get(paneId)?.meta.title ?? titleOf(paneId)))
   }
 
   /** Whether a pane still wears the name the app gave it at birth: its folder or project. */
@@ -1447,6 +1465,7 @@ export class SessionManager extends EventEmitter {
     live.meta.lastRunMs = undefined
     live.meta.createdAt = Date.now()
     live.meta.lastOutput = Date.now()
+    live.contentAt = live.meta.lastOutput
     live.meta.lastKeyboard = Date.now()
     live.repaintUntil = 0
     this.emit('data', id, RESET)
@@ -1755,6 +1774,7 @@ export class SessionManager extends EventEmitter {
     // `openedAt` is the pane's own age and a sleep does not interrupt it.
     live.meta.createdAt = Date.now()
     live.meta.lastOutput = Date.now()
+    live.contentAt = live.meta.lastOutput
     live.meta.lastKeyboard = Date.now()
     live.repaintUntil = 0
     // Not a caption: the pane says "Starting <agent>..." over the terminal already
@@ -1881,8 +1901,10 @@ export class SessionManager extends EventEmitter {
 
   rename(id: string, title: string): void {
     const s = this.sessions.get(id)
-    if (!s || !title.trim()) return
-    s.meta.title = title.trim().slice(0, 60)
+    // `pf rename` is mostly another chat naming this one, and chats write ids.
+    const named = s ? humanTitle(title.trim(), this.chatTitles(id)) : ''
+    if (!s || !named) return
+    s.meta.title = named.slice(0, 60)
     // A manual name is authoritative even when it happens to equal the folder label.
     s.meta.autoTitled = undefined
     this.emitSessions()
@@ -3379,7 +3401,7 @@ export class SessionManager extends EventEmitter {
     // countdown over that and requeueing it a second later, the arm waits out the
     // remainder and asks again - by which time `dropFor` sees the new turn and queues it
     // properly. Re-entering here is safe: a pane that stayed quiet arms on the second pass.
-    const quiet = Date.now() - s.meta.lastOutput
+    const quiet = Date.now() - s.contentAt
     if (!quietEnoughToArm(quiet)) {
       const wait = Math.max(250, ARM_QUIET_MS - quiet)
       const prev = this.autoClearArmTimers.get(id)
@@ -3452,7 +3474,7 @@ export class SessionManager extends EventEmitter {
         armedAt,
         now: Date.now(),
         drop: live ? dropFor({ ...live.meta, typed: live.typed }) : 'gone',
-        quietMs: live ? Date.now() - live.meta.lastOutput : undefined
+        quietMs: live ? Date.now() - live.contentAt : undefined
       })
       acLog(
         `${id} expiry: ${verdict} (armed ${armedAt}, meta ${live?.meta.autoClearAt ?? 'none'})`
@@ -3477,7 +3499,7 @@ export class SessionManager extends EventEmitter {
       if (verdict === 'settling') {
         const next = Date.now() + DRAFT_RETRY_MS
         live!.meta.autoClearAt = next
-        acLog(`${id} waiting: the pane printed ${Date.now() - live!.meta.lastOutput}ms ago and may not be finished - asking again at ${new Date(next).toISOString()}`)
+        acLog(`${id} waiting: the pane printed ${Date.now() - live!.contentAt}ms ago and may not be finished - asking again at ${new Date(next).toISOString()}`)
         this.emitSessions()
         const again = setTimeout(() => fire(next), DRAFT_RETRY_MS)
         again.unref?.()
@@ -3538,7 +3560,7 @@ export class SessionManager extends EventEmitter {
         // before writing: a person may submit, open a question, or recall a history line
         // in this window. The clear is not complete until its command reaches the pty.
         const late = dropFor({ ...current.meta, typed: current.typed })
-        const lateQuiet = Date.now() - current.meta.lastOutput
+        const lateQuiet = Date.now() - current.contentAt
         if (!late && !quietEnoughToArm(lateQuiet)) {
           const next = Date.now() + DRAFT_RETRY_MS
           current.meta.autoClearAt = next
@@ -4041,6 +4063,9 @@ export class SessionManager extends EventEmitter {
       // own banner is not working for you. Submitting a prompt starts it, and the
       // agent's busy footer starts one this app never saw typed.
       meta.lastOutput = now
+      // The autoclear quiet floor's own reading: every byte, EXCEPT a footer counter ticking
+      // on a pane that is not mid-turn. See `contentStampAfter`.
+      live.contentAt = contentStampAfter({ stamp: live.contentAt, now, idle: wasIdle, chunk: data })
       // Output alone is not work either, and the status used to say it was: eight panes
       // relaunched at startup all painted their own banner within a second and the whole
       // sidebar went green - running clocks, lit Ctrl-N keys - while every one of them was
@@ -5221,7 +5246,14 @@ export class SessionManager extends EventEmitter {
     live.titleRead = { path, offset, at: now, seen: read }
     const s = live.meta
     const pane = { title: s.title, autoTitled: s.autoTitled, appDefault: this.appDefault(s) }
-    const next = nextTitle(pane, read, prev?.seen, projectOf(s.cwd, s.lane), s.clientOff ? undefined : () => earlierTitles(path))
+    const next = nextTitle(
+      pane,
+      read,
+      prev?.seen,
+      projectOf(s.cwd, s.lane),
+      s.clientOff ? undefined : () => earlierTitles(path),
+      this.chatTitles(s.id)
+    )
     if (!next) return
     // A person's `/rename` is theirs to make; an old save's "do not name this pane" only
     // holds the app's own naming back.
