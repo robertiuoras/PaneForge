@@ -60,9 +60,20 @@ function stampOf(v: unknown): number | undefined {
   return Number.isFinite(at) ? at : undefined
 }
 
+/** A reply that carries its own `Next steps` heading or label line - a report, not an aside. */
+const OWN_STEPS = /(?:^|\n)[ \t]*(?:#{1,4}[ \t]*)?(?:\*\*|__)?[ \t]*Next steps\b/i
+
 /** The Claude CLI's JSONL, any stretch of it (the first line may be half a record). */
 export function readClaudeReply(jsonl: string): ReplyRead {
   let text = ''
+  /**
+   * The reply a Stop hook answered. Its feedback arrives as an `isMeta` user row and the
+   * agent's answer to it - "wrote the handoff", in a line or two - is the LAST text, so the
+   * Review row and the GuardDeck card carried that and lost the report and its steps (s42,
+   * 1 Oct: AUTO-CLEAR after a full report). Kept until a follow-up brings steps of its own
+   * or somebody (a person, a notification) starts something new.
+   */
+  let report: string | undefined
   let prompt: string | undefined
   let promptAt: number | undefined
   const launched = new Set<string>()
@@ -85,9 +96,17 @@ export function readClaudeReply(jsonl: string): ReplyRead {
     }
     if (j.isSidechain) continue
     const content = j.message?.content
+    // The harness talking (a Stop hook's feedback, a command caveat) - never the person.
+    if (j.type === 'user' && (j as { isMeta?: boolean }).isMeta) {
+      if (/^\s*Stop hook feedback:/.test(textOf(content)) && text.trim() && (report === undefined || OWN_STEPS.test(text))) report = text
+      continue
+    }
     if (j.type === 'assistant') {
       const t = textOf(content)
-      if (t.trim()) text = t
+      if (t.trim()) {
+        text = t
+        if (OWN_STEPS.test(t)) report = undefined
+      }
       if (Array.isArray(content))
         for (const c of content as Array<{ type?: string; id?: string; name?: string }>)
           if (c.type === 'tool_use' && c.id && (c.name === 'Agent' || c.name === 'SendMessage' || c.name === 'Workflow')) launched.add(c.id)
@@ -102,6 +121,7 @@ export function readClaudeReply(jsonl: string): ReplyRead {
             else launched.delete(c.tool_use_id) // foreground: its result IS the report
           } else if (c.type === 'text') plain = true
         }
+        if (plain) report = undefined
         if (plain) {
           const p = typedPrompt(textOf(content))
           if (p) {
@@ -110,6 +130,7 @@ export function readClaudeReply(jsonl: string): ReplyRead {
           }
         }
       } else if (typeof content === 'string') {
+        report = undefined
         const p = typedPrompt(content)
         if (p) {
           prompt = p
@@ -120,6 +141,7 @@ export function readClaudeReply(jsonl: string): ReplyRead {
   }
   let runningAgents = 0
   for (const id of answered) if (!notified.has(id)) runningAgents++
+  if (report !== undefined && report !== text) text = `${report}\n\n${text}`
   return { text, runningAgents, prompt, promptAt }
 }
 

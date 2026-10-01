@@ -16,8 +16,8 @@
 //
 // Pure. `main/doneClose.ts` reads the transcript and closes; `npm run test:doneclose`.
 
-import { doneEnough, type DonePane } from './closeWhenDone'
-import { actionableNextSteps, personOwnedSteps } from './handoffSteps'
+import { CLOSE_DONE_QUIET_MS, doneEnough, type DonePane } from './closeWhenDone'
+import { actionableNextSteps, openNextSteps, personOwnedSteps } from './handoffSteps'
 
 /**
  * What deciding needs to know, on top of what `closeWhenDone` already reads. The hand-off
@@ -150,6 +150,28 @@ export function personLooking(selected: boolean, windowFocused: boolean, deskWat
   return selected && windowFocused && deskWatched
 }
 
+/**
+ * Which pane-state flag `doneEnough` refused on, in words; null when it did not refuse.
+ *
+ * It was one sentence for seven flags, so done-close.log could not say which held s42 on
+ * 1-2 Oct: "busy, asking, drafting or running something" from 11:56pm until Robert came
+ * back at 1:13am. It was an unsent-draft flag nothing could clear (the composer read lost
+ * Claude's box while a hint line sat below it) - known only by elimination, which a log
+ * line naming the flag would have said in one read.
+ */
+export function whyNotDone(p: DonePane, quietMs: number, now = Date.now()): string | null {
+  if (doneEnough(p, quietMs, now)) return null
+  if (!p.printed) return 'not started'
+  if (p.asleep) return 'asleep'
+  if (p.status === 'exited') return 'its program has exited'
+  if (p.runSince || (p.busyUntil ?? 0) > now) return 'a turn running'
+  if (p.ask) return 'a question on screen'
+  if (p.drafting) return 'an unsent draft in its prompt box'
+  if (p.backJob) return `a background job (${p.backJob})`
+  if (quietMs < CLOSE_DONE_QUIET_MS) return 'printed in the last 8 s'
+  return 'busy or running something'
+}
+
 export type DoneVerdict =
   | { close: true; personSteps: string[]; read: boolean }
   | { close: false; reason: string }
@@ -168,7 +190,8 @@ export function doneVerdict(reading: DoneReading, now = Date.now(), quietMs = AU
   const read = wasRead(p)
   const readQuiet = read ? now - Math.max(p.lookedAt ?? 0, p.lastKeyboard) >= READ_QUIET_MS : false
   if (quietMs !== 0 && ((read && !readQuiet) || (!read && quiet < quietMs))) return { close: false, reason: 'not quiet long enough' }
-  if (!doneEnough(p, quiet, now)) return { close: false, reason: 'busy, asking, drafting or running something' }
+  const busy = whyNotDone(p, quiet, now)
+  if (busy) return { close: false, reason: busy }
   // What `closeAfterResult` refuses on, refused here first: passed here and refused there,
   // a held pane got a fresh 30-second countdown every sweep that never closed it (s48,
   // 2026-10-01, twelve in eight minutes, held by a handoff with open steps).
@@ -179,7 +202,7 @@ export function doneVerdict(reading: DoneReading, now = Date.now(), quietMs = AU
   if (left) return { close: false, reason: left }
   if (p.folder === 'unread') return { close: false, reason: 'its folder has not been read yet' }
   if (p.folder && (p.folder.dirty > 0 || p.folder.ahead > 0)) return { close: false, reason: 'its folder has uncommitted or unpushed work' }
-  return { close: true, personSteps: personOwnedSteps(p.reply), read }
+  return { close: true, personSteps: replyPersonSteps(p.reply), read }
 }
 
 /**
@@ -199,9 +222,65 @@ export function replyLeaves(reply: string, runningAgents?: number): string | nul
   const prose = reply.replace(/<oai-mem-citation>[\s\S]*?(?:<\/oai-mem-citation>|$)/g, '').replace(/\*\*/g, '')
   if (/(?:^|\n)\s*(?:[-*]\s*)?(?:unfinished|remaining work|still to do|blocked)\s*:|\b(?:job|task|work|check) (?:itself )?(?:is (?:not finished|not complete|unfinished)|isn't (?:finished|complete))|\b(?:tasks?|steps?) remain open\b|\b(?:check|work|task) is (?:still )?queued\b/i.test(prose))
     return 'the reply reports unfinished work'
-  const open = actionableNextSteps(reply)
+  const open = replyAgentSteps(reply)
   if (open.length) return `${open.length} step${open.length === 1 ? '' : 's'} an agent could take`
   return null
+}
+
+/**
+ * A step that opens with what a person SAYS is theirs: 'Say "release" to ship main' (s42,
+ * 1 Oct). The `handoffSteps` mirror knows "Robert to ..." and "your call", not this.
+ */
+const SAID_BY_PERSON = /^(?:say|tell me|reply|answer)\b/i
+
+/**
+ * A reply's steps in the shape `handoffSteps` reads. It reads a `## Next steps` HEADING,
+ * which handoff files have and replies do not: they say `**Next steps:**` or `Next steps:
+ * None`, so s42's report read as no steps at all. Label lines become headings (a step
+ * written on the label line becomes the first bullet), any other label line - bold, or a
+ * bare `Something:` alone on its line - ends the section, and a bullet indented under a
+ * step is that step's detail, not a step.
+ */
+export function replyStepsText(reply: string): string {
+  const out: string[] = []
+  let inSteps = false
+  let base = -1
+  for (const line of String(reply || '').split('\n')) {
+    const plain = line.replace(/\*\*|__/g, '')
+    const label = plain.match(/^\s*(?:#{1,4}\s*)?Next steps\s*(?::\s*(.*))?$/i)
+    if (label) {
+      out.push('## Next steps')
+      if (label[1]?.trim()) out.push(`- ${label[1].trim()}`)
+      inSteps = true
+      base = -1
+      continue
+    }
+    if (/^#{1,4}\s/.test(line) || (/^\s*[^\s\-*+#\d>][^:]{0,60}:\s*$/.test(plain) && (/^\s*(?:\*\*|__)/.test(line) || !/^\s/.test(line)))) {
+      inSteps = false
+      out.push(/^#{1,4}\s/.test(line) ? line : `## ${plain.trim()}`)
+      continue
+    }
+    const bullet = line.match(/^(\s*)(?:[-*+]|\d+[.)])\s/)
+    if (inSteps && bullet) {
+      const indent = bullet[1].replace(/\t/g, '    ').length
+      if (base < 0) base = indent
+      if (indent > base) continue
+    }
+    out.push(line)
+  }
+  return out.join('\n')
+}
+
+/** The steps a reply leaves for an agent: `actionableNextSteps` over `replyStepsText`. */
+export function replyAgentSteps(reply: string): string[] {
+  return actionableNextSteps(replyStepsText(reply)).filter((step) => !SAID_BY_PERSON.test(step))
+}
+
+/** The steps a reply leaves for a person, in the order it lists them. */
+export function replyPersonSteps(reply: string): string[] {
+  const md = replyStepsText(reply)
+  const theirs = new Set(personOwnedSteps(md))
+  return openNextSteps(md).filter((step) => theirs.has(step) || SAID_BY_PERSON.test(step))
 }
 
 /**

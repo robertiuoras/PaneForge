@@ -36,7 +36,7 @@ async function bundle(entry, name) {
   await build({ absWorkingDir: root, entryPoints: [entry], outfile: out, bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent', plugins: [stubs] })
   return require(out)
 }
-const { doneVerdict, doneReviewId, doneQuietMs, personLooking, replyFinished, closeHeldBy, wasRead, AUTO_CLOSE_QUIET_MS, READ_QUIET_MS } = await bundle('src/shared/doneClose.ts', 'shared.cjs')
+const { doneVerdict, whyNotDone, doneReviewId, doneQuietMs, personLooking, replyFinished, closeHeldBy, wasRead, AUTO_CLOSE_QUIET_MS, READ_QUIET_MS } = await bundle('src/shared/doneClose.ts', 'shared.cjs')
 const { handoffOpenAfter } = await bundle('src/shared/handoffSteps.ts', 'handoffsteps.cjs')
 const digest = await bundle('src/shared/finishedDigest.ts', 'digest.cjs')
 const main = await bundle('src/main/doneClose.ts', 'main.cjs')
@@ -182,20 +182,48 @@ ${method('closeAfterResult', 'killAll')}
   assert.equal(refuse({ kept: true, lookedAt: NOW - 60_000, turnEndedAt: NOW - 90_000 }), 'kept open by hand', 'read does not undo a keep')
   assert.equal(refuse({ lastKeyboard: NOW - 10_000 }), 'not quiet long enough', 'typing restarts the clock')
   assert.equal(refuse({ turnEndedAt: NOW - 30_000 }), 'not quiet long enough')
-  assert.match(refuse({ ask: { q: 'which?' } }), /busy, asking/)
-  assert.match(refuse({ drafting: true }), /busy, asking/)
-  assert.match(refuse({ backJob: 'npm run build' }), /busy, asking/)
-  assert.match(refuse({ backJob: 'npm run build', backWaitOnly: false }), /busy, asking/)
+  assert.equal(refuse({ ask: { q: 'which?' } }), 'a question on screen')
+  assert.equal(refuse({ drafting: true }), 'an unsent draft in its prompt box')
+  assert.equal(refuse({ backJob: 'npm run build' }), 'a background job (npm run build)')
+  assert.equal(refuse({ backJob: 'npm run build', backWaitOnly: false }), 'a background job (npm run build)')
   assert.equal(doneVerdict(finished({ backJob: 'gh', backWaitOnly: true }), NOW).close, true, 'a pane only waiting on CI closes')
   assert.match(refuse({ backJob: 'gh', backWaitOnly: true, reply: 'Which branch?' }), /question/, 'a wait never excuses a question')
-  assert.match(refuse({ runSince: NOW - 1000 }), /busy, asking/)
-  assert.match(refuse({ status: 'exited' }), /busy, asking/)
-  assert.match(refuse({ asleep: NOW - 1000 }), /busy, asking/)
+  assert.equal(refuse({ runSince: NOW - 1000 }), 'a turn running')
+  assert.equal(refuse({ busyUntil: NOW + 1000 }), 'a turn running', 'the footer still saying so')
+  assert.equal(refuse({ status: 'exited' }), 'its program has exited')
+  assert.equal(refuse({ asleep: NOW - 1000, status: 'exited' }), 'asleep')
+  assert.equal(refuse({ printed: 0 }), 'not started')
+  assert.equal(refuse({ job: 'vim' }), 'busy or running something')
+  // Quiet past the three-minute wait but printed in the last 8 s cannot happen through
+  // doneVerdict (the same clock), so the 8 s refusal is asked of whyNotDone directly.
+  assert.equal(whyNotDone(finished(), 3000, NOW), 'printed in the last 8 s')
+  assert.equal(whyNotDone(finished(), 9000, NOW), null)
   assert.equal(refuse({ reply: undefined }), 'reply not read')
   assert.equal(refuse({ runningAgents: 2 }), '2 subagents still running')
   assert.equal(refuse({ reply: 'Which port should it use?' }), 'the reply ends in a question')
   assert.equal(refuse({ reply: 'Done.\n\n## Next steps\n- Wire the PC watcher\n- Robert: approve' }), '1 step an agent could take')
   console.log('done-close: refusals ok')
+}
+
+// 2b. s42 on 1 Oct, finished 11:53pm Thu: its real report, read the way the sweep reads it
+// (`main/doneClose.ts` `readReply` over `fixtures/claude-stophook-followup.jsonl`). Its
+// steps sit under `**Next steps:**`, a label and not a heading, so none were read: the
+// GuardDeck card never got 'Say "release"', and step 1 read as nobody's.
+{
+  const s42 = main.readReply('claude', join(root, 'scripts/fixtures/claude-stophook-followup.jsonl'))
+  const v = doneVerdict(finished({ reply: s42.text, runningAgents: s42.runningAgents }), NOW)
+  assert.equal(v.close, true, JSON.stringify(v))
+  assert.match(v.personSteps[0] ?? '', /^Say "release" to ship main/, 'the release is Robert\'s step')
+  assert.ok(!v.personSteps.some((x) => /^record a test call|^read today/.test(x)), 'sub-bullets under a step are not steps')
+  // The same label shapes, on their own.
+  const steps = (reply) => doneVerdict(finished({ reply }), NOW)
+  assert.equal(steps('Done.\n\n**Next steps:**\n1. Wire the PC watcher').reason, '1 step an agent could take', 'a label line is a heading')
+  assert.equal(steps('Done.\n\nNext steps: wire the PC watcher').reason, '1 step an agent could take', 'a step on the label line itself')
+  assert.equal(steps('Done.\n\n**Next steps:** None').close, true)
+  assert.equal(steps('Done.\n\n**Next steps:**\n- None\n\n**Notes:**\n- the PC was slow').close, true, 'a bold label ends the steps')
+  assert.deepEqual(steps('Done.\n\n**Next steps:**\n1. Tell me which port to use').personSteps, ['Tell me which port to use'])
+  assert.deepEqual(steps('Done.\n\n## Next steps\n- Reply "yes" to merge').personSteps, ['Reply "yes" to merge'])
+  console.log('done-close: s42 report read, its release step is Robert\'s ok')
 }
 
 // 2a. A machine short of memory waits less. Robert 2026-09-28: "id rather they close than
@@ -625,7 +653,7 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
   const at = s77.lastOutput + 10 * 60_000
   const reading = { agent: s77.agent, printed: s77.printed, status: s77.status, lastKeyboard: s77.lastKeyboard, turnEndedAt: s77.lastOutput, backJob: s77.backJob, backWaitOnly: isWaitScript(shell), reply: 'Merged.\n\nNext steps: None', runningAgents: 0 }
   assert.equal(doneVerdict(reading, at).close, true, 's77 waiting on CI through bg-wait closes')
-  assert.match(doneVerdict({ ...reading, backWaitOnly: false }, at).reason, /busy/, 'the same pane running real work stays')
+  assert.equal(doneVerdict({ ...reading, backWaitOnly: false }, at).reason, 'a background job (bg-wait.mjs)', 'the same pane running real work stays')
   console.log('done-close: a pane only waiting through bg-wait closes (s77) ok')
 }
 
