@@ -143,7 +143,17 @@ export { PaneAnswers }
   h.ownershipWrite(r.paneId,'human typing','desk')
   assert.equal(queued.foreign,true,'actual human write still takes queue composer ownership')
   assert.equal(h.queueVerdict(r.paneId,true),'abandon','foreign editing restores the person-owned expiry even at the same keyboard timestamp')
-  for(const active of [{since:100},{writing:true},{foreign:true}]) {
+  h=fresh(); r=request(); const untouched=queue(h)
+  h.ownershipWrite(r.paneId,'\x1b[B','desk')
+  assert.equal(untouched.foreign,true,'native question navigation marks an untouched queued prompt foreign')
+  assert.equal(h.answerPane(r).state,'waiting','native question input leaves an unpasted queue available for the answer');tick();tick();receipt();tick()
+  assert.equal(h.answerStatus(r).state,'confirmed','question input before the queued paste does not reserve the composer')
+  assert.deepEqual(h.writes,[`\x1b[200~${r.text}\x1b[201~`,'\r'])
+  assert.equal(h.codexQueued.get(r.paneId),untouched);assert.equal(untouched.since,0);assert.equal(untouched.foreign,true)
+  h=fresh();r=request();queue(h,{foreign:true});h.sessions.get(r.paneId).draft={text:'human draft kept',certain:true}
+  h.answerPane(r);tick();assert.equal(h.writes.length,0);assert.equal(h.sessions.get(r.paneId).draft.text,'human draft kept')
+  expire();tick();assert.equal(h.answerStatus(r).state,'rejected','foreign waiting queue still preserves a human draft')
+  for(const active of [{since:100},{since:100,foreign:true},{writing:true}]) {
     h=fresh(); r=request(); queue(h,active)
     assert.equal(h.answerPane(r).state,'rejected','active/edited queue ownership refuses answer'); assert.equal(h.writes.length,0)
   }

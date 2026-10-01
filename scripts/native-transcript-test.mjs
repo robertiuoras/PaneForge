@@ -221,6 +221,26 @@ try {
   appendFileSync(questionFile,line({type:'response_item',payload:{type:'function_call_output',call_id:'new-call',output:'{"error":"interrupted"}'}})+'\n')
   assert.equal(codexQuestionPending(cwd,questionId,'new-call',2),false,'native failure ends exact call')
   assert.equal(codexQuestionPending('/wrong/cwd',questionId,'old-call',2),false,'wrong owner fails closed')
+  const lifecycle = (type, turnId) => line({type:'event_msg',payload:{type,...(turnId===undefined?{}:{turn_id:turnId})}})
+  const boundCall = (id, turnId) => { const row=JSON.parse(call(id));row.payload.internal_chat_message_metadata_passthrough={turn_id:turnId};return line(row) }
+  const meta = line({type:'session_meta',payload:{id:questionId,cwd,timestamp:'2026-09-01T00:00:00Z'}})
+  const checkLifecycle = (rows, expected, reason) => {
+    writeFileSync(questionFile,[meta,...rows].join('\n')+'\n')
+    assert.equal(codexQuestionPending(cwd,questionId,'turn-call',2),expected,reason)
+  }
+  for(const end of ['task_complete','turn_aborted']) {
+    checkLifecycle([lifecycle('task_started','own-turn'),boundCall('turn-call','own-turn'),lifecycle(end,'own-turn')],false,`${end}: exact owning turn closes the live question`)
+    checkLifecycle([lifecycle('task_started','own-turn'),boundCall('turn-call','own-turn'),lifecycle(end,'unrelated')],true,`${end}: unrelated turn keeps question`)
+    checkLifecycle([lifecycle('task_started','own-turn'),boundCall('turn-call','own-turn'),lifecycle(end)],true,`${end}: missing end identity keeps question`)
+    checkLifecycle([boundCall('turn-call','own-turn'),lifecycle(end,'own-turn')],true,`${end}: missing ordered start cannot prove closure`)
+    checkLifecycle([lifecycle('task_started','own-turn'),call('turn-call'),lifecycle(end,'own-turn')],true,`${end}: missing call turn metadata cannot prove closure`)
+    checkLifecycle([lifecycle('task_started','own-turn'),boundCall('turn-call','different'),lifecycle(end,'own-turn')],true,`${end}: mismatched call turn keeps question`)
+    checkLifecycle([lifecycle('task_started','own-turn'),lifecycle(end,'own-turn'),boundCall('turn-call','own-turn')],true,`${end}: earlier end cannot close later question`)
+    checkLifecycle([lifecycle('task_started','own-turn'),lifecycle(end,'own-turn'),boundCall('turn-call','own-turn'),lifecycle(end,'own-turn')],true,`${end}: duplicate end cannot bind a question after its turn ended`)
+    checkLifecycle([lifecycle('task_started','own-turn'),boundCall('turn-call','own-turn'),lifecycle('task_started','next-turn'),lifecycle(end,'next-turn')],true,`${end}: next turn end cannot close older question`)
+  }
+  checkLifecycle([lifecycle('task_started','own-turn'),boundCall('turn-call','own-turn'),'{"type":"event_msg","payload":{"type":"task_complete","turn_id":'],true,'partial lifecycle row keeps question')
+  checkLifecycle([lifecycle('task_started','own-turn'),boundCall('turn-call','own-turn'),boundCall('turn-call','own-turn')],false,'duplicated call identity is not actionable')
   console.log('native transcript: OK')
 } finally {
   for (const [key, value] of Object.entries(before)) value === undefined ? delete process.env[key] : process.env[key] = value

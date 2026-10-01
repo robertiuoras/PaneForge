@@ -2105,8 +2105,10 @@ export class SessionManager extends EventEmitter {
     const known = resumeIdFor(id)
     const waitingPrompt = () => {
       const queued = this.codexQueued.get(id)
+      // Native question navigation may mark this queue foreign before we paste it.
+      // Only an untouched prompt can pause here; a pasted or in-flight draft still owns the composer.
       return Boolean(queued && queued.live === live && queued.proc === proc && stillOwed(queued.key) &&
-        !queued.since && !queued.writing && !queued.foreign)
+        queued.since === 0 && !queued.writing)
     }
     const composerReserved = () => {
       const queued = this.codexQueued.get(id)

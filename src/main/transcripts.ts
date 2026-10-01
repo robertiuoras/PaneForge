@@ -1193,17 +1193,31 @@ export function codexQuestionPending(cwd: string, conversationId: string, toolUs
   const file = codexTranscriptPath(cwd, conversationId)
   if (!file || !toolUseId.trim() || !Number.isInteger(questionCount) || questionCount < 1) return false
   let fd = -1, pending = '', matches = false, calls = 0, ended = false
+  let activeTurn: string | undefined, questionTurn: string | undefined
   const consume = (line: string) => {
-    if (!line.includes('session_meta') && !line.includes(toolUseId) && !line.includes('send_user_message_question_reply')) return
+    if (!line.includes('session_meta') && !line.includes('event_msg') && !line.includes(toolUseId) && !line.includes('send_user_message_question_reply')) return
     try {
       const row = JSON.parse(line), p = row.payload
       if (row.type === 'session_meta') { matches = p?.id === conversationId; return }
+      if (row.type === 'event_msg') {
+        const turnId = typeof p?.turn_id === 'string' && p.turn_id.trim() ? p.turn_id : undefined
+        if (p?.type === 'task_started') activeTurn = turnId
+        // The native live editor drops outstanding drafts at the owning turn's end.
+        // An unrelated, truncated or unbound lifecycle row is not closure proof.
+        if ((p?.type === 'task_complete' || p?.type === 'turn_aborted') && turnId && activeTurn === turnId) {
+          if (questionTurn === turnId) ended = true
+          activeTurn = undefined
+        }
+        return
+      }
       if (row.type !== 'response_item' || !p) return
       if (p.type === 'function_call' && p.call_id === toolUseId) {
         if (!/^(?:functions\.)?request_user_input_async$/.test(p.name ?? '')) { ended = true; return }
         const args = JSON.parse(p.arguments)
         if (!Array.isArray(args.questions) || args.questions.length !== questionCount) { ended = true; return }
         calls++
+        const turnId = p.internal_chat_message_metadata_passthrough?.turn_id
+        if (typeof turnId === 'string' && turnId && turnId === activeTurn) questionTurn = turnId
       }
       if (p.type === 'function_call_output' && p.call_id === toolUseId) {
         let result
