@@ -1298,8 +1298,12 @@ const ANSWERING =
   restoredLive.meta.status = 'idle'; restoredLive.meta.runSince = undefined; restoredLive.meta.drafting = false
   restoredLive.meta.lastOutput = Date.now() - 10_000; restoredLive.footerEndedAt = Date.now() - 10_000
   restoredLive.busyUntil = 0; restoredLive.typed = ''
+  // An agent pane closes through the app's report-first close (index.ts); this stands in for it.
+  const askedToClose = []
+  manager.onCloseWhenDone = id => { askedToClose.push(id); manager.kill(id) }
   manager.armCloseWhenDone(restored.id); manager.sweepIdle()
-  ok(!manager.sessions.has(restored.id), 'a genuine completed reply with no owed intent still closes normally')
+  ok(askedToClose.includes(restored.id) && !manager.sessions.has(restored.id), 'a genuine completed reply with no owed intent still closes normally')
+  manager.onCloseWhenDone = null
   manager.replyFor = oldReply
 
   // A queue record for some OTHER message is no receipt: the empty box still gets its returns.

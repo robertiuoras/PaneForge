@@ -111,6 +111,9 @@ sweep over `Session.finished` panes, quiet 0, `dry` touches nothing. Opener told
 result, expand = full reply + Reopen (`--resume`) + Copy; shell/bare-slash rows hidden. Idle
 shell undrawn (`fleet.ts` `idleShell`) till pressed/run; idle countdown still takes it.
 
+Explicit agent `closeWhenDone` arms use the same Review-first sweep and its safety gates,
+even when automatic closure is disabled. Shell closure retains its existing command semantics.
+
 Finished-turn sweeps publish a 30-second `doneClosingAt` before closing, rechecking every
 refusal on expiry; Keep open persists the pin. Local/remote pins also cancel an armed
 clear and refuse new automatic clears. Cancelling a clear holds the same native conversation

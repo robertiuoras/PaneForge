@@ -134,6 +134,13 @@ Transcript RENDERED (`renderer/src/termRender.ts`). `Open again` is never refuse
 pane's own leftover ledger hold: `holdIsOver` (`shared/laneTaken.ts`) = off the desk + History
 `endedAt`, or on the desk exited-not-asleep; unknown pane keeps it (`test:reopenhold`).
 
+## Review starts with today
+
+`ReviewDialog.tsx` opens on today's completed work, with `All dates` grouping rows by day.
+Peer rows show their `origin` device and are readable/copyable, but omit `Continue`: their
+conversation and working folder remain on the owner. `test:review-list` pins the date controls
+and replica affordance.
+
 ## The app remembers what has been asked
 
 `src/main/promptArchive.ts` fed from `shared/draft.ts`. Chip only; `QUIET_MS` 6h is the rule;

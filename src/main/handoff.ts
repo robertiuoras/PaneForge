@@ -30,7 +30,9 @@ import {
   type HandoffRepo,
   type HandoffResult
 } from '../shared/handoff'
-import { queuedNote } from '../shared/autoHandoff'
+import { automaticWork, queuedNote } from '../shared/autoHandoff'
+import { verifiedPaneHandoff } from './handoffSteps'
+import { pinnedByPrompt } from '../shared/offloadFirst'
 import type { DevServer } from '../shared/devServers'
 import type { Session, StartSessionRequest } from '../shared/types'
 
@@ -266,7 +268,7 @@ export interface SendDeps {
    */
   busy?(s: Session): boolean
   /** Take this pane, to be moved to `device` once it goes quiet. */
-  queue?(id: string, device: string, closeReceiverWhenDone: boolean): void
+  queue?(id: string, device: string, closeReceiverWhenDone: boolean, automatic?: boolean): void
   /**
    * Stop the turn this pane is on and wait for its composer to come back - the CLI's own
    * Escape, then `busy` polled up to `INTERRUPT_WAIT_MS`. Resolves true once the pane
@@ -296,6 +298,10 @@ export async function sendHandoff(deps: SendDeps, device: string, request: Hando
   const out: HandoffItem[] = []
   const closeAfter = request.closeReceiverWhenDone === true
   for (const pane of panes) {
+    if (request.automatic && (pane.stayHere || pane.focused || pinnedByPrompt(pane.gist, pane.cwd) || !automaticWork({ ...pane, state: deps.busy?.(pane) ? 'working' : 'ready' }))) {
+      out.push({ id: pane.id, title: pane.title, ok: false, error: 'No unfinished work to move; this conversation stays here', notes: [] })
+      continue
+    }
     // Do this before a busy pane enters the queue. A countdown for a provider
     // that cannot carry its conversation is a false promise, not useful work.
     const snapshot = deps.snapshot().find((r) => r.scrollbackId === pane.id)
@@ -338,8 +344,8 @@ export async function sendHandoff(deps: SendDeps, device: string, request: Hando
     // counting down, or its resume prompt: the far end resumes the conversation un-cleared
     // and the clear lands in the copy being closed (s60-mulljm2l, 2026-09-28). Not folded
     // into `busy`, which also decides the `now` interrupt above.
-    if (request.now !== true && request.waitForTurn !== false && (deps.busy?.(pane) || !!pane.subagent || !!pane.owedPrompt) && deps.queue) {
-      deps.queue(pane.id, device, closeAfter)
+    if (request.now !== true && request.waitForTurn !== false && (deps.busy?.(pane) || !!pane.subagent || !!pane.backJob || pane.owedPrompt || pane.drafting) && deps.queue) {
+      deps.queue(pane.id, device, closeAfter, request.automatic)
       out.push({
         id: pane.id,
         title: pane.title,
@@ -350,8 +356,16 @@ export async function sendHandoff(deps: SendDeps, device: string, request: Hando
       })
       continue
     }
+    // A NOW move still goes with an owed prompt pending (b525596d: `now` is unchanged by
+    // owedPrompt); a running background agent, background job or the person's own unsent
+    // text is never thrown away, NOW or not.
+    if (pane.subagent || pane.backJob || pane.drafting || (request.now !== true && (pane.owedPrompt || deps.busy?.(pane)))) {
+      out.push({ id: pane.id, title: pane.title, ok: false, error: 'Work or an unsent prompt is still active; this conversation stays here', notes: [] })
+      continue
+    }
+    if (request.automatic) continueWith = 'Continue the unfinished work in this conversation on this machine. Check the saved handoff and remaining steps first; do not repeat completed work.'
     try {
-      out.push(await sendOne(deps, device, pane, closeAfter, continueWith))
+      out.push(await sendOne(deps, device, pane, closeAfter, continueWith, request.automatic))
     } catch (err) {
       out.push({ id: pane.id, title: pane.title, ok: false, error: (err as Error).message, notes: [] })
     }
@@ -359,7 +373,7 @@ export async function sendHandoff(deps: SendDeps, device: string, request: Hando
   return out
 }
 
-async function sendOne(deps: SendDeps, device: string, pane: Session, closeReceiverWhenDone: boolean, continueWith?: string): Promise<HandoffItem> {
+async function sendOne(deps: SendDeps, device: string, pane: Session, closeReceiverWhenDone: boolean, continueWith?: string, automatic = false): Promise<HandoffItem> {
   const spec = deps.snapshot().find((r) => r.scrollbackId === pane.id)
   if (!spec) return { id: pane.id, title: pane.title, ok: false, error: 'Pane has already closed', notes: [] }
   const notes: string[] = []
@@ -372,6 +386,18 @@ async function sendOne(deps: SendDeps, device: string, pane: Session, closeRecei
     const error = `Its conversation is already running on ${there} - press this pane to carry on here instead, or close it`
     deps.log?.(`${pane.id} -> ${where}: refused before repo push - ${error}`)
     return { id: pane.id, title: pane.title, ok: false, error, notes }
+  }
+  const verifiedWork = (current: Session) => !!spec.resumeId && !!verifiedPaneHandoff(current.cwd, current.id, current.agent, spec.resumeId)?.open
+  if (automatic && !verifiedWork(pane)) return { id: pane.id, title: pane.title, ok: false, error: 'No fresh handoff for this exact conversation; it stays here', notes }
+  const inputAt = pane.lastKeyboard
+  const changed = () => {
+    const current = deps.list().find((s) => s.id === pane.id)
+    return !current || current.status === 'exited' || current.lastKeyboard !== inputAt ||
+      // An owed prompt counts only if it arrived DURING preparation: one already pending
+      // reaches here only on a NOW move, which goes regardless (sendHandoff).
+      deps.busy?.(current) || current.subagent || current.backJob || (current.owedPrompt && !pane.owedPrompt) || current.drafting ||
+      (automatic && (!verifiedWork(current) || current.stayHere || current.focused || pinnedByPrompt(current.gist, current.cwd) ||
+        !automaticWork({ ...current, state: 'ready' })))
   }
   const t0 = Date.now()
 
@@ -456,6 +482,7 @@ async function sendOne(deps: SendDeps, device: string, pane: Session, closeRecei
   // Only a conversation can carry on; a shell that was interrupted simply starts fresh.
   if (continueWith && transcript) payload.continueWith = continueWith
 
+  if (changed()) return { id: pane.id, title: pane.title, ok: false, error: 'The conversation changed while preparing the move, so it stayed here', notes }
   deps.stage?.(pane.id, `sending to ${where}`)
   const t1 = Date.now()
   const result = await deps.deliver(device, payload, file).catch((err: Error) => {
@@ -465,6 +492,10 @@ async function sendOne(deps: SendDeps, device: string, pane: Session, closeRecei
   if (!result.ok) {
     deps.log?.(`${pane.id} -> ${where}: refused over there after ${Date.now() - t1} ms - ${result.error || 'no reason given'}`)
     return { id: pane.id, title: pane.title, ok: false, error: result.error || 'Refused over there', notes }
+  }
+  if (changed()) {
+    deps.moved?.(pane.id, device)
+    return { id: pane.id, title: pane.title, ok: true, sourceKept: true, notes: [...notes, ...result.notes, 'The source became active while the remote opened. It was kept running here; review both copies before continuing.'] }
   }
   if (handoffSpec.agent !== 'shell' && result.resumed !== true) {
     // The conversation was started over there but the receiver could not PROVE it came up

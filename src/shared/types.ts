@@ -621,6 +621,8 @@ export interface Session {
    * file somebody wrote minutes ago, never evidence about what the pty is doing now.
    */
   handoffOpen?: number
+  /** Fresh remaining work bound to this exact pane and native conversation. */
+  handoffVerified?: boolean
   /**
    * The last turn is over and its reply left nothing: no question, no step an agent could
    * take, no subagent still out (`shared/doneClose.ts` `replyFinished`). The card says
@@ -2381,6 +2383,8 @@ export type IncludedAccounts = Record<'claude' | 'codex', {
 
 export interface Api {
   listReviews(): Promise<{ reviews: ReviewRecord[]; persistent: true }>
+  /** A local or paired device wrote a Review record. Re-read the durable list. */
+  onReviewsChanged(cb: () => void): () => void
   recordReview(input: ReviewInput): Promise<{ review: ReviewRecord; close: { closed: boolean; reason?: string } }>
   acknowledgeReview(id: string, reviewed: boolean): Promise<{ ok: boolean; clearedAttention: boolean }>
   openReview(id: string, index: number | string): Promise<{ opened: boolean }>
@@ -3005,7 +3009,8 @@ export interface Api {
      * true INTERRUPTS a mid-turn pane (the CLI's own Escape) and moves it at once; the far
      * end resumes the conversation and is asked to carry on. See `HandoffRequest.now`.
      */
-    now?: boolean
+    now?: boolean,
+    automatic?: boolean
   ): Promise<HandoffItem[]>
   /**
    * Bring a MIRRORED pane back to this device - the other direction of the same move.

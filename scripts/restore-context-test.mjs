@@ -75,6 +75,8 @@ const T = load('src/main/transcripts.ts', [
 // CODEX_HOME and cannot be checked as a Claude per-project filename.
 const mainIndex = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
 assert.match(mainIndex, /resumableTranscript\(req\.resumeCwd \?\? req\.cwd, req\.resumeId, req\.agent\)/, 'start validates the selected provider transcript')
+assert.match(mainIndex, /const resumeCwd = req\.resume && req\.resumeId \? req\.resumeCwd \?\? req\.cwd : undefined/, 'lane placement retains the original folder that verifies an exact resumed conversation')
+assert.match(mainIndex, /cwd: lane\.cwd,\s+resumeCwd,/, 'a resumed conversation moved into a lane still verifies against its origin')
 assert.match(mainIndex, /const file = req\.resumeId \? resumableTranscript\(req\.resumeCwd \?\? req\.cwd, req\.resumeId, req\.agent\) : null/, 'silent restore validates the selected provider transcript')
 assert.match(mainIndex, /const held = spec\.resumeId \? resumableTranscript\(spec\.resumeCwd \?\? spec\.cwd, spec\.resumeId, spec\.agent\) : null/, 'History restore validates the selected provider transcript')
 assert.match(mainIndex, /const unavailable = req\.agent !== 'shell' && !named/, 'a saved agent pane with no verified id becomes unavailable')

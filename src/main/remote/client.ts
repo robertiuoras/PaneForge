@@ -34,6 +34,7 @@ import {
 import type { Project, RemotePeer, Session, StartSessionRequest } from '../../shared/types'
 import { Conn, deriveKey, type Msg, type PeerIdentity } from './wire'
 import { OutBuffer } from '../outBuffer'
+import type { ReviewRecord } from '../../shared/reviews'
 
 /** Same cap the local session manager keeps, for the same reason. */
 const BUFFER_LIMIT = 400_000
@@ -603,6 +604,13 @@ export class RemoteClient extends EventEmitter {
         return
       case 'attention':
         this.emit('attention', this.tag(m.session as Session))
+        return
+      case 'reviews':
+        this.emit('reviews', Array.isArray(m.list) ? m.list as ReviewRecord[] : [])
+        if (typeof m.cursor === 'string' && /^[A-Za-z0-9_-]{1,120}$/.test(m.cursor)) this.conn?.send({ t: 'reviews', cursor: m.cursor })
+        return
+      case 'review':
+        this.emit('review', m.review as ReviewRecord)
         return
       case 'started':
         this.settle(m, m.session)
