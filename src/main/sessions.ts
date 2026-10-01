@@ -841,6 +841,10 @@ export class SessionManager extends EventEmitter {
         // like any other.
         openedOthers: this.openChildrenOf(m.id) > 0 || this.digestPending(m.id),
         owedPrompt: this.owesPrompt(live),
+        handingOff: m.handingOff,
+        handoffQueuedAt: m.handoffQueuedAt,
+        handoffOpen: m.handoffOpen,
+        handoverUntil: m.handoverUntil,
         lookedAt: live.lookedAt || undefined
       }
     })
@@ -2670,7 +2674,10 @@ export class SessionManager extends EventEmitter {
   private sweepCloseWhenDone(live: Live, now: number, quiet: number): void {
     const { meta } = live
     if (this.keptOpen?.(meta.id)) return
-    // Startup output and an unsent composer are not a completed agent response.
+    // An automatic clear on its way in is not a finished job: closing then loses the
+    // handoff's open steps (2026-10-01, s57-mupk43r8 and s28-mupc5ct1, killed 179ms and
+    // 84ms into it). After the resume turn ends nothing is owed and the pane closes.
+    // Startup output and an unsent composer are not a completed agent response either.
     if (this.owesPrompt(live) || (meta.agent !== 'shell' && meta.finished !== true)) return
     if (!doneEnough({ ...meta, busyUntil: live.busyUntil }, quiet, now)) return
     const told = live.req.reportTo

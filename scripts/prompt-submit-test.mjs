@@ -1517,7 +1517,10 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
     'a follow-up behind a held prompt that is then accepted waits for that prompt’s turn', logOf(unknown.pane.id))
   unknown.live.meta.runSince = undefined
   unknown.live.busyUntil = 0
-  ok(await waitFor(() => pasted(unknown.p, later) && ledger(unknown.pane.id).length === 0) && blockedNext() === 1,
+  // 6s, not the block's 2.4s: the paste, return and receipt take ~300ms, but on the PC's
+  // full-suite pool (2026-10-01, 98c30508) the paste landed and the 60ms return timer had
+  // still not run 2.3s later. A 2.5s stall after the paste reproduces that on the Mac.
+  ok(await waitFor(() => pasted(unknown.p, later) && ledger(unknown.pane.id).length === 0, 6000) && blockedNext() === 1,
     'a late exact receipt promotes the retained second prompt without another queue call',
     `pasted=${pasted(unknown.p, later)}, rows=${ledger(unknown.pane.id).length}\n${logOf(unknown.pane.id)}`)
   manager.kill(unknown.pane.id)
@@ -1995,8 +1998,14 @@ for (const [agent, origin] of [['codex', 'desk'], ['claude', 'desk'], ['grok', '
     }
     // The swallowed Enter's turn clock ends the way the app ends it: the renderer reads
     // the footer as not busy (`setBusyOnScreen`). The manual cases set the same fields.
-    if (endBy === 'footer') manager.setBusyOnScreen(pane.id, false, frame(stuck))
-    else {
+    // Read right around the call: on the Mac the 1s idle sweep ends a shell pane's run by
+    // itself, so a check after the sleep below passes whether or not this path works.
+    let footerEnded = true
+    if (endBy === 'footer') {
+      const ran = Boolean(live.meta.runSince)
+      manager.setBusyOnScreen(pane.id, false, frame(stuck))
+      footerEnded = ran && !live.meta.runSince && live.meta.status === 'idle'
+    } else {
       live.meta.status = 'idle'
       live.meta.runSince = undefined
       live.busyUntil = 0
@@ -2027,8 +2036,8 @@ for (const [agent, origin] of [['codex', 'desk'], ['claude', 'desk'], ['grok', '
     // The follow-up may already be in, with its own Enter's hold: it is only typed once
     // nothing is drafting, so that is the same proof.
     const cleared = live.draftConfirmation !== hold && (!live.meta.drafting || typedIn(live, next))
-    ok(heldBefore && waited && cleared, `${name}: the box-emptying redraw alone releases the hold within 4s`,
-      `status=${live.meta.status} runSince=${live.meta.runSince} held=${heldBefore} waited=${waited} cleared=${cleared} after ${ms}ms, drafting=${live.meta.drafting} hold=${JSON.stringify(live.draftConfirmation)}`)
+    ok(heldBefore && waited && cleared && footerEnded, `${name}: the box-emptying redraw alone releases the hold within 4s`,
+      `status=${live.meta.status} runSince=${live.meta.runSince} held=${heldBefore} footerEnded=${footerEnded} waited=${waited} cleared=${cleared} after ${ms}ms, drafting=${live.meta.drafting} hold=${JSON.stringify(live.draftConfirmation)}`)
     if (agent === 'codex') queueNext()
     const until = Date.now() + 2000
     while (!typedIn(live, next) && Date.now() < until) await sleep(40)
