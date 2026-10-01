@@ -9,7 +9,7 @@
 //
 //   node scripts/panejob-test.mjs
 
-import { buildSync } from 'esbuild'
+import { buildSync, transformSync } from 'esbuild'
 import { strict as assert } from 'node:assert'
 import { mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -97,6 +97,26 @@ is(jobFromTable(winBusy, 67536, 'powershell'), { name: 'node', elapsed: 7 }, "a 
 is(jobFromTable(winBusy, 14168, 'powershell'), null, 'and only of THAT pane - the parent pid is somebody else')
 is(jobFromTable(winBusy, 67536, 'claude'), null, 'the runner refusal holds here too')
 is(jobFromTable([], 67536, 'powershell'), null, 'a table that did not answer is not a machine running nothing')
+
+// The reported pane was spawned as bash, then ran a node-wrapped Codex resume. The
+// wrapper survives every completed turn; it is not an indefinitely running shell job.
+const shellCodex = [{ pid: 30458, ppid: 29642, cmd: 'node /opt/homebrew/bin/codex -c check_for_update_on_startup=false resume 01a0d23b-example', elapsed: 90 }]
+const tracked = jobFromTable(shellCodex, 29642, 'bash')
+is(tracked, { name: 'node', elapsed: 90, turnTracked: true }, 'the measured shell-launched Codex shape uses turn tracking')
+is(paneJob('node', 'bash', tracked), null, 'an idle Codex wrapper does not force Running')
+is(paneJob('codex', 'bash', tracked), null, 'a tty naming the native Codex child also uses turn tracking')
+is(paneJob('sleep', 'bash', tracked), 'sleep', 'a different foreground job is never hidden')
+is(paneJob('node', 'bash'), 'node', 'an unclassified node process remains real work')
+for (const cmd of ['codex', 'codex --model example', 'codex fork --last', '"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\test\\codex.js" resume --last']) {
+  ok(jobFromTable([{ pid: 2, ppid: 1, cmd }], 1, 'bash')?.turnTracked, `${cmd}: interactive Codex is turn tracked`)
+}
+for (const cmd of ['node build.js', 'node -e "console.log(\'codex\')"', 'codex exec resume --last', 'codex -c model=example e test', 'codex app-server', 'codex --unknown-mode', 'codex resume --help']) {
+  ok(!jobFromTable([{ pid: 2, ppid: 1, cmd }], 1, 'bash')?.turnTracked, `${cmd}: real or unknown work stays visible`)
+}
+is(jobFromTable([...shellCodex, { pid: 3, ppid: 29642, cmd: 'node build.js', elapsed: 4 }], 29642, 'bash'), { name: 'node', elapsed: 4 }, 'an independent build still counts beside an idle Codex')
+const nextJob = jobFromTable([{ pid: 4, ppid: 29642, cmd: 'node build.js', elapsed: 1 }], 29642, 'bash')
+is(paneJob('node', 'bash', nextJob), 'node', 'a later node command replaces the old agent reading')
+is(jobFromTable([], 29642, 'bash'), null, 'returning to the shell clears the agent reading')
 is(
   jobFromTable(
     [
@@ -125,6 +145,33 @@ is(
   const body = src.slice(src.indexOf('private jobOf('), src.indexOf('private sweepWinJobs('))
   ok(/if \(WIN\)/.test(body), 'jobOf answers Windows from the table before it ever asks the tty')
   ok(body.indexOf('if (WIN)') < body.indexOf('proc.process'), 'and the refusal comes FIRST')
+  ok(body.includes('paneJob(live.proc.process, live.runner, this.tableJobs.get(live.meta.id))'), 'the foreground decision receives the classified command line')
+  is((body.match(/found && !found.turnTracked/g) ?? []).length, 2, 'Windows and POSIX fallback both defer an interactive wrapper to its footer')
+  ok(body.includes("['node', 'codex'].includes(foreground.toLowerCase())"), 'node and codex foregrounds are sampled instead of bypassing classification')
+
+  // Exercise the actual main-process method, isolated from Electron. Both platform
+  // branches must agree while Codex lives, and expose the next ordinary shell job.
+  const method = src.slice(src.indexOf('  private jobOf('), src.indexOf('\n  /**', src.indexOf('  private jobOf(')))
+  const js = transformSync(`class Harness { tableJobs = new Map(); ${method} }`, { loader: 'ts' }).code
+  const sweepReading = src.match(/const busyOnScreen = ([^\n]+)/)[1]
+  const sweepBusy = new Function('live', 'now', 'jobName', `return ${sweepReading}`)
+  for (const win of [false, true]) {
+    const Harness = new Function('WIN', 'paneJob', `${js}; return Harness`)(win, paneJob)
+    const h = new Harness()
+    const live = { meta: { id: 'test' }, runner: 'bash', proc: { process: 'node' } }
+    h.tableJobs.set('test', tracked)
+    is(h.jobOf(live, 100000), null, `main jobOf does not re-arm Running between Codex turns (${win ? 'Windows' : 'POSIX'})`)
+    // Evaluate the actual sweep reading as well: an active footer starts the next
+    // turn, and its end must stay idle even though the node process remains alive.
+    const jobName = h.jobOf(live, 100000)?.name ?? null
+    is(sweepBusy({ ...live, busyUntil: 110000 }, 100000, jobName), true, 'an active footer still counts as work')
+    is(sweepBusy({ ...live, busyUntil: 0 }, 100000, jobName), false, 'the sweep stays idle when the footer ends')
+    h.tableJobs.set('test', nextJob)
+    ok(h.jobOf(live, 100000)?.name === 'node', 'the next build is counted by the actual main-process method')
+    h.tableJobs.clear()
+    live.proc.process = 'bash'
+    is(h.jobOf(live, 100000), null, 'returning to the shell clears the main-process job')
+  }
 }
 
 // ---------------------------------------------------------------------------

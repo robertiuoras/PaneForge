@@ -68,9 +68,9 @@ export interface DroppedItem {
  * is what dropping a screenshot on Claude Code is for. Three things have to hold, and each
  * one is a case where pasting would be worse than the path it replaces:
  *
- *  - the agent reads images off the OS clipboard (only Claude Code does - see
- *    `pastesClipboardImage`); every other CLI takes a literal control byte and does
- *    nothing at all with it, which is a drop that silently vanishes;
+ *  - the agent reads images off the OS clipboard (see `pastesClipboardImage`);
+ *    every other CLI takes a literal control byte and does nothing at all with it,
+ *    which is a drop that silently vanishes;
  *  - the pty is on THIS machine. A mirrored pane's agent reads the far desk's clipboard,
  *    and this is not that clipboard;
  *  - everything in the drop is an image. A PDF pasted as an image is nothing; its path

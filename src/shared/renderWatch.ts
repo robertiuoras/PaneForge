@@ -210,3 +210,26 @@ export function afterAct(w: Watch, now: number): Watch {
     firstSpinAt: 0
   }
 }
+
+/** Signal numbers are the same on macOS and Linux for the ones worth naming. */
+const SIGNALS: Record<number, string> = { 1: 'SIGHUP', 2: 'SIGINT', 6: 'SIGABRT', 9: 'SIGKILL', 11: 'SIGSEGV', 15: 'SIGTERM' }
+
+/**
+ * Why the renderer went, in words, from Chromium's `render-process-gone` details.
+ *
+ * 2026-09-24 17:16: another chat ran `pkill -f "cat" -n`, which matches every process under
+ * "/Applications", and the notice said "the window stopped answering". It had answered
+ * fine; it was ended from outside. `killed` with a signal number is that case, and naming
+ * it is what points the reader at the right culprit.
+ */
+export function goneWhy(reason: string, exitCode: number, platform: string): string {
+  const sig = platform === 'win32' ? undefined : SIGNALS[exitCode]
+  if (reason === 'killed') {
+    if (sig === 'SIGKILL') return 'ended by another program or the system, SIGKILL'
+    if (sig) return `ended by another program, ${sig}`
+    return `ended by another program (exit ${exitCode})`
+  }
+  if (reason === 'oom') return 'ran out of memory'
+  if (reason === 'crashed') return `crashed (exit ${exitCode}${sig ? `, ${sig}` : ''})`
+  return `${reason} (exit ${exitCode})`
+}

@@ -11,11 +11,14 @@ interface Props {
   status: SessionStatus
   /** false for a CLI that has only drawn its own prompt and been asked nothing */
   engaged?: boolean
+  /** the last reply left nothing to do - `Session.finished` */
+  finished?: boolean
 }
 
-export default function StatusDot({ status, engaged = true }: Props): JSX.Element {
+export default function StatusDot({ status, engaged = true, finished = false }: Props): JSX.Element {
   // "Waiting for you" on a pane that has done nothing yet reads as if it finished
   // work you never gave it, so an untouched CLI says "ready" instead.
-  const label = status === 'idle' && !engaged ? 'ready - type to start' : LABEL[status]
+  // And a turn that finished with nothing asked is not waiting on anybody either.
+  const label = status === 'idle' && !engaged ? 'ready - type to start' : status === 'idle' && finished ? 'done - nothing left to do' : LABEL[status]
   return <span className={`dot ${status}` + (status === 'idle' && !engaged ? ' ready' : '')} title={label} />
 }

@@ -17,9 +17,10 @@
 //
 //   node scripts/lane-owner-test.mjs
 
-import { execFileSync } from 'node:child_process'
+import childProcess, { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import os, { tmpdir } from 'node:os'
+import { syncBuiltinESMExports } from 'node:module'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
@@ -245,9 +246,10 @@ const twoDead = {
 
   // A new inventory has no evidence about any other copy until a later heartbeat reads
   // the established file. The first sweep writes it and deliberately cannot reclaim.
-  laneReclaim(panes)
+  // Async since 055652c4; un-awaited, the second read found no inventory file yet.
+  await laneReclaim(panes)
   check('the first inventory write is conservative before reclaiming', !existsSync(calls))
-  laneReclaim(panes)
+  await laneReclaim(panes)
 
   check('the repo that wins the vote is told what this copy hosts', chatsIn(repo).includes(CHAT_A))
   check(
@@ -357,6 +359,105 @@ const twoDead = {
   check('the flag never widens: a ready or conflicted lane is the strip’s call, still listed',
     markGone(conflicted, now, new Set()).lanes.find((l) => l.lane === 'main').conflicted === true)
   delete process.env.PANEFORGE_REPO
+}
+
+{
+  // Run the actual coordinator and a fixture CLI, isolated from this machine's real
+  // projects. A permanently conflicted first repo must not starve another ready repo,
+  // and restarting with no panes must still find both persisted ledgers.
+  const home = join(work, 'home')
+  const self = join(home, 'Projects', 'PaneForge')
+  const pending = join(home, 'Projects', 'pending')
+  const orphan = join(home, 'Projects', 'orphan')
+  const bundled = join(work, 'resources', 'scripts', 'lane.mjs')
+  const receipt = join(work, 'retry.jsonl')
+  for (const dir of [self, pending, orphan]) {
+    mkdirSync(join(dir, '.git'), { recursive: true })
+    mkdirSync(join(dir, 'scripts'), { recursive: true })
+    writeFileSync(join(dir, '.lanes.json'), JSON.stringify({ pool: ['main', 'a'] }))
+    writeFileSync(join(dir, '.git', 'paneforge-lanes.json'), JSON.stringify({
+      lanes: {}, ready: dir === pending ? { a: { at: now } } : {},
+      conflicts: dir === self ? { a: { at: now, detail: 'semantic disagreement' } } : {}
+    }))
+    writeFileSync(join(dir, 'scripts', 'lane.mjs'), 'malformed editable checkout engine {')
+  }
+  mkdirSync(join(work, 'resources', 'scripts'), { recursive: true })
+  writeFileSync(bundled, `import { appendFileSync } from 'node:fs'\nappendFileSync(${JSON.stringify(receipt)}, JSON.stringify({ repo: process.argv[process.argv.indexOf('--repo') + 1], engine: import.meta.url }) + '\\n')\n`)
+  const oldHome = os.homedir
+  const oldExec = childProcess.execFile
+  const oldNow = Date.now
+  const oldResources = Object.getOwnPropertyDescriptor(process, 'resourcesPath')
+  const oldRepo = process.env.PANEFORGE_REPO
+  const oldEngine = process.env.PANEFORGE_ENGINE
+  let clock = oldNow()
+  let completed
+  let launches = 0
+  try {
+    os.homedir = () => home
+    childProcess.execFile = (file, args, options, callback) => {
+      launches++
+      let finish
+      completed = new Promise((resolve) => { finish = resolve })
+      return oldExec(file, args, options, (err, stdout, stderr) => {
+        callback(err, stdout, stderr)
+        finish({ err, stderr })
+      })
+    }
+    syncBuiltinESMExports()
+    Date.now = () => clock
+    Object.defineProperty(process, 'resourcesPath', { configurable: true, value: join(work, 'resources') })
+    process.env.PANEFORGE_REPO = self
+    delete process.env.PANEFORGE_ENGINE
+    const coordinator = await load()
+    check('the installed engine wins over a malformed self checkout', coordinator.laneEngine(self) === bundled)
+    // Isolate scheduling from engine selection so each defect fails on its own.
+    process.env.PANEFORGE_ENGINE = bundled
+    const tick = async (module, panes) => {
+      clock += 2 * 60_000 + 1
+      completed = null
+      const before = launches
+      module.laneRetry(panes)
+      if (!completed) return false
+      module.laneRetry(panes)
+      const result = await completed
+      check('the selected recovery CLI completes', !result.err, result.stderr)
+      check('repeated discovery does not launch concurrent recovery jobs', launches === before + 1)
+      return true
+    }
+    const panes = [{ id: 'self', cwd: self }, { id: 'pending', cwd: pending }]
+    await tick(coordinator, panes)
+    await tick(coordinator, panes)
+    await tick(coordinator, panes)
+    const attempts = () => existsSync(receipt) ? readFileSync(receipt, 'utf8').trim().split('\n').map(JSON.parse) : []
+    check('a persistent first conflict does not starve a ready repo', attempts().some((r) => r.repo === pending), JSON.stringify(attempts()))
+    delete process.env.PANEFORGE_REPO
+    const restarted = await load()
+    const before = attempts().length
+    await tick(restarted, [])
+    await tick(restarted, [])
+    await tick(restarted, [])
+    const resumed = attempts().slice(before)
+    check('restart with no panes resumes every ledger including an empty orphan board', [self, pending, orphan].every((r) => resumed.some((a) => a.repo === r)), JSON.stringify(resumed))
+    delete process.env.PANEFORGE_ENGINE
+    await tick(restarted, [])
+    check('self recovery actually launches the bundle', attempts().at(-1)?.engine === pathToFileURL(bundled).href)
+    process.env.PANEFORGE_ENGINE = join(pending, 'scripts', 'lane.mjs')
+    check('an explicit recovery engine override is retained', restarted.laneEngine(self) === process.env.PANEFORGE_ENGINE)
+    delete process.env.PANEFORGE_ENGINE
+    delete process.resourcesPath
+    check('development without a bundle falls back to the checkout', restarted.laneEngine(self) === join(self, 'scripts', 'lane.mjs'))
+  } finally {
+    os.homedir = oldHome
+    childProcess.execFile = oldExec
+    syncBuiltinESMExports()
+    Date.now = oldNow
+    if (oldResources) Object.defineProperty(process, 'resourcesPath', oldResources)
+    else delete process.resourcesPath
+    if (oldRepo === undefined) delete process.env.PANEFORGE_REPO
+    else process.env.PANEFORGE_REPO = oldRepo
+    if (oldEngine === undefined) delete process.env.PANEFORGE_ENGINE
+    else process.env.PANEFORGE_ENGINE = oldEngine
+  }
 }
 
 rmSync(work, { recursive: true, force: true })

@@ -18,6 +18,7 @@ import {
   owedTo,
   readStore,
   sentLine,
+  withheldLine,
   type QueueDrop,
   type QueuedPrompt,
   type QueuedPromptStore
@@ -103,10 +104,36 @@ export function noteNativeAccepted(id: string, text: string, cwd?: string): stri
   return row.key
 }
 
+/** Persist uncertain delivery before the first Codex paste. Failure forbids that paste. */
+export function noteTyped(key: string, typed: NonNullable<QueuedPrompt['typed']>): boolean {
+  const row = load()[key]
+  if (!row || row.typed) return false
+  const next = noteQueued(load(), { ...row, typed })
+  try {
+    const file = queuedPromptsPath()
+    mkdirSync(dirname(file), { recursive: true })
+    // sync-on-purpose: first-paste identity must reach disk before the following PTY
+    // write; a crash between those turns would make uncertain delivery replayable.
+    writeFileSync(file + '.tmp', JSON.stringify(next, null, 2), { mode: 0o600 })
+    renameSync(file + '.tmp', file)
+    store = next
+    return true
+  } catch {
+    return false
+  }
+}
+
 /** A turn proved it went in. */
 export function noteSubmitted(key: string): void {
   const row = load()[key]
   if (row) qpLog(sentLine(row))
+  save(clearQueued(load(), key))
+}
+
+/** Typed, then a question came up over it: no more returns, and no claim either way. */
+export function noteWithheld(key: string): void {
+  const row = load()[key]
+  if (row) qpLog(withheldLine(row))
   save(clearQueued(load(), key))
 }
 
@@ -115,6 +142,15 @@ export function noteDropped(key: string, why: QueueDrop): void {
   const row = load()[key]
   if (row) qpLog(dropLine(row, why))
   save(clearQueued(load(), key))
+}
+
+/**
+ * Is this row still owed under this key? A restart, wake or restore re-keys what a pane is
+ * owed and queues it again (`owedAfterRestore`), so a wait still holding the OLD key has
+ * been handed on and must not type it as well.
+ */
+export function stillOwed(key: string): boolean {
+  return Boolean(load()[key])
 }
 
 /**

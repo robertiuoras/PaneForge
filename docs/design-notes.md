@@ -1496,6 +1496,45 @@ does not drop the pipe (that would be a reconnect per keystroke) but does clear 
 last-sent memo, or an edit landing on the same numbers would be read as "no change"
 and never leave the machine.
 
+**Settings → Discord since 2026-09-27: pick a look, flip four switches.** Robert: the
+profile said "1 session idle" with five running, and "make it a lot easier to edit and
+change in settings". The cause was counting, not wording: measured that day, the Mac (14
+panes, five working) went quiet because a guest desk was connected, and that desk - the
+PC on 0.8.224, zero panes of its own - counted the ONE Mac pane it mirrored. The old rule
+("a connected desk mirrors everything, so it speaks") was false. Now every machine sends a
+`desk` frame over the device link both ways with its OWN counts and whether its Discord is
+connected; every machine adds up every machine once (`wholeDesk`), and of the machines
+whose Discord is connected the lowest device id speaks - the rest name it in `countedBy`
+and clear. A machine on an older build ignores desk frames and still speaks for itself, so
+both machines need the build before the old card stops. The tab, top to bottom:
+
+- **the switch** ("Show what your chats are doing on Discord") and Discord's own answer:
+  accepted at when, for whom, and the two lines it STORED (`PresenceStatus.lines`) - or,
+  when another machine speaks, only that ("showing <PC>'s count ... this computer stays
+  quiet"), never "the desk is empty".
+- **Look**: radio cards in a 2x2 grid (`DISCORD_PRESETS`), each showing the line it would
+  put on the card for the sample desk. `counts` "Working and waiting" (default: "5 running
+  · 2 idle"), `fraction` "Out of all" ("5/7 sessions running"), `projects` "With project
+  names" (folder names - a Discord profile is public, so never the default), and "Your own
+  lines" (`custom`). A look REBUILDS `rows` (`presetRows`/`withLook`) every time, so a
+  later reword reaches everyone on it; any hand edit under Advanced turns the look `custom`.
+- **four switches**: "Say how many are waiting" (`idle`) and "Show tokens used today"
+  (`tokens`, today's total summed across machines) belong to the looks, so they are put
+  away - not greyed; greyed measured 2.63:1 in the light theme - while the look is custom;
+  "Show how long it has been going" (`elapsed`); "Show the link button" (every button on or
+  off, adding the default one when there is none).
+- **preview**: the Discord card replica for a made-up 5-of-7 desk, working or all waiting.
+- **Advanced: write your own lines**, closed: the row editor, buttons, Reset. Settings
+  search opens the fold when a match is inside it.
+
+The switch and look travel: `DiscordSettings {on, style, at}` rides the desk report,
+`config:set` stamps `discordSettingsAt` when a Discord key actually changes, and a machine
+adopts newer settings from a link (`newerSettings`, tie keeps its own) - a change made
+anywhere reaches the machine that speaks within one send (15s). Token totals are a disk
+walk (`tokenUsage.ts`, cached 5 min); the presence re-sends when a walk lands, because the
+first frame after the switch went on said "0 tokens today" and kept saying it until a pane
+changed. Past a billion it reads "1.6B", not "1555M".
+
 `npm run test:notes` is about the release page saying what changed.
 `scripts/release-notes.mjs` reads the Conventional Commit subjects between the previous
 version tag and this one and sorts them into New / Fixed / Faster / Other changes.
@@ -1987,6 +2026,8 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:wedge` | that no hung promise can leave the updater needing a person |
 | `npm run test:history` | what transcripts may cost: the age cutoff and the size cap |
 | `npm run test:scrollclear` | that an agent's `/clear` stops destroying the pane's scrollback — all three shapes it has had (`CSI 2 J`, the erase-per-row, and the bare `ESC[6A` overdraw v2.1.233 sends, which erases nothing at all), a sequence torn across two chunks, that an unarmed repaint is left alone, and the result in a real headless xterm with a control per shape proving a plain terminal loses it |
+| `npm run test:cursorup` | that a Claude Code repaint whose first cursor-up the screen cannot hold (its frame shrank at the bottom of a full screen) lands on the row it meant: the guard's arithmetic, a two-line shortfall brought back in order, and s129's measured frame (letters masked, shape untouched) replayed at 130x55 - a bare xterm as the control that still tears it - plus that the cursor-up after `/clear` never brings the kept turn back |
+| `npm run test:pushedoff` | that the rows a Claude Code repaint from the top paints over instead of scrolling go back into the scrollback above the screen, in order and once each: the rule as arithmetic (a shift proven from the top, not a block from the middle), a hand-made screen with a bare xterm as the control, a resize mid-frame and a repaint that moved nothing adding nothing, and s129's measured frame (letters masked) getting its 14 lost lines back with nothing already there shown twice |
 | `npm run test:markanchor` | that a prompt tag survives the CLI erasing the row it sits on — with the control that a bare xterm marker does NOT, which is why Codex panes had no tags to jump to |
 | `npm run test:restoreturn` | what a reopened pane inherits, and the turn a restart cut in half: the clock and the engaged flag that a restored row draws as a number and a green dot, plus the refusals around continuing - a pane that was not mid-turn, a pane launched with its own prompt, and the switch being off. The source assertions are half of it, because a green pure test over a function nothing calls is exactly the false confidence this repo keeps hitting |
 | `npm run test:quitwords` | telling a Cmd-Q from something that asked from outside, when nothing in the app asked. The load-bearing case is the false positive: a blur a beat before the quit still reads as the keyboard |
@@ -2984,6 +3025,7 @@ runs) stays there.
 | `npm run test:theme` | palette derivation + contrast (358 assertions) |
 | `npm run test:contrast` | that every word DRAWN in the window reaches its ratio, in both themes - the backdrop sampled out of a screenshot rather than walked, so a gradient cannot report as the solid colour three ancestors up |
 | `npm run test:autoclear` | the countdown in front of an automatic /clear, every refusal, and that Cancel types NOTHING |
+| `npm run test:devkeep` | that closing test copies never takes the window a person is watching, and that `try --close` only says "closed" once the copy is gone - a copy that ignores the ask (a headless one used to refuse the quit over a mid-turn pane) is killed and reported as such |
 | `npm run test:awake` | holding the display awake, letting go, and the CAP on one busy stretch |
 | `npm run test:stashtheme` | that the Stash picks no colour of its own and asks the theme, not the OS |
 | `npm run test:sounds` | the alert catalogue: nothing silent, nothing clipping, uploads |
@@ -3683,13 +3725,71 @@ disk. `npm run test:clientname`.
   read out of a prompt must match EXACTLY ONE client, on a word boundary, with `MIN_ALIAS`
   characters. A word is an alias only when it is unique across the whole roster - computed,
   not stop-listed - and is not in the small `GENERIC` set of business furniture.
-- **A pane in a client tree doing something else gets the SUBJECT of its first ask**
-  (`topicTitle`). A client identified later may replace that guess; nothing replaces a
-  client, and nothing at all replaces a title a person typed (`mayRename`).
+- **A pane in a client tree doing something else is named by its chat** (2026-09-28: was
+  the SUBJECT of its first ask, `topicTitle`; see the section below). A client identified
+  later may replace the chat's title; nothing replaces a client, and nothing at all
+  replaces a title a person typed (`mayRename`).
 - **The rename is SILENT** (2026-09-23). The three-second `ClientToast` card with a `Cancel`
   was removed: Robert found a card on every rename to be noise. The rename is written to the
   Activity list only; a wrong name is fixed by renaming the pane by hand. `clientOff` stays
   readable on old saved panes. `test:activity` pins the absence.
+
+## A pane is called what its chat is called (2026-09-28)
+
+Robert, 2026-09-28: "review all previous naming/renaming of sessions its terrible and doesnt
+work wel e.g. vverify course helped". For a year the app named panes off the words typed at
+them - a lexicon, a typo table, "two of the last four asks agree on a word", a pointing ask
+named off the reply. The Activity `named` rows on both desks were counted that day: about 3
+of ~33 word-picker names were usable. `Vverify Course Helped` (research-lab: "of course"
+twice), `Prompt Anyways Delted`, `Cards Time Way Zoomed`, `Connect Fro Mac`, `Delete Later`,
+and one Mac pane renamed five times in ninety minutes. Robert types fast and loosely, with
+typos; no word-picker reads that. Every good name on either desk had come from
+`pf open --title` (an agent writing a real title).
+
+- **The CLI already titles every chat.** Claude Code 2.1.283 appends
+  `{"type":"ai-title","aiTitle":...}` to the transcript, generated once by its own model from
+  the first real ask (the title its `/resume` list shows), re-appended on saves, last wins;
+  `/rename` appends `{"type":"custom-title","customTitle":...}`. On the Mac 163 of 239
+  transcripts from one day had one. Reading it costs a string search over new bytes, and the
+  model that wrote it read the whole ask. So the app reads, never guesses: the word-picker
+  (`topicTitle`, `repeatedTopic`, `topicReading`, `topicWords.ts`, `resolvedName.ts`) is gone.
+- **Ranking:** person (app rename, `pf rename`, CLI `/rename`) > opener (`pf open --title`)
+  > client roster > CLI title > project name. A CLI `/rename` read on the FIRST look since
+  the pane started may be older than a name typed into the app since, so it only lands on an
+  app-chosen name; one that changes after that is a person acting now and wins over anything.
+- **At most once per conversation.** The CLI writes its title once, so a card changes name
+  at most once per `/clear` that starts new work, never mid-chat.
+- **Housekeeping is not the work.** About a third of one day's titles were about the desk's
+  own resume prompts (`Car handoff continuation`, `PaneForge handoff next steps`). Those
+  words are cut; what is left names the pane only if it says more than the project, and a
+  continuation never replaces a name the pane already earned.
+- **Who named it is saved.** `autoTitled` was never written to desk.json or a handoff, so
+  after a restart an automatic name looked person-typed and could never be replaced (the Mac
+  desk wore `Prompt Anyways Delted` that way). It is saved now; an old save wearing a title
+  the Activity list says the app gave (`appNamedTitle`), with no `autoTitled`, goes back to
+  the project name so the chat's own title can land - on a desk or handoff restore only, never
+  a History reopen or a continuation, which carry a name on purpose. A `| clients` label is
+  kept.
+- **Lane copies were never renamed.** A new pane in `PaneForge-a` is titled `projectOf`
+  (`PaneForge`), but `mayRename` compared the folder basename (`PaneForge-a`), so client
+  naming never ran there. `appDefault()` accepts either.
+- **A handoff's name is the job it continues (2026-09-29).** Robert, 9:15am: "the naming of
+  session so bad paneforge hard to see/understand". Cards 3 and 4 on the Mac wore
+  `taskdriver.ai` and `PaneForge`: their conversations were titled `Taskdriver AI handoff next
+  steps` / `PaneForge handoff next steps`, which name nothing, and the conversation before
+  was never read (the pane came back from a save, or the title rule arrived with an update).
+  An automatic handoff's next conversation is another handoff, so such a card never got a
+  name. Claude Code stamps the id it was STARTED with as `session_id` on attachment records of
+  every conversation after a `/clear` (~265 KB in, behind the SessionStart output); all 300
+  handoff-only conversations on the Mac over three days carried it. `earlierTitles` walks
+  that chain in the same folder, newest first, and the first title that names work wins:
+  card 3 -> `Taskdriver.ai release check and render validation`, card 4 -> `Session auto
+  close prevention`. 15-36 ms once per such conversation. Only onto a project name.
+- **A PC pane's rename is answered before it lands.** `sessions:rename` on a mirrored pane is
+  sent to the PC, and the new name arrives with the PC's next list; `pf rename` read the list
+  once, at once, and printed `answered but ... is still "assistant"` for a rename that landed
+  seconds later. It now waits up to 5 s for the list, and a link that could not carry the
+  frame answers `false` (`not connected`) instead of nothing. `test:pfrename`.
 
 ## A pane says how long it has been open (full rules, moved out of CLAUDE.md 2026-08-31)
 
@@ -4659,7 +4759,35 @@ corner, so the commonest desk got a small bubble beside an animal. `MoveSoon` is
 always drawn and the mascot no longer draws the count at all - it still walks to the pane
 and wears `.alert` while one is running.
 
-## A password gets typed on the machine that needs it
+## A job that cannot sign in says so
+
+**2026-09-28: the card was switched off too.** Robert, about the "Bing-webmaster needs you to
+sign in" card that a pane on the PC kept raising: "remove this sign in popups and features
+please it doesnt work well ill need to tune it later", and "if u need anything me to login
+that u cant do it yourself ... ill login and u do everyrhing and control browser". The card
+told a person to walk to a computer and sign in, then press a button; it came back every
+sweep and nothing downstream used the sign-in. The route that replaced it is outside the app:
+the agent opens the page in Claude in Chrome on the Mac (his real Chrome), says which tab,
+and does the rest in that tab once he has signed in. The whole card went in ONE commit
+(`git log --grep "switch off the sign-in card"`) so a revert restores it; `pf needs-login`
+prints that route and exits 0 so callers that still run it do not fail.
+
+**2026-09-25: the live picture was removed; the card stays.** `pf needs-login` now puts up
+a card naming the site, the address, the computer and the pane that asked, and marks that
+pane's row red with a `sign in` chip. It opens nothing. What happened: a Claude pane
+working for a client was asked by Robert to set up a morning reminder for a Keap sign-in.
+It read `claude-config/reference/paneforge-panes.md`, which told agents to run `pf login
+<url>` at any sign-in wall, and `pf login` means "open the picture now" - so the picture
+opened on the desk by itself at 05:10, with no person asking for it. Keap bounced to its
+Thryv sign-in page, and because the host changed, `looksSignedIn` marked the request
+"signed in" two seconds later while it was still the sign-in page. Robert: "remove this
+feature paneforge for remote accees its terrible and doesnt work properly will need to
+build another time proerly." The asking half (a job raising its hand, and being told to
+carry on) was the part that worked, so that is what was kept. The notes below are the
+removed picture's, kept for whoever rebuilds it; `docs/specs/remote-login-pane.md` lists
+what a rebuild must do differently.
+
+### What the removed picture was (historical)
 
 Robert's scheduled work runs on the PC so it keeps running while the Mac is asleep. That
 was fine until a sweep hit a login wall: the job stops, nothing says so, and the only way
@@ -4941,6 +5069,16 @@ checks`. The evidence is exact - staged ready at 2026-09-08T02:28:31, superseded
 at 01:43:37 the next morning, installed at the 02:30:34 launch - and the conclusion it
 invites (wire an auto-restart) is the one thing this app may not do.
 
+2026-09-24 update: Robert approved a staged build installing ITSELF on an idle desk ("of
+course u can shoudnt ask me"), because on a desk where some pane always holds an open
+conversation nobody presses Restart now (the PC sat on 0.8.177 with 0.8.190 ready). Idle is
+`idleInstallBlocker` in `shared/updateHold.ts`: nobody has touched the computer (OS idle
+time) and no pane has printed or been typed into for `DESK_QUIET_MS`, nothing is mid-turn,
+asking, drafting or running a back job, restore after update is on so the panes come back,
+and no game is up. `idleInstallCheck` asks once a minute; a hold just waits for the next
+check, nothing counts down or escalates. It goes through `doInstall`, so the relaunch is
+quiet (`markQuietRelaunch`). The paragraphs below describe the rule before that change.
+
 Only the explicit Restart now action or an ordinary user quit installs a staged build.
 `npm run test:updatehold` asserts it from the source side: no timer, no stale-build
 listener, no failed-install retry may start an update. Robert asked for that on 2026-09-04
@@ -4989,6 +5127,72 @@ are different questions. Nothing is offered while the machine reads `ok`, and a 
 mid-turn is never picked - so a desk of five working panes at `warn` shows no countdown
 until one of them goes quiet, which is the rule working.
 
+## ...and before it closes one, it tries to move it — after three turns, on a desk the flag calls fine (2026-09-23)
+
+Robert, from his phone, 05:35Z: "do u see taskdriver sessions running/memory going up now
+shouldve been suggested to move session to pc already since doesnt evn need to be on this
+laptop right? ... automatically after a few turns if it should?" - and earlier the same
+day, "dont ever force at a new session open randomly to pc. i said during the session not at
+start". Start stays local (36d23570); this is the move DURING a session.
+
+What the desk read: 8 agent panes, 5 of them taskdriver.ai, all `working`, each claude
+150-265 MB; four `next dev` servers (ports 3006-3009) at 56-642 MB, ~1.3 GB together.
+`top`: 15G used, 6470M in the compressor, 139M unused. And
+`kern.memorystatus_vm_pressure_level` = 1. The hook had read 2 a few minutes earlier. At
+`ok` `autoHandoffPlan` returns [], and even at `warn` `budgetPlan` takes only a pane quiet
+for `BUDGET_QUIET_MS` - a desk of constantly busy panes never has one. `handoff.log`
+since 04:44Z held only `subagent` refusals.
+
+Four things changed, each with a pure test:
+
+- **The compressor is read beside the flag** (`compressorLevel`, `COMPRESSOR_WARN_FRAC`
+  0.35, `UNUSED_WARN_FRAC` 0.02, `parseVmStat` in `main/memory.ts`). The 2026-08-14 reading
+  at the top of `capacity.ts` (6321M / 122M) was level 2; the 05:35Z one (6470M / 139M)
+  was level 1. Both read `warn` now, and only when BOTH the compressor is over a third and
+  under two percent is unused - a big compressor with room is a machine that recovered.
+  Never `critical`: that stays the kernel's. A failed `vm_stat` keeps the last verdict.
+- **A third rung keyed on turns, not idleness** (`turnsPlan`, `TURNS_BEFORE_MOVE` 3,
+  `Session.turnsHere` counted at `endRun`). Fires when the ladder is on, the verdict is not
+  `ok`, this desk runs more agent panes than `keepLocal`, and a pane has finished three
+  turns here and is `queueable` (out of its turn; no question, background job, subagent,
+  bound browser, unshareable code, `stayHere`, `keepHere`, `pinnedByPrompt`). Never
+  mid-turn, never the focused pane, never back to `arrivedFrom`. Dearest first by
+  `paneCost`, ONE per sweep, through the same countdown as every move (`Keep it here` once
+  = `handoffBlocked`). The renderer runs it the moment any `turnsHere` goes up, off the
+  same `handoffPanes` reading - a desk printing bytes runs no plan.
+- **The dev server is part of the pane's cost** (`PaneUsage.devMb`, `strayDevMb` in
+  `shared/devList.ts`): a `next dev` on ppid 1 whose npm parent exited is attributed by the
+  path in its command line, its subtree summed, only when it is not already in the pane's
+  tree. `roots()` now carries the folder. The move already carried the server
+  (`payload.dev`); the sender now STOPS the stray it left here (`devServersOf().strays`,
+  `deps.stopDev`), only after the far end is proven running. `devserver-reaper.mjs
+  --cap-only` on the Mac did nothing at 05:35Z and could not have: it manages launchd-plist
+  servers only (`com.robert.taskdriver-dev-*`), with a 5000 MB restart cap; its log has no
+  2026-09-23 line at all.
+- **The receiver lands in a clean copy instead of refusing** (`landingCopy` in
+  `shared/handoff.ts`, `ensureRepo` now answers `blocked`, `landOn` in `main/index.ts`).
+  03:08-03:38Z three moves reached the PC and were refused there: `taskdriver.ai-a has 2
+  unpushed commit(s) on lane-a here`, `assistant-c has uncommitted work`, `claude-memory has
+  uncommitted work`. Now a same-named checkout with work in it sends the pane to the first
+  lane copy that is a worktree of the repo, clean, 0 ahead of `origin/<trunk>` and held by
+  nobody, or makes the first missing one off the pool, checks out the handed-over commit
+  on `lane-<label>` there, and the same-named folder is passed as taken so `returnToBase`
+  cannot walk the pane back into the dirty one. Refused only when no copy can be had, and
+  the refusal names each copy and why.
+
+And the overlap warning reads the other desk: `overlap()` in `scripts/lane.mjs` now diffs
+`refs/remotes/origin/lane-*` too (fetched at most once per `OVERLAP_SAID_MS`), skipping a
+remote branch whose sha is this desk's own lane HEAD, and names a hit `lane b on the other
+machine (origin/lane-b, not yet merged)`. Lane claims need nothing new: the ledger is per
+machine, the moved pane's first prompt claims its copy on the PC through the lane hook, and
+the Mac's hold goes with the closed pane.
+
+Not proved live from this pane: a Mac -> PC move armed by the turn rung. The lines that
+would prove it are `reclaim.log` `move-armed` with `why` starting `turns:`, then
+`handoff.log` `<id> -> PC: running there after N ms`, then on the PC `handoff.log`
+`<- <mac>: repo ready` followed by a `landOn` line naming the copy when the same-named
+checkout was dirty.
+
 ## A card answers a right-click, and can say what it is — a right-click is not a wake (2026-09-10)
 
 The sidebar row wakes a sleeping pane on pointerdown (2026-08-29, "click it, then find
@@ -5030,6 +5234,30 @@ on a subagent that already finished. Each `personOwnedSteps` step writes
 `~/.claude/guarddeck/notices/paneforge-step-<review>-<n>.json` (`kind: 'step'`, `machine`
 from `machineOf` else this one, `reopen` = cwd/agent/resumeId/prompt), through the same gate
 as `spoolNotice`.
+
+### ...no resting, sooner when short, 30 s after he read it, and a card only when he is owed one (2026-09-28)
+
+Robert, ~2:20am: "its all saying resting to free memory why? ... id rather they close than
+sleep" and "close those that are actually finished that i dont need to review". reclaim.log
+had 13 pressure sleeps and 13 wakes in 35 minutes; a slept pane is refused by this close, so
+under pressure the sleep always won. Sleep went off (`migrateReclaimV5`) and this close took
+its clocks (`doneQuietMs`). His definition of finished - "no open ask, clean tree/pushed, no
+live background job" - added the folder check (the badge's cached read, never a spawn per
+sweep) and the prompt-owed check; the opener rule stopped holding for life (27 Sep: 8 finished
+openers held). A handoff written before the pane's last prompt no longer counts
+(`handoffOpenAfter`). `bg-wait.mjs` is the waiter every chat is told to use, and its
+`--label release-check` read as release work: s77 sat finished behind it.
+
+~3:54am via the guarddeck chat (s93, a one-line ad-blocker answer he read and left): "shouldn't
+have shown me report ... no manual things that i needed to see ... i already reviewed the
+session ... should've closed that session automatically after like 30secs after i read it".
+Its record went out with `notify: true` at 17:52:44Z and then `closeAfterResult` refused it,
+so a card popped for a pane that stayed. The refusal was one sentence for seven flags; the
+flag was `handoffOpen` from another chat's handoff in `/Users/robertiuoras/Projects/assistant`
+(five steps, written 1h40m before the prompt) - a false positive the stale-handoff rule
+already removes, and the refusal now names each flag. Rows are written first and held; the
+card, the to-dos and the read mark go only after the pane really closed. `pf tidy` asks the
+same sweep without the wait: somebody asking to tidy is the wait.
 
 ### ...and the chat that opened them hears once
 

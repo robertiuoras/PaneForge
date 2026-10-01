@@ -25,8 +25,9 @@
 // including the ones with nothing to do with any of this. Nothing below throws.
 
 import { spawn, spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { closeSync, existsSync, openSync, readFileSync, readSync, renameSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -131,7 +132,7 @@ function writeRegistry(r) {
 // ------------------------------------------------------------------ engine
 
 function lane(repo, ...args) {
-  const r = spawnSync(process.execPath, [ENGINE, ...args, '--repo', repo], {
+  const r = spawnSync(process.execPath, [ENGINE, ...args, '--repo', repo], { windowsHide: true,
     encoding: 'utf8',
     // `release` can end in a real release (merge, tag, two pushes), so it gets room.
     timeout: args[0] === 'release' ? 180_000 : 25_000
@@ -438,7 +439,24 @@ if (event === 'prompt') {
       ? `Every ${name} checkout in use right now (same table in every chat):\n${roster.join('\n')}`
       : `No chat holds a ${name} lane right now.`
   )
-  console.log([...lines, stuck, orphan].filter(Boolean).join('\n'))
+  const text = [...lines, stuck, orphan].filter(Boolean).join('\n')
+  // The same ~1,900 chars were injected on every prompt of a lane chat, task notifications
+  // included (agent setup audit 2026-09-26). Print when the text changes, or again after
+  // 30 minutes so a compacted chat gets it back; otherwise stay silent.
+  const seenFile = join(tmpdir(), `pf-lane-hook-${createHash('sha1').update(session + repo).digest('hex').slice(0, 16)}`)
+  const hash = createHash('sha1').update(text).digest('hex')
+  try {
+    const [h, at] = readFileSync(seenFile, 'utf8').split(' ')
+    if (h === hash && Date.now() - Number(at) < 30 * 60000) process.exit(0)
+  } catch {
+    /* first prompt of this chat */
+  }
+  try {
+    writeFileSync(seenFile, `${hash} ${Date.now()}`)
+  } catch {
+    /* a failed write only means the table prints again */
+  }
+  console.log(text)
   process.exit(0)
 }
 
@@ -532,6 +550,20 @@ if (event === 'pretool') {
   if (!repo) process.exit(0)
   const r = lane(repo, 'guard', '--session', session, '--path', String(path))
   if (r.code === 2 && r.out) deny(r.out)
+  if (r.code !== 0) deny(r.err || 'The lane guard could not establish ownership.')
+  // A first write may claim a repo without a prompt claim. Register that real
+  // ownership too, so SessionEnd stamps it ended before the detached release.
+  if (!(reg.sessions[session] ?? []).includes(repo)) {
+    const held = lane(repo, 'status', '--session', session, '--held')
+    try {
+      const info = JSON.parse(held.out)
+      if (held.code === 0 && info.lanes.some((l) => l.heldBy === session || l.conflict?.resolver === session)) {
+        reg.repos[repo] = { release: info.mode, own: info.own, seen: Date.now() }
+        reg.sessions[session] = [...new Set([...(reg.sessions[session] ?? []), repo])]
+        writeRegistry(reg)
+      }
+    } catch { /* an unknown status does not register somebody else's claim */ }
+  }
   process.exit(0)
 }
 
@@ -566,6 +598,10 @@ if (event === 'end') {
   // running app retries every minute if this process dies early.
   for (const repo of reg.sessions[session] ?? []) {
     if (!existsSync(repo)) continue
+    // Mark the holds ended FIRST, in-line and quick: the detached release below races the
+    // next session's first claim (no ledger lock), and a hold it fails to drop must still
+    // read as a finished chat, so the pane's new chat is handed it (`claim`, PF_PANE).
+    lane(repo, 'park', '--session', session, '--ended')
     try {
       // windowsHide is NOT enough on Win11 with Windows Terminal as default terminal:
       // a detached console spawn is delegated to a VISIBLE Terminal window regardless

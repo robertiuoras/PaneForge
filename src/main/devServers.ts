@@ -133,15 +133,27 @@ export function lockfiles(dir: string): string[] {
 export async function devServersOf(
   pid: number,
   cwd: string
-): Promise<{ servers: DevServer[]; notes: string[] }> {
+): Promise<{ servers: DevServer[]; notes: string[]; strays: number[] }> {
   const scripts = packageScripts(cwd)
-  if (!Object.keys(scripts).length) return { servers: [], notes: [] }
+  if (!Object.keys(scripts).length) return { servers: [], notes: [], strays: [] }
   const procs = await table()
-  if (!procs.length) return { servers: [], notes: [] }
+  if (!procs.length) return { servers: [], notes: [], strays: [] }
   const mine = new Set<string>()
-  for (const p of descendants(procs, pid)) mine.add(p.cmd)
-  for (const p of procs) if (inRepo(p.cmd, cwd)) mine.add(p.cmd)
-  return devPlan([...mine], scripts)
+  const inTree = new Set<number>()
+  for (const p of descendants(procs, pid)) {
+    mine.add(p.cmd)
+    inTree.add(p.pid)
+  }
+  // The servers attributed by PATH alone are the ones `kill()` will not take with the
+  // pane: a `next dev` on ppid 1. The sender stops them itself once the far end has
+  // started its own, or the Mac keeps paying for a server nobody is looking at.
+  const strays: number[] = []
+  for (const p of procs) {
+    if (!inRepo(p.cmd, cwd)) continue
+    mine.add(p.cmd)
+    if (!inTree.has(p.pid) && devSignalOf(p.cmd)) strays.push(p.pid)
+  }
+  return { ...devPlan([...mine], scripts), strays }
 }
 
 /**

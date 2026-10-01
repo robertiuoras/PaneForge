@@ -18,8 +18,9 @@ import { get } from 'node:https'
 import { join } from 'node:path'
 import { BrowserWindow, app, net } from 'electron'
 import { stagedTooLong, updateIgnored } from '../shared/updateStale'
-import { freshRun, noteAnswer, noteTimeout, probeStuck, stuckWords, type ProbeRun } from '../shared/updateProbe'
+import { freshRun, healthWords, noteAnswer, noteTimeout, probeStuck, stuckWords, type ProbeRun } from '../shared/updateProbe'
 import { applyAtLaunch } from '../shared/launchInstall'
+import { failedInstall } from '../shared/installWedge'
 import { pickRelease } from '../shared/pickRelease'
 import { pickWinTag } from '../shared/winFeed'
 import { TICK_MS, WAKE_SETTLE_MS, WakeWatch } from '../shared/wakeWatch'
@@ -37,7 +38,7 @@ import {
 } from './macUpdate'
 import { appendLog } from './logWrite'
 import { diagnosticMeta } from './diagnosticMeta'
-import { probeRetryMs, probeStalled } from '../shared/updateRetry'
+import { macReadsAround, probeRetryMs, probeStalled } from '../shared/updateRetry'
 
 type Emit = (s: UpdateState) => void
 
@@ -487,14 +488,8 @@ function installAtLaunch(version: string): boolean {
 
 /** At launch, say how long it has been since the feed last answered this machine. */
 function logHealth(): void {
-  const h = readHealth()
-  const slept = h.sleeps ? `, ${h.sleeps} check(s) lost to the machine sleeping` : ''
-  if (!h.lastGood) return log('health', `no good update check on record yet (${h.wedges} wedge(s) recovered${slept})`)
-  const hours = Math.round((Date.now() - h.lastGood) / 3_600_000)
-  const line = `last good update check ${hours}h ago, ${h.wedges} wedge(s) recovered${h.lastWedge ? `, last ${h.lastWedge}` : ''}${slept}`
-  // Three days without the feed answering is not a slow week - something is wrong that no
-  // single failure reported, and this is the line to search for when it is noticed later.
-  log(hours >= 72 ? 'health STALE' : 'health', line)
+  const { stale, line } = healthWords(readHealth(), Date.now())
+  log(stale ? 'health STALE' : 'health', line)
 }
 
 // --- did the last install actually happen? ---------------------------------
@@ -553,8 +548,12 @@ function checkLastAttempt(): void {
   } catch {
     /* unreadable marker is as good as none */
   }
-  if (newer(a.version, app.getVersion())) {
-    log('install', `v${a.version} did not apply (still v${app.getVersion()}) - waiting for the user to restart or quit`)
+  const failed = failedInstall(a, app.getVersion())
+  if (failed) {
+    log('install', `v${failed} did not apply (still v${app.getVersion()}) - the card says so and offers the installer`)
+    // Never silent: the same "ready" card again is exactly what left a friend on v0.8.179
+    // pressing Restart now to no effect (2026-09-24).
+    set({ installFailed: failed })
   }
 }
 
@@ -1010,7 +1009,7 @@ function macFallback(message: string): void {
     .then((version) => {
       noteGood()
       if (newer(version, have())) {
-        log('mac fallback', `${have()} -> ${version} (feed has no mac metadata)`)
+        log('mac fallback', `${have()} -> ${version} (feed read failed: ${message.slice(0, 80)})`)
         offerMac(version)
       } else {
         set({ phase: 'none', version: undefined, percent: undefined, error: undefined })
@@ -1188,7 +1187,15 @@ export function initUpdater(onChange: Emit, enabled: boolean): void {
     // ignoring it. On a Mac the install is refused anyway (see autoDownload above).
     u.autoInstallOnAppQuit = true
     u.logger = {
-      info: (m: unknown) => log('info', m),
+      // While a build is staged the feed is asked only whether something NEWER is out, and
+      // electron-updater wrote "Checking for update" + "Found version <the staged one>"
+      // for every ask: ~26 identical lines between 02:56 and 05:06 on 2026-09-24, read as
+      // an updater stuck in a loop. A newer version writes its own `supersede` line, a
+      // failure its `supersede failed`, and every answer reaches update-health.json.
+      info: (m: unknown) => {
+        if (probing && /^(Checking for update|Found version )/.test(String(m))) return
+        log('info', m)
+      },
       warn: (m: unknown) => log('warn', m),
       error: (m: unknown) => log('error', m),
       debug: () => undefined
@@ -1290,7 +1297,7 @@ export function initUpdater(onChange: Emit, enabled: boolean): void {
       // `latest-mac.yml` 404 that will never resolve is what put a permanent
       // "update failed" in the corner of this app on macOS. Only the feed read is
       // rerouted: a checksum or a download failure still says so.
-      if (process.platform === 'darwin' && /\.yml|404/i.test(message)) return macFallback(message)
+      if (process.platform === 'darwin' && macReadsAround(message)) return macFallback(message)
 
       if (isPublishing(message)) {
         // The release tag is on GitHub but its assets are still uploading, so
@@ -1430,9 +1437,12 @@ async function supersede(): Promise<void> {
     const result = (await failFast(u.checkForUpdates(), CHECK_BUDGET_MS, 'the update probe')) as {
       updateInfo?: { version?: string }
     } | null
-    // A feed answer clears both the fast-retry backoff and the timeout health run.
+    // A feed answer clears both the fast-retry backoff and the timeout health run - and it
+    // IS a good check. With a build staged every check comes through here, so leaving
+    // `lastGood` to the ordinary events had the launch line read "last good update check
+    // 6h ago" at 14:03 on 2026-09-23 with answers logged at 13:48 and 13:58.
     probeFails = 0
-    probeRun = noteAnswer()
+    noteGood()
     // ...and it takes the badge off 'cannot check': the feed answered.
     if (state.stalled) set({ stalled: false })
     const found = result?.updateInfo?.version
@@ -1448,17 +1458,26 @@ async function supersede(): Promise<void> {
     await u.downloadUpdate()
   } catch (e) {
     const message = (e as Error)?.message ?? String(e)
-    if (process.platform === 'darwin' && /\.yml|404/i.test(message)) {
+    if (process.platform === 'darwin' && macReadsAround(message)) {
       try {
         const found = await latestMacRelease()
+        // The releases API answered, so this machine is reaching the feed after all.
+        probeFails = 0
+        noteGood()
+        if (state.stalled) set({ stalled: false })
         if (!newer(found, pending)) return
-        log('supersede fallback', `${pending} -> ${found} (feed has no mac metadata)`)
+        log('supersede fallback', `${pending} -> ${found} (feed read failed: ${message.slice(0, 80)})`)
+        noteSuperseded()
         probing = false
         u.autoDownload = restore
         return offerMac(found)
       } catch (fallbackError) {
-        log('probe error', (fallbackError as Error)?.message ?? String(fallbackError))
-        return
+        const second = (fallbackError as Error)?.message ?? String(fallbackError)
+        log('probe error', second)
+        // A missing .yml is the release, not the network. Either read failing on the
+        // network - the first, or the second one behind a missing .yml - is the network,
+        // and must reach the stall count or a Mac with the wifi off never says so.
+        if (!NETWORK_FAILURE.test(message) && !NETWORK_FAILURE.test(second)) return
       }
     }
     probeFails += 1

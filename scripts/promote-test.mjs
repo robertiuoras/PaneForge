@@ -54,16 +54,19 @@ const ok = (name, cond, detail) => {
 
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: 'pipe' }).trim()
 
-function buildRepo(name, extra) {
+function buildRepo(name, extra, release = 'version') {
   const repo = join(root, name)
   mkdirSync(repo, { recursive: true })
   writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'x', version: '0.0.2', ...extra }, null, 2) + '\n')
-  writeFileSync(join(repo, '.lanes.json'), JSON.stringify({ release: 'version' }, null, 2) + '\n')
+  writeFileSync(join(repo, '.lanes.json'), JSON.stringify({ release }, null, 2) + '\n')
   git(repo, 'init', '-q', '-b', 'master')
   git(repo, 'config', 'user.email', 'test@example.com')
   git(repo, 'config', 'user.name', 'test')
   git(repo, 'add', '-A')
   git(repo, 'commit', '-qm', 'init')
+  // The app timer visits registered repositories with a coordinator ledger.
+  // Missing or malformed ownership is unknown and cannot authorize a retry.
+  writeFileSync(join(repo, '.git', 'paneforge-lanes.json'), JSON.stringify({ lanes: {}, ready: {}, conflicts: {} }) + '\n')
   return repo
 }
 
@@ -307,6 +310,18 @@ const goodRelease = (published_at) => ({
 const repoRetry = buildRepo('retry-repo', { build: { publish: [{ provider: 'github', owner: 'o', repo: 'r' }] } })
 git(repoRetry, 'tag', 'v0.0.2')
 
+// Unknown ownership must not promote a release or overwrite the failed inventory.
+for (const kind of ['missing', 'malformed']) {
+  const unknown = buildRepo(`retry-${kind}-ownership`, { build: { publish: [{ provider: 'github', owner: 'o', repo: 'r' }] } })
+  git(unknown, 'tag', 'v0.0.2')
+  const ledger = join(unknown, '.git', 'paneforge-lanes.json')
+  if (kind === 'missing') rmSync(ledger)
+  else writeFileSync(ledger, '{invalid')
+  const refused = retry(unknown, goodRelease(soakedAt))
+  ok(`${kind} ownership inventory prevents channel lookup and promotion`, !refused.looked && !refused.edited, refused.out)
+  ok(`${kind} ownership inventory remains unchanged`, kind === 'missing' ? !existsSync(ledger) : readFileSync(ledger, 'utf8') === '{invalid')
+}
+
 // 7. a build still soaking waits
 {
   const r = retry(repoRetry, goodRelease(new Date().toISOString()))
@@ -364,6 +379,20 @@ git(repoRetry, 'tag', 'v0.0.2')
   const second = retry(repoThrottle, goodRelease(new Date().toISOString()), poll)
   ok('the first retry looks at the channel', first.looked, JSON.stringify(first.log))
   ok('a second retry inside the poll window does not', !second.looked, JSON.stringify(second.log))
+}
+
+// 11. merge mode (versions cut by hand) still promotes a soaked build; 'none' never looks.
+// Gating this on 'version' alone froze stable on v0.8.179 for 24 days.
+{
+  const publish = { build: { publish: [{ provider: 'github', owner: 'o', repo: 'r' }] } }
+  const repoMerge = buildRepo('retry-merge-mode', publish, 'merge')
+  git(repoMerge, 'tag', 'v0.0.2')
+  const merged = retry(repoMerge, goodRelease(soakedAt))
+  ok('merge mode promotes a soaked build too', merged.edited && /Promoted v0\.0\.2 to stable/.test(merged.out), merged.out)
+  const repoNone = buildRepo('retry-none-mode', publish, 'none')
+  git(repoNone, 'tag', 'v0.0.2')
+  const none = retry(repoNone, goodRelease(soakedAt))
+  ok("release 'none' never looks at the channel", !none.looked && !none.edited, JSON.stringify(none.log))
 }
 
 rmSync(root, { recursive: true, force: true })

@@ -215,6 +215,9 @@ console.log('nothing but the button stands a countdown down')
   ok('and it has words', dropWords('cancelled') === 'you stopped it')
   const toast = readFileSync(join(root, 'src/renderer/src/components/AutoClearToast.tsx'), 'utf8')
   ok('the card still carries that button', /Keep this session/.test(toast))
+  // Robert 2026-09-27: the handoff's next steps under the countdown were "too cluttered".
+  // A step is a paragraph of commands; the pane's name is what the card needs to say.
+  ok('the card lists no handoff steps', !/autoClearSteps|<ul|<li/.test(toast))
 }
 
 console.log('a countdown stays silent')
@@ -537,7 +540,8 @@ console.log('the resume prompt is forged, so it names the handoff and what done 
   ok('the handoff path is the anchor', brief.includes('/handoffs/session.md'))
   ok('the hook words survive', brief.includes('Continue the handoff'))
   ok('every open step becomes a done line', brief.includes('- Ship the offload switch.') && brief.includes('- Run npm run test:settingsearch.'))
-  ok('no work beyond the handoff is invited', brief.includes('add no work it does not name'))
+  ok('no feature beyond the handoff is invited', brief.includes('start no new feature it does not name'))
+  ok('a defect found on the way is fixed, not parked', brief.includes('fix it this turn') && !brief.includes('add no work'))
 
   const noPath = resumeBrief(ask, null)
   ok('an unknown handoff draws no anchor', !noPath.includes('Start from:'))

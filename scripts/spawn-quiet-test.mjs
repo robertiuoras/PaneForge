@@ -73,48 +73,68 @@ const cp=require('./child-process-stub.cjs')
 const {spawnQuiet}=require('./spawn-quiet.bundle.cjs')
 const fail=[]
 const ok=(c,n)=>{console.log((c?'PASS ':'FAIL ')+n);if(!c)fail.push(n)}
-const alive=setInterval(()=>{},20)
-const sleep=(ms)=>new Promise(r=>setTimeout(r,ms))
+// Advance the retry clock while retaining the real nextTick error delivery. A busy PC
+// must not leave one case's delayed retry running after the next case replaces its script.
+let now=0
+const timers=[]
+global.setTimeout=(fn,ms)=>{timers.push({at:now+ms,fn});return {unref(){}}}
+const flush=()=>new Promise(r=>setImmediate(r))
+const advance=async(ms)=>{
+  await flush()
+  const until=now+ms
+  for(;;){
+    timers.sort((a,b)=>a.at-b.at)
+    if(!timers.length||timers[0].at>until)break
+    const timer=timers.shift()
+    now=timer.at
+    timer.fn()
+    await flush()
+  }
+  now=until
+  await flush()
+}
 ;(async()=>{
   // Nothing goes wrong: one call, no retry, and the caller gets its child back.
   cp.__script([null])
   const child=spawnQuiet('sh',['-c','true'],{},'happy path')
   ok(!!child&&child.pid===1234,'a spawn that starts hands the child back')
-  await sleep(400)
+  await advance(400)
   ok(cp.__calls.length===1,'and is not retried ('+cp.__calls.length+' calls)')
 
   // The measured failure: EAGAIN once, then room again.
   cp.__script(['EAGAIN',null])
   spawnQuiet('sh',['-c','reap'],{},'reap strays')
-  await sleep(400)
+  await advance(249)
+  ok(cp.__calls.length===1,'a retry waits for its backoff')
+  await advance(1)
   ok(cp.__calls.length===2,'a full process table is tried again rather than written off ('+cp.__calls.length+')')
 
   // Both panes closing at once: the machine stays full for longer than one backoff.
   cp.__script(['EAGAIN','EAGAIN','EAGAIN',null])
   spawnQuiet('sh',['-c','reap'],{},'reap strays')
-  await sleep(2500)
+  await advance(2500)
   ok(cp.__calls.length===4,'and again, backing off, until there is room ('+cp.__calls.length+')')
 
   // It gives up rather than retrying for ever - these are all tidy-ups.
   cp.__script(['EAGAIN','EAGAIN','EAGAIN','EAGAIN','EAGAIN','EAGAIN'])
   spawnQuiet('sh',['-c','reap'],{},'reap strays')
-  await sleep(2500)
+  await advance(2500)
   ok(cp.__calls.length===4,'a machine that stays full stops being asked ('+cp.__calls.length+' tries)')
 
   // A command that is simply not there will fail the same way for ever.
   cp.__script(['ENOENT','ENOENT'])
   spawnQuiet('taskkill',[],{},'kill tree')
-  await sleep(600)
+  await advance(600)
   ok(cp.__calls.length===1,'a binary that is not there is not retried ('+cp.__calls.length+')')
 
   // The synchronous throw path takes the same decision.
   cp.__script(['throw',null])
   const none=spawnQuiet('sh',[],{},'reap strays')
   ok(none===null,'a spawn that throws outright hands back nothing')
-  await sleep(400)
+  await advance(400)
   ok(cp.__calls.length===2,'but is still tried again when the machine was just full ('+cp.__calls.length+')')
 
-  clearInterval(alive)
+  ok(timers.length===0,'no retry remains queued after the cases')
   console.log('DRIVE DONE '+fail.length)
   process.exit(fail.length?1:0)
 })()

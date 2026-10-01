@@ -14,7 +14,7 @@ import { DEFAULT_AUTOCLEAR } from '../shared/autoclear'
 import { DEFAULT_MASCOT } from '../shared/mascot'
 import { DEFAULT_TIPS } from '../shared/tips'
 import { DEFAULT_DEAD_DEV } from '../shared/deadDev'
-import { DEFAULT_RECLAIM , type ReclaimConfig } from '../shared/reclaim'
+import { DEFAULT_RECLAIM, migrateReclaimV5, type ReclaimConfig } from '../shared/reclaim'
 import { DEFAULT_AUTO_ANSWER, type AutoAnswerConfig } from '../shared/autoAnswer'
 import { DEFAULT_RECOVER } from '../shared/recover'
 import { DEFAULT_SOUNDS, quietIdleSounds } from '../shared/sounds'
@@ -194,6 +194,7 @@ function defaults(): Config {
     hiddenBlurbs: [],
     discordPresence: true,
     discordStyle: migrateRows(DEFAULT_DISCORD_STYLE),
+    discordSettingsAt: 0,
     grid: false,
     gridSizes: {},
     gridLayout: 'tiled',
@@ -472,7 +473,7 @@ function migrateReclaim(
   merged.defaultsV2 = true
   merged.defaultsV3 = true
   merged.defaultsV4 = true
-  return merged
+  return migrateReclaimV5(merged, raw)
 }
 
 /**
@@ -504,13 +505,14 @@ function migrateReclaimV3(merged: ReclaimConfig, raw: ReclaimConfig | undefined)
  * already carries `defaultsV3` and a ten in it. Only the old switch value moves.
  */
 function migrateReclaimV4(merged: ReclaimConfig, raw: ReclaimConfig | undefined): ReclaimConfig {
-  if (raw?.defaultsV4) return merged
+  // Chained like V3 -> V4: every config in existence carries `defaultsV4`.
+  if (raw?.defaultsV4) return migrateReclaimV5(merged, raw)
   const OLD_SWITCH_MINUTES = 10
   if (merged.idleCloseMinutes === OLD_SWITCH_MINUTES) {
     merged.idleCloseMinutes = DEFAULT_RECLAIM.idleCloseMinutes
   }
   merged.defaultsV4 = true
-  return merged
+  return migrateReclaimV5(merged, raw)
 }
 
 function migrateKeys(raw: Partial<Config>): Record<string, string> {

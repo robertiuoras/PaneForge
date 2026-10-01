@@ -13,7 +13,7 @@
 //   - a pane that did not settle it gets another after DISPATCH_AGAIN_MS, three at most
 //   - no PaneForge to ask (no pf-ctl beside lane.mjs): nothing requested, nothing recorded
 //   - the lane folder gets the repo's Claude Code trust entry, so the pane does not stop
-//     on the trust prompt
+//     on the trust prompt - also when Claude Code already wrote its own untrusted entry there
 //
 // `LANE_DISPATCH_LOG` stands in for the app; CLAUDE_CONFIG_DIR keeps the trust write in
 // the temp folder. `ship` is never reached: a fresh `lastShip` is seeded.
@@ -125,9 +125,18 @@ ok('but not the repo\'s prompt history', trust && !('history' in trust), JSON.st
 
 // ---------------------------------------------------- the chat did not settle it
 
+// Meanwhile Claude Code ran in the lane folder and wrote its own untrusted default entry.
+// The repo is trusted, so the next resolver pane must not stop on the trust prompt either,
+// and the folder keeps the rest of its own entry.
+const withCliDefault = JSON.parse(readFileSync(claudeJson, 'utf8'))
+withCliDefault.projects[realpathSync(work.dir)] = { hasTrustDialogAccepted: false, allowedTools: [], enabledMcpServers: ['computer-use'] }
+writeFileSync(claudeJson, JSON.stringify(withCliDefault))
 patchState((s) => { s.conflicts[work.lane].dispatch.at = Date.now() - 3 * 60 * 60 * 1000 })
 retryTimes(2)
 ok('two hours on and still conflicted: one more chat, not two', requests().length === 2, JSON.stringify(requests().map((x) => x.lane)))
+const own = JSON.parse(readFileSync(claudeJson, 'utf8')).projects[realpathSync(work.dir)]
+ok('an untrusted lane entry under a trusted repo becomes trusted', own?.hasTrustDialogAccepted === true, JSON.stringify(own))
+ok('and keeps its own allowedTools and settings', JSON.stringify(own?.allowedTools) === '[]' && own?.enabledMcpServers?.[0] === 'computer-use', JSON.stringify(own))
 patchState((s) => { s.conflicts[work.lane].dispatch.at = Date.now() - 3 * 60 * 60 * 1000 })
 lane(['retry'])
 patchState((s) => { s.conflicts[work.lane].dispatch.at = Date.now() - 3 * 60 * 60 * 1000 })
@@ -143,6 +152,30 @@ patchState((s) => {
 })
 retryTimes(2)
 ok('a conflict a chat already adopted gets no second chat', requests().length === 3, JSON.stringify(requests().map((x) => x.lane)))
+
+// Each invocation is a fresh CLI process, as after an app restart. A resolver that is
+// still editing must renew its lease before the retry clock can abort its open merge.
+const adopted = lane(['resolve', '--session', 'sess-fixer', '--lane', work.lane])
+ok('the resolver resumes the real merge', adopted.code === 0 && Boolean(git(work.dir, 'rev-parse', '-q', '--verify', 'MERGE_HEAD')), adopted.err)
+const draft = 'export function page() {\n  return "resolver draft preserving both behaviours"\n}\n'
+writeFileSync(join(work.dir, 'src/page.ts'), draft)
+patchState((s) => { s.conflicts[work.lane].resolverAt = Date.now() - 46 * 60 * 1000 })
+const staleLease = state().conflicts[work.lane].resolverAt
+const stranger = lane(['guard', '--session', 'sess-stranger', '--path', join(work.dir, 'src/page.ts')])
+ok('an unrelated writer cannot renew or steal the resolver lease', stranger.code !== 0 && state().conflicts[work.lane].resolverAt === staleLease, stranger.err)
+const guarded = lane(['guard', '--session', 'sess-fixer', '--path', join(work.dir, 'src/page.ts')])
+ok('authorized resolver edits renew the recovery lease', guarded.code === 0 && Date.now() - state().conflicts[work.lane].resolverAt < 60_000, guarded.err)
+patchState((s) => { s.conflicts[work.lane].retryAt = 0 })
+retryTimes(2)
+ok('retry preserves the active resolver merge and draft', existsSync(git(work.dir, 'rev-parse', '--git-path', 'MERGE_HEAD')) && readFileSync(join(work.dir, 'src/page.ts'), 'utf8') === draft && requests().length === 3)
+patchState((s) => {
+  s.lanes[work.lane].session = 'sess-fixer'
+  s.conflicts[work.lane].resolverAt = Date.now() - 46 * 60 * 1000
+})
+lane(['guard', '--session', 'sess-fixer', '--path', join(work.dir, 'src/page.ts')])
+ok('a resolver that also holds the lane renews both leases', Date.now() - state().conflicts[work.lane].resolverAt < 60_000 && Date.now() - state().lanes[work.lane].seen < 60_000)
+patchState((s) => { s.lanes[work.lane].session = 'sess-a' })
+quiet(work.lane)
 
 // ---------------------------------------------------- no PaneForge to ask
 

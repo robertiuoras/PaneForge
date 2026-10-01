@@ -139,16 +139,9 @@ const DESK_ONLY = new Set([
  * construction rather than by a flag.
  */
 const GATED_SEND = new Set([
-  // Reviewed 2026-09-07. Both end in a line arriving in a pane's composer: `pane:tell`
-  // hands one to a named pane, and `login:done` tells whichever pane asked for the
-  // sign-in that the wall is down - over ssh, when that pane is on the other desk. The
-  // sign-in picture is a desk surface (a phone never draws it), so gating these costs a
-  // phone nothing it could have used.
+  // Reviewed 2026-09-07. It ends in a line arriving in a pane's composer: `pane:tell`
+  // hands one to a named pane.
   'pane:tell',
-  'login:done',
-  // It types into a browser that is signed in to somebody's accounts, on a machine the
-  // person holding the phone may not be near. Strictly worse than `pty:write`.
-  'login:input',
   // It kills a process: the countdown card's `Close now`. The invoke half, `devs:stop`,
   // is gated for the same reason.
   'devs:stopNow',
@@ -169,15 +162,13 @@ const GATED_SEND = new Set([
   'stash:reveal'
 ])
 const GATED_INVOKE = new Set([
+  // Steering an active Codex turn types into its pty, just like pane:tell.
+  'pane:answer',
   // A report can close a pane or ask the desktop to open local evidence.
   'reviews:record',
   'reviews:open',
   // Binds a compute job to a shell pane, which is then CLOSED when the job's result lands.
   'sessions:watchCompute',
-  // `login:need` puts a card on the desk that offers to open a browser; `login:open`
-  // opens an ssh forward and drives a browser through it. Both start something.
-  'login:need',
-  'login:open',
   // Reviewed 2026-08-31. `projects:create` writes a directory into the projects root from
   // a name somebody typed. `shared/projectName.ts` refuses every name that could mean a
   // folder somewhere else, so the worst case is an empty folder with an odd name - but it
@@ -204,6 +195,10 @@ const GATED_INVOKE = new Set([
   // Several kills at once, picked by the app rather than named by the caller - same
   // class as `sessions:kill`, gated the same way.
   'sessions:clearFinished',
+  // `pf tidy`'s close of finished panes into Review: the done-close sweep, asked now.
+  'sessions:closeDone',
+  // The idle clock's close, into Review. Still a kill.
+  'sessions:closeIntoReview',
   // Arms the same kill for later: `shared/closeWhenDone.ts` closes the pane once nothing
   // is left running in it. A deferred kill is still a kill, so it sits with `sessions:kill`
   // rather than with the reads. `pf close-when-done` reaches it over this same surface.
@@ -422,6 +417,12 @@ function askView(a: PhoneAsk & { token?: string }): PhoneAsk {
   return { id, sas, address, kind, origin, at }
 }
 
+/**
+ * `start()`'s bind for the listener `pf` uses while phone access is off: loopback only, and
+ * reported as off. A marker, not an address - tests bind 127.0.0.1 for a server that is on.
+ */
+export const LOCAL_ONLY = 'local-only'
+
 export class PhoneServer {
   private server: Server | null = null
   private clients = new Set<Client>()
@@ -441,6 +442,8 @@ export class PhoneServer {
   private keepalive: NodeJS.Timeout | null = null
   private lastError = ''
   private listening = 0
+  /** The address the listener was asked for: LOCAL_ONLY when phone access is switched off. */
+  private bound = ''
   private nextPeer = 1
   private native: NativeAuth
 
@@ -489,6 +492,7 @@ export class PhoneServer {
     await this.stop()
     this.tidyDevices()
     this.lastError = ''
+    this.bound = bind
     const server = createServer((req, res) => {
       void this.route(req, res).catch((err) => {
         this.plain(res, 500, String(err instanceof Error ? err.message : err))
@@ -503,7 +507,7 @@ export class PhoneServer {
         this.server = null
         resolve()
       })
-      server.listen(port, bind, () => {
+      server.listen(port, bind === LOCAL_ONLY ? '127.0.0.1' : bind, () => {
         this.server = server
         this.listening = port
         resolve()
@@ -553,6 +557,17 @@ export class PhoneServer {
   }
 
   /**
+   * Answering this machine only: phone access is off, and the listener is up for `pf`
+   * (`scripts/pf-ctl.mjs`) alone. It still wants the pairing code from config.json, which
+   * only this user can read. Robert, 2026-09-24: an agent concluded "PaneForge's local
+   * control API appears disabled" - on every install that never switched phone access on,
+   * it was: `phone.on` defaults to false, and `pf` rode the phone server.
+   */
+  get localOnly(): boolean {
+    return !!this.server && this.bound === LOCAL_ONLY
+  }
+
+  /**
    * Everything this server knows. NOT the tunnel: that is a separate child process with a
    * separate switch, and `main/index.ts` merges the two into the one `PhoneState` the
    * panel redraws - so a server that has never heard of cloudflared stays testable on its
@@ -561,11 +576,14 @@ export class PhoneServer {
   state(): Omit<PhoneState, 'tunnel' | 'typeGate' | 'keys'> {
     const port = this.listening || 0
     const live = new Set([...this.clients].map((c) => c.device).filter(Boolean))
+    // The local-only listener is not "phone access on": the panel keeps saying off, lists
+    // no address to scan, and its own port clash is not the panel's error to show.
+    const open = !!this.server && !this.localOnly
     return {
-      on: !!this.server,
-      port,
+      on: open,
+      port: open ? port : 0,
       code: this.deps.code(),
-      urls: this.server ? phoneUrls(port) : [],
+      urls: open ? phoneUrls(port) : [],
       clients: this.clients.size,
       peers: [...this.clients].map(({ id, address, kind, origin, since }) => ({
         id,
@@ -582,7 +600,7 @@ export class PhoneServer {
       })),
       ask: this.asking && !this.asking.answered ? askView(this.asking) : null,
       asking: this.deps.canAsk?.() ?? true,
-      error: this.lastError || undefined
+      error: (this.bound !== LOCAL_ONLY && this.lastError) || undefined
     }
   }
 

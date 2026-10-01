@@ -1,7 +1,5 @@
 export interface ContextUsage { used: number; window: number; at: number; model: string; percent: number; advisory?: 'prepare' | 'boundary' }
 
-import type { FrameMeta, LoginInput, LoginRequest } from './remoteLogin'
-
 import type { AutoClearAsk } from './autoclear'
 import type { SplitAnswer } from './splitPlan'
 import type { Away } from './away'
@@ -123,10 +121,10 @@ export interface ClientNamed {
   /** what it was called a moment ago - `basename(cwd)` */
   was: string
   /**
-   * `folder` is evidence, `prompt` is a client read out of what was typed, and `topic` is
-   * the subject of the first ask when it named no client at all.
+   * `folder` is evidence, `prompt` is a client read out of what was typed, and `agent` is
+   * the agent's own title for the chat (`shared/cliTitle.ts`).
    */
-  from: 'folder' | 'prompt' | 'topic' | 'reply'
+  from: 'folder' | 'prompt' | 'agent'
 }
 
 /** What a card says about a Codex pane's reasoning effort. See `shared/effort.ts`. */
@@ -148,6 +146,23 @@ export type EffortChoice =
   | { mode: 'manual'; level: string }
   | { mode: 'off' }
 
+export interface CodexWorker {
+  id: string
+  name: string
+  nickname?: string
+  model?: string
+  effort?: string
+  state: 'running' | 'completed' | 'interrupted' | 'unknown' | 'stale'
+  /** Native event times only; an absent start never becomes an estimated duration. */
+  startedAt?: number
+  endedAt?: number
+  updatedAt?: number
+}
+export interface CodexWorkerReading {
+  workers: CodexWorker[]
+  status: 'fresh' | 'unknown' | 'limited'
+}
+
 export interface Session {
   id: string
   title: string
@@ -155,9 +170,10 @@ export interface Session {
   agent: Agent
   /**
    * The conversation this pane can be resumed into, once known. Stamped by main when a
-   * turn ends (the transcript is flushed by then) and when a pane sleeps or wakes; absent
-   * until the CLI has written one. Read by the automatic move (`shared/autoHandoff.ts`
-   * `travels`): an agent pane with no id has nothing another machine could resume.
+   * turn ends (the transcript is flushed by then), when a pane sleeps or wakes, and at the
+   * start of a pane opened on a saved conversation; absent until the CLI has written one.
+   * Read by the automatic move (`shared/autoHandoff.ts` `travels`): an agent pane with no
+   * id has nothing another machine could resume. `pf continue` finds a pane by it.
    */
   resumeId?: string
   /** model passed to the agent, empty/undefined = the CLI's own default */
@@ -199,6 +215,12 @@ export interface Session {
   openedAt?: number
   exitCode?: number
   /**
+   * The process ended before the agent was ever ready - it printed nothing, or failed while
+   * still `starting` (`shared/exitClose.ts`). The card stays and says `couldn't start`
+   * instead of closing, because it is the only evidence. Cleared by restart and wake.
+   */
+  startFailed?: boolean
+  /**
    * The client this pane was recognised as working for, when it was - the folder slug out
    * of `shared/clientName.ts`. Set once and kept: it is what stops the prompt reading
    * asking the same question of every line typed afterwards, and what a second reading
@@ -212,11 +234,12 @@ export interface Session {
    */
   clientOff?: boolean
   /**
-   * Which reading named this pane, when one did. `topic` is a guess off the first prompt
-   * and may be replaced by a `client` identified later; `client` is final, and a title a
-   * person typed carries neither and is never touched.
+   * Which reading named this pane, when one did. `agent` is the agent's own title for the
+   * chat and may be replaced by a `client` identified later, or by the next chat's title
+   * after a `/clear`; `client` is final; a title a person typed carries neither and is
+   * never touched. Saved with the desk, so a restart does not turn one into the other.
    */
-  autoTitled?: 'client' | 'topic'
+  autoTitled?: 'client' | 'agent'
   /**
    * Epoch ms since this pane's `cwd` stopped existing on disk, unset while it is there.
    * A live pane keeps running (its shell falls back to $HOME); an EXITED one whose folder
@@ -267,15 +290,8 @@ export interface Session {
    * and a second machine guessing at it would draw a countdown nobody is going to honour.
    */
   closingAt?: number
-  /**
-   * The deadline above is a HOLD, not the idle clock.
-   *
-   * "Keep it open" parks a pane for an hour, and the publish takes the later of the two
-   * numbers - so a held pane drew `closes 55m` under a sentence saying it had been quiet
-   * and was being closed to give its memory back. Same chip, opposite fact. The card says
-   * `kept 55m` for this and explains the hold instead.
-   */
-  closeKept?: boolean
+  /** Published warning deadline from the finished-chat sweep. */
+  doneClosingAt?: number
   /** The owning device's persistent Keep open preference for this pane. */
   keepOpen?: boolean
   /**
@@ -326,7 +342,6 @@ export interface Session {
    */
   owedPrompt?: boolean
   autoClearPrompt?: string
-  autoClearSteps?: string[]
   /**
    * The exact keystrokes the countdown will send, frozen when it was armed.
    *
@@ -542,6 +557,21 @@ export interface Session {
    * moved to the PC on 2026-09-22 with its review half done.
    */
   subagent?: string
+  /** Native Codex child visibility only; does not alter process close/move/sleep guards. */
+  codexWorkers?: CodexWorkerReading
+  /** Claude's existing transcript reader observes background tasks only. */
+  claudeWorkers?: CodexWorkerReading
+  /**
+   * How many turns this pane has finished on THIS machine - counted at `endRun`, never
+   * carried across a move (the far end starts its own pane, at zero).
+   *
+   * The turn-count rung of the automatic move (`turnsPlan`, shared/autoHandoff.ts) reads
+   * it: a pane that has finished `TURNS_BEFORE_MOVE` turns here while this desk reads
+   * `warn` has proved it is a long session that does not need the laptop, which is the
+   * moment Robert wanted it offered to the PC (2026-09-23: "automatically after a few turns
+   * if it should"). Absent = zero.
+   */
+  turnsHere?: number
   /**
    * The last turn ended having changed no file in this pane's folder - `changed no files`,
    * or absent when there is nothing to say. See `shared/changedNothing.ts`.
@@ -563,6 +593,12 @@ export interface Session {
    */
   watched?: boolean
   /**
+   * The pane this window last said is on screen (`sessions:active`), stamped by
+   * `SessionManager.list()` at read time. For `pf tidy`, which cannot see the window:
+   * the pane a person is looking at is never an idle duplicate to close.
+   */
+  focused?: boolean
+  /**
    * How many steps this pane's handoff still lists as open, or undefined when it has no
    * handoff at all.
    *
@@ -575,6 +611,13 @@ export interface Session {
    * file somebody wrote minutes ago, never evidence about what the pty is doing now.
    */
   handoffOpen?: number
+  /**
+   * The last turn is over and its reply left nothing: no question, no step an agent could
+   * take, no subagent still out (`shared/doneClose.ts` `replyFinished`). The card says
+   * `done` instead of `waiting`, and the pane is not counted as wanting a person.
+   * Undefined = not known, drawn as before. Decorates only; reaches no busy reading.
+   */
+  finished?: boolean
   /**
    * How hard this Codex pane is thinking, and why - the card's reading of it.
    *
@@ -728,6 +771,8 @@ export interface StartSessionRequest {
    */
   fromAddress?: string
   title?: string
+  /** who gave `title`, carried across a restart or a move: see `Session.autoTitled` */
+  autoTitled?: 'client' | 'agent'
   agent?: Agent
   model?: string
   /**
@@ -1149,6 +1194,12 @@ export interface UpdateState {
    * "up to date" - see `stalledHint` in shared/updateStale.ts.
    */
   stalled?: boolean
+  /**
+   * The version the last run started installing, when this run came back older - the
+   * install did not go in. The card says so and offers that version's installer instead of
+   * asking for the same restart again (`shared/installWedge.ts`).
+   */
+  installFailed?: string
 }
 
 /**
@@ -1257,6 +1308,8 @@ export interface HistoryEntry {
    * command; see `shared/gist.ts`.
    */
   askLines?: string[]
+  /** the newest real ask, past the `askLines` cap - what an open pane is on now */
+  lastAsk?: string
   /** internal: a clear happened, so the next real ask opens a chapter */
   fresh?: boolean
   /**
@@ -1523,10 +1576,10 @@ export interface RemotePaneInfo {
   /** what that pane is still running with its turn over - see `Session.backJob` */
   backJob?: string
   backJobSince?: number
+  /** that pane's last reply left nothing to do - see `Session.finished` */
+  finished?: boolean
   /** when THAT desk's idle clock will close it - its decision, forwarded, never ours */
   closingAt?: number
-  /** ...and whether that number is a "keep it open" hold rather than the idle clock */
-  closeKept?: boolean
   /** Persistent Keep open preference, read and changed on the device that owns the pane. */
   keepOpen?: boolean
 }
@@ -1911,6 +1964,12 @@ export interface Config {
    * first card anybody ever sees is a real one.
    */
   seenVersion?: string
+  /**
+   * This profile has opened a pane at least once, so the first-run setup card never
+   * shows again. Absent on a fresh install; `shared/firstRun.ts` also reads past
+   * sessions, so a profile from before this field existed never sees the card either.
+   */
+  firstChatStarted?: boolean
   /** folder scanned for projects */
   root: string
   presets: Preset[]
@@ -2002,6 +2061,12 @@ export interface Config {
    * safe to leave alone forever and an upgrade changes nothing on anyone's profile.
    */
   discordStyle: DiscordStyle
+  /**
+   * When a person last changed `discordPresence` or `discordStyle`, epoch ms (0 = never).
+   * Linked machines take the newest they hear of, so the card follows a change made on
+   * either machine whichever one is sending it (`shared/discordRpc.ts` `DiscordSettings`).
+   */
+  discordSettingsAt: number
   /** show every session at once instead of one at a time */
   grid: boolean
   /**
@@ -2258,9 +2323,8 @@ export interface RestorePane {
 
 /** The "restore your last session?" question, as the renderer receives it. */
 export interface RestoreOffer {
+  /** every pane the desk held; past `MAX_RESTORE` they come back asleep */
   panes: RestorePane[]
-  /** panes past the launch cap: listed as not restored rather than silently dropped */
-  extra: RestorePane[]
   /** when the desk was written */
   at: number
   /** false means the last run ended in a crash or a power cut */
@@ -2302,7 +2366,7 @@ export interface Api {
   listReviews(): Promise<{ reviews: ReviewRecord[]; persistent: true }>
   recordReview(input: ReviewInput): Promise<{ review: ReviewRecord; close: { closed: boolean; reason?: string } }>
   acknowledgeReview(id: string, reviewed: boolean): Promise<{ ok: boolean; clearedAttention: boolean }>
-  openReview(id: string, index: number): Promise<{ opened: boolean }>
+  openReview(id: string, index: number | string): Promise<{ opened: boolean }>
   /** Available only to the authenticated PaneForge repository owner. */
   ownerAccess(): Promise<boolean>
   /** Aggregate GitHub installer-asset downloads, not unique people or IP telemetry. */
@@ -2333,7 +2397,8 @@ export interface Api {
   restartSession(id: string): Promise<Session | null>
   /** swap a running pane to another CLI/model - same folder, same pane, fresh process */
   switchAgent(id: string, agent: Agent, model?: string): Promise<Session | null>
-  renameSession(id: string, title: string): Promise<void>
+  /** false = the pane is on another computer and the link could not carry the rename */
+  renameSession(id: string, title: string): Promise<boolean>
   /**
    * Let a Codex pane pick its own reasoning effort, pin it to one level by hand, or stop
    * doing either. Per pane, off until asked for.
@@ -2365,6 +2430,10 @@ export interface Api {
   killSession(id: string): Promise<void>
   /** Removes every finished-and-untouched pane now, same class as `killSession` - see `shared/exitedSweep.ts`. Returns how many were removed. */
   clearFinished(): Promise<number>
+  /** `pf tidy`: closes into Review every finished pane the done-close sweep would, without its quiet wait - see `main/index.ts`. `dry` closes nothing. Returns the pane ids. */
+  closeDone(dry: boolean): Promise<string[]>
+  /** Closes a quiet pane the idle clock picked, keeping its reply as a Review row first - see `main/index.ts` `reviewBeforeRemove`. */
+  closeIntoReview(id: string, reason: string): Promise<void>
   /** A person pressed this pane's card or row. Holds the finished-pane sweep's clock - see `shared/exitedSweep.ts`. */
   touchedSession(id: string): void
   /**
@@ -2387,7 +2456,8 @@ export interface Api {
    * leaves the marker that stops the keep-alive task reopening what was closed on purpose.
    */
   quitIdle(reason: string): Promise<void>
-  write(id: string, data: string): void
+  /** `terminalReply` is set only by xterm's non-keyboard protocol path. */
+  write(id: string, data: string, terminalReply?: boolean): void
   /**
    * Put a job in a pane's prompt box and press Enter, properly.
    *
@@ -2468,7 +2538,7 @@ export interface Api {
    * decides it (it holds the focus and the config); the session carries it, so this
    * desk's card and every paired device's listing draw the same number.
    */
-  setClosing(id: string, at: number | null, kept?: boolean): void
+  setClosing(id: string, at: number | null): void
   /**
    * What changed in the build now running, or null for "say nothing".
    *
@@ -2711,40 +2781,14 @@ export interface Api {
   /** named profile this window runs under ('' = the normal installed app) */
   profile(): Promise<string>
   updateState(): Promise<UpdateState>
+  /** Hand one line to a pane, queued for the gap between its own turns. */
+  tellPane(ref: string, text: string): void
+  answerPane(req: import('./paneAnswer').PaneAnswerRequest): Promise<import('./paneAnswer').PaneAnswerReceipt>
+  answerStatus(req: import('./paneAnswer').PaneAnswerIdentity): Promise<import('./paneAnswer').PaneAnswerReceipt | null>
   /**
    * Ask for a pane to be /clear'd after a countdown the desk can stop. The caller is the
    * `autoclear` Stop hook, never the window - see shared/autoclear.ts.
    */
-  /** Every sign-in a script is waiting on, newest first. */
-  loginRequests(): Promise<LoginRequest[]>
-  /** A script hit a login wall. Puts a card up; opens nothing. */
-  needsLogin(req: {
-    site: string
-    url: string
-    host?: string
-    port?: number
-    machine?: string
-    from?: string
-  }): Promise<LoginRequest>
-  /** Somebody pressed the card: open the tunnel, the browser and the picture. */
-  openLogin(id: string): Promise<{ ok: boolean; error?: string }>
-  /** Done, or Close. The sign-in stays on the machine it was typed into. */
-  closeLogin(id: string): void
-  /** Signed in: tell the pane that asked, then close the view. */
-  doneLogin(id: string): void
-  /** Hand one line to a pane, queued for the gap between its own turns. */
-  tellPane(ref: string, text: string): void
-  /** Not now. */
-  dismissLogin(id: string): void
-  /** A pointer or a key, on the remote page. */
-  loginInput(id: string, ev: LoginInput): void
-  /** This frame is on screen - send the next one. */
-  loginPainted(id: string, ack: number): void
-  /** The view's size in CSS pixels; the remote page is made this shape. */
-  /** The far page's viewport, and the box it is drawn into on this screen. */
-  loginSize(id: string, w: number, h: number, boxW?: number, boxH?: number): void
-  onLoginFrame(cb: (f: { id: string; data: string; meta: FrameMeta; ack: number }) => void): () => void
-  onLogins(cb: (reqs: LoginRequest[]) => void): () => void
   askAutoClear(req: AutoClearAsk): Promise<{ ok: boolean; reason?: string; dueAt?: number }>
   /** The two buttons on that card. */
   /** Countdowns in flight, for a window that has just opened. */

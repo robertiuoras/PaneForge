@@ -44,3 +44,4 @@ node_modules.pf-tmp/
 
 # generated code graph (regenerable, machine-local)
 graphify-out/
+/Microsoft/

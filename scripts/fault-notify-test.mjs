@@ -73,6 +73,15 @@ ok(
   !!at(fresh(), { kind: 'renderer', detail: 'recreate (process gone) - ?' }).send
 )
 
+{
+  const gone = at(fresh(), {
+    kind: 'renderer',
+    detail: 'recreate (process gone - ended by another program, SIGTERM) - pid 35194, already exited'
+  }).send || ''
+  ok('a renderer ended from outside does NOT say it stopped answering', !/stopped answering/.test(gone), gone)
+  ok('...it says the window was ended and rebuilt', /ended/.test(gone) && /rebuilt/.test(gone), gone)
+}
+
 // ---- and the refusals, which are the feature ----------------------------------------
 
 ok(

@@ -273,7 +273,14 @@ export function resumeBrief(ask: AutoClearAsk, handoffPath: string | null): stri
   return forgePrompt({
     task: ask.prompt,
     ...(handoffPath ? { anchors: [handoffPath] } : {}),
-    scope: ['the steps that handoff already lists - add no work it does not name'],
+    // Scope bounds new FEATURES, not defects. "add no work it does not name" read as "leave
+    // what you find broken", and a continuation handed a two-line fix back to Robert under
+    // that line (2026-09-25, the `try --close` leak). His rule: a defect found on the way is
+    // fixed the same turn.
+    scope: [
+      'the steps that handoff already lists - start no new feature it does not name',
+      'a defect you find on the way is not new work: fix it this turn and report it (unasked)'
+    ],
     // The steps ARE the definition of done here: the handoff was written by the session
     // that did the work, and these are the lines it said were still open.
     done: ask.steps.length ? ask.steps : ['every Next step in that handoff is finished, or is named as blocked']

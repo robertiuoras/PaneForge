@@ -179,7 +179,10 @@ function project(name, { lanes, version } = {}) {
 
 // ---------------------------------------------------------------- the engine's own repo
 
-{
+// A PC build copy (rbuild) ships the tree without .git, so there is no engine repo to ask:
+// `status` printed nothing and JSON.parse killed the whole suite on the PC.
+if (!existsSync(join(repoRoot, '.git'))) console.log('skip the engine repo checks: this copy has no .git')
+else {
   // The one that must not have changed: driving THIS repo by --repo has to look exactly
   // like driving it by living in it, or every PaneForge release story is now wrong.
   const s = JSON.parse(lane(repoRoot, 'status').out)

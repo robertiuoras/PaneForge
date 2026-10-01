@@ -15,7 +15,8 @@ const {
   PROBE_RETRY_MAX_MS,
   PROBE_ALERT_AFTER,
   probeRetryMs,
-  probeStalled
+  probeStalled,
+  macReadsAround
 } = await import('../src/shared/updateRetry.ts')
 
 let failed = 0
@@ -47,6 +48,13 @@ ok(
 )
 ok('...once, not once a minute for as long as it is out', !probeStalled(PROBE_ALERT_AFTER + 1))
 
+// A Mac whose Electron network stack broke kept asking it for 2 hours (2026-09-24,
+// `net::ERR_FAILED` x17), because only a missing .yml went to the plain-https read.
+ok('a Mac reads around a missing latest-mac.yml', macReadsAround('Cannot find latest-mac.yml in the latest release artifacts'))
+ok('...and around a 404', macReadsAround('HttpError: 404 Not Found'))
+ok('...and around a broken Electron network stack', macReadsAround('net::ERR_FAILED') && macReadsAround('Error: net::ERR_NETWORK_CHANGED'))
+ok('a checksum mismatch is not a feed read and still says so', !macReadsAround('sha512 checksum mismatch, expected abc'))
+
 // --- source assertions: the arithmetic is worth nothing unwired -------------------------
 const updater = readFileSync(new URL('../src/main/updater.ts', import.meta.url), 'utf8')
 ok('the poll asks the backoff how long to wait', /function nextPollDelay\(\)/.test(updater) && /arm\(nextPollDelay\(\)\)/.test(updater))
@@ -56,6 +64,10 @@ ok('...and the backoff can only make the next check sooner, never later', /Math\
 ok('a probe that answers clears the count, whatever it answered', /probeFails = 0/.test(updater))
 ok('a probe that does not answer counts itself', /probeFails \+= 1/.test(updater))
 ok('and the stall gets its own searchable line', /probeStalled\(probeFails\)/.test(updater) && /probe stalled/.test(updater))
+
+ok('both Mac feed-read failure paths ask the same question', (updater.match(/process\.platform === 'darwin' && macReadsAround\(message\)/g) ?? []).length === 2)
+ok('no Mac path still hand-rolls the old .yml|404 match', !/darwin' && \/\\\.yml\|404\//.test(updater))
+ok('a network error the second read could not get past still counts toward the stall', /if \(!NETWORK_FAILURE\.test\(message\) && !NETWORK_FAILURE\.test\(second\)\) return/.test(updater))
 
 console.log(failed ? `\n${failed} failed` : '\nupdate retry: all good')
 process.exit(failed ? 1 : 0)

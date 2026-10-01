@@ -79,15 +79,35 @@ armed one. `shared/markAnchor.ts` re-anchors tags (`test:markanchor`).
 ## A finished pane closes itself into Review
 
 `shared/doneClose.ts` (`test:doneclose`), `main/doneClose.ts`, 15s timer; `config.autoCloseDone`
-on. Closes when: agent pane, turn over (`footerEndedAt`), not ACTIVE (`sessions:active`),
-`AUTO_CLOSE_QUIET_MS` 3 min past turn end AND last key, `doneEnough`, reply read off
-transcript (`shared/replyRead.ts`, `test:replyread`), no running subagent, reply not ending
-`?`, `actionableNextSteps` empty. Writes `result`/`unverified` review `done_<pane>_<turn s>`
-(`recordReview`, idempotent), then `closeAfterResult`; each `personOwnedSteps` step becomes a
-GuardDeck notice, `spoolNotice`'s gate. Opener told once: `finishedDigest.ts`. Review = ONE list (`ReviewDialog.tsx`,
+on. Never a kept pane (card's Keep open, `config.pinnedPanes`, `keptOpen` in `main/index.ts`: done-close, `pf tidy`,
+`reviews:record` close, exited/asleep sweeps, Clear finished, `--close-when-done`; memory pressure may only sleep it). Closes when: agent pane, turn over (`footerEndedAt`), not LOOKED AT (`personLooking`),
+quiet `doneQuietMs` (3 min, 1 min tight, 30s over) past turn end AND last key, OR read
+(`lookedAt`, stamped each second by `sweepIdle`, older than the turn = unread) and
+`READ_QUIET_MS` 30s past max(look, key); `doneEnough`, no prompt owed, opener only while its
+children are open or their digest pending, reply read off transcript (`shared/replyRead.ts`,
+`test:replyread`), no running subagent, reply not ending `?`, `actionableNextSteps` empty,
+folder clean + pushed (`gitCached`: no upstream counts `rev-list HEAD --not --remotes`; a
+failed read or one started before the turn ended is `'unread'` and refuses); a background job only WAITING
+(`isWaitScript`: sleep loops, `gh run watch`, `tail -f`, `bg-wait.mjs` minus its
+label/done/fail words) holds nothing. Writes `result`/`unverified` review
+`done_<pane>_<turn s>` with `hold` (row, no card), then `closeAfterResult` (refusal names each
+flag, `closeHeldBy`). ONLY after a real close: each `personOwnedSteps` step a GuardDeck to-do,
+the result card (`sendReviewNotice`) unless explicitly marked reviewed in Review or by a
+GuardDeck receipt. Looking at a pane only controls close timing; it never acknowledges a
+report or suppresses its delivery. Explicit unfinished/queued work in prose also holds the pane.
+Once eligible, the automatic sweep publishes `doneClosingAt` and waits a fresh 30 seconds;
+any refusal cancels it. GuardDeck displays that deadline alongside the idle-close clock.
+An old turn never overrides the 30-second quiet period after a recent look. `autoclose_*` rows (`reviews:record`) same rule via `heldCards`/
+`cardAfterClose` (direct close, arm, `sessions:kill`). `pf tidy` = `sessions:closeDone`: same
+sweep over `Session.finished` panes, quiet 0, `dry` touches nothing. Opener told once: `finishedDigest.ts`. Review = ONE list (`ReviewDialog.tsx`,
 `shared/reviewList.ts`, `test:reviewlist`): Needs you/Done/All, row = number+project+ask+
 result, expand = full reply + Reopen (`--resume`) + Copy; shell/bare-slash rows hidden. Idle
 shell undrawn (`fleet.ts` `idleShell`) till pressed/run; idle countdown still takes it.
+
+Finished-turn sweeps publish a 30-second `doneClosingAt` before closing, rechecking every
+refusal on expiry; Keep open persists the pin. Local/remote pins also cancel an armed
+clear and refuse new automatic clears. Cancelling a clear holds the same native conversation
+for the lifetime of the app, until a manual fresh session changes its ID.
 
 ## A session that clears itself asks first
 

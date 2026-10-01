@@ -8,7 +8,15 @@
  * actually needs - list, open, close, type - rather than adding a second door to the
  * app (repo rule: channels are added to surface.ts, not to a transport).
  *
+ * `pf help` is the full reference, written for an agent that has never seen PaneForge: every
+ * command, a plain-words line and a copy-paste example each (the table is `COMMANDS` in
+ * scripts/pf-ctl-lib.mjs). Bare `pf`, `pf --help` and `pf -h` print it too.
+ *
+ *   node scripts/pf-ctl.mjs help [command]
  *   node scripts/pf-ctl.mjs list
+ *   node scripts/pf-ctl.mjs agents                  agent ids --agent / --to take, installed or not
+ *   node scripts/pf-ctl.mjs tidy [--dupes] [--dry-run]   clear finished panes; list (or close) idle duplicates
+ *   node scripts/pf-ctl.mjs move <pane> --to <agent> [--model M]   reopen a pane's work on another agent
  *   node scripts/pf-ctl.mjs open <cwd> [--title T] [--prompt P | --task BACKLOG_ID] [--model M] [--agent A]
  *                                       [--close-when-done] [--report-to <pane>]
  *   Queue-backed observer: open <cwd> --agent shell --compute-job <submitted-id> --compute-owner <native-id>
@@ -17,18 +25,16 @@
  *                                       [--resume <chat-id> | --continue] [--here | --on <device>]
  *   node scripts/pf-ctl.mjs open-many <plan.json>
  *   node scripts/pf-ctl.mjs devices
- *   node scripts/pf-ctl.mjs needs-login <site> --url <url> [--host user@ip] [--port N] [--machine WORDS]
- *                                        [--why "what it will do once signed in"] [--open]
- *                                        [--desk user@ip] [--me user@ip] [--report-to <pane>]
  *   node scripts/pf-ctl.mjs tell <title-or-id> <text...>
- *   node scripts/pf-ctl.mjs login [url] [--site NAME] [--host user@ip] [--port N] [--machine WORDS]
+ *   node scripts/pf-ctl.mjs continue <chat-id> --prompt-file <file> [--json]   next prompt to one conversation, reopening it if closed
  *   node scripts/pf-ctl.mjs close <title-or-id>
  *   node scripts/pf-ctl.mjs review <review.json>   record an agent completion/decision/blocked result
  *   node scripts/pf-ctl.mjs watch-job <job-id> --owner <native-id> --pane <exact-local-id>
  *   node scripts/pf-ctl.mjs rename <title-or-id> <name...>
  *   node scripts/pf-ctl.mjs composer <number-title-or-id>   what is typed but not sent
  *   node scripts/pf-ctl.mjs type <title-or-id> <text...>
- *   node scripts/pf-ctl.mjs composer <title-or-id> [--json]
+ *   node scripts/pf-ctl.mjs devices | cost [--seconds N] | reload
+ *   node scripts/pf-ctl.mjs call <channel> [json-arg...] | send <channel> [json-arg...]
  *   node scripts/pf-ctl.mjs hold [--bundle ID|--name APP|--pid N] [--reason R] [--ttl MIN] [--this]
  *   node scripts/pf-ctl.mjs hold list | hold release <id>
  *
@@ -49,11 +55,31 @@
  *
  * Exit codes: 0 ok · 1 target not found / call failed · 2 phone server unreachable/off.
  */
-import { spawnSync } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import {
+  buildHandoffBrief,
+  claimHolder,
+  commandHelp,
+  cardNumber,
+  continueTarget,
+  findDuplicates,
+  findTranscript,
+  folderRefusal,
+  helpText,
+  isCommand,
+  isFinishedPane,
+  lastExchange,
+  laneLedger,
+  movePrompt,
+  moveRefusal,
+  paneAt,
+  readTail,
+  samePath,
+  stripAnsi
+} from './pf-ctl-lib.mjs'
 
 /*
  * `PF_USER_DATA` points this at ONE app's settings folder.
@@ -78,15 +104,24 @@ function phoneConfig() {
   } catch {
     fail(2, `no PaneForge config at ${USER_DATA} - is PaneForge installed on this machine?`)
   }
+  // No refusal on `phone.on`: with phone access off the app still listens on this
+  // machine only (`PhoneServer.localOnly`), and that listener is what `pf` talks to.
   const phone = JSON.parse(raw).phone ?? {}
-  if (!phone.on)
-    fail(2, 'phone server is OFF - enable "Phone" in PaneForge Settings, then rerun')
   return { port: phone.port ?? 7312, code: phone.code ?? '' }
 }
 
+/** Thrown by `fail` and caught around `main`: the refusal is already printed. */
+class Refused extends Error {}
+
 function fail(codeNum, msg) {
   console.error(`pf-ctl: ${msg}`)
-  process.exit(codeNum)
+  // Not process.exit(): on Windows, exiting while fetch's keep-alive socket is still being
+  // closed aborts inside libuv (`Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)`)
+  // and the exit code becomes 3221226505 instead of this one - measured 2026-09-26 on every
+  // `pf continue` refusal made after the app had been asked something. The process ends on
+  // its own once the socket is closed, with this code.
+  process.exitCode = codeNum
+  throw new Refused(msg)
 }
 
 let cookie = ''
@@ -101,7 +136,10 @@ async function post(path, body) {
       body: JSON.stringify(body)
     })
   } catch {
-    fail(2, `PaneForge not answering on ${base} - is the app running?`)
+    fail(
+      2,
+      `PaneForge is not answering on this machine (${base}) - is it running? (builds before this one answer pf only with Phone switched on in Settings)`
+    )
   }
   if (res.status === 401) fail(2, 'not paired and pairing was refused - check the code in config.json')
   return res
@@ -118,10 +156,16 @@ async function pair() {
 }
 
 async function call(channel, args) {
-  const res = await post('/pf/call', { id: 1, channel, args })
-  const out = await res.json()
+  const out = await tryCall(channel, args)
   if (out.error) fail(1, `${channel}: ${out.error}`)
   return out.value
+}
+
+/** `call` that hands a refusal back instead of exiting - for a step that has to undo one before it. */
+async function tryCall(channel, args) {
+  const res = await post('/pf/call', { id: 1, channel, args })
+  const out = await res.json().catch(() => ({ error: `unreadable answer (HTTP ${res.status})` }))
+  return out.error ? { error: String(out.error) } : { value: out.value }
 }
 
 /** Fire-and-forget send channels (pty:write) go through /pf/send, ordered, no reply. */
@@ -140,15 +184,16 @@ async function sessions() {
  * Ctrl+<n> reaches, and the only name Robert ever uses for a pane ("check PaneForge
  * session 12"). It was the one name this CLI could not answer to: `pf list` printed
  * `s45-mu5kq7f9` and no number at all, so another session asked about pane 12 looked at
- * that list, found no 12, and told him it did not exist (2026-09-17). The order here is
- * the order `sessions:list` returns, which is the sidebar's own order.
+ * that list, found no 12, and told him it did not exist (2026-09-17). Which pane shows
+ * which number is `cardNumber`: a row's own `number` when it has one, else its place in
+ * the `sessions:list` answer, which is the sidebar's own order.
  */
 function resolve(list, ref) {
   const byId = list.find((s) => s.id === ref)
   if (byId) return byId
   if (/^\d+$/.test(ref)) {
-    const at = list[Number(ref) - 1]
-    if (!at) fail(1, `there is no pane ${ref} - the desk has ${list.length}`)
+    const at = paneAt(list, Number(ref))
+    if (!at) fail(1, `there is no pane ${ref} - the cards on the desk are ${list.map((s) => cardNumber(list, s.id)).join(', ') || 'none'}`)
     return at
   }
   const byTitle = list.filter((s) => s.title === ref)
@@ -200,132 +245,69 @@ export function readOpenManyPlan(path) {
 // so every `pf ...` call silently did nothing and exited 0 (2026-09-07).
 const isMain = import.meta.url === pathToFileURL(realpathSync(process.argv[1] ?? "/")).href
 const [cmd, ...rest] = isMain ? process.argv.slice(2) : []
-if (isMain) await main()
+if (isMain)
+  await main().catch((e) => {
+    if (!(e instanceof Refused)) throw e
+  })
 
 async function main() {
 
 /*
- * A sign-in request is checked BEFORE the app is asked for anything.
+ * Help, and every mistyped command, answer WITHOUT the app.
  *
- * The whole point of the card is that a person walks over to it and types a password, so
- * an ask that names no site, or an address that is not an address, must cost nobody that
- * walk. It refuses here, where the mistake was made, rather than putting up a card that
- * opens a browser at nothing.
+ * 2026-09-24: a Codex chat concluded "PaneForge's local control API appears disabled, and
+ * its launcher cannot select Codex" - both false (`pf list` worked, `pf open --agent codex`
+ * existed). It could not find out: `pf --help` was itself an unknown command, and the only
+ * list of commands was the error line, which named no flags. An agent learns a tool by
+ * asking it, so the tool answers - bare `pf`, `--help`, `-h`, `pf help <command>`, and
+ * `pf <command> --help` - and a wrong word points at the answer rather than at the source.
  */
+if (!cmd || cmd === 'help' || cmd === '--help' || cmd === '-h') {
+  const topic = cmd === 'help' ? rest[0] : undefined
+  if (!topic) {
+    console.log(helpText())
+    process.exit(0)
+  }
+  const one = commandHelp(topic)
+  if (!one) fail(1, `no command "${topic}" - run: pf help`)
+  console.log(one)
+  process.exit(0)
+}
+// What an agent does instead when a job needs a person to sign in: the person's own Chrome,
+// driven by Claude in Chrome, rather than a card on the desk.
+const SIGN_IN_ROUTE =
+  'When a job needs a person to sign in: open the sign-in page in Claude in Chrome on the Mac (mcp__claude-in-chrome__* tools, the person\'s real Chrome), say in your reply which tab and what to sign in to, then carry on in that tab yourself once they have signed in.'
+// A command agents were taught and that is gone is answered with what replaced it, rather
+// than with the list of everything. `pf login` opened the sign-in picture until 2026-09-25.
+const RETIRED = {
+  login: `pf login was removed with the sign-in picture. ${SIGN_IN_ROUTE}`
+}
+if (Object.hasOwn(RETIRED, cmd)) fail(1, RETIRED[cmd])
+// A command that is switched off rather than gone: scripts and agents still run it, so it
+// answers with what to do instead and exits 0 rather than failing the job that asked.
+// Nothing reaches the app. `pf needs-login` put a "needs you to sign in" card on the desk
+// until 2026-09-28; the card kept coming back without getting anybody signed in.
+const SWITCHED_OFF = {
+  'needs-login': `pf needs-login is switched off: no card goes up. ${SIGN_IN_ROUTE}`
+}
+if (Object.hasOwn(SWITCHED_OFF, cmd)) {
+  console.log(SWITCHED_OFF[cmd])
+  process.exit(0)
+}
+if (!isCommand(cmd))
+  fail(
+    1,
+    `unknown command "${cmd}" - use: help | list | agents | open | open-many | devices | tell | continue | type | composer | close | close-when-done | tidy | move | rename | review | watch-job | hold | cost | reload | call | send - run: pf help`
+  )
+if (rest[0] === '--help' || rest[0] === '-h') {
+  console.log(commandHelp(cmd))
+  process.exit(0)
+}
 
-/** One argument, safe inside the single command line ssh hands to a shell. */
+/** One argument, safe to paste into a shell as a single word. */
 function shellQuote(word) {
   if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(word)) return word
   return `'${String(word).replace(/'/g, `'"'"'`)}'`
-}
-
-/** This machine's ssh address, for the other desk to reach back on. */
-function selfAddress() {
-  const who = process.env.USER || process.env.USERNAME
-  if (!who) return undefined
-  const ts = spawnSync('tailscale', ['ip', '-4'], { encoding: 'utf8' })
-  const ip = (ts.stdout ?? '').split(/\r?\n/).map((l) => l.trim()).find(Boolean)
-  return ip ? `${who}@${ip}` : undefined
-}
-
-/**
- * The one command that puts the card on the OTHER desk. Same shape as `relayCommand` in
- * src/shared/remoteLogin.ts, which is where the rules are written down.
- */
-function relayCommand(a) {
-  const desk = (a.desk ?? '').trim()
-  if (!desk) return { ok: false, why: 'Say which computer should show the card, like: --desk robert@100.89.94.66' }
-  const self = (a.me ?? selfAddress() ?? '').trim()
-  if (!self)
-    return {
-      ok: false,
-      why: 'The other desk has to be able to reach this machine back - pass --me user@address (or set PF_SSH_SELF)'
-    }
-  const words = ['needs-login', a.site, '--url', a.url, '--host', self, '--open']
-  if (a.port) words.push('--port', String(a.port))
-  if (a.machine) words.push('--machine', a.machine)
-  if (a.why) words.push('--why', a.why)
-  if (a.reportTo) words.push('--report-to', a.reportTo, '--report-host', self)
-  const args = words.map(shellQuote).join(' ')
-  // An ssh command reads no profile, so neither `pf` nor `node` is on the PATH over
-  // there; a LOGIN shell has the paths a person's own terminal has.
-  // The checkout first, the `pf` link second: running the link through a login shell
-  // printed nothing and exited 0 on this Mac, which looks exactly like success.
-  const inner = `node "$HOME/Projects/PaneForge/scripts/pf-ctl.mjs" ${args} || pf ${args}`
-  const remote = a.pf ? `${a.pf} ${args}` : `bash -lc ${shellQuote(inner)}`
-  return {
-    ok: true,
-    remote,
-    // `-n`: ssh reads its own stdin, and a spawn that hands it a pipe nobody closes hangs.
-    argv: ['-n', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-o', 'StrictHostKeyChecking=accept-new', desk, remote]
-  }
-}
-
-let loginArgs = null
-if (cmd === 'needs-login') {
-  const host = flag(rest, '--host')
-  const port = flag(rest, '--port')
-  const machine = flag(rest, '--machine')
-  const url = flag(rest, '--url')
-  const why = flag(rest, '--why')
-  const desk = flag(rest, '--desk')
-  const pf = flag(rest, '--pf')
-  const me = flag(rest, '--me') ?? process.env.PF_SSH_SELF
-  // A pane that asked is the pane to tell, so `--report-to` only has to be typed by
-  // something that is not a pane (a cron job telling a pane on another machine).
-  const reportTo = flag(rest, '--report-to') ?? process.env.PF_PANE
-  const reportHost = flag(rest, '--report-host')
-  const site = rest[0]
-  if (!site) fail(1, 'needs-login needs a site: pf-ctl needs-login <site> --url <url> [--host user@ip]')
-  if (!url) fail(1, 'needs-login needs --url <address of the sign-in page>')
-  if (!/^https?:\/\//i.test(url))
-    fail(1, `--url must start with http:// or https:// - got "${url}"`)
-  if (port && !/^\d+$/.test(port)) fail(1, `--port must be a number - got "${port}"`)
-  loginArgs = {
-    site,
-    url,
-    host,
-    port: port ? Number(port) : undefined,
-    machine,
-    why,
-    reportTo,
-    reportHost,
-    open: rest.includes('--open') || undefined,
-    from: process.env.PF_PANE,
-    // Not sent to the app: `--desk` means this ask is not for THIS app at all.
-    desk,
-    me,
-    pf
-  }
-}
-
-/*
- * `pf login` is the same ask, said the short way, by the session that already hit the wall.
- *
- * Robert, 2026-09-03: "allow me to just ask, like that session who wanted it, to open
- * again the login and it knows how to open it." So this names no site and no computer -
- * the app remembers what this pane asked for last (`askAgain` in shared/remoteLogin.ts) -
- * and it does not put a card up to be clicked: the picture opens.
- */
-let reopenArgs = null
-if (cmd === 'login') {
-  const host = flag(rest, '--host')
-  const port = flag(rest, '--port')
-  const machine = flag(rest, '--machine')
-  const site = flag(rest, '--site')
-  const url = rest[0]
-  if (url && !/^https?:\/\//i.test(url))
-    fail(1, `a sign-in page starts with http:// or https:// - got "${url}"`)
-  if (port && !/^\d+$/.test(port)) fail(1, `--port must be a number - got "${port}"`)
-  reopenArgs = {
-    site,
-    url,
-    host,
-    port: port ? Number(port) : undefined,
-    machine,
-    from: process.env.PF_PANE,
-    open: true
-  }
 }
 
 /**
@@ -411,34 +393,43 @@ if (cmd === 'tell') {
   if (rest.length < 2 || !rest[0] || !rest.slice(1).join(' ').trim())
     fail(1, 'tell needs a pane and one line: pf-ctl tell <title-or-id> <text...>')
 }
-
-// The card belongs on the OTHER computer, because that is where the person is - so this
-// ask never reaches the app on this machine, and runs before one is even looked for. The
-// hop is ssh and not the desk-to-desk link on purpose: a scheduled job hits its sign-in
-// wall whether or not the two desks are paired, and often with no PaneForge running on
-// its own machine at all.
-if (cmd === 'needs-login' && loginArgs?.desk) {
-  const relay = relayCommand(loginArgs)
-  if (!relay.ok) fail(1, relay.why)
-  // `PF_SSH` stands in for the ssh binary when this is being tested. Windows has no `echo`
-  // binary to point it at and cannot spawn a `.cmd` without a shell, so the JSON form
-  // `["<binary>", "<leading arg>"]` lets a test name an interpreter and the script it runs.
-  const sshCmd = process.env.PF_SSH ?? 'ssh'
-  const [sshBin, ...sshLead] = sshCmd.startsWith('[') ? JSON.parse(sshCmd) : [sshCmd]
-  const ssh = spawnSync(sshBin, [...sshLead, ...relay.argv], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe']
-  })
-  const said = `${ssh.stdout ?? ''}${ssh.stderr ?? ''}`.trim()
-  if (ssh.status !== 0)
-    fail(1, `could not ask ${loginArgs.desk} to show the sign-in card: ${said || `ssh exited ${ssh.status}`}`)
-  // The far desk answers with the request's own id. Nothing at all is a FAILED ask - a
-  // silent exit 0 is what a missing command over ssh looks like, and reporting that as a
-  // card being up leaves a job waiting on something nobody can see.
-  if (!/login-\S+/.test(said) && !process.env.PF_SSH)
-    fail(1, `${loginArgs.desk} did not put a sign-in card up${said ? `: ${said}` : ' and said nothing'}`)
-  console.log(said || 'asked')
-  process.exit(0)
+// `pf continue` too: GuardDeck shows whatever this says to a person who typed a prompt and
+// pressed Send, so a bad id or an empty file is refused here, before any pane is touched.
+let continueArgs = null
+if (cmd === 'continue') {
+  const promptFile = flag(rest, '--prompt-file')
+  const json = rest.includes('--json')
+  const [resumeId, ...stray] = rest.filter((a) => a !== '--json')
+  if (!resumeId || !promptFile)
+    fail(1, 'continue needs a chat id and a prompt file: pf continue <chat-id> --prompt-file <file> - run: pf help continue')
+  if (stray.length) fail(1, `continue takes one chat id, --prompt-file and --json, not: ${stray.join(' ')}`)
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$/.test(resumeId))
+    fail(1, `"${resumeId}" is not a chat id - use the resumeId from the review notice, not a pane number or name`)
+  let prompt
+  try {
+    prompt = readFileSync(promptFile, 'utf8')
+  } catch (e) {
+    fail(1, `could not read the prompt file ${promptFile} - ${e instanceof Error ? e.message : e}`)
+  }
+  if (!prompt.trim()) fail(1, `the prompt file ${promptFile} is empty - nothing to send`)
+  if (prompt.length > 64000) fail(1, `the prompt is ${prompt.length} characters; the most one prompt can carry is 64000`)
+  continueArgs = { resumeId, prompt: prompt.replace(/\s+$/, ''), json }
+}
+// So do `tidy` and `move`: a flag that is not theirs is a mistake, never a silent no-op.
+let tidyArgs = null
+if (cmd === 'tidy') {
+  const stray = rest.filter((a) => a !== '--dupes' && a !== '--dry-run')
+  if (stray.length) fail(1, `tidy takes only --dupes and --dry-run, not: ${stray.join(' ')} - run: pf help tidy`)
+  tidyArgs = { dupes: rest.includes('--dupes'), dry: rest.includes('--dry-run') }
+}
+let moveArgs = null
+if (cmd === 'move') {
+  const to = flag(rest, '--to')
+  const model = flag(rest, '--model')
+  const [ref, ...stray] = rest
+  if (!ref || !to) fail(1, 'move needs a pane and an agent: pf move <pane> --to <agent> [--model M] - run: pf help move')
+  if (stray.length) fail(1, `move takes one pane, --to and --model, not: ${stray.join(' ')}`)
+  moveArgs = { ref, to, model }
 }
 
 if (process.env.PF_CTL_NO_APP === '1') process.exit(0)
@@ -486,20 +477,246 @@ function placeTranscript(cwd, id) {
 if (cmd === 'list') {
   const list = await sessions()
   // The number leads, because it is the name on the card. See `resolve`.
-  for (const [i, s] of list.entries()) console.log([i + 1, s.id, s.status, s.title, s.cwd].join('\t'))
-  // A sign-in request is not a pane yet - it is a card waiting for somebody - so it is
-  // listed too, and says which computer it is waiting on.
-  const logins = (await call('login:list', [])) ?? []
-  for (const r of logins)
-    console.log([r.id, r.state, `Sign in to ${r.site} on ${r.machine}`, r.url].join('\t'))
-} else if (cmd === 'needs-login') {
-  const req = await call('login:need', [loginArgs])
-  if (!req?.id) fail(1, 'PaneForge did not accept the sign-in request')
-  console.log(req.id)
-} else if (cmd === 'login') {
-  const req = await call('login:need', [reopenArgs])
-  if (!req?.id) fail(1, 'PaneForge did not accept the sign-in request')
-  console.log(`sign in to ${req.site} on ${req.machine} - the picture is on screen now`)
+  for (const s of list) console.log([cardNumber(list, s.id), s.id, s.status, s.title, s.cwd].join('\t'))
+} else if (cmd === 'agents') {
+  // The running app's own catalogue, so an agent the person added is here too, and
+  // "installed" is this computer's answer rather than a list baked into this file.
+  for (const a of (await call('agents:list', [])) ?? [])
+    console.log(
+      [
+        a.id,
+        a.available === false ? 'not installed' : 'installed',
+        a.label ?? a.id,
+        (a.models ?? []).map((m) => (typeof m === 'string' ? m : m?.id)).filter(Boolean).join(', ')
+      ].join('\t')
+    )
+} else if (cmd === 'tidy') {
+  // One call to tidy the desk. Finished panes go the way the window's "Clear finished"
+  // button sends them (same channel, same rule, their last reply kept in Review); then
+  // duplicates - two panes of one agent in one folder - are listed, and with --dupes the
+  // idle extras close. Which pane is safe to close is `findDuplicates`, the pure half.
+  const { dupes, dry } = tidyArgs
+  const self = process.env.PF_PANE
+  const before = await sessions()
+  const at = (list, p) => `${p.id} (pane ${cardNumber(list, p.id)} "${p.title}")`
+  let closed = 0
+  // A dry run numbers panes as they are now; a real one as they are once the finished
+  // ones are gone - either way the number printed is the one on the card at that moment.
+  // `findDuplicates` skips exited panes, so a dry run can hand it the desk as it stands.
+  let desk = before
+  // Then panes still running whose turn is over with nothing left (`sessions:closeDone`):
+  // the app's own done-close rule, asked now instead of after its quiet wait. An app from
+  // before that channel answers with an error, and tidy carries on without it.
+  const closeDone = async (asDry) => {
+    const out = await tryCall('sessions:closeDone', [asDry])
+    return new Set(out.error ? [] : out.value ?? [])
+  }
+  if (dry) {
+    const finished = before.filter(isFinishedPane)
+    for (const p of finished) console.log(`would clear ${at(before, p)} - finished; its last reply stays in Review`)
+    closed += finished.length
+    const done = await closeDone(true)
+    const going = before.filter((p) => done.has(p.id))
+    for (const p of going) console.log(`would clear ${at(before, p)} - finished; its last reply goes to Review`)
+    closed += going.length
+    desk = before.filter((p) => !done.has(p.id))
+  } else {
+    await call('sessions:clearFinished', [])
+    const done = await closeDone(false)
+    desk = await sessions()
+    for (const p of before.filter((p) => !desk.some((x) => x.id === p.id))) {
+      console.log(`cleared ${at(before, p)} - finished; its last reply ${done.has(p.id) ? 'goes to' : 'stays in'} Review`)
+      closed++
+    }
+  }
+  const groups = findDuplicates(desk, { now: Date.now(), self })
+  let suggested = 0
+  for (const g of groups) {
+    const of = `duplicate of pane ${g.keep.number} "${g.keep.pane.title}" (${g.agent} in ${g.cwd})`
+    for (const m of g.close) {
+      const idle = Math.max(1, Math.round((Date.now() - (m.pane.lastOutput || Date.now())) / 60_000))
+      if (!dupes) {
+        console.log(`pf close ${m.pane.id}    # pane ${m.number} "${m.pane.title}", idle ${idle} min - ${of}`)
+        suggested++
+      } else if (dry) {
+        console.log(`would close ${at(desk, m.pane)} - idle ${idle} min, ${of}`)
+        closed++
+      } else {
+        await call('sessions:kill', [m.pane.id])
+        if ((await sessions()).some((x) => x.id === m.pane.id)) {
+          console.log(`could not close ${at(desk, m.pane)} - the app answered but it is still listed`)
+          continue
+        }
+        console.log(`closed ${at(desk, m.pane)} - idle ${idle} min, ${of}`)
+        closed++
+      }
+    }
+    for (const m of g.held) console.log(`kept ${at(desk, m.pane)} - ${of}, but ${m.why.join(', ')}`)
+  }
+  if (!groups.length) console.log('no duplicate panes')
+  if (suggested) console.log(`${suggested} idle duplicate${suggested === 1 ? '' : 's'} above: run the pf close lines, or: pf tidy --dupes`)
+  const left = dry ? before.length - closed : (await sessions()).length
+  console.log(dry ? `would close ${closed}, keep ${left} (dry run - nothing changed)` : `closed ${closed}, kept ${left}`)
+} else if (cmd === 'move') {
+  // Reopen a pane's work on another agent, with no copy-paste: the case is Claude's usage
+  // running out mid-task and the same work carrying on in Codex (Robert, 2026-09-24).
+  //
+  // The OLD pane closes BEFORE the new one opens, which looks backwards and is not. The
+  // folder is still in use until the old pane goes, and the app gives a second pane in a
+  // busy git folder its own copy of it - measured 2026-09-24: two `pf open --here` into one
+  // scratch repo landed in `/tmp/pf-lane-probe` and `/private/tmp/pf-lane-probe-a`. The new
+  // agent would carry on in a copy on another branch, without the old one's uncommitted
+  // work. So the safety runs the other way round: refuse while the pane is mid-anything
+  // (`moveRefusal`), write the brief BEFORE closing, and reopen the old conversation if the
+  // new pane does not start.
+  const { ref, to, model } = moveArgs
+  const agents = (await call('agents:list', [])) ?? []
+  const target = agents.find((a) => a.id === to)
+  const usable = agents.filter((a) => a.id !== 'shell' && a.available !== false).map((a) => a.id)
+  if (!target) fail(1, `unknown agent "${to}" - use one of: ${agents.map((a) => a.id).join(', ')}`)
+  if (to === 'shell') fail(1, `a shell cannot read a handoff brief - move to an agent: ${usable.join(', ')}`)
+  if (target.available === false)
+    fail(1, `${target.label ?? to} is not installed on this computer - installed: ${usable.join(', ')}`)
+  // A model the agent does not list would start a CLI that quits on its first word. Only
+  // checked when the catalogue lists models at all: Claude and Codex take any name.
+  const models = (target.models ?? []).map((m) => (typeof m === 'string' ? m : m?.id)).filter(Boolean)
+  if (model && models.length && !models.includes(model))
+    fail(1, `${to} has no model "${model}" - it lists: ${models.join(', ')}`)
+  const list = await sessions()
+  const pane = resolve(list, ref)
+  if (!pane) fail(1, `no pane named "${ref}"`)
+  const number = cardNumber(list, pane.id)
+  const refused = moveRefusal(pane, { now: Date.now(), self: process.env.PF_PANE })
+  if (refused) fail(1, `will not move pane ${number} "${pane.title}" (${pane.id}): ${refused}`)
+  // The folder has to be free the moment the old pane goes, or the new one opens in a copy.
+  const holder = claimHolder(laneLedger(pane.cwd), pane.cwd)
+  const taken = folderRefusal(list, pane, holder)
+  if (taken) fail(1, `will not move pane ${number} "${pane.title}" (${pane.id}): ${taken}`)
+
+  const transcript = findTranscript({
+    cwd: pane.cwd,
+    resumeId: pane.resumeId,
+    agent: pane.agent,
+    claudeHome: join(homedir(), '.claude'),
+    codexHome: process.env.CODEX_HOME || join(homedir(), '.codex')
+  })
+  let exchange = null
+  if (transcript) {
+    try {
+      exchange = lastExchange(readTail(transcript))
+    } catch {
+      exchange = null
+    }
+    if (exchange && !exchange.ask && !exchange.reply) exchange = null
+  }
+  // No readable conversation (an agent that keeps none where this looks): the pane's own
+  // screen is the next best record of where it stopped.
+  let screen
+  if (!exchange) {
+    const buf = await tryCall('sessions:buffer', [pane.id])
+    if (typeof buf.value === 'string') screen = stripAnsi(buf.value)
+  }
+  const dir = join(tmpdir(), 'paneforge-move')
+  mkdirSync(dir, { recursive: true })
+  const brief = join(dir, `${pane.id.replace(/[^A-Za-z0-9-]/g, '_')}-${Date.now()}.md`)
+  writeFileSync(brief, buildHandoffBrief({ pane, number, to, model, transcript, exchange, screen }))
+  // Said BEFORE anything closes: if the app stops answering halfway, this is the way back.
+  const undo = ['pf', 'open', pane.cwd, '--agent', pane.agent, ...(pane.resumeId ? ['--resume', pane.resumeId] : []), '--here']
+    .map(shellQuote)
+    .join(' ')
+  console.log(`brief: ${brief}`)
+  console.log(`if this stops halfway, reopen the old chat with: ${undo}`)
+
+  await call('sessions:kill', [pane.id])
+  if ((await sessions()).some((x) => x.id === pane.id))
+    fail(1, `could not close pane ${number} (${pane.id}) - nothing was moved`)
+
+  const reportTo = process.env.PF_PANE
+  let fresh = null
+  let why = ''
+  let state = 'starting'
+  // A lane claim is let go by the closed chat's own exit hook, a moment after the close.
+  if (holder === pane.id) {
+    for (const deadline = Date.now() + 15_000; Date.now() < deadline; ) {
+      if (claimHolder(laneLedger(pane.cwd), pane.cwd) !== pane.id) break
+      await new Promise((r) => setTimeout(r, 500))
+    }
+    if (claimHolder(laneLedger(pane.cwd), pane.cwd) === pane.id)
+      why = `the closed chat still held ${pane.cwd} 15s later, so ${to} would have opened in a copy of it`
+  }
+  if (!why) {
+    const opened = await tryCall('sessions:start', [
+      { cwd: pane.cwd, title: pane.title, prompt: movePrompt(brief), agent: to, model, reportTo, where: 'local' }
+    ])
+    fresh = opened.value?.id ? opened.value : null
+    why = opened.error ?? (fresh ? '' : 'the app opened nothing')
+  }
+  // "Started" is the pane listed, drawing, and STILL THERE a little later: `starting` is a
+  // process with no output yet, and a CLI that draws its banner can still quit at a gate
+  // before it reads a word. Measured 2026-09-24: Codex 0.156 in a folder it had not been
+  // told to trust drew its banner, showed "Trust this folder?", and exited 3s after launch
+  // - a first-output check had already printed `moved`, with the old pane gone.
+  if (fresh && !samePath(fresh.cwd ?? pane.cwd, pane.cwd)) {
+    why = `the app opened ${to} in ${fresh.cwd}, a copy of the folder, not in ${pane.cwd}`
+    await tryCall('sessions:kill', [fresh.id])
+    fresh = null
+  }
+  const stateOf = async () => (await sessions()).find((x) => x.id === fresh.id)?.status ?? 'gone'
+  for (const deadline = Date.now() + 30_000; fresh && state === 'starting' && Date.now() < deadline; ) {
+    await new Promise((r) => setTimeout(r, 500))
+    state = await stateOf()
+  }
+  for (const settle = Date.now() + 10_000; fresh && state !== 'exited' && state !== 'gone' && Date.now() < settle; ) {
+    await new Promise((r) => setTimeout(r, 500))
+    state = await stateOf()
+  }
+  if (fresh && (state === 'exited' || state === 'gone')) {
+    why = `the ${to} pane ${state === 'gone' ? 'disappeared' : 'quit'} as it started`
+    if (state === 'exited') {
+      // Its last words are the reason (a sign-in wall, a trust question, a bad model name).
+      const buf = await tryCall('sessions:buffer', [fresh.id])
+      const said = typeof buf.value === 'string' ? stripAnsi(buf.value).replace(/\s+/g, ' ').trim().slice(-300) : ''
+      if (said) why += ` - its screen ended with: "${said}"`
+      await tryCall('sessions:kill', [fresh.id])
+    }
+    fresh = null
+  }
+  if (!fresh) {
+    // Put the old chat back. It may land in a copy too (the same claim is still held), so
+    // its conversation file goes with it, the way `pf open --resume` does it.
+    const back = await tryCall('sessions:start', [
+      {
+        cwd: pane.cwd,
+        title: pane.title,
+        agent: pane.agent,
+        model: pane.model,
+        reportTo,
+        where: 'local',
+        resume: Boolean(pane.resumeId) || undefined,
+        resumeId: pane.resumeId || undefined
+      }
+    ])
+    const at = back.value?.cwd ?? pane.cwd
+    if (back.value?.id && pane.resumeId && pane.agent !== 'codex' && transcriptAnywhere(pane.resumeId)) {
+      if (placeTranscript(at, pane.resumeId)) await tryCall('sessions:restart', [back.value.id])
+    }
+    fail(
+      1,
+      `could not start ${to}: ${why}. ` +
+        (back.value?.id
+          ? pane.resumeId
+            ? `Reopened the old conversation as ${back.value.id} in ${at}.`
+            : `Reopened ${pane.agent} as ${back.value.id} in ${at} - with no conversation id it starts empty; the brief has where it stopped.`
+          : `Reopening the old chat failed too (${back.error ?? 'no pane'}) - reopen it with: ${undo}`) +
+        ` Brief: ${brief}`
+    )
+  }
+  const now = await sessions()
+  console.log(
+    `moved pane ${number} ${pane.id} (${pane.agent}) -> pane ${cardNumber(now, fresh.id)} ${fresh.id} (${to}${model ? ` ${model}` : ''}) in ${fresh.cwd ?? pane.cwd}`
+  )
+  if (!transcript) console.log(`note: no conversation file found for ${pane.id}; the brief carries its last screen instead`)
+  if (state === 'starting') console.log(`note: ${fresh.id} has drawn nothing yet after 40s - check it with pf list`)
 } else if (cmd === 'open') {
   const title = flag(rest, '--title')
   // A pane opened on a backlog task is briefed FROM the task: the app compiles the prompt
@@ -674,11 +891,20 @@ if (cmd === 'list') {
   const s = resolve(await sessions(), ref)
   if (!s) fail(1, `no pane named "${ref}"`)
   const was = s.title
-  await call('sessions:rename', [s.id, name])
-  // The rename re-emits the list, so the new name being LISTED is the verification.
-  const now = (await sessions()).find((x) => x.id === s.id)
-  if (now?.title !== name) fail(1, `sessions:rename answered but ${s.id} is still "${now?.title ?? '?'}"`)
-  console.log(`renamed ${s.id} (${was} -> ${name})`)
+  const sent = await call('sessions:rename', [s.id, name])
+  if (sent === false) fail(1, `could not rename ${s.id} - the computer it runs on is not connected`)
+  // The rename re-emits the list, so the new name being LISTED is the verification. A pane on
+  // the other computer is renamed THERE and its name comes back with that desk's next list:
+  // read at once, `pf rename 12 "PC disk cleanup"` failed on 2026-09-29 and then landed.
+  // The app keeps the first 60 characters of a name.
+  const want = name.slice(0, 60)
+  let now
+  for (const until = Date.now() + 5000; ; await new Promise((r) => setTimeout(r, 200))) {
+    now = (await sessions()).find((x) => x.id === s.id)
+    if (now?.title === want || Date.now() > until) break
+  }
+  if (now?.title !== want) fail(1, `sessions:rename answered but ${s.id} is still "${now?.title ?? '?'}"`)
+  console.log(`renamed ${s.id} (${was} -> ${want})`)
 } else if (cmd === 'composer') {
   // What is typed into a pane and NOT sent - the one thing every other read here misses.
   // The pty log carries the redraw stream, so a line sitting in a CLI's composer is
@@ -703,19 +929,71 @@ if (cmd === 'list') {
           ? `pane ${pane.id} has nothing unsent that this app relayed - its window could not be asked, so a line typed before the app started would not show here`
           : `pane ${pane.id} has nothing the app can vouch for - it relayed no keystrokes for the current line`
     )
-    process.exit(screen || draft.certain ? 0 : 1)
+    process.exitCode = screen || draft.certain ? 0 : 1
+    return
   }
   if (!screen && !draft.certain)
     console.error(`(uncertain - the line was edited in a way the app could not follow, so this may be incomplete)`)
   console.log(draft.text)
 } else if (cmd === 'tell') {
   // One line into a pane, queued for the gap between its turns rather than typed into
-  // the middle of one - the same door the sign-in card reports back through.
+  // the middle of one.
   const ref = rest.shift()
   const text = rest.join(' ')
   if (!ref || !text) fail(1, 'tell needs a pane and one line: pf-ctl tell <title-or-id> <text...>')
-  await send('pane:tell', [ref, text])
-  console.log(`told ${ref}`)
+  // Resolved HERE, not by the app: `tellPane` matches an id or a title and nothing else,
+  // and a send channel has no reply - so `pf tell 3 ...` printed `told 3` and delivered
+  // nothing, to the one name for a pane everybody uses (2026-09-24).
+  const s = resolve(await sessions(), ref)
+  if (!s) fail(1, `no pane named "${ref}"`)
+  await send('pane:tell', [s.id, text])
+  console.log(`told ${s.id} (${s.title})`)
+} else if (cmd === 'continue') {
+  // GuardDeck's "next prompt" box (Robert, 2026-09-26): a finished chat closes itself, its
+  // result shows in GuardDeck, and what he types there has to reach THAT conversation -
+  // open, asleep, or closed. `continueTarget` decides which; this only carries it out.
+  const { resumeId, prompt, json } = continueArgs
+  const target = continueTarget(resumeId, await sessions(), (await call('history:list', [])) ?? [])
+  if (target.error) fail(1, target.error)
+  let paneId
+  const reopened = target.action === 'reopen'
+  if (target.action === 'tell') paneId = target.pane.id
+  else if (target.action === 'wake') {
+    const woke = await tryCall('sessions:wake', [target.pane.id])
+    if (!woke.value?.id) fail(1, `pane ${target.pane.id} has chat ${resumeId} but would not wake${woke.error ? ` - ${woke.error}` : ''}; nothing was sent`)
+    // `wake()` starts a NEW conversation when the saved one is gone, and says so by
+    // dropping the id. The prompt was written for the old one.
+    if (woke.value.resumeId !== resumeId)
+      fail(1, `pane ${target.pane.id} woke into a new chat because the saved conversation ${resumeId} could not be resumed; nothing was sent`)
+    paneId = target.pane.id
+  } else {
+    // History's own "Open again" request: BOTH resume and resumeId, or the CLI starts an
+    // empty chat in that folder (`buildArgs` spells `--resume <id>` only with both). No
+    // prompt on the start: a pane that has to be restarted below would be handed it twice.
+    const h = target.entry
+    const opened = await tryCall('sessions:start', [
+      { cwd: h.cwd, title: h.title, agent: h.agent, model: h.model, resume: true, resumeId, where: 'local' }
+    ])
+    const pane = opened.value
+    if (!pane?.id) fail(1, `could not reopen chat ${resumeId} in ${h.cwd} - ${opened.error ?? 'the app opened nothing'}; nothing was sent`)
+    // The app opens a conversation it cannot find on disk ASLEEP rather than as an empty
+    // chat (`startOrSend`). That pane holds nothing, so it goes, and the answer says why.
+    if (pane.asleep || pane.status === 'exited') {
+      await tryCall('sessions:kill', [pane.id])
+      fail(1, `the saved conversation for chat ${resumeId} is no longer on this computer (${pane.laneNote ?? 'it could not be resumed'}); nothing was sent`)
+    }
+    // Claude reads a conversation out of the folder it runs in, and a busy folder gets its
+    // own copy - see `pf open --resume`.
+    const landed = pane.cwd ?? h.cwd
+    if (h.agent === 'claude' && placeTranscript(landed, resumeId)) await call('sessions:restart', [pane.id])
+    paneId = pane.id
+  }
+  await send('pane:tell', [paneId, prompt])
+  const list = await sessions()
+  const number = cardNumber(list, paneId)
+  if (!number) fail(1, `pane ${paneId} disappeared before the prompt could be handed to it`)
+  if (json) console.log(JSON.stringify({ paneId, number, reopened }))
+  else console.log(`sent to pane ${number} (${paneId})${reopened ? ' - reopened from History' : target.action === 'wake' ? ' - woken first' : ''}`)
 } else if (cmd === 'type') {
   const ref = rest.shift()
   const text = rest.join(' ')
@@ -732,25 +1010,6 @@ if (cmd === 'list') {
   await new Promise((r) => setTimeout(r, 800))
   await send('pty:write', [s.id, '\r'])
   console.log(`typed into ${s.id} (${s.title})`)
-} else if (cmd === 'composer') {
-  // Read a pane's prompt box WITHOUT touching it. Every other pane command here writes -
-  // `type`, `tell`, `send` - and the terminal history a script can reach holds repaints
-  // rather than a document, so "what is chat 1 halfway through typing" had no answer at
-  // all. Nothing is submitted and nothing is cleared: the draft is left as it was found.
-  const ref = rest.shift()
-  if (!ref) fail(1, 'composer needs a pane: pf-ctl composer <title-or-id> [--json]')
-  const s = resolve(await sessions(), ref)
-  if (!s) fail(1, `no pane named "${ref}"`)
-  const out = await call('sessions:composer', [s.id])
-  if (rest.includes('--json')) {
-    console.log(JSON.stringify(out))
-  } else if (!out) {
-    // A refusal and an empty box are different answers, and a script that cannot tell
-    // them apart will report a lost draft as "nothing was typed".
-    fail(1, `could not see a prompt box in ${s.id} (${s.title}) - it may be a plain shell, mid-repaint, or running on another machine`)
-  } else {
-    console.log(out.text)
-  }
 } else if (cmd === 'call') {
   // The escape hatch, and deliberately the last one: every `invoke` channel in surface.ts
   // is already published, so a setting that only has a switch in the dialog can still be
@@ -807,9 +1066,7 @@ if (cmd === 'list') {
   await send(channel, args)
   console.log('sent')
 } else {
-  fail(
-    1,
-    `unknown command "${cmd ?? ''}" - use: list | open | open-many | devices | needs-login | login | tell | close | rename | type | hold | cost | reload | call | send`
-  )
+  // Unreachable while every `COMMANDS` row has a branch above; pf-ctl-help-test pins that.
+  fail(1, `"${cmd}" has help but nothing here runs it - a bug in pf-ctl.mjs`)
 }
 }

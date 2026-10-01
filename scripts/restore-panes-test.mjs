@@ -30,7 +30,7 @@ const code = transformSync(`${functionSource('restoreStaggerMs')}\n${functionSou
   loader: 'ts', format: 'cjs', target: 'node20'
 }).code
 
-function run({ failures = [], stagger = false, inProgress, asleep = false, wasWorking = false } = {}) {
+function run({ failures = [], stagger = false, inProgress, asleep = false, wasWorking = false, titles = ['one', 'two'] } = {}) {
   const calls = []
   const timers = []
   const sessions = []
@@ -72,7 +72,7 @@ function run({ failures = [], stagger = false, inProgress, asleep = false, wasWo
   }
   vm.createContext(context)
   new vm.Script(code).runInContext(context)
-  const specs = ['one', 'two'].map(title => ({ cwd: '/desk', title, agent: 'codex', resumeId: title, scrollbackId: title, wasWorking, asleep }))
+  const specs = titles.map(title => ({ cwd: '/desk', title, agent: 'codex', resumeId: title, scrollbackId: title, wasWorking, asleep }))
   context.restorePanes(specs)
   return {
     calls: () => JSON.parse(JSON.stringify(calls)),
@@ -80,6 +80,17 @@ function run({ failures = [], stagger = false, inProgress, asleep = false, wasWo
     requests,
     runTimer: () => timers.shift()?.fn()
   }
+}
+
+// Every saved pane comes back; the cap is on agents STARTED. 2026-09-23 06:46: a crash
+// left 13 panes and the desk offered 12 - the thirteenth was never seen again.
+{
+  const titles = Array.from({ length: 14 }, (_, i) => `pane-${i + 1}`)
+  const many = run({ titles, wasWorking: true })
+  assert.equal(many.requests.length, 14, 'every one of fourteen saved panes is started')
+  assert.deepEqual(many.requests.map(r => Boolean(r.asleep)),
+    [...Array(12).fill(false), true, true],
+    'twelve come back running (all were mid-turn), the rest asleep rather than left out')
 }
 
 const allFailed = run({ failures: [0, 1] })
@@ -140,6 +151,12 @@ const offerContext = {
 vm.createContext(offerContext)
 new vm.Script(transformSync(source.slice(offerStart, offerEnd) + '\n' + source.slice(answerStart, answerEnd),
   { loader: 'ts', format: 'cjs', target: 'node20' }).code).runInContext(offerContext)
+{
+  const lots = Array.from({ length: 13 }, (_, i) => ({ cwd: `/p${i}`, title: `p${i}`, agent: 'codex', resumeId: `r${i}` }))
+  const big = offerContext.makeRestoreOffer({ specs: lots, at: 100, clean: false })
+  assert.equal(big.panes.length, 13, 'the offer lists every saved pane, not the first twelve')
+  assert.equal('extra' in big, false, 'nothing is set aside as not offered')
+}
 offerContext.offer = offerContext.makeRestoreOffer({ specs: offered, at: 100, clean: false }, true)
 answerHandler(null, { accept: true, ids: ['1', '2', 'made-up'] })
 assert.deepEqual(JSON.parse(JSON.stringify(restored)), { specs: [offered[1]], previous: true },

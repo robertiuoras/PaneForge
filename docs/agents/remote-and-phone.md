@@ -1,4 +1,4 @@
-# Two machines, remote login, offload, the phone surface
+# Two machines, sign-in requests, offload, the phone surface
 
 Verbatim sections moved out of the repo's always-loaded instructions (`AGENTS.md`),
 same headings as `docs/design-notes.md` (the why). Paths: `shared/` = `src/shared/`, `main/` =
@@ -27,20 +27,16 @@ same headings as `docs/design-notes.md` (the why). Paths: `shared/` = `src/share
   commit, conversation, screen, dev servers; mid-turn queued; sender closes on ack, becomes
   mirror; dirty/unpushed refused by name; paths grafted (`test:handoff`, `test:handofffit`).
 
-## A password gets typed on the machine that needs it
+## A job that cannot sign in: no card (switched off 2026-09-28)
 
-`pf needs-login <site> --url <url> [--host user@ip] [--port 9333] [--machine WORDS]` -> card;
-press splits the window, that machine's Chrome right. `shared/remoteLogin.ts`,
-`main/remoteLogin.ts`, `RemoteLoginView.tsx`, `LoginCard.tsx`; `test:remotelogin`. ONE frame
-in flight (`Page.screencastFrame` -> paint -> `login:ack` -> `Page.screencastFrameAck`);
-mid-paint frame REPLACES. `STEPS` 60/40/30 at 1440/960/720; rtt median over `RTT_WINDOW` 20
-past `LAGGY_MS` 250 drops a rung, `SLOW_MS` 600 to last; `GOOD_RUN` 20 under `GOOD_MS` 150
-buys back; `remote-login.log`; `PF_REMOTE_LOGIN_FAKE_LAG_MS`. Tunnel `ssh -N -L
-<free>:127.0.0.1:<port> <host>` `BatchMode=yes` `ExitOnForwardFailure=yes`, port from
-`net.createServer`, 15s then stderr on card. Coordinates in MAIN (`toRemotePoint`);
-`mapMetaToCtrl`; Cmd/Ctrl+W/+Q/+N never forwarded; paste = `Input.insertText`.
-`login:need`/`open`/`input` GATED, `login:list` safe; renderer never speaks CDP. Chrome stays
-up; `shutdownLogins()` on quit. NOT `peerChrome.ts`.
+The "<Site> needs you to sign in" card (`LoginCard.tsx`, `main/signIn.ts`, `shared/signIn.ts`,
+`login:*` channels, the row's `sign in` chip, `test:signin`) was REMOVED 2026-09-28 in ONE
+commit (`git log --grep "switch off the sign-in card"`), so `git revert <sha>` brings it back
+when it is tuned. `pf needs-login` stays a word: `SWITCHED_OFF` in `pf-ctl.mjs` prints one line
+naming the replacement (Claude in Chrome on the Mac, the person signs in in that tab, the agent
+carries on there) and exits 0 without reaching the app; `pf login` exits 1 with the same line
+(`test:pfhelp`). The live-picture version was REMOVED 2026-09-25:
+`docs/specs/remote-login-pane.md`.
 
 ## A new pane starts where the work can run
 

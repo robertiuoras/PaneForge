@@ -1,6 +1,7 @@
-import { flushLogsOnExit } from './logWrite'
+import { appendLog, flushLogsOnExit } from './logWrite'
+import { measureMainTask } from './mainPerformance'
 import { profileRenderer, reloadRenderer } from './renderCost'
-import { execFile, spawn } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
 import { basename, dirname, join, resolve, sep } from 'node:path'
@@ -22,18 +23,21 @@ import {
   shell } from 'electron'
 import { startMainWatch, stopMainWatch } from './mainWatch'
 import { SessionManager, setSilenceAlert, type WriteOrigin } from './sessions'
-import { acknowledgeReview, listReviews, noteReviewClose, recordReview, reviewCloseArmAction, reviewOpenTarget, type ReviewCloseArm } from './reviews'
+import { acknowledgeReview, listReviews, noteReviewClose, recordReview, reviewCloseArmAction, reviewOpenTarget, sendReviewNotice, setReviewDesk, type ReviewCloseArm } from './reviews'
 import { ComputeReviews, computeResult } from './computeReviews'
-import { mayNotify, noticesDir, readReply, sweepDoneClose } from './doneClose'
-import { doneReviewId } from '../shared/doneClose'
+import { mayNotify, noticesDir, readReply, sweepDoneClose, type DoneCloseDeps } from './doneClose'
+import { doneQuietMs, doneReviewId } from '../shared/doneClose'
 import { FinishedDigest, summaryOf } from '../shared/finishedDigest'
 import { DataPump } from './dataPump'
+import { freshReplay } from '../shared/freshReplay'
 import { DiscordPresence } from './discordPresence'
-import { countPresence, needsTokens, type PresenceCounts } from '../shared/discordRpc'
-import { tokenSpend, tokenSpendFresh } from './tokenUsage'
+import { countPresence, needsTokens, newerSettings, wholeDesk, type PresenceCounts } from '../shared/discordRpc'
+import { tokenCounting, tokenSpend, tokenSpendFresh } from './tokenUsage'
 import { promptReview, promptsForSession, recordPromptReview, removePromptReview } from './promptReview'
 import { readPulls } from './pulls'
 import { quitWhere } from '../shared/quitWords'
+import { pidAlive, waitForExit } from '../shared/installWedge'
+import { idleInstallBlocker, shouldLogHold } from '../shared/updateHold'
 import { mayReturnLane } from '../shared/laneReturn'
 import { revealTarget, within } from '../shared/reveal'
 import { revealTargetFor } from '../shared/revealPane'
@@ -57,7 +61,8 @@ import { type AttachIn, type AttachResult } from '../shared/attach'
 import { CHOOSE_GAP_MS, keysForChoice, sameAsk, stampMatches } from '../shared/choices'
 import { Remote } from './remote'
 import { readInvite } from './remote/invite'
-import { PhoneServer, newPhoneCode } from './phone'
+import { LOCAL_ONLY, PhoneServer, newPhoneCode } from './phone'
+import { installPf } from './pfAccess'
 import { ownerAccess, ownerStats } from './ownerStats'
 import { Tunnel } from './tunnel'
 import { callInvoke, callSend, tapIpc } from './ipcTap'
@@ -67,12 +72,14 @@ import { attachGlass, glassSupported } from './glass'
 import { invalidateAgents, listAgents, specFor } from './agents'
 import { codexInstalledVersion, codexLatest, forgetCodexVersion } from './codexModels'
 import { isOutdated, versionOf } from '../shared/codexCatalogue'
-import { gitInfo } from './git'
+import { gitCached, gitInfo } from './git'
 import { projectRoot } from './projectRoot'
 import { diffFiles, diffPatch } from './diff'
 import { withDefaultModel } from '../shared/startModel'
 import type { ClientNamed, DiffScope, EffortChoice, PhoneState , LaneBoard} from '../shared/types'
-import { detectLane, laneExtras, resolveLane } from './lanes'
+import { detectLane, isWorktreeOf, laneExtras, LANE_LABELS, resolveLane, seedLane } from './lanes'
+import { hideCopyFolder } from './hideCopy'
+import { gitRun, isRead } from './gitRun'
 import { inspectLaneFolders, laneWork, returnToBase, trackTyped } from './laneWork'
 import { attachLaneOwners, laneBoards, laneEngine, laneReclaim, laneRetry, ledgerRepos, mainCheckout, markGone } from './laneBoard'
 import type { LanePane } from './laneBoard'
@@ -97,6 +104,7 @@ import {
   whenClear
 } from './gameMode'
 import { away, startAway, stopAway } from './away'
+import { idleHideDeskChanged, idleHideShown, startIdleHide } from './idleHide'
 import { onBatteryNow, watchPower } from './power'
 import {
   initProfile,
@@ -140,7 +148,7 @@ import { codexContextUsage, receivedContinuation } from './contextUsage'
 import { rolloutTurn } from './effort'
 import { startContinuation } from './continuation'
 import { handoffCandidates } from '../shared/handoffSteps'
-import { receiveHandoff, sendHandoff, shareable } from './handoff'
+import { receiveHandoff, sendHandoff, shareable, type LandedCopy } from './handoff'
 import { RESUME_CONFIRM_MS } from '../shared/resumeCheck'
 import { briefAnchor, clearCommandFor, hasFreshPaneHandoff, readAsk as readAutoClearAsk, resumeBrief } from '../shared/autoclear'
 import { handoffFor, verifiedPaneHandoff } from './handoffSteps'
@@ -148,24 +156,10 @@ import { briefForTask } from './backlogStore'
 import { startAutoClearWatch, stopAutoClearWatch } from './autoclearWatch'
 import { startAutoClearRequests, stopAutoClearRequests } from './autoclearRequests'
 import { installAutoClearHooks } from './autoclearHooks'
-import { handoffReceiverCanQuit, INTERRUPT_WAIT_MS, type HandoffItem, type HandoffRequest } from '../shared/handoff'
+import { handoffReceiverCanQuit, INTERRUPT_WAIT_MS, landingCopy, type CopyState, type HandoffItem, type HandoffRepo, type HandoffRequest } from '../shared/handoff'
 import { HandoffQueue } from './handoffQueue'
 import { devServersOf, listRunningDevs, localDevCommand, stopDevServer } from './devServers'
 import { keepDevServer, stopNow, watchDeadDevs } from './deadDev'
-import {
-  closeLogin,
-  dismissLogin,
-  doneLogin,
-  initRemoteLogin,
-  listLogins,
-  loginInput,
-  openLogin,
-  paintedFrame,
-  requestLogin,
-  resizeLogin,
-  shutdownLogins
-} from './remoteLogin'
-import { shellQuote, type LoginInput } from '../shared/remoteLogin'
 import { DEFAULT_DEAD_DEV } from '../shared/deadDev'
 import { asleepSweep, clearFinishedNow, exitedSweep, finishedCount, type ExitedFact } from '../shared/exitedSweep'
 import { listBackJobs, type BackJob } from './backJobs'
@@ -206,7 +200,7 @@ import {
   bootMs
 } from './updater'
 import * as history from './history'
-import { clashingRestores, takenFolders } from '../shared/laneTaken'
+import { clashingRestores, holdIsOver, takenFolders } from '../shared/laneTaken'
 import { copyNumber } from '../shared/place'
 import { readBoard, writeMemory, writeTasks } from './board'
 import { vaultGraph, vaultInfo, vaultOpen } from './vault'
@@ -214,6 +208,7 @@ import * as voice from './voice'
 import { installCommand, uninstallCommand, updateCommand } from '../shared/agents'
 import { installLaneHooks } from './laneHooks'
 import { assess, lagLevel, restorePlan, worstPressure, type Pressure } from '../shared/capacity'
+import { sleepPressureOf } from '../shared/reclaim'
 import { restoreAsleep } from '../shared/restoreTurn'
 import { DEFAULT_RECOVER } from '../shared/recover'
 import type { UsageReport } from '../shared/usage'
@@ -253,7 +248,12 @@ startWakeQueue({
   // The same reading the budget rung takes (`autoHandoff` below): the memory verdict OR
   // the lag band, whichever is worse. A machine that is not lagging and not short of
   // memory is a machine with room, and that is when a queued pane may start.
-  pressure: () => worstPressure(lastPressure, lagLevel(loadPerCore()))
+  pressure: () => worstPressure(lastPressure, lagLevel(loadPerCore())),
+  // ...and the budget the sleep clock reads. The kernel said `normal` while the verdict said
+  // the desk was full, so a pane the idle sweep had just slept for room was woken, filled
+  // the budget again and was slept a minute later: s27-muezyz7e slept and woke four times
+  // in twenty minutes on 2026-09-24. See `wakePlan`.
+  room: () => capacityVerdict().roomFor
 })
 /** Keeps userData/desk.json in step with the panes on screen. See restore.ts. */
 const noteDesk = startDeskAutosave(() => manager.snapshot())
@@ -637,6 +637,8 @@ function createWindow(): void {
   win.on('restore', pushVisible)
   win.on('show', pushVisible)
   win.on('hide', pushVisible)
+  win.on('show', idleHideShown)
+  win.on('focus', idleHideShown)
   win.webContents.on('did-finish-load', pushVisible)
 
   /**
@@ -807,7 +809,7 @@ const phone = new PhoneServer({
     const cfg = getConfig()
     setConfigStrict({ phone: { ...cfg.phone!, nativePromptReceipts: list } })
   },
-  sessions: () => manager.list(),
+  sessions: () => localSessions(),
   sessionBuffer: (id) => manager.buffer(id),
   semanticConversation: (id, agent, cursor) => nativeTranscriptPage(id, agent, cursor),
   sleepSession: (id) => Boolean(manager.sleep(id, 'manual', { source: 'api' })),
@@ -815,9 +817,12 @@ const phone = new PhoneServer({
     const current = getConfig().pinnedPanes ?? []
     const next = keepOpen ? [...new Set([...current, id])] : current.filter((pinned) => pinned !== id)
     if (next.join(',') !== current.join(',')) setConfig({ pinnedPanes: next })
+    if (keepOpen) manager.cancelAutoClear(id, 'cancelled')
+    send('config:changed', getConfig())
+    send('sessions:changed', allSessions())
     return true
   },
-  isKeepOpen: (id) => (getConfig().pinnedPanes ?? []).includes(id),
+  isKeepOpen: keptOpen,
   wakeSession: (id) => manager.wake(id),
   sendNativePrompt: (id, text) => manager.sendNativePrompt(id, text),
   onIdle: () => manager.returnSizes(),
@@ -945,49 +950,93 @@ manager.on('sessions', () => {
   noteDesk()
   presence.update(presenceCounts())
   closeReceiverWhenClear()
+  idleHideDeskChanged()
 })
 
 // Discord Rich Presence: "3/6 sessions running" on the user's profile, refreshed as
 // turns start and finish.
 //
-// The WHOLE desk, mirrored panes included. This counted local panes only, on the
-// reasoning that a mirrored pane is counted by the device its agent actually runs on -
-// which is never true in practice: a Discord account shows ONE presence, so the other
-// device's PaneForge has nowhere to publish its half, and those panes went uncounted
-// everywhere. Measured 2026-08-17: eight panes on screen with five running turns, and
-// the profile said "4/5 sessions running" - the five being the local half of the desk.
-// The mirrored view is what the user is looking at, so it is what the profile says.
+// The WHOLE desk: every pane on this machine and on every machine linked to it, each
+// machine counting its own and telling the others (`wholeDesk`, `shared/discordRpc.ts`).
+// A Discord account shows ONE presence, so exactly one machine speaks - the one with the
+// lowest device id among those that can reach Discord - and the rest send a clear.
+// Counting "what this window shows" instead left out whatever was not mirrored: the PC,
+// mirroring one asleep Mac pane, put "1 session idle" on the profile while the Mac ran
+// five turns and stayed quiet for it (2026-09-27).
 const appStartedAt = Date.now()
+let discordReachable = false
 const presence = new DiscordPresence({
   enabled: getConfig().discordPresence,
   style: getConfig().discordStyle,
   // The Discord tab reports Discord's own answer rather than guessing from the switch,
   // so every change of that answer has to reach an open Settings dialog by itself.
-  onStatus: (s) => send('discord:status', s)
+  onStatus: (s) => {
+    send('discord:status', s)
+    // Discord opening or closing here moves which machine speaks, on both machines.
+    if (s.connected !== discordReachable) {
+      discordReachable = s.connected
+      presence.update(presenceCounts())
+    }
+  }
 })
+let awaitedCount: Promise<unknown> | null = null
 function presenceCounts(): PresenceCounts {
-  const counts = countPresence(allSessions(), appStartedAt)
-  // Another desk connected to this one mirrors every pane here, so its count already
-  // includes them. Unless this desk mirrors some other machine too (then both counts are
-  // the whole desk), this one stays quiet rather than put its half on the profile.
-  const guest = remote.state().guests[0]
-  if (guest && !remote.sessions().length) counts.countedBy = guest.name
+  const cfg = getConfig()
+  // This machine's own panes: not the ones mirrored from another machine, which that
+  // machine reports itself, and not a screen view, which is a picture of a machine.
+  const own = countPresence(manager.list(), appStartedAt)
   // The token numbers cost a walk of every transcript written this week (7.6s of async
   // I/O on this Mac, 7,546 files), so they are counted only while a row on the card
   // actually says one. `tokenSpend` answers from its own cache and refreshes behind
   // itself; nothing here waits on the disk.
-  if (needsTokens(getConfig().discordStyle)) {
+  if (needsTokens(cfg.discordStyle)) {
     const spend = tokenSpend()
-    counts.tokensToday = spend.today
-    counts.tokensWeek = spend.week
+    own.tokensToday = spend.today
+    own.tokensWeek = spend.week
+    // A count still on the disk says its numbers when it lands. Without this the first
+    // frame after the tokens switch went on said "0 tokens today" and kept saying it until
+    // some pane next started or stopped (dev copy, 2026-09-27: still 0 a minute later).
+    const counting = tokenCounting()
+    if (counting && counting !== awaitedCount) {
+      awaitedCount = counting
+      void counting.then(() => presence.update(presenceCounts())).catch(() => {})
+    }
   }
-  return counts
+  const discord = presence.status().connected
+  const { running, total, asleep, names, oldestRunSince, tokensToday, tokensWeek } = own
+  remote.tellDesk({
+    counts: { running, total, asleep, names, oldestRunSince, tokensToday, tokensWeek },
+    discord,
+    settings: { on: cfg.discordPresence, style: cfg.discordStyle, at: cfg.discordSettingsAt }
+  })
+  return wholeDesk({ id: cfg.remote.id, discord, own }, remote.deskLinks())
+}
+/**
+ * Take Discord settings a person changed more recently on a linked machine. The machine
+ * that speaks is often not the one being sat at, so without this a switch flipped here
+ * never reached the card the other machine sends.
+ */
+function adoptDiscordSettings(): void {
+  const cfg = getConfig()
+  const newer = newerSettings(
+    { on: cfg.discordPresence, style: cfg.discordStyle, at: cfg.discordSettingsAt },
+    remote.deskLinks()
+  )
+  if (!newer) return
+  const next = setConfig({ discordPresence: newer.on, discordStyle: newer.style, discordSettingsAt: newer.at })
+  presence.configure(next.discordPresence, next.discordStyle)
+  send('config:changed', next)
 }
 // A card that goes on its own is a row in the list, never a pane that just vanished:
 // `shared/exitClose.ts` decides, and this is the one place that says it happened.
 manager.on('exit-closed', (_id: string, why: string) => {
   const [what, ...rest] = why.split(' closed - ')
   noteActivity(activityEntry('closed', what, rest.join(' closed - ') || undefined))
+})
+// A pane that could not start keeps its card; this is the row that says why, next to the
+// `closed` rows above, so the card is not the only place the failure can be read.
+manager.on('start-failed', (_id: string, what: string, why: string) => {
+  noteActivity(activityEntry('stopped', what, why))
 })
 manager.on('attention', (s: Session) => raiseAttention(s))
 manager.on('stalled', (s: Session) => raiseStalled(s))
@@ -1140,14 +1189,14 @@ function raiseAttention(s: Session): void {
 // machines involved.
 
 const remote = new Remote({
-  list: () => manager.list(),
+  list: () => localSessions(),
   buffer: (id) => manager.buffer(id),
-  log: (id, bytes) => history.tail(id, bytes) || manager.buffer(id),
+  log: (id, bytes) => freshReplay(history.tail(id, bytes), manager.buffer(id)),
   // A person typed this on the paired machine's mirror, and this desk never saw the
   // keystrokes - so it needs telling on `pane:typed`, exactly as a phone's line does.
   // Without an origin here it defaulted to `desk`, and a pane driven from another
   // machine got no rail tag and no row in the prompt archive.
-  write: (id, data) => manager.write(id, data, 'phone'),
+  write: (id, data, terminalReply) => manager.write(id, data, 'phone', terminalReply),
   onTyped: (cb) => {
     manager.on('submitted', cb)
     return () => manager.off('submitted', cb)
@@ -1168,9 +1217,12 @@ const remote = new Remote({
     const current = getConfig().pinnedPanes ?? []
     const next = keepOpen ? [...new Set([...current, id])] : current.filter((pinned) => pinned !== id)
     if (next.join(',') !== current.join(',')) setConfig({ pinnedPanes: next })
+    if (keepOpen) manager.cancelAutoClear(id, 'cancelled')
+    send('config:changed', getConfig())
+    send('sessions:changed', allSessions())
     return true
   },
-  isKeepOpen: (id) => (getConfig().pinnedPanes ?? []).includes(id),
+  isKeepOpen: keptOpen,
   armCloseWhenDone: (id) => manager.armCloseWhenDone(id),
   kill: (id) => manager.kill(id),
   restart: (id) => continuationOwnsSource(id) ? null : manager.restart(id),
@@ -1192,7 +1244,8 @@ const remote = new Remote({
     receiveHandoff(
       {
         root: projectsRoot,
-        place: (req) => laneFor(req),
+        place: (req, extraTaken) => laneFor(req, extraTaken),
+        landOn,
         start: (req) => manager.start(req),
         historyDir: () => join(app.getPath('userData'), 'history'),
         noteTailCols: (id, cols) => history.noteCols(id, cols),
@@ -1249,10 +1302,16 @@ const screenViews = new ScreenViews(
 screenViews.on('sessions', () => send('sessions:changed', allSessions()))
 remote.on('screen', (e) => screenViews.onRemote(e))
 
-/** Local panes and mirrored ones, as one list. This is what the renderer ever sees. */
-function allSessions(): Session[] {
-  return [...manager.list(), ...remote.sessions(), ...screenViews.sessions()]
+function localSessions(): Session[] {
+  return manager.list().map(s => ({ ...s, keepOpen: keptOpen(s.id) }))
 }
+
+/** Local panes and mirrored ones, as one list. */
+function allSessions(): Session[] {
+  return [...localSessions(), ...remote.sessions(), ...screenViews.sessions()]
+}
+// A finished chat's report carries the number on its card, counted from this same list.
+setReviewDesk(allSessions)
 
 remote.on('data', (id: string, data: string) => pump.push(id, data))
 // The link came back and the whole scrollback arrived again: the pane has to start
@@ -1290,6 +1349,11 @@ remote.on('sessions', () => {
   presence.update(presenceCounts())
 })
 remote.on('attention', (s: Session) => raiseAttention(s))
+// Another machine said something new about its own panes or its Discord.
+remote.on('desk', () => {
+  adoptDiscordSettings()
+  presence.update(presenceCounts())
+})
 remote.on('changed', (state: RemoteState) => {
   send('remote:changed', state)
   // A desk connecting or leaving decides whether this machine speaks for the profile.
@@ -1312,30 +1376,32 @@ remote.on('changed', (state: RemoteState) => {
  * run on a paired device, which is the real answer when a machine is full, so the
  * verdict says when to offer it.
  */
-function publishCapacity(): void {
+/** The verdict itself - what the strip shows, and what the wake queue asks for room. */
+function capacityVerdict(): ReturnType<typeof assess> {
   const mirrored = remote.sessions().length
   const peers = remote.state().peers.filter((p) => p.status === 'online').length
-  send(
-    'capacity:changed',
-    assess({
-      totalMb: totalMb(),
-      pressure: lastPressure,
-      // What a person calls lagging, and it moves minutes before the memory verdict does.
-      load: loadPerCore(),
-      // Panes with an AGENT in them. A sleeping pane (`shared/sleep.ts`) has given its
-      // process back, so counting it says this machine is running work it is not - which
-      // reaches the budget rung as an overshoot and the card as "7 panes hold ~1.3 GB".
-      localPanes: manager.list().filter((s) => !s.asleep).length,
-      remotePanes: mirrored,
-      peerAvailable: peers > 0,
-      // How many agents this desk agreed to run itself. Read live rather than captured:
-      // changing it in Settings has to reach the next reading, which is this one.
-      keepLocal: (getConfig().autoHandoff ?? DEFAULT_AUTO_HANDOFF).keepLocal,
-      // Whether the ladder is going to answer this reading itself. Only decides whether the
-      // strip SAYS it - see `Verdict.say`.
-      willMove: (getConfig().autoHandoff ?? DEFAULT_AUTO_HANDOFF).enabled === true
-    })
-  )
+  return assess({
+    totalMb: totalMb(),
+    pressure: lastPressure,
+    // What a person calls lagging, and it moves minutes before the memory verdict does.
+    load: loadPerCore(),
+    // Panes with an AGENT in them. A sleeping pane (`shared/sleep.ts`) has given its
+    // process back, so counting it says this machine is running work it is not - which
+    // reaches the budget rung as an overshoot and the card as "7 panes hold ~1.3 GB".
+    localPanes: manager.list().filter((s) => !s.asleep).length,
+    remotePanes: mirrored,
+    peerAvailable: peers > 0,
+    // How many agents this desk agreed to run itself. Read live rather than captured:
+    // changing it in Settings has to reach the next reading, which is this one.
+    keepLocal: (getConfig().autoHandoff ?? DEFAULT_AUTO_HANDOFF).keepLocal,
+    // Whether the ladder is going to answer this reading itself. Only decides whether the
+    // strip SAYS it - see `Verdict.say`.
+    willMove: (getConfig().autoHandoff ?? DEFAULT_AUTO_HANDOFF).enabled === true
+  })
+}
+
+function publishCapacity(): void {
+  send('capacity:changed', capacityVerdict())
 }
 
 /**
@@ -1377,55 +1443,13 @@ ipcMain.handle('owner:stats', (e) => {
 // and what that project is called - because that is the sidebar's own arithmetic and main
 // has never had it. Every FACT is read here: the folder off the pane's own record and the
 // pty's pid off the manager, so a caller cannot point this at a folder it does not own.
-/*
- * Signing in to a browser on another machine - src/main/remoteLogin.ts.
- *
- * A scheduled job on the PC cannot type a password, so it says so and a card goes up
- * here. Everything that touches CDP or ssh lives in that file; these are the six lines
- * the window is allowed to say. The frames go out on `login:frame` rather than being
- * answered to a caller, because the renderer does not ASK for a frame - it acknowledges
- * the one it painted, and that acknowledgement is what asks Chrome for the next.
- */
-initRemoteLogin({
-  publish: (reqs) => send('login:changed', reqs),
-  frame: (id, data, meta, ack) => send('login:frame', { id, data, meta, ack }),
-  paneName: (id) => allSessions().find((s) => s.id === id || s.title === id)?.title,
-  // Telling the pane that asked is the only half of this feature that can cross a
-  // machine boundary without a picture: on this desk it is the ordinary prompt queue,
-  // and on the other one it is the same `pf tell` over the ssh the asker named.
-  tell: (req, text) => {
-    if (!req.reportTo) return
-    if (req.reportHost) {
-      const remote = ['pf', 'tell', req.reportTo, text].map(shellQuote).join(' ')
-      const ssh = spawn('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', req.reportHost, remote], {
-        windowsHide: true,
-        stdio: 'ignore'
-      })
-      ssh.on('error', () => {
-        /* the far desk is unreachable; the sign-in still happened */
-      })
-      ssh.unref()
-      return
-    }
-    manager.tellPane(req.reportTo, text)
-  }
-})
-ipcMain.handle('login:list', () => listLogins())
-ipcMain.handle('login:need', (_e, req: Parameters<typeof requestLogin>[0]) => requestLogin(req))
-ipcMain.handle('login:open', (_e, id: string) => openLogin(String(id)))
-ipcMain.on('login:close', (_e, id: string) => closeLogin(String(id)))
-ipcMain.on('login:done', (_e, id: string) => doneLogin(String(id)))
 // Anything that can reach the app can hand a pane one line, queued for the gap between
-// its turns - which is how the far desk says "signed in" to the pane that asked.
+// its turns - `pf tell`.
 ipcMain.on('pane:tell', (_e, ref: string, text: string) => {
   manager.tellPane(String(ref), String(text))
 })
-ipcMain.on('login:dismiss', (_e, id: string) => dismissLogin(String(id)))
-ipcMain.on('login:input', (_e, id: string, ev: LoginInput) => loginInput(String(id), ev))
-ipcMain.on('login:ack', (_e, id: string, ack: number) => paintedFrame(String(id), Number(ack)))
-ipcMain.on('login:size', (_e, id: string, w: number, h: number, boxW?: number, boxH?: number) =>
-  resizeLogin(String(id), Number(w), Number(h), Number(boxW) || 0, Number(boxH) || 0)
-)
+ipcMain.handle('pane:answer', (_e, req) => manager.answerPane(req))
+ipcMain.handle('pane:answerStatus', (_e, req) => manager.answerStatus(req))
 
 ipcMain.handle('devs:list', async (_e, panes: Array<{ id: string; pane: number; name: string }>) => {
   const roots = manager.roots()
@@ -1519,6 +1543,7 @@ manager.deskWatched = (): boolean => {
   if (!a.sawPerson || a.awaySince !== null) return false
   return !!win && !win.isDestroyed() && win.isVisible() && !win.isMinimized()
 }
+manager.windowFocused = (): boolean => focused
 startAway((a) => {
   send('system:away', a)
   manager.presenceChanged()
@@ -1527,6 +1552,22 @@ startAway((a) => {
   // is the only thing that ever says otherwise - see `Borrow.person`.
   remote.presenceChanged(a.sawPerson)
 })
+
+// On the PC, an empty desk nobody is using puts its window away after three minutes and
+// keeps running, so the Mac can still start panes here (shared/idleHide.ts). A test copy
+// joins only when it asks for a wait of its own, so an agent's copy never vanishes mid-look.
+{
+  const testWait = Number(process.env.PF_IDLE_HIDE_MS) || undefined
+  if (process.platform === 'win32' && !headlessMode() && (!profileName() || testWait)) {
+    startIdleHide({
+      win: () => (alive() ? win : null),
+      localSessions: () => manager.list(),
+      watching: () => screenViews.sessions().length,
+      log: (line) => updateLog('window', line),
+      waitMs: testWait
+    })
+  }
+}
 
 ipcMain.handle('projects:list', () => listProjects())
 ipcMain.handle('projects:sessionFolders', () => listSessionFolders())
@@ -1584,8 +1625,8 @@ ipcMain.handle('sessions:watchCompute', (_e, id: string, job: string, owner: str
   return { watching: true, pane: id, job }
 })
 ipcMain.handle('reviews:ack', (_e, id: string, reviewed: boolean) => acknowledgeReview(String(id), reviewed === true))
-ipcMain.handle('reviews:open', async (_e, id: string, index: number) => {
-  const target = reviewOpenTarget(String(id), Number(index), history.list())
+ipcMain.handle('reviews:open', async (_e, id: string, index: number | string) => {
+  const target = reviewOpenTarget(String(id), typeof index === 'string' ? index : Number(index), history.list())
   return { opened: target ? /^https?:/.test(target) ? await openLink(target, 'review') : await openLocal(target, 'review') : false }
 })
 // The pane the person is looking at. A finished pane is never closed under them.
@@ -1596,6 +1637,25 @@ ipcMain.on('sessions:active', (_e, id: unknown) => manager.setActive(typeof id =
 // The panes a chat opened report back to it ONCE, when the last of them has closed
 // (`shared/finishedDigest.ts`). Flushed on the same 15s tick as the sweep that feeds it.
 const finishedDigest = new FinishedDigest()
+manager.digestPending = (id) => finishedDigest.has(id)
+/**
+ * A person said to keep this pane open - the card's "Keep this pane open"
+ * (`config.pinnedPanes`). Every automatic close asks this: the idle clock (renderer), the
+ * finished-pane sweep and `pf tidy`, `reviews:record`'s close, the dead/asleep sweeps and
+ * `--close-when-done`. Robert, 2026-09-29: "mark a session as keep open so auto close won't
+ * close it ... some work long running I need to see result and also continue the session".
+ */
+function keptOpen(id: string): boolean {
+  return (getConfig().pinnedPanes ?? []).includes(id)
+}
+manager.keptOpen = keptOpen
+function doneReadings(): ReturnType<typeof manager.doneReadings> {
+  return manager.doneReadings().map((r) => (keptOpen(r.id) ? { ...r, kept: true } : r))
+}
+manager.replyFor = (id, agent) => {
+  const file = transcriptFor(id)
+  return file ? readReply(agent, file) : undefined
+}
 manager.onFinished = (meta, opener) => {
   const file = transcriptFor(meta.id)
   const reply = file ? readReply(meta.agent, file) : undefined
@@ -1607,59 +1667,118 @@ manager.onFinished = (meta, opener) => {
     personSteps: []
   })
 }
-setInterval(() => {
+function doneCloseDeps(): DoneCloseDeps {
+  return {
+    openerOf: (id) => manager.openerOf(id),
+    finished: (opener, note) => finishedDigest.add(opener, note),
+    enabled: () => getConfig().autoCloseDone !== false,
+    // Quicker on a machine measured short of memory: 3 min, 1 min tight, 30 s over.
+    quietMs: () => {
+      const v = capacityVerdict()
+      return doneQuietMs(sleepPressureOf(v.level, v.why))
+    },
+    readings: doneReadings,
+    setClosing: (id, at) => manager.setDoneClosingAt(id, at),
+    folderOf: (id, since) => {
+      const cwd = manager.list().find((x) => x.id === id)?.cwd
+      return cwd ? gitCached(cwd, since) : null
+    },
+    transcriptFor,
+    resumeIdFor,
+    history: () => history.list(),
+    titleOf: (id) => {
+      const s = manager.list().find((x) => x.id === id)
+      return s ? { title: s.title, cwd: s.cwd, agent: s.agent } : undefined
+    },
+    otherwiseBusy: (id) =>
+      continuationOwnsSource(id) || preparingContinuations.has(id) || handoffQueue.pending().some((q) => q.id === id) || (backJobOf(id) && !backJobWaitOnly(id))
+        ? 'session has a pending continuation, handoff, or background job'
+        : null,
+    record: (input, native) => recordReview(input, native, true),
+    notify: sendReviewNotice,
+    close: (id, at) => manager.closeAfterResult(id, at),
+    noteClose: noteReviewClose,
+    writeNotice: (path, body) => {
+      if (!mayNotify()) return
+      mkdirSync(noticesDir(), { recursive: true, mode: 0o700 })
+      const tmp = `${path}.${process.pid}.tmp`
+      writeFileSync(tmp, body, { mode: 0o600 })
+      renameSync(tmp, path)
+    },
+    activity: (what, why) => noteActivity(activityEntry('closed', what, why)),
+    log: (line) => appendLog(join(app.getPath('userData'), 'done-close.log'), `[${new Date().toISOString()}] ${line}\n`, { rotateAt: 64 * 1024 })
+  }
+}
+setInterval(() => measureMainTask('done-close', () => {
   try {
-    sweepDoneClose({
-      openerOf: (id) => manager.openerOf(id),
-      finished: (opener, note) => finishedDigest.add(opener, note),
-      enabled: () => getConfig().autoCloseDone !== false,
-      readings: () => manager.doneReadings(),
-      transcriptFor,
-      resumeIdFor,
-      history: () => history.list(),
-      titleOf: (id) => {
-        const s = manager.list().find((x) => x.id === id)
-        return s ? { title: s.title, cwd: s.cwd, agent: s.agent } : undefined
-      },
-      otherwiseBusy: (id) =>
-        continuationOwnsSource(id) || preparingContinuations.has(id) || handoffQueue.pending().some((q) => q.id === id) || (backJobOf(id) && !backJobWaitOnly(id))
-          ? 'session has a pending continuation, handoff, or background job'
-          : null,
-      record: recordReview,
-      close: (id, at) => manager.closeAfterResult(id, at),
-      noteClose: noteReviewClose,
-      writeNotice: (path, body) => {
-        if (!mayNotify()) return
-        mkdirSync(noticesDir(), { recursive: true, mode: 0o700 })
-        const tmp = `${path}.${process.pid}.tmp`
-        writeFileSync(tmp, body, { mode: 0o600 })
-        renameSync(tmp, path)
-      },
-      activity: (what, why) => noteActivity(activityEntry('closed', what, why))
-    })
+    sweepDoneClose(doneCloseDeps())
   } catch (e) {
     console.warn(`done-close: sweep failed - ${(e as Error).message}`)
   }
   for (const opener of finishedDigest.flush((o) => manager.openChildrenOf(o), (o, text) => manager.tellPane(o, text)))
     console.info(`done-close: told ${opener} what the panes it opened did`)
-}, 15_000).unref()
+}), 15_000).unref()
+/**
+ * `pf tidy`: every pane whose card says finished (`Session.finished`) that the sweep above
+ * would close - the same refusals, only not the quiet wait, because somebody asking to
+ * tidy IS the wait. `dry` answers without closing anything. Returns the pane ids.
+ */
+ipcMain.handle('sessions:closeDone', async (_e, dry: unknown) => {
+  const panes = manager.list().filter((s) => s.finished === true)
+  const finished = new Set(panes.map((s) => s.id))
+  // The sweep reads git from the cache only; asked by hand, the answer is worth one read.
+  await Promise.all([...new Set(panes.map((s) => s.cwd))].map((cwd) => gitInfo(cwd, true).catch(() => null)))
+  return sweepDoneClose({
+    ...doneCloseDeps(),
+    enabled: () => true,
+    quietMs: () => 0,
+    readings: () => doneReadings().filter((r) => finished.has(r.id)),
+    dry: dry === true
+  })
+})
+/**
+ * A finished chat's GuardDeck card, held until its pane has really closed - the rule the
+ * done-close sweep keeps (`main/doneClose.ts`), for the rows that arrive through
+ * `reviews:record` instead: claude-config's autoclose (`autoclose_*`). Its close is tried
+ * there, retried on an arm, or done by its own `sessions:kill` fallback, so all three ask.
+ */
+const heldCards = new Map<string, { reviewId: string; turn: number }>()
+/**
+ * Capture the turn BEFORE the pane closes; call the answer with whether it closed.
+ * A card held for an earlier turn is dropped unsent. Focus never acknowledges it.
+ */
+function cardAfterClose(paneId: string): (closed: boolean) => void {
+  const held = heldCards.get(paneId)
+  const turn = manager.turnRead(paneId)
+  return (closed) => {
+    if (!held || !closed) return
+    heldCards.delete(paneId)
+    if (!turn || turn.endedAt !== held.turn) return
+    sendReviewNotice(held.reviewId)
+  }
+}
 ipcMain.handle('reviews:record', (_e, input: import('../shared/reviews').ReviewInput) => {
   const session = manager.list().find((s) => s.id === input?.sessionId)
   const old = !session && input?.nativeSessionId ? history.list().find((h) => h.id === input.sessionId && h.resumeId === input.nativeSessionId) : undefined
   if (!session && !old) throw new Error('Review session does not exist')
   const native = session ? { title: session.title, provider: session.agent, cwd: session.cwd, nativeSessionId: resumeIdFor(session.id) ?? session.id } : { title: old!.title, provider: old!.agent, cwd: old!.cwd, nativeSessionId: old!.resumeId ?? old!.id }
-  const review = recordReview(input, native)
+  const chat = session && session.agent !== 'shell' && input.notify === true && input.closeSession === true ? session : undefined
+  const review = recordReview(input, native, Boolean(chat))
+  if (chat) heldCards.set(chat.id, { reviewId: review.id, turn: manager.turnRead(chat.id)?.endedAt ?? 0 })
   if (old?.endedAt) noteReviewClose(review.id, undefined, new Date(old.endedAt).toISOString())
   let close: { closed: boolean; reason?: string } = { closed: false }
   if (input.closeSession === true) {
     if (review.closedAt || review.closeBlocked) close.reason = review.closedAt ? 'close was already completed' : review.closeBlocked
     else if (!session) close.reason = 'session is already closed'
+    else if (keptOpen(session.id)) close.reason = 'kept open by hand'
     else if (!resumeIdFor(session.id)) close.reason = 'close requires a stable native provider session ID'
     else if (input.kind !== 'result' || input.proof !== 'measured' || !input.evidence?.length || input.workPreserved !== true || input.noRemainingWork !== true || !input.capturedAt) close.reason = 'close requires measured result evidence, work preservation, no remaining work, and a captured timestamp'
     else if (Date.parse(input.capturedAt) > Date.now()) close.reason = 'captured timestamp is in the future'
     else if (continuationOwnsSource(session.id) || preparingContinuations.has(session.id) || handoffQueue.pending().some((q) => q.id === session.id) || backJobOf(session.id)) close.reason = 'session has a pending continuation, handoff, or background job'
     else {
+      const card = cardAfterClose(session.id)
       close = manager.closeAfterResult(session.id, Date.parse(input.capturedAt))
+      card(close.closed)
       if (!close.closed && close.reason === 'session is busy or has a background job' && !review.closedAt && !review.closeBlocked) reviewCloseArms.set(review.id, { sessionId: session.id, nativeSessionId: resumeIdFor(session.id)!, capturedAt: Date.parse(input.capturedAt) })
     }
   }
@@ -1723,6 +1842,12 @@ ipcMain.handle('sessions:continuationStatus', (_e, id: string) => {
   return { received: !!receipt.received, reason: receipt.received ? `Verified: this conversation received its saved handoff. ${recovery}` : receipt.failed ? `Delivery could not be verified. Recover from the saved handoff or source. ${recovery}` : `Delivery is not verified yet. ${recovery}` }
 })
 /**
+ * A lane-ledger hold kept for a pane this app has already closed holds nothing: History's
+ * `Open again` on that very chat was refused by it (`shared/laneTaken.ts` `holdIsOver`).
+ */
+const holdOver = (pane: string): boolean => holdIsOver(pane, manager.list(), history.ended)
+
+/**
  * Move a second session in the same folder into its own git worktree, so two
  * agents in one project cannot overwrite each other's edits or race the index.
  * Folders already held by live sessions are what "in use" means, so a lane freed
@@ -1730,6 +1855,105 @@ ipcMain.handle('sessions:continuationStatus', (_e, id: string) => {
  *
  * A swarm is deliberately exempt: its roles are briefed to share one checkout.
  */
+/** Run git without blocking the window - same gate `lanes.ts` and `handoff.ts` use. */
+function landGit(cwd: string, args: string[], timeout = 60_000): Promise<{ ok: boolean; out: string }> {
+  return gitRun(cwd, args, { timeout, read: isRead(args) }).then((r) => ({
+    ok: r.ok,
+    out: r.stdout.trim() || r.stderr.trim()
+  }))
+}
+
+/**
+ * A blocked handoff (`ensureRepo` said the same-named checkout here is dirty or has
+ * unpushed commits) tries every lane copy of that repo before giving up: the first clean,
+ * merged, free one is reused, or the first missing label becomes a fresh one. See
+ * `shared/handoff.ts` `landingCopy` for the decision itself - this only gathers the facts
+ * it decides from and carries out what it returns.
+ */
+async function landOn(target: string, repo: HandoffRepo, blocked: string): Promise<LandedCopy | string> {
+  let labels: readonly string[] = LANE_LABELS
+  let trunk = 'main'
+  try {
+    const config = JSON.parse(readFileSync(join(target, '.lanes.json'), 'utf8')) as {
+      pool?: unknown
+      branch?: unknown
+    }
+    if (Array.isArray(config.pool)) {
+      const pool = config.pool.filter((l): l is string => typeof l === 'string' && /^[a-z]$/.test(l))
+      if (pool.length) labels = pool
+    }
+    if (typeof config.branch === 'string' && config.branch) trunk = config.branch
+    else throw new Error('no configured trunk')
+  } catch {
+    const originHead = await landGit(target, ['rev-parse', '--verify', 'origin/master'])
+    trunk = originHead.ok ? 'master' : 'main'
+  }
+
+  const taken = new Set([...takenFolders(manager.list()), ...ledgerTakenFolders('', holdOver)])
+  const copies: CopyState[] = []
+  for (const label of labels) {
+    const path = `${target}-${label}`
+    const exists = existsSync(path)
+    let isCopy = false
+    let dirty = false
+    let unmerged = -1
+    if (exists) {
+      isCopy = await isWorktreeOf(path, target)
+      if (isCopy) {
+        const status = await landGit(path, ['status', '--porcelain'])
+        dirty = status.ok ? status.out.length > 0 : true
+        const ahead = await landGit(path, ['rev-list', '--count', `origin/${trunk}..HEAD`])
+        unmerged = ahead.ok && /^\d+$/.test(ahead.out) ? Number(ahead.out) : -1
+      }
+    }
+    copies.push({ path, label, exists, isCopy, dirty, unmerged, inUse: taken.has(path) })
+  }
+
+  const landing = landingCopy(blocked, copies)
+  if ('refusal' in landing) return landing.refusal
+
+  const { path, label, make } = landing
+  if (!repo.sha) {
+    // The copies share `target`'s `.git`, so fetching once there makes the branch
+    // reachable from every worktree of it.
+    const fetched = await landGit(target, ['fetch', 'origin', repo.branch])
+    if (!fetched.ok) return `Could not fetch ${repo.branch}: ${fetched.out}`
+  }
+  const ref = repo.sha || `origin/${repo.branch}`
+  try {
+    if (!make) {
+      let checkout = await landGit(path, ['checkout', '-B', `lane-${label}`, ref])
+      if (!checkout.ok && repo.sha) {
+        // The sha may never have reached this repo's objects (ensureRepo refused before
+        // fetching anything, on this very target). One more try, the object fetched directly.
+        await landGit(target, ['fetch', 'origin', repo.sha])
+        checkout = await landGit(path, ['checkout', '-B', `lane-${label}`, ref])
+      }
+      if (!checkout.ok) return `Could not land in copy ${copyNumber(label) ?? label}: ${checkout.out}`
+    } else {
+      let made = await landGit(target, ['worktree', 'add', '-b', `lane-${label}`, path, ref])
+      if (!made.ok && repo.sha) {
+        await landGit(target, ['fetch', 'origin', repo.sha])
+        made = await landGit(target, ['worktree', 'add', '-b', `lane-${label}`, path, ref])
+      }
+      if (!made.ok) {
+        made = await landGit(target, ['worktree', 'add', path, `lane-${label}`])
+        if (made.ok) await landGit(path, ['checkout', '-B', `lane-${label}`, ref])
+      }
+      if (!made.ok) return `Could not create copy ${copyNumber(label) ?? label}: ${made.out}`
+    }
+  } catch (err) {
+    return `Could not land in copy ${copyNumber(label) ?? label}: ${(err as Error).message}`
+  }
+  seedLane(target, path)
+  hideCopyFolder(path)
+  return {
+    cwd: path,
+    lane: label,
+    note: `${basename(target)} here already has other work in progress, so this pane opened in copy ${copyNumber(label) ?? label} of it`
+  }
+}
+
 async function laneFor(
   req: StartSessionRequest,
   extraTaken: string[] = [],
@@ -1747,7 +1971,7 @@ async function laneFor(
   // that folder again. Two client chats were restored asleep into `clients` and a
   // third opened from History landed there too, because neither counted (2026-09-04):
   // all three woke into one checkout. A folder with a sleeping pane in it is taken.
-  const taken = [...takenFolders(manager.list(), except), ...ledgerTakenFolders(except ?? ''), ...extraTaken]
+  const taken = [...takenFolders(manager.list(), except), ...ledgerTakenFolders(except ?? '', holdOver), ...extraTaken]
 
   // Reopening a pane that was in a lane, when the lane turned out to hold nothing and
   // the project folder is free again: the lane was only ever there to keep two agents
@@ -2090,7 +2314,7 @@ ipcMain.handle('sessions:wake', async (_e, id: string) => {
   if (continuationOwnsSource(id)) return null
   // A sleeping pane is placed again before it wakes: the folder it slept in may now be
   // another pane's (two client chats restored asleep into one checkout, 2026-09-04).
-  await manager.rehome(id, (req) => laneFor(req, ledgerTakenFolders(id), id))
+  await manager.rehome(id, (req) => laneFor(req, ledgerTakenFolders(id, holdOver), id))
   return manager.wake(id)
 })
 ipcMain.handle('sessions:switchAgent', (_e, id: string, agent: string, model?: string) => {
@@ -2098,9 +2322,13 @@ ipcMain.handle('sessions:switchAgent', (_e, id: string, agent: string, model?: s
   if (continuationOwnsSource(id)) return null
   return manager.switchAgent(id, agent, model)
 })
-ipcMain.handle('sessions:rename', (_e, id: string, title: string) =>
-  remote.owns(id) ? remote.send(id, { t: 'rename', title }) : manager.rename(id, title)
-)
+// A pane on another desk is renamed by that desk, and the new name comes back with its next
+// list - so this only says whether the rename left: false = the link could not carry it.
+ipcMain.handle('sessions:rename', (_e, id: string, title: string) => {
+  if (remote.owns(id)) return remote.send(id, { t: 'rename', title })
+  manager.rename(id, title)
+  return true
+})
 // A pane that has finished what it was opened for, said while it is open rather than
 // asked for at the open. The rule that decides WHEN is `shared/closeWhenDone.ts`.
 ipcMain.handle('sessions:closeWhenDone', (_e, id: string, reportTo?: string) =>
@@ -2117,7 +2345,7 @@ ipcMain.handle('sessions:setEffort', (_e, id: string, choice: EffortChoice) =>
 ipcMain.handle('model:adviceAnswer', (_e, id: string, doSwitch: boolean) =>
   manager.answerModelAdvice(id, !!doSwitch)
 )
-ipcMain.handle('sessions:kill', (_e, id: string) => {
+function closePane(id: string): void {
   if (screenViews.owns(id)) {
     screenViews.close(id)
     return
@@ -2134,10 +2362,12 @@ ipcMain.handle('sessions:kill', (_e, id: string) => {
   // could never go: the pane looked stuck and the button looked broken. Answer a stale
   // ask with the truth.
   const known = allSessions().some((s) => s.id === id)
+  const card = cardAfterClose(id)
   manager.kill(id)
+  card(known)
   if (!known) send('sessions:changed', allSessions())
-  return
-})
+}
+ipcMain.handle('sessions:kill', (_e, id: string) => closePane(id))
 
 /**
  * A finished pane that closes itself once it has sat dead for a while - see
@@ -2161,7 +2391,7 @@ function exitedFacts(): ExitedFact[] {
     ask: s.ask,
     handingOff: s.handingOff,
     lastKeyboard: Math.max(s.lastKeyboard ?? 0, touchedAt.get(s.id) ?? 0) || undefined,
-    keepOpen: s.keepOpen
+    keepOpen: s.keepOpen || keptOpen(s.id)
   }))
 }
 /**
@@ -2216,6 +2446,19 @@ function removeFinished(removals: { id: string; reason: string }[]): void {
   }
   send('sessions:changed', allSessions())
 }
+// The idle clock's close (the renderer's countdown ran out): the pane goes the way a
+// finished one does, INTO REVIEW, rather than only into History. Robert, 2026-09-25: a
+// quiet pane "just close sessions after a bit of time", with Review as the way back.
+ipcMain.handle('sessions:closeIntoReview', (_e, id: string, reason: string) => {
+  if (keptOpen(id)) return
+  // Only a local agent pane has a conversation to keep; a screen view, a mirror or a stale
+  // id is closed exactly the way `sessions:kill` closes it.
+  if (!remote.owns(id) && !screenViews.owns(id) && manager.list().some((s) => s.id === id)) {
+    logReclaim({ action: 'close-into-review', pane: id, reason })
+    reviewBeforeRemove(id, reason)
+  }
+  closePane(id)
+})
 ipcMain.handle('sessions:clearFinished', () => {
   const removals = clearFinishedNow(exitedFacts())
   removeFinished(removals)
@@ -2223,13 +2466,13 @@ ipcMain.handle('sessions:clearFinished', () => {
 })
 // The automatic half: the same facts the button reads, checked on its own clock so a
 // pane nobody presses the button on still leaves the sidebar ten minutes after it dies.
-setInterval(() => {
+setInterval(() => measureMainTask('exited-close', () => {
   const facts = exitedFacts()
   const now = Date.now()
   // Sleeping panes only when finished panes close themselves at all (Settings).
   const asleep = getConfig().autoCloseDone !== false ? asleepSweep(facts, now) : []
   removeFinished([...exitedSweep(facts, now), ...asleep])
-}, 30_000).unref()
+}), 30_000).unref()
 ipcMain.handle('sessions:buffer', (_e, id: string) =>
   remote.owns(id) ? remote.buffer(id) : manager.buffer(id)
 )
@@ -2263,13 +2506,13 @@ ipcMain.handle('app:tourCheck', (_e, script: string) =>
 ipcMain.handle('sessions:log', (_e, id: string, bytes?: number) => {
   const want = Math.min(Math.max(Number(bytes) || 2_000_000, 1), 8 * 1024 * 1024)
   if (remote.owns(id)) return remote.log(id, want)
-  return history.tail(id, want) || manager.buffer(id)
+  return freshReplay(history.tail(id, want), manager.buffer(id))
 })
 ipcMain.handle('sessions:replay', async (_e, id: string) => {
   if (remote.owns(id)) return remote.replayHistory(id)
   if (!manager.list().some((session) => session.id === id)) return false
   pump.flushOne(id)
-  const raw = history.tail(id, 4 * 1024 * 1024) || manager.buffer(id)
+  const raw = freshReplay(history.tail(id, 4 * 1024 * 1024), manager.buffer(id))
   send('pane:reset', id, raw)
   return true
 })
@@ -2328,8 +2571,11 @@ ipcMain.on('sessions:attention-clear', (_e, id: string) =>
   remote.owns(id) ? remote.send(id, { t: 'ack' }) : manager.clearAttention(id)
 )
 /** Bytes into a pane, wherever that pane lives. The one path anything here types through. */
-function writePane(id: string, data: string, origin: WriteOrigin = 'desk'): void {
-  if (remote.owns(id)) return remote.send(id, { t: 'write', data })
+function writePane(id: string, data: string, origin: WriteOrigin = 'desk', terminalReply = false): void {
+  if (remote.owns(id)) {
+    remote.send(id, { t: 'write', data, ...(terminalReply ? { terminalReply: true } : {}) })
+    return
+  }
   watchForClear(id, data)
   // Nothing typed here stands a countdown down any more. It used to: a write carrying one
   // printable character cancelled the pane's own /clear outright, which meant the card
@@ -2339,14 +2585,14 @@ function writePane(id: string, data: string, origin: WriteOrigin = 'desk'): void
   // session". The one thing typing must still prevent is being typed OVER, and that is
   // handled where it can be handled honestly: `expiryDecision` returns 'wait' for an
   // unsent draft, so the timer asks again rather than the countdown disappearing.
-  manager.write(id, data, origin)
+  manager.write(id, data, origin, terminalReply)
 }
 
 // A phone's write arrives through `ipcTap`'s stand-in event, whose sender reports itself
 // gone; the window's own sender is live. That one bit decides whether the rail in this
 // window already tagged the line (it typed it) or needs telling (`pane:typed`).
-ipcMain.on('pty:write', (e, id: string, data: string) =>
-  writePane(id, data, e.sender?.isDestroyed?.() ? 'phone' : 'desk')
+ipcMain.on('pty:write', (e, id: string, data: string, terminalReply?: boolean) =>
+  writePane(id, data, e.sender?.isDestroyed?.() ? 'phone' : 'desk', terminalReply === true)
 )
 // The DESK window only, never `send()`. `send` broadcasts to the phone first, and a
 // phone's own submitted line already ran through its renderer's `feedInput` on the way
@@ -2566,15 +2812,25 @@ ipcMain.on(
 // The idle clock's deadline, from the window that decides it. Refused for a mirrored id
 // for the same reason the busy footer is: the pane lives on the other machine, and its
 // own desk publishes when it will close it.
-ipcMain.on('sessions:closing', (_e, id: string, at: number | null, kept?: boolean) => {
-  if (!remote.owns(id)) manager.setClosingAt(id, typeof at === 'number' ? at : null, kept === true)
+ipcMain.on('sessions:closing', (_e, id: string, at: number | null) => {
+  if (!remote.owns(id)) manager.setClosingAt(id, typeof at === 'number' ? at : null)
 })
 
 ipcMain.handle('sessions:swarm', (_e, req: SwarmRequest) => manager.startSwarm(req))
 
 ipcMain.handle('config:get', () => getConfig())
 ipcMain.handle('config:set', (_e, patch: Partial<Config>) => {
+  // A person changed what Discord shows: stamped, so linked machines take it too.
+  const was = getConfig()
+  if (
+    (patch.discordPresence !== undefined && patch.discordPresence !== was.discordPresence) ||
+    (patch.discordStyle !== undefined && JSON.stringify(patch.discordStyle) !== JSON.stringify(was.discordStyle))
+  )
+    patch = { ...patch, discordSettingsAt: Date.now() }
   const next = setConfig(patch)
+  if (patch.pinnedPanes) {
+    for (const id of next.pinnedPanes ?? []) manager.cancelAutoClear(id, 'cancelled')
+  }
   // An edited custom agent changes what is launchable, so the availability cache
   // must not outlive the edit.
   if (patch.customAgents) invalidateAgents()
@@ -2900,7 +3156,7 @@ function sweepCopies(repos: string[], gap: number): void {
 // lane command, so the ones that come unstuck by themselves do it overnight too. Both
 // the interval and laneRetry are no-ops on a machine with no PaneForge checkout, and it
 // returns immediately unless a lane is conflicted or waiting to go out.
-setInterval(() => {
+setInterval(() => measureMainTask('lane-maintenance', () => {
   laneRetry(lanePanes())
   // And the lanes held by chats that are not here any more: a killed pane never runs its
   // SessionEnd hook, so its lane sat held - and blocking the release - for twelve hours.
@@ -2908,7 +3164,7 @@ setInterval(() => {
   // Same clock, and the copies nothing has freed up since: no git here, the list of
   // projects with copies is read off disk, and each is swept at most every six hours.
   sweepCopies(ledgerRepos(lanePanes()), COPIES_EVERY_MS)
-}, 60_000).unref()
+}), 60_000).unref()
 
 // A pane ending is when a copy most often stops being needed: its chat let go, and nothing
 // else may be in it. Only the projects of the panes that ended are swept, and not at once -
@@ -2967,7 +3223,8 @@ ipcMain.handle('phone:serve', async (_e, on: boolean) => {
     // The tunnel points at a port that is about to stop answering; leaving it up would
     // publish an address that 502s, which reads as a broken app rather than a closed door.
     await tunnel.stop()
-    await phone.stop()
+    // Back to answering this machine only, for `pf` (`PhoneServer.localOnly`).
+    await phone.start(port, LOCAL_ONLY)
     return phoneState()
   }
   await phone.start(port)
@@ -2983,7 +3240,7 @@ ipcMain.handle('phone:port', async (_e, port: number) => {
   const cfg = getConfig()
   setConfig({ phone: { ...cfg.phone!, port: next } })
   if (!phone.running) return phoneState()
-  await phone.start(next)
+  await phone.start(next, phone.localOnly ? LOCAL_ONLY : undefined)
   // The tunnel is bound to the OLD port, so it is restarted rather than left pointing at
   // a door that moved. A new quick tunnel means a new address, which the panel redraws.
   if (tunnel.running) void tunnel.start(next)
@@ -3006,7 +3263,7 @@ ipcMain.handle('phone:tunnel', async (_e, on: boolean) => {
   ensureCodeFor(true)
   send('phone:changed', phoneState())
   const port = cfg.phone?.port ?? DEFAULT_PHONE_PORT
-  if (!phone.running) await phone.start(port)
+  if (!phone.running || phone.localOnly) await phone.start(port)
   void tunnel.start(port)
   return phoneState()
 })
@@ -3267,7 +3524,8 @@ function runHandoff(device: string, request: HandoffRequest): Promise<HandoffIte
       root: projectsRoot,
       list: () => manager.list(),
       snapshot: () => manager.snapshot(),
-      kill: (id) => manager.kill(id),
+      // Only after the far end has confirmed the resume - the close IS the move's result.
+      kill: (id) => manager.kill(id, 'handoff'),
       sleep: (id) => {
         manager.sleep(id, 'handoff', { source: 'handoff' })
       },
@@ -3286,8 +3544,9 @@ function runHandoff(device: string, request: HandoffRequest): Promise<HandoffIte
       log: logHandoff,
       devServersOf: (id, cwd) => {
         const root = manager.roots().find((r) => r.id === id)
-        return root ? devServersOf(root.pid, cwd) : Promise.resolve({ servers: [], notes: [] })
-      }
+        return root ? devServersOf(root.pid, cwd) : Promise.resolve({ servers: [], notes: [], strays: [] })
+      },
+      stopDev: (pid) => stopDevServer(pid)
     },
     device,
     request
@@ -3345,13 +3604,16 @@ manager.on('sessions', () => queueMicrotask(() => {
     })
     if (action === 'cancel') {
       reviewCloseArms.delete(reviewId)
+      heldCards.delete(arm.sessionId)
       if (session) noteReviewClose(reviewId, 'newer input or pending work cancelled the requested close')
       continue
     }
     if (action === 'wait') continue
     if (!session) continue
     reviewCloseArms.delete(reviewId)
+    const card = cardAfterClose(session.id)
     const close = manager.closeAfterResult(session.id, arm.capturedAt)
+    card(close.closed)
     if (close.closed) noteReviewClose(reviewId, undefined, new Date().toISOString())
     else noteReviewClose(reviewId, close.reason)
   }
@@ -3401,10 +3663,17 @@ ipcMain.handle('remote:handoffCancel', (_e, id: string) => handoffQueue.drop(Str
 // the only part a person can stop. Payload is re-read here because the phone server reaches
 // this channel too - see `readAutoClearAsk`.
 // The same body answers a request FILE from the shipped hook (`autoclearRequests.ts`).
+const keptContexts = new Map<string, string>()
 function autoClearAsk(raw: unknown): { ok: boolean; reason?: string } {
   const ask = readAutoClearAsk(raw)
   if (!ask) return { ok: false, reason: 'that is not an autoclear request' }
   if (remote.owns(ask.paneId)) return { ok: false, reason: 'that pane lives on another device' }
+  if (keptOpen(ask.paneId)) return { ok: false, reason: 'kept open by hand' }
+  const keptContext = keptContexts.get(ask.paneId)
+  if (keptContext && keptContext === resumeIdFor(ask.paneId)) {
+    return { ok: false, reason: 'you chose to keep this session; clear it manually when ready' }
+  }
+  keptContexts.delete(ask.paneId)
   // The hook says WHAT to type, this end says how this CLI spells "start again" - the same
   // ask from a codex pane has to send `/new`.
   //
@@ -3443,7 +3712,12 @@ function autoClearAsk(raw: unknown): { ok: boolean; reason?: string } {
   return manager.armAutoClear(ask.paneId, { ...ask, prompt: resumeBrief(ask, briefAnchor(ask, handoff?.path ?? null, (p) => existsSync(p))), command })
 }
 ipcMain.handle('autoclear:ask', (_e, raw: unknown) => autoClearAsk(raw))
-ipcMain.handle('autoclear:cancel', (_e, id: string) => manager.cancelAutoClear(String(id), 'cancelled'))
+ipcMain.handle('autoclear:cancel', (_e, id: string) => {
+  const paneId = String(id)
+  const conversation = resumeIdFor(paneId)
+  if (conversation) keptContexts.set(paneId, conversation)
+  return manager.cancelAutoClear(paneId, 'cancelled')
+})
 ipcMain.handle('autoclear:takeover', (_e, id: string) => manager.takeOver(String(id)))
 // The renderer runs from file:// in production, which is not a secure context, so
 // navigator.clipboard is unavailable there. Terminal copy/paste goes through here.
@@ -3953,6 +4227,9 @@ ipcMain.handle('update:install', async (): Promise<InstallOutcome> => {
   return { status: 'installing' }
 })
 
+/** How long a Windows update waits for the panes' processes to exit before the installer. */
+const PANE_EXIT_WAIT_MS = 5_000
+
 function doInstall(): void {
   if (installStarted) return
   if (getUpdateState().phase !== 'ready') return
@@ -3995,7 +4272,33 @@ function doInstall(): void {
   )
   // Flushes transcripts, ends their metadata in one pass and hard-kills every agent
   // tree in a single taskkill instead of one blocking ConPTY teardown per pane.
-  manager.shutdown()
+  void handOverToInstaller(manager.shutdown()).catch((e: unknown) => {
+    // Hidden window, panes gone: a throw here would otherwise leave an invisible app.
+    updateLog('install', `hand-over failed: ${e instanceof Error ? e.message : String(e)}`)
+    installStarted = false
+    markQuietRelaunch(false)
+    if (alive()) whenClear('update-failed-reveal', restoreAfterFailedInstall)
+  })
+}
+
+/**
+ * The second half of `doInstall`: wait for the panes, start the installer, leave.
+ *
+ * Both kills in `shutdown()` return before anything has died, and a pane process still
+ * alive when the installer starts copying is one way an update comes back as the old
+ * version (2026-09-24, see shared/installWedge.ts). The window is already hidden, so the
+ * wait costs nobody anything to look at; past the budget the installer stops them itself.
+ */
+async function handOverToInstaller(pids: number[]): Promise<void> {
+  if (process.platform === 'win32' && pids.length) {
+    const { left, ms } = await waitForExit(pids, { alive: (pid) => pidAlive(pid), budgetMs: PANE_EXIT_WAIT_MS })
+    updateLog(
+      'install',
+      left.length
+        ? `${left.length} of ${pids.length} pane process(es) still running after ${ms}ms - installing anyway`
+        : `${pids.length} pane process(es) gone in ${ms}ms`
+    )
+  }
   // Set before the installer starts, because once quitAndInstall() runs this process can
   // be gone before the next line. The new exe reads it and comes back without activating.
   markQuietRelaunch()
@@ -4014,6 +4317,46 @@ function doInstall(): void {
   // of its own files, so every millisecond spent on a graceful teardown is a millisecond
   // the user spends looking at no app at all. Nothing is left to save.
   hardExit()
+}
+
+/** How often a downloaded update asks whether the desk is idle enough to install itself. */
+const IDLE_INSTALL_CHECK_MS = 60_000
+let idleHoldLoggedAt = 0
+
+/**
+ * Install a downloaded update by itself once nobody would notice (`idleInstallBlocker`).
+ * Same path as Restart now: the desk is saved and comes back, and the new version starts
+ * without taking the screen (`markQuietRelaunch`). A held check logs its reason now and
+ * then (`shouldLogHold`) and simply asks again next minute; nothing counts down.
+ */
+function idleInstallCheck(): void {
+  if (installStarted || getUpdateState().phase !== 'ready') {
+    idleHoldLoggedAt = 0
+    return
+  }
+  let personIdleMs: number
+  try {
+    personIdleMs = powerMonitor.getSystemIdleTime() * 1000
+  } catch {
+    return // no reading is not "nobody is here"
+  }
+  const now = Date.now()
+  const why = idleInstallBlocker({
+    sessions: manager.list(),
+    now,
+    personIdleMs,
+    restoreAfterUpdate: getConfig().restoreAfterUpdate,
+    gameActive: isGameActive()
+  })
+  if (why) {
+    if (shouldLogHold(now, idleHoldLoggedAt)) {
+      updateLog('install', `waiting for a quiet desk: ${why}`)
+      idleHoldLoggedAt = now
+    }
+    return
+  }
+  updateLog('install', 'desk quiet for 10 min: installing the downloaded update by itself')
+  doInstall()
 }
 
 /** The update did not happen: put the window back, inactive, once the screen is free. */
@@ -4386,7 +4729,9 @@ function restorePanes(specs: StartSessionRequest[], previous = false): void {
   // A previous desk may overlap with panes that survived the failed restore. Keep the
   // current cards and skip only the exact conversation or screen already represented.
   const openIds = new Set(manager.snapshot().flatMap((s) => [s.resumeId, s.scrollbackId].filter(Boolean)))
-  const opening = specs.filter((s) => !openIds.has(s.resumeId) && !openIds.has(s.scrollbackId)).slice(0, MAX_RESTORE)
+  const opening = specs.filter((s) => !openIds.has(s.resumeId) && !openIds.has(s.scrollbackId))
+  // How many have come back with an agent running - see `MAX_RESTORE`.
+  let awake = 0
   let remaining = [...opening]
   if (remaining.length) setDeskHold({ specs: remaining, at: Date.now(), clean: false, reason: 'live' })
   // Two cards can be saved pointing at ONE folder - the desk is written per pane and
@@ -4423,6 +4768,8 @@ function restorePanes(specs: StartSessionRequest[], previous = false): void {
         // only a verified conversation; explicit sleep remains authoritative below.
         const restored = { ...req, wasWorking: named && req.agent === 'codex'
           ? rolloutTurn(file).inProgress ?? req.wasWorking : req.wasWorking }
+        const asleep = unavailable || req.asleep || clash[i] || restoreAsleep(restored, i, recoverOn) || awake >= MAX_RESTORE
+        if (!asleep) awake++
         const meta = manager.start({
           ...restored,
           // An asleep placeholder must keep the exact id even when it cannot be checked
@@ -4434,7 +4781,7 @@ function restorePanes(specs: StartSessionRequest[], previous = false): void {
           // Everything but the pane being looked at comes back with no agent in it. The
           // card, its place and its screen are all there; a press starts the CLI in the
           // conversation it was in. See `shared/restoreTurn.ts` for the measurement.
-          asleep: unavailable || req.asleep || clash[i] || restoreAsleep(restored, i, recoverOn),
+          asleep,
           laneNote: unavailable
             ? 'Saved conversation could not be verified. It remains asleep; start a new session only if you want to replace it.'
             : clash[i]
@@ -4542,8 +4889,8 @@ function describe(spec: StartSessionRequest, i: number): RestorePane {
 
 function makeRestoreOffer(desk: { specs: StartSessionRequest[]; at: number; clean: boolean }, previous = false): RestoreOffer {
   offeredSpecs = desk.specs.map((spec) => ({ ...spec }))
-  const all = offeredSpecs.map(describe)
-  const panes = all.slice(0, MAX_RESTORE)
+  // Every pane, however many: past `MAX_RESTORE` they come back asleep, not left behind.
+  const panes = offeredSpecs.map(describe)
   const plan = restorePlan(panes.filter((p) => !p.gone).length, {
     totalMb: totalMb(),
     pressure: readPressure(),
@@ -4551,7 +4898,6 @@ function makeRestoreOffer(desk: { specs: StartSessionRequest[]; at: number; clea
   })
   return {
     panes,
-    extra: all.slice(MAX_RESTORE),
     at: desk.at,
     clean: desk.clean,
     fits: plan.fits,
@@ -4645,7 +4991,7 @@ function offerRestore(): void {
   // over it, and a mis-click that closes the dialog. `saveDesk` writes these panes in
   // front of the live ones until `setDeskHold(null)`.
   setDeskHold(desk)
-  updateLog('desk', `offered ${offer.panes.length} pane(s)${offer.extra.length ? ` (+${offer.extra.length} more not offered)` : ''}`)
+  updateLog('desk', `offered ${offer.panes.length} pane(s)`)
 }
 
 ipcMain.handle('restore:pending', () => offer)
@@ -4767,6 +5113,8 @@ app.whenReady().then(() => {
   // The other half of autoclear: the CLIs with no Stop hook of their own. Also the moment
   // the antigravity statusline tee is put in place, which is a no-op unless that CLI is
   // installed here. See autoclearWatch.ts.
+  // Before any pane starts, so the first one already has `pf` (`main/pfAccess.ts`).
+  installPf()
   startAutoClearWatch(manager)
   startAutoClearRequests(join(app.getPath('userData'), 'autoclear-requests'), autoClearAsk)
   createWindow()
@@ -4783,11 +5131,12 @@ app.whenReady().then(() => {
       // answering yet publishes an address that 502s for its first few seconds.
       if (cfg.phone?.tunnel) void tunnel.start(cfg.phone.port)
     })
-  }
+  } else void phone.start(cfg.phone?.port ?? DEFAULT_PHONE_PORT, LOCAL_ONLY)
   setDevChannel(!!cfg.devUpdates)
   initUpdater((s: UpdateState) => {
     send('update:changed', s)
   }, cfg.autoUpdate)
+  setInterval(idleInstallCheck, IDLE_INSTALL_CHECK_MS).unref()
   offerRestore()
   // Only the copy that owns the window: a launch that lost the lock is on its way out,
   // and starting a pane in it puts an agent in a process that is about to exit.
@@ -4925,7 +5274,10 @@ app.on('before-quit', (e) => {
   // least one pane is mid-turn or holding a job: the quit is refused ONCE and a corner
   // card asks. `Quit anyway` comes back through `app:quitAnswer` with the guard lowered.
   // The card is the whole point - a silent refusal would read as Cmd-Q being broken.
-  if (!quitCause && !quitConfirmed) {
+  // A headless copy has no screen to show the card on, so its refusal is permanent:
+  // `npm run try -- --close` printed "closed" while the copy kept its port and a Claude pane
+  // (2026-09-25, updater.log `quit refused - 1 pane(s) still working; asked`).
+  if (!quitCause && !quitConfirmed && !headlessMode()) {
     const running = manager.list().filter((s) => s.status !== 'exited' && !s.asleep && (s.status === 'working' || s.runSince || s.backJob || s.ask))
     if (running.length) {
       e.preventDefault()
@@ -4952,9 +5304,6 @@ app.on('before-quit', (e) => {
   // Not a pty, so `strays.ts` has never heard of it: without this line the app leaves a
   // cloudflared holding a public address open with nothing behind it.
   void tunnel.stop()
-  // An ssh child holding a forward open is not a pty either, and it outlives this process
-  // exactly as cloudflared does.
-  shutdownLogins()
   // A viewer on the other machine hears the view ended rather than watching it freeze.
   screenViews.shutdown()
   // shutdown() also flushes buffered transcript output, which would otherwise lose the

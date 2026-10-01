@@ -60,6 +60,24 @@ ok(
   'require() and python-style imports count too',
   mergeImportConflicts(hunk(["const a = require('a')"], ['from os import path'])) !== null
 )
+// faec0266 (2026-09-25): both sides edited ONE import line; keeping both declared every
+// name twice and master stopped compiling.
+const sameLine = mergeImportConflicts(
+  hunk(
+    ["import { canQuit, WAIT, type Item } from '../shared/handoff'"],
+    ["import { canQuit, WAIT, landing, type Item, type Repo } from '../shared/handoff'"]
+  )
+)
+ok(
+  'one module edited on both sides folds into one import holding every name',
+  sameLine ===
+    ['const x = 1', "import { canQuit, WAIT, type Item, landing, type Repo } from '../shared/handoff'", 'const y = 2'].join('\n'),
+  sameLine
+)
+ok(
+  'one module imported twice in a shape that cannot be folded stays a conflict',
+  mergeImportConflicts(hunk(["import a from './a'"], ["import { b } from './a'"])) === null
+)
 ok('real code is still a real conflict', mergeImportConflicts(hunk(['const a = 1'], ['const a = 2'])) === null)
 ok(
   'one bad hunk poisons the whole file',

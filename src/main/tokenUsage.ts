@@ -115,6 +115,11 @@ export function tokenSpend(now = Date.now()): TokenSpend {
   return spend
 }
 
+/** The count still walking the disk, if one is - so a caller can say its numbers when it lands. */
+export function tokenCounting(): Promise<TokenSpend> | null {
+  return running
+}
+
 /** A Review screen is opened deliberately, so its figures wait for a current disk count. */
 export async function tokenSpendFresh(now = Date.now()): Promise<TokenSpend> {
   if (!running) {

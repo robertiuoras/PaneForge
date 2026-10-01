@@ -78,6 +78,18 @@ export function listActivity(): Store {
   return load()
 }
 
+/**
+ * Whether the app itself once renamed a pane to `title`, going by the Activity list.
+ *
+ * Builds before 2026-09-28 did not save WHO named a pane, so a restored card wearing the old
+ * word-picker's `Prompt Anyways Delted` looked exactly like a name a person typed, and
+ * nothing could ever replace it. The `named` rows are the one record of which names the
+ * app gave.
+ */
+export function appNamedTitle(title: string): boolean {
+  return load().items.some((i) => i.kind === 'named' && i.what.endsWith(` is now ${title}`))
+}
+
 /** The list has been looked at: everything up to now stops counting as new. */
 export function markActivitySeen(at = Date.now()): Store {
   const s = load()

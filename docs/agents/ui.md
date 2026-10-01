@@ -22,12 +22,25 @@ generated branch (`pf/w2`, `lane-a`, `worktree-<slug>`) dropped; `copy 2` = seco
 `shared/clientName.ts`, `main/clients.ts`; `test:clientname`. Roster =
 `clients/<who>/README.md` walking UP; first heading, contact stripped; parenthetical kept
 only for a person, not an org; `Client` off. Prompt name matches ONE client, word boundary,
-`MIN_ALIAS`, not `GENERIC`. Replace only on STRONG reading (`topicReading`, `repeatedTopic`);
-`/clear` empties `topicAsks`. Others get `topicTitle` where `mayTopicName` (client tree,
-`Desktop`/`Downloads`/root); real repo waits three agreeing asks, EARLIEST names. Rename is
-SILENT: no card, Activity row only (`test:activity`). Pointing ask (`$50 task`) named off the REPLY
-(`shared/resolvedName.ts` `handleOf`/`resolvedName`, `sweepResolved` once, app-given names
-only; `The agent found what you meant.`; `test:resolvedname`).
+`MIN_ALIAS`, not `GENERIC`, named by `CLIENT_MIN_ASKS` of the last `ASK_WINDOW` asks;
+`/clear` empties `clientAsks`. Rename is SILENT: no card, Activity row only (`test:activity`).
+
+## A pane is called what its chat is called
+
+`shared/cliTitle.ts`, `sweepCliTitle` (`main/sessions.ts`, Claude panes, every 5s, only new
+transcript bytes, first read the last 256 KB); `test:clititle`. Ranking: a person (app rename, `pf rename`, CLI `/rename` =
+`custom-title`) > opener (`pf open --title`) > client roster > the CLI's own `ai-title` >
+project name. NO word-picker off typed asks (deleted 2026-09-28: ~3 of ~33 names usable). CLI
+title only over an app-chosen name (`appDefault()` or `autoTitled: 'agent'`), once per
+conversation; housekeeping words cut (`cardTitle`), a continuation never replaces an earned
+name, a title that is only the project names nothing. `autoTitled` is saved with the desk and a
+handoff (and a continuation); on a desk/handoff restore (`scrollbackId`) a name the Activity
+list says the app gave (`appNamedTitle`) with no saved `autoTitled` goes back to the project name.
+`HOUSEKEEPING` is whole words; `session` only before a handoff word. A handoff-only title on a
+card still on its project name takes the newest work title of the conversations the SAME CLI
+process ran before it (`main/cliChain.ts` `earlierTitles`: the CLI stamps its start id as
+`session_id` on records of every conversation after a `/clear`; `startedAs`). Read once per
+conversation, never over an earned, person, opener or client name.
 
 ## A pane says how long it has been open
 
@@ -100,11 +113,20 @@ clean basename, ext from MAGIC BYTES; 5MB/batch; never auto-submitted. macOS dro
 
 ## History says what each session was working on
 
+Review's expanded report and saved HTML share `shared/reviewMarkdown.ts`: headings,
+lists, quotes, links, tables and code render as written. Raw HTML stays escaped; inline
+links open through `reviews:open` only when retained in the source report and validated
+as web pages or supported evidence files. Existing report HTML is rebuilt from its JSON
+source when opened, preserving its contents and read state. Internal `reviews` paths stay
+stable; people use Review and Open report, not the storage folder.
+
 Row = FIRST ask + count (`shared/gist.ts`, `test:gist`) from relayed keystrokes. Newest closed
 top (`endedAt ?? startedAt`); `closed 5 min ago`/date; green `open since`, red `closed …`.
 `View all` = `summaryFull`. Closed before recording = archive line or none. `/clear` ends a
 job (`noteAskInto`); three shown, WORK asks counted, twelve chapters; `recordStart` reruns.
-Transcript RENDERED (`renderer/src/termRender.ts`).
+Transcript RENDERED (`renderer/src/termRender.ts`). `Open again` is never refused by the closed
+pane's own leftover ledger hold: `holdIsOver` (`shared/laneTaken.ts`) = off the desk + History
+`endedAt`, or on the desk exited-not-asleep; unknown pane keeps it (`test:reopenhold`).
 
 ## The app remembers what has been asked
 
@@ -123,7 +145,7 @@ Whisper worker (`voiceWorker.ts`, ONNX wasm) -> phone recogniser (`test:voice`).
 
 `shared/cardIdle.ts` `CARD_IDLE_MS` 5 min, `renderer/src/idleDismiss.ts`; pointer/focus HOLDS
 (`idleLeft` `null`); one timeout. Only `WhatsNewCard`; `MoveSoon`, `OffloadSoon`,
-`AutoClearToast`, `StopServer`, `LoginCard`, `UpdateToast`, `TourCard` end at their own
+`AutoClearToast`, `StopServer`, `UpdateToast`, `TourCard` end at their own
 deadline. `test:cardidle`.
 
 ## Every card the app puts in the corner is in ONE column
@@ -139,8 +161,20 @@ Bell -> `ActivityFlyout.tsx`; `shared/activity.ts`, `main/activity.ts` `activity
 READING, nothing pressable; opening marks seen. `activity:list`/`seen` `REVIEWED_SAFE`
 (`scripts/passkey-test.mjs`).
 
+## Discord: a look and four switches, own lines under Advanced
+
+`components/DiscordTab.tsx`, `shared/discordRpc.ts` (`DISCORD_PRESETS`, `presetRows`,
+`withLook`, `wholeDesk`). Look cards rebuild the lines; hand edits make it `custom`, which
+puts the `idle`/`tokens` switches away (greyed failed contrast). Counts every machine, one
+machine speaks, settings travel newest-wins. `test:discord`, contrast sweeps the tab.
+Why: `docs/design-notes.md` "Settings → Discord since 2026-09-27".
+
 ## ...and one card says what this app can even do
 
 `shared/tips.ts`, `components/Tips.tsx`, `test:tips`. Silent during dialog/update/question/
 minimised/`FIRST_MS` 4 min; `EVERY_MS` 40 min; first and every fourth `offersOff` (Settings
 re-enables); each once before any twice; `seen` resets.
+
+Keep-open checkboxes live on every session card; Keep all open includes filtered sessions
+and writes mirrored choices on the owning device. Queued handoff text is omitted from cards;
+the existing handoff menu retains cancellation.

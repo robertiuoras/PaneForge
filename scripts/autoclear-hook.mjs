@@ -204,10 +204,10 @@ export function runningAgents(transcriptPath) {
     const content = row?.message?.content
     if (!Array.isArray(content)) continue
     for (const c of content) {
-      if (c?.type === 'tool_use' && (c.name === 'Agent' || c.name === 'SendMessage')) launched.add(c.id)
+      if (c?.type === 'tool_use' && (c.name === 'Agent' || c.name === 'SendMessage' || c.name === 'Workflow')) launched.add(c.id)
       else if (c?.type === 'tool_result' && launched.has(c.tool_use_id) && !c.is_error) {
         const t = typeof c.content === 'string' ? c.content : (c.content || []).map((x) => x?.text || '').join('\n')
-        const id = t.match(/Async agent launched[\s\S]*?agentId:\s*([A-Za-z0-9_-]+)/)?.[1] ?? t.match(/"resumedAgentId"\s*:\s*"([^"]+)"/)?.[1]
+        const id = t.match(/Async agent launched[\s\S]*?agentId:\s*([A-Za-z0-9_-]+)/)?.[1] ?? t.match(/"resumedAgentId"\s*:\s*"([^"]+)"/)?.[1] ?? t.match(/Workflow launched in background\.\s*Task ID:\s*([A-Za-z0-9_-]+)/)?.[1]
         if (id) answered.set(c.tool_use_id, id)
       }
     }

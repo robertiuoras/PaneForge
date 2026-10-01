@@ -260,11 +260,14 @@ function worstUnder(img, scale, rect, textLum) {
 const SCREENS = [
   { id: 'desk', open: null },
   { id: 'settings', open: /settings/i },
+  // Its own screen because it is the one tab drawn in another product's colours (the
+  // Discord card replica) beside the app's own look cards and switches.
+  { id: 'settings · discord', open: /settings/i, tab: /^\s*Discord/ },
   { id: 'devices', open: /device/i },
   { id: 'history', open: /history/i }
 ]
 
-const openScreen = (re) => `(async () => {
+const openScreen = (re, tab) => `(async () => {
   document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
   await new Promise((r) => setTimeout(r, 250))
   const re = ${re}
@@ -273,6 +276,13 @@ const openScreen = (re) => `(async () => {
   if (!hit) return { err: 'no control' }
   hit.click()
   await new Promise((r) => setTimeout(r, 900))
+  const tab = ${tab ?? null}
+  if (tab) {
+    const nav = [...document.querySelectorAll('.dialog button')].find((b) => tab.test(b.textContent))
+    if (!nav) return { err: 'no tab' }
+    nav.click()
+    await new Promise((r) => setTimeout(r, 600))
+  }
   return { ok: !!document.querySelector('.dialog') }
 })()`
 
@@ -308,7 +318,7 @@ try {
     await new Promise((r) => setTimeout(r, 900))
     for (const s of SCREENS) {
       if (s.open) {
-        const r = await evalIn(openScreen(s.open))
+        const r = await evalIn(openScreen(s.open, s.tab))
         if (r?.err || !r?.ok) {
           check(false, `${t.id} · ${s.id} opens`, r?.err ?? 'no dialog')
           continue

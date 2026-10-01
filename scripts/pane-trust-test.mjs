@@ -141,7 +141,7 @@ ok(/allowsCwd\(specFor\(agent\), req\.cwd/.test(spawnSrc), 'sessions.start() ask
 ok(
   // The spawn is now conditional - a pane can be born asleep, with no process at all
   // (`shared/restoreTurn.ts`) - so this looks for the CALL, not the property it sits in.
-  spawnSrc.indexOf('allowsCwd(specFor(agent), req.cwd') < spawnSrc.indexOf('this.spawn(req, agent, START_COLS'),
+  spawnSrc.indexOf('allowsCwd(specFor(agent), req.cwd') < spawnSrc.indexOf('this.spawn(req, agent, startCols'),
   '...and refuses BEFORE the spawn, which cannot be taken back'
 )
 

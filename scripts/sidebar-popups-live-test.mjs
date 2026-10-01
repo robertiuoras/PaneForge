@@ -47,7 +47,7 @@ try {
     check(sizes.every(s => s.w >= s.h), `every icon at least as wide as tall at sidebar width ${width} (${Math.round(sizes[0].w)}x${Math.round(sizes[0].h)})`)
     check(sizes.every(s => s.label), 'every icon has an accessible name')
   }
-  check(await c.evaluate(`!document.querySelector('.keep-open-toggle .badge')`), 'keep-open has no unexplained count')
+  check(await c.evaluate(`!document.querySelector('.keep-open-toggle')`), 'no bulk Keep open button: Review keeps finished work (2026-09-25)')
   check(await c.evaluate(`!!document.querySelector('.users-button svg') && !document.querySelector('.users-button').textContent.trim()`), 'Users is an icon')
   await click('[aria-label="Tools"]'); await pause(100)
   check(await c.evaluate(`document.querySelector('#tools-title')?.textContent==='Tools'`), 'Tools opens')

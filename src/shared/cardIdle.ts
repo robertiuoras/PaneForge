@@ -9,8 +9,8 @@
 //
 // WHAT MAY NOT USE THIS. A card that is asking something, or counting down to doing
 // something, is not a card nobody has answered - it is a card whose whole point is the
-// answer: `MoveSoon`, `OffloadSoon`, `AutoClearToast`, `StopServer`, `LoginCard`, the
-// update prompt. Those already end themselves, at their own deadline, by doing the thing.
+// answer: `MoveSoon`, `OffloadSoon`, `AutoClearToast`, `StopServer`, the update
+// prompt. Those already end themselves, at their own deadline, by doing the thing.
 // This is only for a card that says something and wants nothing back.
 
 /** Nobody has touched it for this long, so it has been read or it has been ignored. */

@@ -31,49 +31,116 @@ import { INCOMPLETE, SOMEBODY_SAID, STOPS } from './recover'
 export const TAIL_CHARS = 4000
 
 /**
- * The shapes a CLI reports a failure in, required alongside a `STOPS` word.
+ * The CLI's OWN report of a stop, as the CLI words it - at the start of the row, after the
+ * gutter it draws in front of its output (`⎿` for Claude, `■` for Codex).
  *
- * `STOPS` on its own is not enough and the reason is already measured, in `recover.ts`'
- * own header: an agent that WROTE the words "rate limit" in an answer has not hit one. A
- * reply discussing billing, a README quoting a 401, a test name containing `usage limit`
- * are all prose. What separates the CLI's own report from prose about one is that the
- * report is shaped like a report.
+ * `STOPS` is a list of words, and a word is not a report. The first version of this
+ * required a `STOPS` word and a report shape anywhere in the row, and both lists carried a
+ * bare 401/403/429 - so one number in a sentence satisfied both. 2026-09-27, a PC pane
+ * researching Reddit sent Robert "stopped:" messages for `It returned 429 once, then 200
+ * with 100 posts in rank order, but no upvote counts.` and for a tool result reading `not
+ * a 403/rate-limit`: prose, every line a new message.
+ *
+ * So the whole line has to BE the vendor's sentence, anchored where the CLI starts it.
+ * Wording from this Mac's own record, not from memory: Claude Code 2.1.283's transcripts
+ * (`isApiErrorMessage` rows: `You've hit your weekly limit · resets Sep 24 at 3pm
+ * (Australia/Brisbane)` x85, `Not logged in · Please run /login` x23, `You've hit your
+ * session limit · resets 5pm ...` x13) and its binary (`API Error: 401 Invalid API key ·
+ * Please run /login`, `Session expired. Please run /login`, `credit balance is too low`);
+ * Codex's binary and pane history (`■ You've hit your usage limit. Visit https://...`,
+ * `exceeded retry limit, last status: `, `unexpected status `).
+ *
+ * Matched with the whitespace squeezed out, because the painted stream is not the screen:
+ * a CLI moves the cursor over a blank run instead of printing it, and once the escape codes
+ * are stripped `import { X } from` reads `import{X}from` (measured in this desk's pane
+ * history). The anchor is what keeps prose out, not the spacing.
  */
-const REPORTED =
-  /API Error|Request failed|Stream (error|interrupted)|usage limit reached|credit balance|Please run \/login|invalid[_ ]?api[_ ]?key|\berror\b|\b(401|403|429|529)\b/i
+const REPORT_SHAPES: RegExp[] = [
+  // Claude's API error line. The words after it say whether anything will retry it: the
+  // `STOPS` list is `recover`'s refusal, shared so the two files cannot disagree.
+  /^APIError:/i,
+  // Claude's session/weekly/fast/spend limits and team budget, Codex's usage limit.
+  /^You['’]?ve(hit|reached)your/i,
+  /^(ClaudeAI|Claude)usagelimitreached/i,
+  /^\d+-hourlimitreached/i,
+  /^(Your)?creditbalanceistoolow/i,
+  /^(Error:)?(Notloggedin|InvalidAPIkey|(Your)?session(has)?expired).*run\/login/i,
+  /^YourorganizationhasdisabledClaudesubscriptionaccess/i,
+  // Codex, after its own retries ran out, and its auth refusal.
+  /^(streamerror:)?exceededretrylimit,laststatus:(401|403|429)/i,
+  /^unexpectedstatus(401|403|429)/i
+]
+
+/** The gutter a CLI draws before its own output. A person's `>` is not one of them. */
+const GUTTER = /^[⎿■●⏺✗✘×│]+/
+
+/** Is this row, whole, a CLI's report that it stopped? */
+export function isStopReport(row: string): boolean {
+  const squeezed = row.replace(/\s+/g, '').replace(GUTTER, '')
+  if (!REPORT_SHAPES.some((shape) => shape.test(squeezed))) return false
+  // An API error that is NOT a stop - a cut-off turn, a 400 about tool ids - is somebody
+  // else's: `recover` finishes the first, and the second is not a wall.
+  return !/^APIError:/i.test(squeezed) || STOPS.test(row)
+}
 
 /**
  * The line that stopped this pane, or null.
  *
  * Four things have to be true of it, and three of them are refusals:
  *
- *  - it carries a `STOPS` word and is shaped like a report (`REPORTED`);
+ *  - it is the CLI's own report of a stop (`isStopReport`), not prose that mentions one;
  *  - it is not inside a drawn input box. A person asking an agent about an error types
  *    that error, and a half-typed composer row is not a failure - `promptBox` already
  *    knows what a box is;
  *  - it is not a person's submitted line echoed back. Once submitted, the CLI prints the
  *    quoted error into the transcript with no box around it, and the app would page about
  *    a question ABOUT an error;
- *  - it is not a cut-off turn `recover` is about to finish by itself. `INCOMPLETE` with no
- *    `STOPS` word is that case exactly, and it belongs to the other file - so it ends this
- *    read rather than being skipped, which stops an older error further up the tail being
- *    reported as the reason this turn ended.
+ *  - it is not a cut-off turn `recover` is about to finish by itself. `INCOMPLETE` on a
+ *    row that is not a stop is that case exactly, and it belongs to the other file - so it
+ *    ends this read rather than being skipped, which stops an older error further up the
+ *    tail being reported as the reason this turn ended.
  */
 export function stoppedLine(painted: string): string | null {
   const tail = painted.length > TAIL_CHARS ? painted.slice(-TAIL_CHARS) : painted
   const rows = tail.split('\n')
   for (let i = rows.length - 1; i >= 0; i--) {
     const row = rows[i]
-    if (!STOPS.test(row)) {
+    if (!isStopReport(row)) {
       if (row.includes(INCOMPLETE)) return null
       continue
     }
-    if (!REPORTED.test(row)) continue
     if (frameAt(row) >= 0) return null
     if (SOMEBODY_SAID.test(row)) return null
     return row.trim()
   }
   return null
+}
+
+/**
+ * One message per stop, per pane.
+ *
+ * A pane that has stopped keeps painting: the CLI redraws, retries by itself and says so
+ * again, an agent's own last words scroll past. Each of those is a new line, and a key
+ * that differs gets past `AskNotifier`'s five-minute hold - which is how one stopped pane
+ * became a phone buzzing over and over. After one message nothing more leaves for that
+ * pane until a turn is submitted into it, whatever the next line says.
+ */
+export interface StopLatch {
+  /** A stop was reported for this pane and no turn has been submitted since. */
+  reported: boolean
+}
+
+/** The line to send for this read, or null - including for every read after the first. */
+export function nextStop(latch: StopLatch, painted: string): string | null {
+  if (latch.reported) return null
+  const line = stoppedLine(painted)
+  if (line) latch.reported = true
+  return line
+}
+
+/** A turn was submitted into the pane: its next stop is news again. */
+export function turnSubmitted(latch: StopLatch): void {
+  latch.reported = false
 }
 
 /**

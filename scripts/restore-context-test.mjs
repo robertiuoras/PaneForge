@@ -27,7 +27,7 @@ import { fileURLToPath } from 'node:url'
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const tsc = (await import('typescript')).default
 
-/** Compile one dependency-free main-process module and hand back its exports. */
+/** Compile one main-process module with the bounded dependencies below. */
 function load(file, exportNames) {
   const src = readFileSync(join(root, file), 'utf8')
   const js = tsc.transpileModule(src, {
@@ -43,8 +43,8 @@ function load(file, exportNames) {
   return module.exports
 }
 
-// The modules under test import only node builtins; give the compiled CommonJS a
-// require that can reach them and nothing else.
+// Restore behavior uses node builtins and task instrumentation. Timing is exercised
+// with the real writer in main-performance-test, so keep this fixture synchronous.
 const builtins = new Map()
 function require_(id) {
   if (!builtins.has(id)) throw new Error(`unexpected import: ${id}`)
@@ -57,6 +57,7 @@ for (const id of ['node:fs', 'node:os', 'node:path', 'node:child_process', 'elec
     /* electron is not importable outside the app - nothing under test needs it */
   }
 }
+builtins.set('./mainPerformance', { measureMainTask: (_task, run) => run() })
 
 const T = load('src/main/transcripts.ts', [
   'noteSession',
@@ -77,7 +78,8 @@ assert.match(mainIndex, /resumableTranscript\(req\.resumeCwd \?\? req\.cwd, req\
 assert.match(mainIndex, /const file = req\.resumeId \? resumableTranscript\(req\.resumeCwd \?\? req\.cwd, req\.resumeId, req\.agent\) : null/, 'silent restore validates the selected provider transcript')
 assert.match(mainIndex, /const held = spec\.resumeId \? resumableTranscript\(spec\.resumeCwd \?\? spec\.cwd, spec\.resumeId, spec\.agent\) : null/, 'History restore validates the selected provider transcript')
 assert.match(mainIndex, /const unavailable = req\.agent !== 'shell' && !named/, 'a saved agent pane with no verified id becomes unavailable')
-assert.match(mainIndex, /asleep: unavailable \|\| req\.asleep/, 'unavailable restore is a process-free asleep placeholder')
+assert.match(mainIndex, /const asleep = unavailable \|\| req\.asleep/, 'unavailable restore is a process-free asleep placeholder')
+assert.match(mainIndex, /\r?\n\s+asleep,\r?\n/, '...and that is the reading the pane is started with')
 assert.match(mainIndex, /Saved conversation could not be verified\. It remains asleep/, 'the placeholder explains it was preserved instead of replaced')
 
 // ---------------------------------------------------------------- last prompt
@@ -320,6 +322,32 @@ try {
   rollout('one', codexId, cwd, undefined, 'pane three owns this Codex prompt')
   assert.equal(T.resumeIdFor('pane3'), codexId, 'Codex keeps its metadata-bound session id')
   assert.equal(T.resumable(cwd, codexId, 'codex'), true, 'an exact Codex id with an assistant reply is resumable')
+  // /new changes the native conversation without restarting its terminal pane.
+  const freshCwd = mkdtempSync(join(tmpdir(), 'pf-codex-new-'))
+  const freshOld = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'
+  const freshNew = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd'
+  T.noteSession('pane-codex-new', freshCwd, 'codex')
+  T.noteSubmittedPrompt('pane-codex-new', 'original conversation unique request')
+  rollout('fresh-old', freshOld, freshCwd, undefined, 'original conversation unique request')
+  assert.equal(T.resumeIdFor('pane-codex-new'), freshOld)
+  rollout('fresh-unrelated', freshNew, freshCwd, undefined, 'unrelated same directory conversation')
+  assert.equal(T.resumeIdFor('pane-codex-new'), freshOld, 'newest file alone never changes identity')
+  T.noteSubmittedPrompt('pane-codex-new', 'new conversation distinct request')
+  assert.equal(T.resumeIdFor('pane-codex-new'), freshOld, 'a prompt not written yet preserves the verified claim')
+  rollout('fresh-unrelated', freshNew, freshCwd, undefined, 'new conversation distinct request')
+  assert.equal(T.resumeIdFor('pane-codex-new'), freshNew, 'a new native conversation follows unique submitted proof')
+  assert.equal(T.resumeIdFor('pane-codex-new'), freshNew, 'the refreshed identity stays stable')
+  T.noteSession('pane-codex-abandoned', freshCwd, 'codex')
+  T.noteSubmittedPrompt('pane-codex-abandoned', 'original conversation unique request')
+  assert.equal(T.resumeIdFor('pane-codex-abandoned'), undefined, 'abandoned history cannot be claimed by another pane')
+  T.noteSubmittedPrompt('pane-codex-new', 'ambiguous later conversation request')
+  rollout('fresh-amb-one', 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', freshCwd, undefined, 'ambiguous later conversation request')
+  rollout('fresh-amb-two', 'ffffffff-ffff-4fff-8fff-ffffffffffff', freshCwd, undefined, 'ambiguous later conversation request')
+  assert.equal(T.resumeIdFor('pane-codex-new'), freshNew, 'ambiguous new evidence never swaps identities')
+  T.forgetSession('pane-codex-new')
+  T.forgetSession('pane-codex-abandoned')
+  rmSync(freshCwd, { recursive: true, force: true })
+
   const largeMetaId = '12121212-1212-4121-8121-121212121212'
   rollout('large-meta', largeMetaId, cwd, undefined, 'large native metadata is restorable', true, 'x'.repeat(22_000))
   assert.equal(T.resumable(cwd, largeMetaId, 'codex'), true, 'Codex metadata larger than 8KB is read through its complete first line')
@@ -484,7 +512,9 @@ assert.deepEqual(A.buildArgs(spec('codex'), { resume: true, resumeId: 'x' }), [
   'resume',
   'x',
   '-c',
-  'tui.resume_cwd="current"'
+  'tui.resume_cwd="current"',
+  '-c',
+  'check_for_update_on_startup=false'
 ])
 // The model still lands after the resume form, whichever one was used.
 assert.deepEqual(

@@ -20,6 +20,7 @@ import {
 import type { AttachIn, AttachResult } from '../../shared/attach'
 import type { BackJob } from '../../shared/backJobs'
 import type { BusyReason } from '../../shared/busy'
+import { readDeskReport, type DeskReport } from '../../shared/discordRpc'
 import type { Project, Session, StartSessionRequest, TurnClock } from '../../shared/types'
 import { WireBatch, type WireFrame } from '../../shared/wireBatch'
 import { Conn, deriveKey, type Msg, type PeerIdentity } from './wire'
@@ -32,7 +33,7 @@ export interface HostBackend {
   list(): Session[]
   buffer(id: string): string
   log(id: string, bytes: number): string
-  write(id: string, data: string): void
+  write(id: string, data: string, terminalReply?: boolean): void
   /** Submit an app-dispatched job through the owner's composer-aware prompt path. */
   sendPrompt(id: string, text: string): void
   resize(
@@ -128,6 +129,8 @@ class GuestConn {
   attached = new Set<string>()
   /** transcripts mid-transfer: a handoff's chunk frames, keyed by its xfer id */
   xfers = new Map<string, { payload: HandoffPayload; rid: number; parts: Buffer[]; size: number }>()
+  /** what that machine last said about its own panes and its Discord (`shared/discordRpc.ts`) */
+  desk?: DeskReport
   readonly since = Date.now()
   constructor(readonly conn: Conn) {}
 
@@ -202,6 +205,22 @@ export class RemoteHost extends EventEmitter {
    */
   tellPresence(person: boolean): void {
     for (const g of this.guests) g.conn.send({ t: 'presence', person })
+  }
+
+  /** What this desk last said about itself, re-sent to every guest that joins after. */
+  private desk: DeskReport | undefined
+
+  /** Tell every connected guest this desk's own numbers and whether it reaches Discord. */
+  tellDesk(report: DeskReport): void {
+    this.desk = report
+    for (const g of this.guests) g.conn.send({ t: 'desk', report })
+  }
+
+  /** What each connected guest last said about itself - nothing yet from an older build. */
+  deskReports(): Array<{ id: string; name: string; report?: DeskReport }> {
+    return [...this.guests]
+      .filter((g) => g.conn.peer.id)
+      .map((g) => ({ id: g.conn.peer.id, name: g.conn.peer.name, report: g.desk }))
   }
 
   list(): Guest[] {
@@ -393,6 +412,7 @@ export class RemoteHost extends EventEmitter {
     this.guests.add(guest)
     conn.on('msg', (m: Msg) => this.handle(guest, m))
     conn.send({ t: 'sessions', list: this.withKeepOpen() })
+    if (this.desk) conn.send({ t: 'desk', report: this.desk })
     this.emit('changed')
   }
 
@@ -467,6 +487,10 @@ export class RemoteHost extends EventEmitter {
           guest.conn.peer.person = typeof m.person === 'boolean' ? m.person : undefined
           this.emit('changed')
           return
+        case 'desk':
+          guest.desk = readDeskReport(m.report)
+          this.emit('desk')
+          return
         case 'detach':
           guest.attached.delete(id)
           // Whatever that guest borrowed goes back to this desk the moment it looks
@@ -485,7 +509,7 @@ export class RemoteHost extends EventEmitter {
         case 'write':
           // The writing viewer already registered this prompt from its own keystrokes.
           this.writingGuest = guest
-          try { this.backend.write(id, String(m.data ?? '')) }
+          try { this.backend.write(id, String(m.data ?? ''), m.terminalReply === true) }
           finally { this.writingGuest = null }
           return
         case 'prompt':

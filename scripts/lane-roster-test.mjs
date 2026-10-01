@@ -34,7 +34,7 @@
 //   node scripts/lane-roster-test.mjs
 
 import { execFileSync } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -113,13 +113,17 @@ const prompt = (hookFile, session, cwd) => {
     transcript_path: join(transcripts, `${session}.jsonl`),
     prompt: 'hello'
   })
+  // The hook stays silent when it printed the same table for this session+repo in the last
+  // 30 min (f2ce99aa), remembered in the temp dir; with fixed session ids a second run of
+  // this suite inside 30 min saw empty output. Fresh temp dir per prompt = first prompt.
+  const fresh = mkdtempSync(join(root, 'hooktmp-'))
   try {
     return execFileSync(process.execPath, [hookFile, '--event=prompt'], {
       input: payload,
       cwd,
       encoding: 'utf8',
       stdio: 'pipe',
-      env: { ...process.env, LANE_REGISTRY: REGISTRY, PANEFORGE_REPO: repo }
+      env: { ...process.env, LANE_REGISTRY: REGISTRY, PANEFORGE_REPO: repo, TMPDIR: fresh, TEMP: fresh, TMP: fresh }
     })
   } catch (e) {
     return `${e.stdout ?? ''}${e.stderr ?? ''}`
@@ -278,6 +282,10 @@ if (existsSync(INSTALLED)) {
   rmSync(join(dirOf['sess-a'], 'edit.txt'), { force: true })
 }
 
-rmSync(root, { recursive: true, force: true })
+try {
+  rmSync(root, { recursive: true, force: true })
+} catch {
+  /* Windows: a detached sweep the release started may still hold the folder (EPERM); it is temp */
+}
 console.log(failed ? `\n${failed} failed` : '\nall ok')
 process.exit(failed ? 1 : 0)

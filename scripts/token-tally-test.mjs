@@ -134,6 +134,10 @@ const ONE = 2 + 44167 + 23991 + 482
 {
   check('millions', formatTokens(1_480_000) === '1.5M', formatTokens(1_480_000))
   check('tens of millions lose the decimal', formatTokens(12_400_000) === '12M', formatTokens(12_400_000))
+  // A day of cache reads across every agent on two machines passes a billion (dev copy,
+  // 2026-09-27: the card said "1555M tokens today").
+  check('billions', formatTokens(1_555_000_000) === '1.6B', formatTokens(1_555_000_000))
+  check('tens of billions lose the decimal', formatTokens(12_400_000_000) === '12B', formatTokens(12_400_000_000))
   check('thousands', formatTokens(340_500) === '341k', formatTokens(340_500))
   check('under a thousand is itself', formatTokens(912) === '912')
   check('nothing spent is 0, never NaN', formatTokens(0) === '0' && formatTokens(NaN) === '0')

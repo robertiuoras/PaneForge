@@ -45,6 +45,8 @@ const {
   staysHere,
   suggestMove,
   budgetPlan,
+  turnsPlan,
+  TURNS_BEFORE_MOVE,
   endsOnArrival,
   travels,
   BUDGET_QUIET_MS,
@@ -836,10 +838,11 @@ checks += 3
   const at = app.indexOf('const handoffPanes = useCallback')
   const built = app.slice(at, app.indexOf('handoffPanesRef.current = handoffPanes', at))
   assert.match(built, /idleSleepPlan\(/, 'handoffPanes reads the sleep rung\'s own plan')
+  assert.match(built, /idleClosePlan\(reclaimPanes/, 'handoffPanes also holds back what the close clock is about to take into Review')
   assert.match(built, /SLEEPS_SOON_LEAD_MS/, '...at the move sweep\'s lead')
   assert.match(built, /sleepsSoon: sleepingSoon\.has\(s\.id\)/, '...and puts it on every pane')
   assert.match(built, /sleepPressureRef\.current/, '...under the same pressure reading the sleep sweep uses')
-  checks += 4
+  checks += 5
 }
 
 {
@@ -864,6 +867,16 @@ checks += 3
   eq('...said in plain words', words, 'a background agent (Visual review Design 4 pages)')
   eq('its task-notification ends it', runningAgentsIn(lines.join('\n'), opts), [])
   eq('...already on the queue-operation line, before the notification is delivered', runningAgentsIn(lines.slice(0, 3).join('\n'), opts), [])
+  {
+    // A Workflow graph (real result text, 2026-09-27) is out until its notification.
+    const wf = [
+      JSON.stringify({ type: 'assistant', timestamp: new Date(opts.now - 60_000).toISOString(), message: { content: [{ type: 'tool_use', id: 'toolu_wf', name: 'Workflow', input: { scriptPath: '/x/research-verify.mjs' } }] } }),
+      JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_wf', content: "Workflow launched in background. Task ID: wtzhrpsxe\nSummary: Breadth-first research: parallel lanes, adversarial verification, sourced synthesis\nRun ID: wf_c14fc25e-2b0" }] } })
+    ]
+    eq('a background workflow is running', runningAgentsIn(wf.join('\n'), opts).map((a) => [a.id, a.via, a.label]), [['wtzhrpsxe', 'Workflow', 'workflow research-verify']])
+    wf.push(JSON.stringify({ type: 'queue-operation', content: '<task-notification>\n<task-id>wtzhrpsxe</task-id>\n<tool-use-id>toolu_wf</tool-use-id>\n</task-notification>' }))
+    eq('...until its notification', runningAgentsIn(wf.join('\n'), opts), [])
+  }
   const scan = newAgentScan()
   scanAgentLines(scan, lines[0] + '\n')
   scanAgentLines(scan, lines[1] + '\n')
@@ -960,6 +973,44 @@ checks += 3
   check('an agent that outlasts the wait: given up with the reason', log2.some((l) => /gave up waiting after \d+ min - a background agent \(Visual review Design 4 pages\) is still running, so it stays here/.test(l)), log2)
   hq2.stop()
 
+  // A queued pane the app still owes a prompt - an automatic clear counting down, or its
+  // resume prompt - waits and starts no countdown, exactly like a running agent.
+  // s60-mulljm2l (2026-09-28 19:01Z) moved inside its clear's countdown and reached the PC
+  // un-cleared.
+  const log3 = []
+  const sent3 = []
+  let clock3 = NOW
+  const owedPane = [{ id: 'clearing', title: 'PaneForge', owedPrompt: true }]
+  const hq3 = new HandoffQueue({
+    list: () => owedPane,
+    busy: () => false,
+    send: async (id) => {
+      sent3.push(id)
+      return [{ id, ok: true }]
+    },
+    mark: () => {},
+    deviceName: () => 'PC',
+    config: () => DEFAULT_AUTO_HANDOFF,
+    log: (line) => log3.push(line),
+    now: () => clock3,
+    soon: (id, _device, at) => log3.push(`soon ${id} ${at === null ? 'null' : 'at'}`)
+  })
+  hq3.add('clearing', 'pc')
+  hq3.tick()
+  clock3 += 30_000
+  hq3.tick()
+  eq('the queue does not move a pane owed a prompt', sent3, [])
+  eq('...starts no countdown for it', log3.filter((l) => l === 'soon clearing at').length, 0)
+  eq('...keeps it queued', hq3.pending().map((p) => p.id), ['clearing'])
+  eq('...and says why in handoff.log, once', log3.filter((l) => l.includes('handoff: clearing still waiting - an automatic clear')).length, 1)
+  owedPane[0] = { id: 'clearing', title: 'PaneForge' }
+  hq3.tick()
+  eq('owed nothing and idle: a countdown, not a move', sent3, [])
+  clock3 += 16_000
+  hq3.tick()
+  eq('...then the move', sent3, ['clearing'])
+  hq3.stop()
+
   // Wiring the renderer and main must keep: the reading reaches every rung.
   const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
   assert.match(app, /subagent: s\.subagent,/, 'handoffPanes carries Session.subagent onto AutoPane')
@@ -970,4 +1021,116 @@ checks += 3
   checks += 3
 }
 
+
+// ---------------------------------------------------------------------------------------
+// The turn-count rung, replaying the desk of 2026-09-23 ~05:35Z (Mac, installed 0.8.222):
+// 8 agent panes, 5 of them taskdriver.ai (`taskdriver.ai`, `-a`, `-b`, `-c`, `-d`), all
+// `working`, each claude 150-265 MB; four `next dev` servers for taskdriver (ports
+// 3006-3009), next-server 56-642 MB each. `top`: 15G used, 6470M in the compressor, 139M
+// unused - and `kern.memorystatus_vm_pressure_level` = 1. `autoHandoffPlan` returned []
+// at `ok`; `budgetPlan` wanted a pane quiet BUDGET_QUIET_MS, which none ever was.
+{
+  const capOut = join(work, 'capacity.bundle.cjs')
+  buildSync({ absWorkingDir: root, entryPoints: ['src/shared/capacity.ts'], bundle: true, format: 'cjs', platform: 'node', outfile: capOut })
+  const cap = createRequire(import.meta.url)(capOut)
+
+  // 1. The memory verdict, read honestly: the compressor beside the flag.
+  const measured = cap.compressorLevel({ totalMb: 16384, unusedMb: 139, compressorMb: 6470 })
+  assert.equal(measured, 'warn', '6470M compressed / 139M unused of 16384M reads warn whatever the flag said')
+  const pressure = cap.worstPressure('normal', measured)
+  const desk0535 = cap.assess({ totalMb: 16384, pressure, localPanes: 8, keepLocal: 2, peerAvailable: true, willMove: true })
+  assert.notEqual(desk0535.level, 'ok', 'the 05:35Z desk is not ok')
+  const lowUse = cap.assess({
+    totalMb: 16384,
+    pressure: cap.worstPressure('normal', cap.compressorLevel({ totalMb: 16384, unusedMb: 6000, compressorMb: 900 })),
+    localPanes: 8,
+    keepLocal: 2,
+    peerAvailable: true,
+    willMove: true
+  })
+  assert.equal(lowUse.level, 'ok', 'the same eight panes at genuinely low use read ok')
+
+  const pcProjects = ['taskdriver.ai', 'assistant', 'PaneForge', 'claude-memory'].map((name) => ({ name, path: `C:/Users/Gamer/Desktop/Projects/${name}` }))
+  const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: pcProjects }]
+  const now = 1_758_600_000_000
+  const pane = (id, projectName, memMb, extra = {}) => ({
+    id,
+    agent: 'claude',
+    resumeId: `conv-${id}`,
+    state: 'working',
+    lastKeyboard: now - 30_000,
+    lastOutput: now - 1_000,
+    focused: false,
+    visible: true,
+    remote: false,
+    handingOff: false,
+    asking: false,
+    projectName,
+    memMb,
+    cpuPct: 12,
+    turnsHere: 0,
+    ...extra
+  })
+  // memMb = the claude's own RSS + the next-server it started (`PaneUsage.devMb`).
+  const desk = [
+    pane('td', 'taskdriver.ai', 265 + 642, { turnsHere: 3 }),
+    pane('td-a', 'taskdriver.ai', 210 + 56, { turnsHere: 3 }),
+    pane('td-b', 'taskdriver.ai', 190 + 300, { turnsHere: 2 }),
+    pane('td-c', 'taskdriver.ai', 150 + 310, { turnsHere: 5 }),
+    pane('td-d', 'taskdriver.ai', 180, { turnsHere: 1 }),
+    pane('as', 'assistant', 220, { turnsHere: 4 }),
+    pane('pf', 'PaneForge', 250, { turnsHere: 6, focused: true }),
+    pane('cm', 'claude-memory', 160, { turnsHere: 3 })
+  ]
+  const plan = (panes, v = desk0535, blocked = {}, cfg = DEFAULT_AUTO_HANDOFF) => turnsPlan(panes, v, peers, cfg, blocked, now)
+  const ready = (panes, ...ids) => panes.map((p) => (ids.includes(p.id) ? { ...p, state: 'ready' } : p))
+  const withTd = (panes, extra) => ready(panes, 'td').map((p) => (p.id === 'td' ? { ...p, ...extra } : p))
+
+  // 2. Every pane mid-turn: nothing, and nothing mid-turn is ever picked.
+  assert.deepEqual(plan(desk), [], 'eight working panes arm nothing')
+  // 3. taskdriver.ai finishes its 3rd turn: armed for the PC.
+  const one = plan(ready(desk, 'td'))
+  assert.equal(one.length, 1, 'one pane armed')
+  assert.equal(one[0].id, 'td')
+  assert.equal(one[0].device, 'pc')
+  assert.equal(one[0].cwd, 'C:/Users/Gamer/Desktop/Projects/taskdriver.ai')
+  // 4. Two finish together: the one owning the bigger server goes, ONE per sweep.
+  const two = plan(ready(desk, 'td-a', 'td-c'))
+  assert.deepEqual(two.map((p) => p.id), ['td-c'], 'dearest first (150+310 over 210+56), one per sweep')
+  // 5. A pane on its 2nd turn is not a session yet.
+  assert.deepEqual(plan(ready(desk, 'td-b')), [], 'two turns is not enough')
+  assert.equal(TURNS_BEFORE_MOVE, 3)
+  // 6. The same desk at genuinely low use arms nothing, however many turns.
+  assert.deepEqual(plan(ready(desk, 'td', 'td-c', 'as'), lowUse), [], 'low use: nothing')
+  // 7. Refusals every rung keeps.
+  assert.deepEqual(plan(ready(desk, 'pf')), [], 'the focused pane is never taken')
+  assert.deepEqual(plan(ready(desk, 'td'), desk0535, { td: now + 60_000 }), [], 'Keep it here (blocked) holds')
+  assert.deepEqual(plan(ready(desk, 'td'), desk0535, {}, { ...DEFAULT_AUTO_HANDOFF, keepHere: ['taskdriver.ai'] }), [], 'a kept project stays')
+  assert.deepEqual(plan(withTd(desk, { subagent: 'a background agent' })), [], 'a running subagent holds it')
+  assert.deepEqual(plan(withTd(desk, { backJob: 'npm run build' })), [], 'a background job holds it')
+  assert.deepEqual(plan(withTd(desk, { machineBound: 'chrome --remote-debugging-port=9333' })), [], 'machine-bound work stays')
+  assert.deepEqual(plan(withTd(desk, { shareable: false })), [], 'code that cannot get there stays')
+  assert.deepEqual(plan(withTd(desk, { stayHere: true })), [], 'a pane the person pinned stays')
+  assert.deepEqual(plan(withTd(desk, { asking: true })), [], 'a question is never moved')
+  assert.deepEqual(plan(withTd(desk, { arrivedFrom: 'pc' })), [], 'never back where it came from')
+  assert.deepEqual(plan(withTd(desk, { resumeId: undefined })), [], 'no conversation to resume, no move')
+  assert.deepEqual(plan(withTd(desk, { ask: 'remove onedrive from my mac' })), [], 'a Mac-only ask stays')
+  assert.deepEqual(plan(ready(desk, 'td'), desk0535, {}, { ...DEFAULT_AUTO_HANDOFF, enabled: false }), [], 'switched off')
+  // 8. Within the budget there is nothing to give back: two agents on a keepLocal of 2.
+  assert.deepEqual(plan(ready(desk.slice(0, 2), 'td')), [], 'two agents within keepLocal 2 arm nothing')
+  assert.deepEqual(plan(ready(desk.slice(0, 1), 'td')), [], 'never the last pane')
+  checks += 26
+
+  // Wiring the renderer and main must keep.
+  const { readFileSync } = await import('node:fs')
+  const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
+  assert.match(app, /turnsHere: s\.turnsHere/, 'handoffPanes carries Session.turnsHere onto AutoPane')
+  assert.match(app, /turnsPlan\(panes, capacity, candidates, cfg, handoffBlocked\.current, at\)/, 'the turn-end effect runs turnsPlan through the same countdown')
+  assert.match(app, /\.devMb \?\? 0\)/, 'the dev server the pane started is part of its cost')
+  const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
+  assert.match(sessions, /live\.meta\.turnsHere = \(live\.meta\.turnsHere \?\? 0\) \+ 1/, 'endRun counts the turn')
+  const memory = readFileSync(join(root, 'src/main/memory.ts'), 'utf8')
+  assert.match(memory, /worstPressure\(darwinLevel, darwinCompressor\)/, 'the Mac verdict is the worse of the flag and the compressor')
+  checks += 5
+}
 console.log(`autohandoff: ${checks} checks passed`)

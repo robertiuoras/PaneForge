@@ -65,7 +65,7 @@ function page(c) {
   <div class="app"><div class="sidebar" style="width:260px"><div class="list">
     <div class="row">
       <div class="row-text">
-        <div class="row-title has-key"><span class="num-wrap"><span class="num">1</span></span>${mark}<span class="row-name">${c.cardName ?? 'PaneForge'}</span><span class="row-tags">${c.title ?? ''}</span>${c.state ?? ''}</div>
+        <div class="row-title has-key">${c.state ?? ''}<span class="row-tags">${c.title ?? ''}</span><span class="num-wrap"><span class="num">1</span></span>${mark}<span class="row-name">${c.cardName ?? 'PaneForge'}</span></div>
         <div class="row-place">${LOGO}${c.place ?? PLACE()}</div>
         <div class="row-sub">${c.sub}</div>
       </div>

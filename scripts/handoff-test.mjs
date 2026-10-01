@@ -51,7 +51,7 @@ function bundle() {
       `export { RemoteClient } from ${p('src/main/remote/client.ts')}`,
       `export { newCode } from ${p('src/main/remote/wire.ts')}`,
       `export { sendHandoff, receiveHandoff, writeConversation } from ${p('src/main/handoff.ts')}`,
-      `export { handoffReceiverCanQuit, mapCwd, handoffReport, handoffConversationError } from ${p('src/shared/handoff.ts')}`
+      `export { handoffReceiverCanQuit, mapCwd, handoffReport, handoffConversationError, landingCopy } from ${p('src/shared/handoff.ts')}`
     ].join('\n'),
     'utf8'
   )
@@ -96,7 +96,54 @@ function inertBackend() {
 }
 
 const mod = await import(pathToFileURL(bundle()).href)
-const { RemoteHost, RemoteClient, newCode, sendHandoff, receiveHandoff, writeConversation, mapCwd, handoffReceiverCanQuit, handoffReport, handoffConversationError } = mod
+const { RemoteHost, RemoteClient, newCode, sendHandoff, receiveHandoff, writeConversation, mapCwd, handoffReceiverCanQuit, handoffReport, handoffConversationError, landingCopy } = mod
+
+// ---------------------------------------------------------------- landingCopy
+// Pure decision, no git and no disk: a blocked handoff must land in the first clean
+// merged free copy, or make the first missing label, or refuse by name - see
+// src/shared/handoff.ts. `handoff.log` 2026-09-23 is the incident this replaces: three
+// panes refused outright because the same-named checkout was busy, with clean lane
+// copies sitting right beside it unused.
+console.log('landingCopy')
+{
+  const copy = (label, over = {}) => ({
+    path: `/repo-${label}`,
+    label,
+    exists: true,
+    isCopy: true,
+    dirty: false,
+    unmerged: 0,
+    inUse: false,
+    ...over
+  })
+  const blocked = 'repo here has uncommitted work on this machine - not touching it'
+
+  // (a) same-named checkout dirty, -a exists clean merged free -> lands -a, make false.
+  const a = landingCopy(blocked, [copy('a')])
+  ok('a clean free copy is reused, not made', 'path' in a && a.path === '/repo-a' && a.make === false, JSON.stringify(a))
+
+  // (b) -a dirty, -b in use, -c missing -> make -c.
+  const b = landingCopy(blocked, [
+    copy('a', { dirty: true }),
+    copy('b', { inUse: true }),
+    { path: '/repo-c', label: 'c', exists: false, isCopy: false, dirty: false, unmerged: -1, inUse: false }
+  ])
+  ok('the first missing label is made when every existing one is busy', 'path' in b && b.path === '/repo-c' && b.label === 'c' && b.make === true, JSON.stringify(b))
+
+  // (c) every copy dirty or in use, none missing -> refusal names the blocked sentence
+  // and every copy with its reason.
+  const c = landingCopy(blocked, [copy('a', { dirty: true }), copy('b', { inUse: true })])
+  ok(
+    'no free copy at all refuses, naming the original reason',
+    'refusal' in c && c.refusal.includes(blocked),
+    JSON.stringify(c)
+  )
+  ok('...and names each copy and its own reason', /repo-a has uncommitted work/.test(c.refusal) && /repo-b is in use/.test(c.refusal), c.refusal)
+
+  // (d) unmerged: -1 (could not be told) is never treated as clean.
+  const d = landingCopy(blocked, [copy('a', { unmerged: -1 })])
+  ok('an unmerged reading that could not be checked is not clean', 'refusal' in d, JSON.stringify(d))
+}
 
 // ---------------------------------------------------------------- mapCwd
 console.log('mapCwd')
@@ -604,6 +651,36 @@ console.log('move now')
   interrupted = 0
   const idle = await sendHandoff(nowSender, 'pc', { ids: ['s1'], now: true })
   ok('an idle pane moved with now is not interrupted and not asked to carry on', idle[0]?.ok === true && interrupted === 0 && received.at(-1)?.continueWith === undefined && started.at(-1)?.prompt === undefined, idle[0]?.error)
+}
+
+// ---------------------------------------------------------------- owed a prompt
+// An idle pane the app still owes a prompt - an automatic clear counting down, or its
+// resume prompt not yet sent - is held like a turn. s60-mulljm2l (2026-09-28 19:01Z) was
+// moved inside its clear's countdown: the PC resumed it at 259k tokens, un-cleared, and the
+// /clear was typed into the copy being closed.
+console.log('owed a prompt')
+{
+  const deliveriesBefore = received.length
+  const queued = []
+  const owedSender = {
+    ...sender,
+    list: () => [{ id: 's1', title: 'proj', cwd: repo, agent: 'claude', status: 'idle', lastOutput: 0, createdAt: 0, owedPrompt: true }],
+    busy: () => false,
+    queue: (id, device, closeAfter) => queued.push({ id, device, closeAfter })
+  }
+  const held = await sendHandoff(owedSender, 'pc', { ids: ['s1'] })
+  ok(
+    'an idle pane owed a prompt is queued, not delivered',
+    held[0]?.pending === true && queued.length === 1 && queued[0].id === 's1' && received.length === deliveriesBefore,
+    JSON.stringify({ item: held[0], queued, delivered: received.length - deliveriesBefore })
+  )
+  const beforeNow = received.length
+  const now = await sendHandoff(
+    { ...owedSender, queue: () => { throw new Error('a NOW move must never queue') }, interrupt: async () => true, selfDevice: () => 'mac' },
+    'pc',
+    { ids: ['s1'], now: true }
+  )
+  ok('...and a NOW move of it is unchanged: moved at once, never queued', now[0]?.ok === true && !now[0]?.pending && received.length === beforeNow + 1, now[0]?.error)
 }
 
 // ---------------------------------------------------------------- refusals

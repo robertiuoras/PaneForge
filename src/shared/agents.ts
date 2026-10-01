@@ -670,9 +670,29 @@ const CLAUDE_CODE_AGENTS = new Set([
   'anthropic'
 ])
 
+/**
+ * Which CLIs read images directly off the OS clipboard on ^V.
+ *
+ * Claude Code reads an image off the clipboard when it gets a ^V; modern Codex (0.150+)
+ * and Antigravity CLI (1.2+) also read macOS/OS clipboard images on ^V.
+ *
+ * `openrouter`, `deepseek` and `glm` are Claude Code with a different base URL, so they
+ * read the clipboard too - the binary is what decides this, never the model behind it.
+ */
+const CLIPBOARD_IMAGE_AGENTS = new Set([
+  'claude',
+  'openrouter',
+  'deepseek',
+  'glm',
+  'claude-code',
+  'anthropic',
+  'codex',
+  'antigravity'
+])
+
 /** Would a raw ^V put an image in front of this agent, rather than nothing? */
 export function pastesClipboardImage(agent: string | undefined): boolean {
-  return !!agent && CLAUDE_CODE_AGENTS.has(agent)
+  return !!agent && CLIPBOARD_IMAGE_AGENTS.has(agent)
 }
 
 /**
@@ -1039,6 +1059,11 @@ export function buildArgs(
   // person's global Codex preference is untouched.
   if (spec.id === 'codex' && opts.resume)
     argv.push('-c', 'tui.resume_cwd="current"')
+  // Codex opens on an "Update available" chooser whose first answer is "Update now", so
+  // the first Enter a pane receives (a queued prompt, a relay) starts a global install
+  // instead of the task. PaneForge's setup rows run `codex update` on purpose instead.
+  // Process-scoped, like the two overrides around it.
+  if (spec.id === 'codex') argv.push('-c', 'check_for_update_on_startup=false')
   // How hard the pane starts out thinking. Codex only, and only when the pane was opened
   // with that reading switched on: it is a `-c` override of `model_reasoning_effort` for
   // THIS process, so nothing on disk changes and the person's own config.toml is left

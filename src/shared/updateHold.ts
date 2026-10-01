@@ -117,3 +117,43 @@ export const HOLD_LOG_INTERVAL_MS = 30 * 60_000
 export function shouldLogHold(now: number, lastLoggedAt: number): boolean {
   return lastLoggedAt === 0 || now - lastLoggedAt >= HOLD_LOG_INTERVAL_MS
 }
+
+// --- installing a downloaded update by itself --------------------------------------
+//
+// "Restart now" alone left desks versions behind: on a desk where some pane always has a
+// conversation open, nobody presses it (2026-09-02: the PC sat on 0.8.177 with 0.8.190
+// ready). Robert, 2026-09-24: a staged update may install itself when the desk is idle.
+// Idle means nobody would notice the restart: nobody has touched this computer for
+// DESK_QUIET_MS, no pane has printed or been typed into for as long, nothing is mid-turn,
+// waiting on a question, drafting or running a background job, and the panes will come
+// back afterwards (restore after update on). Every one of those holds the install; the
+// next check tries again, and nothing counts down.
+
+/** Minutes, rounded up, for a log line. */
+function mins(ms: number): number {
+  return Math.max(1, Math.ceil(ms / 60_000))
+}
+
+/** Why a downloaded update may not install by itself right now, or null when it may. */
+export function idleInstallBlocker(o: {
+  sessions: readonly RunState[]
+  now: number
+  /** the OS's time since any keyboard or mouse input on this computer */
+  personIdleMs: number
+  restoreAfterUpdate: boolean
+  gameActive: boolean
+}): string | null {
+  if (!o.restoreAfterUpdate) return 'restore after update is off, so the panes would not come back'
+  if (o.gameActive) return 'a game is on screen'
+  if (o.personIdleMs < DESK_QUIET_MS) return `someone used this computer ${mins(o.personIdleMs)} min ago`
+  const live = o.sessions.filter((s) => s.status !== 'exited')
+  const count = (pick: (s: RunState) => unknown): number => live.filter(pick).length
+  const midTurn = count((s) => s.runSince || s.status === 'working' || s.status === 'starting')
+  if (midTurn) return `${midTurn} pane(s) mid-turn`
+  if (count((s) => s.ask)) return 'a pane is waiting on a question'
+  if (count((s) => s.drafting)) return 'a pane has a half-typed prompt'
+  if (count((s) => s.backJob)) return 'a pane is running a background job'
+  const last = Math.max(0, ...live.map((s) => Math.max(s.lastOutput ?? 0, s.lastKeyboard ?? 0)))
+  if (o.now - last < DESK_QUIET_MS) return `a pane was active ${mins(o.now - last)} min ago`
+  return null
+}

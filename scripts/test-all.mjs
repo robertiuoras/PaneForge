@@ -22,7 +22,7 @@
 //   node scripts/test-all.mjs rail theme  only the ones whose name contains one of these
 
 import { execFileSync, spawn, spawnSync, execSync } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, readdirSync, statSync } from 'node:fs'
 import { cpus, loadavg, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -39,6 +39,9 @@ if (process.platform !== 'win32') {
 // name -> the script file, in the order they run. Cheapest first is deliberate: a broken
 // build should say so in a second rather than after the slow ones.
 const TESTS = [
+  ['freshreplay', 'fresh-replay-test.mjs'],
+  ['codexworkers', 'codex-workers-test.mjs'],
+  ['paneanswer', 'pane-answer-test.mjs'],
   ['remotesuite', 'test-remote-test.mjs'],
   ['testchrome', 'test-chrome-test.mjs'],
   ['promptreview', 'prompt-review-test.mjs'],
@@ -47,6 +50,7 @@ const TESTS = [
   ['reviewlist', 'review-list-test.mjs'],
   ['doneclose', 'done-close-test.mjs'],
   ['replyread', 'reply-read-test.mjs'],
+  ['bgshell', 'background-shell-test.mjs'],
   ['claudemd', 'claudemd-size-test.mjs'],
   ['copylogic', 'copy-logic-test.mjs'],
   ['tokentally', 'token-tally-test.mjs'],
@@ -83,6 +87,7 @@ const TESTS = [
   ['remotereset', 'remote-reset-test.mjs'],
   ['terminalprotocol', 'terminal-protocol-test.mjs'],
   ['exitclose', 'exitclose-test.mjs'],
+  ['closedpipe', 'closedpipe-test.mjs'],
   ['headerfit', 'header-fit-test.mjs'],
   ['promptseed', 'promptseed-test.mjs'],
   ['renderwatch', 'renderwatch-test.mjs'],
@@ -124,6 +129,10 @@ const TESTS = [
   ['promptsubmit', 'prompt-submit-test.mjs'],
   ['anim', 'anim-cost-test.mjs'],
   ['scrollclear', 'scroll-clear-test.mjs'],
+  ['cursorup', 'cursor-up-realign-test.mjs'],
+  ['pushedoff', 'pushed-off-test.mjs'],
+  ['wipefile', 'wipe-file-test.mjs'],
+  ['wordrewrap', 'word-rewrap-test.mjs'],
   ['replaywidth', 'replay-width-test.mjs'],
   ['panegrid', 'pane-grid-test.mjs'],
   ['markanchor', 'mark-anchor-test.mjs'],
@@ -141,6 +150,8 @@ const TESTS = [
   ['continuation', 'continuation-test.mjs'],
   ['claim', 'transcript-claim-test.mjs'],
   ['cliclaim', 'transcript-cli-claim-test.mjs'],
+  ['mainperformance', 'main-performance-test.mjs'],
+  ['codexprocessclaim', 'codex-process-claim-test.mjs'],
   ['clearclaim', 'transcript-clear-test.mjs'],
   ['quitwords', 'quit-words-test.mjs'],
   ['screenview', 'screen-view-test.mjs'],
@@ -153,6 +164,11 @@ const TESTS = [
   ['hookdeny', 'hookdeny-test.mjs'],
   ['deaddev', 'deaddev-test.mjs'],
   ['exitedsweep', 'exited-sweep-test.mjs'],
+  ['pfaccess', 'pf-access-test.mjs'],
+  ['pfhelp', 'pf-ctl-help-test.mjs'],
+  ['pfcontinue', 'pf-continue-test.mjs'],
+  ['firstrun', 'first-run-test.mjs'],
+  ['installwedge', 'install-wedge-test.mjs'],
   ['sleep', 'sleep-test.mjs'],
   ['wakeplan', 'wakeplan-test.mjs'],
   ['deviceopen', 'device-open-test.mjs'],
@@ -168,6 +184,7 @@ const TESTS = [
   ['autohandoff', 'autohandoff-test.mjs'],
   ['offloadfirst', 'offloadfirst-test.mjs'],
   ['idlequit', 'idlequit-test.mjs'],
+  ['idlehide', 'idlehide-test.mjs'],
   ['winshortcut', 'winshortcut-test.mjs'],
   ['promptecho', 'promptecho-test.mjs'],
   ['promptpad', 'promptpad-test.mjs'],
@@ -185,8 +202,15 @@ const TESTS = [
   ['setupcheck', 'setup-check-test.mjs'],
   ['sessioncopies', 'session-copies-test.mjs'],
   ['lanevisitor', 'lane-visitor-test.mjs'],
+  ['laneorphan', 'lane-orphan-test.mjs'],
+  ['laneparked', 'lane-parked-test.mjs'],
   ['lanework', 'lane-work-test.mjs'],
   ['lanemergehold', 'lane-mergehold-test.mjs'],
+  // A cleared pane keeps its lane; an unrecorded open merge can be resolved; identical
+  // dirt in main does not hold a merge (2026-09-28).
+  ['lanecleared', 'lane-cleared-test.mjs'],
+  // taskdriver.ai's PC-proof gate; a ready lane's own check is what `ready` reports (macOS only).
+  ['lanetaskdriver', 'lane-taskdriver-pc-test.mjs'],
   // A lane whose hooks rewrite its ledger every turn is not dirty forever.
   ['laneledger', 'lane-ledger-test.mjs'],
   ['issues', 'issues-dialog-test.mjs'],
@@ -198,21 +222,23 @@ const TESTS = [
   // A copy of a project is out of Finder, and a project that merely ends in `-a` is not.
   ['lanehidden', 'lane-hidden-test.mjs'],
   ['lanetaken', 'lane-taken-test.mjs'],
+  ['reopenhold', 'reopen-hold-test.mjs'],
   // Both folder buttons on a pane open the project, never the copy the pane runs in.
   ['projectfolder', 'project-folder-test.mjs'],
   ['clientname', 'client-name-test.mjs'],
   ['renametrigger', 'rename-trigger-test.mjs'],
-  ['resolvedname', 'resolved-name-test.mjs'],
+  ['clititle', 'cli-title-test.mjs'],
+  ['pfrename', 'pf-rename-test.mjs'],
   ['peerchrome', 'peer-chrome-test.mjs'],
-  ['remotelogin', 'remote-login-test.mjs'],
-  ['loginkeys', 'login-keys-test.mjs'],
   ['projectname', 'project-name-test.mjs'],
   ['historysearch', 'history-search-test.mjs'],
+  ['chatsearch', 'chat-search-test.mjs'],
   ['projectroot', 'projectroot-test.mjs'],
   ['agentenv', 'agent-env-test.mjs'],
   ['tailnet', 'tailnet-test.mjs'],
   ['panetrust', 'pane-trust-test.mjs'],
   ['agytrust', 'agy-trust-test.mjs'],
+  ['codextrust', 'codex-trust-test.mjs'],
   ['agyconv', 'agy-conversation-test.mjs'],
   ['unreleased', 'unreleased-test.mjs'],
   // Loopback only, ~5s: the full remote suite stays out for being slow, but a device
@@ -325,6 +351,7 @@ const TESTS = [
   ['gate', 'release-gate-test.mjs'],
   ['conflict', 'conflict-test.mjs'],
   ['lanedispatch', 'lane-dispatch-test.mjs'],
+  ['lanecompletion', 'lane-completion-test.mjs'],
   ['queuedprompt', 'queued-prompt-test.mjs']
 ]
 
@@ -403,7 +430,12 @@ const SERIAL = new Set([
   // 54.6px of 116px`. It lays out a card whose content is a RUNNING clock, so a slow
   // machine writes a wider string than the box the assertion was written against. The
   // contention is the test's input, not its environment.
-  'cardfit'
+  'cardfit',
+  // Measured on the PC 2026-09-28: four full runs, each 1 of 280 red, always this suite
+  // and a different check each time (startup wait log, pid-file short wait, restarted
+  // pane, silent command); 3 of 3 green alone. The app's timers and the test's clock share
+  // one event loop, so a pool's stall moves the ground every check stands on.
+  'promptsubmit'
 ])
 
 const failed = []
@@ -432,10 +464,54 @@ const TMP_ROOT = mkdtempSync(join(tmpdir(), 'pf-test-run-'))
 // A suite's headless Chrome outlives a killed run (ppid 1) and then blocks the real Chrome
 // from opening: macOS activates the running bundle instead of launching a window. Kill any
 // Chrome whose profile lives under this run's root before dropping the root.
-const dropTmp = () => {
-  try { execSync(`pkill -9 -f -- "--user-data-dir=${TMP_ROOT}"`, { stdio: 'ignore' }) } catch {}
-  rmSync(TMP_ROOT, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+// `pkill` does not exist on Windows, so this swallowed its own ENOENT and left every test
+// Chrome running. The profile stayed locked, `rmSync` threw EPERM, and the whole root
+// leaked - 10 roots and 1.3 GB of them on the PC by 2026-09-23. Match the process by its
+// `--user-data-dir`, the same way the POSIX branch does, so this cannot reach the user's
+// own Chrome or another run's.
+const killChromeUnder = (root) => {
+  if (process.platform === 'win32') {
+    const q = root.replace(/'/g, "''")
+    execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+      `Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" |` +
+      ` Where-Object { $_.CommandLine -like '*--user-data-dir=${q}*' } |` +
+      ` ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`
+    ], { stdio: 'ignore', timeout: 20_000, windowsHide: true })
+    return
+  }
+  execSync(`pkill -9 -f -- "--user-data-dir=${root}"`, { stdio: 'ignore' })
 }
+// A root something still holds open (a Chrome not yet let go, a child whose working folder
+// is inside it) threw EPERM out of this `exit` handler, and a throw there exits 1: "20
+// tests passed" then red, on 2026-09-28. The verdict is the suites', not the cleanup's -
+// say it and leave the root to `sweepStaleRoots` below.
+const dropTmp = () => {
+  try { killChromeUnder(TMP_ROOT) } catch {}
+  try {
+    rmSync(TMP_ROOT, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+  } catch (err) {
+    console.error(`test-all: could not remove ${TMP_ROOT} (${err.code ?? err.message}); a later run removes it`)
+  }
+}
+// A run killed before `exit` - or one whose cleanup lost a race with a Chrome that had not
+// released its handles yet - leaves its root behind for good, because the name is unique
+// per run and nothing else knows it. Reclaim the ones old enough that no live run owns them.
+const sweepStaleRoots = () => {
+  const parent = tmpdir()
+  let entries
+  try { entries = readdirSync(parent) } catch { return }
+  for (const name of entries) {
+    if (!name.startsWith('pf-test-run-')) continue
+    const full = join(parent, name)
+    if (full === TMP_ROOT) continue
+    try {
+      if (Date.now() - statSync(full).mtimeMs < 6 * 60 * 60 * 1000) continue
+    } catch { continue }
+    try { killChromeUnder(full) } catch {}
+    try { rmSync(full, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }) } catch {}
+  }
+}
+sweepStaleRoots()
 // `exit` alone leaks the root on every Ctrl-C, and this name is unique per run, so nothing
 // later reclaims it. A signal has to drop it itself, then die of that signal.
 process.on('exit', dropTmp)

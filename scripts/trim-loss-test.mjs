@@ -95,7 +95,7 @@ const pane = readFileSync(new URL('../src/renderer/src/components/TerminalPane.t
 const rd = pane.slice(pane.indexOf('const redrawHistory = async'), pane.indexOf('paneRedraw.set(sessionId'))
 const main = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
 ok('the re-render requests an ordered full-history replay', rd.includes('api.replayHistory(sessionId)'))
-ok('main reads disk history with a live buffer fallback', main.includes('history.tail(id, 4 * 1024 * 1024) || manager.buffer(id)'))
+ok('main retains disk history and includes the current live tail', main.includes('freshReplay(history.tail(id, 4 * 1024 * 1024), manager.buffer(id))'))
 ok('the renderer cannot erase output by resetting around an asynchronous log read', !rd.includes('t.reset()') && !rd.includes('api.paneLog'))
 
 // A controlled transcript with both retained lines and in-place progress repaints.

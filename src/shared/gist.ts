@@ -133,6 +133,12 @@ export interface SessionNotes {
    * it is something done TO the pane, not work asked of it.
    */
   askLines?: string[]
+  /**
+   * The newest real ask. `askLines` keeps the FIRST 80, so on a long session its last line
+   * is the 80th ask, not the one the pane is on now - which is what Ctrl K says under an
+   * open pane.
+   */
+  lastAsk?: string
 }
 
 /** A slash command says what was DONE to the pane, never what it was working on. */
@@ -164,6 +170,7 @@ export function noteAskInto(notes: SessionNotes, prompt: string): SessionNotes {
     const askLines = out.askLines ? [...out.askLines] : []
     if (askLines.length < MAX_ASK_LINES) askLines.push(clip(line, ASK_LINE_CAP))
     out.askLines = askLines
+    out.lastAsk = clip(line, ASK_LINE_CAP)
   }
   if (mayClearScreen(prompt)) {
     out.fresh = true
