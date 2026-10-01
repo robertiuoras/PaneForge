@@ -172,6 +172,7 @@ const TESTS = [
   ['sleep', 'sleep-test.mjs'],
   ['wakeplan', 'wakeplan-test.mjs'],
   ['deviceopen', 'device-open-test.mjs'],
+  ['openfailed', 'open-failed-test.mjs'],
   ['mascot', 'mascot-test.mjs'],
   ['petmood', 'petmood-test.mjs'],
   ['tips', 'tips-test.mjs'],
