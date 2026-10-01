@@ -21,7 +21,7 @@ const fixtureCodexHome = join(work, 'codex')
 
 const out = join(work, 'transcripts.cjs')
 buildSync({ absWorkingDir: root, entryPoints: ['src/main/transcripts.ts'], bundle: true, format: 'cjs', platform: 'node', outfile: out, define: { 'process.env.CODEX_HOME': JSON.stringify(fixtureCodexHome) } })
-const { codexAcceptedPrompt, codexConversationReceipt, codexQuestionPending, noteSession, noteSubmittedPrompt, resumeIdFor, forgetSession, projectDir, nativeTranscriptPage } = createRequire(import.meta.url)(out)
+const { codexTranscriptPath, codexAcceptedPrompt, codexConversationReceipt, codexQuestionPending, noteSession, noteSubmittedPrompt, resumeIdFor, forgetSession, projectDir, nativeTranscriptPage } = createRequire(import.meta.url)(out)
 const cwd = '/Users/native/Projects/reader'
 const line = (value) => JSON.stringify(value)
 const claudeRow = (type, content, extra = {}) => line({ type, timestamp: '2026-09-09T01:02:03.000Z', message: { role: type, content }, ...extra })
@@ -97,7 +97,7 @@ try {
   // Codex records use response_item payloads. Tool and tool-output rows are visible rather
   // than dropped, and a resume id makes the claim exact rather than folder based.
   const codexId = '12345678-1234-1234-1234-123456789abc'
-  const codexFile = join(fixtureCodexHome, 'sessions', '2026', '09', '09', 'native.jsonl')
+  const codexFile = join(fixtureCodexHome, 'sessions', '2026', '09', '09', `rollout-2026-09-09T01-02-03-${codexId}.jsonl`)
   mkdirSync(dirname(codexFile), { recursive: true })
   const codexRows = [
     line({ type: 'session_meta', payload: { id: codexId, session_id: codexId, cwd, timestamp: '2026-09-09T01:02:03.000Z' } }),
@@ -149,8 +149,8 @@ try {
   const resumedCwd = '/Users/native/Projects/resumed-reader'
   const resumedId = '34567890-1234-1234-1234-123456789abc'
   const olderId = '45678901-1234-1234-1234-123456789abc'
-  const resumedFile = join(dirname(codexFile), 'resumed.jsonl')
-  const olderFile = join(dirname(codexFile), 'older-same-prompt.jsonl')
+  const resumedFile = join(dirname(codexFile), `rollout-2026-09-09T01-02-03-${resumedId}.jsonl`)
+  const olderFile = join(dirname(codexFile), `rollout-2026-09-08T01-02-03-${olderId}.jsonl`)
   const repeated = 'repeat the exact first line\n  and this indented second line\n\nlast line'
   const pasteAt = Date.now()
   const codexMetaRow = id => line({ type: 'session_meta', payload: { id, cwd: resumedCwd, timestamp: new Date(pasteAt - 1000).toISOString() } })
@@ -202,7 +202,7 @@ try {
   forgetSession('giant-pane')
 
   const questionId = 'ab345678-1234-1234-1234-123456789abc'
-  const questionFile = join(fixtureCodexHome, 'sessions', '2026', '09', '09', 'questions.jsonl')
+  const questionFile = join(fixtureCodexHome, 'sessions', '2026', '09', '09', `rollout-2026-09-09T02-00-00-${questionId}.jsonl`)
   const call = id => line({ timestamp:'2026-09-01T00:00:00Z', type:'response_item', payload:{type:'function_call',name:'functions.request_user_input_async',call_id:id,arguments:JSON.stringify({questions:[{title:'Synthetic one'},{title:'Synthetic two'}]})}})
   const reply = (id,index,answer='safe synthetic answer') => line({type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text:'<send_user_message_question_reply>'+JSON.stringify([{questionItemId:JSON.stringify(['request_user_input_async',id,index]),answer}])+'</send_user_message_question_reply>'}]}})
   const questionRows = [line({type:'session_meta',payload:{id:questionId,cwd,timestamp:'2026-09-01T00:00:00Z'}}),call('old-call'),
@@ -241,6 +241,29 @@ try {
   }
   checkLifecycle([lifecycle('task_started','own-turn'),boundCall('turn-call','own-turn'),'{"type":"event_msg","payload":{"type":"task_complete","turn_id":'],true,'partial lifecycle row keeps question')
   checkLifecycle([lifecycle('task_started','own-turn'),boundCall('turn-call','own-turn'),boundCall('turn-call','own-turn')],false,'duplicated call identity is not actionable')
+  // codexTranscriptPath opens only rollouts named `-<id>.jsonl` (the real store has 1,800+ files; opening every
+  // one took 6.7-19 s per call on the main thread), caches the proven file, and never trusts a decoy's metadata.
+  {
+    const dir = join(fixtureCodexHome, 'sessions', '2026', '10', '01'); mkdirSync(dir, { recursive: true })
+    const realId = 'aaaaaaaa-1111-4222-8333-444444444444', decoyId = 'bbbbbbbb-1111-4222-8333-444444444444'
+    const metaFor = (id, folder) => line({ type: 'session_meta', payload: { id, cwd: folder, timestamp: '2026-10-01T00:00:00Z' } }) + '\n'
+    const real = join(dir, `rollout-2026-10-01T10-00-00-${realId}.jsonl`)
+    writeFileSync(real, metaFor(realId, cwd))
+    writeFileSync(join(dir, `rollout-2026-10-01T11-00-00-${decoyId}.jsonl`), metaFor(realId, cwd))
+    assert.equal(codexTranscriptPath(cwd, realId), real, 'a decoy named for another id that claims this id is never opened')
+    const crowd = join(dir, 'crowd'); mkdirSync(crowd)
+    const crowdId = 'cccccccc-1111-4222-8333-444444444444'
+    for (let i = 0; i < 300; i++) {
+      const id = `dddddddd-${String(i).padStart(4, '0')}-4222-8333-444444444444`
+      writeFileSync(join(crowd, `rollout-2026-10-01T12-00-00-${id}.jsonl`), metaFor(id, cwd))
+    }
+    const crowdFile = join(crowd, `rollout-2026-10-01T09-00-00-${crowdId}.jsonl`)
+    writeFileSync(crowdFile, metaFor(crowdId, cwd))
+    assert.equal(codexTranscriptPath(cwd, crowdId), crowdFile, 'the one real file is found among 300 other rollouts')
+    assert.equal(codexTranscriptPath(cwd, crowdId), crowdFile, 'the second ask answers from the proven cache')
+    assert.equal(codexTranscriptPath(cwd, 'eeeeeeee-1111-4222-8333-444444444444'), null, 'an id with no rollout is null')
+    assert.equal(codexTranscriptPath('/somewhere/else', crowdId), null, 'a cached file is never served for another folder')
+  }
   console.log('native transcript: OK')
 } finally {
   for (const [key, value] of Object.entries(before)) value === undefined ? delete process.env[key] : process.env[key] = value
