@@ -66,6 +66,14 @@ export interface DoneReading extends DonePane {
    * turn's and counts as unset, so a new turn resets it without anybody clearing it.
    */
   lookedAt?: number
+  /**
+   * A person said to keep this pane open (the card's "Keep this pane open",
+   * `config.pinnedPanes`). Robert, 2026-09-29: "mark a session as keep open so auto close
+   * won't close it ... some work long running I need to see result and also continue the
+   * session". The pin held off the idle clock only, so a kept pane still closed itself
+   * into Review the moment its turn was over.
+   */
+  kept?: boolean
 }
 
 /**
@@ -78,16 +86,6 @@ export const READ_QUIET_MS = 30_000
 /** Has somebody looked at this turn's reply since it ended? */
 export function wasRead(p: Pick<DoneReading, 'lookedAt' | 'turnEndedAt'>): boolean {
   return Boolean(p.turnEndedAt && p.lookedAt && p.lookedAt >= p.turnEndedAt)
-}
-
-/**
- * Does a finished chat that closed get a GuardDeck card? Only when something is left for
- * the person and they have not already read it. Robert, 2026-09-28: "shouldn't have shown
- * me report ... that had no manual things that i needed to see ... i already reviewed the
- * session". Its person-only steps still go out as their own to-dos either way.
- */
-export function finishedCard(personSteps: number, read: boolean): boolean {
-  return personSteps > 0 && !read
 }
 
 /** What `closeAfterResult` (`main/sessions.ts`) checks beyond busy, as `Session` has it. */
@@ -157,15 +155,16 @@ export type DoneVerdict =
 export function doneVerdict(reading: DoneReading, now = Date.now(), quietMs = AUTO_CLOSE_QUIET_MS): DoneVerdict {
   const p = reading.backWaitOnly ? { ...reading, backJob: undefined } : reading
   if (p.agent === 'shell') return { close: false, reason: 'shell pane' }
+  if (p.kept) return { close: false, reason: 'kept open by hand' }
   if (!p.turnEndedAt) return { close: false, reason: 'no finished turn' }
   if (p.focused) return { close: false, reason: 'somebody is looking at it' }
   if (p.openedOthers) return { close: false, reason: 'it opened other panes and collects their summary' }
   if (p.owedPrompt) return { close: false, reason: 'a prompt is on its way to it' }
   const quiet = now - Math.max(p.turnEndedAt, p.lastKeyboard)
-  // A read pane waits READ_QUIET_MS from when they looked away; whichever wait ends first.
+  // A read pane always waits READ_QUIET_MS from when they looked away.
   const read = wasRead(p)
   const readQuiet = read ? now - Math.max(p.lookedAt ?? 0, p.lastKeyboard) >= READ_QUIET_MS : false
-  if (quiet < quietMs && !readQuiet) return { close: false, reason: 'not quiet long enough' }
+  if (quietMs !== 0 && ((read && !readQuiet) || (!read && quiet < quietMs))) return { close: false, reason: 'not quiet long enough' }
   if (!doneEnough(p, quiet, now)) return { close: false, reason: 'busy, asking, drafting or running something' }
   if (p.reply === undefined) return { close: false, reason: 'reply not read' }
   const left = replyLeaves(p.reply, p.runningAgents)
@@ -187,6 +186,11 @@ export function doneVerdict(reading: DoneReading, now = Date.now(), quietMs = AU
 export function replyLeaves(reply: string, runningAgents?: number): string | null {
   if (runningAgents) return `${runningAgents} subagent${runningAgents === 1 ? '' : 's'} still running`
   if (/\?\s*$/.test(reply.trim())) return 'the reply ends in a question'
+  // Ordinary final prose need not contain a literal "## Next steps" heading.
+  // Explicit unfinished work must never become a completion claim by omission.
+  const prose = reply.replace(/<oai-mem-citation>[\s\S]*?(?:<\/oai-mem-citation>|$)/g, '').replace(/\*\*/g, '')
+  if (/(?:^|\n)\s*(?:[-*]\s*)?(?:unfinished|remaining work|still to do|blocked)\s*:|\b(?:job|task|work|check) (?:itself )?(?:is (?:not finished|not complete|unfinished)|isn't (?:finished|complete))|\b(?:tasks?|steps?) remain open\b|\b(?:check|work|task) is (?:still )?queued\b/i.test(prose))
+    return 'the reply reports unfinished work'
   const open = actionableNextSteps(reply)
   if (open.length) return `${open.length} step${open.length === 1 ? '' : 's'} an agent could take`
   return null

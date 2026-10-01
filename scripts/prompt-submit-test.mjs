@@ -53,6 +53,7 @@ const work = mkdtempSync(join(tmpdir(), 'pf-prompt-submit-'))
 mkdirSync(join(work, 'userData'), { recursive: true })
 // The CLI's own pid files and transcripts, off the real ~/.claude.
 process.env.PF_CLAUDE_HOME = join(work, 'claude-home')
+process.env.CODEX_HOME = join(work, 'codex-home')
 
 writeFileSync(
   join(work, 'electron-stub.cjs'),
@@ -72,7 +73,7 @@ module.exports={spawn:(file,args,opts)=>({
   pid: 4242, file, args, cols: opts.cols, rows: opts.rows,
   writes: [], _data: null,
   onData(fn){this._data=fn;return off}, onExit(){return off},
-  write(d){this.writes.push(d)}, kill(){}, resize(){},
+  write(d){if(d==='\\r'&&this.firstReturnAt===undefined)this.firstReturnAt=Date.now();this.writes.push(d);this.onWrite?.(d)}, kill(){}, resize(){},
   say(text){this._data && this._data(text)}
 })}
 `
@@ -80,7 +81,7 @@ module.exports={spawn:(file,args,opts)=>({
 
 buildSync({
   absWorkingDir: root,
-  entryPoints: ['src/main/sessions.ts'],
+  stdin: { contents: `export { SessionManager } from './src/main/sessions'; export { forgetQueuedPrompts, noteAccepted, noteTyped } from './src/main/queuedPrompts'`, resolveDir: root },
   bundle: true,
   format: 'cjs',
   platform: 'node',
@@ -103,7 +104,7 @@ buildSync({
 })
 
 const req = createRequire(join(work, 'x.cjs'))
-const { SessionManager } = req('./sessions.bundle.cjs')
+const { SessionManager, forgetQueuedPrompts, noteAccepted, noteTyped } = req('./sessions.bundle.cjs')
 
 const fail = []
 const ok = (c, n, detail) => {
@@ -431,18 +432,19 @@ manager.kill(cmd.id)
 async function sentReturnAt(proc, waitMs = 3000) {
   const until = Date.now() + waitMs
   while (Date.now() < until) {
-    if (proc.writes.some((w) => w === '\r')) return Date.now()
+    if (proc.firstReturnAt !== undefined) return proc.firstReturnAt
     await sleep(10)
   }
-  return Date.now()
+  throw new Error('fake PTY did not receive Enter within the fixture wait')
 }
 
 const eaten = manager.start({ cwd: root, agent: 'shell' })
 const eatenProc = manager.sessions.get(eaten.id).proc
 let eatenDone = 0
-manager.queuePrompt(eaten.id, '/model opus', 0, 40, () => eatenDone++, 5000, 'idle')
-await sleep(120)
+// Paint readiness before submitting: a delayed setup paint after Enter would look
+// like the command printed an answer, defeating this silence-only fixture.
 eatenProc.say(COMPOSER)
+manager.queuePrompt(eaten.id, '/model opus', 0, 40, () => eatenDone++, 5000, 'idle')
 // The return goes in and the pane stays exactly as it was - quiet at its composer, with
 // nothing printed. The old code settled on that silence within one poll (40ms here).
 // Timed off the RETURN, never off a fixed sleep: the give-up settle lands
@@ -1008,7 +1010,8 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
 // that write. The proof a return landed is a TURN, not output.
 {
   const src = readFileSync(new URL('../src/main/sessions.ts', import.meta.url), 'utf8')
-  const fn = src.slice(src.indexOf('const submit = (tries: number)'), src.indexOf('const tick = ()'))
+  const submitStart = src.indexOf('const submit = (tries: number)')
+  const fn = src.slice(submitStart, src.indexOf('const tick = ', submitStart))
   ok(/runSince \?\? 0\) >= typedAt/.test(fn), 'a turn newer than the return is the only proof it went in')
   // ...for a PROMPT. `write()` stamps `runSince` on every return it sends, so a slash
   // command - which starts no turn - would otherwise be proven by this app's own keystroke.
@@ -1036,7 +1039,7 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
   ok(!/Date\.now\(\) >= deadline\)/.test(fn), 'the confirm may not expire on the WAIT deadline')
   ok(
     /confirmUntil = typedAt \+ PROMPT_CONFIRM_MS \* PROMPT_ENTER_TRIES/.test(
-      src.slice(src.indexOf('const submit = (tries: number)'), src.indexOf('const tick = ()'))
+      fn
     ),
     'the confirm clock starts at the return and lasts every retry it is allowed'
   )
@@ -1075,6 +1078,491 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
     'the model switch is proven by an idle composer, never by a turn - a slash command starts none')
   ok(/setHandover\(id, Date\.now\(\) \+ handoverMaxMs\(CLEAR_RESUME_BUDGET_MS\)\)/.test(src),
     'and the curtain outlives that wait, so the pane says a prompt is still coming')
+}
+
+// Production queue + terminal replay + exact native JSONL, with no real CLI or home.
+// The raw repaint has no LF: stripping escapes cannot reconstruct this composer.
+{
+  let fixture = 0
+  const payload = 'first line: preserve this newline\n  indented second line\n\nlast line'
+  const waitFor = async (test, ms = 2400) => {
+    const until = Date.now() + ms
+    while (!test() && Date.now() < until) await sleep(20)
+    return test()
+  }
+  const frame = (text, working = false) => {
+    const lines = text.split('\n')
+    let raw = '\x1b[?1049h\x1b[2J'
+    if (working) raw += '\x1b[2;1H• Working (2s · esc to interrupt)'
+    lines.forEach((line, n) => { raw += `\x1b[${5 + n};1H${n ? '  ' : '› '}${line}` })
+    raw += `\x1b[${6 + lines.length};1H  gpt-6.1-sol · 50% left`
+    return raw + `\x1b[${4 + lines.length};${3 + lines.at(-1).length}H`
+  }
+  const open = () => {
+    const conversation = `12345678-1234-1234-1234-${String(++fixture).padStart(12, '0')}`
+    const file = join(process.env.CODEX_HOME, 'sessions', '2026', '09', '30', `queue-${fixture}.jsonl`)
+    mkdirSync(dirname(file), { recursive: true })
+    writeFileSync(file, JSON.stringify({ type: 'session_meta', payload: { id: conversation, cwd: root, timestamp: new Date().toISOString() } }) + '\n')
+    const pane = manager.start({ cwd: root, agent: 'codex', resume: true, resumeId: conversation })
+    const live = manager.sessions.get(pane.id)
+    live.cols = 134; live.rows = 53
+    live.proc.say(frame(''))
+    const received = (text) => {
+      appendFileSync(file, JSON.stringify({ timestamp: new Date().toISOString(), type: 'response_item', payload: {
+        type: 'message', role: 'user', content: [{ type: 'input_text', text }]
+      } }) + '\n')
+    }
+    return { pane, live, p: live.proc, received, conversation, file }
+  }
+  const queue = (f, text = payload, budget = 1800) => {
+    let settled = 0
+    manager.queuePrompt(f.pane.id, text, 0, 40, () => settled++, budget)
+    return () => settled
+  }
+  const pasted = (p, text = payload) => p.writes.includes('\x1b[200~' + text + '\x1b[201~')
+  const ledger = (id) => Object.values(JSON.parse(readFileSync(join(work, 'userData', 'queued-prompts.json'), 'utf8'))).filter(row => row.id === id)
+
+  const startup = open()
+  startup.p.onWrite = data => {
+    if (data.includes(payload)) startup.p.say(frame(payload))
+    if (data === '\r') startup.received(payload)
+  }
+  const startupSettled = queue(startup)
+  const { Terminal } = createRequire(import.meta.url)('@xterm/headless')
+  const terminal = new Terminal({cols:73,rows:28,allowProposedApi:true})
+  const replies = []
+  terminal.onData(data => {
+    replies.push(data)
+    manager.write(startup.pane.id,data,'desk',true)
+  })
+  await new Promise(resolve => terminal.write('\x1b[6n\x1b[c',resolve))
+  terminal.dispose()
+  ok(JSON.stringify(replies) === JSON.stringify(['\x1b[1;1R','\x1b[?1;2c']) &&
+    startup.live.draft.certain && !startup.live.draft.text && !startup.live.meta.drafting &&
+    !manager.codexQueued.get(startup.pane.id)?.foreign,
+    'real xterm startup replies reach PTY without claiming or poisoning the queued composer')
+  ok(await waitFor(() => startupSettled() === 1) &&
+    startup.p.writes.filter(data => data === '\x1b[200~' + payload + '\x1b[201~').length === 1 && ledger(startup.pane.id).length === 0,
+    'startup replies preserve one multiline delivery confirmed by the exact native receipt',logOf(startup.pane.id))
+  manager.kill(startup.pane.id)
+
+  for (const [name,data,tagged] of [
+    ['typing','human',false],['arrow','\x1b[D',false],['Shift-F3','\x1b[1;2R',false],
+    ['paste','\x1b[200~human\x1b[201~',false],['invalid protocol tag','human',true]
+  ]) {
+    const edited = open()
+    queue(edited,payload,300)
+    manager.write(edited.pane.id,data,'desk',tagged)
+    const claimed = manager.codexQueued.get(edited.pane.id)?.foreign
+    await sleep(420)
+    ok(claimed && !pasted(edited.p) && !returnsOf(edited.p) && edited.p.writes.includes(data),
+      `${name} still owns the composer and prevents queued startup paste`,logOf(edited.pane.id))
+    manager.kill(edited.pane.id)
+  }
+
+  const hint = 'Ask Codex to do anything'
+  const hinted = open()
+  hinted.p.say(frame(`\x1b[2m${hint}\x1b[22m`).replace(/\x1b\[5;\d+H$/, '\x1b[5;3H'))
+  hinted.p.onWrite = data => {
+    if (data.includes(payload)) hinted.p.say(frame(payload))
+    if (data === '\r') hinted.received(payload)
+  }
+  const hintSettled = queue(hinted)
+  ok(await waitFor(() => hintSettled() === 1) &&
+    hinted.p.writes.filter(data => data === '\x1b[200~' + payload + '\x1b[201~').length === 1 && ledger(hinted.pane.id).length === 0,
+    'native dim placeholder permits one multiline paste proven by its exact native receipt', logOf(hinted.pane.id))
+  manager.kill(hinted.pane.id)
+
+  const literalDraft = open()
+  literalDraft.p.say(frame(hint).replace(/\x1b\[5;\d+H$/, '\x1b[5;3H'))
+  const draftSettled = queue(literalDraft, payload, 300)
+  await sleep(700)
+  ok(draftSettled() === 0 && !pasted(literalDraft.p) &&
+    ledger(literalDraft.pane.id).some(row => row.text === payload && !row.typed),
+    'regular same-string draft with caret at start keeps queued bytes out and preserves accepted intent')
+  manager.kill(literalDraft.pane.id)
+
+  const persistence = open()
+  const markerFile = join(work, 'userData', 'queued-prompts.json.tmp')
+  mkdirSync(markerFile)
+  const persistenceSettled = queue(persistence)
+  ok(await logSays(persistence.pane.id, /durable delivery marker could not be saved/) && persistenceSettled() === 0 && persistence.p.writes.length === 0 &&
+    ledger(persistence.pane.id).some(row => row.text === payload && !row.typed) &&
+    !manager.codexQueued.has(persistence.pane.id),
+    'failed durable typed marker keeps accepted intent without bytes or a phantom composer owner', logOf(persistence.pane.id))
+  rmSync(markerFile, { recursive: true })
+  persistence.p.onWrite = data => {
+    if (data.includes(payload)) persistence.p.say(frame(payload))
+    if (data === '\r') persistence.received(payload)
+  }
+  ok(await waitFor(() => pasted(persistence.p) && ledger(persistence.pane.id).length === 0) && persistenceSettled() === 1,
+    'the existing wait retries after persistence recovers and completes its caller exactly once', logOf(persistence.pane.id))
+  manager.kill(persistence.pane.id)
+
+  // The autoclear caller chains a model switch's completion to a confirm and resume.
+  // Exercise that same production callback boundary across a failed durable marker.
+  const ordered = open()
+  const switchText = '/model gpt-6.1-sol'
+  const orderedResume = 'resume only after the model switch completes'
+  const order = []
+  let switchCompleted = 0
+  let resumeCompleted = 0
+  manager.setHandover(ordered.pane.id, Date.now() + 10_000)
+  ordered.p.onWrite = data => {
+    if (data === switchText) { order.push('switch text'); ordered.p.say(frame(switchText)) }
+    if (data === '\r') {
+      order.push('return')
+      if (pasted(ordered.p, orderedResume)) ordered.received(orderedResume)
+      else setTimeout(() => ordered.p.say(frame('') + '\x1b[2;1HModel updated\x1b[5;3H'), 10)
+    }
+    if (data.includes(orderedResume)) { order.push('resume text'); ordered.p.say(frame(orderedResume)) }
+  }
+  mkdirSync(markerFile)
+  manager.queuePrompt(ordered.pane.id, switchText, 0, 40, () => {
+    switchCompleted++
+    order.push('switch completed')
+    setTimeout(() => {
+      manager.write(ordered.pane.id, '\r', 'app')
+      manager.queuePrompt(ordered.pane.id, orderedResume, 0, 40, () => {
+        resumeCompleted++
+        manager.setHandover(ordered.pane.id, 0)
+      }, 1800)
+    }, 20)
+  }, 1800, 'idle')
+  ok(await logSays(ordered.pane.id, /durable delivery marker could not be saved/) &&
+    switchCompleted === 0 && resumeCompleted === 0 && ordered.p.writes.length === 0 && ordered.live.meta.handoverUntil,
+    'transient switch persistence failure neither runs the sequencing callback nor releases its handover')
+  rmSync(markerFile, { recursive: true })
+  ok(await waitFor(() => resumeCompleted === 1, 3500) && switchCompleted === 1 &&
+    order.join('|') === 'switch text|return|switch completed|return|resume text|return' &&
+    ledger(ordered.pane.id).length === 0 && !ordered.live.meta.handoverUntil,
+    'storage recovery completes the model switch before its confirm and resume, exactly once', order.join('|'))
+  manager.kill(ordered.pane.id)
+
+  const held = open()
+  held.p.onWrite = (data) => {
+    if (data.includes(payload)) held.p.say(frame(payload, true))
+    if (data === '\r') {
+      // Cursor-only footer repaint leaves the composer outside the newest paint tail.
+      held.p.say('\x1b[2;1H\x1b[2K• Working (3s · esc to interrupt)\x1b[8;12H')
+      if (returnsOf(held.p) === 2) held.received(payload)
+    }
+  }
+  const heldSettled = queue(held)
+  ok(await waitFor(heldSettled), 'a held Codex prompt gets a bounded confirmation')
+  ok(pasted(held.p), 'Codex multiline text is one bracketed paste with every LF intact')
+  ok(returnsOf(held.p) === 2, 'actual held composer permits one safe retry despite a cursor-only Working repaint', String(returnsOf(held.p)))
+  ok(await logSays(held.pane.id, /native Codex receipt/) && ledger(held.pane.id).length === 0,
+    'only the exact multiline native receipt settles that prompt as submitted', logOf(held.pane.id))
+  manager.kill(held.pane.id)
+
+  const foreign = open()
+  foreign.p.onWrite = (data) => {
+    if (data.includes(payload)) foreign.p.say(frame(payload))
+  }
+  const foreignSettled = queue(foreign)
+  await sentReturnAt(foreign.p)
+  manager.write(foreign.pane.id, 'another human line', 'phone')
+  setTimeout(() => foreign.received(payload), 350)
+  ok(await waitFor(foreignSettled) && await logSays(foreign.pane.id, /native Codex receipt/),
+    'a delayed native Codex receipt still wins after external typing', logOf(foreign.pane.id))
+  ok(returnsOf(foreign.p) === 1, 'no retry is sent into the external writer’s line',
+    `${returnsOf(foreign.p)} returns\n${logOf(foreign.pane.id)}`)
+  manager.kill(foreign.pane.id)
+
+  const unknown = open()
+  unknown.p.onWrite = (data) => {
+    if (data.includes(payload)) unknown.p.say('\x1b[2J\x1b[1;1H• Working (4s · esc to interrupt)')
+    if (data === '\r') unknown.live.meta.runSince = Date.now() + 1
+  }
+  const unknownSettled = queue(unknown)
+  ok(await waitFor(unknownSettled), 'an unknown composer confirmation ends within its budget')
+  ok(returnsOf(unknown.p) === 1 && ledger(unknown.pane.id).some(row => row.text === payload) && unknown.live.meta.owedPrompt,
+    'paint and a newer turn clock cannot confirm Codex; unknown draft retains its full ledger and owner',
+    `${returnsOf(unknown.p)} returns, ${ledger(unknown.pane.id).length} rows, owed=${unknown.live.meta.owedPrompt}\n${logOf(unknown.pane.id)}`)
+  const blockedNext = queue(unknown, 'later queued message must not append', 300)
+  ok(await logSays(unknown.pane.id, /queued prompt retained/) && blockedNext() === 0 && !pasted(unknown.p, 'later queued message must not append'),
+    'a later queue cannot append after the unknown owner has settled unsuccessfully', logOf(unknown.pane.id))
+  ok(ledger(unknown.pane.id).some(row => row.text === 'later queued message must not append' && !row.typed),
+    'a never-typed second accepted prompt survives its wait deadline')
+  unknown.received(payload)
+  const afterReceipt = Date.now()
+  await waitFor(() => Date.now() - afterReceipt >= 400)
+  ok(!pasted(unknown.p, 'later queued message must not append') &&
+    ledger(unknown.pane.id).some(row => row.text === 'later queued message must not append' && !row.typed),
+    'an exact earlier receipt does not discard or paste the second intent while the actual composer remains unknown')
+  unknown.p.say(frame('a foreign held draft'))
+  const nonemptyAt = Date.now()
+  await waitFor(() => Date.now() - nonemptyAt >= 200)
+  ok(!pasted(unknown.p, 'later queued message must not append') &&
+    ledger(unknown.pane.id).some(row => row.text === 'later queued message must not append' && !row.typed),
+    'a nonempty composer after the receipt preserves the accepted second intent')
+  unknown.p.say(frame(''))
+  const later = 'later queued message must not append'
+  unknown.p.onWrite = data => {
+    if (data.includes(later)) unknown.p.say(frame(later))
+    if (data === '\r') unknown.received(later)
+  }
+  ok(await waitFor(() => pasted(unknown.p, later) && ledger(unknown.pane.id).length === 0) && blockedNext() === 1,
+    'a late exact receipt promotes the retained second prompt without another queue call',
+    `pasted=${pasted(unknown.p, later)}, rows=${ledger(unknown.pane.id).length}\n${logOf(unknown.pane.id)}`)
+  manager.kill(unknown.pane.id)
+
+  // All waiting followers share the retained owner's negative native scan. Count
+  // real 2 MiB reads, including invalidation without a terminal repaint.
+  const scanHeld = open()
+  appendFileSync(scanHeld.file, (JSON.stringify({ type: 'event_msg', payload: { text: 'x'.repeat(4000) } }) + '\n').repeat(600))
+  scanHeld.p.onWrite = data => { if (data.includes(payload)) scanHeld.p.say(frame(payload)) }
+  const scanHead = queue(scanHeld)
+  ok(await waitFor(scanHead), 'scan fixture retains an unconfirmed typed head')
+  const fs = req('node:fs')
+  const originalFs = { openSync: fs.openSync, readSync: fs.readSync, statSync: fs.statSync }
+  const scanFds = new Set()
+  let scans = 0, statChecks = 0, failedStats = 0, failedReads = 0, failStat = false, failRead = false, frozenStat
+  fs.openSync = (file, ...args) => {
+    const fd = originalFs.openSync(file, ...args)
+    if (String(file) === scanHeld.file) scanFds.add(fd)
+    else scanFds.delete(fd)
+    return fd
+  }
+  fs.readSync = (fd, buf, ...args) => {
+    if (scanFds.has(fd) && buf.length === 2 * 1024 * 1024 && failRead) {
+      failedReads++
+      throw new Error('fixture read unavailable')
+    }
+    const got = originalFs.readSync(fd, buf, ...args)
+    if (scanFds.has(fd) && buf.length === 2 * 1024 * 1024) scans++
+    return got
+  }
+  fs.statSync = (file, ...args) => {
+    if (String(file) === scanHeld.file) {
+      statChecks++
+      if (failStat) { failedStats++; throw new Error('fixture stat unavailable') }
+      if (frozenStat) return frozenStat
+    }
+    return originalFs.statSync(file, ...args)
+  }
+  try {
+    const initialReturns = returnsOf(scanHeld.p)
+    for (let n = 0; n < 8; n++) queue(scanHeld, `scan follower ${n}`, 300)
+    ok(await waitFor(() => statChecks >= 32) && scans === 1 && ledger(scanHeld.pane.id).length === 9,
+      'eight followers poll an unchanged rollout repeatedly but share one 2 MiB negative scan', `stats=${statChecks}, scans=${scans}`)
+    scanHeld.received(payload.replace('first', 'wrong'))
+    ok(await waitFor(() => scans === 2) && ledger(scanHeld.pane.id).length === 9,
+      'a delayed append invalidates the shared miss without accepting a different prompt')
+    const beforeRewrite = originalFs.statSync(scanHeld.file)
+    writeFileSync(scanHeld.file, readFileSync(scanHeld.file, 'utf8').replace('wrong line:', 'other line:'))
+    utimesSync(scanHeld.file, beforeRewrite.atime, beforeRewrite.mtime)
+    ok(await waitFor(() => scans === 3) && originalFs.statSync(scanHeld.file).size === beforeRewrite.size &&
+      ledger(scanHeld.pane.id).length === 9,
+      'a same-size rewrite with restored mtime invalidates the miss through file change identity')
+    const unchangedStat = originalFs.statSync(scanHeld.file)
+    failStat = true
+    ok(await waitFor(() => failedStats >= 8), 'unavailable stat is retried without discarding the retained intent')
+    writeFileSync(scanHeld.file, readFileSync(scanHeld.file, 'utf8').replace('other line:', 'first line:'))
+    // Simulate the same signature returning after a transient stat failure. The
+    // failed check must have cleared its prior miss, so this receipt is still read.
+    frozenStat = unchangedStat
+    failRead = true
+    failStat = false
+    ok(await waitFor(() => failedReads >= 8) && scans === 3 && ledger(scanHeld.pane.id).length === 9,
+      'transient read failure is retried with the same signature and preserves every intent')
+    failRead = false
+    scanHeld.p.say(frame('a foreign draft still owns the composer'))
+    ok(await waitFor(() => ledger(scanHeld.pane.id).length === 8) && scans === 4 &&
+      ledger(scanHeld.pane.id).every(row => row.text.startsWith('scan follower ') && !row.typed) &&
+      returnsOf(scanHeld.p) === initialReturns && scanHeld.p.writes.filter(data => data.includes(payload)).length === 1,
+      'a receipt after stat recovery acknowledges only the head and never repastes its waiting followers', `scans=${scans}`)
+    console.log(`receipt scan regression: 8 followers, ${statChecks} stat checks, ${scans} scans across 4 file states`)
+  } finally {
+    Object.assign(fs, originalFs)
+    manager.kill(scanHeld.pane.id)
+  }
+
+  const finalLF = open()
+  const terminated = payload + '\n'
+  finalLF.p.onWrite = data => {
+    if (data.includes(terminated)) finalLF.p.say(frame(terminated))
+    if (data === '\r') finalLF.received(payload)
+  }
+  const finalLFSettled = queue(finalLF, terminated)
+  ok(await waitFor(finalLFSettled) && returnsOf(finalLF.p) === 1 &&
+    finalLF.p.writes.filter(data => data === '\x1b[200~' + terminated + '\x1b[201~').length === 1 &&
+    ledger(finalLF.pane.id).length === 0 && !finalLF.live.meta.owedPrompt,
+    'the native receipt omitting only the final LF clears its durable intent without another paste or Return', logOf(finalLF.pane.id))
+  manager.kill(finalLF.pane.id)
+
+  // An altered native row missing interior LFs cannot acknowledge the original.
+  const changed = open()
+  changed.p.onWrite = data => {
+    if (data.includes(payload)) changed.p.say(frame(payload))
+    if (data === '\r') changed.received(payload.replace(/\n/g, ''))
+  }
+  const changedSettled = queue(changed)
+  ok(await waitFor(changedSettled) && ledger(changed.pane.id).some(row => row.text === payload),
+    'a native row missing interior LF is not normalized into an exact receipt')
+  ok(!/prompt submitted/.test(logOf(changed.pane.id)), 'missing interior LF never reports Codex as submitted')
+  const nextHeld = queue(changed, 'must not append to held prompt', 300)
+  ok(await logSays(changed.pane.id, /queued prompt retained/) && nextHeld() === 0 && !pasted(changed.p, 'must not append to held prompt'),
+    'a held composer also retains ownership after all safe retries expire')
+  manager.kill(changed.pane.id)
+
+  const asked = open()
+  asked.live.meta.ask = { question: 'synthetic dialog', options: [] }
+  const askedSettled = queue(asked, payload, 300)
+  ok(await logSays(asked.pane.id, /queued prompt retained/) && askedSettled() === 0 && asked.p.writes.length === 0, 'a dialog blocks Codex paste without completing a deferred sequencing callback')
+  manager.kill(asked.pane.id)
+  const afterPaste = open()
+  afterPaste.p.onWrite = data => {
+    if (data.includes(payload)) {
+      afterPaste.p.say(frame(payload) + '\x1b[30;1HPress Enter to confirm')
+      afterPaste.live.meta.ask = { question: 'synthetic dialog', options: [] }
+    }
+  }
+  const afterPasteSettled = queue(afterPaste)
+  ok(await waitFor(afterPasteSettled) && pasted(afterPaste.p) && returnsOf(afterPaste.p) === 0,
+    'a dialog appearing after paste withholds the first Enter')
+  ok(ledger(afterPaste.pane.id).some(row => row.text === payload), 'withheld pasted text keeps its durable owner')
+  manager.kill(afterPaste.pane.id)
+
+  const repeated = open()
+  repeated.received(payload) // This identical row precedes the actual paste.
+  repeated.p.onWrite = data => { if (data.includes(payload)) repeated.p.say(frame(payload)) }
+  const repeatedSettled = queue(repeated)
+  ok(await waitFor(repeatedSettled) && returnsOf(repeated.p) > 0 && ledger(repeated.pane.id).some(row => row.text === payload),
+    'an identical native row before this paste cannot acknowledge the new prompt', logOf(repeated.pane.id))
+  const retainedRow = ledger(repeated.pane.id).find(row => row.text === payload)
+  ok(retainedRow?.typed?.at > 0 && retainedRow.typed.conversationId === repeated.conversation,
+    'an actual typed timeout persists its first paste time and original native identity')
+  const beforeWake = repeated.p.writes.length
+  forgetQueuedPrompts()
+  manager.deliverOwed(repeated.pane.id, repeated.pane.id)
+  ok(repeated.p.writes.length === beforeWake && manager.codexQueued.get(repeated.pane.id)?.key === ledger(repeated.pane.id)[0]?.key,
+    'same-pane recovery replaces stale ownership with the re-keyed uncertain intent without replay')
+  repeated.received(payload)
+  const afterRestart = open()
+  forgetQueuedPrompts()
+  manager.deliverOwed(repeated.pane.id, afterRestart.pane.id)
+  ok(afterRestart.p.writes.length === 0 && ledger(afterRestart.pane.id).length === 0,
+    'disk reload after a real typed timeout clears its later original receipt without any restored writes')
+  manager.kill(afterRestart.pane.id)
+  manager.kill(repeated.pane.id)
+
+  for (const cancel of ['\x03', '\x15', 'takeOver']) {
+    const canceled = open()
+    canceled.p.onWrite = data => { if (data.includes(payload)) canceled.p.say(frame(payload)) }
+    const canceledSettled = queue(canceled)
+    await sentReturnAt(canceled.p)
+    if (cancel === 'takeOver') manager.takeOver(canceled.pane.id)
+    else manager.write(canceled.pane.id, cancel, 'phone')
+    canceled.p.say(frame(''))
+    ok(await waitFor(canceledSettled) && ledger(canceled.pane.id).length === 0,
+      `explicit ${JSON.stringify(cancel)} cancellation removes the matching durable intent`)
+    canceled.live.meta.runSince = undefined
+    canceled.live.busyUntil = 0
+    const next = `after explicit cancellation ${JSON.stringify(cancel)}`
+    canceled.p.onWrite = data => {
+      if (data.includes(next)) canceled.p.say(frame(next))
+      if (data === '\r') canceled.received(next)
+    }
+    const nextSettled = queue(canceled, next)
+    ok(await waitFor(nextSettled) && pasted(canceled.p, next) && ledger(canceled.pane.id).length === 0,
+      `a subsequent queue delivers after ${JSON.stringify(cancel)} without resending canceled text`, logOf(canceled.pane.id))
+    manager.kill(canceled.pane.id)
+  }
+
+  const command = open()
+  command.p.onWrite = data => {
+    if (data === '\r') setTimeout(() => command.p.say(frame('') + '\x1b[2;1HModel updated\x1b[5;3H'), 10)
+  }
+  const commandSettled = queue(command, '/model gpt-6.1-sol')
+  ok(await waitFor(commandSettled) && returnsOf(command.p) === 1 && ledger(command.pane.id).length === 0,
+    'a default Codex slash command uses idle command proof without a native user receipt', logOf(command.pane.id))
+  manager.kill(command.pane.id)
+
+  const swallowed = open()
+  const cmd = '/model gpt-6.1-sol'
+  swallowed.p.onWrite = data => { if (data === cmd) swallowed.p.say(frame(cmd)) }
+  const swallowedSettled = queue(swallowed, cmd)
+  ok(await waitFor(swallowedSettled) && ledger(swallowed.pane.id).some(row => row.text === cmd),
+    'a held slash command retains its durable intent after swallowed returns')
+  swallowed.p.say(frame(cmd) + '\x1b[20;1HUnrelated repaint')
+  const afterCmd = 'blocked behind held command'
+  const commandBlocked = queue(swallowed, afterCmd, 300)
+  ok(await logSays(swallowed.pane.id, /queued prompt retained/) && commandBlocked() === 0 && !pasted(swallowed.p, 'blocked behind held command'),
+    'unrelated output cannot release a slash command still held in the actual composer')
+  swallowed.p.onWrite = data => {
+    if (data === '\r') swallowed.p.say(frame('') + '\x1b[2;1HModel updated after manual Enter\x1b[5;3H')
+  }
+  manager.write(swallowed.pane.id, '\r', 'phone')
+  swallowed.live.meta.runSince = undefined; swallowed.live.busyUntil = 0
+  swallowed.p.onWrite = data => {
+    if (data.includes(afterCmd)) swallowed.p.say(frame(afterCmd))
+    if (data === '\r') swallowed.received(afterCmd)
+  }
+  ok(await waitFor(() => pasted(swallowed.p, afterCmd) && ledger(swallowed.pane.id).length === 0),
+    'manual command Enter plus new output and an empty idle composer releases the retained owner once', logOf(swallowed.pane.id))
+  manager.kill(swallowed.pane.id)
+
+  for (const human of [false, true]) {
+    const effort = open()
+    effort.p.onWrite = data => { if (data.includes(payload)) effort.p.say(frame(payload)) }
+    const effortSettled = queue(effort)
+    await sentReturnAt(effort.p)
+    if (human) manager.write(effort.pane.id, 'human edit without Enter', 'phone')
+    effort.live.effortPassThrough = true
+    manager.write(effort.pane.id, '\x1b[I', 'app')
+    manager.write(effort.pane.id, '\r', 'app')
+    effort.live.effortPassThrough = false
+    ok(manager.codexQueued.get(effort.pane.id)?.foreign === human,
+      `effort replay ${human ? 'preserves real human ownership' : 'does not create foreign ownership'}`)
+    effort.received(payload)
+    ok(await waitFor(effortSettled) && ledger(effort.pane.id).length === 0,
+      'an exact receipt resolves effort replay without duplicating the payload')
+    manager.kill(effort.pane.id)
+  }
+
+  // Exercise production disk loading and recovery, independent of the live pane claim.
+  for (const receipt of ['original', 'missing', 'before', 'wrong', 'altered', 'unknown']) {
+    const source = open()
+    const restored = open() // Deliberately a different native conversation.
+    const at = Date.now()
+    const key = noteAccepted(source.pane.id, payload, root)
+    ok(noteTyped(key, { at, conversationId: receipt === 'unknown' ? undefined : source.conversation, proof: 'receipt' }),
+      `typed recovery marker is durable (${receipt})`)
+    const nativeRow = (file, text, timestamp) => appendFileSync(file, JSON.stringify({ timestamp,
+      type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] } }) + '\n')
+    if (receipt === 'original') nativeRow(source.file, payload, at + 1)
+    if (receipt === 'before') nativeRow(source.file, payload, at - 1)
+    if (receipt === 'wrong' || receipt === 'unknown') nativeRow(restored.file, payload, at + 1)
+    if (receipt === 'altered') nativeRow(source.file, payload.replace(/\n/g, ''), at + 1)
+    forgetQueuedPrompts()
+    manager.deliverOwed(source.pane.id, restored.pane.id)
+    ok(restored.p.writes.length === 0 && ledger(restored.pane.id).length === (receipt === 'original' ? 0 : 1),
+      `disk recovery ${receipt === 'original' ? 'clears exact original conversation receipt without replay' : `retains uncertain ${receipt} delivery without replay`}`)
+    if (receipt !== 'original') {
+      const blockedRecovery = queue(restored, 'must not append after uncertain restored delivery', 300)
+      ok(await logSays(restored.pane.id, /queued prompt retained/) && blockedRecovery() === 0 &&
+        !pasted(restored.p, 'must not append after uncertain restored delivery') &&
+        ledger(restored.pane.id).some(row => row.text === 'must not append after uncertain restored delivery' && !row.typed),
+        `uncertain restored ${receipt} delivery protects subsequent queues`)
+    }
+    manager.kill(source.pane.id); manager.kill(restored.pane.id)
+  }
+
+  const neverTyped = open()
+  const recoveredUntyped = open()
+  const untypedText = 'accepted but never typed remains deliverable'
+  noteAccepted(neverTyped.pane.id, untypedText, root)
+  recoveredUntyped.p.onWrite = data => {
+    if (data.includes(untypedText)) recoveredUntyped.p.say(frame(untypedText))
+    if (data === '\r') recoveredUntyped.received(untypedText)
+  }
+  forgetQueuedPrompts()
+  manager.deliverOwed(neverTyped.pane.id, recoveredUntyped.pane.id)
+  ok(await waitFor(() => pasted(recoveredUntyped.p, untypedText) && ledger(recoveredUntyped.pane.id).length === 0),
+    'accepted never-typed intent still recovers into an exact native submission')
+  manager.kill(neverTyped.pane.id); manager.kill(recoveredUntyped.pane.id)
 }
 
 // A completed Codex turn keeps its notification pending until the attention gate

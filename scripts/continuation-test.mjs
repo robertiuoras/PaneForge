@@ -101,7 +101,7 @@ try {
   writeFileSync(customPath, `<!-- paneforge-handoff ${JSON.stringify(customMeta)} -->\n` +
     ['Objective','Constraints','Completed','Next steps','Verification','Running jobs'].map(h=>`# ${h}\nx\n`).join(''))
   clearHandoffCache()
-  eq(verifiedPaneHandoff(prepared.pane.cwd, prepared.pane.id, prepared.pane.agent, 'prepare-resume', now)?.path, customPath, 'verifier reads the exact custom-state file prepare requested')
+  eq(verifiedPaneHandoff(prepared.pane.cwd, prepared.pane.id, prepared.pane.agent, 'prepare-resume', Date.now())?.path, customPath, 'verifier reads the exact custom-state file prepare requested')
   delete process.env.PF_CLAUDE_HOME
   prepared = prepare()
   eq(pathInPrompt(prepared.prompts[0]?.text), handoffCandidates(prepared.pane.cwd, prepared.pane.id, join(homedir(), '.claude'), () => false)[0], 'actual prepare handler falls back to the default Claude home')

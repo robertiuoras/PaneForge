@@ -153,6 +153,30 @@ patchState((s) => {
 retryTimes(2)
 ok('a conflict a chat already adopted gets no second chat', requests().length === 3, JSON.stringify(requests().map((x) => x.lane)))
 
+// Each invocation is a fresh CLI process, as after an app restart. A resolver that is
+// still editing must renew its lease before the retry clock can abort its open merge.
+const adopted = lane(['resolve', '--session', 'sess-fixer', '--lane', work.lane])
+ok('the resolver resumes the real merge', adopted.code === 0 && Boolean(git(work.dir, 'rev-parse', '-q', '--verify', 'MERGE_HEAD')), adopted.err)
+const draft = 'export function page() {\n  return "resolver draft preserving both behaviours"\n}\n'
+writeFileSync(join(work.dir, 'src/page.ts'), draft)
+patchState((s) => { s.conflicts[work.lane].resolverAt = Date.now() - 46 * 60 * 1000 })
+const staleLease = state().conflicts[work.lane].resolverAt
+const stranger = lane(['guard', '--session', 'sess-stranger', '--path', join(work.dir, 'src/page.ts')])
+ok('an unrelated writer cannot renew or steal the resolver lease', stranger.code !== 0 && state().conflicts[work.lane].resolverAt === staleLease, stranger.err)
+const guarded = lane(['guard', '--session', 'sess-fixer', '--path', join(work.dir, 'src/page.ts')])
+ok('authorized resolver edits renew the recovery lease', guarded.code === 0 && Date.now() - state().conflicts[work.lane].resolverAt < 60_000, guarded.err)
+patchState((s) => { s.conflicts[work.lane].retryAt = 0 })
+retryTimes(2)
+ok('retry preserves the active resolver merge and draft', existsSync(git(work.dir, 'rev-parse', '--git-path', 'MERGE_HEAD')) && readFileSync(join(work.dir, 'src/page.ts'), 'utf8') === draft && requests().length === 3)
+patchState((s) => {
+  s.lanes[work.lane].session = 'sess-fixer'
+  s.conflicts[work.lane].resolverAt = Date.now() - 46 * 60 * 1000
+})
+lane(['guard', '--session', 'sess-fixer', '--path', join(work.dir, 'src/page.ts')])
+ok('a resolver that also holds the lane renews both leases', Date.now() - state().conflicts[work.lane].resolverAt < 60_000 && Date.now() - state().lanes[work.lane].seen < 60_000)
+patchState((s) => { s.lanes[work.lane].session = 'sess-a' })
+quiet(work.lane)
+
 // ---------------------------------------------------- no PaneForge to ask
 
 patchState((s) => {

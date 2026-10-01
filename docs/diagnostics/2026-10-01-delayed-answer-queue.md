@@ -1,0 +1,7 @@
+# Delayed answers and queued intent
+
+The native acceptance run on candidate `87ab0282` confirmed its first answer once in the exact Codex conversation, using the plain-text GuardDeck answer plus the app's durable `pane-answers.json` receipt. The test probe incorrectly expected an XML envelope. Its separate queued sentinel was accepted at 2026-09-30 13:43:59 UTC, then logged as abandoned at 14:33:55 while the second question was still unanswered. Answer delivery is not proof of queued delivery; this original run remains failed evidence.
+
+The authenticated answer's Enter updates `lastKeyboard`, which the queue also uses to detect a person's turn. That update made the queue apply its 45-minute person-owned ceiling during the ongoing answer turn. The queue now remembers that exact authenticated answer boundary and keeps waiting while it remains unchanged. Real drafting, foreign input, process replacement and takeover retain their existing protections. No answer or queued text is retried by this change.
+
+PC job `5b4957d1-a5e3-4b11-a9e0-4ba8c2a6ebbf` passed typecheck, pane-answer guards, autoclear (141/141), and prompt submission. The production verdict regression advances seven days: authenticated answer waiting survives, then permits delivery after the turn ends; a genuine human draft and foreign typing still hit the existing far ceiling. A fresh native acceptance run remains required on the final built candidate.

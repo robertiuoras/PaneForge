@@ -891,11 +891,20 @@ if (cmd === 'list') {
   const s = resolve(await sessions(), ref)
   if (!s) fail(1, `no pane named "${ref}"`)
   const was = s.title
-  await call('sessions:rename', [s.id, name])
-  // The rename re-emits the list, so the new name being LISTED is the verification.
-  const now = (await sessions()).find((x) => x.id === s.id)
-  if (now?.title !== name) fail(1, `sessions:rename answered but ${s.id} is still "${now?.title ?? '?'}"`)
-  console.log(`renamed ${s.id} (${was} -> ${name})`)
+  const sent = await call('sessions:rename', [s.id, name])
+  if (sent === false) fail(1, `could not rename ${s.id} - the computer it runs on is not connected`)
+  // The rename re-emits the list, so the new name being LISTED is the verification. A pane on
+  // the other computer is renamed THERE and its name comes back with that desk's next list:
+  // read at once, `pf rename 12 "PC disk cleanup"` failed on 2026-09-29 and then landed.
+  // The app keeps the first 60 characters of a name.
+  const want = name.slice(0, 60)
+  let now
+  for (const until = Date.now() + 5000; ; await new Promise((r) => setTimeout(r, 200))) {
+    now = (await sessions()).find((x) => x.id === s.id)
+    if (now?.title === want || Date.now() > until) break
+  }
+  if (now?.title !== want) fail(1, `sessions:rename answered but ${s.id} is still "${now?.title ?? '?'}"`)
+  console.log(`renamed ${s.id} (${was} -> ${want})`)
 } else if (cmd === 'composer') {
   // What is typed into a pane and NOT sent - the one thing every other read here misses.
   // The pty log carries the redraw stream, so a line sitting in a CLI's composer is

@@ -1,4 +1,5 @@
 import { appendLog, flushLogsOnExit } from './logWrite'
+import { measureMainTask } from './mainPerformance'
 import { profileRenderer, reloadRenderer } from './renderCost'
 import { execFile } from 'node:child_process'
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -25,9 +26,10 @@ import { SessionManager, setSilenceAlert, type WriteOrigin } from './sessions'
 import { acknowledgeReview, listReviews, noteReviewClose, recordReview, reviewCloseArmAction, reviewOpenTarget, sendReviewNotice, setReviewDesk, type ReviewCloseArm } from './reviews'
 import { ComputeReviews, computeResult } from './computeReviews'
 import { mayNotify, noticesDir, readReply, sweepDoneClose, type DoneCloseDeps } from './doneClose'
-import { doneQuietMs, doneReviewId, finishedCard } from '../shared/doneClose'
+import { doneQuietMs, doneReviewId } from '../shared/doneClose'
 import { FinishedDigest, summaryOf } from '../shared/finishedDigest'
 import { DataPump } from './dataPump'
+import { freshReplay } from '../shared/freshReplay'
 import { DiscordPresence } from './discordPresence'
 import { countPresence, needsTokens, newerSettings, wholeDesk, type PresenceCounts } from '../shared/discordRpc'
 import { tokenCounting, tokenSpend, tokenSpendFresh } from './tokenUsage'
@@ -145,7 +147,7 @@ import {
 import { codexContextUsage, receivedContinuation } from './contextUsage'
 import { rolloutTurn } from './effort'
 import { startContinuation } from './continuation'
-import { handoffCandidates, personOwnedSteps } from '../shared/handoffSteps'
+import { handoffCandidates } from '../shared/handoffSteps'
 import { receiveHandoff, sendHandoff, shareable, type LandedCopy } from './handoff'
 import { RESUME_CONFIRM_MS } from '../shared/resumeCheck'
 import { briefAnchor, clearCommandFor, hasFreshPaneHandoff, readAsk as readAutoClearAsk, resumeBrief } from '../shared/autoclear'
@@ -807,7 +809,7 @@ const phone = new PhoneServer({
     const cfg = getConfig()
     setConfigStrict({ phone: { ...cfg.phone!, nativePromptReceipts: list } })
   },
-  sessions: () => manager.list(),
+  sessions: () => localSessions(),
   sessionBuffer: (id) => manager.buffer(id),
   semanticConversation: (id, agent, cursor) => nativeTranscriptPage(id, agent, cursor),
   sleepSession: (id) => Boolean(manager.sleep(id, 'manual', { source: 'api' })),
@@ -815,9 +817,12 @@ const phone = new PhoneServer({
     const current = getConfig().pinnedPanes ?? []
     const next = keepOpen ? [...new Set([...current, id])] : current.filter((pinned) => pinned !== id)
     if (next.join(',') !== current.join(',')) setConfig({ pinnedPanes: next })
+    if (keepOpen) manager.cancelAutoClear(id, 'cancelled')
+    send('config:changed', getConfig())
+    send('sessions:changed', allSessions())
     return true
   },
-  isKeepOpen: (id) => (getConfig().pinnedPanes ?? []).includes(id),
+  isKeepOpen: keptOpen,
   wakeSession: (id) => manager.wake(id),
   sendNativePrompt: (id, text) => manager.sendNativePrompt(id, text),
   onIdle: () => manager.returnSizes(),
@@ -1184,14 +1189,14 @@ function raiseAttention(s: Session): void {
 // machines involved.
 
 const remote = new Remote({
-  list: () => manager.list(),
+  list: () => localSessions(),
   buffer: (id) => manager.buffer(id),
-  log: (id, bytes) => history.tail(id, bytes) || manager.buffer(id),
+  log: (id, bytes) => freshReplay(history.tail(id, bytes), manager.buffer(id)),
   // A person typed this on the paired machine's mirror, and this desk never saw the
   // keystrokes - so it needs telling on `pane:typed`, exactly as a phone's line does.
   // Without an origin here it defaulted to `desk`, and a pane driven from another
   // machine got no rail tag and no row in the prompt archive.
-  write: (id, data) => manager.write(id, data, 'phone'),
+  write: (id, data, terminalReply) => manager.write(id, data, 'phone', terminalReply),
   onTyped: (cb) => {
     manager.on('submitted', cb)
     return () => manager.off('submitted', cb)
@@ -1212,9 +1217,12 @@ const remote = new Remote({
     const current = getConfig().pinnedPanes ?? []
     const next = keepOpen ? [...new Set([...current, id])] : current.filter((pinned) => pinned !== id)
     if (next.join(',') !== current.join(',')) setConfig({ pinnedPanes: next })
+    if (keepOpen) manager.cancelAutoClear(id, 'cancelled')
+    send('config:changed', getConfig())
+    send('sessions:changed', allSessions())
     return true
   },
-  isKeepOpen: (id) => (getConfig().pinnedPanes ?? []).includes(id),
+  isKeepOpen: keptOpen,
   armCloseWhenDone: (id) => manager.armCloseWhenDone(id),
   kill: (id) => manager.kill(id),
   restart: (id) => continuationOwnsSource(id) ? null : manager.restart(id),
@@ -1294,9 +1302,13 @@ const screenViews = new ScreenViews(
 screenViews.on('sessions', () => send('sessions:changed', allSessions()))
 remote.on('screen', (e) => screenViews.onRemote(e))
 
-/** Local panes and mirrored ones, as one list. This is what the renderer ever sees. */
+function localSessions(): Session[] {
+  return manager.list().map(s => ({ ...s, keepOpen: keptOpen(s.id) }))
+}
+
+/** Local panes and mirrored ones, as one list. */
 function allSessions(): Session[] {
-  return [...manager.list(), ...remote.sessions(), ...screenViews.sessions()]
+  return [...localSessions(), ...remote.sessions(), ...screenViews.sessions()]
 }
 // A finished chat's report carries the number on its card, counted from this same list.
 setReviewDesk(allSessions)
@@ -1436,6 +1448,8 @@ ipcMain.handle('owner:stats', (e) => {
 ipcMain.on('pane:tell', (_e, ref: string, text: string) => {
   manager.tellPane(String(ref), String(text))
 })
+ipcMain.handle('pane:answer', (_e, req) => manager.answerPane(req))
+ipcMain.handle('pane:answerStatus', (_e, req) => manager.answerStatus(req))
 
 ipcMain.handle('devs:list', async (_e, panes: Array<{ id: string; pane: number; name: string }>) => {
   const roots = manager.roots()
@@ -1611,8 +1625,8 @@ ipcMain.handle('sessions:watchCompute', (_e, id: string, job: string, owner: str
   return { watching: true, pane: id, job }
 })
 ipcMain.handle('reviews:ack', (_e, id: string, reviewed: boolean) => acknowledgeReview(String(id), reviewed === true))
-ipcMain.handle('reviews:open', async (_e, id: string, index: number) => {
-  const target = reviewOpenTarget(String(id), Number(index), history.list())
+ipcMain.handle('reviews:open', async (_e, id: string, index: number | string) => {
+  const target = reviewOpenTarget(String(id), typeof index === 'string' ? index : Number(index), history.list())
   return { opened: target ? /^https?:/.test(target) ? await openLink(target, 'review') : await openLocal(target, 'review') : false }
 })
 // The pane the person is looking at. A finished pane is never closed under them.
@@ -1624,6 +1638,20 @@ ipcMain.on('sessions:active', (_e, id: unknown) => manager.setActive(typeof id =
 // (`shared/finishedDigest.ts`). Flushed on the same 15s tick as the sweep that feeds it.
 const finishedDigest = new FinishedDigest()
 manager.digestPending = (id) => finishedDigest.has(id)
+/**
+ * A person said to keep this pane open - the card's "Keep this pane open"
+ * (`config.pinnedPanes`). Every automatic close asks this: the idle clock (renderer), the
+ * finished-pane sweep and `pf tidy`, `reviews:record`'s close, the dead/asleep sweeps and
+ * `--close-when-done`. Robert, 2026-09-29: "mark a session as keep open so auto close won't
+ * close it ... some work long running I need to see result and also continue the session".
+ */
+function keptOpen(id: string): boolean {
+  return (getConfig().pinnedPanes ?? []).includes(id)
+}
+manager.keptOpen = keptOpen
+function doneReadings(): ReturnType<typeof manager.doneReadings> {
+  return manager.doneReadings().map((r) => (keptOpen(r.id) ? { ...r, kept: true } : r))
+}
 manager.replyFor = (id, agent) => {
   const file = transcriptFor(id)
   return file ? readReply(agent, file) : undefined
@@ -1649,7 +1677,8 @@ function doneCloseDeps(): DoneCloseDeps {
       const v = capacityVerdict()
       return doneQuietMs(sleepPressureOf(v.level, v.why))
     },
-    readings: () => manager.doneReadings(),
+    readings: doneReadings,
+    setClosing: (id, at) => manager.setDoneClosingAt(id, at),
     folderOf: (id, since) => {
       const cwd = manager.list().find((x) => x.id === id)?.cwd
       return cwd ? gitCached(cwd, since) : null
@@ -1667,7 +1696,6 @@ function doneCloseDeps(): DoneCloseDeps {
         : null,
     record: (input, native) => recordReview(input, native, true),
     notify: sendReviewNotice,
-    markRead: (id) => void acknowledgeReview(id, true),
     close: (id, at) => manager.closeAfterResult(id, at),
     noteClose: noteReviewClose,
     writeNotice: (path, body) => {
@@ -1681,7 +1709,7 @@ function doneCloseDeps(): DoneCloseDeps {
     log: (line) => appendLog(join(app.getPath('userData'), 'done-close.log'), `[${new Date().toISOString()}] ${line}\n`, { rotateAt: 64 * 1024 })
   }
 }
-setInterval(() => {
+setInterval(() => measureMainTask('done-close', () => {
   try {
     sweepDoneClose(doneCloseDeps())
   } catch (e) {
@@ -1689,7 +1717,7 @@ setInterval(() => {
   }
   for (const opener of finishedDigest.flush((o) => manager.openChildrenOf(o), (o, text) => manager.tellPane(o, text)))
     console.info(`done-close: told ${opener} what the panes it opened did`)
-}, 15_000).unref()
+}), 15_000).unref()
 /**
  * `pf tidy`: every pane whose card says finished (`Session.finished`) that the sweep above
  * would close - the same refusals, only not the quiet wait, because somebody asking to
@@ -1704,7 +1732,7 @@ ipcMain.handle('sessions:closeDone', async (_e, dry: unknown) => {
     ...doneCloseDeps(),
     enabled: () => true,
     quietMs: () => 0,
-    readings: () => manager.doneReadings().filter((r) => finished.has(r.id)),
+    readings: () => doneReadings().filter((r) => finished.has(r.id)),
     dry: dry === true
   })
 })
@@ -1714,10 +1742,10 @@ ipcMain.handle('sessions:closeDone', async (_e, dry: unknown) => {
  * `reviews:record` instead: claude-config's autoclose (`autoclose_*`). Its close is tried
  * there, retried on an arm, or done by its own `sessions:kill` fallback, so all three ask.
  */
-const heldCards = new Map<string, { reviewId: string; steps: number; turn: number }>()
+const heldCards = new Map<string, { reviewId: string; turn: number }>()
 /**
- * Read BEFORE the pane closes (whether the person saw this turn goes with it); call the
- * answer with whether it closed. A card held for an earlier turn is dropped unsent.
+ * Capture the turn BEFORE the pane closes; call the answer with whether it closed.
+ * A card held for an earlier turn is dropped unsent. Focus never acknowledges it.
  */
 function cardAfterClose(paneId: string): (closed: boolean) => void {
   const held = heldCards.get(paneId)
@@ -1726,8 +1754,7 @@ function cardAfterClose(paneId: string): (closed: boolean) => void {
     if (!held || !closed) return
     heldCards.delete(paneId)
     if (!turn || turn.endedAt !== held.turn) return
-    if (turn.read) acknowledgeReview(held.reviewId, true)
-    if (finishedCard(held.steps, turn.read)) sendReviewNotice(held.reviewId)
+    sendReviewNotice(held.reviewId)
   }
 }
 ipcMain.handle('reviews:record', (_e, input: import('../shared/reviews').ReviewInput) => {
@@ -1737,12 +1764,13 @@ ipcMain.handle('reviews:record', (_e, input: import('../shared/reviews').ReviewI
   const native = session ? { title: session.title, provider: session.agent, cwd: session.cwd, nativeSessionId: resumeIdFor(session.id) ?? session.id } : { title: old!.title, provider: old!.agent, cwd: old!.cwd, nativeSessionId: old!.resumeId ?? old!.id }
   const chat = session && session.agent !== 'shell' && input.notify === true && input.closeSession === true ? session : undefined
   const review = recordReview(input, native, Boolean(chat))
-  if (chat) heldCards.set(chat.id, { reviewId: review.id, steps: personOwnedSteps(input.report).length, turn: manager.turnRead(chat.id)?.endedAt ?? 0 })
+  if (chat) heldCards.set(chat.id, { reviewId: review.id, turn: manager.turnRead(chat.id)?.endedAt ?? 0 })
   if (old?.endedAt) noteReviewClose(review.id, undefined, new Date(old.endedAt).toISOString())
   let close: { closed: boolean; reason?: string } = { closed: false }
   if (input.closeSession === true) {
     if (review.closedAt || review.closeBlocked) close.reason = review.closedAt ? 'close was already completed' : review.closeBlocked
     else if (!session) close.reason = 'session is already closed'
+    else if (keptOpen(session.id)) close.reason = 'kept open by hand'
     else if (!resumeIdFor(session.id)) close.reason = 'close requires a stable native provider session ID'
     else if (input.kind !== 'result' || input.proof !== 'measured' || !input.evidence?.length || input.workPreserved !== true || input.noRemainingWork !== true || !input.capturedAt) close.reason = 'close requires measured result evidence, work preservation, no remaining work, and a captured timestamp'
     else if (Date.parse(input.capturedAt) > Date.now()) close.reason = 'captured timestamp is in the future'
@@ -2294,9 +2322,13 @@ ipcMain.handle('sessions:switchAgent', (_e, id: string, agent: string, model?: s
   if (continuationOwnsSource(id)) return null
   return manager.switchAgent(id, agent, model)
 })
-ipcMain.handle('sessions:rename', (_e, id: string, title: string) =>
-  remote.owns(id) ? remote.send(id, { t: 'rename', title }) : manager.rename(id, title)
-)
+// A pane on another desk is renamed by that desk, and the new name comes back with its next
+// list - so this only says whether the rename left: false = the link could not carry it.
+ipcMain.handle('sessions:rename', (_e, id: string, title: string) => {
+  if (remote.owns(id)) return remote.send(id, { t: 'rename', title })
+  manager.rename(id, title)
+  return true
+})
 // A pane that has finished what it was opened for, said while it is open rather than
 // asked for at the open. The rule that decides WHEN is `shared/closeWhenDone.ts`.
 ipcMain.handle('sessions:closeWhenDone', (_e, id: string, reportTo?: string) =>
@@ -2359,7 +2391,7 @@ function exitedFacts(): ExitedFact[] {
     ask: s.ask,
     handingOff: s.handingOff,
     lastKeyboard: Math.max(s.lastKeyboard ?? 0, touchedAt.get(s.id) ?? 0) || undefined,
-    keepOpen: s.keepOpen
+    keepOpen: s.keepOpen || keptOpen(s.id)
   }))
 }
 /**
@@ -2418,6 +2450,7 @@ function removeFinished(removals: { id: string; reason: string }[]): void {
 // finished one does, INTO REVIEW, rather than only into History. Robert, 2026-09-25: a
 // quiet pane "just close sessions after a bit of time", with Review as the way back.
 ipcMain.handle('sessions:closeIntoReview', (_e, id: string, reason: string) => {
+  if (keptOpen(id)) return
   // Only a local agent pane has a conversation to keep; a screen view, a mirror or a stale
   // id is closed exactly the way `sessions:kill` closes it.
   if (!remote.owns(id) && !screenViews.owns(id) && manager.list().some((s) => s.id === id)) {
@@ -2433,13 +2466,13 @@ ipcMain.handle('sessions:clearFinished', () => {
 })
 // The automatic half: the same facts the button reads, checked on its own clock so a
 // pane nobody presses the button on still leaves the sidebar ten minutes after it dies.
-setInterval(() => {
+setInterval(() => measureMainTask('exited-close', () => {
   const facts = exitedFacts()
   const now = Date.now()
   // Sleeping panes only when finished panes close themselves at all (Settings).
   const asleep = getConfig().autoCloseDone !== false ? asleepSweep(facts, now) : []
   removeFinished([...exitedSweep(facts, now), ...asleep])
-}, 30_000).unref()
+}), 30_000).unref()
 ipcMain.handle('sessions:buffer', (_e, id: string) =>
   remote.owns(id) ? remote.buffer(id) : manager.buffer(id)
 )
@@ -2473,13 +2506,13 @@ ipcMain.handle('app:tourCheck', (_e, script: string) =>
 ipcMain.handle('sessions:log', (_e, id: string, bytes?: number) => {
   const want = Math.min(Math.max(Number(bytes) || 2_000_000, 1), 8 * 1024 * 1024)
   if (remote.owns(id)) return remote.log(id, want)
-  return history.tail(id, want) || manager.buffer(id)
+  return freshReplay(history.tail(id, want), manager.buffer(id))
 })
 ipcMain.handle('sessions:replay', async (_e, id: string) => {
   if (remote.owns(id)) return remote.replayHistory(id)
   if (!manager.list().some((session) => session.id === id)) return false
   pump.flushOne(id)
-  const raw = history.tail(id, 4 * 1024 * 1024) || manager.buffer(id)
+  const raw = freshReplay(history.tail(id, 4 * 1024 * 1024), manager.buffer(id))
   send('pane:reset', id, raw)
   return true
 })
@@ -2538,8 +2571,11 @@ ipcMain.on('sessions:attention-clear', (_e, id: string) =>
   remote.owns(id) ? remote.send(id, { t: 'ack' }) : manager.clearAttention(id)
 )
 /** Bytes into a pane, wherever that pane lives. The one path anything here types through. */
-function writePane(id: string, data: string, origin: WriteOrigin = 'desk'): void {
-  if (remote.owns(id)) return remote.send(id, { t: 'write', data })
+function writePane(id: string, data: string, origin: WriteOrigin = 'desk', terminalReply = false): void {
+  if (remote.owns(id)) {
+    remote.send(id, { t: 'write', data, ...(terminalReply ? { terminalReply: true } : {}) })
+    return
+  }
   watchForClear(id, data)
   // Nothing typed here stands a countdown down any more. It used to: a write carrying one
   // printable character cancelled the pane's own /clear outright, which meant the card
@@ -2549,14 +2585,14 @@ function writePane(id: string, data: string, origin: WriteOrigin = 'desk'): void
   // session". The one thing typing must still prevent is being typed OVER, and that is
   // handled where it can be handled honestly: `expiryDecision` returns 'wait' for an
   // unsent draft, so the timer asks again rather than the countdown disappearing.
-  manager.write(id, data, origin)
+  manager.write(id, data, origin, terminalReply)
 }
 
 // A phone's write arrives through `ipcTap`'s stand-in event, whose sender reports itself
 // gone; the window's own sender is live. That one bit decides whether the rail in this
 // window already tagged the line (it typed it) or needs telling (`pane:typed`).
-ipcMain.on('pty:write', (e, id: string, data: string) =>
-  writePane(id, data, e.sender?.isDestroyed?.() ? 'phone' : 'desk')
+ipcMain.on('pty:write', (e, id: string, data: string, terminalReply?: boolean) =>
+  writePane(id, data, e.sender?.isDestroyed?.() ? 'phone' : 'desk', terminalReply === true)
 )
 // The DESK window only, never `send()`. `send` broadcasts to the phone first, and a
 // phone's own submitted line already ran through its renderer's `feedInput` on the way
@@ -2792,6 +2828,9 @@ ipcMain.handle('config:set', (_e, patch: Partial<Config>) => {
   )
     patch = { ...patch, discordSettingsAt: Date.now() }
   const next = setConfig(patch)
+  if (patch.pinnedPanes) {
+    for (const id of next.pinnedPanes ?? []) manager.cancelAutoClear(id, 'cancelled')
+  }
   // An edited custom agent changes what is launchable, so the availability cache
   // must not outlive the edit.
   if (patch.customAgents) invalidateAgents()
@@ -3117,7 +3156,7 @@ function sweepCopies(repos: string[], gap: number): void {
 // lane command, so the ones that come unstuck by themselves do it overnight too. Both
 // the interval and laneRetry are no-ops on a machine with no PaneForge checkout, and it
 // returns immediately unless a lane is conflicted or waiting to go out.
-setInterval(() => {
+setInterval(() => measureMainTask('lane-maintenance', () => {
   laneRetry(lanePanes())
   // And the lanes held by chats that are not here any more: a killed pane never runs its
   // SessionEnd hook, so its lane sat held - and blocking the release - for twelve hours.
@@ -3125,7 +3164,7 @@ setInterval(() => {
   // Same clock, and the copies nothing has freed up since: no git here, the list of
   // projects with copies is read off disk, and each is swept at most every six hours.
   sweepCopies(ledgerRepos(lanePanes()), COPIES_EVERY_MS)
-}, 60_000).unref()
+}), 60_000).unref()
 
 // A pane ending is when a copy most often stops being needed: its chat let go, and nothing
 // else may be in it. Only the projects of the panes that ended are swept, and not at once -
@@ -3624,10 +3663,17 @@ ipcMain.handle('remote:handoffCancel', (_e, id: string) => handoffQueue.drop(Str
 // the only part a person can stop. Payload is re-read here because the phone server reaches
 // this channel too - see `readAutoClearAsk`.
 // The same body answers a request FILE from the shipped hook (`autoclearRequests.ts`).
+const keptContexts = new Map<string, string>()
 function autoClearAsk(raw: unknown): { ok: boolean; reason?: string } {
   const ask = readAutoClearAsk(raw)
   if (!ask) return { ok: false, reason: 'that is not an autoclear request' }
   if (remote.owns(ask.paneId)) return { ok: false, reason: 'that pane lives on another device' }
+  if (keptOpen(ask.paneId)) return { ok: false, reason: 'kept open by hand' }
+  const keptContext = keptContexts.get(ask.paneId)
+  if (keptContext && keptContext === resumeIdFor(ask.paneId)) {
+    return { ok: false, reason: 'you chose to keep this session; clear it manually when ready' }
+  }
+  keptContexts.delete(ask.paneId)
   // The hook says WHAT to type, this end says how this CLI spells "start again" - the same
   // ask from a codex pane has to send `/new`.
   //
@@ -3666,7 +3712,12 @@ function autoClearAsk(raw: unknown): { ok: boolean; reason?: string } {
   return manager.armAutoClear(ask.paneId, { ...ask, prompt: resumeBrief(ask, briefAnchor(ask, handoff?.path ?? null, (p) => existsSync(p))), command })
 }
 ipcMain.handle('autoclear:ask', (_e, raw: unknown) => autoClearAsk(raw))
-ipcMain.handle('autoclear:cancel', (_e, id: string) => manager.cancelAutoClear(String(id), 'cancelled'))
+ipcMain.handle('autoclear:cancel', (_e, id: string) => {
+  const paneId = String(id)
+  const conversation = resumeIdFor(paneId)
+  if (conversation) keptContexts.set(paneId, conversation)
+  return manager.cancelAutoClear(paneId, 'cancelled')
+})
 ipcMain.handle('autoclear:takeover', (_e, id: string) => manager.takeOver(String(id)))
 // The renderer runs from file:// in production, which is not a secure context, so
 // navigator.clipboard is unavailable there. Terminal copy/paste goes through here.

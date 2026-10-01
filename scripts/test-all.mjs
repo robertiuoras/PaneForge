@@ -39,6 +39,9 @@ if (process.platform !== 'win32') {
 // name -> the script file, in the order they run. Cheapest first is deliberate: a broken
 // build should say so in a second rather than after the slow ones.
 const TESTS = [
+  ['freshreplay', 'fresh-replay-test.mjs'],
+  ['codexworkers', 'codex-workers-test.mjs'],
+  ['paneanswer', 'pane-answer-test.mjs'],
   ['remotesuite', 'test-remote-test.mjs'],
   ['testchrome', 'test-chrome-test.mjs'],
   ['promptreview', 'prompt-review-test.mjs'],
@@ -47,6 +50,7 @@ const TESTS = [
   ['reviewlist', 'review-list-test.mjs'],
   ['doneclose', 'done-close-test.mjs'],
   ['replyread', 'reply-read-test.mjs'],
+  ['bgshell', 'background-shell-test.mjs'],
   ['claudemd', 'claudemd-size-test.mjs'],
   ['copylogic', 'copy-logic-test.mjs'],
   ['tokentally', 'token-tally-test.mjs'],
@@ -146,6 +150,8 @@ const TESTS = [
   ['continuation', 'continuation-test.mjs'],
   ['claim', 'transcript-claim-test.mjs'],
   ['cliclaim', 'transcript-cli-claim-test.mjs'],
+  ['mainperformance', 'main-performance-test.mjs'],
+  ['codexprocessclaim', 'codex-process-claim-test.mjs'],
   ['clearclaim', 'transcript-clear-test.mjs'],
   ['quitwords', 'quit-words-test.mjs'],
   ['screenview', 'screen-view-test.mjs'],
@@ -197,6 +203,7 @@ const TESTS = [
   ['sessioncopies', 'session-copies-test.mjs'],
   ['lanevisitor', 'lane-visitor-test.mjs'],
   ['laneorphan', 'lane-orphan-test.mjs'],
+  ['laneparked', 'lane-parked-test.mjs'],
   ['lanework', 'lane-work-test.mjs'],
   ['lanemergehold', 'lane-mergehold-test.mjs'],
   // A cleared pane keeps its lane; an unrecorded open merge can be resolved; identical
@@ -221,6 +228,7 @@ const TESTS = [
   ['clientname', 'client-name-test.mjs'],
   ['renametrigger', 'rename-trigger-test.mjs'],
   ['clititle', 'cli-title-test.mjs'],
+  ['pfrename', 'pf-rename-test.mjs'],
   ['peerchrome', 'peer-chrome-test.mjs'],
   ['projectname', 'project-name-test.mjs'],
   ['historysearch', 'history-search-test.mjs'],
@@ -343,6 +351,7 @@ const TESTS = [
   ['gate', 'release-gate-test.mjs'],
   ['conflict', 'conflict-test.mjs'],
   ['lanedispatch', 'lane-dispatch-test.mjs'],
+  ['lanecompletion', 'lane-completion-test.mjs'],
   ['queuedprompt', 'queued-prompt-test.mjs']
 ]
 

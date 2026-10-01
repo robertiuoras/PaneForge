@@ -3773,6 +3773,23 @@ typos; no word-picker reads that. Every good name on either desk had come from
 - **Lane copies were never renamed.** A new pane in `PaneForge-a` is titled `projectOf`
   (`PaneForge`), but `mayRename` compared the folder basename (`PaneForge-a`), so client
   naming never ran there. `appDefault()` accepts either.
+- **A handoff's name is the job it continues (2026-09-29).** Robert, 9:15am: "the naming of
+  session so bad paneforge hard to see/understand". Cards 3 and 4 on the Mac wore
+  `taskdriver.ai` and `PaneForge`: their conversations were titled `Taskdriver AI handoff next
+  steps` / `PaneForge handoff next steps`, which name nothing, and the conversation before
+  was never read (the pane came back from a save, or the title rule arrived with an update).
+  An automatic handoff's next conversation is another handoff, so such a card never got a
+  name. Claude Code stamps the id it was STARTED with as `session_id` on attachment records of
+  every conversation after a `/clear` (~265 KB in, behind the SessionStart output); all 300
+  handoff-only conversations on the Mac over three days carried it. `earlierTitles` walks
+  that chain in the same folder, newest first, and the first title that names work wins:
+  card 3 -> `Taskdriver.ai release check and render validation`, card 4 -> `Session auto
+  close prevention`. 15-36 ms once per such conversation. Only onto a project name.
+- **A PC pane's rename is answered before it lands.** `sessions:rename` on a mirrored pane is
+  sent to the PC, and the new name arrives with the PC's next list; `pf rename` read the list
+  once, at once, and printed `answered but ... is still "assistant"` for a rename that landed
+  seconds later. It now waits up to 5 s for the list, and a link that could not carry the
+  frame answers `false` (`not connected`) instead of nothing. `test:pfrename`.
 
 ## A pane says how long it has been open (full rules, moved out of CLAUDE.md 2026-08-31)
 

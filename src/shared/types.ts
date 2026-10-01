@@ -146,6 +146,23 @@ export type EffortChoice =
   | { mode: 'manual'; level: string }
   | { mode: 'off' }
 
+export interface CodexWorker {
+  id: string
+  name: string
+  nickname?: string
+  model?: string
+  effort?: string
+  state: 'running' | 'completed' | 'interrupted' | 'unknown' | 'stale'
+  /** Native event times only; an absent start never becomes an estimated duration. */
+  startedAt?: number
+  endedAt?: number
+  updatedAt?: number
+}
+export interface CodexWorkerReading {
+  workers: CodexWorker[]
+  status: 'fresh' | 'unknown' | 'limited'
+}
+
 export interface Session {
   id: string
   title: string
@@ -273,6 +290,8 @@ export interface Session {
    * and a second machine guessing at it would draw a countdown nobody is going to honour.
    */
   closingAt?: number
+  /** Published warning deadline from the finished-chat sweep. */
+  doneClosingAt?: number
   /** The owning device's persistent Keep open preference for this pane. */
   keepOpen?: boolean
   /**
@@ -538,6 +557,10 @@ export interface Session {
    * moved to the PC on 2026-09-22 with its review half done.
    */
   subagent?: string
+  /** Native Codex child visibility only; does not alter process close/move/sleep guards. */
+  codexWorkers?: CodexWorkerReading
+  /** Claude's existing transcript reader observes background tasks only. */
+  claudeWorkers?: CodexWorkerReading
   /**
    * How many turns this pane has finished on THIS machine - counted at `endRun`, never
    * carried across a move (the far end starts its own pane, at zero).
@@ -2343,7 +2366,7 @@ export interface Api {
   listReviews(): Promise<{ reviews: ReviewRecord[]; persistent: true }>
   recordReview(input: ReviewInput): Promise<{ review: ReviewRecord; close: { closed: boolean; reason?: string } }>
   acknowledgeReview(id: string, reviewed: boolean): Promise<{ ok: boolean; clearedAttention: boolean }>
-  openReview(id: string, index: number): Promise<{ opened: boolean }>
+  openReview(id: string, index: number | string): Promise<{ opened: boolean }>
   /** Available only to the authenticated PaneForge repository owner. */
   ownerAccess(): Promise<boolean>
   /** Aggregate GitHub installer-asset downloads, not unique people or IP telemetry. */
@@ -2374,7 +2397,8 @@ export interface Api {
   restartSession(id: string): Promise<Session | null>
   /** swap a running pane to another CLI/model - same folder, same pane, fresh process */
   switchAgent(id: string, agent: Agent, model?: string): Promise<Session | null>
-  renameSession(id: string, title: string): Promise<void>
+  /** false = the pane is on another computer and the link could not carry the rename */
+  renameSession(id: string, title: string): Promise<boolean>
   /**
    * Let a Codex pane pick its own reasoning effort, pin it to one level by hand, or stop
    * doing either. Per pane, off until asked for.
@@ -2432,7 +2456,8 @@ export interface Api {
    * leaves the marker that stops the keep-alive task reopening what was closed on purpose.
    */
   quitIdle(reason: string): Promise<void>
-  write(id: string, data: string): void
+  /** `terminalReply` is set only by xterm's non-keyboard protocol path. */
+  write(id: string, data: string, terminalReply?: boolean): void
   /**
    * Put a job in a pane's prompt box and press Enter, properly.
    *
@@ -2758,6 +2783,8 @@ export interface Api {
   updateState(): Promise<UpdateState>
   /** Hand one line to a pane, queued for the gap between its own turns. */
   tellPane(ref: string, text: string): void
+  answerPane(req: import('./paneAnswer').PaneAnswerRequest): Promise<import('./paneAnswer').PaneAnswerReceipt>
+  answerStatus(req: import('./paneAnswer').PaneAnswerIdentity): Promise<import('./paneAnswer').PaneAnswerReceipt | null>
   /**
    * Ask for a pane to be /clear'd after a countdown the desk can stop. The caller is the
    * `autoclear` Stop hook, never the window - see shared/autoclear.ts.

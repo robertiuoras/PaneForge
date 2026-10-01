@@ -367,7 +367,9 @@ export function pickAnswer(ask: PaneAsk, cfg: AutoAnswerConfig): AutoPick | null
  */
 export interface GuardDeckQuestion {
   pane?: { id?: string }
-  /** `open` (showing), `sending` (GuardDeck is answering), `answered`, `expired`. */
+  /** Native conversation identity, retained when its physical pane is reopened. */
+  session_id?: string
+  /** `open`, `sending`, `queued` (waiting for receipt), `answered`, `expired`. */
   state?: string
   /** ISO time the question was written. Past a day it counts as expired. */
   created?: string
@@ -377,22 +379,25 @@ export interface GuardDeckQuestion {
 export const GUARDDECK_QUESTION_TTL_MS = 24 * 60 * 60 * 1000
 
 /**
- * Is somebody answering this pane's question from GuardDeck?
+ * Is this pane waiting for an answer from GuardDeck?
  *
  * The auto-answer wait only holds while somebody is at PaneForge's own window
  * (`deskFocused()`), and nothing outside the app could hold it - so a question GuardDeck
  * had just put on screen was pressed by the default the moment `waitMs` ran out, and a
  * marked "(Recommended)" option is exactly the kind GuardDeck gets (observed 2026-09-23,
  * "Apple" pressed under the popup). A file naming this pane in `open` or `sending` is
- * that person; `answered`, `expired`, another pane, or a day-old file is nobody. Bad
+ * that person. A queued answer still needs its receipt. Automatic closure must hold too:
+ * a native asynchronous question can finish its terminal turn while its answer is pending.
+ * A verified native ID also holds a reopened pane of that exact conversation.
+ * `answered`, `expired`, another conversation, or a day-old file holds nothing. Bad
  * records are skipped, never a hold: a hold that could not be read cannot be released.
  */
-export function heldByGuardDeck(paneId: string, files: unknown[], now: number): boolean {
+export function heldByGuardDeck(paneId: string, files: unknown[], now: number, conversationId?: string): boolean {
   for (const f of files) {
     if (!f || typeof f !== 'object') continue
     const q = f as GuardDeckQuestion
-    if (q.pane?.id !== paneId) continue
-    if (q.state !== 'open' && q.state !== 'sending') continue
+    if (q.pane?.id !== paneId && (!conversationId || q.session_id !== conversationId)) continue
+    if (q.state !== 'open' && q.state !== 'sending' && q.state !== 'queued') continue
     const created = typeof q.created === 'string' ? Date.parse(q.created) : NaN
     if (!Number.isFinite(created) || now - created > GUARDDECK_QUESTION_TTL_MS) continue
     return true

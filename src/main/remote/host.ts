@@ -33,7 +33,7 @@ export interface HostBackend {
   list(): Session[]
   buffer(id: string): string
   log(id: string, bytes: number): string
-  write(id: string, data: string): void
+  write(id: string, data: string, terminalReply?: boolean): void
   /** Submit an app-dispatched job through the owner's composer-aware prompt path. */
   sendPrompt(id: string, text: string): void
   resize(
@@ -509,7 +509,7 @@ export class RemoteHost extends EventEmitter {
         case 'write':
           // The writing viewer already registered this prompt from its own keystrokes.
           this.writingGuest = guest
-          try { this.backend.write(id, String(m.data ?? '')) }
+          try { this.backend.write(id, String(m.data ?? ''), m.terminalReply === true) }
           finally { this.writingGuest = null }
           return
         case 'prompt':

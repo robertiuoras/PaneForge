@@ -148,7 +148,6 @@ const RETRY_TIMEOUT = 10 * 60 * 1000
  * How long after a release the timer keeps ticking with nothing else to do. Matches
  * NOTES_MS in scripts/lane.mjs, which is the window its two reconcilers work in.
  */
-const RECONCILE_AFTER_SHIP = 60 * 60 * 1000
 
 let repo: string | null | undefined
 /** Which set of open panes produced `repo`, so closing the last pane on a repo re-resolves. */
@@ -156,6 +155,8 @@ let repoFrom: string | null = null
 let cache: { at: number; board: LaneBoard | null } = { at: 0, board: null }
 let retryAt = 0
 let retrying = false
+const retryAttempts = new Map<string, number>()
+let retrySequence = 0
 
 /**
  * The main checkout, which is where the shared .git (and so the lane state) lives.
@@ -400,8 +401,9 @@ export function laneEngine(main: string): string | null {
   const resources = (process as unknown as { resourcesPath?: string }).resourcesPath
   const tries = [
     process.env.PANEFORGE_ENGINE,
-    join(main, 'scripts', 'lane.mjs'),
-    resources ? join(resources, 'scripts', 'lane.mjs') : undefined
+    // Installed recovery must survive a broken edit in PaneForge's own checkout.
+    resources ? join(resources, 'scripts', 'lane.mjs') : undefined,
+    join(main, 'scripts', 'lane.mjs')
   ].filter(Boolean) as string[]
   return tries.find((p) => existsSync(p)) ?? null
 }
@@ -462,23 +464,20 @@ export function laneRetry(panes: LanePane[] = []): void {
   if (retrying) return
   const now = Date.now()
   if (now - retryAt < RETRY_EVERY) return
-  // Every repo the panes are in, one per tick, same as laneReclaim: the retry used to run
-  // only against the vote's winning repo, so a conflict in any other open project was
-  // never retried by the clock at all.
-  for (const board of laneBoards(panes)) {
-    // A release is not finished when it is cut. For an hour afterwards lane.mjs still has
-    // two things to fix from here - the notes, and a `latest.yml` overwritten by whichever
-    // publisher finished last (see reconcileFeed). Both need the timer, and the timer used
-    // to stop the moment no lane was ready or conflicted - which is precisely what a
-    // release makes true, at precisely the moment it creates the work. So the reconcilers
-    // could only ever run when some OTHER lane happened to be mid-flight, and v0.4.27's
-    // broken feed would have sat there being served until somebody noticed by hand.
-    const ship = board.lastShip
-    const watching = !!ship?.version && now - ship.at < RECONCILE_AFTER_SHIP
-    if (!watching && !board.lanes.some((l) => l.conflicted || l.ready)) continue
+  // Closed panes and app restarts do not remove a repo's pending work. Use the same
+  // bounded ledger discovery as reclaim, and give every repo a turn even when the
+  // first one's semantic conflict remains pending indefinitely.
+  const boards = ledgerRepos(panes).flatMap((main) => {
+    const board = readRepo(main)
+    return board ? [board] : []
+  }).sort((a, b) => (retryAttempts.get(samePath(a.repo)) ?? 0) - (retryAttempts.get(samePath(b.repo)) ?? 0))
+  for (const board of boards) {
+    // Empty boards can still have abandoned dirty work, clean unready commits or feed
+    // reconciliation. The engine decides which work is safe to resume.
     const engine = laneEngine(board.repo)
     if (!engine) continue
     retryAt = now
+    retryAttempts.set(samePath(board.repo), ++retrySequence)
     retrying = true
     execFile(
       process.execPath,

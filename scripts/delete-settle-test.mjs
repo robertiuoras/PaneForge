@@ -2,6 +2,8 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { buildSync, transformSync } from 'esbuild'
+import xtermHeadless from '@xterm/headless'
+const { Terminal } = xtermHeadless
 const source=readFileSync(new URL('../src/renderer/src/components/TerminalPane.tsx',import.meta.url),'utf8')
 const start=source.indexOf('    const deleteSelection ='),end=source.indexOf('    inputRowsRef.current =',start)
 assert.ok(start>=0&&end>start)
@@ -50,3 +52,30 @@ for(const separator of ['',' ','\n'])for(const cursorAtStart of [false,true]){
  eq(logical.keys,[],'no destructive keys into a chooser')
 }
 console.log(`selection delete: ${checks} checks passed`)
+
+// Exercise the real row reader on Codex's alternate screen, not just supplied spans.
+const boxBundle=buildSync({entryPoints:['src/shared/promptBox.ts'],bundle:true,format:'esm',write:false})
+const box=await import('data:text/javascript;base64,'+Buffer.from(boxBundle.outputFiles[0].text).toString('base64'))
+const readerStart=source.indexOf('    const contentStart =')
+const readerEnd=source.indexOf('    /** The last row of what `inputRows`',readerStart)
+assert.ok(readerStart>=0&&readerEnd>readerStart)
+const readerCode=transformSync(source.slice(readerStart,readerEnd),{loader:'ts'}).code
+const t=new Terminal({cols:133,rows:12,allowProposedApi:true})
+await new Promise(resolve=>t.write('\x1b[?1049h\x1b[2J\x1b[2;1H› alpha beta\r\n  gamma delta\r\n  epsilon zeta\r\n\r\n                    360K in · 1K out · Context 78% left · GPT-6-Astra medium\x1b[4;15H',resolve))
+const rowText=r=>t.buffer.active.getLine(r)?.translateToString(true)??''
+function readRows(agent) {
+ const deps={t,rowText,agent,...helpers,...box}
+ return new Function(...Object.keys(deps),readerCode+';return inputRows()')(...Object.values(deps))
+}
+eq(t.buffer.active.type,'alternate','fixture uses current Codex screen mode')
+const span=readRows('codex')
+eq(span?.top,1,'alternate Codex input starts at prompt marker')
+eq(span?.rows.length,3,'alternate Codex input includes all three lines')
+eq(helpers.keysToPoint(span.rows,{row:2,col:14},{row:0,col:2}),helpers.ARROW.left.repeat(35),'cursor moves up across hard newlines')
+eq(helpers.keysToPoint(span.rows,{row:0,col:2},{row:2,col:14}),helpers.ARROW.right.repeat(35),'cursor moves down across hard newlines')
+eq(readRows('shell'),null,'alternate shell cannot opt into editable input')
+eq(readRows('claude'),null,'other alternate applications retain refusal')
+await new Promise(resolve=>t.write('\x1b[2J\x1b[2;1H› 1. Update now\r\n  2. Skip\r\n\r\n  Press enter to continue\x1b[3;5H',resolve))
+eq(readRows('codex'),null,'alternate Codex menu cannot fall back to cursor row')
+t.dispose()
+console.log(`alternate composer: ${checks} total checks passed`)

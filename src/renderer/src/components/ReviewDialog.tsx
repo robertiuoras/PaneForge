@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { FULL_ADVICE, contextLevel, contextPercent, contextWords, type ReviewRecord } from '@shared/reviews'
 import { ago, filterReviews, firstLine, statusWord, visibleReviews, type ReviewFilter } from '@shared/reviewList'
 import { folderName } from '@shared/place'
+import { renderReviewMarkdown } from '@shared/reviewMarkdown'
 import useDialogFocus from './useDialogFocus'
 
 const api = window.api
@@ -140,7 +141,16 @@ export default function ReviewDialog({ onHistory, onReopen, onClose }: Props): J
                       </div>
                       <div className="review-field">
                         <strong>What it did</strong>
-                        <pre>{r.report}</pre>
+                        <div
+                          className="review-markdown"
+                          dangerouslySetInnerHTML={{ __html: renderReviewMarkdown(r.report) }}
+                          onClick={(e) => {
+                            const link = (e.target as HTMLElement).closest<HTMLAnchorElement>('a[href]')
+                            if (!link) return
+                            e.preventDefault()
+                            void api.openReview(r.id, link.getAttribute('href')!)
+                          }}
+                        />
                       </div>
                       {(r.context || r.sessionTokens) && (
                         <div className="review-field">

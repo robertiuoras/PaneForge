@@ -37,6 +37,8 @@ const surfaceFile = path.join(root, 'src', 'shared', 'surface.ts')
 const DESK_SIDE = {
   recordReview: 'pf-ctl review - explicit agent result publishing, guarded phone invoke',
   tellPane: 'pf tell <pane> "..." - one line handed to a pane from outside the window',
+  answerPane: 'GuardDeck codex-question-answer.mjs - conversation-bound async answers through pf call',
+  answerStatus: 'GuardDeck codex-question-answer.mjs - durable exact transcript delivery receipts',
   // A pane says of ITSELF that it should go once it is done. The person who would press a
   // button for this is the person who would simply close the pane; the caller that cannot
   // is the agent inside it, at the end of its own work.

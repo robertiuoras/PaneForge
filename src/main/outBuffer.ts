@@ -17,11 +17,16 @@
  * the cap. The join happens on read, where one copy is what the caller wanted anyway.
  *
  * `limit` is a floor on what is retained, not a ceiling: the tail can carry up to one
- * extra chunk beyond it, and read() trims to exactly the cap.
+ * extra chunk beyond it, and read() trims to exactly the cap. A clipped replay also
+ * gets a short DEC-mode prefix so discarding startup does not change terminal mode.
  */
+import { TerminalModes } from '../shared/terminalModes'
+
 export class OutBuffer {
   private parts: string[] = []
   private len = 0
+  private modes = new TerminalModes()
+  private truncated = false
 
   constructor(private readonly limit: number) {}
 
@@ -31,7 +36,10 @@ export class OutBuffer {
     this.len += data.length
     // Drop from the front while the rest still covers the cap on its own.
     while (this.parts.length > 1 && this.len - this.parts[0].length >= this.limit) {
-      this.len -= this.parts.shift()!.length
+      const discarded = this.parts.shift()!
+      this.modes.consume(discarded)
+      this.truncated = true
+      this.len -= discarded.length
     }
   }
 
@@ -39,6 +47,8 @@ export class OutBuffer {
   set(data: string): void {
     this.parts = data ? [data] : []
     this.len = data.length
+    this.modes = new TerminalModes()
+    this.truncated = false
   }
 
   clear(): void {
@@ -57,10 +67,16 @@ export class OutBuffer {
     if (this.parts.length === 0) return ''
     if (this.parts.length > 1 || this.len > this.limit) {
       const joined = this.parts.join('')
-      const out = joined.length > this.limit ? joined.slice(-this.limit) : joined
+      const cut = Math.max(0, joined.length - this.limit)
+      if (cut) {
+        this.modes.consume(joined.slice(0, cut))
+        this.truncated = true
+      }
+      const out = cut ? joined.slice(cut) : joined
       this.parts = [out]
       this.len = out.length
     }
-    return this.parts[0]
+    const tail = this.parts[0]
+    return (this.truncated ? this.modes.restorePrefix(tail) : '') + tail
   }
 }

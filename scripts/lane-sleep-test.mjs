@@ -5,7 +5,8 @@
 // and hands the checkout to the next chat that asks. That is exactly wrong for a pane put
 // to sleep on purpose: nothing ended, somebody is keeping the pane for later, and its lane
 // may be mid-feature. `sleep` marks the hold `asleep`; every path that would otherwise give
-// it away has to refuse while that mark is on, and only `wake` (or seven days) takes it off.
+// it away has to refuse while that mark is on. Silence after seven days is still not
+// evidence that the native owner ended.
 //
 // RED first: every assertion below fails against `release`/`reap`/`claim` as they were
 // before this file's `asleep` guards existed - proven by running this against a lane.mjs
@@ -143,14 +144,21 @@ ok('the lane is still this pane\'s to keep working in', state().lanes[LANE]?.ses
   write(s)
 }
 lane(repo, 'status', '--session', 'anyone')
-ok('an asleep hold seven days stale reaps like any other', state().lanes[LANE] === undefined, JSON.stringify(state().lanes))
+ok('an expired asleep hold with unknown native liveness remains held', Boolean(state().lanes[LANE]), JSON.stringify(state().lanes))
+{
+  const s = state()
+  s.lanes[LANE].ended = Date.now() - 8 * DAY
+  write(s)
+}
+lane(repo, 'status', '--session', 'anyone')
+ok('an expired asleep hold with an actual session-end marker reaps', state().lanes[LANE] === undefined, JSON.stringify(state().lanes))
 
 // -------------------------------------------------------------- the app's --gone ends it now
 
 // The pane that slept is in no running copy (closed, or a desk restarted without it), so
 // nothing will ever `wake` this hold. The app's reclaim sweep says so with `--gone`, and
-// release then ends the hold the way a chat's own SessionEnd would: clean committed work
-// is marked done, the lane is freed. 2026-09-09: 26 of 41 holds on the machine sat like
+// release then frees the hold while preserving unfinished work for verification.
+// 2026-09-09: 26 of 41 holds on the machine sat like
 // this, immune for seven days, drawn as `Other copies (21)`.
 const SESS2 = 'chat-slept-then-closed'
 const PANE2 = 'pane-slept-then-closed'
@@ -169,9 +177,11 @@ git(laneFolder2, 'add', '-A')
 git(laneFolder2, 'commit', '-qm', 'done')
 lane(repo, 'release', '--session', SESS2)
 ok('a plain release still parks an asleep hold', Boolean(state().lanes[LANE2]?.asleep), JSON.stringify(state().lanes))
+const finishedTip = git(laneFolder2, 'rev-parse', 'HEAD')
 lane(repo, 'release', '--session', SESS2, '--gone')
 ok('release --gone ends an asleep hold', state().lanes[LANE2] === undefined, JSON.stringify(state().lanes))
-if (LANE2 !== 'main') ok('its committed clean work is marked done on the way out', Boolean(state().ready?.[LANE2]), JSON.stringify(state().ready))
+if (LANE2 !== 'main') ok('its committed clean work is not marked ready without verification', !state().ready?.[LANE2], JSON.stringify(state().ready))
+ok('its committed work is preserved after the hold ends', git(laneFolder2, 'rev-parse', 'HEAD') === finishedTip)
 
 console.log(`\n${failed ? `${failed} FAILED` : 'all passed'}`)
 process.exit(failed ? 1 : 0)
