@@ -74,6 +74,8 @@ ok(/doneEnough\(\{ \.\.\.meta, busyUntil: live\.busyUntil \}, quiet, now\)/.test
 // Told BEFORE the kill: `kill()` deletes the session, and the request naming who to tell
 // goes with it.
 const body = sessions.slice(sessions.indexOf('private sweepCloseWhenDone'), sessions.indexOf('/** Start a countdown that was queued'))
+ok(/this\.owesPrompt\(live\)/.test(body), 'an owed or uncertain prompt refuses the explicit close path')
+ok(/meta\.agent !== 'shell' && meta\.finished !== true/.test(body), 'startup paint without a completed native reply refuses the explicit close path')
 ok(body.indexOf('queuePrompt') < body.indexOf('this.kill(meta.id)'), 'the opener is told before the pane is killed')
 ok(/PF_PANE: id/.test(sessions), 'every pane knows which pane it is, so `pf` can name the opener')
 
@@ -125,7 +127,7 @@ ok(/close-when-done needs a pane/.test(ctl), '...and refuses by name when it can
   manager.kill = (id) => kills.push(id)
   const at = Date.now()
   const pane = () => ({
-    meta: { id: 'pane', title: 'Finish preserved work', cwd: '/fixture', status: 'idle', printed: at - 60_000 },
+    meta: { id: 'pane', title: 'Finish preserved work', cwd: '/fixture', agent: 'claude', finished: true, status: 'idle', printed: at - 60_000 },
     req: { closeWhenDone: true },
     busyUntil: 0,
   })
@@ -158,6 +160,12 @@ ok(/close-when-done needs a pane/.test(ctl), '...and refuses by name when it can
   sweep(owed)
   is(kills, [], '...and a queued prompt that has not landed yet')
   is(told, [], 'the opener is told nothing while the pane is still owed a prompt')
+
+  // Quiet but no completed reply on record (startup paint): not done either.
+  const unfinished = pane()
+  unfinished.meta.finished = undefined
+  sweep(unfinished)
+  is(kills, [], '...and a Claude pane whose reply has not completed')
 
   // The resume turn ran and finished: nothing owed, quiet again. Now it is done.
   const resumed = pane()

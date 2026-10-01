@@ -23,7 +23,7 @@ type WriteOrigin='app'|'desk'
 const REPAINT_GRACE_MS=100
 const app={getPath:()=>${JSON.stringify(work)}}
 let owed=0
-const owedCount=()=>owed, stillOwed=()=>owed>0
+const owedCount=()=>owed, stillOwed=()=>owed>0, typedOwed=()=>[]
 import {join} from 'node:path'
 let native='11111111-1111-1111-1111-111111111111', received=false, clock=1000
 const Date={now:()=>clock}

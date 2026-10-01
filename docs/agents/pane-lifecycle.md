@@ -95,6 +95,13 @@ flag, `closeHeldBy`). ONLY after a real close: each `personOwnedSteps` step a Gu
 the result card (`sendReviewNotice`) unless explicitly marked reviewed in Review or by a
 GuardDeck receipt. Looking at a pane only controls close timing; it never acknowledges a
 report or suppresses its delivery. Explicit unfinished/queued work in prose also holds the pane.
+Explicit `--close-when-done` also requires an actual completed agent reply and no owed
+prompt; an idle startup or trust composer is not completion. Claude's invisible-character
+review warning holds submission. Typed but unconfirmed Claude intent remains in the durable
+queue, blocks followers and is never pasted again on restore. Only a native receipt containing
+the entire payload releases it; a matching first line or a turn clock is insufficient
+(`test:promptsubmit`, `test:closedone`, `test:busy`). A pre-paste trust-choice Enter does not
+claim Codex's composer; existing empty, idle and unchanged checks still govern delivery.
 Once eligible, the automatic sweep publishes `doneClosingAt` and waits a fresh 30 seconds;
 any refusal cancels it. GuardDeck displays that deadline alongside the idle-close clock.
 An old turn never overrides the 30-second quiet period after a recent look. `autoclose_*` rows (`reviews:record`) same rule via `heldCards`/

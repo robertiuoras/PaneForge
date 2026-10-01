@@ -162,7 +162,7 @@ export function readsBusy(text: string): boolean {
  */
 const CONNECTING = /\/rc\s+connecting(?:…|\.\.\.)/
 export function composerHeld(text: string): boolean {
-  return CONNECTING.test(text)
+  return CONNECTING.test(text) || /removed \d+ invisible characters[^\n]*review and press enter to send/i.test(text)
 }
 
 /**
