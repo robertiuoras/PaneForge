@@ -3,7 +3,7 @@ import { measureMainTask } from './mainPerformance'
 import { profileRenderer, reloadRenderer } from './renderCost'
 import { execFile } from 'node:child_process'
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
-import { tmpdir, homedir } from 'node:os'
+import { tmpdir, homedir, hostname } from 'node:os'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
@@ -58,6 +58,8 @@ import { writeAttachments, readAttachIns } from './attach'
 import { AskNotifier, postAsk, telegramCreds } from './askNotify'
 import { errorMessage } from '../shared/paneError'
 import { tooBig, type AttachIn, type AttachResult } from '../shared/attach'
+import { postPush, startLimitWaves } from './limitWaves'
+import { cardNumber } from '../../scripts/pf-ctl-lib.mjs'
 import { CHOOSE_GAP_MS, keysForChoice, sameAsk, stampMatches } from '../shared/choices'
 import { Remote } from './remote'
 import { readInvite } from './remote/invite'
@@ -179,7 +181,7 @@ import {
 } from './restore'
 import { ACTIVATION_SETTLE_MS, revealOnActivation } from '../shared/activation'
 import { knownToHave, OFFLOAD_ASK_MS, openFailure, placeNewPane, preferRemoteOf, REMOTE_START_ACK_MS, type KnownProjects } from '../shared/offloadFirst'
-import { logActivation, logOffload, logReclaim, logFix, logHandoff, logAwake } from './activationLog'
+import { logActivation, logOffload, logReclaim, logFix, logHandoff, logAwake, logLimitReset } from './activationLog'
 import { projectNameOf, projectOn } from '../shared/capacity'
 import { staysHere } from '../shared/autoHandoff'
 import { listActivity, markActivitySeen, noteActivity, onActivityChange } from './activity'
@@ -1060,9 +1062,17 @@ manager.on('clientNamed', (e: ClientNamed) => {
 })
 
 /**
- * A pane that STOPPED on an error goes to Telegram. A pane's QUESTION does not: Robert
- * 2026-09-23, "remove these question[s] ... in telegram, they gonna come through guarddeck
- * now". Questions stay on the desk (red row, knock) and go to GuardDeck.
+ * A pane that STOPPED on an error goes to Telegram - unless the stop is a usage limit that
+ * names its reset. A pane's QUESTION does not: Robert 2026-09-23, "remove these question[s]
+ * ... in telegram, they gonna come through guarddeck now". Questions stay on the desk (red
+ * row, knock) and go to GuardDeck.
+ *
+ * A limit with a reset goes nowhere when it happens. It joins a wave (`limitWaves` below):
+ * every pane that limit stopped is continued after the reset, and ONE TaskDriver push says
+ * how many actually carried on. 2026-10-01 9:39pm the 5-hour limit stopped ten panes and
+ * this sent ten Telegram messages; Robert: "rather not on telegram taskdriver mobile app
+ * notif and put them together". Every other stop - an expired login, a credit balance, a
+ * limit line with no reset on it - still comes here.
  *
  * `AskNotifier` does what an error needs: wait for the frames to stop, send once, then hold
  * the same message for five minutes. A CLI paints its error line in pieces, and a limit that
@@ -1085,9 +1095,46 @@ const errorNotifier = new AskNotifier({
  * there is no toast, no flash and no sound, and it is skipped for a mirror for the same
  * reason a question is: that pane's own machine is raising it too.
  */
-manager.on('paneError', (s: Session, line: string) => {
-  if (s.remote || !getConfig().telegramAsk) return
+manager.on('paneError', (s: Session, line: string, painted?: string) => {
+  if (s.remote) return
+  if (limitWaves.stopped(s, line, painted)) return
+  if (!getConfig().telegramAsk) return
   errorNotifier.schedule(s.id, () => ({ key: line, text: errorMessage(s.title, line, undefined) }))
+})
+
+// A stop repainted on a pane already reported: only a limit wave cares (see sessions.ts).
+manager.on('paneStopAgain', (s: Session, line: string, painted?: string) => {
+  if (!s.remote) limitWaves.stopped(s, line, painted)
+})
+
+/**
+ * Usage-limit waves: the continue after the reset and the one phone push
+ * (`shared/limitWave.ts` decides, `main/limitWaves.ts` acts). Only this desk's own panes -
+ * a mirror's machine runs its own wave. The continue rides the automatic-continue switch:
+ * off, the panes are left to people and the push says so.
+ */
+const limitWaves = startLimitWaves({
+  list: () => manager.list(),
+  label: (id) => {
+    const s = manager.list().find((x) => x.id === id)
+    return s ? { number: cardNumber(allSessions(), id), title: s.title } : undefined
+  },
+  movedOn: (id) => continuationOwnsSource(id),
+  mayPrompt: () => (getConfig().recover ?? DEFAULT_RECOVER).enabled,
+  carryOn: (id, text, done) => {
+    void (async () => {
+      // Placed again before it wakes, exactly as a press on its sleep chip does.
+      try {
+        await manager.rehome(id, (req) => laneFor(req, ledgerTakenFolders(id, holdOver), id))
+      } catch {
+        /* the folder it slept in is still there */
+      }
+      manager.carryOn(id, text, done)
+    })()
+  },
+  post: (payload) => postPush(payload),
+  host: process.env.PF_DEVICE || hostname().replace(/\.local$/, ''),
+  log: logLimitReset
 })
 
 /**

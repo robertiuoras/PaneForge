@@ -164,7 +164,7 @@ import { askSignature, CHOOSE_GAP_MS, keysForChoice, readAsk, sameAsk , stampMat
 import { stripAnsi as strip } from '../shared/ansi'
 import { silenceMs, stalledNow } from '../shared/alerts'
 import { DEFAULT_RECOVER, recover, TAIL_CHARS } from '../shared/recover'
-import { nextStop, turnSubmitted, type StopLatch } from '../shared/paneError'
+import { nextStop, stoppedLine, turnSubmitted, type StopLatch } from '../shared/paneError'
 import { wakeBytes } from '../shared/wakeScreen'
 import { getConfig } from './config'
 import { spawnQuiet } from './spawnQuiet'
@@ -1150,6 +1150,9 @@ export class SessionManager extends EventEmitter {
     // anything. It is the previous session's transcript, replayed raw - see `restoredTail`.
     if (back.text) {
       live.buffer.set(back.text)
+      // Last run's screen is not this process's output. Read as new, a pane that came back
+      // showing a limit or a login error reported it again on every restart.
+      live.recoverSeen = strip(live.buffer.read()).length
       if (back.cols > 0) meta.replayCols = back.cols
       // ...and its height, which antigravity's cursor-up frame is drawn against.
       if (back.rows > 0) meta.replayRows = back.rows
@@ -1877,6 +1880,31 @@ export class SessionManager extends EventEmitter {
   sendPrompt(id: string, text: string): void {
     if (!this.sessions.has(id)) return
     this.queuePrompt(id, text)
+  }
+
+  /**
+   * Type a continue into a pane a usage limit stopped, once the limit has reset
+   * (`main/limitWaves.ts`). Most such panes are ASLEEP by then - the idle sweep sleeps a
+   * pane after half an hour and a 5-hour limit is a long wait - and `queuePrompt` into a
+   * pane with no process types into nothing, so it is woken first. A woken CLI repaints its
+   * conversation, old limit line and all; that repaint names a reset already gone, and
+   * `limitWaves.stopped` drops it as stale. The prompt waits the beat a restored pane's
+   * continue does. `done` gets `queuePrompt`'s own ending.
+   */
+  carryOn(id: string, text: string, done: (end: QueueDrop | 'sent' | 'withheld' | 'wake-failed') => void): void {
+    const live = this.sessions.get(id)
+    if (!live) return done('gone')
+    const asleep = Boolean(live.meta.asleep)
+    if (asleep) {
+      try {
+        if (!this.wake(id)) return done('wake-failed')
+      } catch {
+        return done('wake-failed')
+      }
+    }
+    // No waiting behind a person: somebody typing in there has the pane, and a "carry on
+    // with what you were doing" landing after THEIR turn would steer it back to the old job.
+    this.queuePrompt(id, text, asleep ? RESTORE_CONTINUE_MS : 0, PROMPT_START_MS, done, PROMPT_WAIT_MAX_MS, 'turn', undefined, 0)
   }
 
   /** A native receipt may say queued only after the real recovery ledger is saved. */
@@ -4156,12 +4184,13 @@ export class SessionManager extends EventEmitter {
     prompt?: string,
     extraDelay = 0,
     startMs = PROMPT_START_MS,
-    onSettled?: () => void,
+    onSettled?: (end: QueueDrop | 'sent' | 'withheld') => void,
     budgetMs = PROMPT_WAIT_MAX_MS,
     proof: PromptProof = 'turn',
-    known?: string
+    known?: string,
+    personWaitMs = PERSON_WAIT_MAX_MS
   ): void {
-    if (!prompt) return onSettled?.()
+    if (!prompt) return onSettled?.('withheld')
     // The app owes this pane a prompt from here until `settle` below runs, whatever the
     // caller is - autoclear's resume, a restore, `pf open --prompt`, a split brief. See
     // `Session.owedPrompt`.
@@ -4219,7 +4248,7 @@ export class SessionManager extends EventEmitter {
         this.releaseDraftHold(this.sessions.get(id), ownHold)
       }
       this.setOwedPrompt(id, owedCount(id) > 0)
-      onSettled?.()
+      onSettled?.(end)
     }
     let deadline = Date.now() + Math.max(0, budgetMs) + Math.max(0, extraDelay)
     // `lastKeyboard` as it stands NOW, which is after whatever write queued this prompt -
@@ -4234,7 +4263,7 @@ export class SessionManager extends EventEmitter {
     // turn", which is a different question and a much longer answer - a turn Robert starts
     // in a freshly cleared pane routinely runs ten minutes. Below it the prompt waits; at
     // it, it gives up and says so, rather than sitting owed for ever.
-    const personDeadline = Date.now() + PERSON_WAIT_MAX_MS + Math.max(0, extraDelay)
+    const personDeadline = Date.now() + personWaitMs + Math.max(0, extraDelay)
     const ourWrite = (data: string): void => {
       const priorHold = this.sessions.get(id)?.draftConfirmation
       if (owner) owner.writing = true
@@ -4909,8 +4938,17 @@ export class SessionManager extends EventEmitter {
     // continue off must not also silence the pane that has given up, which is the one a
     // person misses (`shared/paneError.ts`).
     // Once per stop: `nextStop` answers null until a turn is submitted into this pane.
+    // The tail goes with the line: a limit's reset is read off it (`shared/limitWave.ts`),
+    // and Codex wraps its date onto the row below.
     const stopped = nextStop(live.stop, painted)
-    if (stopped) this.emit('paneError', live.meta, stopped)
+    if (stopped) this.emit('paneError', live.meta, stopped, painted)
+    // Already reported, so no news for Telegram - but news for a limit wave. Claude Code
+    // continues a limit-stopped chat by itself, typing nothing through this app, so the
+    // latch never reopens and that turn hitting the limit again would be invisible.
+    else if (live.stop.reported) {
+      const again = stoppedLine(painted)
+      if (again) this.emit('paneStopAgain', live.meta, again, painted)
+    }
     const found = cfg.enabled
       ? recover({ painted, busy: false, tries: live.recoverTries }, cfg)
       : null

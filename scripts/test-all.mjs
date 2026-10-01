@@ -125,6 +125,7 @@ const TESTS = [
   ['settingsearch', 'settings-search-test.mjs'],
   ['autoanswer', 'auto-answer-test.mjs'],
   ['asknotify', 'ask-notify-test.mjs'],
+  ['limitwave', 'limit-wave-test.mjs'],
   ['faultnotify', 'fault-notify-test.mjs'],
   ['spawnguard', 'spawn-guard-test.mjs'],
   ['promptsubmit', 'prompt-submit-test.mjs'],
