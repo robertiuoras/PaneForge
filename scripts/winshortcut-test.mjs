@@ -108,6 +108,13 @@ if (!existsSync(nshPath)) {
   for (const t of targets) {
     assert.ok(defined.has(t), `jump to a label that is never defined: ${t}`)
   }
+  // An update's installer is a child of the app it replaces, so `taskkill /T` takes the
+  // installer down with the app's tree while the app is still closing (measured on the PC
+  // 2026-10-01: nothing installed, nothing relaunched). See `killRunning`.
+  for (const raw of nsh.split(/\r?\n/)) {
+    const line = raw.replace(/;.*$/, '')
+    if (/taskkill/i.test(line)) assert.ok(!/\s\/T\b/i.test(line), `taskkill /T kills the installer itself during an update: ${line.trim()}`)
+  }
 }
 
 console.log('winshortcut: ok')
