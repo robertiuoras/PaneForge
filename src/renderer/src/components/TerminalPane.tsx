@@ -6,11 +6,12 @@ import { Terminal, type ILink, type IMarker } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { WebglAddon } from '@xterm/addon-webgl'
-import { allAgents, continuesOnBackslash, pastesClipboardImage } from '../../../shared/agents'
+import { allAgents, continuesOnBackslash, imagePasteKey, pastesClipboardImage } from '../../../shared/agents'
 import { spriteReserve } from '../../../shared/mascot'
 import { mascotRect, onMascotRect } from '../mascotSpot'
 import { unwrapForClipboard } from '../unwrapCopy'
 import {
+  imagePathsInText,
   pasteImageDrop,
   splitDropUris,
   type AttachIn
@@ -331,7 +332,7 @@ function AskCountdown({
 
 // On macOS the clipboard lives on Cmd, which leaves Ctrl+C free to interrupt the agent.
 // Same detector the window-level shortcuts use, so the two halves cannot disagree.
-import { isMac } from '../platform'
+import { isMac, isWindows } from '../platform'
 import { isPhoneClient, viewerName } from '../client'
 
 /**
@@ -1553,10 +1554,15 @@ function TerminalPane({
    * `shot.png` is exactly how a mixed batch gets this far: `pasteImageDrop` can only read
    * names and MIME types, and only a decode knows.
    */
-  const pasteImages = async (items: { file?: File; path?: string }[]): Promise<void> => {
+  const pasteImages = async (
+    items: { file?: File; path?: string }[],
+    instead?: () => void
+  ): Promise<void> => {
     /** What this drop does when anything at all goes wrong. Never silent, never partial. */
     const fallBack = async (why?: string): Promise<void> => {
       if (why) toast.current?.(why)
+      // A pasted path that would not decode goes back in as the text that was pasted.
+      if (instead) return instead()
       const files = items.map((i) => i.file).filter((f): f is File => !!f)
       const paths = items.map((i) => i.path).filter((p): p is string => !!p)
       if (files.length) await sendFiles(files)
@@ -1598,7 +1604,7 @@ function TerminalPane({
     for (let i = 0; i < loaded.length; i++) {
       try {
         if (!(await api.putImageOnClipboard(loaded[i]))) return fallBack()
-        api.write(sessionId, RAW_PASTE)
+        api.write(sessionId, imagePasteKey(agentRef.current, isWindows))
       } catch {
         return fallBack('That image reached the clipboard but the pane could not paste it.')
       }
@@ -3063,6 +3069,29 @@ function TerminalPane({
 
     const pasteClipboard = (): void => {
       api.readClipboard().then((text) => {
+        // A copied image PATH (a screenshot's location out of a popup, a Finder path) is
+        // the picture to an agent that reads the clipboard, never the path. A mirrored
+        // pane sends the file over and the other desk pastes it there; a path on this
+        // desk would mean nothing to an agent running on that one.
+        const shots = text ? imagePathsInText(text) : null
+        if (shots && sessionId.startsWith('@')) {
+          void api
+            .attachPaths(sessionId, shots)
+            .then((res) => {
+              if (res.error) toast.current?.(res.error)
+              if (res.paths.length) typePaths(res.paths)
+              else if (res.error) t.paste(text)
+            })
+            .catch(() => t.paste(text))
+          return
+        }
+        if (shots && pastesClipboardImage(agentRef.current)) {
+          void pasteImages(
+            shots.map((path) => ({ path })),
+            () => t.paste(text)
+          ).catch(() => t.paste(text))
+          return
+        }
         if (text) {
           t.paste(text)
           return
@@ -3074,11 +3103,13 @@ function TerminalPane({
         // from a ^V, and for a MIRRORED pane, whose agent reads the far desk's clipboard
         // and not this one.
         if (pastesClipboardImage(agentRef.current) && !sessionId.startsWith('@')) {
-          api.write(sessionId, RAW_PASTE)
+          api.write(sessionId, imagePasteKey(agentRef.current, isWindows))
           return
         }
         // It is saved as a file on the machine that owns this pty and the PATH is typed.
         void api.attachClipboardImage(sessionId).then((res) => {
+          // The other desk pasted it as a picture: another ^V would paste it twice.
+          if (res.pasted) return
           if (res.paths.length) {
             typePaths(res.paths)
             return

@@ -43,6 +43,8 @@ export interface AttachIn {
 export interface AttachResult {
   paths: string[]
   error?: string
+  /** how many images went in as pictures instead (a mirrored pane's paste); no paths then */
+  pasted?: number
 }
 
 /**
@@ -264,7 +266,7 @@ export function splitDropUris(list: string): { paths: string[]; uris: string[] }
     const uri = line.trim()
     // A uri-list may carry comment lines, by its own spec.
     if (!uri || uri.startsWith('#')) continue
-    const path = pathFromFileUri(uri)
+    const path = pathFromFileUri(uri) || imagePathsInText(uri)?.[0]
     if (path) {
       paths.push(path)
       continue
@@ -272,6 +274,36 @@ export function splitDropUris(list: string): { paths: string[]; uris: string[] }
     if (/^(https?:|data:)/i.test(uri)) uris.push(uri)
   }
   return { paths, uris }
+}
+
+/**
+ * The image files a pasted (or dragged) TEXT names, or null when it is anything else.
+ *
+ * A screenshot's location copied out of a popup, a Finder path, a `file://` link: to an
+ * agent that reads the clipboard that is the picture, and handing it the path made Robert
+ * ask for the same thing three times ("shouldn't ever be a path", 2026-10-01). Every
+ * non-empty line has to be one absolute path to an image name - a sentence that merely
+ * mentions a .png is text and stays text. Quotes and a terminal's `\ ` space escapes are
+ * taken off; nothing here touches the disk, so a path that does not exist is found out by
+ * the decode, which falls back to pasting the text as it was.
+ */
+export function imagePathsInText(text: string): string[] | null {
+  const lines = String(text ?? '')
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+  if (!lines.length || lines.length > 20) return null
+  const out: string[] = []
+  for (const line of lines) {
+    let path = line
+    if (path.length > 1 && /^(["']).*\1$/.test(path)) path = path.slice(1, -1)
+    if (/^file:\/\//i.test(path)) path = pathFromFileUri(path)
+    else if (path.startsWith('/')) path = path.replace(/\\(.)/g, '$1')
+    else if (!/^[A-Za-z]:\\/.test(path)) return null
+    if (!path || /[\x00-\x1f]/.test(path) || !IMAGE_NAME.test(path)) return null
+    out.push(path)
+  }
+  return out
 }
 
 /** Total size of a batch, from the base64 without decoding it. */

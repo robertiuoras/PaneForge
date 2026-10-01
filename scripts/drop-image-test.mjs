@@ -34,8 +34,8 @@ const bundle = (entry, out) => {
   return createRequire(import.meta.url)(join(work, out))
 }
 
-const { pasteImageDrop, IMAGE_NAME } = bundle('src/shared/attach.ts', 'attach.cjs')
-const { pastesClipboardImage } = bundle('src/shared/agents.ts', 'agents.cjs')
+const { pasteImageDrop, IMAGE_NAME, imagePathsInText, splitDropUris } = bundle('src/shared/attach.ts', 'attach.cjs')
+const { pastesClipboardImage, imagePasteKey } = bundle('src/shared/agents.ts', 'agents.cjs')
 
 let failed = 0
 const ok = (name, cond) => {
@@ -86,6 +86,30 @@ ok('.webp matches', IMAGE_NAME.test('a.webp'))
 ok('a name that merely CONTAINS png does not', !IMAGE_NAME.test('png-notes.txt'))
 ok('a trailing dot does not', !IMAGE_NAME.test('a.png.txt'))
 
+// --- a pasted PATH to an image is the image (Robert 2026-10-01: "shouldn't ever be a path") --
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b)
+ok('a plain path is an image path', same(imagePathsInText('/Users/r/Desktop/shot.png'), ['/Users/r/Desktop/shot.png']))
+ok('a quoted path with spaces', same(imagePathsInText('"/Users/r/Screen Shot 1.png"'), ['/Users/r/Screen Shot 1.png']))
+ok("a terminal's escaped spaces come off", same(imagePathsInText('/Users/r/Screen\\ Shot.png'), ['/Users/r/Screen Shot.png']))
+ok('a file:// link', same(imagePathsInText('file:///Users/r/a%20b.jpg'), ['/Users/r/a b.jpg']))
+ok('a Windows path keeps its backslashes', same(imagePathsInText('C:\\Users\\Gamer\\a.png'), ['C:\\Users\\Gamer\\a.png']))
+ok('one path per line, all of them', same(imagePathsInText('/a/1.png\n/a/2.webp\n'), ['/a/1.png', '/a/2.webp']))
+ok('a sentence mentioning a png stays text', imagePathsInText('look at /a/1.png please') === null)
+ok('a relative name stays text', imagePathsInText('shot.png') === null)
+ok('a pdf path stays text', imagePathsInText('/a/spec.pdf') === null)
+ok('one non-image line keeps the whole paste as text', imagePathsInText('/a/1.png\nhello') === null)
+ok('empty is not a path', imagePathsInText('   ') === null)
+ok('a control byte is refused', imagePathsInText('file:///a/x%0A.png') === null)
+// A text drag of an image path (a popup's label, an editor) is a dropped file too.
+ok('a plain image path dropped as text is a path', same(splitDropUris('/Users/r/shot.png').paths, ['/Users/r/shot.png']))
+ok('plain non-image text dropped is not a path', same(splitDropUris('/Users/r/notes').paths, []))
+
+// --- the image key is the agent's own, on the machine the pty is on --------------------
+ok('Claude Code on a Mac is ^V', imagePasteKey('claude', false) === '\u0016')
+ok('Claude Code on Windows is Alt+V', imagePasteKey('claude', true) === '\u001bv')
+ok('openrouter is Claude Code: Alt+V on Windows', imagePasteKey('openrouter', true) === '\u001bv')
+ok('Codex on Windows stays ^V', imagePasteKey('codex', true) === '\u0016')
+
 // Cmd+V uses a separate handler from drop. Exercise that shipped handler too: checking
 // the capability list alone cannot catch an accidental path fallback in this branch.
 const pane = readFileSync(join(root, 'src/renderer/src/components/TerminalPane.tsx'), 'utf8')
@@ -93,7 +117,7 @@ const start = pane.indexOf('    const pasteClipboard = (): void => {')
 const end = pane.indexOf('\n    t.attachCustomKeyEventHandler', start)
 if (start < 0 || end < 0) throw new Error('pasteClipboard handler not found')
 const handler = pane.slice(start, end).replace('(): void =>', '() =>')
-const paste = async (agent, sessionId, text = '') => {
+const paste = async (agent, sessionId, text = '', { windows = false, decodes = true, far = { paths: ['/fixture/clipboard.png'] } } = {}) => {
   const calls = []
   const pasteClipboard = runInNewContext(`(() => { ${handler}; return pasteClipboard })()`, {
     api: {
@@ -101,11 +125,20 @@ const paste = async (agent, sessionId, text = '') => {
       write: (id, data) => calls.push(['write', id, data]),
       attachClipboardImage: async (id) => {
         calls.push(['attach', id])
-        return { paths: ['/fixture/clipboard.png'] }
+        return far
+      },
+      attachPaths: async (id, paths) => {
+        calls.push(['attachPaths', id, ...paths])
+        return { paths: [] }
       }
     },
     t: { paste: (data) => calls.push(['text', data]) },
-    agentRef: { current: agent }, sessionId, pastesClipboardImage,
+    agentRef: { current: agent }, sessionId, pastesClipboardImage, imagePathsInText, imagePasteKey,
+    isWindows: windows,
+    pasteImages: async (items, instead) => {
+      calls.push(['images', ...items.map((i) => i.path)])
+      if (!decodes) instead()
+    },
     RAW_PASTE: '\u0016', NO_IMAGE: 'No image on the clipboard',
     typePaths: (paths) => calls.push(['paths', ...paths]), toast: { current: null }
   })
@@ -122,6 +155,59 @@ ok('a custom CLI still receives a saved image path',
   JSON.stringify(await paste('custom', 'local')) === JSON.stringify([['attach', 'local'], ['paths', '/fixture/clipboard.png']]))
 ok('a remote Codex pane still receives its own saved image path',
   JSON.stringify(await paste('codex', '@pc/remote')) === JSON.stringify([['attach', '@pc/remote'], ['paths', '/fixture/clipboard.png']]))
+ok('a screenshot pasted into a mirrored pane that the other desk pasted sends no second ^V',
+  same(await paste('claude', '@pc/remote', '', { far: { paths: [], pasted: 1 } }), [['attach', '@pc/remote']]))
+ok('Claude Code on Windows gets Alt+V, the key it reads images on',
+  same(await paste('claude', 'local', '', { windows: true }), [['write', 'local', '\u001bv']]))
+ok('a pasted image PATH goes in as the image on Claude Code',
+  same(await paste('claude', 'local', '/Users/r/shot.png'), [['images', '/Users/r/shot.png']]))
+ok('a pasted image PATH goes in as the image on Codex',
+  same(await paste('codex', 'local', '"/Users/r/Screen Shot.png"'), [['images', '/Users/r/Screen Shot.png']]))
+ok('a path that will not decode is pasted back as the text it was',
+  same(await paste('claude', 'local', '/Users/r/gone.png', { decodes: false }), [['images', '/Users/r/gone.png'], ['text', '/Users/r/gone.png']]))
+ok('a custom CLI still gets the path text',
+  same(await paste('custom', 'local', '/Users/r/shot.png'), [['text', '/Users/r/shot.png']]))
+ok('a mirrored pane sends the image over rather than a path from this desk',
+  same(await paste('claude', '@pc/remote', '/Users/r/shot.png'), [['attachPaths', '@pc/remote', '/Users/r/shot.png']]))
+ok('a sentence is still text',
+  same(await paste('claude', 'local', 'see /Users/r/shot.png'), [['text', 'see /Users/r/shot.png']]))
+
+// --- the other desk pastes a mirrored pane's image, never answers with a path -----------
+const main = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
+const hs = main.indexOf('async function pasteImagesHere(')
+const he = main.indexOf('\n}\n', hs)
+if (hs < 0 || he < 0) throw new Error('pasteImagesHere not found')
+const hereSrc = main.slice(hs, he + 2).replace(/: Promise<AttachResult>/, '').replace(/\(id: string, files: AttachIn\[\]\)/, '(id, files)')
+  .replace(/const imgs: Electron\.NativeImage\[\] = \[\]/, 'const imgs = []')
+  .replace(/\(f\) => f && typeof f\.data === 'string'\)/, "(f) => f && typeof f.data === 'string')")
+  .replace(/\(s\) => s\.id === id\)/, '(s) => s.id === id)')
+const here = async (agent, files, { platform = 'darwin' } = {}) => {
+  const calls = []
+  const fn = runInNewContext(`(() => { ${hereSrc}; return pasteImagesHere })()`, {
+    manager: { list: () => [{ id: 'p1', agent }], write: (id, data, origin) => calls.push(['write', id, data, origin]) },
+    pastesClipboardImage, imagePasteKey, tooBig: () => '', PASTE_GAP_MS: 0, setTimeout, Buffer,
+    process: { platform },
+    nativeImage: { createFromBuffer: (b) => ({ isEmpty: () => b.toString() === 'pdf' }) },
+    putClipboardImage: () => { calls.push(['clipboard']); return true },
+    writeAttachments: (f) => { calls.push(['saved', f.length]); return { paths: ['/saved/x.png'] } }
+  })
+  const res = await fn('p1', files)
+  return { calls, res }
+}
+const png = { name: 'a.png', data: Buffer.from('png').toString('base64') }
+const pdf = { name: 'a.pdf', data: Buffer.from('pdf').toString('base64') }
+{
+  const r = await here('claude', [png])
+  ok('mirrored image: clipboard then ^V, no path', same(r.calls, [['clipboard'], ['write', 'p1', '\u0016', 'phone']]) && same(r.res, { paths: [], pasted: 1 }))
+  const w = await here('claude', [png], { platform: 'win32' })
+  ok('mirrored image on a Windows desk: Alt+V', same(w.calls, [['clipboard'], ['write', 'p1', '\u001bv', 'phone']]))
+  const two = await here('codex', [png, png])
+  ok('two images: two pastes', two.calls.filter((c) => c[0] === 'write').length === 2)
+  const mixed = await here('claude', [png, pdf])
+  ok('a mixed batch is saved whole and answered with paths', same(mixed.calls, [['saved', 2]]) && same(mixed.res, { paths: ['/saved/x.png'] }))
+  const custom = await here('my-cli', [png])
+  ok('an agent that does not read the clipboard gets the path', same(custom.calls, [['saved', 1]]))
+}
 
 writeFileSync(join(work, 'done'), 'ok')
 if (failed) {
