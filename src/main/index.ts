@@ -3950,34 +3950,50 @@ function putClipboardImage(img: Electron.NativeImage): boolean {
 const PASTE_GAP_MS = 250
 
 /**
+ * The batch on this desk's clipboard right now. The next waits for it, and for one gap
+ * after its last ^V: the CLI reads the clipboard some time after the key arrives, and a
+ * second batch landing in that window would be read twice in place of the first.
+ */
+let pasteChain: Promise<void> = Promise.resolve()
+
+/**
  * Images from another desk, pasted into one of THIS desk's panes the way a drop here is:
  * onto this machine's clipboard, then the agent's own image key, one at a time.
  *
  * Before this a screenshot pasted into a pane mirrored from the other desk arrived as a
  * saved file's PATH, the one case in which a paste was always a path. ALL OR NOTHING, as
  * the local drop is: one file that will not decode, or an agent that does not read the
- * clipboard, saves the whole batch and answers with its paths - the answer an older
- * version of this app gives, so a guest needs nothing new to read it.
+ * clipboard, saves the whole batch and answers with its paths and `pasted: 0` - the 0 is
+ * how the guest tells this from an older desk, which answers paths and nothing else.
  */
 async function pasteImagesHere(id: string, files: AttachIn[]): Promise<AttachResult> {
+  const saved = (): AttachResult => ({ ...writeAttachments(files), pasted: 0 })
   const agent = manager.list().find((s) => s.id === id)?.agent
   const list = Array.isArray(files) ? files.filter((f) => f && typeof f.data === 'string') : []
-  if (!list.length || !pastesClipboardImage(agent) || tooBig(list)) return writeAttachments(files)
+  if (!list.length || !pastesClipboardImage(agent) || tooBig(list)) return saved()
   const imgs: Electron.NativeImage[] = []
   for (const f of list) {
     try {
       const img = nativeImage.createFromBuffer(Buffer.from(f.data, 'base64'))
-      if (img.isEmpty()) return writeAttachments(files)
+      if (img.isEmpty()) return saved()
       imgs.push(img)
     } catch {
-      return writeAttachments(files)
+      return saved()
     }
   }
   const key = imagePasteKey(agent, process.platform === 'win32')
-  for (let i = 0; i < imgs.length; i++) {
-    if (!putClipboardImage(imgs[i])) return { paths: [], error: 'That image could not be put on the clipboard over there.' }
-    manager.write(id, key, 'phone')
-    if (i < imgs.length - 1) await new Promise((r) => setTimeout(r, PASTE_GAP_MS))
+  const before = pasteChain
+  let release = (): void => {}
+  pasteChain = new Promise<void>((r) => (release = r))
+  await before
+  try {
+    for (let i = 0; i < imgs.length; i++) {
+      if (!putClipboardImage(imgs[i])) return { paths: [], error: 'That image could not be put on the clipboard over there.' }
+      manager.write(id, key, 'phone')
+      if (i < imgs.length - 1) await new Promise((r) => setTimeout(r, PASTE_GAP_MS))
+    }
+  } finally {
+    setTimeout(release, PASTE_GAP_MS)
   }
   return { paths: [], pasted: imgs.length }
 }

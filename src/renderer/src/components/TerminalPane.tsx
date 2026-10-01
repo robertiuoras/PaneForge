@@ -12,9 +12,12 @@ import { mascotRect, onMascotRect } from '../mascotSpot'
 import { unwrapForClipboard } from '../unwrapCopy'
 import {
   imagePathsInText,
+  OLDER_DESK,
+  olderDeskTypedPaths,
   pasteImageDrop,
   splitDropUris,
-  type AttachIn
+  type AttachIn,
+  type AttachResult
 } from '../../../shared/attach'
 import { FULL_SCROLLBACK } from '../../../shared/capacity'
 import { GRANT_GRACE_MS, nextResize, ptyOwed } from '../../../shared/shrinkFirst'
@@ -1515,6 +1518,12 @@ function TerminalPane({
     typePaths(paths)
   }
 
+  /** A mirrored pane's images typed as paths because the far desk is too old to paste them. */
+  const sayIfOlderDesk = (names: string[], res: AttachResult): void => {
+    if (olderDeskTypedPaths({ agent: agentRef.current, sessionId, names, res }, pastesClipboardImage))
+      toast.current?.(OLDER_DESK)
+  }
+
   /**
    * Hand files to the machine this pane's pty is on, and type the paths it answers with.
    *
@@ -1533,6 +1542,7 @@ function TerminalPane({
     if (!payload.length) return
     const res = await api.attachFiles(sessionId, payload)
     if (res.error) toast.current?.(res.error)
+    sayIfOlderDesk(payload.map((p) => p.name), res)
     typePaths(res.paths)
   }
 
@@ -3074,11 +3084,13 @@ function TerminalPane({
         // pane sends the file over and the other desk pastes it there; a path on this
         // desk would mean nothing to an agent running on that one.
         const shots = text ? imagePathsInText(text) : null
-        if (shots && sessionId.startsWith('@')) {
+        // A mirrored shell or a CLI that reads no clipboard gets the text it was pasted.
+        if (shots && sessionId.startsWith('@') && pastesClipboardImage(agentRef.current)) {
           void api
             .attachPaths(sessionId, shots)
             .then((res) => {
               if (res.error) toast.current?.(res.error)
+              sayIfOlderDesk(shots, res)
               if (res.paths.length) typePaths(res.paths)
               else if (res.error) t.paste(text)
             })
@@ -3111,6 +3123,7 @@ function TerminalPane({
           // The other desk pasted it as a picture: another ^V would paste it twice.
           if (res.pasted) return
           if (res.paths.length) {
+            sayIfOlderDesk(['clipboard.png'], res)
             typePaths(res.paths)
             return
           }
@@ -5081,6 +5094,7 @@ function TerminalPane({
           .attachPaths(sessionId, dropped)
           .then((res) => {
             if (res.error) toast.current?.(res.error)
+            sayIfOlderDesk(dropped, res)
             typePaths(res.paths)
           })
           .catch(() => toast.current?.('Could not send that file to the other device.'))

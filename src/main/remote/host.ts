@@ -689,7 +689,7 @@ export class RemoteHost extends EventEmitter {
           // a path. Anything that is not all images, or an agent that does not read the
           // clipboard, is saved and answered with paths, as it always was.
           if (this.backend.pasteImages && id)
-            void this.backend.pasteImages(id, files).then(done, () => done(this.backend.attachFiles(files)))
+            void this.backend.pasteImages(id, files).then(done, () => done({ ...this.backend.attachFiles(files), pasted: 0 }))
           else done(this.backend.attachFiles(files))
           return
         }

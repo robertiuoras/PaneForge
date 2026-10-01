@@ -14,6 +14,12 @@ export interface PsRow {
   comm: string
 }
 
+/**
+ * Does this platform have the `ps` the sample reads? Windows has none: every minute would be
+ * a failed spawn and a log that never gets a line, so the sampler does not start there.
+ */
+export const pressureLogRuns = (platform: string): boolean => platform !== 'win32'
+
 /** The arguments of the single `ps` call. `comm` LAST: it is the only field with spaces. */
 export const PS_ARGS = ['-Ao', 'pid=,ppid=,rss=,pcpu=,comm=']
 

@@ -138,7 +138,6 @@ import {
   typeLine
 } from '../shared/slashTurn'
 import { feedDraft, newDraft, type DraftState } from '../shared/draft'
-import { composerOf } from './composerRead'
 import { OutBuffer } from './outBuffer'
 import { allAgents, buildArgs, colourEnv, continuesOnBackslash, hasAgent, modelValue, resolveEnv } from '../shared/agents'
 import { homedir } from 'node:os'

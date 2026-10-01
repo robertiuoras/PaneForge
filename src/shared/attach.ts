@@ -89,6 +89,34 @@ export function pasteImageDrop(
   return args.items.every((i) => i.type?.startsWith('image/') || IMAGE_NAME.test(i.name))
 }
 
+/** Said when a mirrored pane's images came back as paths from a desk too old to paste them. */
+export const OLDER_DESK = 'That device is on an older PaneForge, so the image went in as a file path.'
+
+/**
+ * Did an OLDER far desk answer a mirrored pane's images with saved paths?
+ *
+ * A desk that pastes always answers `pasted`: the count, or 0 when it chose paths itself
+ * (a mixed batch, a file that would not decode, an agent that does not read the
+ * clipboard). Only an answer with no `pasted` at all comes from a desk too old to try,
+ * and only for images an agent that reads the clipboard would have shown as pictures is
+ * the path worth a sentence.
+ */
+export function olderDeskTypedPaths(
+  args: { agent?: string; sessionId: string; names: string[]; res: AttachResult },
+  readsClipboard: (agent: string | undefined) => boolean
+): boolean {
+  const { agent, sessionId, names, res } = args
+  return (
+    sessionId.startsWith('@') &&
+    res.pasted === undefined &&
+    !res.error &&
+    res.paths.length > 0 &&
+    names.length > 0 &&
+    names.every((n) => IMAGE_NAME.test(n)) &&
+    readsClipboard(agent)
+  )
+}
+
 /** Magic bytes, in the order they are tested. Long signatures first. */
 const MAGIC: [string, number[]][] = [
   ['png', [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]],

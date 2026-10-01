@@ -8,12 +8,13 @@ import { join } from 'node:path'
 import { app } from 'electron'
 import { appendLog } from './logWrite'
 import { memoryReading } from './memory'
-import { buildPressureLine, parsePsTable, parseSwapUsedMb, PS_ARGS, type PressurePane } from '../shared/pressureLog'
+import { buildPressureLine, parsePsTable, parseSwapUsedMb, pressureLogRuns, PS_ARGS, type PressurePane } from '../shared/pressureLog'
 
 export const PRESSURE_LOG_MS = 60_000
 const MAX_BYTES = 2 * 1024 * 1024
 
 export function startPressureLog(panes: () => PressurePane[]): () => void {
+  if (!pressureLogRuns(platform())) return () => {}
   let running = false
   const file = (): string => join(app.getPath('userData'), 'pressure.log')
   const swap = (cb: (mb: number | null) => void): void => {
