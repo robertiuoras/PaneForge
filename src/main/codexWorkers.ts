@@ -24,8 +24,11 @@ interface RolloutReading {
   effort?: string
   state: CodexWorker['state']
   turn?: string
+  startedAt?: number
+  endedAt?: number
+  updatedAt?: number
   skipFirst?: boolean
-  head?: { turn?: string; model?: string; effort?: string }
+  head?: { turn?: string; model?: string; effort?: string; startedAt?: number }
 }
 interface Reading {
   parent: string
@@ -42,6 +45,8 @@ export function scanWorkerLines(r: RolloutReading, text: string): void {
     try {
       const record = JSON.parse(line)
       const p = record.payload
+      const at = typeof record.timestamp === 'string' ? Date.parse(record.timestamp) : NaN
+      if (Number.isFinite(at)) r.updatedAt = at
       if (record.type === 'turn_context') {
         if (typeof p?.model === 'string') r.model = p.model
         if (typeof p?.effort === 'string') r.effort = p.effort
@@ -49,11 +54,14 @@ export function scanWorkerLines(r: RolloutReading, text: string): void {
         if (p?.type === 'task_started') {
           r.turn = p.turn_id
           r.state = 'running'
+          r.startedAt = Number.isFinite(at) ? at : undefined
+          r.endedAt = undefined
           r.model = undefined
           r.effort = undefined
         } else if ((p?.type === 'task_complete' || p?.type === 'turn_aborted') && (!r.turn || p.turn_id === r.turn)) {
           r.turn = p.turn_id
           r.state = p.type === 'task_complete' ? 'completed' : 'interrupted'
+          r.endedAt = Number.isFinite(at) ? at : undefined
         }
       }
     } catch { /* A partial/unknown record says nothing. */ }
@@ -79,7 +87,7 @@ function worker(row: string[], readings: Map<string, RolloutReading>, now: numbe
         try { readSync(fd, head, 0, head.length, 0) } finally { closeSync(fd) }
         const context: RolloutReading = { file, offset: 0, state: 'unknown' }
         scanWorkerLines(context, head.subarray(0, head.lastIndexOf(10) + 1).toString('utf8'))
-        r.head = { turn: context.turn, model: context.model, effort: context.effort }
+        r.head = { turn: context.turn, model: context.model, effort: context.effort, startedAt: context.startedAt }
       }
     }
     if (stat.size > start) {
@@ -93,15 +101,17 @@ function worker(row: string[], readings: Map<string, RolloutReading>, now: numbe
         if (r.skipFirst) text = text.slice(text.indexOf('\n') + 1)
         r.skipFirst = false
         scanWorkerLines(r, text)
-        if (!r.model && r.turn && r.turn === r.head?.turn) {
-          r.model = r.head.model
-          r.effort = r.head.effort
+        if (r.turn && r.turn === r.head?.turn) {
+          r.model ??= r.head.model
+          r.effort ??= r.head.effort
+          r.startedAt ??= r.head.startedAt
         }
         r.offset = start + end + 1
       }
     }
     const state = r!.state === 'running' && now - stat.mtimeMs > STALE_MS ? 'stale' : r!.state
-    return { id, name, nickname: nickname || undefined, model: r!.model, effort: r!.effort, state }
+    return { id, name, nickname: nickname || undefined, model: r!.model, effort: r!.effort, state,
+      startedAt: r!.startedAt, endedAt: r!.endedAt, updatedAt: r!.updatedAt }
   } catch {
     return { id, name, nickname: nickname || undefined, model: r?.model, effort: r?.effort, state: 'unknown' }
   }

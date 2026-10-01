@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync, appendFileSync, rmSync, utimesSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, appendFileSync, rmSync, utimesSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
 import { EventEmitter, once } from 'node:events'
 import childProcess from 'node:child_process'
-import { buildSync } from 'esbuild'
+import { build, buildSync } from 'esbuild'
 
 const dir = mkdtempSync(join(tmpdir(), 'pf-codex-workers-'))
 const parent = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
@@ -47,6 +47,15 @@ try {
   assert.equal(scan.state, 'completed')
   assert.equal(scan.model, 'gpt-6.1-sol')
   assert.equal(scan.effort, 'high')
+  const at = '2026-10-01T03:00:00.000Z'
+  const endAt = '2026-10-01T03:01:30.000Z'
+  const timed = (type, timestamp) => JSON.stringify({ type: 'event_msg', timestamp, payload: { type, turn_id: 'timed' } }) + '\n'
+  scanWorkerLines(scan, timed('task_started', at) + context + timed('task_complete', endAt))
+  assert.equal(scan.startedAt, Date.parse(at))
+  assert.equal(scan.endedAt - scan.startedAt, 90_000, 'duration is native task time, not lookup time')
+  scanWorkerLines(scan, event('task_started', 'without-time'))
+  assert.equal(scan.startedAt, undefined, 'missing timestamp does not invent a clock')
+  assert.equal(scan.endedAt, undefined, 'a new task clears the preceding finish')
   const file = join(dir, 'child.jsonl')
   writeFileSync(file, event('task_started') + context)
   utimesSync(file, new Date(fixtureNow), new Date(fixtureNow))
@@ -103,7 +112,49 @@ c=sqlite3.connect(sys.argv[1]);c.execute('create table threads(id text,rollout_p
   assert.deepEqual(changed.workers, [], 'changing parent never leaks previous children')
   forgetCodexWorkers('pane')
   assert.equal(codexWorkersFor('pane', undefined), undefined)
+  const claudeOut = join(dir, 'claude.cjs')
+  await build({ entryPoints: ['src/main/runningAgents.ts'], bundle: true, platform: 'node', format: 'cjs', outfile: claudeOut,
+    plugins: [{ name: 'quiet-log', setup(b) {
+      b.onResolve({ filter: /\/activationLog$/ }, () => ({ path: 'quiet-log', namespace: 'fixture' }))
+      b.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents: 'export function logHandoff() {}' }))
+    } }] })
+  const { backgroundAgentsFor, backgroundWorkerReadingFor } = createRequire(import.meta.url)(claudeOut)
+  const claudeFile = join(dir, 'claude.jsonl')
+  const claudeLines = readFileSync('scripts/fixtures/claude-background-agent.jsonl', 'utf8').trimEnd().split('\n')
+  const launchedAt = Date.parse('2026-09-22T18:27:32.073Z')
+  writeFileSync(claudeFile, claudeLines.slice(0, 2).join('\n') + '\n')
+  backgroundAgentsFor('claude', claudeFile, launchedAt - 1, launchedAt + 1000)
+  const claudeReading = backgroundWorkerReadingFor('claude', launchedAt - 1, launchedAt + 1000)
+  assert.equal(claudeReading.status, 'fresh')
+  assert.deepEqual(claudeReading.workers.map(w => [w.name, w.state, w.startedAt, w.model]), [['Visual review Design 4 pages', 'running', launchedAt, undefined]], 'requested model is not an executed-model claim')
+  assert.equal(backgroundWorkerReadingFor('claude', launchedAt - 1, launchedAt + 4 * 60 * 60_000).workers[0].state, 'stale', 'aged background launches are not falsely idle')
+  appendFileSync(claudeFile, claudeLines.slice(2).join('\n') + '\n')
+  backgroundAgentsFor('claude', claudeFile, launchedAt - 1, launchedAt + 5000)
+  assert.deepEqual(backgroundWorkerReadingFor('claude', launchedAt - 1, launchedAt + 5000).workers, [], 'Claude task notification ends the observed worker')
+  rmSync(claudeFile)
+  backgroundAgentsFor('claude', claudeFile, launchedAt - 1, launchedAt + 9000)
+  assert.equal(backgroundWorkerReadingFor('claude', launchedAt - 1, launchedAt + 9000).status, 'unknown', 'missing transcript is not an idle count')
+  const boundedFile = join(dir, 'bounded-claude.jsonl')
+  writeFileSync(boundedFile, JSON.stringify({ type: 'irrelevant', text: 'x'.repeat(9 * 1024 * 1024) }) + '\n' + claudeLines.slice(0, 2).join('\n') + '\n')
+  backgroundAgentsFor('bounded-claude', boundedFile, launchedAt - 1, launchedAt + 1000)
+  assert.equal(backgroundWorkerReadingFor('bounded-claude', launchedAt - 1, launchedAt + 1000).status, 'limited', 'bounded transcript scans cannot claim complete coverage')
+  const uiOut = join(dir, 'worker-ui.cjs')
+  buildSync({ stdin: { contents: `import React from 'react'; import {renderToStaticMarkup} from 'react-dom/server'; import Workers from './src/renderer/src/components/Workers'; export const render = session => renderToStaticMarkup(React.createElement(Workers, {session}));`, resolveDir: process.cwd() }, bundle: true, platform: 'node', format: 'cjs', jsx: 'automatic', tsconfig: 'tsconfig.web.json', outfile: uiOut })
+  const { render } = createRequire(import.meta.url)(uiOut)
+  globalThis.window = { api: { onLinkState() {} } }
+  const session = { id: 'fixture', title: 'Worker proof', agent: 'codex' }
+  assert.match(render(session), /Count unavailable/)
+  assert.match(render({ ...session, codexWorkers: { status: 'fresh', workers: [] } }), /0 running/)
+  const ui = render({ ...session, codexWorkers: { status: 'fresh', workers: [{ id: 'one', name: 'Build & verify', model: 'gpt-6.1-sol', state: 'running', startedAt: fixtureNow - 90_000 }] } })
+  assert.match(ui, /1 running/)
+  assert.match(ui, /Build &amp; verify/)
+  assert.match(ui, /gpt-6.1-sol/)
+  assert.match(ui, /1m 30s/)
+  assert.match(render({ ...session, codexWorkers: { status: 'unknown', workers: [{ id: 'one', name: 'Build', state: 'stale' }] } }), /0 confirmed running/)
+  assert.equal(render({ ...session, agent: 'shell' }), '', 'unsupported provider does not claim zero')
+  delete globalThis.window
   console.log('Codex workers: event ordering, incremental reads, partial writes, stale/unknown states, read-only DB and identity checks passed')
+  console.log('Worker display: native timing, Claude background completion/unknown model, persistent zero/unavailable counts and escaped task labels passed')
 } finally {
   Date.now = realNow
   childProcess.execFile = realExec

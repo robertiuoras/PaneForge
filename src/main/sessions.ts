@@ -99,7 +99,7 @@ import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from '.
 import { claimFromCli, claimCodexFromProcess, claudeAcceptedPrompt, claudeStartup, codexAcceptedPrompt, codexConversationReceipt, codexPromptReceipt, codexQuestionPending, forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeEvidence, resumeIdFor, transcriptFor, transcriptPath } from './transcripts'
 import { recordPromptReview } from './promptReview'
 import { liveModelFor } from './paneModel'
-import { backgroundAgentsFor, forgetBackgroundAgents, noteBackgroundAgents } from './runningAgents'
+import { backgroundAgentsFor, backgroundWorkerReadingFor, forgetBackgroundAgents, noteBackgroundAgents } from './runningAgents'
 import { codexWorkersFor, forgetCodexWorkers } from './codexWorkers'
 // How hard a Codex pane thinks. The rule is `shared/effort.ts`, the disk is
 // `main/effort.ts`, the levels each model offers come from Codex itself.
@@ -5189,6 +5189,13 @@ export class SessionManager extends EventEmitter {
         }
         const agents = meta.status === 'exited' || !live.proc ? undefined : backgroundAgentsFor(meta.id, path, bornAt, now)
         noteBackgroundAgents(meta.id, agents)
+        const workers = meta.status === 'exited' || meta.asleep || !live.proc
+          ? { workers: [], status: 'fresh' as const }
+          : backgroundWorkerReadingFor(meta.id, bornAt, now)
+        if (JSON.stringify(workers) !== JSON.stringify(meta.claudeWorkers)) {
+          meta.claudeWorkers = workers
+          changed = true
+        }
         if (agents !== meta.subagent) {
           meta.subagent = agents
           changed = true

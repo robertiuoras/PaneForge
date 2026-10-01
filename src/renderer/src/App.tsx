@@ -50,6 +50,7 @@ import { unreadCount } from '@shared/activity'
 import { TextSheet } from './components/TextSheet'
 import { Segmented } from './components/Controls'
 import Elapsed, { formatElapsed, kb, useNow } from './components/Elapsed'
+import Workers from './components/Workers'
 import GitBadge from './components/GitBadge'
 import HistoryDialog from './components/HistoryDialog'
 import ReviewDialog from './components/ReviewDialog'
@@ -5552,26 +5553,6 @@ export default function App(): JSX.Element {
                       </span>
                     )
                   })()}
-                  {s.codexWorkers && (s.codexWorkers.workers.length > 0 || s.codexWorkers.status !== 'fresh') && (
-                    <span className="meta row-workers" title={
-                      s.codexWorkers.workers.map(w => `${w.name}${w.nickname ? ` (${w.nickname})` : ''}: ${w.model || 'model unknown'} · ${w.effort || 'effort unknown'} · ${w.state}`).join('\n') +
-                      (s.codexWorkers.status === 'fresh' ? '' : `\nWorker lookup ${s.codexWorkers.status === 'limited' ? 'limited to 20 newest children' : 'unavailable; states may be stale'}`)
-                    }>
-                      {(() => {
-                        const workers = s.codexWorkers!.workers
-                        const running = workers.filter(w => w.state === 'running')
-                        const models = [...new Set(running.map(w => agentModelLabel(agents.find(a => a.id === 'codex'), w.model || '') || w.model || 'unknown model'))]
-                        const parts: string[] = []
-                        if (running.length) parts.push(`${running.length} ${models.join('/')} worker${running.length === 1 ? '' : 's'} running (${running.map(w => w.name).join(', ')})`)
-                        for (const state of ['completed', 'interrupted', 'stale', 'unknown'] as const) {
-                          const count = workers.filter(w => w.state === state).length
-                          if (count) parts.push(`${count} ${state}`)
-                        }
-                        if (s.codexWorkers!.status !== 'fresh') parts.push(`worker lookup ${s.codexWorkers!.status}`)
-                        return parts.join(' · ')
-                      })()}
-                    </span>
-                  )}
                   {s.status !== 'exited' && (
                     <span className="meta" title="Time since this session opened, including idle time">
                       <Elapsed since={s.openedAt ?? s.createdAt} className="elapsed done" />
@@ -5607,6 +5588,7 @@ export default function App(): JSX.Element {
                         )
                       })()}
                 </div>
+                <Workers session={s} spec={agents.find(a => a.id === s.agent)} />
                 <label className="session-keep-open" title="Keep open until you close it"
                   onClick={e => e.stopPropagation()} onPointerDown={e => e.stopPropagation()}>
                   <input type="checkbox" className="keep-checkbox"
@@ -6592,6 +6574,7 @@ export default function App(): JSX.Element {
               </span>
               </>)}
             </div>
+            <Workers session={s} spec={agents.find(a => a.id === s.agent)} />
             {s.screen ? (
               <ScreenPane
                 session={s}
