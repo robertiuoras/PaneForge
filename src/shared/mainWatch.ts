@@ -7,6 +7,23 @@ export const BEAT_MS = 2_000
 export const HANG_MS = 75_000
 const SLEEP_GAP_MS = BEAT_MS * 3
 
+/**
+ * How many times longer a silence is tolerated while the MACHINE is out of memory: 8 x 75 s
+ * is ten minutes.
+ *
+ * 2026-10-01 6:25:54pm: `main: no heartbeat for 76s - relaunching ... timers 15500ms late
+ * ... machine: 196MB free of 16384MB, cpu 98% busy | ps says ... 928 RSS-KB`. Main was not
+ * stuck in its own code; it had been paged out while the kernel jetsam-killed 252 daemons
+ * in the 30 s before. The relaunch is a `kill -9`, and every pane's CLI is main's child, so
+ * it ended 18 chats mid-turn to cure a stall that was the machine's. A silence under memory
+ * pressure is read as the machine until this much longer; a real hang still ends in a
+ * relaunch, ten minutes late at worst.
+ */
+export const STARVED_HANG_FACTOR = 8
+
+/** A silence this long starts reading the machine's memory, so the decision has a fresh answer. */
+export const READ_MACHINE_AFTER_MS = 10_000
+
 export interface MainWatchState {
   receivedBeat: boolean
   silentTicks: number
@@ -25,8 +42,12 @@ export function beat(state: MainWatchState): MainWatchState {
   return { ...state, receivedBeat: true, silentTicks: 0 }
 }
 
-/** One child timer tick. The returned state makes this decision testable without Electron. */
-export function decide(state: MainWatchState, now: number, hangMs = HANG_MS): { action: MainWatchAction; state: MainWatchState } {
+/**
+ * One child timer tick. The returned state makes this decision testable without Electron.
+ *
+ * `starved`: the machine reports memory pressure right now (see `STARVED_HANG_FACTOR`).
+ */
+export function decide(state: MainWatchState, now: number, hangMs = HANG_MS, starved = false): { action: MainWatchAction; state: MainWatchState } {
   if (state.acted) return { action: 'wait', state: { ...state, lastTickAt: now } }
   // One long gap is suspend or wake, not a missed heartbeat. Start a fresh count after it.
   if (state.lastTickAt && now - state.lastTickAt > SLEEP_GAP_MS) {
@@ -34,7 +55,8 @@ export function decide(state: MainWatchState, now: number, hangMs = HANG_MS): { 
   }
   const silentTicks = state.receivedBeat ? state.silentTicks + 1 : 0
   const next = { ...state, silentTicks, lastTickAt: now }
-  if (!state.receivedBeat || silentTicks * BEAT_MS < hangMs) return { action: 'wait', state: next }
+  const limit = starved ? hangMs * STARVED_HANG_FACTOR : hangMs
+  if (!state.receivedBeat || silentTicks * BEAT_MS < limit) return { action: 'wait', state: next }
   return { action: 'act', state: { ...next, acted: true } }
 }
 
