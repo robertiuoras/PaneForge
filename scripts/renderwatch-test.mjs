@@ -25,7 +25,9 @@ const {
   noteWedge,
   MAX_GIVE_UP_REBUILDS,
   noteRecovered,
-  goneWhy
+  goneWhy,
+  SLEEP_GAP_MS,
+  afterGap
 } = await import('../src/shared/renderWatch.ts')
 
 let failed = 0
@@ -59,6 +61,25 @@ ok(
   decide(w({ probeSentAt: T - PROBE_DEAD_MS }), T) === 'reload',
   `probe dead at ${PROBE_DEAD_MS}ms`
 )
+// 2026-10-01 01:41/01:52Z: two reloads inside a five-hour sleep, "no answer to the liveness
+// probe for 1021965ms". The probe is stamped on the awake clock and judged on it, so the
+// hours the machine slept are not hours the renderer failed to answer in.
+const A = 5_000_000
+ok(
+  'a probe sent before a sleep is not judged on the hours slept',
+  decide(w({ probeSentAt: A - 3_000 }), T, A) === 'wait',
+  'wall gap irrelevant, 3 s awake'
+)
+ok('...but 20 s of awake silence is still a spin', decide(w({ probeSentAt: A - PROBE_DEAD_MS }), T, A) === 'reload')
+{
+  const slept = afterGap(w({ probeSentAt: A - 1000, unresponsiveSince: T - GRACE_MS }), SLEEP_GAP_MS)
+  ok(
+    'a tick that arrives after a sleep-sized gap drops the outstanding probe and the unresponsive clock',
+    slept.probeSentAt === 0 && slept.unresponsiveSince === 0 && decide(slept, T, A) === 'wait'
+  )
+  const busy = w({ probeSentAt: A - 1000 })
+  ok('...and an ordinary late tick keeps them', afterGap(busy, SLEEP_GAP_MS - 1) === busy)
+}
 ok(
   'a dead renderer is REBUILT, not reloaded - there is no page left',
   decide(w({ gone: true }), T) === 'recreate'
@@ -163,6 +184,11 @@ ok(
   /getOSProcessId\(\)/.test(main) && /cpu-time/.test(main)
 )
 ok('every action leaves a line in paneforge-errors.log', /logProblem\(/.test(main))
+ok(
+  'the probe is stamped and judged on the awake clock, and a sleep-sized tick gap skips the tick',
+  /process\.hrtime\.bigint\(\)/.test(main) && /const sent = awake/.test(main) &&
+    /decide\(state, now, awake\)/.test(main) && /gap >= SLEEP_GAP_MS[\s\S]{0,80}afterGap\(state, gap\)[\s\S]{0,20}return/.test(main)
+)
 ok('the wedge is counted where Chromium reports it', /noteWedge\(state, Date\.now\(\)\)/.test(main))
 const giveUp = main.slice(main.indexOf("act === 'give-up'"), main.indexOf("const why = state.gone"))
 ok(

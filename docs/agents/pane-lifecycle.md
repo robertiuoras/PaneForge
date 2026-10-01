@@ -17,6 +17,8 @@ Busy read = bottom of screen (`shared/busy.ts`). `shared/staleFrame.ts`, `test:s
 `render-process-gone` (`PROBE_DEAD_MS` 20s + 5s). `executeJavaScript('1')` per
 `PROBE_EVERY_MS` 5s, `GRACE_MS` 10s; `RELOAD_COOLDOWN_MS` 60s, `MAX_RELOADS` 3. Dead renderer
 rebuilt; `activate` asks `alive()`; panes return via desk.json + `--resume`, no focus.
+Probe age is AWAKE time (`process.hrtime`); a tick after a `SLEEP_GAP_MS` 30s gap drops the
+probe + unresponsive clock (2026-10-01: two reloads inside a 5h sleep, "1021965ms").
 `paneforge-errors.log`; cpu = `getAppMetrics().cpu.percentCPUUsage` delta. `test:renderwatch`;
 `PF_PORT=9334 npm run test:renderwatchlive`.
 
