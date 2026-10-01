@@ -218,5 +218,16 @@ ok('laneFor passes it to the ledger read', index.includes('ledgerTakenFolders(ex
 ok('no rehome caller reads the ledger itself any more', index.split('laneFor(req, ledgerTakenFolders(').length - 1 === 0)
 ok('both rehome callers use laneFor(req, [], id)', index.split('laneFor(req, [], id)').length - 1 === 2)
 
+// A pane restored ASLEEP must get its History row (2026-10-02: 11 panes restored asleep after a
+// crash, closed by the idle countdown, and `pf continue` refused every one - their history/
+// folders held s3-...log but no s3-...json, because the `born` branch returned before recordStart).
+const bornAt = sessions.indexOf('    if (born) {\n')
+const bornEnd = sessions.indexOf('      return meta\n', bornAt)
+const bornBody = sessions.slice(bornAt, bornEnd)
+ok('the asleep (born) branch exists and returns meta', bornAt > 0 && bornEnd > bornAt)
+ok('the asleep branch writes its History row before returning', /recordStart\(meta\)/.test(bornBody))
+ok('the asleep branch claims the conversation before the row is written',
+  bornBody.indexOf('noteSession(') > 0 && bornBody.indexOf('noteSession(') < bornBody.indexOf('recordStart(meta)'))
+
 rmSync(work, { recursive: true, force: true })
 console.log(`restore-turn: ${n} checks passed`)

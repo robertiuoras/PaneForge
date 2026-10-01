@@ -1212,6 +1212,14 @@ export class SessionManager extends EventEmitter {
       // be resumed" on a pane that had only ever slept). One restart with the pane asleep
       // was enough to lose it for good.
       noteSession(id, req.resumeCwd ?? req.cwd, agent, req.resume ? req.resumeId : undefined)
+      // ...and it gets its History row now. This branch used to return before `recordStart`,
+      // so a pane that stayed asleep until the idle countdown closed it had no row for
+      // `recordEnd` to stamp: its `resumeId` was never saved and `pf continue` answered "no
+      // chat <id> ... History has no record of it" (2026-10-02: after a crash 0.8.232 restored
+      // 11 panes asleep, s3-mupvhztd..s11-mupvhzza; history/ held s3-mupvhztd.log and no .json).
+      // `recordStart` keeps an earlier row's gist and asks, and `wake()` calling it again is the
+      // same rewrite a restarted live pane gets.
+      recordStart(meta)
       this.emitSessions()
       return meta
     }
