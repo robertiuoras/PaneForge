@@ -37,6 +37,9 @@ process.env.PF_PROMPT_WAIT_MAX_MS ??= '5000'
 // Pinned here rather than read from the module: the SHIPPED budget is 6, and the cap
 // assertion below is about the cap existing at all, not about the number.
 process.env.PF_PROMPT_ENTER_TRIES ??= '3'
+process.env.PF_PROMPT_RETYPE_MS ??= '1500'
+// How long the LAST return gets to show on screen before the prompt is marked not sent.
+process.env.PF_PROMPT_BACKOFF_MAX_MS ??= '2000'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const work = mkdtempSync(join(tmpdir(), 'pf-prompt-submit-'))
@@ -118,15 +121,21 @@ const returns = () => returnsOf(proc)
 
 // 1. A CLI that is still painting its startup is not ready, however long it takes.
 //    PF_PROMPT_START_MS is 120 here, so a blind timer would have typed long ago.
+// Each frame REPAINTS the status line in place (`\r` + erase line), as a real CLI's
+// spinner does. Appending eight copies would leave eight `esc to interrupt` lines on the
+// replayed screen for ever, which no real pane draws - and the prompt path reads the
+// screen (`screenOf`), not just the newest bytes.
+const REPAINT = '\r\x1b[2K'
 for (let i = 0; i < 8; i++) {
-  proc.say(BOOTING)
+  proc.say(REPAINT + BOOTING)
   await sleep(40)
 }
 ok(!typed().includes('first line of the ask'), 'nothing is typed while the CLI is still booting', typed())
 
 // 2. The startup finishes: output stops and the footer stops claiming work. Now the
-//    prompt goes in - and the return is NOT part of it.
-proc.say(COMPOSER)
+//    prompt goes in - and the return is NOT part of it. The composer replaces the boot
+//    status line, which is what "the footer stops claiming work" looks like on screen.
+proc.say(REPAINT + COMPOSER)
 await sleep(400)
 ok(typed().includes('first line of the ask'), 'the prompt is typed once the composer is idle', typed())
 // `?? ''` rather than a bare index: when the prompt never went in at all - which is
@@ -153,7 +162,6 @@ for (let i = 0; i < 6; i++) {
   await sleep(60)
 }
 ok(returns() === beforeBusy, 'no more returns once the pane says it is working', `${beforeBusy} -> ${returns()}`)
-ok(returns() <= 3, 'the retries are capped', String(returns()))
 
 // 5. A pane opened with no prompt is never typed at at all.
 const bare = manager.start({ cwd: root, agent: 'shell' })
@@ -301,6 +309,10 @@ let done = 0
 manager.queuePrompt(settling.id, 'goes in fine', 0, 40, () => done++)
 await sleep(120)
 settlingProc.say(COMPOSER)
+await echoWhenTyped(settlingProc, 'goes in fine')
+await sentReturnAt(settlingProc)
+// The return took: the CLI empties its box and draws a fresh composer.
+settlingProc.say('\r\n' + COMPOSER)
 await sleep(1400)
 ok(done === 1, 'the settle callback fires exactly once on the happy path', String(done))
 ok(
@@ -340,6 +352,15 @@ manager.kill(cmd.id)
 // not. So the proof is the command's ANSWER, not the silence around it.
 // Answers the moment the return this queuePrompt sends was written, so a case can be
 // judged against the confirm window rather than against a wall-clock sleep.
+// A real CLI ECHOES what is typed into its composer. The prompt path proves a submit off
+// the replayed screen - "the box is empty AND the prompt had been in it" - so a fake that
+// never draws the typed text is a CLI that never received it (s15-mucz8c8j), not a happy path.
+async function echoWhenTyped(proc, text, waitMs = 3000) {
+  const until = Date.now() + waitMs
+  while (Date.now() < until && !proc.writes.some((w) => w.includes(text))) await sleep(10)
+  proc.say('\r\x1b[2K › ' + text)
+}
+
 async function sentReturnAt(proc, waitMs = 3000) {
   const until = Date.now() + waitMs
   while (Date.now() < until) {
@@ -405,6 +426,7 @@ const ANSWERING =
   manager.queuePrompt(answering.id, RESUME2, 0, 40, () => aDone++, 5000)
   await sleep(120)
   aProc.say(COMPOSER)
+  await echoWhenTyped(aProc, RESUME2)
   await sentReturnAt(aProc)
   const afterReturn = returnsOf(aProc)
   // The agent answers, and keeps answering past the whole confirm budget - which is the
@@ -448,8 +470,10 @@ const ANSWERING =
   }
   await sleep(300)
   const mine = readFileSync(acPath, 'utf8').split('\n').filter((l) => l.includes(stuck.id)).join('\n')
-  ok(/UNSENT/.test(mine), 'a prompt still sitting in the composer is still called UNSENT', mine)
-  ok(sDone === 1, 'and that settles once too', String(sDone))
+  // It used to be written off here as UNSENT/LOST with the text still in the box
+  // (s15-mucz8c8j, 2026-09-22 18:03). A painting pane is waited out; the prompt stays owed.
+  ok(!/UNSENT/.test(mine), 'a prompt still in the composer of a painting pane is not written off', mine)
+  ok(sDone === 0 && manager.sessions.get(stuck.id).meta.owedPrompt, 'and it is still owed', String(sDone))
   manager.kill(stuck.id)
 }
 
@@ -478,6 +502,29 @@ const ANSWERING =
   )
   ok(promptStillInBox('\u23fa nothing that looks like a composer at all\n', P) === null, 'a frame with no composer answers null, never a guess')
   ok(promptStillInBox('\u276f \n', 'go') === null, 'a prompt too short to recognise answers null')
+  // s46-mud47sld (2026-09-22 20:17Z): a 2334-char brief wrapped over ~20 composer rows,
+  // with words split at the right edge.
+  const BIG = ('Robert asked: prove the queued brief off the screen and never off the run clock. ').repeat(30).slice(0, 2334)
+  const RULE60 = '\u2500'.repeat(60)
+  const wrapped = []
+  for (let i = 0; i < BIG.length; i += 118) wrapped.push((i ? '  ' : '\u276f ') + BIG.slice(i, i + 118))
+  ok(wrapped.length >= 19, 'the fixture really wraps over about twenty rows', String(wrapped.length))
+  ok(
+    promptStillInBox('\u273b Running SessionStart hooks\u2026 (2s \u00b7 esc to interrupt)\n' + RULE60 + '\n' + wrapped.join('\n') + '\n' + RULE60 + '\n', BIG) === true,
+    'a long prompt wrapped over twenty rows, split mid-word, is still in the box'
+  )
+  ok(
+    promptStillInBox(wrapped.slice(-6).join('\n') + '\n' + RULE60 + '\n  \u23f5\u23f5 bypass permissions on\n', BIG) === true,
+    '...and so is one scrolled so only its tail rows are on screen'
+  )
+  ok(
+    promptStillInBox(RULE60 + '\n\u276f [Pasted text #1 +20 lines]\n' + RULE60 + '\n', BIG) === true,
+    '...and one Claude Code folded into a pasted-text token'
+  )
+  ok(
+    promptStillInBox('> ' + BIG.slice(0, 118) + '\n\u23fa on it\n' + RULE60 + '\n\u276f \n' + RULE60 + '\n', BIG) === false,
+    'the same long prompt submitted leaves an empty composer'
+  )
 }
 
 // A pane that closes mid-wait settles too - otherwise the curtain outlives the pty.
@@ -510,7 +557,7 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
 // that write. The proof a return landed is a TURN, not output.
 {
   const src = readFileSync(new URL('../src/main/sessions.ts', import.meta.url), 'utf8')
-  const fn = src.slice(src.indexOf('const submit = (tries: number)'), src.indexOf('const tick = ()'))
+  const fn = src.slice(src.indexOf('const submitCommand = (tries: number)'), src.indexOf('const tick = ()'))
   ok(/runSince \?\? 0\) >= typedAt/.test(fn), 'a turn newer than the return is the only proof it went in')
   // ...for a PROMPT. `write()` stamps `runSince` on every return it sends, so a slash
   // command - which starts no turn - would otherwise be proven by this app's own keystroke.
@@ -536,9 +583,15 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
   ok(/box === false/.test(fn) && /settle\('sent'\)/.test(fn), 'an empty composer settles it as sent')
 
   ok(!/Date\.now\(\) >= deadline\)/.test(fn), 'the confirm may not expire on the WAIT deadline')
+  // A PROMPT's confirm never reads the run clock at all (s46-mud47sld): only the composer
+  // emptying, or Codex's own transcript, proves it. The `runSince` proof above is the slash
+  // command path's (`submitCommand`), which only ever runs for proof 'idle'.
+  const sp = src.slice(src.indexOf('const submitPrompt = (tries: number)'), src.indexOf('const submit = (tries: number)'))
+  ok(sp.length > 0 && !/runSince/.test(sp), 'a queued prompt is never confirmed off runSince')
+  ok(/proof === 'idle' \? submitCommand\(tries\) : submitPrompt\(tries\)/.test(src), '...and every prompt goes through that confirm')
   ok(
     /confirmUntil = typedAt \+ PROMPT_CONFIRM_MS \* PROMPT_ENTER_TRIES/.test(
-      src.slice(src.indexOf('const submit = (tries: number)'), src.indexOf('const tick = ()'))
+      src.slice(src.indexOf('const submitCommand = (tries: number)'), src.indexOf('const tick = ()'))
     ),
     'the confirm clock starts at the return and lasts every retry it is allowed'
   )
@@ -598,6 +651,172 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
   manager.setBusyOnScreen(pane.id, true, 'Esc to interrupt · 1s')
   live.proc.say('Working')
   ok(live.meta.status === 'working' && Boolean(live.meta.runSince), 'a subsequent real turn still starts')
+  manager.kill(pane.id)
+}
+
+// ---------------------------------------------------------------------------
+// A QUEUED PROMPT IS NEVER LOST WHILE ITS PANE IS ALIVE.
+//
+// 2026-09-22 17:57, three Claude panes opened together under memory pressure, all three
+// prompts logged `queued prompt LOST` inside 30s; queued-prompts.log held 417 such lines.
+// Two different failures, both off the pane's own history log:
+//   s15-mucz8c8j: the prompt was typed 2.8s after spawn, when Claude had printed nothing
+//     but terminal queries. "Quiet and not busy" read as ready with NO COMPOSER DRAWN, the
+//     text never reached the screen, and six returns hit an empty box.
+//   s18-mucz8fm2: the first return WENT IN (`running UserPromptSubmit hooks… 0/4 · 12s`),
+//     but Claude repaints only the cells that change, so each tick arrived as `13`, `14`:
+//     no busy words in the newest bytes, a second of quiet between ticks, and the confirm
+//     read an idle composer, fed five more returns and called a delivered prompt LOST.
+const claudeFrame = (inBox = '') =>
+  '\x1b[2J\x1b[H ▐▛███▜▌ Claude Code v2.1.280\r\n  ~/Projects/x\r\n' +
+  '─'.repeat(60) + '\r\n❯ ' + inBox + '\r\n' + '─'.repeat(60) + '\r\n  ⏵⏵ bypass permissions on\r\n'
+const settleLog = (id) =>
+  readFileSync(join(work, 'userData', 'autoclear-app.log'), 'utf8').split('\n').filter((l) => l.includes(id)).join('\n')
+const LONG = 'Robert asked: in PaneForge, remove the popup that appears when a session is renamed.'
+
+// s15: nothing is typed until the composer is on screen, however quiet the pane is.
+{
+  const pane = manager.start({ cwd: root, agent: 'claude' })
+  const p = manager.sessions.get(pane.id).proc
+  let done = 0
+  manager.queuePrompt(pane.id, LONG, 0, 40, () => done++, 5000)
+  p.say('\x1b[>0q\x1b[>4m')
+  await sleep(600)
+  ok(!p.writes.join('').includes('Robert asked'), 'a Claude pane that has drawn no composer is not typed at', JSON.stringify(p.writes))
+  p.say(claudeFrame())
+  await sleep(400)
+  ok(p.writes.join('').includes('Robert asked'), 'and the prompt goes in once the composer is drawn', JSON.stringify(p.writes))
+  manager.kill(pane.id)
+}
+
+// s18: a submit the agent is running hooks for is SENT, even when the newest bytes are
+// only the counter digits of a partial repaint.
+{
+  const pane = manager.start({ cwd: root, agent: 'claude' })
+  const p = manager.sessions.get(pane.id).proc
+  let done = 0
+  const write = p.write.bind(p)
+  let submitted = false
+  p.write = (d) => {
+    write(d)
+    if (d.includes('Robert asked')) setTimeout(() => p.say(claudeFrame(LONG)), 5)
+    else if (d === '\r' && !submitted) {
+      submitted = true
+      setTimeout(() => p.say(
+        '\x1b[2J\x1b[H❯ ' + LONG + '\r\n\r\n✻ Dilly-dallying… (running UserPromptSubmit hooks… 0/4 · 0s)\r\n' +
+        '─'.repeat(60) + '\r\n❯ \r\n' + '─'.repeat(60) + '\r\n'), 5)
+    }
+  }
+  p.say(claudeFrame())
+  manager.queuePrompt(pane.id, LONG, 0, 40, () => done++, 5000)
+  const budget = Number(process.env.PF_PROMPT_CONFIRM_MS) * Number(process.env.PF_PROMPT_ENTER_TRIES)
+  const until = Date.now() + budget + 1200
+  for (let s = 1; Date.now() < until; s++) {
+    await sleep(200)
+    p.say(`\x1b[3;50H${s}`)
+  }
+  const log = settleLog(pane.id)
+  ok(!/UNSENT|LOST/.test(log), 'a prompt whose hooks are running is never called unsent', log)
+  ok(done === 1 && /submitted/.test(log), 'it settles as submitted, once', `${done}\n${log}`)
+  ok(returnsOf(p) === 1, 'and exactly one return was sent', String(returnsOf(p)))
+  manager.kill(pane.id)
+}
+
+// A RUN CLOCK THAT MOVES IS NOT A SUBMIT. s46-mud47sld (Mac, 2026-09-22 20:17Z, load ~370):
+// the installed build logged `queued prompt submitted` off `runSince` (moved by a boot/hook
+// spinner and by the app's own return), and 13 minutes later the whole 2334-char brief was
+// still in the composer. Here every return moves `runSince` and repaints a hook spinner
+// over a composer that still holds the wrapped brief.
+{
+  const BRIEF = ('Robert asked: prove the queued brief off the screen and never off the run clock. ').repeat(30).slice(0, 2334)
+  const hookFrame = () =>
+    '\x1b[2J\x1b[H\u273b Running SessionStart hooks\u2026 (2s \u00b7 esc to interrupt)\r\n' + '\u2500'.repeat(60) +
+    '\r\n\u276f ' + BRIEF + '\r\n' + '\u2500'.repeat(60) + '\r\n  \u23f5\u23f5 bypass permissions on\r\n'
+  const pane = manager.start({ cwd: root, agent: 'claude' })
+  const live = manager.sessions.get(pane.id)
+  const p = live.proc
+  let done = 0
+  const write = p.write.bind(p)
+  p.write = (d) => {
+    write(d)
+    if (d.includes('Robert asked')) setTimeout(() => p.say(hookFrame()), 5)
+    else if (d === '\r') setTimeout(() => {
+      live.meta.runSince = Date.now()
+      p.say(hookFrame())
+    }, 5)
+  }
+  p.say(claudeFrame())
+  manager.queuePrompt(pane.id, BRIEF, 0, 40, () => done++, 5000)
+  const cap = Number(process.env.PF_PROMPT_ENTER_TRIES)
+  const until = Date.now() + 4000
+  while (Date.now() < until && returnsOf(p) < 2) await sleep(20)
+  // (a) the turn looks started, the brief is still in the box: owed, and Return goes again.
+  ok(returnsOf(p) >= 2, 'a spinner over a composer still holding the brief gets Return again', String(returnsOf(p)))
+  ok(done === 0 && live.meta.owedPrompt && !/submitted/.test(settleLog(pane.id)),
+    '...and a moved run clock never confirms it', settleLog(pane.id))
+  // (b) the returns never take: UNSENT, with the resend on the card - never "submitted".
+  const until2 = Date.now() + 8000
+  while (Date.now() < until2 && !done) await sleep(50)
+  await sleep(300) // the log line is appended after settle; read it once it has landed
+  const log = settleLog(pane.id)
+  ok(returnsOf(p) === cap, `returns stop at PROMPT_ENTER_TRIES (${cap})`, String(returnsOf(p)))
+  ok(done === 1 && /UNSENT/.test(log) && !/submitted/.test(log), 'returns that never take end UNSENT, never submitted', `${done}\n${log}`)
+  ok(live.meta.unsentPrompt?.text === BRIEF && !live.meta.owedPrompt, '...and the card offers it again (markUnsent)', JSON.stringify(live.meta.unsentPrompt?.text?.slice(0, 40)))
+  manager.queuePrompt(pane.id, 'a fresh ask supersedes the chip', 0, 100000, undefined, 5000)
+  ok(!live.meta.unsentPrompt, 'queuing any prompt clears the not-sent chip')
+  manager.kill(pane.id)
+}
+
+// Text that never reached the box is typed again rather than returned at an empty composer.
+{
+  const pane = manager.start({ cwd: root, agent: 'claude' })
+  const p = manager.sessions.get(pane.id).proc
+  let done = 0
+  const write = p.write.bind(p)
+  let eaten = 0
+  p.write = (d) => {
+    write(d)
+    // The first copy vanishes (typed into a CLI not yet reading keys); a second one echoes.
+    if (d.includes('Robert asked') && eaten++ > 0) setTimeout(() => p.say(claudeFrame(LONG)), 5)
+  }
+  p.say(claudeFrame())
+  manager.queuePrompt(pane.id, LONG, 0, 40, () => done++, 5000)
+  const until = Date.now() + 6000
+  while (Date.now() < until && eaten < 2) await sleep(50)
+  ok(eaten >= 2, 'a prompt that never appeared in the composer is typed again', String(eaten))
+  manager.kill(pane.id)
+}
+
+// HEAVY LAG: every byte the CLI prints arrives a second late - five confirm periods, the
+// scaled-down shape of s44-mud42wl9 (Mac, 2026-09-22 20:13Z, load ~470), whose prompt was
+// logged LOST. The echo of the typed text and the submitted frame both come late. The
+// prompt must settle as sent, once, and must never be typed a second time into the box.
+{
+  const LAG_MS = 1000
+  const pane = manager.start({ cwd: root, agent: 'claude' })
+  const p = manager.sessions.get(pane.id).proc
+  let done = 0
+  const write = p.write.bind(p)
+  let submitted = false
+  p.write = (d) => {
+    write(d)
+    if (d.includes('Robert asked')) setTimeout(() => p.say(claudeFrame(LONG)), LAG_MS)
+    else if (d === '\r' && !submitted) {
+      submitted = true
+      setTimeout(() => p.say(
+        '\x1b[2J\x1b[H❯ ' + LONG + '\r\n\r\n✻ Thinking… (1s · esc to interrupt)\r\n' +
+        '─'.repeat(60) + '\r\n❯ \r\n' + '─'.repeat(60) + '\r\n'), LAG_MS)
+    }
+  }
+  p.say(claudeFrame())
+  manager.queuePrompt(pane.id, LONG, 0, 40, () => done++, 5000)
+  const until = Date.now() + 6000
+  while (Date.now() < until && !done) await sleep(50)
+  await sleep(600)
+  const log = settleLog(pane.id)
+  const copies = p.writes.filter((w) => w.includes('Robert asked')).length
+  ok(done === 1 && !/UNSENT|LOST/.test(log), 'under heavy lag a late-echoed prompt still settles as sent, once', `${done}\n${log}`)
+  ok(copies === 1, '...and a late echo is waited for, never typed into the box twice', String(copies))
   manager.kill(pane.id)
 }
 

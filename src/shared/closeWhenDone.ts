@@ -35,6 +35,24 @@ export interface DonePane {
    * would take that build with it.
    */
   backJob?: string
+  /** The app is still delivering a queued prompt (`Session.owedPrompt`). */
+  owedPrompt?: boolean
+  /** A queued prompt was given up as not sent (`Session.unsentPrompt`). */
+  unsentPrompt?: unknown
+  /** When a prompt was last queued for this pane (`queuePrompt`); none = never. */
+  promptQueuedAt?: number
+  /** When a prompt was last PROVEN submitted: a queued one settled `sent`, or a person sent a line. */
+  promptSentAt?: number
+}
+
+/**
+ * Did this pane's prompt never go in? s44-mud42wl9 (Mac, 2026-09-22 20:13Z, load ~470):
+ * opened with `--close-when-done`, its opening prompt was logged `queued prompt LOST` and
+ * left in the composer, and the pane was then closed and reported DONE. A pane that never
+ * received its job has not finished it.
+ */
+function promptNeverSent(p: DonePane): boolean {
+  return Boolean(p.unsentPrompt) || (p.promptQueuedAt ?? 0) > (p.promptSentAt ?? 0)
 }
 
 /**
@@ -52,9 +70,20 @@ export const CLOSE_DONE_QUIET_MS = 8_000
  * bar is higher here, because a slept pane can be woken and a closed one is a History row.
  */
 export function doneEnough(p: DonePane, quietMs: number, now = Date.now()): boolean {
-  if (!p.printed) return false
-  if (p.status === 'exited' || p.asleep) return false
-  if (p.runSince || (p.busyUntil ?? 0) > now) return false
-  if (p.ask || p.drafting || p.job || p.backJob) return false
-  return quietMs >= CLOSE_DONE_QUIET_MS
+  return closeVerdict(p, quietMs, now) === 'close'
+}
+
+/**
+ * `close` - finished, close it. `wait` - something is still going on. `unsent` - quiet and
+ * otherwise finished, but its prompt never went in: the pane stays OPEN and the opener is
+ * told the prompt was never sent, never that the job is done.
+ */
+export function closeVerdict(p: DonePane, quietMs: number, now = Date.now()): 'close' | 'wait' | 'unsent' {
+  if (!p.printed) return 'wait'
+  if (p.status === 'exited' || p.asleep) return 'wait'
+  if (p.runSince || (p.busyUntil ?? 0) > now) return 'wait'
+  if (p.ask || p.drafting || p.job || p.backJob) return 'wait'
+  if (quietMs < CLOSE_DONE_QUIET_MS) return 'wait'
+  if (p.owedPrompt) return 'wait'
+  return promptNeverSent(p) ? 'unsent' : 'close'
 }

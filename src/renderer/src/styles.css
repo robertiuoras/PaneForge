@@ -986,6 +986,8 @@ button.chip.closing:hover { filter: brightness(1.3); }
 }
 /* The widest thing on the line and the most repeated, so it is the first to be asked. */
 .row-sub .chip.place { flex: 0 999 auto; min-width: 3.4em; }
+/* A queued prompt that never went in: danger-toned, because nothing else will send it. */
+.chip.unsent-prompt { white-space: nowrap; cursor: pointer; color: var(--danger); border-color: #ff8f8f2b; background: #ff8f8f14; }
 .chip.dead { color: var(--danger); border-color: #ff8f8f2b; background: #ff8f8f14; }
 /* A pane somebody is KEEPING with its agent given back (src/shared/sleep.ts). Deliberately
    quiet - muted text on a hairline, no fill, no colour of its own: nothing is wrong and

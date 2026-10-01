@@ -43,7 +43,7 @@ import type { ClientNamed } from '../shared/types'
 export const NOTHING_OPEN = 'the handoff lists nothing still open'
 import { jobFromTable, paneJob, programName, SHELLS } from '../shared/paneJob'
 import { canSleep, sleepRefusal } from '../shared/sleep'
-import { doneEnough } from '../shared/closeWhenDone'
+import { closeVerdict } from '../shared/closeWhenDone'
 import { folderName, laneOfCheckout, projectOf } from '../shared/place'
 import { dropStale, lentGrid, watchedBorrow, type Borrow } from '../shared/paneSize'
 import { START_COLS, START_ROWS } from '../shared/paneGrid'
@@ -120,7 +120,8 @@ import { allAgents, buildArgs, colourEnv, hasAgent, modelValue, resolveEnv } fro
 import { homedir } from 'node:os'
 import { allowsCwd, scrubForeignKeys } from '../shared/paneTrust'
 import { anchoredStart, readsBusy, composerHeld, type BusyReason } from '../shared/busy'
-import { promptStillInBox } from '../shared/promptLanded'
+import { composerDrawn, promptAppeared, promptStillInBox } from '../shared/promptLanded'
+import { screenOf } from './composerRead'
 import { resumeVerdict, RESUME_POLL_MS } from '../shared/resumeCheck'
 import { exitPlan, exitWords } from '../shared/exitClose'
 import { readsCloudWork, cloudHeld } from '../shared/cloudWork'
@@ -224,6 +225,13 @@ const PROMPT_TAIL_CHARS = 2000
  */
 type PromptProof = 'turn' | 'idle'
 const PROMPT_CONFIRM_MS = ms('PF_PROMPT_CONFIRM_MS', 4000)
+/** The longest gap between two returns into a composer still holding the prompt. */
+const PROMPT_BACKOFF_MAX_MS = ms('PF_PROMPT_BACKOFF_MAX_MS', 30_000)
+// A prompt whose text has not appeared is typed AGAIN only once the CLI has printed
+// something since (it is reading and drawing, and the text is not there) or this long has
+// passed. Under load (2026-09-22, load ~470) an echo arrives seconds late, and retyping on
+// the first quiet look would put the prompt in the box twice.
+const PROMPT_RETYPE_MS = ms('PF_PROMPT_RETYPE_MS', 15_000)
 /**
  * How many returns may be sent before the prompt is left for a person.
  *
@@ -457,6 +465,12 @@ interface Live {
    * busy, so a pane that is torn down mid-turn cannot leave a session muted forever.
    */
   busyUntil: number
+  /** When `queuePrompt` last accepted a prompt for this pane (`shared/closeWhenDone.ts`). */
+  promptQueuedAt?: number
+  /** When a prompt was last PROVEN submitted: a queued one settled `sent`, or a person sent a line. */
+  promptSentAt?: number
+  /** close-when-done already told the opener this pane's prompt was never sent. */
+  unsentReported?: boolean
   /**
    * What this pane left running somewhere that is not this machine, and when its own
    * footer last said so - see `shared/cloudWork.ts`. Nothing in the process table can
@@ -1860,6 +1874,9 @@ export class SessionManager extends EventEmitter {
     const asked = submitted ? live.typed : ''
     if (submitted) {
       live.meta.lastKeyboard = Date.now()
+      // A PERSON sending a line is a submitted turn they saw go in; the app's own returns
+      // prove nothing until `queuePrompt` confirms them (`promptSentAt` in `settle`).
+      if (origin !== 'app' && asked.trim()) live.promptSentAt = Date.now()
       // A person sending a line owns the pane, so an armed countdown stands down for it -
       // and an `app` write never does. `standDownFor` is the whole decision; without it
       // this app's own queued prompt cancelled the clear and the log blamed the person.
@@ -2101,10 +2118,30 @@ export class SessionManager extends EventEmitter {
 
   private sweepCloseWhenDone(live: Live, now: number, quiet: number): void {
     const { meta } = live
-    if (!doneEnough({ ...meta, busyUntil: live.busyUntil }, quiet, now)) return
+    const verdict = closeVerdict(
+      { ...meta, busyUntil: live.busyUntil, promptQueuedAt: live.promptQueuedAt, promptSentAt: live.promptSentAt },
+      quiet,
+      now
+    )
+    if (verdict === 'wait') return
     const told = live.req.reportTo
+    const opener = told
+      ? this.sessions.get(told) ?? [...this.sessions.values()].find((l) => l.meta.title === told)
+      : undefined
+    if (verdict === 'unsent') {
+      // Its prompt never went in: the job was never started, let alone done. The pane stays
+      // open holding the text (and the "Send again" chip), and the opener hears exactly that.
+      if (live.unsentReported) return
+      live.unsentReported = true
+      if (opener && opener.meta.id !== meta.id)
+        this.queuePrompt(
+          opener.meta.id,
+          `The pane you opened for "${meta.title}" (${meta.cwd}) never got its prompt - it was never sent. The pane is left open.`
+        )
+      console.info(`close-when-done: ${meta.id} NOT closed - its prompt was never sent${told ? ` - told ${told}` : ''}`)
+      return
+    }
     if (told) {
-      const opener = this.sessions.get(told) ?? [...this.sessions.values()].find((l) => l.meta.title === told)
       if (opener && opener.meta.id !== meta.id)
         this.queuePrompt(
           opener.meta.id,
@@ -3499,6 +3536,19 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
+   * Leave a visible "not sent" on the pane (`Session.unsentPrompt`), or clear it with
+   * `undefined`. `queuePrompt` sets it when it gives up and clears it the moment any prompt
+   * is queued for the pane again, so the chip never outlives a resend.
+   */
+  private markUnsent(id: string, prompt: string | undefined): void {
+    const live = this.sessions.get(id)
+    if (!live) return
+    if (!prompt && !live.meta.unsentPrompt) return
+    live.meta.unsentPrompt = prompt ? { text: prompt, at: Date.now() } : undefined
+    this.emitSessions()
+  }
+
+  /**
    * A person taking the pane back mid-handover.
    *
    * `tookOverAt` is what actually cancels the queued resume prompt, and it is a SECOND
@@ -3557,6 +3607,14 @@ export class SessionManager extends EventEmitter {
     // caller is - autoclear's resume, a restore, `pf open --prompt`, a split brief. See
     // `Session.owedPrompt`.
     this.setOwedPrompt(id, true)
+    const queuedFor = this.sessions.get(id)
+    if (queuedFor) {
+      queuedFor.promptQueuedAt = Date.now()
+      queuedFor.unsentReported = false
+    }
+    // A new prompt supersedes whatever the card said was not sent - the resend button
+    // queues through here too.
+    this.markUnsent(id, undefined)
     // ON DISK BEFORE A BYTE OF IT IS TYPED. Everything below is a wait, and a wait that
     // lives only in memory is a prompt the app forgets when the pane is recreated - which
     // is exactly what happened to two briefs on 2026-09-07 (see `shared/queuedPrompts.ts`).
@@ -3574,8 +3632,11 @@ export class SessionManager extends EventEmitter {
     const settle = (end: QueueDrop | 'sent'): void => {
       if (settled) return
       settled = true
-      if (end === 'sent') noteSubmitted(key)
-      else noteDropped(key, end)
+      if (end === 'sent') {
+        noteSubmitted(key)
+        const proven = this.sessions.get(id)
+        if (proven) proven.promptSentAt = Date.now()
+      } else noteDropped(key, end)
       this.setOwedPrompt(id, false)
       onSettled?.()
     }
@@ -3645,7 +3706,7 @@ export class SessionManager extends EventEmitter {
     // as `budgetMs + PROMPT_CONFIRM_MS * PROMPT_ENTER_TRIES`, so the confirm was always
     // meant to outlive the wait; only this branch disagreed.
     let confirmUntil = 0
-    const submit = (tries: number): void => {
+    const submitCommand = (tries: number): void => {
       const live = this.sessions.get(id)
       if (!live) return settle('gone')
       // A confirm return is still a keystroke into a live CLI. If somebody has sent their
@@ -3773,17 +3834,125 @@ export class SessionManager extends EventEmitter {
             acLog(`${id} prompt left UNSENT: ${PROMPT_ENTER_TRIES} returns were swallowed`)
             return settle('unsent')
           }
-          submit(tries + 1)
+          submitCommand(tries + 1)
         }, proof === 'idle' ? PROMPT_POLL_MS : PROMPT_CONFIRM_MS)
       }
       confirm()
     }
 
+    // A PROMPT IS PROVEN OFF THE SCREEN AS DRAWN, AND IS OWED UNTIL IT IS.
+    //
+    // The command path above reads the newest BYTES. For a prompt that lost 417 of them to
+    // `queued prompt LOST` by 2026-09-22: Claude Code repaints only the cells that change,
+    // so a hook-phase tick arrives as `13` - no busy footer, a second of quiet - and a
+    // prompt that had gone in on its first return was fed five more and written off
+    // (s18-mucz8fm2); and a pane painting a long turn read "no composer" for 24s and was
+    // written off with the prompt still in the box (s15-mucz8c8j, 18:03). So here:
+    //   - the screen is replayed (`screenOf`) and the composer read off it;
+    //   - the prompt is SENT only when the composer no longer holds it and it is known to
+    //     have been there, or Codex's own transcript holds it - never on `runSince` or a
+    //     busy footer alone (s46-mud47sld, 2026-09-22 20:17Z);
+    //   - a composer still holding the prompt gets another return, busy footer or not, up
+    //     to PROMPT_ENTER_TRIES; a painting pane that does not show it is waited out; an idle
+    //     one whose text never appeared gets it typed again (`PROMPT_RETYPE_MS`);
+    //   - out of returns, the last one gets PROMPT_BACKOFF_MAX_MS to show, then the pane is
+    //     left with a visible "not sent" and a resend (`markUnsent`), never a silent log line.
+    let typedFrom = 0
+    let typedTextAt = 0
+    let everHeld = false
+    const typePrompt = (live: Live): void => {
+      typedFrom = strip(live.buffer.read()).length
+      ourWrite(prompt)
+      typedTextAt = Date.now()
+    }
+    const printedSinceTyped = (live: Live): string => {
+      const text = strip(live.buffer.read())
+      return text.length >= typedFrom ? text.slice(typedFrom) : text
+    }
+    const giveUp = (why: string): void => {
+      acLog(`${id} prompt left UNSENT: ${why}`)
+      this.markUnsent(id, prompt)
+      settle('unsent')
+    }
+    const submitPrompt = (tries: number): void => {
+      const live = this.sessions.get(id)
+      if (!live) return settle('gone')
+      if ((live.meta.lastKeyboard ?? 0) > mark) return giveUp('the pane was typed into by hand before the return')
+      ourWrite('\r')
+      if (tries === 0) recordPromptReview(live.meta, prompt)
+      noteSubmittedPrompt(id, prompt)
+      acLog(`${id} return sent (try ${tries + 1}/${PROMPT_ENTER_TRIES})`)
+      const typedAt = Date.now()
+      const again = (): void => {
+        if (tries + 1 < PROMPT_ENTER_TRIES) return submitPrompt(tries + 1)
+        // Out of returns. The last one still gets PROMPT_BACKOFF_MAX_MS to show on screen -
+        // under load a submit is drawn seconds late - and only then is it written off.
+        if (Date.now() - typedAt >= PROMPT_BACKOFF_MAX_MS) {
+          return giveUp(`${PROMPT_ENTER_TRIES} returns and nothing proved it left the composer`)
+        }
+        setTimeout(() => void look(), PROMPT_CONFIRM_MS)
+      }
+      const look = async (): Promise<void> => {
+        if (settled) return
+        const before = this.sessions.get(id)
+        if (!before) return settle('gone')
+        const shown = await screenOf(before.buffer.read(), before.cols, before.rows)
+        const still = this.sessions.get(id)
+        if (settled) return
+        if (!still) return settle('gone')
+        const held = promptStillInBox(shown, prompt)
+        if (held === true) everHeld = true
+        if (codexAcceptedPrompt(id, prompt, typedAt - 1000)) {
+          acLog(`${id} prompt submitted - native Codex receipt`)
+          return settle('sent')
+        }
+        // THE ONLY SCREEN PROOF: the composer no longer holds the prompt, and it is known to
+        // have been there. The run clock or a busy footer on its own NEVER confirms: s46-mud47sld
+        // (2026-09-22 20:17Z, load ~370) logged `submitted` off a run clock moved by a boot
+        // spinner and by this app's own return (`beginRun` stamps it in the same millisecond
+        // `typedAt` is read), and 13 minutes later the 2334-char brief was still in the box.
+        if (held === false && (everHeld || promptAppeared(printedSinceTyped(still), prompt))) {
+          acLog(`${id} prompt submitted - it left the composer it was typed into`)
+          return settle('sent')
+        }
+        if ((still.meta.lastKeyboard ?? 0) > mark) return giveUp('the pane was typed into by hand while confirming')
+        if (Date.now() >= personDeadline) {
+          return giveUp(`nothing took it in ${Math.round(PERSON_WAIT_MAX_MS / 60_000)} min` + (held ? ', and the composer still holds it' : ''))
+        }
+        // STILL IN THE BOX: owed, whatever the footer or the run clock says. A spinner over a
+        // full composer is a CLI that has not taken the text, so the return goes again.
+        if (held === true) return again()
+        // Painting over a composer this cannot read as holding it: wait, never type.
+        if (readsBusy(shown) || composerHeld(shown) || Date.now() - still.meta.lastOutput < PROMPT_QUIET_MS) {
+          return void setTimeout(() => void look(), PROMPT_CONFIRM_MS)
+        }
+        // A shell draws no composer this can trust, so it only ever gets another return.
+        if (held === false && still.meta.agent === 'shell') return again()
+        if (held === false && ((still.meta.lastOutput ?? 0) > typedTextAt || Date.now() - typedTextAt >= PROMPT_RETYPE_MS)) {
+          if (tries + 1 >= PROMPT_ENTER_TRIES) return again()
+          acLog(`${id} prompt never reached the composer - typing it again`)
+          typePrompt(still)
+          return void setTimeout(() => this.sessions.get(id) && submitPrompt(tries + 1), PROMPT_ENTER_MS)
+        }
+        setTimeout(() => void look(), PROMPT_CONFIRM_MS)
+      }
+      setTimeout(() => void look(), PROMPT_CONFIRM_MS)
+    }
+    const submit = (tries: number): void => (proof === 'idle' ? submitCommand(tries) : submitPrompt(tries))
+
+    // QUIET IS NOT READY UNTIL A COMPOSER HAS BEEN DRAWN. s15-mucz8c8j (2026-09-22) was
+    // typed at 2.8s, on a screen holding only terminal queries: the CLI was not reading keys
+    // yet, the text never appeared, and six returns hit an empty box. A shell draws no
+    // marker we know, so it keeps the old reading; an agent that never draws one is still
+    // typed at when the wait budget runs out (`queuedPromptDecision`'s `expired`).
+    let drawn = false
+    const ready = (live: Live): boolean =>
+      (drawn ||= live.meta.agent === 'shell' || composerDrawn(strip(live.buffer.read()).slice(-20_000)))
     let saidWaiting = false
     const tick = (): void => {
       const live = this.sessions.get(id)
       if (!live) return settle('gone')
-      const what = verdict(live, idle(live))
+      const what = verdict(live, idle(live) && ready(live))
       if (what === 'wait') {
         // Somebody is typing in there. The curtain says "Keys are held" and they are
         // plainly not, so it comes down: this prompt is now waiting its turn behind a
@@ -3808,7 +3977,7 @@ export class SessionManager extends EventEmitter {
         )
         return settle('abandoned')
       }
-      ourWrite(prompt)
+      typePrompt(live)
       acLog(`${id} prompt typed (${prompt.length} chars), return in ${PROMPT_ENTER_MS}ms`)
       setTimeout(() => this.sessions.get(id) && submit(0), PROMPT_ENTER_MS)
     }

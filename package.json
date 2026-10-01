@@ -157,6 +157,7 @@
     "test:winfeed": "node scripts/winfeed-test.mjs",
     "test:winshortcut": "node scripts/winshortcut-test.mjs",
     "test:promptsubmit": "node scripts/prompt-submit-test.mjs",
+    "test:busywindow": "node scripts/busy-window-test.mjs",
     "test:anim": "node scripts/anim-cost-test.mjs",
     "test:scrollclear": "node scripts/scroll-clear-test.mjs",
     "test:replaywidth": "node scripts/replay-width-test.mjs",

@@ -326,6 +326,13 @@ export interface Session {
    * autoclear timing.
    */
   owedPrompt?: boolean
+  /**
+   * A prompt the app queued and gave up delivering (`queuePrompt`'s `giveUp` in
+   * `main/sessions.ts`). The card draws `Prompt not sent · Send again` from it so a lost
+   * prompt is never only a line in `autoclear-app.log`. Cleared as soon as any prompt is
+   * queued for the pane again.
+   */
+  unsentPrompt?: { text: string; at: number }
   autoClearPrompt?: string
   autoClearSteps?: string[]
   /**

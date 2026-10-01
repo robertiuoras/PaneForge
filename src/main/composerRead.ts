@@ -48,3 +48,25 @@ export async function composerOf(
     term.dispose()
   }
 }
+
+/**
+ * The visible screen of a pane, as rows joined by newlines.
+ *
+ * The confirm in `queuePrompt` used to read the newest BYTES, and Claude Code repaints only
+ * the cells that change: a hook-phase tick arrives as `13`, so the busy footer and the
+ * emptied composer were invisible to it (s18-mucz8fm2, 2026-09-22). A replayed screen has
+ * both, whatever order the cells were painted in.
+ */
+export async function screenOf(raw: string, cols: number, rows: number): Promise<string> {
+  if (!raw) return ''
+  const term = new Terminal({ cols: Math.max(20, cols), rows: Math.max(4, rows), scrollback: 0, allowProposedApi: true })
+  try {
+    await new Promise<void>((resolve) => term.write(raw, resolve))
+    const buf = term.buffer.active
+    const out: string[] = []
+    for (let i = 0; i < term.rows; i++) out.push(buf.getLine(buf.baseY + i)?.translateToString(true) ?? '')
+    return out.join('\n')
+  } finally {
+    term.dispose()
+  }
+}

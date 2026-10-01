@@ -5354,6 +5354,21 @@ export default function App(): JSX.Element {
                           transient - it takes the clock's place for the few seconds a move
                           lasts, or for as long as a queued pane's turn runs. It cannot appear
                           beside "asks you": a pane holding a question is never moved. */}
+                      {/* A prompt the app queued and could not deliver. Never only a log line:
+                          the card says so and one press queues it again (`Session.unsentPrompt`). */}
+                      {s.unsentPrompt && !s.owedPrompt ? (
+                        <button
+                          type="button"
+                          className="chip unsent-prompt"
+                          title={`This message never reached the prompt box:\n\n${s.unsentPrompt.text.slice(0, 400)}\n\nPress to send it again.`}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            window.api.sendPrompt(s.id, s.unsentPrompt!.text)
+                          }}
+                        >
+                          Prompt not sent · Send again
+                        </button>
+                      ) : null}
                       {s.handingOff ? (
                         s.handoffQueuedAt ? (
                           // Waiting for its own turn to end, which is as long as the agent

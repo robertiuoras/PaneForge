@@ -34,7 +34,7 @@ buildSync({
   outfile: out
 })
 const require = createRequire(import.meta.url)
-const { doneEnough, CLOSE_DONE_QUIET_MS } = require(out)
+const { doneEnough, closeVerdict, CLOSE_DONE_QUIET_MS } = require(out)
 
 let checks = 0
 const ok = (cond, what) => {
@@ -67,14 +67,43 @@ is(doneEnough({ ...done, backJob: 'npm' }, QUIET, NOW), false, 'never while the 
 is(doneEnough({ ...done, status: 'exited' }, QUIET, NOW), false, 'an ended pane has nothing to close')
 is(doneEnough({ ...done, asleep: NOW - 1000 }, QUIET, NOW), false, 'and a SLEEPING pane is being kept, not finished')
 
+// ------------------------------------------------- a prompt that never went in
+// s44-mud42wl9 (Mac, 2026-09-22 20:13Z, load ~470): opened with --close-when-done, its
+// opening prompt was logged `queued prompt LOST` and left in the composer - and the pane
+// was then CLOSED and reported done. A pane that never received its job has not finished it.
+is(doneEnough({ ...done, owedPrompt: true }, QUIET, NOW), false, 'never while the app still owes the pane its prompt')
+is(doneEnough({ ...done, unsentPrompt: { text: 'do x', at: NOW - 5000 } }, QUIET, NOW), false, 'never a pane whose prompt was given up as not sent')
+is(
+  doneEnough({ ...done, promptQueuedAt: NOW - 20_000, promptSentAt: undefined }, QUIET, NOW),
+  false,
+  'never a pane with no submitted turn since its prompt was queued'
+)
+is(
+  doneEnough({ ...done, promptQueuedAt: NOW - 20_000, promptSentAt: NOW - 30_000 }, QUIET, NOW),
+  false,
+  '...and a submit from BEFORE the queue is not proof of this prompt'
+)
+ok(doneEnough({ ...done, promptQueuedAt: NOW - 20_000, promptSentAt: NOW - 19_000 }, QUIET, NOW), 'a prompt proven sent closes as before')
+is(closeVerdict({ ...done, unsentPrompt: { text: 'do x', at: NOW } }, QUIET, NOW), 'unsent', 'a given-up prompt on an otherwise quiet pane is reported as NOT SENT')
+is(closeVerdict({ ...done, promptQueuedAt: NOW - 20_000 }, QUIET, NOW), 'unsent', '...and so is one never proven, once nothing is owed')
+is(closeVerdict({ ...done, owedPrompt: true }, QUIET, NOW), 'wait', 'a prompt still being delivered is waited on, not reported')
+is(closeVerdict({ ...done, unsentPrompt: { text: 'x', at: NOW }, runSince: NOW - 1 }, QUIET, NOW), 'wait', 'a pane mid-turn is never reported either way')
+is(closeVerdict(done, QUIET, NOW), 'close', 'a finished pane with no prompt owed closes')
+
 // ------------------------------------------------------------- the wiring
 const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
 ok(/if \(live\.req\.closeWhenDone\) this\.sweepCloseWhenDone\(live, now, quiet\)/.test(sessions), 'the idle sweep asks, every second')
-ok(/doneEnough\(\{ \.\.\.meta, busyUntil: live\.busyUntil \}, quiet, now\)/.test(sessions), '...through this rule, with the footer reading it alone holds')
+ok(
+  /closeVerdict\(\s*\{ \.\.\.meta, busyUntil: live\.busyUntil, promptQueuedAt: live\.promptQueuedAt, promptSentAt: live\.promptSentAt \},\s*quiet,\s*now\s*\)/.test(sessions),
+  '...through this rule, with the footer and prompt-proof readings only main holds'
+)
 // Told BEFORE the kill: `kill()` deletes the session, and the request naming who to tell
 // goes with it.
 const body = sessions.slice(sessions.indexOf('private sweepCloseWhenDone'), sessions.indexOf('/** Start a countdown that was queued'))
 ok(body.indexOf('queuePrompt') < body.indexOf('this.kill(meta.id)'), 'the opener is told before the pane is killed')
+ok(/never sent/.test(body) && /left open/.test(body), 'a pane whose prompt never went in tells the opener it was NEVER SENT and stays open')
+ok(/unsentReported/.test(body), '...once, not once a second')
+ok(/promptQueuedAt = Date\.now\(\)/.test(sessions) && /promptSentAt = Date\.now\(\)/.test(sessions), 'queuePrompt stamps the queue and the proof')
 ok(/PF_PANE: id/.test(sessions), 'every pane knows which pane it is, so `pf` can name the opener')
 
 const ctl = readFileSync(join(root, 'scripts/pf-ctl.mjs'), 'utf8')
