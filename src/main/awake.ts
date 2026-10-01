@@ -101,15 +101,22 @@ export function startDisplayAwake(opts: {
       if (which === 'system') systemCaffeinate = proc
       else displayCaffeinate = proc
       opts.log?.(`caffeinate ${which} started PID ${proc.pid}`)
+      // Forget THIS process only. `kill()` already dropped the reference, and its exit lands
+      // after the next tick may have started a replacement: clearing the slot then lost the
+      // replacement, which nothing ever stopped. Measured 2026-10-01: 21 live
+      // `caffeinate -i -w <pid>` under one PaneForge, one per hold/release since midnight,
+      // every one still preventing idle sleep with no pane working.
+      const forget = (): void => {
+        if (which === 'system' && systemCaffeinate === proc) systemCaffeinate = null
+        else if (which === 'display' && displayCaffeinate === proc) displayCaffeinate = null
+      }
       proc.on('error', (err) => {
         opts.log?.(`caffeinate ${which} error: ${err.message}`)
-        if (which === 'system') systemCaffeinate = null
-        else displayCaffeinate = null
+        forget()
       })
       proc.on('exit', (code) => {
         opts.log?.(`caffeinate ${which} exited with code ${code}`)
-        if (which === 'system') systemCaffeinate = null
-        else displayCaffeinate = null
+        forget()
       })
     } catch (e) {
       opts.log?.(`caffeinate ${which} spawn failed: ${e}`)

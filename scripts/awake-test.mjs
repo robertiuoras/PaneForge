@@ -226,4 +226,14 @@ function keeper(panes, opts = {}) {
   assert.equal(awakeBusy([asking, working, recentKeys], NOW), 3)
 }
 
+// A caffeinate's exit forgets that process only. It lands after `kill()` dropped the
+// reference and the next tick may have spawned a replacement; clearing the slot then
+// orphaned the replacement (2026-10-01: 21 live `caffeinate -i -w` under one PaneForge).
+{
+  const src = (await import('node:fs')).readFileSync(new URL('../src/main/awake.ts', import.meta.url), 'utf8')
+  const handlers = src.slice(src.indexOf("proc.on('error'"), src.indexOf('} catch (e) {', src.indexOf("proc.on('error'")))
+  assert.ok(/systemCaffeinate === proc/.test(src) && /displayCaffeinate === proc/.test(src), 'exit clears only its own process')
+  assert.ok(!/=\s*null/.test(handlers.replace(/const forget[\s\S]*?\n      \}/, '')), 'no handler clears the slot unconditionally')
+}
+
 console.log('awake: ok')
