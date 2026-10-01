@@ -2418,6 +2418,8 @@ export interface Api {
   reorderSessions(ids: string[]): void
   /** Record why a pane was closed by a sweep, into `reclaim.log` under userData. */
   logReclaim(entry: Record<string, unknown>): void
+  /** One line into `handoff.log`: why the automatic move sweep moved nothing. */
+  logHandoff(line: string): void
   /** One line to `fix.log` per Fix run: the screen's signature before the repair. */
   logFix(entry: Record<string, unknown>): void
   /** What the app has done on its own lately, newest first. See `shared/activity.ts`. */

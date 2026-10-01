@@ -82,6 +82,7 @@ export const SURFACE: Surface = {
   reorderSessions: ['send', 'sessions:reorder'],
   logReclaim: ['send', 'reclaim:log'],
   logFix: ['send', 'pane:fixlog'],
+  logHandoff: ['send', 'handoff:log'],
   listActivity: ['invoke', 'activity:list'],
   taskBrief: ['invoke', 'backlog:task'],
   markActivitySeen: ['send', 'activity:seen'],

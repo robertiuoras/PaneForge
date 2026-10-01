@@ -4495,6 +4495,9 @@ ipcMain.handle('history:delete', (_e, id: string) => {
  */
 ipcMain.handle('prompt:prior', (_e, draft: string) => {
   const cfg = getConfig().promptRecall
+ipcMain.on('handoff:log', (_e, line: unknown) => {
+  if (typeof line === 'string' && line.startsWith('sweep: ')) logHandoff(line.slice(0, 600))
+})
   if (!cfg.enabled) return null
   try {
     return priorPrompt(draft, { extraArchives: cfg.extraArchives })
