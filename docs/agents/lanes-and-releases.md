@@ -33,6 +33,30 @@ there, PreToolUse refuses elsewhere. `node scripts/lane.mjs status --repo <dir>`
 - Sidebar lists no copies; `copiesNotice` draws one line only for an untaken clash or work
   held 6h (`test:laneplain`).
 - Lane hooks install only from the installed app (`installLaneHooks(stable)`, `node scripts/lane-hooks-test.mjs`).
+- The app's retry clock visits every known ledger under the project roots, including repos
+  with no open panes, one at a time in fair order. Installed recovery prefers its bundled
+  engine; `PANEFORGE_ENGINE` still overrides it and development falls back to the checkout.
+  Semantic conflicts use the existing bounded resolver dispatch. Authorized guarded edits
+  renew the resolver's lease and preserve its open merge (`test:laneowner`, `test:lanedispatch`).
+- The same clock visits empty boards. Unready abandoned dirty or clean-ahead work gets one
+  completion owner per repo. `paneforge-recovery.json` stores the reservation separately
+  from ordinary lane writes; an exclusive directory lock serializes recovery transactions.
+  Atomic stale-lock takeover retains a nonempty tombstone to protect a newer owner. Unknown
+  native/process inventory (including unavailable Windows process cwd inventory) or Git state
+  stops adoption; an ordinary stopped turn does not prove its owner
+  ended. Guard-only first claims enter the hook registry so SessionEnd can mark them ended.
+  The dispatcher preserves files and staging, including empty-index, missing and foreign
+  worktrees; subfolder panes/processes protect the whole checkout. Claims preserve unready
+  clean-ahead HEAD/index until explicit adoption; damaged recovery folders require backup
+  and diagnosis before claim. It never auto-stages deletions or reconstructs folders
+  (`test:lanecompletion`).
+- `recover --key <pinned-key> --session <native-id> --disposition begin [--lane <slot>]`
+  binds an actual ordinary claim. `verified --receipt <json>` needs the current commit,
+  nonempty successful `{command, exitCode: 0}` checks and accepted independent
+  `{reviewer, result: "accepted"}` review. Normal `ready` then integrates; `complete`
+  proves inclusion in the remote trunk. `blocked`/`reviewed` receipts require a reason and
+  persist for the pinned snapshot so an ambiguous ref does not reopen on every tick.
+  Recovery never publishes a version; that remains Robert's publisher's action.
 - Roster asks `status --held` (`test:lanes`). First edit of a file another lane changed is
   told with line ranges (`guard` exits 0 with text); same region: message that chat first
   (`node scripts/lane-overlap-test.mjs`).

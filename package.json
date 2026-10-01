@@ -126,6 +126,7 @@
     "test:handoffnotify": "node scripts/handoff-notify-test.mjs",
     "test:conflict": "node scripts/conflict-test.mjs",
     "test:lanedispatch": "node scripts/lane-dispatch-test.mjs",
+    "test:lanecompletion": "node scripts/lane-completion-test.mjs",
     "test:rename": "node scripts/rename-repo-test.mjs",
     "test:rail": "node scripts/rail-test.mjs",
     "test:railclick": "node scripts/rail-click-test.mjs",

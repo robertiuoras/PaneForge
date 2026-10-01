@@ -8,15 +8,9 @@
 // ready, so the release could not see them, and nothing ever would until some later chat
 // happened to be handed that same lane. Real commits sat like that for days.
 //
-// The fix is that losing an owner is not an opinion about the work. Committed and clean
-// means it was meant to go out; that is exactly the rule the normal end-of-session path
-// uses, so it is the rule used here too:
-//
-//   - a stale claim drains before it is dropped
-//   - `retry` (which runs on a clock) sweeps lanes that have no claim left to drain
-//   - uncommitted work is never marked ready, however long it has been abandoned
-//   - a lane that will not merge is recorded as conflicted, not marked ready and left to
-//     fail at release time with nobody around to read the failure
+// Losing an owner is not a verification receipt. The clock preserves ordinary abandoned
+// work and requests a completion owner; neither committed nor dirty WIP is auto-readied.
+// Explicit ready and the normal owned SessionEnd route retain their existing behavior.
 //
 //   node scripts/lane-orphan-test.mjs
 
@@ -55,6 +49,11 @@ function fixture(name) {
   git(repo, 'add', '-A')
   git(repo, 'commit', '-qm', 'first')
   git(repo, 'tag', 'v0.0.1')
+  mkdirSync(join(repo, '.git', 'paneforge-panes'))
+  writeFileSync(join(repo, '.git', 'paneforge-panes', `pf-${process.pid}.json`), JSON.stringify({ at: Date.now(), chats: [] }))
+  const panes = join(repo, '.git', 'test-panes.txt')
+  writeFileSync(panes, '')
+  const processes = join(repo, '.git', 'processes.json'); writeFileSync(processes, '[]')
 
   const lane = (...args) => {
     try {
@@ -63,7 +62,8 @@ function fixture(name) {
         out: execFileSync(process.execPath, [join(repo, 'scripts', 'lane.mjs'), ...args], {
           cwd: repo,
           encoding: 'utf8',
-          stdio: 'pipe'
+          stdio: 'pipe',
+          env: { ...process.env, LANE_PANES_FILE: panes, LANE_PROCESSES_FILE: processes, LANE_COMPLETION_LOG: join(repo, '.git', 'completion.log') }
         }).trim()
       }
     } catch (e) {
@@ -117,11 +117,11 @@ mkdirSync(root, { recursive: true })
 
   const s = f.state()
   ok('the dead chat no longer holds the lane', !s.lanes.a, JSON.stringify(s.lanes))
-  ok('its commit is marked ready instead of being forgotten', Boolean(s.ready.a), JSON.stringify(s.ready))
-  ok('the mark records how much work it rescued', s.ready.a?.commits === 1, JSON.stringify(s.ready.a))
+  ok('a dead owner does not imply verified work', !s.ready.a, JSON.stringify(s.ready))
+  ok('its unready commit remains preserved for verification', git(dir, 'rev-list', '--count', 'master..HEAD') === '1')
 
   const pending = JSON.parse(f.lane('status').out).pending
-  ok('and a release can now see it', pending === true, `pending=${pending}`)
+  ok('a release cannot include unverified orphan work', pending === false, `pending=${pending}`)
 }
 
 // ------------------------------------------------- half-finished work is left half-finished
@@ -159,8 +159,9 @@ mkdirSync(root, { recursive: true })
   ok('nothing in the state file points at the work', !f.state().ready.a && !f.state().lanes.a)
 
   const r = f.lane('retry')
-  ok('the clock sweep finds it', Boolean(f.state().ready.a), JSON.stringify(f.state().ready))
-  ok('and says so in words', /had finished work and no chat/.test(r.out), r.out)
+  const recovery = JSON.parse(readFileSync(join(f.repo, '.git', 'paneforge-recovery.json'), 'utf8'))
+  ok('the clock gives it a verification owner without marking ready', !f.state().ready.a && Boolean(recovery.active), JSON.stringify(recovery))
+  ok('and says so in words', /one verification owner/.test(r.out), r.out)
 }
 
 // ------------------------------------------------- an unmergeable lane is reported, not marked
@@ -178,8 +179,8 @@ mkdirSync(root, { recursive: true })
 
   const s = f.state()
   ok('a lane that will not merge is not marked ready', !s.ready.a, JSON.stringify(s.ready))
-  ok('it is recorded as conflicted by name', Boolean(s.conflicts.a), JSON.stringify(s.conflicts))
-  ok('the conflict names the file', /app\.js/.test(s.conflicts.a?.detail ?? ''), JSON.stringify(s.conflicts.a))
+  ok('no unchecked merge is attempted by stale-owner cleanup', !s.conflicts.a, JSON.stringify(s.conflicts))
+  ok('both tips remain available for the verification owner', git(dir, 'rev-list', '--count', 'master..HEAD') === '1')
   ok(
     'and the lane checkout is left clean, not mid-merge',
     git(dir, 'status', '--porcelain') === '',
