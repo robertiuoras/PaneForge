@@ -283,7 +283,7 @@ function AsleepChip({
       title="Asleep: this pane's agent was stopped and its memory given back. Press to start it again in the same conversation - the screen is still here."
       onClick={(e) => {
         e.stopPropagation()
-        void api.wakeSession(id)
+        void api.wakeSession(id, 'chip')
       }}
     >
       {asleepChip(reason, at, now)}
@@ -4959,7 +4959,7 @@ export default function App(): JSX.Element {
    * broadcast. `publishClosingRef` because `focusLeftAt` is a ref and nothing else would
    * notice that it moved.
    */
-  const touchPane = useCallback((id: string, wake = true) => {
+  const touchPane = useCallback((id: string, wake = true, by = 'click') => {
     focusLeftAt.current[id] = Date.now()
     // Main's finished-pane sweep cannot see this ref; tell it a person came to the pane.
     api.touchedSession(id)
@@ -4979,7 +4979,7 @@ export default function App(): JSX.Element {
     // on that press was woken by somebody who wanted to move it (Robert 2026-09-10: "if i
     // right click a pane and its sleep ... allow me to just right click not wake it up").
     const asleepPane = sessionsRef.current.find((x) => x.id === id)
-    if (wake && asleepPane?.asleep && !asleepPane.remote) void api.wakeSession(id)
+    if (wake && asleepPane?.asleep && !asleepPane.remote) void api.wakeSession(id, by)
     // ...and a person arriving at a pane a countdown NAMED is the answer that countdown
     // was asking for. Nothing dropped it: the sweeps' own "went back to work" effect keys
     // on `stillCloseable`, which a click does not change - so clicking the pane restarted
@@ -5231,7 +5231,7 @@ export default function App(): JSX.Element {
               }
               onPointerDown={(e) => {
                 const pick = (): void => {
-                  touchPane(s.id, e.button !== 2)
+                  touchPane(s.id, e.button !== 2, 'pointer')
                   setActiveId(s.id)
                   handheld.showPane()
                 }
@@ -6124,7 +6124,7 @@ export default function App(): JSX.Element {
               } as React.CSSProperties
             }
             onMouseDown={(e) => {
-              touchPane(s.id, e.button !== 2)
+              touchPane(s.id, e.button !== 2, 'pointer')
               setActiveId(s.id)
             }}
           >
@@ -7217,7 +7217,7 @@ export default function App(): JSX.Element {
                       key: 'wake',
                       label: 'Wake this pane',
                       hint: 'start its agent again, in the same conversation',
-                      run: () => void api.wakeSession(s.id)
+                      run: () => void api.wakeSession(s.id, 'menu')
                     }
                   ]
                 : []),
@@ -7548,7 +7548,7 @@ export default function App(): JSX.Element {
           await new Promise((r) => setTimeout(r, TOUR_ASLEEP_MS))
           say('Waking it up again\u2026')
           const t1 = Date.now()
-          await api.wakeSession(pane.id)
+          await api.wakeSession(pane.id, 'tour')
           say(`Awake in ${sayMs(Date.now() - t1)}.`)
         }}
         // A pane step is only shown once a pane is really RUNNING. The card can see a

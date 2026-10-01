@@ -1635,10 +1635,21 @@ export class SessionManager extends EventEmitter {
     return placed.cwd
   }
 
-  wake(id: string): Session | null {
+  wake(id: string, by = 'unknown'): Session | null {
     const live = this.sessions.get(id)
+    // One press can ask twice: the pane's pointer-down AND its click both reach the wake
+    // (log review 2026-10-01: `wake-request -> wake -> process-start`, then a scary
+    // `wake-refused not-asleep` a moment later at 04:45:36Z and 11:20:32Z). Nothing was left
+    // running - the refusal returns before any spawn - but a "refused" line for a wake that
+    // succeeded reads as a fault. A pane that is already awake with its program running has
+    // got what the caller asked for, so that is a success logged as a duplicate, not a
+    // refusal. `wake-refused` stays for a pane that is gone, or awake with nothing running.
+    if (live && !live.meta.asleep && live.proc) {
+      logReclaim({ action: 'wake-duplicate', pane: id, by })
+      return live.meta
+    }
     if (!live || !live.meta.asleep) {
-      logReclaim({ action: 'wake-refused', pane: id, refusal: live ? 'not-asleep' : 'pane-missing' })
+      logReclaim({ action: 'wake-refused', pane: id, by, refusal: live ? 'not-asleep' : 'pane-missing' })
       return null
     }
     const reason = live.meta.asleepReason
@@ -1656,7 +1667,7 @@ export class SessionManager extends EventEmitter {
     // still worth keeping, so it wakes FRESH in its folder and says so once. Nothing is
     // adopted from a sibling: the resume is dropped, not widened to `--continue`.
     const fresh = live.meta.agent !== 'shell' && !resumable
-    logReclaim({ action: 'wake-request', pane: id, previousSleepReason: reason, resumeId, resumable, fresh, agent: live.meta.agent })
+    logReclaim({ action: 'wake-request', pane: id, by, previousSleepReason: reason, resumeId, resumable, fresh, agent: live.meta.agent })
     if (fresh) {
       const note = '\x1b[33mThe saved conversation could not be resumed, so this pane starts a new one in the same folder. Its old screen stays above.\x1b[0m\r\n'
       this.emit('data', id, note)
@@ -1681,7 +1692,7 @@ export class SessionManager extends EventEmitter {
     // conversation state it needs - so the ledger reads asleep for the whole gap between
     // "the app decided to wake this pane" and "the CLI is actually running again".
     ledgerWake(live.meta.cwd, id)
-    logReclaim({ at: Date.now(), action: 'wake', pane: id, previousSleepReason: reason ?? 'unknown', resumeId: live.req.resumeId, fresh, processPid: live.proc?.pid, agent: live.meta.agent, folder: basename(live.meta.cwd) })
+    logReclaim({ at: Date.now(), action: 'wake', pane: id, by, previousSleepReason: reason ?? 'unknown', resumeId: live.req.resumeId, fresh, processPid: live.proc?.pid, agent: live.meta.agent, folder: basename(live.meta.cwd) })
     // Stamped for the `wake-printed` line further down, which is where the seconds are.
     live.wokeAt = Date.now()
     // Stamped on the broadcast Session too, kept (never zeroed on first byte like

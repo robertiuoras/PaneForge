@@ -2449,7 +2449,7 @@ export interface Api {
    */
   sleepSession(id: string, reason?: SleepReason, evidence?: SleepEvidence): Promise<Session | null>
   /** Start a sleeping pane's agent again, back in the conversation it was in. */
-  wakeSession(id: string): Promise<Session | null>
+  wakeSession(id: string, by?: string): Promise<Session | null>
   /**
    * Quit the app because nobody has used it for a while. The renderer owns the clock
    * (it is the side that knows about keyboard input and focus); main only obeys, and

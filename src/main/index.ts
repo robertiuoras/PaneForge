@@ -246,7 +246,7 @@ tapIpc()
 const manager = new SessionManager()
 startWakeQueue({
   list: () => manager.list(),
-  wake: (id) => { if (!continuationOwnsSource(id)) manager.wake(id) },
+  wake: (id) => { if (!continuationOwnsSource(id)) manager.wake(id, 'queue') },
   // The same reading the budget rung takes (`autoHandoff` below): the memory verdict OR
   // the lag band, whichever is worse. A machine that is not lagging and not short of
   // memory is a machine with room, and that is when a queued pane may start.
@@ -826,7 +826,7 @@ const phone = new PhoneServer({
     return true
   },
   isKeepOpen: keptOpen,
-  wakeSession: (id) => manager.wake(id),
+  wakeSession: (id) => manager.wake(id, 'phone'),
   sendNativePrompt: (id, text) => manager.sendNativePrompt(id, text),
   onIdle: () => manager.returnSizes(),
   onChange: () => send('phone:changed', phoneState())
@@ -1823,7 +1823,7 @@ ipcMain.handle('sessions:continueFresh', (_e, id: string) => {
   const source = manager.list().find((s) => s.id === id)
   if (!source || !['codex', 'claude'].includes(source.agent) || backJobOf(id)) return { ok: false, reason: 'No supported, safe source conversation.' }
   if (continuationOwnsSource(id)) return { ok: false, reason: 'This source already has a live continuation.' }
-  const result = startContinuation({ sleep: (key) => manager.sleep(key, 'continuation', { source: 'continuation' }), wake: (key) => manager.wake(key), session: (key) => manager.list().find((s) => s.id === key), snapshot: () => manager.snapshot(), start: (req) => manager.start(req) }, id)
+  const result = startContinuation({ sleep: (key) => manager.sleep(key, 'continuation', { source: 'continuation' }), wake: (key) => manager.wake(key, 'continuation'), session: (key) => manager.list().find((s) => s.id === key), snapshot: () => manager.snapshot(), start: (req) => manager.start(req) }, id)
   if (result.ok && result.id && result.digest) {
     continuationReceipts.set(result.id, { cwd: source.cwd, digest: result.digest, sourceId: id, deadline: Date.now() + 5 * 60_000 })
     return { ok: true, id: result.id, reason: 'Fresh pane opened; delivery is being checked. Your source is saved asleep.' }
@@ -2312,13 +2312,23 @@ ipcMain.handle('sessions:sleep', (_e, id: string, reason?: import('../shared/typ
   }
   return manager.sleep(id, 'unknown', { source: 'renderer' })
 })
-ipcMain.handle('sessions:wake', async (_e, id: string) => {
+// A wake already under way for a pane. One press reaches this twice (pointer-down and click,
+// log review 2026-10-01), and the second used to run its own folder check and then find the
+// pane already awake. It now gets the first one's answer, so one press is one wake.
+const wakesInFlight = new Map<string, Promise<Session | null>>()
+ipcMain.handle('sessions:wake', (_e, id: string, by?: string) => {
   if (remote.owns(id)) return null
   if (continuationOwnsSource(id)) return null
+  const running = wakesInFlight.get(id)
+  if (running) return running
   // A sleeping pane is placed again before it wakes: the folder it slept in may now be
   // another pane's (two client chats restored asleep into one checkout, 2026-09-04).
-  await manager.rehome(id, (req) => laneFor(req, ledgerTakenFolders(id, holdOver), id))
-  return manager.wake(id)
+  const wake = (async (): Promise<Session | null> => {
+    await manager.rehome(id, (req) => laneFor(req, ledgerTakenFolders(id, holdOver), id))
+    return manager.wake(id, typeof by === 'string' ? by.slice(0, 24) : 'renderer')
+  })().finally(() => wakesInFlight.delete(id))
+  wakesInFlight.set(id, wake)
+  return wake
 })
 ipcMain.handle('sessions:switchAgent', (_e, id: string, agent: string, model?: string) => {
   if (remote.owns(id)) return remote.send(id, { t: 'switch', agent, model }), null
