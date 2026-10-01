@@ -212,7 +212,7 @@ import { installCommand, uninstallCommand, updateCommand } from '../shared/agent
 import { installLaneHooks } from './laneHooks'
 import { assess, lagLevel, restorePlan, worstPressure, type Pressure } from '../shared/capacity'
 import { sleepPressureOf } from '../shared/reclaim'
-import { restoreAsleep } from '../shared/restoreTurn'
+import { restoreAsleep, deskLeftBy } from '../shared/restoreTurn'
 import { DEFAULT_RECOVER } from '../shared/recover'
 import type { UsageReport } from '../shared/usage'
 import { loadPerCore, readPressure, totalMb, watchPressure } from './memory'
@@ -4956,7 +4956,7 @@ function offerRestore(): void {
   }
   updateLog(
     'desk',
-    `${desk.specs.length} pane(s) left ${desk.reason === 'live' ? 'by a crash or a kill' : desk.reason === 'quit' ? 'by a quit' : 'by an update'} ${Math.round((Date.now() - desk.at) / 60_000)} min ago`
+    `${desk.specs.length} pane(s) left ${deskLeftBy(desk)} ${Math.round((Date.now() - desk.at) / 60_000)} min ago`
   )
   // Panes from last week are not the desk anyone remembers leaving.
   if (desk.at && Date.now() - desk.at > MAX_DESK_AGE_MS) {
@@ -4975,7 +4975,7 @@ function offerRestore(): void {
     // times a day, so asking every time costs more than the inconsistency it removes.
     // On, this falls through to the same offer a quit or a crash gets.
     if (!cfg.askAfterUpdate) {
-      updateLog('desk', `reopened ${desk.specs.length} pane(s) after the update without asking`)
+      updateLog('desk', `reopened ${desk.specs.length} pane(s) after the ${desk.relaunch === 'watchdog' ? 'hang restart' : 'update'} without asking`)
       restorePanes(desk.specs)
       return
     }

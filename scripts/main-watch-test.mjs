@@ -195,6 +195,24 @@ try {
   await markDeskForRestart(hello(dir))
   let marked = JSON.parse(readFileSync(join(dir, 'desk.exit.json'), 'utf8'))
   ok('a legacy desk without writtenAt is recoverable when no clear tombstone exists', marked.specs[0].cwd === 'legacy' && marked.reason === 'update' && marked.writtenAt > 0)
+  // 2026-10-01 08:25:54Z: a hang restart wrote reason 'update' (so the panes reopen unasked) and
+  // the next launch logged "left by an update" with no update. The marker must survive
+  // readDesk and pick the true wording; a real update desk keeps its own.
+  ok('the hang restart marks its desk with relaunch watchdog', marked.relaunch === 'watchdog')
+  const restoreOut = join(work, 'restore.cjs')
+  await build({ entryPoints: [join(root, 'src/main/restore.ts')], bundle: true, platform: 'node', format: 'cjs', outfile: restoreOut, external: ['electron'] })
+  let deskDir = dir
+  Module._load = (request, parent, isMain) => request === 'electron' ? { app: { getPath: () => deskDir } } : nativeLoad(request, parent, isMain)
+  const { readDesk } = requireOut(restoreOut)
+  const shared = await import('../src/shared/restoreTurn.ts').catch(() => ({}))
+  const leftBy = shared.deskLeftBy ?? (() => 'by an update')
+  const read = readDesk()
+  ok('readDesk keeps the watchdog marker and the unasked-reopen reason', read?.relaunch === 'watchdog' && read.reason === 'update')
+  ok('a watchdog desk is logged as a hang restart', leftBy(read ?? {}).includes('hang restart'))
+  deskDir = caseDir('real-update')
+  writeDesk(deskDir, 'desk.exit.json', { specs: [{ cwd: 'u' }], reason: 'update', at: 1, writtenAt: 1 })
+  const real = readDesk()
+  ok('a real update desk has no marker and is still logged as an update', real?.relaunch === undefined && leftBy(real ?? {}) === 'by an update')
   dir = caseDir('terminal')
   writeDesk(dir, 'desk.json', { specs: [{ cwd: 'live' }], writtenAt: 0 })
   writeDesk(dir, 'desk.exit.json', { specs: [{ cwd: 'exit' }], writtenAt: 3 })
