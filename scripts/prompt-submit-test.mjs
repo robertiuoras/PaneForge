@@ -1833,8 +1833,8 @@ for (const [agent, origin] of [['codex', 'desk'], ['claude', 'desk'], ['grok', '
   const frame = (text) => `\x1b[2J\x1b[H${'─'.repeat(60)}\r\n❯ ${text}\r\n${'─'.repeat(60)}\r\n\x1b[2;${3 + text.length}H`
   const stuck = 'Keep this prompt until the box is proven empty'
   const typedIn = (live, text) => live.proc.writes.join('').includes(text)
-  const run = async (agent, origin, key) => {
-    const name = `${agent} (${origin}) ${key === '\x15' ? 'Ctrl-U' : 'Ctrl-C'}`
+  const run = async (agent, origin, key, endBy = 'manual') => {
+    const name = `${agent} (${origin}${endBy === 'footer' ? ', turn ended by footer read' : ''}) ${key === '\x15' ? 'Ctrl-U' : 'Ctrl-C'}`
     const pane = manager.start({ cwd: root, agent: 'shell' })
     const live = manager.sessions.get(pane.id)
     live.meta.agent = agent
@@ -1853,12 +1853,18 @@ for (const [agent, origin] of [['codex', 'desk'], ['claude', 'desk'], ['grok', '
       while (!settled && Date.now() < until) await sleep(40)
       live.proc.onWrite = undefined
     }
-    live.meta.status = 'idle'
-    live.meta.runSince = undefined
-    live.busyUntil = 0
+    // The swallowed Enter's turn clock ends the way the app ends it: the renderer reads
+    // the footer as not busy (`setBusyOnScreen`). The manual cases set the same fields.
+    if (endBy === 'footer') manager.setBusyOnScreen(pane.id, false, frame(stuck))
+    else {
+      live.meta.status = 'idle'
+      live.meta.runSince = undefined
+      live.busyUntil = 0
+    }
     // The idle sweep reads the box, prompt still in it, once the pane has been quiet 1s.
     await sleep(2300)
-    const heldBefore = live.meta.drafting === true && Boolean(live.draftConfirmation)
+    const heldBefore = live.meta.drafting === true && Boolean(live.draftConfirmation) &&
+      live.meta.status === 'idle' && !live.meta.runSince
     // Codex: a person's cancel key also cancels a waiting queued prompt of ours (by
     // design), so its follow-up is queued after the release instead.
     const next = `follow-up after ${name}`
@@ -1882,7 +1888,7 @@ for (const [agent, origin] of [['codex', 'desk'], ['claude', 'desk'], ['grok', '
     // nothing is drafting, so that is the same proof.
     const cleared = live.draftConfirmation !== hold && (!live.meta.drafting || typedIn(live, next))
     ok(heldBefore && waited && cleared, `${name}: the box-emptying redraw alone releases the hold within 4s`,
-      `held=${heldBefore} waited=${waited} cleared=${cleared} after ${ms}ms, drafting=${live.meta.drafting} hold=${JSON.stringify(live.draftConfirmation)}`)
+      `status=${live.meta.status} runSince=${live.meta.runSince} held=${heldBefore} waited=${waited} cleared=${cleared} after ${ms}ms, drafting=${live.meta.drafting} hold=${JSON.stringify(live.draftConfirmation)}`)
     if (agent === 'codex') queueNext()
     const until = Date.now() + 2000
     while (!typedIn(live, next) && Date.now() < until) await sleep(40)
@@ -1891,6 +1897,7 @@ for (const [agent, origin] of [['codex', 'desk'], ['claude', 'desk'], ['grok', '
   }
   await Promise.all([
     run('claude', 'desk', '\x15'), run('codex', 'desk', '\x15'), run('claude', 'app', '\x15'),
+    run('claude', 'desk', '\x15', 'footer'),
     run('grok', 'app', '\x15'), run('claude', 'desk', '\x03'), run('claude', 'app', '\x03')
   ])
 }

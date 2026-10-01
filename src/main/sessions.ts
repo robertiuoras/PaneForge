@@ -4167,7 +4167,7 @@ export class SessionManager extends EventEmitter {
       { key, live: original, proc: original.proc, prompt, since: 0, writing: false, foreign: false,
         proof: proof === 'idle' ? 'idle' as const : 'receipt' as const, conversationId: undefined as string | undefined,
         receiptCwd: original.meta.cwd, commandOutputAt: undefined as number | undefined,
-        answerKeyboard: undefined as number | undefined, hold: undefined as Live['draftConfirmation'] } : undefined
+        answerKeyboard: undefined as number | undefined, hold: undefined as Live['draftConfirmation'], accepted: false } : undefined
     if (owner && !this.codexQueued.has(id)) this.codexQueued.set(id, owner)
     // Called exactly once, however this ends - typed and submitted, dropped, or the pane
     // gone. The handover curtain is raised on it, and a curtain with an exit this does not
