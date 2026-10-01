@@ -137,13 +137,6 @@ const longActions = Array.from({ length: Math.ceil((HANG_MS * STARVED_FACTOR) / 
 })
 ok('the starved limit acts after 150 silent ticks and not before', longActions.slice(0, -1).every((a) => a === 'wait') && longActions.at(-1) === 'act' && longActions.length === 150)
 
-// The child wiring: the first act reads the machine, a starved one waits once, a beat ends it.
-const childText = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'src/main/watchdog-child.ts'), 'utf8')
-ok('the child reads the machine before its first relaunch', /if \(starvedWait \|\| !h\)[\s\S]*readStarvation\(h\)/.test(childText))
-ok('the child uses the longer limit only while a starved wait is on', childText.includes('starvedWait ? limit * STARVED_FACTOR : limit'))
-ok('a beat during the wait says main came back and ends it', /msg\.t === 'beat'[\s\S]{0,200}starvedBackLine[\s\S]{0,80}starvedWait = false/.test(childText))
-ok('a beat during the reading cancels the relaunch', childText.includes('if (watch.silentTicks === 0) return'))
-
 // Bundle the real module, substituting Electron and crash logging only at test time. This
 // keeps the production watchdog free of a test injection surface while driving lifecycle
 // failures that pure tick arithmetic cannot observe.
@@ -266,7 +259,9 @@ try {
 
   // Drive the real child's timer on a starving and on a healthy machine. Each load is its own
   // bundle, so each starts with its own module state; ticks are called by hand.
-  async function loadChild(name, answers) {
+  async function loadChild(name, answers, platform = 'darwin') {
+    const calls = []
+    const held = []
     const file = join(work, `watchdog-child-${name}.cjs`)
     const source = readFileSync(join(root, 'src/main/watchdog-child.ts'), 'utf8')
       .replace('const port = process.parentPort', 'const port = { on(_, fn) { globalThis.__port = fn } }')
@@ -275,13 +270,19 @@ try {
       bundle: true, platform: 'node', format: 'cjs', outfile: file
     })
     Module._load = (request, parent, isMain) => request === 'node:child_process'
-      ? { execFile(cmd, args, opts, cb) { const a = answers(cmd); process.nextTick(() => a === null ? cb(new Error('no')) : cb(null, a)) }, spawn() { return { once() {}, unref() {} } } }
+      ? { execFile(cmd, args, opts, cb) {
+          calls.push(cmd)
+          const a = answers(cmd)
+          // undefined = hold the answer until the test releases it
+          if (a === undefined) held.push(() => cb(null, answers.later(cmd)))
+          else process.nextTick(() => a === null ? cb(new Error('no')) : cb(null, a))
+        }, spawn() { return { once() {}, unref() {} } } }
       : nativeLoad(request, parent, isMain)
     requireOut(file)
     const port = globalThis.__port
     const tick = intervals.at(-1)
     const dir = caseDir(`child-${name}`)
-    port({ data: { t: 'hello', pid: 2147483646, exe: 'pf', appPath: 'pf', userData: dir, platform: 'darwin', profile: '', packaged: false } })
+    port({ data: { t: 'hello', pid: 2147483646, exe: 'pf', appPath: 'pf', userData: dir, platform, profile: '', packaged: false } })
     port({ data: { t: 'beat' } })
     const log = () => { try { return readFileSync(join(dir, 'paneforge-errors.log'), 'utf8') } catch { return '' } }
     // The log is appended asynchronously; a loaded machine can take a while. Waits for the
@@ -292,7 +293,7 @@ try {
         if (!text || (typeof text === 'function' ? text(log()) : log().includes(text))) return
       }
     }
-    return { port, tick, settle, log }
+    return { port, tick, settle, log, calls, held }
   }
   const graceTicks = Math.ceil(HANG_MS / BEAT_MS)
   const short = await loadChild('starved', (cmd) => cmd.endsWith('sysctl') ? '4\n' : cmd === 'ps' ? '110:07.70 0.0 928 S\n' : null)
@@ -316,6 +317,29 @@ try {
   for (let i = 0; i < graceTicks; i++) spinning.tick()
   await spinning.settle('no heartbeat for 76s - stopping it')
   ok('starving machine with main spinning: the child recovers at the ordinary grace', spinning.log().includes('no heartbeat for 76s - stopping it'))
+
+  // A beat that lands while the reading is still out settles the silence: no wait, no relaunch.
+  const slowAnswers = Object.assign((cmd) => (cmd.endsWith('sysctl') || cmd === 'ps' ? undefined : null), {
+    later: (cmd) => (cmd.endsWith('sysctl') ? '4\n' : '110:07.70 0.0 928 S\n')
+  })
+  const racing = await loadChild('racing', slowAnswers)
+  for (let i = 0; i < graceTicks; i++) racing.tick()
+  ok('the reading is out after the grace', racing.held.length === 2)
+  racing.port({ data: { t: 'beat' } })
+  racing.held.splice(0).forEach((release) => release())
+  for (let i = 0; i < 10; i++) racing.tick()
+  await racing.settle()
+  await new Promise((r) => oldTimeout(r, 200))
+  ok('a beat during the reading: no starved wait and no relaunch', !racing.log().includes('waiting up to') && !racing.log().includes('stopping it'))
+  for (let i = 0; i < graceTicks; i++) racing.tick()
+  ok('after that beat the next silence reads the machine again', racing.held.length === 2)
+
+  // Windows: no sysctl and no ps; the free-memory rule decides.
+  const win = await loadChild('win32', () => null, 'win32')
+  for (let i = 0; i < graceTicks; i++) win.tick()
+  await win.settle((l) => l.includes('waiting up to') || l.includes('stopping it'))
+  ok('Windows reads neither sysctl nor ps before deciding', !win.calls.some((c) => c.endsWith('sysctl') || c === 'ps'))
+  ok('Windows decides without a pressure level', /waiting up to|stopping it/.test(win.log()) && !win.log().includes('pressure '))
 
   const index = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
   const beforeQuit = index.slice(index.indexOf("app.on('before-quit'"), index.indexOf("app.on('will-quit'"))

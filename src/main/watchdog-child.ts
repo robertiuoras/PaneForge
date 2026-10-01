@@ -76,7 +76,9 @@ port.on('message', (e) => {
     hello = msg as Hello
     hangMs = (hello.hangMs ?? 0) > 0 ? hello.hangMs ?? 0 : 0
   } else if (msg.t === 'beat') {
-    if (starvedWait && hello) void note(hello, starvedBackLine(Math.round((watch.silentTicks * BEAT_MS) / 1000), hello.pid))
+    // Wall time since the last beat: a tick gap (this helper paged out too) resets the tick count.
+    const silentMs = last ? Date.now() - last.at : watch.silentTicks * BEAT_MS
+    if (starvedWait && hello) void note(hello, starvedBackLine(Math.round(silentMs / 1000), hello.pid))
     starvedWait = false
     watch = beat(watch)
     beatsReceived++

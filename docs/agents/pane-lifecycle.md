@@ -142,4 +142,6 @@ in a row stops; new output only; sends via `queuePrompt`.
 mid-turn. First it reads the machine (`shared/mainWatch.ts` `starved`, `scripts/main-watch-test.mjs`): Mac
 pressure >= 2 (elsewhere < 5% free) and main under 50% cpu = paged out, not stuck; the wait
 becomes `STARVED_FACTOR` (4) x the grace, a beat ends it (`beating again ... no relaunch`).
+Windows has no level or `ps` cpu: < 5% free alone decides. A helper tick gap > 6s (sleep, or the
+helper paged out too) restarts the count, so a starved wait can run past 300s.
 2026-10-01 08:25Z: 196MB free, main 0% cpu 928KB resident; the relaunch cold-started 16 chats.
