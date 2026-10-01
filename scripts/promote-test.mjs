@@ -64,6 +64,9 @@ function buildRepo(name, extra, release = 'version') {
   git(repo, 'config', 'user.name', 'test')
   git(repo, 'add', '-A')
   git(repo, 'commit', '-qm', 'init')
+  // The app timer visits registered repositories with a coordinator ledger.
+  // Missing or malformed ownership is unknown and cannot authorize a retry.
+  writeFileSync(join(repo, '.git', 'paneforge-lanes.json'), JSON.stringify({ lanes: {}, ready: {}, conflicts: {} }) + '\n')
   return repo
 }
 
@@ -306,6 +309,18 @@ const goodRelease = (published_at) => ({
 
 const repoRetry = buildRepo('retry-repo', { build: { publish: [{ provider: 'github', owner: 'o', repo: 'r' }] } })
 git(repoRetry, 'tag', 'v0.0.2')
+
+// Unknown ownership must not promote a release or overwrite the failed inventory.
+for (const kind of ['missing', 'malformed']) {
+  const unknown = buildRepo(`retry-${kind}-ownership`, { build: { publish: [{ provider: 'github', owner: 'o', repo: 'r' }] } })
+  git(unknown, 'tag', 'v0.0.2')
+  const ledger = join(unknown, '.git', 'paneforge-lanes.json')
+  if (kind === 'missing') rmSync(ledger)
+  else writeFileSync(ledger, '{invalid')
+  const refused = retry(unknown, goodRelease(soakedAt))
+  ok(`${kind} ownership inventory prevents channel lookup and promotion`, !refused.looked && !refused.edited, refused.out)
+  ok(`${kind} ownership inventory remains unchanged`, kind === 'missing' ? !existsSync(ledger) : readFileSync(ledger, 'utf8') === '{invalid')
+}
 
 // 7. a build still soaking waits
 {
