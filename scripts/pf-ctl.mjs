@@ -542,7 +542,7 @@ if (cmd === 'list') {
         console.log(`would close ${at(desk, m.pane)} - idle ${idle} min, ${of}`)
         closed++
       } else {
-        await call('sessions:kill', [m.pane.id])
+        await call('sessions:kill', [m.pane.id, 'tidy-dupes'])
         if ((await sessions()).some((x) => x.id === m.pane.id)) {
           console.log(`could not close ${at(desk, m.pane)} - the app answered but it is still listed`)
           continue
@@ -627,7 +627,7 @@ if (cmd === 'list') {
   console.log(`brief: ${brief}`)
   console.log(`if this stops halfway, reopen the old chat with: ${undo}`)
 
-  await call('sessions:kill', [pane.id])
+  await call('sessions:kill', [pane.id, 'pf'])
   if ((await sessions()).some((x) => x.id === pane.id))
     fail(1, `could not close pane ${number} (${pane.id}) - nothing was moved`)
 
@@ -658,7 +658,7 @@ if (cmd === 'list') {
   // - a first-output check had already printed `moved`, with the old pane gone.
   if (fresh && !samePath(fresh.cwd ?? pane.cwd, pane.cwd)) {
     why = `the app opened ${to} in ${fresh.cwd}, a copy of the folder, not in ${pane.cwd}`
-    await tryCall('sessions:kill', [fresh.id])
+    await tryCall('sessions:kill', [fresh.id, 'pf'])
     fresh = null
   }
   const stateOf = async () => (await sessions()).find((x) => x.id === fresh.id)?.status ?? 'gone'
@@ -677,7 +677,7 @@ if (cmd === 'list') {
       const buf = await tryCall('sessions:buffer', [fresh.id])
       const said = typeof buf.value === 'string' ? stripAnsi(buf.value).replace(/\s+/g, ' ').trim().slice(-300) : ''
       if (said) why += ` - its screen ended with: "${said}"`
-      await tryCall('sessions:kill', [fresh.id])
+      await tryCall('sessions:kill', [fresh.id, 'pf'])
     }
     fresh = null
   }
@@ -850,7 +850,7 @@ if (cmd === 'list') {
   if (!ref) fail(1, 'close needs a pane: pf-ctl close <title-or-id>')
   const s = resolve(await sessions(), ref)
   if (!s) fail(1, `no pane named "${ref}"`)
-  await call('sessions:kill', [s.id])
+  await call('sessions:kill', [s.id, 'pf'])
   // kill() deletes the session and re-emits the list, so absence IS the verification.
   const still = (await sessions()).some((x) => x.id === s.id)
   if (still) fail(1, `sessions:kill answered but ${s.id} is still listed`)
@@ -959,7 +959,7 @@ if (cmd === 'list') {
   const reopened = target.action === 'reopen'
   if (target.action === 'tell') paneId = target.pane.id
   else if (target.action === 'wake') {
-    const woke = await tryCall('sessions:wake', [target.pane.id])
+    const woke = await tryCall('sessions:wake', [target.pane.id, 'pf'])
     if (!woke.value?.id) fail(1, `pane ${target.pane.id} has chat ${resumeId} but would not wake${woke.error ? ` - ${woke.error}` : ''}; nothing was sent`)
     // `wake()` starts a NEW conversation when the saved one is gone, and says so by
     // dropping the id. The prompt was written for the old one.
@@ -979,7 +979,7 @@ if (cmd === 'list') {
     // The app opens a conversation it cannot find on disk ASLEEP rather than as an empty
     // chat (`startOrSend`). That pane holds nothing, so it goes, and the answer says why.
     if (pane.asleep || pane.status === 'exited') {
-      await tryCall('sessions:kill', [pane.id])
+      await tryCall('sessions:kill', [pane.id, 'pf'])
       fail(1, `the saved conversation for chat ${resumeId} is no longer on this computer (${pane.laneNote ?? 'it could not be resumed'}); nothing was sent`)
     }
     // Claude reads a conversation out of the folder it runs in, and a busy folder gets its

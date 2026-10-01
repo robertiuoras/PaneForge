@@ -156,6 +156,7 @@ const TESTS = [
   ['codexprocessclaim', 'codex-process-claim-test.mjs'],
   ['clearclaim', 'transcript-clear-test.mjs'],
   ['quitwords', 'quit-words-test.mjs'],
+  ['lastbreath', 'last-breath-test.mjs'],
   ['screenview', 'screen-view-test.mjs'],
   ['screenstream', 'screen-stream-test.mjs'],
   ['rendercost', 'rendercost-test.mjs'],
@@ -256,6 +257,7 @@ const TESTS = [
   // update for 28 hours while every surface read as healthy.
   ['blindlist', 'updater-blindlist-test.mjs'],
   ['updateprobe', 'update-probe-test.mjs'],
+  ['wakewatch', 'wake-watch-test.mjs'],
   ['launchinstall', 'launch-install-test.mjs'],
   ['straylaunch', 'stray-launch-test.mjs'],
   ['devicewatch', 'device-watch-test.mjs'],
@@ -333,6 +335,7 @@ const TESTS = [
   ['buffer', 'outbuffer-test.mjs'],
   ['notes', 'release-notes-test.mjs'],
   ['trydiff', 'try-diff-test.mjs'],
+  ['tryreaper', 'try-reaper-test.mjs'],
   ['sidehidden', 'side-hidden-test.mjs'],
   ['uploadretry', 'release-upload-retry-test.mjs'],
   ['updaterelaunchlock', 'update-relaunch-lock-test.mjs'],

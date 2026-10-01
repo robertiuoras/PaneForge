@@ -132,7 +132,7 @@ ok(
 )
 // Waking must not write a terminal reset: the screen the pane went to sleep with is still
 // in the renderer's xterm buffer, and that is what "it should show layout perfectly" is.
-const wake = sessions.slice(sessions.indexOf('  wake(id: string)'), sessions.indexOf('   * A pane\'s folder no longer exists'))
+const wake = sessions.slice(sessions.indexOf('  wake(id: string, by'), sessions.indexOf('   * A pane\'s folder no longer exists'))
 ok(wake.length > 200, 'found wake()')
 is(/RESET/.test(wake), false, 'waking writes no reset - the old screen IS the screen')
 ok(/resumableTranscript\(resumeCwd, resumeId, live\.meta\.agent\)/.test(wake), 'wake revalidates the saved conversation before spawning')
@@ -150,6 +150,55 @@ ok(/resumableTranscript\(resumeCwd, resumeId, live\.meta\.agent\)/.test(wake), '
 ok(/resumeCwd: s\.req\.resumeCwd/.test(sessions), 'snapshot persists the original folder that verifies the named conversation')
 ok(/resumeCwd \?\? from/.test(sessions), 'rehome preserves the original folder for a sleeping named conversation')
 ok(/noteSession\(id, fresh \? live\.meta\.cwd : resumeCwd, live\.meta\.agent/.test(wake), 'wake keeps the verified original folder bound to the named conversation, and a fresh wake binds its own folder')
+
+// One press reaching wake twice (pointer-down AND click, log review 2026-10-01: a
+// `wake-refused not-asleep` after a good wake at 04:45:36Z and 11:20:32Z) is a success logged
+// as a duplicate, never a refusal, and never a second process.
+{
+  const rows = []
+  const wakeClass = transformSync(`class WakeFixture { ${wake.slice(0, wake.lastIndexOf('/**'))} }`, { loader: 'ts' }).code
+  const WakeFixture = new Function('logReclaim', `${wakeClass}; return WakeFixture`)((row) => rows.push(row))
+  const wm = new WakeFixture()
+  const awake = { meta: { id: 'p', asleep: undefined, status: 'idle' }, proc: { pid: 7 }, req: {} }
+  wm.sessions = new Map([['p', awake]])
+  is(wm.wake('p', 'click'), awake.meta, 'waking a pane that is already awake succeeds with the pane')
+  is(rows.length, 1, 'and writes exactly one line')
+  is(rows[0].action, 'wake-duplicate', 'that line is a duplicate, not a refusal')
+  is(rows[0].by, 'click', '...and says who asked')
+  is(rows.some((r) => r.action === 'wake-refused'), false, 'a duplicate wake never logs wake-refused')
+  is(wm.wake('gone', 'pointer'), null, 'a missing pane is still refused')
+  is(rows.at(-1).refusal, 'pane-missing', '...with its reason')
+  is(rows.at(-1).by, 'pointer', '...and who asked')
+  awake.proc = undefined
+  is(wm.wake('p', 'click'), null, 'an awake pane with nothing running is still refused')
+  is(rows.at(-1).refusal, 'not-asleep', '...as not asleep')
+}
+// Two concurrent presses on one pane share one wake in main.
+{
+  const index = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
+  const from = index.indexOf('const wakesInFlight')
+  const handlerSrc = index.slice(from, index.indexOf("ipcMain.handle('sessions:switchAgent'"))
+  ok(from > 0 && handlerSrc.length > 100, 'found the wake handler')
+  const handlers = {}
+  let rehomes = 0
+  const wakes = []
+  const hm = {
+    rehome: async () => { rehomes++; await new Promise((r) => setTimeout(r, 20)) },
+    wake: (id, by) => { wakes.push([id, by]); return { id } }
+  }
+  const code = transformSync(handlerSrc, { loader: 'ts' }).code
+  new Function('ipcMain', 'remote', 'continuationOwnsSource', 'manager', 'laneFor', 'ledgerTakenFolders', 'holdOver', code)(
+    { handle: (name, fn) => { handlers[name] = fn } }, { owns: () => false }, () => false, hm, () => ({}), () => [], null)
+  const first = handlers['sessions:wake'](null, 'p', 'pointer')
+  const second = handlers['sessions:wake'](null, 'p', 'click')
+  is(first, second, 'a second wake while the first is under way shares its promise')
+  await first
+  is(rehomes, 1, 'one folder check for the two presses')
+  is(wakes.length, 1, 'one wake, so one process')
+  is(wakes[0][1], 'pointer', 'the first press is the one named')
+  await handlers['sessions:wake'](null, 'p', 'click')
+  is(wakes.length, 2, 'a press after the wake finished is a new wake, not a stale shared answer')
+}
 
 // ---------------------------------------------------------------------------
 // Sleeping keeps its lane (lane-split 2026-09-04): the app marks the ledger asleep

@@ -580,6 +580,31 @@ const glLive = new Set<string>()
 const GL_BUDGET = 16
 
 /**
+ * Take a pane off the GPU renderer and give its WebGL context back NOW.
+ *
+ * xterm's `WebglAddon.dispose()` only takes the canvas out of the page; the context and the
+ * IOSurfaces behind it live on until the garbage collector happens to collect the canvas,
+ * and nothing tells V8 those few JS objects are holding hundreds of MB in another process.
+ * Since the context follows visibility, every switch between panes left one behind.
+ * Measured 2026-10-01 on the installed app after ~5h of use: GPU helper 1615 MB, of it
+ * IOSurface 1.3 GB in 612 regions; a window reload (same panes) dropped it to 381 MB and
+ * 150 MB in 156 regions. Losing the context on purpose frees it the moment the pane goes.
+ *
+ * `_renderer._gl` is private to the addon; if a later xterm renames it this degrades to the
+ * plain dispose() it replaced, never to an error.
+ */
+function dropGl(gl: WebglAddon | null): void {
+  if (!gl) return
+  const ctx = (gl as unknown as { _renderer?: { _gl?: WebGL2RenderingContext } })._renderer?._gl
+  gl.dispose()
+  try {
+    ctx?.getExtension('WEBGL_lose_context')?.loseContext()
+  } catch {
+    /* already lost - nothing left to give back */
+  }
+}
+
+/**
  * How long a restored pane's output must be quiet before it repairs itself. Long enough
  * that a CLI still printing its resume banner is not poked mid-paint, short enough that
  * nobody reaches for the Fix button first.
@@ -2446,7 +2471,7 @@ function TerminalPane({
         // while the CLI is still painting at another width.
         pty: () => ptyRef.current,
         dropWebgl: () => {
-          glRef.current?.dispose()
+          dropGl(glRef.current)
           glRef.current = null
           glLive.delete(sessionId)
         },
@@ -4806,7 +4831,9 @@ function TerminalPane({
       window.clearTimeout(tailSync)
       for (const m of list.splice(0)) m.marker.dispose()
       // Before dispose(), so the seat is free for whichever pane asks for it next -
-      // t.dispose() takes the addon with it, but only this line gives up the budget.
+      // t.dispose() takes the addon with it, but only this line gives up the budget -
+      // and only dropGl gives the context back to the GPU without waiting for a GC.
+      dropGl(glRef.current)
       glRef.current = null
       glLive.delete(sessionId)
       t.dispose()
@@ -4832,7 +4859,7 @@ function TerminalPane({
     const t = term.current
     if (!t) return
     if (!visible) {
-      glRef.current?.dispose()
+      dropGl(glRef.current)
       glRef.current = null
       glLive.delete(sessionId)
       return

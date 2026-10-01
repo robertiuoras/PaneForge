@@ -344,11 +344,12 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
     eq('a kept pane under pressure keeps every OTHER refusal', idleSleepPlan([pane({ id: 'k', pinned: true, busy: true, lastKeyboard: NOW - 9 * HOUR })], cfg, NOW, true, 'over').length, 0)
     eq('and closing a kept pane stays refused under pressure', idleClosePlan(kept(), { ...cfg, idleCloseMinutes: 5 }, NOW).length, 0)
   }
-  // A pane that fell asleep (or came back asleep after a restart) is on the close clock
-  // like any other: 5 of 7 panes sat asleep for ten hours on 2026-09-02 because this
-  // refused them. Robert: "id rather them to close than sleep".
+  // A pane that FELL asleep is on the close clock like any other: 5 of 7 panes sat asleep
+  // for ten hours on 2026-09-02 because this refused them. Robert: "id rather them to
+  // close than sleep". (One a restart brought back asleep is the exception since
+  // 2026-10-01 - see the born-asleep CONTROL below.)
   {
-    const slept = pane({ id: 'slept', asleep: NOW - 3 * HOUR, asleepReason: 'restored', state: 'exited', lastKeyboard: NOW - 9 * HOUR, lastOutput: NOW - 9 * HOUR })
+    const slept = pane({ id: 'slept', asleep: NOW - 3 * HOUR, asleepReason: 'idle', state: 'exited', lastKeyboard: NOW - 9 * HOUR, lastOutput: NOW - 9 * HOUR, lastFocus: NOW - 8 * HOUR })
     const pad = pane({ id: 'pad', lastKeyboard: NOW })
     eq('an asleep pane past the clock is closed', ids(idleClosePlan([slept, pad], CLOCKED, NOW)), 'slept')
     check('...and its card carries the countdown', idleCloseAt(slept, CLOCKED, NOW) !== null)
@@ -420,13 +421,21 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
       ids(idleClosePlan([sleptRead, pad], CLOCKED, NOW)),
       'sleptread'
     )
-    // CONTROL 2: the born-asleep pane the old clause was written for, same shape, still
-    // goes - the 2026-09-02 fix is untouched.
+    // CONTROL 2: the born-asleep pane, same shape, is NOT on this clock at all. It holds
+    // no process, so closing it frees nothing, and its quiet clock began at the relaunch:
+    // on 2026-09-30 s7/s8 (04:55Z) and s6/s8 (11:30Z) were live chats before a restart and
+    // were closed ten minutes after it, before anybody had looked at the desk. It leaves
+    // through the asleep sweep instead, thirty minutes after somebody is first at the window.
     const bornAsleep = pane({ ...sleptUnread, id: 'born', asleepReason: 'restored' })
     eq(
-      'CONTROL: a pane the restore brought back asleep still closes',
+      'CONTROL: a pane the restore brought back asleep is NOT closed by the idle clock',
       ids(idleClosePlan([bornAsleep, pad], CLOCKED, NOW)),
-      'born'
+      ''
+    )
+    eq(
+      '...even once somebody has read it',
+      ids(idleClosePlan([{ ...bornAsleep, lastFocus: NOW - 4 * HOUR }, pad], CLOCKED, NOW)),
+      ''
     )
     // CONTROL 3: a desk no person has touched reads nothing, so the refusal lifts there -
     // the same escape every other unread pane has.
@@ -1185,8 +1194,23 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   check('no countdown path writes the woke-up words without asking whether the pane is still there',
     !/skipClose\([^)]*'it went back to work/.test(app))
   const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
-  check('the close-request line names who closed the pane', /kill\(id: string, by\?: string\)/.test(sessions) && /quitting: this\.down, by \}/.test(sessions))
+  check('the close-request line names who closed the pane', /kill\(id: string, by: CloseBy\): boolean/.test(sessions) && /quitting: this\.down, by \}/.test(sessions))
   check('...and the Review auto-close says it was the one', /this\.kill\(id, 'review'\)/.test(sessions))
+  // Log review 2026-10-01: s16-munpf9fk and s2-munmghtf closed while `working`, no `by`.
+  check('an automatic close of a working pane is refused, and says so', /action: 'close-refused'/.test(sessions) &&
+    /closeRefused\(by, s\.meta\.status\)/.test(sessions))
+  check('no close inside main leaves the closer out', !/this\.kill\([\w.]+\)/.test(sessions))
+  const index = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
+  check('...nor in the window, phone, pf and sweep wiring', !/manager\.kill\([\w.]+\)/.test(index) && !/closePane\([\w.]+\)/.test(index))
+  check('the close channel tells the window from pf and the phone',
+    /ipcMain\.handle\('sessions:kill', \(_e, id: string, by\?: unknown\) => closePane\(id, closeByOf\(Boolean\(_e\?\.processId\), by\)\)\)/.test(index))
+  const review = index.slice(index.indexOf("ipcMain.handle('sessions:closeIntoReview'"), index.indexOf("ipcMain.handle('sessions:clearFinished'"))
+  check('the idle clock is refused before it writes a Review row for a pane it will not close',
+    review.indexOf("closeRefusedFor(id, 'idle-clock')") > 0 && review.indexOf("closeRefusedFor(id, 'idle-clock')") < review.indexOf('reviewBeforeRemove'))
+  check('every window close says it was a person', !/api\.killSession\([^,)]+\)/.test(app))
+  const ctl = readFileSync(join(root, 'scripts/pf-ctl.mjs'), 'utf8')
+  check('every pf close says it was pf', !/'sessions:kill', \[[^\],]+\]/.test(ctl) && /'sessions:kill', \[m\.pane\.id, 'tidy-dupes'\]/.test(ctl))
+  check("pf's wake says it was pf too", /'sessions:wake', \[target\.pane\.id, 'pf'\]/.test(ctl))
 }
 // A pane put to sleep is not armed again off the session list that still says awake
 // (s22-mueyklpl, 2026-09-24: slept 04:35:29.853, armed .896, refused "already asleep").

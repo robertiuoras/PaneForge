@@ -149,6 +149,9 @@ const PROMPT = 'first line of the ask\nsecond line: do the thing'
 const BOOTING = '\x1b[2m• Starting MCP servers (0/4): codex_apps, node_repl (0s • esc to interrupt)\x1b[0m'
 const COMPOSER = '\r\n\x1b[2m › Use /skills to list available skills\x1b[0m\r\n'
 
+// Every close below says `'user'`: a test closing a pane is a person. A close with no
+// `by` is refused while the pane is `working` (`closeRefused`), and a pane left open
+// pollutes the cases after it - on the slow PC that was ~15 FAILs and a throw.
 const manager = new SessionManager()
 const started = manager.start({ cwd: root, agent: 'shell', prompt: PROMPT })
 const proc = manager.sessions.get(started.id).proc
@@ -215,7 +218,7 @@ try {
   mock.timers.tick(200)
   ok(p.writes.includes('follow up after this turn'), 'the follow-up is typed when that existing turn ends')
   ok(!p.writes.includes('a separate second follow up'), 'the next queued message is not appended to the first paste')
-  manager.kill(followup.id)
+  manager.kill(followup.id, 'user')
 } finally {
   mock.timers.reset()
 }
@@ -381,7 +384,7 @@ ok(manager.takeOver('no-such-pane') === false, 'takeOver on a dead id is false, 
   ok(said.length === 2, 'desk keystrokes are not announced; app and phone lines are', JSON.stringify(said))
   ok(said[0] === 'from a phone', 'the phone line arrives whole', said[0])
   ok(said[1] === 'pasted\nby app', 'a pasted prompt keeps its newlines and is not the 200-char tail', said[1])
-  manager.kill(typedInto.id)
+  manager.kill(typedInto.id, 'user')
 }
 
 // And the settle path fires for a prompt that goes in normally, which is what lowers the
@@ -447,7 +450,7 @@ ok(
   'and it settled at the poll cadence, not after the whole confirm budget',
   `${cmdSettledAt - cmdAt}ms\n${logOf(cmd.id)}`
 )
-manager.kill(cmd.id)
+manager.kill(cmd.id, 'user')
 
 // ...and a QUIET composer that printed NOTHING is a swallowed return, not a landed command.
 // 2026-09-07, pane s2-mtqmyvnv: `/clear` restarted the CLI, the `/model opus` return went in
@@ -458,7 +461,9 @@ manager.kill(cmd.id)
 // not. So the proof is the command's ANSWER, not the silence around it.
 // Answers the moment the return this queuePrompt sends was written, so a case can be
 // judged against the confirm window rather than against a wall-clock sleep.
-async function sentReturnAt(proc, waitMs = 3000) {
+// 10s, not 3s: on a shared PC (2026-10-01, returns 1.4s apart for a planned 0.2s) a 3s
+// wait threw, and the throw ends the FILE - every case after it never runs.
+async function sentReturnAt(proc, waitMs = 10_000) {
   const until = Date.now() + waitMs
   while (Date.now() < until) {
     if (proc.firstReturnAt !== undefined) return proc.firstReturnAt
@@ -495,7 +500,7 @@ ok(
   'and the return really was sent, so the silence is the pane\'s answer and not a missing keystroke',
   JSON.stringify(eatenProc.writes)
 )
-manager.kill(eaten.id)
+manager.kill(eaten.id, 'user')
 
 // THE PROMPT WENT IN AND THE APP SAID IT DID NOT.
 //
@@ -540,7 +545,7 @@ const ANSWERING =
   ok(!/UNSENT/.test(mine), 'a prompt the agent is answering is never called UNSENT', mine)
   ok(aDone === 1, 'and it settles exactly once', String(aDone))
   ok(returnsOf(aProc) === afterReturn, 'no second return is fed into the turn it started', String(returnsOf(aProc)))
-  manager.kill(answering.id)
+  manager.kill(answering.id, 'user')
 }
 
 // ...and the failure this path exists for still reads as the failure. Same painting pane,
@@ -569,7 +574,7 @@ const ANSWERING =
   const mine = readFileSync(acPath, 'utf8').split('\n').filter((l) => l.includes(stuck.id)).join('\n')
   ok(/UNSENT/.test(mine), 'a prompt still sitting in the composer is still called UNSENT', mine)
   ok(sDone === 1, 'and that settles once too', String(sDone))
-  manager.kill(stuck.id)
+  manager.kill(stuck.id, 'user')
 }
 
 // NOT INTO A CLAUDE CODE THAT IS STILL STARTING.
@@ -619,18 +624,30 @@ const ANSWERING =
     return 0
   }
   const open = () => {
+    const t0 = Date.now()
     const pane = manager.start({ cwd: root, agent: 'claude' })
     const p = manager.sessions.get(pane.id).proc
     manager.queuePrompt(pane.id, BRIEF, 0, 40, undefined, 5000)
     p.say(IDLE)
-    return { pane, p, at: Date.now() }
+    return { pane, p, t0, at: Date.now() }
   }
 
   // s113: the pid file is there, the hooks are not done. The composer is idle the whole time.
+  // The hold ends at PF_PROMPT_STARTUP_MS of process age, by design. PC job 0f0f73e5 spent
+  // 6.6s between minting the pane id and returning from open(), so the first look found a
+  // process past that ceiling and typed at once - the ceiling working, not a missed hold.
+  // A pane typed only once PF_PROMPT_STARTUP_MS had passed since open() began is judged
+  // again on one fresh pane; a second such stall fails the case.
   cli('sess-running')
   hooksPending('sess-running')
-  const a = open()
-  const early = await typedAt(a.p, 900)
+  let a, early
+  for (let attempt = 1; ; attempt++) {
+    a = open()
+    early = await typedAt(a.p, 900)
+    if (!early || early - a.t0 < Number(process.env.PF_PROMPT_STARTUP_MS) || attempt === 2) break
+    console.log(`note  opening the pane took ${a.at - a.t0}ms, past the ${process.env.PF_PROMPT_STARTUP_MS}ms hold; judged on a fresh pane`)
+    manager.kill(a.pane.id, 'user')
+  }
   ok(!early, 'a prompt is not typed while Claude Code is still running its SessionStart hooks',
     `typed ${early ? early - a.at : '-'}ms in\n${logOf(a.pane.id)}`)
   hooksDone('sess-running')
@@ -638,7 +655,7 @@ const ANSWERING =
   ok(late > 0, 'and it is typed once the SessionStart record is in the transcript and it has gone quiet', logOf(a.pane.id))
   ok(typings(a.p) === 1, 'exactly once')
   ok(await logSays(a.pane.id, /finished starting/), 'the wait and its end are written down', logOf(a.pane.id))
-  manager.kill(a.pane.id)
+  manager.kill(a.pane.id, 'user')
 
   // A CLI whose start is long over (the record written, the file quiet): nothing to wait for.
   cli('sess-done')
@@ -652,7 +669,7 @@ const ANSWERING =
     'a CLI that has finished starting is typed into at once',
     `${bAt ? bAt - b.at : '-'}ms\n${logOf(b.pane.id)}`
   )
-  manager.kill(b.pane.id)
+  manager.kill(b.pane.id, 'user')
 
   // The record never comes (hooks stuck): held only until the process is
   // PF_PROMPT_STARTUP_MS old, then typed as it always was.
@@ -666,7 +683,7 @@ const ANSWERING =
   ok(cAt > 0 && cWaited >= 3, 'a record that never comes holds the prompt only up to the ceiling',
     `${cWaited}s waited\n${logOf(c.pane.id)}`)
   ok(await logSays(c.pane.id, /typing anyway/), 'and the log says it was typed without the record', logOf(c.pane.id))
-  manager.kill(c.pane.id)
+  manager.kill(c.pane.id, 'user')
 
   // NO TRANSCRIPT ON DISK IS NOT "STILL STARTING". Claude Code 2.1.283 often writes none
   // until the first prompt is in: panes s2, s15, s20, s26 and s27 (2026-09-26/27) had their
@@ -684,7 +701,7 @@ const ANSWERING =
     'a pid file whose transcript is not on disk yet costs only the short wait, not the ceiling',
     `${fWaited}s waited\n${logOf(f.pane.id)}`)
   ok(await logSays(f.pane.id, /no pid file or transcript yet/), 'and the log says what it was waiting for', logOf(f.pane.id))
-  manager.kill(f.pane.id)
+  manager.kill(f.pane.id, 'user')
 
   // ONE PASTE, NOT A BURST. 2026-09-27 05:37:04Z, pane s26-mujdy43s: the 2116-char prompt
   // written raw reached the CLI as two 1024-byte reads and a 99-byte tail, Claude Code took
@@ -699,21 +716,21 @@ const ANSWERING =
     const w = g.p.writes.find((x) => x.includes('RESEARCH QUESTION')) ?? ''
     ok(w === '\x1b[200~' + BRIEF + '\x1b[201~', 'a Claude prompt goes in as one bracketed paste', JSON.stringify(w.slice(0, 40)))
     ok(!g.p.writes.some((x) => x.includes('\x1b[201~\r')), 'and its return is still a keystroke of its own', JSON.stringify(g.p.writes))
-    manager.kill(g.pane.id)
+    manager.kill(g.pane.id, 'user')
     const cmd = manager.start({ cwd: root, agent: 'claude' })
     const cp = manager.sessions.get(cmd.id).proc
     manager.queuePrompt(cmd.id, '/model opus', 0, 40, undefined, 5000, 'idle')
     cp.say(IDLE)
     for (const until = Date.now() + 1500; Date.now() < until && !cp.writes.length; ) await sleep(20)
     ok(cp.writes[0] === '/model opus', 'a slash command is typed, not pasted', JSON.stringify(cp.writes[0]))
-    manager.kill(cmd.id)
+    manager.kill(cmd.id, 'user')
     const sh = manager.start({ cwd: root, agent: 'shell' })
     const shp = manager.sessions.get(sh.id).proc
     manager.queuePrompt(sh.id, BRIEF, 0, 40, undefined, 5000)
     shp.say(IDLE)
     await typedAt(shp, 1500)
     ok(shp.writes.find((x) => x.includes('RESEARCH QUESTION')) === BRIEF, 'a shell pane gets the text as it was', JSON.stringify(shp.writes))
-    manager.kill(sh.id)
+    manager.kill(sh.id, 'user')
     // Codex as well. 2026-09-29 7:59:39am, pane s62-mulltgcs: a 959-char `pf tell` typed
     // as keys, Codex read the burst as a paste and the return after it as a newline, and
     // the brief sat unsent in the composer.
@@ -727,7 +744,7 @@ const ANSWERING =
     const cw = cxp.writes.find((x) => x.includes('RESEARCH QUESTION')) ?? ''
     ok(cw === '\x1b[200~' + BRIEF + '\x1b[201~', 'a Codex prompt goes in as one bracketed paste too', JSON.stringify(cw.slice(0, 40)))
     ok(!cxp.writes.some((x) => x.includes('\x1b[201~\r')), 'and its return is a write of its own', JSON.stringify(cxp.writes))
-    manager.kill(cx.id)
+    manager.kill(cx.id, 'user')
   }
 
   // No pid file at all (a CLI that writes none): the short wait, then as before.
@@ -736,7 +753,7 @@ const ANSWERING =
   const dAt = await typedAt(d.p, 2500)
   const dWaited = await shortWaitOf(d.pane.id)
   ok(dAt > 0 && dWaited >= 0.8 && dWaited < 2.4, 'a CLI with no pid file costs only the short wait', `${dWaited}s waited\n${logOf(d.pane.id)}`)
-  manager.kill(d.pane.id)
+  manager.kill(d.pane.id, 'user')
 
   // Restarted while it waited: `restart` re-keys the owed row and queues it again, so the
   // first wait stands down and the prompt goes into the new process ONCE. Before this, both
@@ -753,7 +770,7 @@ const ANSWERING =
   await sleep(600)
   ok(typings(e.p, e2) === 1, 'a pane restarted while its prompt waited gets it once, in the new process',
     `${typings(e.p)} in the old, ${typings(e2)} in the new\n${logOf(e.pane.id)}`)
-  manager.kill(e.pane.id)
+  manager.kill(e.pane.id, 'user')
 
   // Only Claude Code is waited for: a shell pane is typed into on its idle composer alone.
   cli('sess-shell')
@@ -771,7 +788,7 @@ const ANSWERING =
     'a pane that is not Claude Code is not held',
     `${sAt ? sAt - sAt0 : '-'}ms\n${logOf(shell.id)}`
   )
-  manager.kill(shell.id)
+  manager.kill(shell.id, 'user')
 
   // THE PROMPT WENT IN AND THE APP CALLED IT LOST. 2026-09-24 13:26:18.630Z, pane s105: the
   // resume prompt is a user row in its transcript (taskdriver.ai-c, 69ec86bb-...), and the
@@ -827,7 +844,7 @@ const ANSWERING =
       await sleep(50)
     }
     await logSays(pane.id, /prompt submitted|UNSENT/)
-    manager.kill(pane.id)
+    manager.kill(pane.id, 'user')
     return { log: logOf(pane.id), settles, returns: returnsOf(p) }
   }
 
@@ -869,12 +886,16 @@ const ANSWERING =
     const until = Date.now() + budget + 600
     while (Date.now() < until && !settles) await sleep(50)
     await logSays(pane.id, /prompt submitted|UNSENT/)
-    const qpLog = (() => { try { return readFileSync(join(work, 'userData', 'queued-prompts.log'), 'utf8').split('\n').filter((l) => l.includes(pane.id)).join('\n') } catch { return '' } })()
+    // The ledger line is appended apart from the app log line: wait for it too (2026-10-01,
+    // a pressured Mac read the ledger with only `accepted` in it).
+    const qpRead = () => { try { return readFileSync(join(work, 'userData', 'queued-prompts.log'), 'utf8').split('\n').filter((l) => l.includes(pane.id)).join('\n') } catch { return '' } }
+    for (const end = Date.now() + 2000; Date.now() < end && !/queued prompt submitted|LOST/.test(qpRead()); ) await sleep(40)
+    const qpLog = qpRead()
     ok(!/UNSENT/.test(logOf(pane.id)) && /Claude transcript receipt/.test(logOf(pane.id)),
       'a prompt Claude wrote down is submitted even when the pane is typed into afterwards', logOf(pane.id))
     ok(!/LOST/.test(qpLog) && /queued prompt submitted/.test(qpLog), 'and queued-prompts.log says submitted, not LOST', qpLog)
     ok(settles === 1, 'it settles once', String(settles))
-    manager.kill(pane.id)
+    manager.kill(pane.id, 'user')
   }
 
   // ...AND ONE LOOK IS NOT THE ANSWER. 2026-09-27 16:31, pane s81-muk0ypqg: prompt typed
@@ -922,7 +943,7 @@ const ANSWERING =
     ok(/Claude transcript receipt \(then the pane was typed into by hand\)/.test(logOf(pane.id)) && !/UNSENT/.test(logOf(pane.id)),
       'a receipt readable a tick later still counts after a line from outside', logOf(pane.id))
     ok(/a phone write submitted while a prompt is owed: "<1>\\r" \(2 bytes, line of \d+ chars\)/.test(logOf(pane.id)), 'the outside line is logged with its shape and origin, never its words', logOf(pane.id))
-    manager.kill(pane.id)
+    manager.kill(pane.id, 'user')
   }
 
   // ...and a transcript without it is still no receipt: the empty box gets its returns.
@@ -938,7 +959,144 @@ const ANSWERING =
     await logSays(pane.id, /UNSENT/)
     ok(/UNSENT/.test(logOf(pane.id)) && returnsOf(p) > 1,
       'with no user row in the transcript it is still called UNSENT', `${returnsOf(p)} returns\n${logOf(pane.id)}`)
-    manager.kill(pane.id)
+    manager.kill(pane.id, 'user')
+  }
+
+  // "SUBMITTED" WITH NO USER ROW. 2026-10-01 08:14:53Z, pane s54-mup9d0za: a 4958-char brief
+  // sat in the composer as `[Pasted text #1 +30 lines]` while the log said "it is no longer in
+  // the composer" - the composer was read for the brief's words, which a placeholder does not
+  // have - and Claude Code's transcript got it 2m47s later, when Robert pressed Enter. The pane
+  // paints over the whole window, so only the final reading decides.
+  const LONG = Array.from({ length: 30 }, (_, i) => `${i + 1}. BRIEF LINE ${i + 1}: carry this step out and prove it.`).join('\n')
+  const unproven = async (name, composer) => {
+    cli(name)
+    hooksDone(name, 60_000)
+    const pane = manager.start({ cwd: root, agent: 'claude' })
+    const p = manager.sessions.get(pane.id).proc
+    let settles = 0
+    manager.queuePrompt(pane.id, LONG, 0, 40, () => settles++, 5000)
+    p.say(IDLE)
+    await sentReturnAt(p)
+    const frame = '\x1b[2J\x1b[H✻ Working… (3s · esc to interrupt)\r\n' + RULE + '\r\n' + composer + '\r\n' + RULE + '\r\n'
+    for (const until = Date.now() + budget + 800; Date.now() < until && !settles; ) {
+      p.say(frame)
+      await sleep(50)
+    }
+    await logSays(pane.id, /prompt submitted|UNSENT/)
+    manager.kill(pane.id, 'user')
+    return { log: logOf(pane.id), settles }
+  }
+  const held = await unproven('sess-paste-held', '❯ [Pasted text #1 +30 lines]')
+  ok(!/prompt submitted/.test(held.log) && /UNSENT/.test(held.log),
+    'a paste placeholder still in the composer is UNSENT, never "submitted"', held.log)
+  const gone = await unproven('sess-paste-gone', '❯ ')
+  ok(!/prompt submitted/.test(gone.log) && /UNSENT: .*no record of it/.test(gone.log),
+    'an empty composer with no user row in the transcript is UNSENT too, when the transcript can be read', gone.log)
+
+  // A RETURN TAKEN WHILE CLAUDE CODE STARTS IS HELD, NOT LOST. 2026-10-01, pane
+  // s27-mupamiv8: typed 10s in, six returns 4s apart, "UNSENT: 6 returns were swallowed" at
+  // +38s - and the user row at +72s, sent by Claude Code itself once its SessionStart hooks
+  // finished at +65s. s54 got five returns and four of them came back as "Removed 4 invisible
+  // characters - review and press Enter to send". A young Claude Code with a pid file and no
+  // transcript yet is given one return and waited for.
+  {
+    const name = 'sess-deferred'
+    cli(name)
+    const pane = manager.start({ cwd: root, agent: 'claude' })
+    const at = Date.now()
+    const p = manager.sessions.get(pane.id).proc
+    let settles = 0
+    manager.queuePrompt(pane.id, BRIEF, 0, 40, () => settles++, 5000)
+    p.say(IDLE)
+    await sentReturnAt(p)
+    p.say('\x1b[2J\x1b[H' + RULE + '\r\n❯ ' + BRIEF.split('\n')[0] + '\r\n' + RULE + '\r\n')
+    // Claude Code finishes starting at +1.9s and runs the submit it took.
+    while (Date.now() < at + 1900) await sleep(20)
+    const before = returnsOf(p)
+    received(name)
+    for (const until = Date.now() + budget + 1500; Date.now() < until && !settles; ) await sleep(50)
+    await logSays(pane.id, /prompt submitted|UNSENT/)
+    ok(before === 1 && returnsOf(p) === 1, 'one return while Claude Code starts, and no more',
+      `${before} before the row, ${returnsOf(p)} in all\n${logOf(pane.id)}`)
+    ok(/Claude transcript receipt/.test(logOf(pane.id)) && !/UNSENT/.test(logOf(pane.id)) && settles === 1,
+      'the submit Claude Code ran when it was ready is the receipt', logOf(pane.id))
+    ok(/still starting - no more returns/.test(logOf(pane.id)), 'the wait is written down', logOf(pane.id))
+    manager.kill(pane.id, 'user')
+  }
+
+  // ...and the wait ends: past the start ceiling a prompt still in the box gets its returns,
+  // and one that never got a row is UNSENT, never "submitted".
+  {
+    const name = 'sess-deferred-never'
+    cli(name)
+    const pane = manager.start({ cwd: root, agent: 'claude' })
+    const at = Date.now()
+    const p = manager.sessions.get(pane.id).proc
+    let settles = 0
+    manager.queuePrompt(pane.id, BRIEF, 0, 40, () => settles++, 5000)
+    p.say(IDLE)
+    await sentReturnAt(p)
+    p.say('\x1b[2J\x1b[H' + RULE + '\r\n❯ ' + BRIEF.split('\n')[0] + '\r\n' + RULE + '\r\n')
+    let second = 0
+    for (const until = at + Number(process.env.PF_PROMPT_STARTUP_MS) + budget * 3 + 2000; Date.now() < until && !settles; ) {
+      if (!second && returnsOf(p) > 1) second = Date.now()
+      await sleep(20)
+    }
+    await logSays(pane.id, /prompt submitted|UNSENT/)
+    ok(second - at >= Number(process.env.PF_PROMPT_STARTUP_MS) - 100,
+      'no second return until Claude Code is past its start', `second return at +${second ? second - at : '-'}ms\n${logOf(pane.id)}`)
+    ok(returnsOf(p) > 1 && /UNSENT/.test(logOf(pane.id)) && !/prompt submitted/.test(logOf(pane.id)),
+      'then it gets its returns, and with no row it is UNSENT', `${returnsOf(p)} returns\n${logOf(pane.id)}`)
+    manager.kill(pane.id, 'user')
+  }
+
+  // A TYPED CLAUDE PROMPT LEFT UNSENT IS KEPT, NOT CALLED LOST. After the 2026-10-01 restarts
+  // 14 of 15 resumed panes' `continue` was logged LOST and then answered, up to 80s later
+  // (s11-mupasdoz). The typed row stays owed instead, and the idle sweep writes it down as
+  // submitted whenever its whole payload turns up in the conversation.
+  {
+    cli('sess-late')
+    hooksDone('sess-late', 60_000)
+    const pane = manager.start({ cwd: root, agent: 'claude' })
+    const live = manager.sessions.get(pane.id)
+    manager.queuePrompt(pane.id, BRIEF, 0, 40, () => {}, 5000)
+    live.proc.say(IDLE)
+    // Three returns a confirm window apart before the verdict: ~1s here, past the 2s default
+    // on the PC's full-suite pool (2026-10-01: the row went in first and read "submitted").
+    await logSays(pane.id, /UNSENT/, 15_000)
+    const qpNow = () => { try { return readFileSync(join(work, 'userData', 'queued-prompts.log'), 'utf8').split('\n').filter((l) => l.includes(pane.id)).join('\n') } catch { return '' } }
+    ok(/UNSENT/.test(logOf(pane.id)) && !/LOST/.test(qpNow()) && live.meta.owedPrompt,
+      'a typed Claude prompt left UNSENT stays owed and is not logged LOST', `${logOf(pane.id)}\n${qpNow()}`)
+    received('sess-late')
+    manager.sweepIdle()
+    await logSays(pane.id, /retained prompt submitted - Claude transcript receipt/)
+    ok(/retained prompt submitted - Claude transcript receipt/.test(logOf(pane.id)) && /queued prompt submitted/.test(qpNow()) &&
+      !/LOST/.test(qpNow()) && !live.meta.owedPrompt,
+      'its late transcript row is written down as submitted, never LOST', `${logOf(pane.id)}\n${qpNow()}`)
+    manager.kill(pane.id, 'user')
+  }
+
+  // ...and with no pid file there is no receipt to wait for: past twice the pid-file wait,
+  // the returns come back rather than a minute of nothing.
+  {
+    rmSync(pidFile, { force: true })
+    const pane = manager.start({ cwd: root, agent: 'claude' })
+    const at = Date.now()
+    const p = manager.sessions.get(pane.id).proc
+    let settles = 0
+    manager.queuePrompt(pane.id, BRIEF, 0, 40, () => settles++, 5000)
+    p.say(IDLE)
+    await sentReturnAt(p)
+    p.say('\x1b[2J\x1b[H' + RULE + '\r\n\u276f ' + BRIEF.split('\n')[0] + '\r\n' + RULE + '\r\n')
+    let second = 0
+    for (const until = at + Number(process.env.PF_PROMPT_STARTUP_MS); Date.now() < until && !second; ) {
+      if (returnsOf(p) > 1) second = Date.now()
+      await sleep(20)
+    }
+    ok(second && second - at < Number(process.env.PF_PROMPT_STARTUP_MS),
+      'a Claude Code with no pid file is not held for the whole start', `second return at +${second ? second - at : '-'}ms\n${logOf(pane.id)}`)
+    for (const until = Date.now() + budget * 2; Date.now() < until && !settles; ) await sleep(50)
+    manager.kill(pane.id, 'user')
   }
 
   // A RETURN INTO A QUESTION IS AN ANSWER. 2026-09-27 04:55Z, pane s9-mujbz9vp: `pf tell`
@@ -996,7 +1154,7 @@ const ANSWERING =
     const retained = Object.values(JSON.parse(readFileSync(join(work, 'userData', 'queued-prompts.json'), 'utf8')))
       .filter(row => row.id === pane.id)
     const out = { log: logOf(pane.id), qp: qpOf(pane.id), returns: returnsOf(p), asking: Boolean(manager.sessions.get(pane.id).meta.ask), retained }
-    manager.kill(pane.id)
+    manager.kill(pane.id, 'user')
     return out
   }
 
@@ -1039,7 +1197,7 @@ const ANSWERING =
   await logSays(clockPane.id, /prompt left UNSENT/, confirmBudget + 5000)
   ok(clockSettles === 1 && clockLive.meta.owedPrompt && !/prompt submitted/.test(logOf(clockPane.id)),
     'a turn clock and unreadable startup paint cannot confirm a Claude prompt without its native receipt', logOf(clockPane.id))
-  manager.kill(clockPane.id)
+  manager.kill(clockPane.id, 'user')
 
   cli('sess-sole-review'); hooksDone('sess-sole-review', 60_000)
   const solePane = manager.start({ cwd: root, agent: 'claude' })
@@ -1057,7 +1215,7 @@ const ANSWERING =
   manager.sweepIdle()
   ok(!soleLive.meta.owedPrompt && !returnsOf(soleLive.proc) && soleLive.proc.writes.filter(data => data.includes(BRIEF)).length === 1,
     'a sole withheld prompt reconciles its full native receipt without a follower or replay', logOf(solePane.id))
-  manager.kill(solePane.id)
+  manager.kill(solePane.id, 'user')
 
   // The two failed real recovery panes never received an accepted prompt or a reply.
   // Their invisible-character review composer must remain an unfinished task.
@@ -1086,7 +1244,7 @@ const ANSWERING =
   const restoredLive = manager.sessions.get(restored.id)
   restoredLive.proc.say(IDLE)
   forgetQueuedPrompts(); manager.deliverOwed(reviewPane.id, restored.id)
-  manager.kill(reviewPane.id)
+  manager.kill(reviewPane.id, 'user')
   const follower = 'A separate follow-up must wait for the original exact receipt.'
   manager.queuePrompt(restored.id, follower, 0, 40, undefined, 400)
   await sleep(650)
@@ -1275,7 +1433,8 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
   }
   const open = () => {
     const conversation = `12345678-1234-1234-1234-${String(++fixture).padStart(12, '0')}`
-    const file = join(process.env.CODEX_HOME, 'sessions', '2026', '09', '30', `queue-${fixture}.jsonl`)
+    // Real Codex naming: codexTranscriptPath opens only `rollout-<time>-<id>.jsonl` (09252fd8).
+    const file = join(process.env.CODEX_HOME, 'sessions', '2026', '09', '30', `rollout-2026-09-30T01-02-03-${conversation}.jsonl`)
     mkdirSync(dirname(file), { recursive: true })
     writeFileSync(file, JSON.stringify({ type: 'session_meta', payload: { id: conversation, cwd: root, timestamp: new Date().toISOString() } }) + '\n')
     const pane = manager.start({ cwd: root, agent: 'codex', resume: true, resumeId: conversation })
@@ -1319,7 +1478,7 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
   ok(await waitFor(() => startupSettled() === 1) &&
     startup.p.writes.filter(data => data === '\x1b[200~' + payload + '\x1b[201~').length === 1 && ledger(startup.pane.id).length === 0,
     'startup replies preserve one multiline delivery confirmed by the exact native receipt',logOf(startup.pane.id))
-  manager.kill(startup.pane.id)
+  manager.kill(startup.pane.id, 'user')
 
   const trusted = open()
   queue(trusted)
@@ -1334,7 +1493,7 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
   ok(await waitFor(() => ledger(trusted.pane.id).length === 0) && !trustForeign &&
     trusted.p.writes.filter(data => data === '\x1b[200~' + payload + '\x1b[201~').length === 1,
     'a pre-paste trust choice preserves the empty checked composer and exact queued delivery', logOf(trusted.pane.id))
-  manager.kill(trusted.pane.id)
+  manager.kill(trusted.pane.id, 'user')
 
   const foreignTrust = open()
   queue(foreignTrust, payload, 300)
@@ -1346,7 +1505,7 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
   await sleep(420)
   ok(stillForeign && !pasted(foreignTrust.p),
     'accepting a trust chooser never clears genuine earlier user ownership', logOf(foreignTrust.pane.id))
-  manager.kill(foreignTrust.pane.id)
+  manager.kill(foreignTrust.pane.id, 'user')
 
   for (const [name,data,tagged] of [
     ['typing','human',false],['arrow','\x1b[D',false],['Shift-F3','\x1b[1;2R',false],
@@ -1359,7 +1518,7 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
     await sleep(420)
     ok(claimed && !pasted(edited.p) && !returnsOf(edited.p) && edited.p.writes.includes(data),
       `${name} still owns the composer and prevents queued startup paste`,logOf(edited.pane.id))
-    manager.kill(edited.pane.id)
+    manager.kill(edited.pane.id, 'user')
   }
 
   const hint = 'Ask Codex to do anything'
@@ -1377,7 +1536,7 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
   // later screen reading, or the next queued prompt sits behind a box already empty.
   ok(!hinted.live.meta.drafting && !hinted.live.draftConfirmation,
     'a prompt proven sent by its receipt drops its own draft hold at once', JSON.stringify(hinted.live.draftConfirmation))
-  manager.kill(hinted.pane.id)
+  manager.kill(hinted.pane.id, 'user')
 
   const literalDraft = open()
   literalDraft.p.say(frame(hint).replace(/\x1b\[5;\d+H$/, '\x1b[5;3H'))
@@ -1386,7 +1545,7 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
   ok(draftSettled() === 0 && !pasted(literalDraft.p) &&
     ledger(literalDraft.pane.id).some(row => row.text === payload && !row.typed),
     'regular same-string draft with caret at start keeps queued bytes out and preserves accepted intent')
-  manager.kill(literalDraft.pane.id)
+  manager.kill(literalDraft.pane.id, 'user')
 
   const persistence = open()
   const markerFile = join(work, 'userData', 'queued-prompts.json.tmp')
@@ -1403,7 +1562,7 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
   }
   ok(await waitFor(() => pasted(persistence.p) && ledger(persistence.pane.id).length === 0) && persistenceSettled() === 1,
     'the existing wait retries after persistence recovers and completes its caller exactly once', logOf(persistence.pane.id))
-  manager.kill(persistence.pane.id)
+  manager.kill(persistence.pane.id, 'user')
 
   // The autoclear caller chains a model switch's completion to a confirm and resume.
   // Exercise that same production callback boundary across a failed durable marker.
@@ -1443,7 +1602,7 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
     order.join('|') === 'switch text|return|switch completed|return|resume text|return' &&
     ledger(ordered.pane.id).length === 0 && !ordered.live.meta.handoverUntil,
     'storage recovery completes the model switch before its confirm and resume, exactly once', order.join('|'))
-  manager.kill(ordered.pane.id)
+  manager.kill(ordered.pane.id, 'user')
 
   const held = open()
   held.p.onWrite = (data) => {
@@ -1460,7 +1619,7 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
   ok(returnsOf(held.p) === 2, 'actual held composer permits one safe retry despite a cursor-only Working repaint', String(returnsOf(held.p)))
   ok(await logSays(held.pane.id, /native Codex receipt/) && ledger(held.pane.id).length === 0,
     'only the exact multiline native receipt settles that prompt as submitted', logOf(held.pane.id))
-  manager.kill(held.pane.id)
+  manager.kill(held.pane.id, 'user')
 
   const foreign = open()
   foreign.p.onWrite = (data) => {
@@ -1474,7 +1633,7 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
     'a delayed native Codex receipt still wins after external typing', logOf(foreign.pane.id))
   ok(returnsOf(foreign.p) === 1, 'no retry is sent into the external writer’s line',
     `${returnsOf(foreign.p)} returns\n${logOf(foreign.pane.id)}`)
-  manager.kill(foreign.pane.id)
+  manager.kill(foreign.pane.id, 'user')
 
   const unknown = open()
   unknown.p.onWrite = (data) => {
@@ -1523,7 +1682,7 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
   ok(await waitFor(() => pasted(unknown.p, later) && ledger(unknown.pane.id).length === 0, 6000) && blockedNext() === 1,
     'a late exact receipt promotes the retained second prompt without another queue call',
     `pasted=${pasted(unknown.p, later)}, rows=${ledger(unknown.pane.id).length}\n${logOf(unknown.pane.id)}`)
-  manager.kill(unknown.pane.id)
+  manager.kill(unknown.pane.id, 'user')
 
   // A stale owner - another process's, about to be dropped - says nothing about whose
   // turn is running. A follow-up queued during that turn still waits for it to end.
@@ -1545,7 +1704,7 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
   stale.live.busyUntil = 0
   ok(await waitFor(() => staleSettled() === 1 && pasted(stale.p, staleNext)),
     'and that follow-up is typed when the turn ends', logOf(stale.pane.id))
-  manager.kill(stale.pane.id)
+  manager.kill(stale.pane.id, 'user')
 
   // The held prompt can prove ITSELF sent first: its own receipt check runs one confirm
   // after its return, and a follow-up queued during that turn may not look until later.
@@ -1586,7 +1745,7 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
   selfSent.p.say(frame(''))
   ok(await waitFor(() => heldNextSettled === 1 && pasted(selfSent.p, heldNext) && ledger(selfSent.pane.id).length === 0),
     'and it is typed once that turn ends', logOf(selfSent.pane.id))
-  manager.kill(selfSent.pane.id)
+  manager.kill(selfSent.pane.id, 'user')
 
   // All waiting followers share the retained owner's negative native scan. Count
   // real 2 MiB reads, including invalidation without a terminal repaint.
@@ -1656,7 +1815,7 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
     console.log(`receipt scan regression: 8 followers, ${statChecks} stat checks, ${scans} scans across 4 file states`)
   } finally {
     Object.assign(fs, originalFs)
-    manager.kill(scanHeld.pane.id)
+    manager.kill(scanHeld.pane.id, 'user')
   }
 
   const finalLF = open()
@@ -1670,7 +1829,7 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
     finalLF.p.writes.filter(data => data === '\x1b[200~' + terminated + '\x1b[201~').length === 1 &&
     ledger(finalLF.pane.id).length === 0 && !finalLF.live.meta.owedPrompt,
     'the native receipt omitting only the final LF clears its durable intent without another paste or Return', logOf(finalLF.pane.id))
-  manager.kill(finalLF.pane.id)
+  manager.kill(finalLF.pane.id, 'user')
 
   // An altered native row missing interior LFs cannot acknowledge the original.
   const changed = open()
@@ -1685,13 +1844,13 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
   const nextHeld = queue(changed, 'must not append to held prompt', 300)
   ok(await logSays(changed.pane.id, /queued prompt retained/) && nextHeld() === 0 && !pasted(changed.p, 'must not append to held prompt'),
     'a held composer also retains ownership after all safe retries expire')
-  manager.kill(changed.pane.id)
+  manager.kill(changed.pane.id, 'user')
 
   const asked = open()
   asked.live.meta.ask = { question: 'synthetic dialog', options: [] }
   const askedSettled = queue(asked, payload, 300)
   ok(await logSays(asked.pane.id, /queued prompt retained/) && askedSettled() === 0 && asked.p.writes.length === 0, 'a dialog blocks Codex paste without completing a deferred sequencing callback')
-  manager.kill(asked.pane.id)
+  manager.kill(asked.pane.id, 'user')
   const afterPaste = open()
   afterPaste.p.onWrite = data => {
     if (data.includes(payload)) {
@@ -1703,7 +1862,7 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
   ok(await waitFor(afterPasteSettled) && pasted(afterPaste.p) && returnsOf(afterPaste.p) === 0,
     'a dialog appearing after paste withholds the first Enter')
   ok(ledger(afterPaste.pane.id).some(row => row.text === payload), 'withheld pasted text keeps its durable owner')
-  manager.kill(afterPaste.pane.id)
+  manager.kill(afterPaste.pane.id, 'user')
 
   const repeated = open()
   repeated.received(payload) // This identical row precedes the actual paste.
@@ -1725,8 +1884,8 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
   manager.deliverOwed(repeated.pane.id, afterRestart.pane.id)
   ok(afterRestart.p.writes.length === 0 && ledger(afterRestart.pane.id).length === 0,
     'disk reload after a real typed timeout clears its later original receipt without any restored writes')
-  manager.kill(afterRestart.pane.id)
-  manager.kill(repeated.pane.id)
+  manager.kill(afterRestart.pane.id, 'user')
+  manager.kill(repeated.pane.id, 'user')
 
   for (const cancel of ['\x03', '\x15', 'takeOver']) {
     const canceled = open()
@@ -1755,7 +1914,7 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
     const nextSettled = queue(canceled, next)
     ok(await waitFor(nextSettled) && pasted(canceled.p, next) && ledger(canceled.pane.id).length === 0,
       `a subsequent queue delivers after ${JSON.stringify(cancel)} without resending canceled text`, logOf(canceled.pane.id))
-    manager.kill(canceled.pane.id)
+    manager.kill(canceled.pane.id, 'user')
   }
 
   const command = open()
@@ -1765,7 +1924,7 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
   const commandSettled = queue(command, '/model gpt-6.1-sol')
   ok(await waitFor(commandSettled) && returnsOf(command.p) === 1 && ledger(command.pane.id).length === 0,
     'a default Codex slash command uses idle command proof without a native user receipt', logOf(command.pane.id))
-  manager.kill(command.pane.id)
+  manager.kill(command.pane.id, 'user')
 
   const swallowed = open()
   const cmd = '/model gpt-6.1-sol'
@@ -1789,7 +1948,7 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
   }
   ok(await waitFor(() => pasted(swallowed.p, afterCmd) && ledger(swallowed.pane.id).length === 0),
     'manual command Enter plus new output and an empty idle composer releases the retained owner once', logOf(swallowed.pane.id))
-  manager.kill(swallowed.pane.id)
+  manager.kill(swallowed.pane.id, 'user')
 
   for (const human of [false, true]) {
     const effort = open()
@@ -1806,7 +1965,7 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
     effort.received(payload)
     ok(await waitFor(effortSettled) && ledger(effort.pane.id).length === 0,
       'an exact receipt resolves effort replay without duplicating the payload')
-    manager.kill(effort.pane.id)
+    manager.kill(effort.pane.id, 'user')
   }
 
   // Exercise production disk loading and recovery, independent of the live pane claim.
@@ -1834,7 +1993,7 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
         ledger(restored.pane.id).some(row => row.text === 'must not append after uncertain restored delivery' && !row.typed),
         `uncertain restored ${receipt} delivery protects subsequent queues`)
     }
-    manager.kill(source.pane.id); manager.kill(restored.pane.id)
+    manager.kill(source.pane.id, 'user'); manager.kill(restored.pane.id, 'user')
   }
 
   const neverTyped = open()
@@ -1849,7 +2008,7 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
   manager.deliverOwed(neverTyped.pane.id, recoveredUntyped.pane.id)
   ok(await waitFor(() => pasted(recoveredUntyped.p, untypedText) && ledger(recoveredUntyped.pane.id).length === 0),
     'accepted never-typed intent still recovers into an exact native submission')
-  manager.kill(neverTyped.pane.id); manager.kill(recoveredUntyped.pane.id)
+  manager.kill(neverTyped.pane.id, 'user'); manager.kill(recoveredUntyped.pane.id, 'user')
 }
 
 // A completed Codex turn keeps its notification pending until the attention gate
@@ -1871,7 +2030,7 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
   manager.setBusyOnScreen(pane.id, true, 'Esc to interrupt · 1s')
   live.proc.say('Working')
   ok(live.meta.status === 'working' && Boolean(live.meta.runSince), 'a subsequent real turn still starts')
-  manager.kill(pane.id)
+  manager.kill(pane.id, 'user')
 }
 
 // A working line that has stopped moving is a leftover, not a turn. After `/clear`
@@ -1888,7 +2047,7 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
   ok(!live.proc.writes.join('').includes('after a clear'), 'a busy line younger than the stale window still holds the prompt', JSON.stringify(live.proc.writes))
   await sleep(1400)
   ok(live.proc.writes.join('').includes('after a clear'), 'a busy line nothing has repainted for the stale window does not', JSON.stringify(live.proc.writes))
-  manager.kill(pane.id)
+  manager.kill(pane.id, 'user')
 }
 
 // An app slash command takes no draft hold. `/clear` (autoclear writes it straight to the
@@ -1908,7 +2067,7 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
   const until = Date.now() + 3000
   while (!live.proc.writes.join('').includes('after the clear') && Date.now() < until) await sleep(40)
   ok(live.proc.writes.join('').includes('after the clear'), 'and the resume queued behind it goes in', logOf(pane.id))
-  manager.kill(pane.id)
+  manager.kill(pane.id, 'user')
 }
 
 // Enter can be swallowed while the CLI boots. A pending draft must outlive that
@@ -1962,7 +2121,7 @@ for (const [agent, origin] of [['codex', 'desk'], ['claude', 'desk'], ['grok', '
   paint(frame(''))
   await manager.confirmDraft(live)
   ok(!live.meta.drafting, `${name}: confirmed empty composer releases the hold`)
-  manager.kill(pane.id)
+  manager.kill(pane.id, 'user')
 }
 
 // A CANCEL KEY'S REDRAW IS THE ONLY PROOF AN IDLE BOX GIVES. Ctrl-U and Ctrl-C are not
@@ -2044,7 +2203,7 @@ for (const [agent, origin] of [['codex', 'desk'], ['claude', 'desk'], ['grok', '
     const until = Date.now() + 2000
     while (!typedIn(live, next) && Date.now() < until) await sleep(40)
     ok(typedIn(live, next), `${name}: and a queued follow-up then goes in`, logOf(pane.id))
-    manager.kill(pane.id)
+    manager.kill(pane.id, 'user')
   }
   await Promise.all([
     run('claude', 'desk', '\x15'), run('codex', 'desk', '\x15'), run('claude', 'app', '\x15'),

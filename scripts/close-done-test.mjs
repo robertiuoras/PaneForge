@@ -34,7 +34,7 @@ buildSync({
   outfile: out
 })
 const require = createRequire(import.meta.url)
-const { doneEnough, CLOSE_DONE_QUIET_MS } = require(out)
+const { doneEnough, closeRefused, closeByOf, CLOSE_DONE_QUIET_MS } = require(out)
 
 let checks = 0
 const ok = (cond, what) => {
@@ -66,6 +66,22 @@ is(doneEnough({ ...done, job: 'npm' }, QUIET, NOW), false, 'never while a comman
 is(doneEnough({ ...done, backJob: 'npm' }, QUIET, NOW), false, 'never while the agent left something running in the background')
 is(doneEnough({ ...done, status: 'exited' }, QUIET, NOW), false, 'an ended pane has nothing to close')
 is(doneEnough({ ...done, asleep: NOW - 1000 }, QUIET, NOW), false, 'and a SLEEPING pane is being kept, not finished')
+// By status alone: log review 2026-10-01 found two Codex panes closed while `working`
+// (s16-munpf9fk 09-30 08:05Z, s2-munmghtf 08:47Z) with no turn clock the rule could read.
+is(doneEnough({ ...done, status: 'working' }, QUIET, NOW), false, 'never a pane whose status says working, however quiet it reads')
+
+// ------------------------------------------------ who may close a working pane
+for (const by of ['user', 'phone', 'remote', 'pf', 'handoff'])
+  is(closeRefused(by, 'working'), undefined, `${by}: a close somebody named this pane in goes through mid-turn`)
+for (const by of ['review', 'close-when-done', 'idle-clock', 'exited-sweep', 'exit-close', 'cwd-gone', 'tidy-dupes', 'unnamed'])
+  ok(typeof closeRefused(by, 'working') === 'string', `${by}: the app's own close of a working pane is refused`)
+is(closeRefused('idle-clock', 'idle'), undefined, '...and only mid-turn')
+is(closeByOf(true, 'pf'), 'user', 'the window is a person, whatever it says')
+is(closeByOf(false, 'user'), 'phone', "the window's own code in a phone's browser is a person on the phone")
+is(closeByOf(false, 'pf'), 'pf', 'pf says so')
+is(closeByOf(false, 'tidy-dupes'), 'tidy-dupes', '...and so does its duplicate sweep')
+is(closeByOf(false, 'review'), 'unnamed', "a caller from outside cannot claim one of the app's own names")
+is(closeByOf(false, undefined), 'unnamed', 'a script that names nobody is not a person')
 
 // ------------------------------------------------------------- the wiring
 const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
@@ -76,7 +92,7 @@ ok(/doneEnough\(\{ \.\.\.meta, busyUntil: live\.busyUntil \}, quiet, now\)/.test
 const body = sessions.slice(sessions.indexOf('private sweepCloseWhenDone'), sessions.indexOf('/** Start a countdown that was queued'))
 ok(/this\.owesPrompt\(live\)/.test(body), 'an owed or uncertain prompt refuses the explicit close path')
 ok(/meta\.agent !== 'shell' && meta\.finished !== true/.test(body), 'startup paint without a completed native reply refuses the explicit close path')
-ok(body.indexOf('queuePrompt') < body.indexOf('this.kill(meta.id)'), 'the opener is told before the pane is killed')
+ok(body.indexOf('queuePrompt') < body.indexOf("this.kill(meta.id, 'close-when-done')"), 'the opener is told before the pane is killed, and the close names itself')
 ok(/PF_PANE: id/.test(sessions), 'every pane knows which pane it is, so `pf` can name the opener')
 
 const ctl = readFileSync(join(root, 'scripts/pf-ctl.mjs'), 'utf8')

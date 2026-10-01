@@ -16,14 +16,14 @@ import {
 } from 'node:fs'
 import { get } from 'node:https'
 import { join } from 'node:path'
-import { BrowserWindow, app, net } from 'electron'
+import { BrowserWindow, app, net, session } from 'electron'
 import { stagedTooLong, updateIgnored } from '../shared/updateStale'
-import { freshRun, healthWords, noteAnswer, noteTimeout, probeStuck, stuckWords, type ProbeRun } from '../shared/updateProbe'
+import { freshRun, healthWords, noteAnswer, noteTimeout, probeStuck, recentSleeps, stuckWords, type ProbeRun } from '../shared/updateProbe'
 import { applyAtLaunch } from '../shared/launchInstall'
 import { failedInstall } from '../shared/installWedge'
 import { pickRelease } from '../shared/pickRelease'
 import { pickWinTag } from '../shared/winFeed'
-import { TICK_MS, WAKE_SETTLE_MS, WakeWatch } from '../shared/wakeWatch'
+import { TICK_MS, WakeWatch, deferPoll, pollSettle } from '../shared/wakeWatch'
 import type { UpdateState } from '../shared/types'
 import { lastShip } from './laneBoard'
 import {
@@ -71,6 +71,7 @@ function isProbing(): boolean {
   if (Date.now() - probingAt <= PROBE_BUDGET_MS) return true
   log('wedged', `a feed probe never came back after ${Math.round((Date.now() - probingAt) / 1000)}s - dropping it`)
   noteWedge('probe')
+  dropRequest()
   probing = false
   return false
 }
@@ -205,6 +206,45 @@ setInterval(() => wake.tick(Date.now()), Number(process.env.PF_WAKE_TICK_MS) || 
 let droppedAt = 0
 
 /**
+ * The promise electron-updater handed back for the check in flight, and the one a drop
+ * left behind. electron-updater 6 keeps its own `checkForUpdatesPromise` pending until the
+ * request ends, so on 2026-10-01 02:57 a new check got the dead one back ("already in
+ * progress"), and its net::ERR_TIMED_OUT landed 325s after the drop - past the 60s window -
+ * and was written as a fresh failure. Identity says whose answer it is, whatever the clock.
+ */
+let inFlight: Promise<unknown> | null = null
+let dropped: Promise<unknown> | null = null
+
+function track<T>(p: Promise<T>): Promise<T> {
+  inFlight = p
+  const clear = (): void => {
+    if (inFlight === p) inFlight = null
+    if (dropped === p) dropped = null
+  }
+  p.then(clear, clear)
+  return p
+}
+
+/**
+ * A drop must END the request, not just stop waiting for it. Closing electron-updater's own
+ * session (the 'electron-updater' partition, cache off - node_modules/electron-updater
+ * electronHttpExecutor.getNetSession) makes the dead request fail now, so its stored
+ * promise clears and the next check is a fresh request.
+ */
+function dropRequest(): void {
+  droppedAt = Date.now()
+  if (inFlight) {
+    dropped = inFlight
+    inFlight = null
+  }
+  try {
+    void Promise.resolve(session.fromPartition('electron-updater', { cache: false }).closeAllConnections()).catch(() => {})
+  } catch {
+    /* best-effort: the drop already happened, this only hurries the dead request along */
+  }
+}
+
+/**
  * How long after a drop electron-updater's own end of that request is still expected.
  * Its socket timeout fires within seconds of the wake that dropped the phase; a minute
  * is generous and still far inside the 10-minute poll, so it cannot reach the next check.
@@ -257,13 +297,13 @@ function unwedge(): void {
     // explanation of it. Counted apart from wedges, so the health line stops reading
     // "154 wedges" for a laptop that spent three nights with its lid shut.
     log('slept', `${held} was in flight when the machine slept for ${Math.round(slept / 1000)}s (${secs}s on the clock) - dropping it and looking again`)
-    noteSleep()
+    noteSleep(now)
   } else {
     const cause = `${phaseNet || 'network unknown'} when it started, ${netWord()} now`
     log('wedged', `${held} never finished after ${secs}s (${cause}) - dropping it and looking again`)
     noteWedge(`${held} after ${secs}s, ${cause}`)
   }
-  droppedAt = now
+  dropRequest()
   macStaging = ''
   if (restoreStagedReady()) return
   // Not 'error': nothing the user asked for failed, and the next check is one tick away.
@@ -349,7 +389,7 @@ function busy(): boolean {
 // like nothing to do. One small file survives the restart and turns that into a number.
 const HEALTH = () => join(app.getPath('userData'), 'update-health.json')
 
-type Health = { lastGood: number; wedges: number; lastWedge?: string; superseded: number; sleeps: number }
+type Health = { lastGood: number; wedges: number; lastWedge?: string; superseded: number; sleptAt: number[] }
 
 function readHealth(): Health {
   try {
@@ -359,10 +399,11 @@ function readHealth(): Health {
       wedges: Number(raw.wedges) || 0,
       lastWedge: raw.lastWedge,
       superseded: Number(raw.superseded) || 0,
-      sleeps: Number(raw.sleeps) || 0
+      // An old file's lifetime `sleeps` total is ignored: it had no date to age out by.
+      sleptAt: recentSleeps(raw.sleptAt, Date.now())
     }
   } catch {
-    return { lastGood: 0, wedges: 0, superseded: 0, sleeps: 0 }
+    return { lastGood: 0, wedges: 0, superseded: 0, sleptAt: [] }
   }
 }
 
@@ -391,10 +432,10 @@ function noteWedge(what: string): void {
   writeHealth({ ...h, wedges: h.wedges + 1, lastWedge: `${new Date().toISOString()} ${what}` })
 }
 
-/** A check the machine slept through. Its own count: it says nothing about the feed. */
-function noteSleep(): void {
+/** A check the machine slept through, dated: it says nothing about the feed. A postponed poll is not one. */
+function noteSleep(now: number): void {
   const h = readHealth()
-  writeHealth({ ...h, sleeps: h.sleeps + 1 })
+  writeHealth({ ...h, sleptAt: recentSleeps([...h.sleptAt, now], now) })
 }
 
 // --- a staged build nobody ever installs ------------------------------------
@@ -1274,6 +1315,13 @@ export function initUpdater(onChange: Emit, enabled: boolean): void {
       // abort a check, so its request fails on its own clock and lands here as
       // `net::ERR_TIMED_OUT`; it used to write `error`, two `state error` lines and a
       // three-minute retry over a check already started over. One line, no badge.
+      // ...and by identity, not only by the clock: the request of a dropped check can fail
+      // minutes later (325s on 2026-10-01 03:05). While that very promise has not settled
+      // and no check of ours is running, a network failure is its end, never a new fault.
+      if (dropped && !budgetFor(state.phase) && NETWORK_FAILURE.test(message)) {
+        log('late answer', `${message.slice(0, 160)} - from a check dropped at ${new Date(droppedAt).toISOString()}, ${Math.round((Date.now() - droppedAt) / 1000)}s ago, no check of ours is running`)
+        return
+      }
       if (droppedAt && Date.now() - droppedAt < LATE_ANSWER_MS && !budgetFor(state.phase) && NETWORK_FAILURE.test(message)) {
         log('late answer', `${message.slice(0, 160)} - the end of the check dropped ${Math.round((Date.now() - droppedAt) / 1000)}s ago, already started over`)
         return
@@ -1379,10 +1427,14 @@ export async function pollOnce(): Promise<void> {
   // out the wake instead: a dark wake is over long before the settle, so its deferred
   // turn fires at the NEXT wake and defers again; a real wake runs the check once the
   // network has had its twenty seconds. One line per run of them, not one per wake.
-  if (auto && wake.justWoke(now)) {
-    if (!deferredWakes) log('poll', `the machine just woke - a check started now would die with a dark wake, so it waits ${Math.round(WAKE_SETTLE_MS / 1000)}s`)
+  // After a flurry the settle is longer (`pollSettle`), and one poll waits a bounded number
+  // of times (`deferPoll`), so a missed signal can never stop the checks for good.
+  const awake = wake.awakeFor(now)
+  if (auto && deferPoll(awake, deferredWakes)) {
+    const settle = pollSettle(deferredWakes)
+    if (!deferredWakes) log('poll', `the machine just woke - a check started now would die with a dark wake, so it waits ${Math.round(settle / 1000)}s`)
     deferredWakes++
-    arm(WAKE_SETTLE_MS + 500)
+    arm(Math.max(0, settle - awake) + 500)
     return
   }
   if (deferredWakes) {
@@ -1397,13 +1449,13 @@ export async function pollOnce(): Promise<void> {
     // several times" was. Keep looking, and swap the pending build for a newer one.
     if (state.phase === 'ready') {
       // A build that has been installable for hours is not a fault and is not hurried:
-      // this app installs one only when somebody presses Restart now or quits it. But
+      // it installs on Restart now, a quit, or a quiet desk (idleInstallBlocker). But
       // 0.8.207 sat staged for nearly 24 hours (2026-09-08 02:28 to 09-09 02:30) with
       // nothing said about it anywhere, so the wait is at least written down once.
       if (!stagedNagged && stagedTooLong(state.readyAt, Date.now())) {
         stagedNagged = true
         const hours = Math.round((Date.now() - (state.readyAt ?? 0)) / 3_600_000)
-        log('staged waiting', `v${state.version ?? ''} has been ready ${hours}h and is still not installed - it waits for Restart now or a quit, by design`)
+        log('staged waiting', `v${state.version ?? ''} has been ready ${hours}h and is still not installed - it waits for Restart now, a quit or a quiet desk, by design`)
       }
       await supersede()
     }
@@ -1434,7 +1486,7 @@ async function supersede(): Promise<void> {
     // Same stand-down as the main check: this is the path that logged the crash every
     // minute for 28 hours, because a ready build keeps it running forever.
     u.allowPrerelease = (await pinWinDevFeed(u)) ? false : devChannel && !(await devListBlind())
-    const result = (await failFast(u.checkForUpdates(), CHECK_BUDGET_MS, 'the update probe')) as {
+    const result = (await failFast(track(u.checkForUpdates()), CHECK_BUDGET_MS, 'the update probe')) as {
       updateInfo?: { version?: string }
     } | null
     // A feed answer clears both the fast-retry backoff and the timeout health run - and it
@@ -1490,6 +1542,7 @@ async function supersede(): Promise<void> {
     // a run of them is a check loop that is not going to notice a release, and until now
     // that read in the log exactly like one bad minute repeated.
     if (/did not answer within/.test(message)) {
+      dropRequest()
       const now = Date.now()
       probeRun = noteTimeout(probeRun, now)
       if (probeStuck(probeRun)) {
@@ -1527,7 +1580,7 @@ export async function checkForUpdates(): Promise<UpdateState> {
     // the same question by construction, so the flag is stood down under it.
     u.allowPrerelease = (await pinWinDevFeed(u)) ? false : devChannel && !(await devListBlind())
     set({ phase: 'checking', error: undefined })
-    await failFast(u.checkForUpdates(), CHECK_BUDGET_MS, 'the update check')
+    await failFast(track(u.checkForUpdates()), CHECK_BUDGET_MS, 'the update check')
   } catch (e) {
     const message = (e as Error)?.message ?? String(e)
     if (/did not answer within/.test(message)) {

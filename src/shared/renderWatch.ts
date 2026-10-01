@@ -85,7 +85,7 @@ export const SPIN_WINDOW_MS = 30 * 60_000
 export interface Watch {
   /** When Chromium last said the renderer stopped answering input. 0 = it is answering. */
   unresponsiveSince: number
-  /** When the outstanding liveness probe was sent. 0 = none outstanding. */
+  /** When the outstanding liveness probe was sent, on the awake clock. 0 = none outstanding. */
   probeSentAt: number
   /** The renderer process died (`render-process-gone`) and there is nothing to reload. */
   gone: boolean
@@ -116,7 +116,28 @@ export function noteRecovered(w: Watch, forMs: number, now: number): Watch {
 
 export type Act = 'wait' | 'reload' | 'recreate' | 'give-up'
 
-export function decide(w: Watch, now: number): Act {
+/**
+ * A tick this late means the machine slept (or main itself stalled), not the renderer.
+ *
+ * 2026-10-01 01:41 and 01:52Z: two reloads inside a five-hour sleep, "no answer to the
+ * liveness probe for 1021965ms" and "600996ms". The probe went out just before a suspend
+ * and the first tick of a dark wake judged it, ahead of the answer queued behind that tick.
+ * The interval runs every PROBE_EVERY_MS, so a gap this long is the watch's own clock
+ * stopping: the outstanding probe and Chromium's unresponsive clock are dropped and the
+ * next tick asks again. Same threshold as `shared/wakeWatch.ts` uses for the update poll.
+ */
+export const SLEEP_GAP_MS = 30_000
+
+export function afterGap(w: Watch, gapMs: number): Watch {
+  return gapMs >= SLEEP_GAP_MS ? { ...w, probeSentAt: 0, unresponsiveSince: 0 } : w
+}
+
+/**
+ * `awake` is the clock `probeSentAt` was stamped with: time the machine was awake
+ * (`process.hrtime` on macOS stops during sleep), so a probe is never judged on hours the
+ * renderer could not have answered in. Every other field is wall time, `now`.
+ */
+export function decide(w: Watch, now: number, awake = now): Act {
   const spent = w.reloads >= MAX_RELOADS
   // A dead renderer is not a slow one: there is no page left to reload, so the window has
   // to be rebuilt. Said before the cooldown, because a process that is GONE is not going
@@ -132,7 +153,7 @@ export function decide(w: Watch, now: number): Act {
   // the spin has already ended, which is exactly how this one escaped for two hours.
   if (w.spins >= MAX_SPINS) return 'reload'
   if (w.unresponsiveSince && now - w.unresponsiveSince >= GRACE_MS) return 'reload'
-  if (w.probeSentAt && now - w.probeSentAt >= PROBE_DEAD_MS) return 'reload'
+  if (w.probeSentAt && awake - w.probeSentAt >= PROBE_DEAD_MS) return 'reload'
   return 'wait'
 }
 

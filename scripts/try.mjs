@@ -238,6 +238,19 @@ if (minimized) {
   if (verdict !== 'spare') dropTestAppKeep()
 } else if (child.pid) keepTestApp(child.pid, profile)
 
+// Every copy is launched by an agent pane (PF_PANE), and a copy whose chat forgot it sat
+// open for hours (2026-10-01: chat 1's copy, idle 25 min, its brief lost). A watcher
+// closes it when that chat is gone or idle 15 minutes. `--keep` only skips the build -
+// it is in the very command agents are told to run - so it does not opt out of this.
+if (process.env.PF_PANE && child.pid) {
+  spawn(process.execPath, [join(root, 'scripts', 'try-reaper.mjs'), profile, String(child.pid), process.env.PF_PANE, String(Date.now())], {
+    cwd: root,
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true
+  }).unref()
+}
+
 const dockOrTaskbar = process.platform === 'darwin' ? 'Dock' : 'taskbar'
 console.log(`A second PaneForge is opening, marked "${profile}" next to the version number.
 ${
