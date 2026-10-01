@@ -1640,12 +1640,31 @@ function commitMachineWritten(dir) {
 }
 
 /**
+ * The git operation a checkout is in the middle of - merge, rebase, cherry-pick or revert -
+ * or null. Everything a half-done operation keeps (MERGE_HEAD, the rebase folders, the
+ * staged resolution) lives in the checkout's own git folder, so one lookup answers all four.
+ * A folder git will not answer about reads as "in the middle of something": the caller is
+ * deciding whether it may undo work, and "unknown" is not permission.
+ */
+function openOperation(dir) {
+  const g = gitSafe(dir, 'rev-parse', '--absolute-git-dir')
+  if (!g.ok || !g.out) return 'unknown'
+  const found = ['MERGE_HEAD', 'REBASE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'rebase-merge', 'rebase-apply'].find((n) =>
+    existsSync(join(g.out, n))
+  )
+  return found ?? null
+}
+
+/**
  * Make a free lane safe to hand to a new chat.
  *
- * A lane released by a chat that stopped mid-merge used to stay conflicted forever: no chat
- * owned it, so nobody resolved it, and every auto-sync run tripped over it. Nothing here can
- * lose work - it only touches a lane no live session holds, only aborts a merge that was
- * never finished, and only resets a branch whose commits master already has.
+ * Nothing here can lose work - it only touches a lane no live session holds, and only resets
+ * a branch whose commits master already has. A checkout with a merge, rebase, cherry-pick or
+ * revert open is not touched at all (2026-10-02, claude-memory lane b: a claim aborted the
+ * merge a chat was finishing and reset the folder, its staged resolution gone). The chooser
+ * never hands out a lane with uncommitted work on its own, so the only claim that reaches
+ * a half-done operation is one that asked for that exact folder - a chat protecting the work
+ * in it - and undoing the operation is the one thing that chat cannot be given back.
  */
 function healLane(id) {
   const dir = laneDir(id)
@@ -1654,15 +1673,8 @@ function healLane(id) {
   // is what made a broken lane look like one with uncommitted work in it. ensureWorktree
   // owns that repair; every caller here has already been through it.
   if (!isWorktree(dir)) return null
+  if (openOperation(dir)) return null
   const did = []
-  if (gitSafe(dir, 'rev-parse', '--verify', '--quiet', 'MERGE_HEAD').ok) {
-    gitSafe(dir, 'merge', '--abort')
-    did.push('aborted an unfinished merge')
-  }
-  if (gitSafe(dir, 'rev-parse', '--verify', '--quiet', 'REBASE_HEAD').ok) {
-    gitSafe(dir, 'rebase', '--abort')
-    did.push('aborted an unfinished rebase')
-  }
   const clean = !gitSafe(dir, ...WORK_STATUS).out
   if (clean && aheadOf(laneBranch(id)) === 0) {
     // Every change in this lane is already in master: start the next chat from master
@@ -5057,6 +5069,12 @@ function statusOf(state, session, held) {
         // purpose (see holdGivenUp, reap), a press away from being what it was.
         asleep: state.lanes[id]?.asleep ?? null,
         from: state.lanes[id]?.cwd ?? null,
+        // Which pane the holder lives in, and when its chat ended: the two facts `claim`
+        // uses to hand a hold to the same pane's next chat after a /clear. A caller that
+        // must not start a new copy for a chat (the prompt hook, in a repo that never gets
+        // lanes) reads them to tell "that pane's earlier chat" from "somebody else".
+        pane: state.lanes[id]?.pane ?? null,
+        ended: state.lanes[id]?.ended ?? null,
         // When the HOLD was last refreshed - a heartbeat bumped by that chat's turns
         // ending, so it says how long ago the chat was last alive rather than anything
         // about work. Without it every hold reads the same: taskdriver.ai printed five
