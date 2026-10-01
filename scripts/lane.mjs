@@ -3143,31 +3143,111 @@ function installDeps() {
 
 const RBUILD = join(homedir(), '.claude', 'rbuild.mjs')
 
+/** How long one try waits on its PC typecheck before handing the job to the next try. */
+const TYPECHECK_WAIT_S = 900
+
+/**
+ * The tree id of everything rbuild would ship from `dir`: the commit plus every edit and
+ * new file .gitignore keeps, staged into a throwaway index so the real one is never
+ * touched. Null when git cannot say, and then nothing is reused.
+ */
+function workingTree(dir) {
+  const index = join(tmpdir(), `lane-tree-${process.pid}-${randomUUID()}`)
+  try {
+    const real = gitSafe(dir, 'rev-parse', '--git-path', 'index')
+    if (!real.ok) return null
+    // A copy of the real index keeps git's stat cache, so only changed files are re-read.
+    copyFileSync(resolve(dir, real.out), index)
+    const env = { ...process.env, GIT_INDEX_FILE: index }
+    const opts = { cwd: dir, env, encoding: 'utf8', windowsHide: true, timeout: 60_000 }
+    if (spawnSync('git', ['add', '-A'], opts).status !== 0) return null
+    const tree = spawnSync('git', ['write-tree'], opts)
+    return tree.status === 0 ? tree.stdout.trim() : null
+  } catch {
+    return null
+  } finally {
+    try {
+      unlinkSync(index)
+    } catch {}
+  }
+}
+
 /**
  * On the Mac the typecheck runs on the PC through rbuild: nothing heavy runs on the laptop,
  * and a loaded Mac timed the local one out (see below). `undefined` means "not handled
  * here, run it locally"; null means it passed; a sentence means it did not.
  * A repo under the temp dir stays local: the fixture tests stub npm and must not reach the PC.
+ *
+ * One PC job per tree, remembered in the ledger (`state.typecheck`), and a try that runs
+ * out of time leaves it for the next try instead of queueing another. Measured 2026-10-01:
+ * with 25 jobs in the PC queue every try submitted a fresh job at the back, was killed
+ * 20 minutes later still queued (its ssh waiter orphaned, its job still bound to run for
+ * nobody), and the retry timer started over at the back - three copies of one master
+ * typecheck queued 09:32-09:50 and lane e's finished fix never merged. The wait now ends
+ * inside rbuild (`--wait` with a budget), so nothing is killed mid-connection.
  */
-function remoteTypecheckFailure() {
+function remoteTypecheckFailure(state) {
   if (process.platform !== 'darwin' || !existsSync(RBUILD)) return undefined
   const tmp = tmpdir()
   if ([tmp, `/private${tmp}`].some((t) => MAIN.startsWith(t))) return undefined
-  const at = process.argv.indexOf('--session')
-  const session =
-    (at >= 0 && process.argv[at + 1]) || process.env.CLAUDE_SESSION_ID || process.env.CODEX_THREAD_ID || `lane-${hostname()}`
-  const r = spawnSync(process.execPath, [RBUILD, '--repo', MAIN, '--session', session, 'typecheck'], { windowsHide: true,
+  // Merged into a fresh read, same as the suite verdict: this holds `state` for up to
+  // 20 minutes and must not write back a stale copy of everything else.
+  const remember = (typecheck) => {
+    const fresh = read()
+    for (const s of [state, fresh]) {
+      if (typecheck) s.typecheck = typecheck
+      else delete s.typecheck
+    }
+    write(fresh)
+  }
+  const tree = workingTree(MAIN)
+  const known = tree && state.typecheck?.tree === tree ? state.typecheck : null
+  if (known && 'verdict' in known) return known.verdict
+  let id = known?.id
+  if (!id) {
+    const at = process.argv.indexOf('--session')
+    const session =
+      (at >= 0 && process.argv[at + 1]) || process.env.CLAUDE_SESSION_ID || process.env.CODEX_THREAD_ID || `lane-${hostname()}`
+    const sent = spawnSync(process.execPath, [RBUILD, '--repo', MAIN, '--session', session, '--no-wait', 'typecheck'], {
+      windowsHide: true,
+      encoding: 'utf8',
+      timeout: 600_000
+    })
+    id = /rbuild: job ([0-9a-f-]{36}) saved/.exec(sent.stderr ?? '')?.[1]
+    if (!id) {
+      const all = `${sent.stdout ?? ''}${sent.stderr ?? ''}`
+      return (
+        `${MB}'s typecheck could not be sent to the PC, so nothing was released - ${firstLine(all) || sent.error?.message || `exit ${sent.status}`}. ` +
+        `That is the remote runner, not the code.`
+      )
+    }
+    if (tree) remember({ tree, id, at: now() })
+  }
+  const r = spawnSync(process.execPath, [RBUILD, '--wait', id, String(TYPECHECK_WAIT_S)], {
+    windowsHide: true,
     encoding: 'utf8',
-    timeout: 1_200_000
+    // rbuild ends its own wait at TYPECHECK_WAIT_S (+120s for its ssh); this is only a backstop.
+    timeout: (TYPECHECK_WAIT_S + 300) * 1000
   })
-  if (r.status === 0) return null
+  if (r.status === 75) {
+    return (
+      `${MB}'s typecheck is still waiting its turn on the PC (job ${id.slice(0, 8)}), so nothing was released yet. ` +
+      `The next try waits on that same job rather than queueing another.`
+    )
+  }
   const all = `${r.stdout ?? ''}${r.stderr ?? ''}`
   const detail = all
     .split('\n')
     .filter((l) => /error TS/.test(l))
     .slice(0, 3)
     .join('; ')
-  if (detail) return `${MB} does not typecheck, so it was not released - ${detail}. Fix it and it goes out by itself.`
+  if (r.status === 0 || detail) {
+    const verdict = detail ? `${MB} does not typecheck, so it was not released - ${detail}. Fix it and it goes out by itself.` : null
+    if (tree) remember({ tree, id, at: now(), verdict })
+    return verdict
+  }
+  // Cancelled, timed out on the PC, or a job rbuild no longer knows: the next try sends a new one.
+  if (known || tree) remember(null)
   return (
     `${MB}'s typecheck could not run on the PC, so nothing was released - ${firstLine(all) || r.error?.message || `exit ${r.status}`}. ` +
     `That is the remote runner, not the code.`
@@ -3227,7 +3307,7 @@ function typecheckFailure(state) {
     const failed = installDeps()
     if (failed) return failed
   }
-  const remote = remoteTypecheckFailure()
+  const remote = remoteTypecheckFailure(state)
   if (remote !== undefined) return remote
   // One string + shell: npm on Windows is npm.cmd, which cannot be spawned directly.
   const r = spawnSync('npm run --silent typecheck', { windowsHide: true,
