@@ -1101,6 +1101,8 @@ const ANSWERING =
   }
   received('sess-review-restored')
   await logSays(restored.id, /Claude transcript receipt/)
+  // The receipt is logged a few ms before the follower is typed: wait for the paste itself.
+  for (const until = Date.now() + 1500; Date.now() < until && !restoredLive.proc.writes.some(data => data.includes(follower)); ) await sleep(5)
   ok(rowsFor(restored.id).length === 0 && restoredLive.proc.writes.filter(data => data.includes(follower)).length === 1 && !restoredLive.proc.writes.some(data => data.includes(BRIEF)),
     'only the entire native payload releases the retained owner and permits one follower paste', logOf(restored.id))
   const oldReply = manager.replyFor
