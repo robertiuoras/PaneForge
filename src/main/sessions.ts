@@ -99,7 +99,7 @@ import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from '.
 import { claimFromCli, claimCodexFromProcess, claudeAcceptedPrompt, claudeStartup, codexAcceptedPrompt, codexConversationReceipt, codexPromptReceipt, codexQuestionPending, forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeEvidence, resumeIdFor, transcriptFor, transcriptPath } from './transcripts'
 import { recordPromptReview } from './promptReview'
 import { liveModelFor } from './paneModel'
-import { backgroundAgentsFor, backgroundWorkerReadingFor, forgetBackgroundAgents, noteBackgroundAgents } from './runningAgents'
+import { backgroundAgentsFor, backgroundWorkerReadingFor, forgetBackgroundAgents, noteBackgroundAgents, pendingBackgroundFor } from './runningAgents'
 import { codexWorkersFor, forgetCodexWorkers } from './codexWorkers'
 // How hard a Codex pane thinks. The rule is `shared/effort.ts`, the disk is
 // `main/effort.ts`, the levels each model offers come from Codex itself.
@@ -902,6 +902,18 @@ export class SessionManager extends EventEmitter {
    * user had already finished with - which is how a workspace grows a tab per
    * update until the window is full of CLIs nobody asked for.
    */
+  /**
+   * A live Claude pane whose turn is over but whose CLI still owes work to a background
+   * agent, a `run_in_background` shell command, or a task notification not yet acted on.
+   * A restart kills that work with the process, so the pane must come back RESUMED and be
+   * told to continue, not asleep (pane 2, 2026-10-01: waiting on a background Bash, `runSince`
+   * unset, killed with the app, restored asleep). Reads the sweep's cached transcript scan.
+   */
+  private hasPendingBackground(s: Live): boolean {
+    if (s.meta.agent !== 'claude' || s.meta.asleep || s.meta.status === 'exited' || !s.proc) return false
+    return pendingBackgroundFor(s.meta.id, procBorn.get(s.proc))
+  }
+
   snapshot(): StartSessionRequest[] {
     return [...this.sessions.values()]
       // A SLEEPING pane is `exited` too and is not an ended run - it is a card somebody
@@ -953,7 +965,7 @@ export class SessionManager extends EventEmitter {
         // turn evidence when available, retaining the clock for other agents.
         wasWorking: (s.meta.agent === 'codex' && !s.meta.asleep
           ? rolloutTurn(codexTranscriptPath(s.meta.cwd, resumeIdFor(s.meta.id) ?? '')).inProgress
-          : undefined) ?? Boolean(s.meta.runSince),
+          : undefined) ?? (Boolean(s.meta.runSince) || this.hasPendingBackground(s)),
         // ...and whether this pane was picking its own reasoning effort. Only the choice
         // survives, never the level: the pane comes back as a new conversation's worth of
         // launch flag, and what it is really running is confirmed from the rollout again.
