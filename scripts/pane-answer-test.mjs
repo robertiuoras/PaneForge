@@ -10,7 +10,7 @@ try {
   const source = readFileSync('src/main/sessions.ts', 'utf8')
   const methods = source.slice(source.indexOf('  answerStatus('), source.indexOf('  draftOf('))
   const ownershipWrite = source.slice(source.indexOf('  write(id: string,'), source.indexOf('    // Before a byte moves:', source.indexOf('  write(id: string,')))
-  const queueVerdict = source.slice(source.indexOf('    const verdict = (live: Live,'), source.indexOf('    // The busy read is of the LAST THING PAINTED', source.indexOf('    const verdict = (live: Live,')))
+  const queueVerdict = source.slice(source.indexOf('    const queuedLive = this.sessions.get(id)'), source.indexOf('    // The busy read is of the LAST THING PAINTED', source.indexOf('    const verdict = (live: Live,')))
   const fixture = `
 import { PaneAnswers } from ${JSON.stringify(resolve('src/main/paneAnswers.ts'))}
 import { feedDraft, newDraft } from ${JSON.stringify(resolve('src/shared/draft.ts'))}
@@ -37,7 +37,7 @@ export class Harness {
   sessions=new Map(); answering=new Set(); pendingAnswers=new Map(); codexQueued=new Map(); autoClearPending=new Set(); autoClearArmTimers=new Map(); answerLedger; writes=[]
   setOwedPrompt(id,v){this.sessions.get(id).meta.owedPrompt=v}
   write(id,text){const l=this.sessions.get(id);this.writes.push(text);l.draft=feedDraft(l.draft,text).state;if(text==='\\r')l.meta.lastKeyboard=clock}
-  queueVerdict(id, composerIdle=false){const live=this.sessions.get(id),owner=this.codexQueued.get(id),mark=0,takenMark=0,deadline=0,personDeadline=0,PERSON_QUIET_MS=120;${queueVerdict}return verdict(live,composerIdle)}
+  queueVerdict(id, composerIdle=false){const proof='turn',live=this.sessions.get(id),owner=this.codexQueued.get(id),mark=0,takenMark=0,deadline=0,personDeadline=0,PERSON_QUIET_MS=120;${queueVerdict}return verdict(live,composerIdle)}
   cancelCodexQueued(){throw Error('No cancellation expected')}
   ${ownershipWrite.replace('  write(', 'ownershipWrite(')}
   }

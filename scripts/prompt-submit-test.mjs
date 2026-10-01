@@ -715,7 +715,9 @@ const ANSWERING =
     const cx = manager.start({ cwd: root, agent: 'codex' })
     const cxp = manager.sessions.get(cx.id).proc
     manager.queuePrompt(cx.id, BRIEF, 0, 40, undefined, 5000)
-    cxp.say(COMPOSER)
+    // The queue reads Codex's composer off the replayed screen before it pastes, so the
+    // frame is a drawn one (alternate screen, `› ` row, status row), not a bare placeholder.
+    cxp.say('\x1b[?1049h\x1b[2J\x1b[5;1H› \x1b[7;1H  gpt-6.1-sol · 50% left\x1b[5;3H')
     await typedAt(cxp, 1500)
     const cw = cxp.writes.find((x) => x.includes('RESEARCH QUESTION')) ?? ''
     ok(cw === '\x1b[200~' + BRIEF + '\x1b[201~', 'a Codex prompt goes in as one bracketed paste too', JSON.stringify(cw.slice(0, 40)))

@@ -793,6 +793,9 @@ ok(!server.running, 'the gate test server stopped cleanly')
     // is a bigger log file.
     'reclaim:log',
     'pane:fixlog',
+    // Reviewed 2026-10-01: one `sweep: ` line in this desk's own handoff log saying why the
+    // move sweep moved nothing. Other text is dropped; it starts and types nothing.
+    'handoff:log',
     // Reviewed 2026-09-23: stamps when a person last pressed a pane, which only HOLDS the
     // finished-pane sweep. It starts, stops and types nothing.
     'sessions:touched',

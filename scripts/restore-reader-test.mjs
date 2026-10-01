@@ -59,7 +59,7 @@ try{
 
 // Exercise the actual reset handler: a full log omits a screen of trailing repaint
 // blanks that the live buffer had. Keeping tail distance used to move the reader.
-const resetFrom=src.indexOf('    const receiveReset = (')
+const resetFrom=src.indexOf('    let widenForReset: (() => void) | null = null')
 const resetTo=src.indexOf('\n    const writeData =',resetFrom)
 assert(resetFrom>0&&resetTo>resetFrom)
 const resetCode=transformSync(src.slice(resetFrom,resetTo),{loader:'ts'}).code

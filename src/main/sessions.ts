@@ -2245,8 +2245,10 @@ export class SessionManager extends EventEmitter {
       backslashNewline: continuesOnBackslash(live.meta.agent)
     })
     // Keep the automatic-close/clear hold after Enter until a fresh screen proves
-    // the box empty. Startup and paste handling can swallow that very key.
-    if (live.meta.agent !== 'shell' && whole.submitted.length &&
+    // the box empty. Startup and paste handling can swallow that very key. Not for an
+    // `app` write: a queued prompt's return is confirmed by its own receipt, and holding
+    // the box as a draft would stall the very next queued prompt (a model switch's resume).
+    if (origin !== 'app' && live.meta.agent !== 'shell' && whole.submitted.length &&
         (whole.submitted.some((line) => line.trim()) || !live.draft.certain)) {
       live.draftConfirmation = {
         prompt: live.draft.certain ? whole.submitted.join('\n') : '',
@@ -4196,8 +4198,17 @@ export class SessionManager extends EventEmitter {
     // though its last keystroke predates `mark`. The boot timeout is not permission
     // to paste into a running conversation. Autoclear owns its own handover wait.
     const queuedLive = this.sessions.get(id)
-    let waitingForTurn = proof === 'turn' && Boolean(queuedLive?.meta.runSince) && !queuedLive?.meta.handoverUntil
+    // Not behind a prompt of ours still held in this composer: its own return stamped
+    // `runSince`, and that retained owner already gates this one until its receipt.
+    let waitingForTurn = proof === 'turn' && Boolean(queuedLive?.meta.runSince) && !queuedLive?.meta.handoverUntil &&
+      !this.codexQueued.get(id)?.since
     const verdict = (live: Live, composerIdle: boolean): QueuedPromptVerdict => {
+      // An authenticated answer is steering this same turn, not a person claiming
+      // the composer. Keep waiting through delayed questions; actual drafting or
+      // foreign input still restores the person's existing far ceiling.
+      const personExpired = Date.now() >= personDeadline && !(owner?.answerKeyboard !== undefined &&
+        owner.answerKeyboard === live.meta.lastKeyboard && !owner.foreign &&
+        !live.meta.drafting && !live.typed?.trim())
       const decision = queuedPromptDecision({
         exists: true,
         lastKeyboard: live.meta.lastKeyboard,
@@ -4206,12 +4217,7 @@ export class SessionManager extends EventEmitter {
         composerIdle,
         expired: Date.now() >= deadline,
         tookOver: (live.meta.tookOverAt ?? 0) > takenMark,
-        // An authenticated answer is steering this same turn, not a person claiming
-        // the composer. Keep waiting through delayed questions; actual drafting or
-        // foreign input still restores the person's existing far ceiling.
-        personExpired: Date.now() >= personDeadline && !(owner?.answerKeyboard !== undefined &&
-          owner.answerKeyboard === live.meta.lastKeyboard && !owner.foreign &&
-          !live.meta.drafting && !live.typed?.trim()),
+        personExpired,
         turnLive:
           Boolean(live.meta.runSince) ||
           live.busyUntil > Date.now() ||
@@ -4220,7 +4226,7 @@ export class SessionManager extends EventEmitter {
       if (decision === 'abandon') return decision
       if (waitingForTurn) {
         if (live.meta.runSince || live.busyUntil > Date.now()) {
-          return Date.now() >= personDeadline ? 'abandon' : 'wait'
+          return personExpired ? 'abandon' : 'wait'
         }
         waitingForTurn = false
       }
