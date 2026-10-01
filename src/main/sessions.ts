@@ -66,7 +66,7 @@ import { dropStale, lentGrid, watchedBorrow, type Borrow } from '../shared/paneS
 import { START_COLS, START_ROWS } from '../shared/paneGrid'
 import { LIVE_REPLAY_LIMIT } from '../shared/freshReplay'
 import { paintedWidth, RESTORE_MARK_TEXT } from '../shared/replayWidth'
-import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, SUBMIT_GAP_MS, armDecision, clearChunks, hasFreshPaneHandoff, resumeOf, dropFor, dropWords, expiryDecision, queuedPromptDecision, quietEnoughToArm, standDownFor, type DropReason, type QueuedPromptVerdict } from '../shared/autoclear'
+import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, SUBMIT_GAP_MS, armDecision, clearChunks, contentStampAfter, hasFreshPaneHandoff, resumeOf, dropFor, dropWords, expiryDecision, queuedPromptDecision, quietEnoughToArm, standDownFor, type DropReason, type QueuedPromptVerdict } from '../shared/autoclear'
 import { acLog } from './autoclearLog'
 import { dropAllFor, noteAccepted, noteNativeAccepted, noteTyped, noteDropped, noteSubmitted, noteWithheld, owedAfterRestore, owedCount, stillOwed, typedOwed } from './queuedPrompts'
 import type { QueueDrop } from '../shared/queuedPrompts'
@@ -558,6 +558,14 @@ interface Live {
   paintSeq: number
   /** When the newest data event arrived, grace repaints included. */
   paintedAt: number
+  /**
+   * When this pane last SAID something: `meta.lastOutput` minus the once-a-second tick of a
+   * footer counter on a pane that is not mid-turn (`contentStampAfter`). Read by the three
+   * autoclear quiet gates and nothing else - a finished pane carrying a background agent
+   * repaints its timer for ever, and `lastOutput` on it is never 10s old (s72, 2026-10-02:
+   * 115 holds in 20 minutes, no clear). Reset wherever `lastOutput` is.
+   */
+  contentAt: number
   /**
    * When this pane was WOKEN, until its CLI prints something. 0 the rest of the time.
    *
@@ -1131,6 +1139,7 @@ export class SessionManager extends EventEmitter {
       repaintUntil: 0,
       paintSeq: 0,
       paintedAt: 0,
+      contentAt: Date.now(),
       wokeAt: 0,
       turnPending: false,
       footerEndedAt: 0,
@@ -1433,6 +1442,7 @@ export class SessionManager extends EventEmitter {
     live.meta.lastRunMs = undefined
     live.meta.createdAt = Date.now()
     live.meta.lastOutput = Date.now()
+    live.contentAt = live.meta.lastOutput
     live.meta.lastKeyboard = Date.now()
     live.repaintUntil = 0
     this.emit('data', id, RESET)
@@ -1741,6 +1751,7 @@ export class SessionManager extends EventEmitter {
     // `openedAt` is the pane's own age and a sleep does not interrupt it.
     live.meta.createdAt = Date.now()
     live.meta.lastOutput = Date.now()
+    live.contentAt = live.meta.lastOutput
     live.meta.lastKeyboard = Date.now()
     live.repaintUntil = 0
     // Not a caption: the pane says "Starting <agent>..." over the terminal already
@@ -3357,7 +3368,7 @@ export class SessionManager extends EventEmitter {
     // countdown over that and requeueing it a second later, the arm waits out the
     // remainder and asks again - by which time `dropFor` sees the new turn and queues it
     // properly. Re-entering here is safe: a pane that stayed quiet arms on the second pass.
-    const quiet = Date.now() - s.meta.lastOutput
+    const quiet = Date.now() - s.contentAt
     if (!quietEnoughToArm(quiet)) {
       const wait = Math.max(250, ARM_QUIET_MS - quiet)
       const prev = this.autoClearArmTimers.get(id)
@@ -3430,7 +3441,7 @@ export class SessionManager extends EventEmitter {
         armedAt,
         now: Date.now(),
         drop: live ? dropFor({ ...live.meta, typed: live.typed }) : 'gone',
-        quietMs: live ? Date.now() - live.meta.lastOutput : undefined
+        quietMs: live ? Date.now() - live.contentAt : undefined
       })
       acLog(
         `${id} expiry: ${verdict} (armed ${armedAt}, meta ${live?.meta.autoClearAt ?? 'none'})`
@@ -3455,7 +3466,7 @@ export class SessionManager extends EventEmitter {
       if (verdict === 'settling') {
         const next = Date.now() + DRAFT_RETRY_MS
         live!.meta.autoClearAt = next
-        acLog(`${id} waiting: the pane printed ${Date.now() - live!.meta.lastOutput}ms ago and may not be finished - asking again at ${new Date(next).toISOString()}`)
+        acLog(`${id} waiting: the pane printed ${Date.now() - live!.contentAt}ms ago and may not be finished - asking again at ${new Date(next).toISOString()}`)
         this.emitSessions()
         const again = setTimeout(() => fire(next), DRAFT_RETRY_MS)
         again.unref?.()
@@ -3516,7 +3527,7 @@ export class SessionManager extends EventEmitter {
         // before writing: a person may submit, open a question, or recall a history line
         // in this window. The clear is not complete until its command reaches the pty.
         const late = dropFor({ ...current.meta, typed: current.typed })
-        const lateQuiet = Date.now() - current.meta.lastOutput
+        const lateQuiet = Date.now() - current.contentAt
         if (!late && !quietEnoughToArm(lateQuiet)) {
           const next = Date.now() + DRAFT_RETRY_MS
           current.meta.autoClearAt = next
@@ -4018,6 +4029,9 @@ export class SessionManager extends EventEmitter {
       // own banner is not working for you. Submitting a prompt starts it, and the
       // agent's busy footer starts one this app never saw typed.
       meta.lastOutput = now
+      // The autoclear quiet floor's own reading: every byte, EXCEPT a footer counter ticking
+      // on a pane that is not mid-turn. See `contentStampAfter`.
+      live.contentAt = contentStampAfter({ stamp: live.contentAt, now, idle: wasIdle, chunk: data })
       // Output alone is not work either, and the status used to say it was: eight panes
       // relaunched at startup all painted their own banner within a second and the whole
       // sidebar went green - running clocks, lit Ctrl-N keys - while every one of them was
