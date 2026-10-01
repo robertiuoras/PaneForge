@@ -593,18 +593,30 @@ const ANSWERING =
     return 0
   }
   const open = () => {
+    const t0 = Date.now()
     const pane = manager.start({ cwd: root, agent: 'claude' })
     const p = manager.sessions.get(pane.id).proc
     manager.queuePrompt(pane.id, BRIEF, 0, 40, undefined, 5000)
     p.say(IDLE)
-    return { pane, p, at: Date.now() }
+    return { pane, p, t0, at: Date.now() }
   }
 
   // s113: the pid file is there, the hooks are not done. The composer is idle the whole time.
+  // The hold ends at PF_PROMPT_STARTUP_MS of process age, by design. PC job 0f0f73e5 spent
+  // 6.6s between minting the pane id and returning from open(), so the first look found a
+  // process past that ceiling and typed at once - the ceiling working, not a missed hold.
+  // A pane typed only once PF_PROMPT_STARTUP_MS had passed since open() began is judged
+  // again on one fresh pane; a second such stall fails the case.
   cli('sess-running')
   hooksPending('sess-running')
-  const a = open()
-  const early = await typedAt(a.p, 900)
+  let a, early
+  for (let attempt = 1; ; attempt++) {
+    a = open()
+    early = await typedAt(a.p, 900)
+    if (!early || early - a.t0 < Number(process.env.PF_PROMPT_STARTUP_MS) || attempt === 2) break
+    console.log(`note  opening the pane took ${a.at - a.t0}ms, past the ${process.env.PF_PROMPT_STARTUP_MS}ms hold; judged on a fresh pane`)
+    manager.kill(a.pane.id)
+  }
   ok(!early, 'a prompt is not typed while Claude Code is still running its SessionStart hooks',
     `typed ${early ? early - a.at : '-'}ms in\n${logOf(a.pane.id)}`)
   hooksDone('sess-running')
