@@ -258,6 +258,7 @@
     "test:laneorphan": "node scripts/lane-orphan-test.mjs",
     "test:laneadopt": "node scripts/lane-adopt-test.mjs",
     "test:lanecleared": "node scripts/lane-cleared-test.mjs",
+    "test:lanedamaged": "node scripts/lane-damaged-test.mjs",
     "test:lanetaskdriver": "node scripts/lane-taskdriver-pc-test.mjs",
     "test:laneforeign": "node scripts/lane-foreign-test.mjs",
     "test:lanelock": "node scripts/lane-lock-test.mjs",
