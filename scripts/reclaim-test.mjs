@@ -344,11 +344,12 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
     eq('a kept pane under pressure keeps every OTHER refusal', idleSleepPlan([pane({ id: 'k', pinned: true, busy: true, lastKeyboard: NOW - 9 * HOUR })], cfg, NOW, true, 'over').length, 0)
     eq('and closing a kept pane stays refused under pressure', idleClosePlan(kept(), { ...cfg, idleCloseMinutes: 5 }, NOW).length, 0)
   }
-  // A pane that fell asleep (or came back asleep after a restart) is on the close clock
-  // like any other: 5 of 7 panes sat asleep for ten hours on 2026-09-02 because this
-  // refused them. Robert: "id rather them to close than sleep".
+  // A pane that FELL asleep is on the close clock like any other: 5 of 7 panes sat asleep
+  // for ten hours on 2026-09-02 because this refused them. Robert: "id rather them to
+  // close than sleep". (One a restart brought back asleep is the exception since
+  // 2026-10-01 - see the born-asleep CONTROL below.)
   {
-    const slept = pane({ id: 'slept', asleep: NOW - 3 * HOUR, asleepReason: 'restored', state: 'exited', lastKeyboard: NOW - 9 * HOUR, lastOutput: NOW - 9 * HOUR })
+    const slept = pane({ id: 'slept', asleep: NOW - 3 * HOUR, asleepReason: 'idle', state: 'exited', lastKeyboard: NOW - 9 * HOUR, lastOutput: NOW - 9 * HOUR, lastFocus: NOW - 8 * HOUR })
     const pad = pane({ id: 'pad', lastKeyboard: NOW })
     eq('an asleep pane past the clock is closed', ids(idleClosePlan([slept, pad], CLOCKED, NOW)), 'slept')
     check('...and its card carries the countdown', idleCloseAt(slept, CLOCKED, NOW) !== null)
@@ -420,13 +421,21 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
       ids(idleClosePlan([sleptRead, pad], CLOCKED, NOW)),
       'sleptread'
     )
-    // CONTROL 2: the born-asleep pane the old clause was written for, same shape, still
-    // goes - the 2026-09-02 fix is untouched.
+    // CONTROL 2: the born-asleep pane, same shape, is NOT on this clock at all. It holds
+    // no process, so closing it frees nothing, and its quiet clock began at the relaunch:
+    // on 2026-09-30 s7/s8 (04:55Z) and s6/s8 (11:30Z) were live chats before a restart and
+    // were closed ten minutes after it, before anybody had looked at the desk. It leaves
+    // through the asleep sweep instead, thirty minutes after somebody is first at the window.
     const bornAsleep = pane({ ...sleptUnread, id: 'born', asleepReason: 'restored' })
     eq(
-      'CONTROL: a pane the restore brought back asleep still closes',
+      'CONTROL: a pane the restore brought back asleep is NOT closed by the idle clock',
       ids(idleClosePlan([bornAsleep, pad], CLOCKED, NOW)),
-      'born'
+      ''
+    )
+    eq(
+      '...even once somebody has read it',
+      ids(idleClosePlan([{ ...bornAsleep, lastFocus: NOW - 4 * HOUR }, pad], CLOCKED, NOW)),
+      ''
     )
     // CONTROL 3: a desk no person has touched reads nothing, so the refusal lifts there -
     // the same escape every other unread pane has.

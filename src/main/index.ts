@@ -104,6 +104,7 @@ import {
   whenClear
 } from './gameMode'
 import { away, startAway, stopAway } from './away'
+import { deskNow } from '../shared/away'
 import { idleHideDeskChanged, idleHideShown, startIdleHide } from './idleHide'
 import { onBatteryNow, watchPower } from './power'
 import {
@@ -2393,7 +2394,8 @@ function exitedFacts(): ExitedFact[] {
     ask: s.ask,
     handingOff: s.handingOff,
     lastKeyboard: Math.max(s.lastKeyboard ?? 0, touchedAt.get(s.id) ?? 0) || undefined,
-    keepOpen: s.keepOpen || keptOpen(s.id)
+    keepOpen: s.keepOpen || keptOpen(s.id),
+    restored: s.asleepReason === 'restored'
   }))
 }
 /**
@@ -2468,11 +2470,15 @@ ipcMain.handle('sessions:clearFinished', () => {
 })
 // The automatic half: the same facts the button reads, checked on its own clock so a
 // pane nobody presses the button on still leaves the sidebar ten minutes after it dies.
+// When a person was first at the window this launch: a restored-asleep pane's clock starts
+// there (`asleepSweep`), and freezes while they are away like the idle clock does.
+let deskSeenAt: number | null = null
 setInterval(() => measureMainTask('exited-close', () => {
   const facts = exitedFacts()
   const now = Date.now()
+  if (deskSeenAt === null && manager.deskWatched?.()) deskSeenAt = now
   // Sleeping panes only when finished panes close themselves at all (Settings).
-  const asleep = getConfig().autoCloseDone !== false ? asleepSweep(facts, now) : []
+  const asleep = getConfig().autoCloseDone !== false ? asleepSweep(facts, deskNow(now, away().awaySince), deskSeenAt) : []
   removeFinished([...exitedSweep(facts, now), ...asleep])
 }), 30_000).unref()
 ipcMain.handle('sessions:buffer', (_e, id: string) =>
