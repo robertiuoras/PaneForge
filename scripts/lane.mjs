@@ -285,10 +285,20 @@ const OWN = (() => {
  * asked for a lane called `w2`, and this file would have gone and made `lane-w2` on top of
  * the `pf/w2` worktree that was already sitting at that path.
  *
- * Eight letters because that is how many the window offers. A repo that wants fewer, more,
- * or different says so in its own `.lanes.json` `pool`.
+ * Three, because three is what a person who has never heard of any of this needs: the
+ * project's own folder and two more chats. Eight was the old default, and eight copies of
+ * one repository is what put `PaneForge-a` .. `PaneForge-h` on the disk and rows reading
+ * `copy 6`, `copy 7` on the screen of somebody who had opened two chats. Headroom is free
+ * to the engine and expensive to the reader, and the reader is the one who has to make
+ * sense of the folder list. A repo that wants fewer, more, or different says so in its own
+ * `.lanes.json` `pool` - this one does, because Robert runs many chats on it.
+ *
+ * Copies past the end of the pool are never deleted: shrinking the default leaves any
+ * `<repo>-c` already on disk exactly where it is, with its branch and its commits, and
+ * simply stops handing it out. src/main/lanes.ts reads the same `pool` for the copies the
+ * window itself makes, so the two halves cannot disagree about how many there are.
  */
-const DEFAULT_POOL = ['main', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
+const DEFAULT_POOL = ['main', 'a', 'b']
 
 function loadProfile() {
   let cfg = {}
@@ -394,6 +404,25 @@ const STALE_MS = 12 * 60 * 60 * 1000
 // and had to wait for a human to close a window. Nothing can be lost: a lane with so much
 // as one uncommitted character is never taken, however long it has been quiet.
 const IDLE_EMPTY_MS = 60 * 60 * 1000
+// A hold whose chat has said nothing for this long, over a checkout with NOTHING IN IT, is
+// released outright - not held until somebody else needs it, the way IDLE_EMPTY_MS is.
+//
+// The two rules answer different questions. IDLE_EMPTY_MS is asked when the pool is full
+// and a chat is about to be told to wait; this one is asked on every `status`, and it
+// exists because what `status` answers is what a person READS. Four copies "in use" by
+// chats last heard from nine hours ago is a true sentence about the ledger and a false one
+// about the desk - and with a three-lane pool it is also what tells the fourth chat to wait
+// for a chat that went home.
+//
+// The FACT frees it, not the clock: clean tree, no commits the trunk lacks, no ready mark,
+// no conflict - the same four checks drainLane makes before it rescues anything. A copy
+// holding so much as one uncommitted character, or one unmerged commit, keeps its hold for
+// the full twelve hours exactly as before (lesson 2026-08-24: a ghost carrying commits must
+// keep its hold, because dropping that claim is what left real work on a branch with
+// nothing pointing at it).
+//
+// `PF_HOLD_QUIET_MS` overrides it, which is how the test drives it without waiting hours.
+const HOLD_QUIET_MS = Number(process.env.PF_HOLD_QUIET_MS) || 2 * 60 * 60 * 1000
 // A hold whose chat ENDED ITS TURN with the lane clean is parked (`park`, run by the Stop
 // hook). Parked is not stale: the window is open and the chat may speak again - but the
 // evidence says nobody is mid-anything, so the wait for its lane is minutes, not the hour
@@ -822,6 +851,14 @@ function drainLane(state, id) {
 let reaped = false
 
 /**
+ * The lanes the last `reap` gave back under HOLD_QUIET_MS, by name.
+ *
+ * `status` reports it, so the number is READ rather than inferred from a row that quietly
+ * stopped being drawn: a silent release shares a shape with a release that never happened.
+ */
+let quietReleased = []
+
+/**
  * Has this hold's chat, by the evidence, stopped needing the checkout?
  *
  * Three ways to say yes, weakest first: an hour of silence (the original idle sweep - a
@@ -915,6 +952,22 @@ function reap(state) {
       delete state.lanes[id]
       reaped = true
       continue
+    }
+    // A quiet hold over an empty copy. Nothing to drain and nothing to lose, so the claim
+    // simply goes and the row stops saying somebody is in there.
+    if (
+      now() - (c.seen ?? c.claimed ?? 0) > HOLD_QUIET_MS &&
+      !state.ready[id] &&
+      !state.conflicts[id]
+    ) {
+      const w = laneWork(id)
+      if (!w.dirty && w.ahead === 0) {
+        dropClaims(state, c.session)
+        delete state.lanes[id]
+        if (!quietReleased.includes(id)) quietReleased.push(id)
+        reaped = true
+        continue
+      }
     }
     if (now() - (c.seen ?? c.claimed ?? 0) > STALE_MS) {
       // A chat that died without a SessionEnd hook never released its lane, and never
@@ -3417,6 +3470,11 @@ function status(session) {
     // for every repo until the collision was noticed.
     mode: RELEASE,
     own: OWN,
+    // How many chats may work here at once, and which copies were handed back this call
+    // because nobody had typed in them and there was nothing in them. Both are here so a
+    // reader can check the rule rather than infer it from a row that stopped being drawn.
+    pool: POOL,
+    quietReleased,
     lanes: POOL.map((id) => {
       // The catch-up: a copy made before this hid them, or one a person un-hid, goes back
       // out of Finder here. Setting a flag that is already set costs one no-op call and

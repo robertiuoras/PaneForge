@@ -174,7 +174,7 @@ ok(
 )
 ok(
   'the strip line says who has it and since when',
-  laneState(fromTaskdriver, false, NOW + 20 * 60_000) === "taskdriver's chat has it, quiet 20m",
+  laneState(fromTaskdriver, false, NOW + 20 * 60_000) === "taskdriver's chat has it, nobody has typed here for 20m",
   laneState(fromTaskdriver, false, NOW + 20 * 60_000)
 )
 ok(

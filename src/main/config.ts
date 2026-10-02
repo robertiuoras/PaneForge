@@ -235,6 +235,8 @@ function defaults(): Config {
     saveHistory: true,
     historyDays: 30,
     autoLane: true,
+    // The first-copy card has not been shown yet. Set the first time one is sent.
+    seenCopyCard: false,
     // On, because the alternative is thrashing: the capacity verdict only asks for this
     // once panes here already cost more than the machine has, and the launch says out
     // loud where the pane went. Off keeps every pane local whatever the machine is doing.

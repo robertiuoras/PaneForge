@@ -200,6 +200,7 @@ export const SURFACE: Surface = {
   onBell: ['on', 'sessions:bell'],
   onAsk: ['on', 'sessions:ask'],
   onClientNamed: ['on', 'sessions:clientNamed'],
+  onCopyMade: ['on', 'lanes:copyMade'],
   onActivity: ['on', 'activity:changed'],
   paneBell: ['send', 'sessions:bell'],
   onRemote: ['on', 'remote:changed'],

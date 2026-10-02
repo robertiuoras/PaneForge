@@ -48,7 +48,42 @@ import { basename, dirname, join, resolve } from 'node:path'
  * replaced. It is also the alphabet scripts/lane.mjs has always used for the same folders.
  */
 const LANE_LABELS = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'] as const
-const MAX_LANES = LANE_LABELS.length
+
+/**
+ * How many copies a project gets when it says nothing: its own folder, and two more.
+ *
+ * Every label above is still RECOGNISED - a `<repo>-f` already on disk keeps working, keeps
+ * its number and is never deleted - but only these are handed out. Eight was the old
+ * default and eight is what put `PaneForge-a` .. `-h` in the Projects folder and `copy 7`
+ * on the screen of somebody who had opened two chats.
+ *
+ * scripts/lane.mjs has the same default and reads the same `.lanes.json` `pool`, which is
+ * what stops the two halves disagreeing about how many copies of a project there are.
+ */
+const DEFAULT_COPIES = ['a', 'b'] as const
+
+/**
+ * The labels this repo hands out: its own `.lanes.json` `pool`, or the default.
+ *
+ * `main` in that list is the project's own folder, which is not a label here - it is the
+ * thing the labels are copies OF. Anything in the list this app cannot recognise is
+ * dropped rather than trusted, because an unknown label would build a folder no other
+ * part of the app could read back as a copy.
+ */
+function copiesFor(repo: string): readonly string[] {
+  try {
+    const cfg = JSON.parse(readFileSync(join(repo, '.lanes.json'), 'utf8')) as { pool?: unknown }
+    if (Array.isArray(cfg.pool)) {
+      const labels = cfg.pool.filter(
+        (x): x is string => typeof x === 'string' && (LANE_LABELS as readonly string[]).includes(x)
+      )
+      if (labels.length) return labels
+    }
+  } catch {
+    /* no file, or unreadable - the default below is the whole of the behaviour */
+  }
+  return DEFAULT_COPIES
+}
 
 /**
  * Dev-server port a lane starts from when the project never names one.
@@ -828,7 +863,8 @@ export async function resolveLane(cwd: string, taken: string[]): Promise<Lane> {
 
   const parent = dirname(repo)
   const name = basename(repo)
-  for (const label of LANE_LABELS) {
+  const copies = copiesFor(repo)
+  for (const label of copies) {
     const path = join(parent, `${name}-${label}`)
     if (taken.some((t) => samePath(t, path))) continue
 
@@ -862,7 +898,13 @@ export async function resolveLane(cwd: string, taken: string[]): Promise<Lane> {
     return { cwd: path, lane: label, branch, ...(await laneExtras(path, label)) }
   }
 
-  return { cwd, note: `All ${MAX_LANES} lanes for ${name} are in use - this session shares the folder.` }
+  // Plain words on purpose: this sentence is drawn on a pane, and "lane" is the engine's
+  // word for a slot in a pool. The count includes the project's own folder, because that
+  // is a copy somebody is working in too - three copies means this folder and two beside it.
+  return {
+    cwd,
+    note: `All ${copies.length + 1} copies of ${name} are in use - this chat shares the folder.`
+  }
 }
 
 /**

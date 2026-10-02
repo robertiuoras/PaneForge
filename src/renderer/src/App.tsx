@@ -4,6 +4,7 @@ import { chordOf, resolveKeymap, sameChord } from '@shared/keymap'
 import { stripAnsi } from '@shared/ansi'
 import type {
   ClientNamed,
+  CopyMade,
   Config,
   DiffScope,
   HistoryEntry,
@@ -156,6 +157,7 @@ import SwarmDialog, { type SwarmStart } from './components/SwarmDialog'
 import SplitDialog from './components/SplitDialog'
 import AutoClearToast from './components/AutoClearToast'
 import ClientToast from './components/ClientToast'
+import CopyToast from './components/CopyToast'
 import UpdateToast from './components/UpdateToast'
 import WhatsNewCard from './components/WhatsNewCard'
 import Tips from './components/Tips'
@@ -1320,6 +1322,7 @@ export default function App(): JSX.Element {
     // A pane naming itself for the client (or the subject) it is working on. No sound and
     // no glow: nothing was asked of anybody, and the card says so for three seconds.
     const offNamed = api.onClientNamed((e) => setClientNamed(e))
+    const offCopy = api.onCopyMade((e) => setCopyMade(e))
     return () => {
       offStalled()
       offAsk()
@@ -3984,6 +3987,7 @@ export default function App(): JSX.Element {
    */
   // The newest pane to have named itself, for the three-second card in the corner.
   const [clientNamed, setClientNamed] = useState<ClientNamed | undefined>(undefined)
+  const [copyMade, setCopyMade] = useState<CopyMade | undefined>(undefined)
   /**
    * Every countdown currently on screen - one per decision, not one full stop.
    *
@@ -6803,6 +6807,9 @@ export default function App(): JSX.Element {
         }
       />
       {/* A pane that has just worked out whose work it is doing. */}
+      {/* The first copy of a project, explained once. Below the countdowns in the stack:
+          nothing is about to be taken away, so it must never be the card under the hand. */}
+      <CopyToast made={copyMade} onDone={() => setCopyMade(undefined)} />
       <ClientToast
         named={clientNamed}
         besidePet={config?.mascot?.enabled ?? DEFAULT_MASCOT.enabled}

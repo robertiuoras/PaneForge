@@ -1,3 +1,14 @@
 {
-  "release": "merge"
+  "release": "merge",
+  "pool": [
+    "main",
+    "a",
+    "b",
+    "c",
+    "d",
+    "e",
+    "f",
+    "g",
+    "h"
+  ]
 }

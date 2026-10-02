@@ -149,6 +149,21 @@ export function deviceTip(lane: LaneBoardEntry, here?: string | null): string {
 const FRESH_MS = 5 * 60 * 1000
 
 /**
+ * How long a copy may sit untouched before the row stops calling it "in use".
+ *
+ * The same two hours scripts/lane.mjs releases an EMPTY hold after (HOLD_QUIET_MS), and
+ * the row has to agree with it or the app contradicts itself: a copy the engine is about
+ * to hand to the next chat cannot read as somebody's. It is a number here rather than a
+ * reading from the engine because the row already has `seen`, and one poll fewer is one
+ * poll fewer - if the engine's constant moves, this moves with it.
+ *
+ * The sentence past it is deliberately a GUESS said out loud ("probably finished"): the
+ * ledger cannot know whether that chat went home, and the old row said "quiet 9h" as
+ * though nine hours of silence were a state somebody had chosen.
+ */
+export const QUIET_GIVEUP_MS = 2 * 60 * 60 * 1000
+
+/**
  * Somebody is working in this lane at this moment.
  *
  * The words already said so ("busy now" against "quiet 14m"); the colour did not, and the
@@ -194,7 +209,13 @@ export function laneState(
   // starts, so four chats that had typed nothing all read as busy. What the lane file
   // actually knows is who holds it and when that chat was last heard from.
   const who = mine ? '' : `${holderName(lane, pane)} has it, `
-  return now - lane.seen < FRESH_MS ? `${who}busy now` : `${who}quiet ${ago(lane.seen, now)}`
+  if (now - lane.seen < FRESH_MS) return `${who}busy now`
+  // "quiet 9h" is the ledger's word for the gap since a heartbeat, and it was read as a
+  // state the copy was in - four rows saying it at once looked like four copies somebody
+  // was coming back to. What the row knows is that nothing has been typed, and what the
+  // engine is about to do about it, so it says both.
+  if (now - lane.seen > QUIET_GIVEUP_MS) return `${who}probably finished - will be reused`
+  return `${who}nobody has typed here for ${ago(lane.seen, now)}`
 }
 
 /**

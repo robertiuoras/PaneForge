@@ -3114,6 +3114,29 @@ label.sub { display: block; margin: 9px 0 3px; font-size: 11px; color: var(--mut
 /* A pane that has just named itself, and the three seconds in which that can be undone.
    One step above the countdown cards: it is the shortest-lived thing in this corner and
    is gone before either of them arms. `beside-pet` steps it up off a sprite. */
+/* The first copy of a project, said once. Same card as .client-toast; its own class
+   because it carries a PATH, which needs the monospace and the wrapping that a title
+   does not. Inside .corner-stack, so no `position: fixed` and no bottom of its own. */
+.copy-toast {
+  width: 320px; background: var(--surface-3); border: 1px solid var(--line-strong);
+  border-radius: var(--r); box-shadow: var(--shadow); padding: 12px 13px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.copy-toast-say { color: var(--text); font-size: 13px; }
+/* The folder a row of the copies card is about. Monospace and wrapping: it is a path,
+   and a path that is ellipsed is a path nobody can find on disk. */
+.lane-help-where {
+  display: block; color: var(--muted); font-size: 11px; font-family: var(--mono);
+  overflow-wrap: anywhere; margin-top: 2px;
+}
+.copy-toast-say strong { color: var(--acc); font-weight: 590; }
+.copy-toast-where {
+  color: var(--muted); font-size: 11px; font-family: var(--mono);
+  overflow-wrap: anywhere;
+}
+.copy-toast-why { color: var(--muted); font-size: 12px; }
+.copy-toast-acts { display: flex; justify-content: flex-end; gap: 6px; }
+
 .client-toast {
   position: fixed; right: 18px; bottom: 18px; z-index: 46; width: 300px;
   background: var(--surface-3); border: 1px solid var(--line-strong); border-radius: var(--r);
