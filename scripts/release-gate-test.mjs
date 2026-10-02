@@ -16,8 +16,8 @@
 //
 //   node scripts/release-gate-test.mjs
 
-import { execFileSync } from 'node:child_process'
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -340,6 +340,28 @@ ok(
   state().conflicts?.['somebody-else'] === 'was here',
   JSON.stringify(state().conflicts)
 )
+
+// One suite at a time per repository on this computer. On 2 Oct 2026 the PC had 10 of
+// PaneForge's suites running at once - every chat's `release`, the retry timer and lane-cron
+// each started its own - and every one timed out because of the others. A second caller
+// must wait for the first one's answer, not start a copy; a lock left by a process that
+// has died must not hold anything.
+const suiteLock = join(repo, '.git', 'paneforge-suite.lock')
+writeFileSync(exitFile, '0')
+git(repo, 'commit', '-qm', 'two chats ask at once', '--allow-empty')
+// Before `ready`: it ends with its own `autoship`, which would otherwise run the suite.
+writeFileSync(suiteLock, `${process.pid} ${Date.now() - 3 * 60000}\n`)
+const lockedBefore = readFileSync(runs, 'utf8').length
+lane('ready', '--session', 'sess-main')
+const busyOut = lane('autoship')
+ok('a suite already running elsewhere is waited for, not started again', /already running for another chat on this computer \(3 min so far\)/.test(busyOut), busyOut)
+ok('and no second copy ran', readFileSync(runs, 'utf8').length === lockedBefore, `ran ${readFileSync(runs, 'utf8').length - lockedBefore} times`)
+ok('nor was a verdict written down for it', state().suite?.commit !== git(repo, 'rev-parse', 'HEAD'), JSON.stringify(state().suite))
+const gone = spawnSync(process.execPath, ['-e', ''])
+writeFileSync(suiteLock, `${gone.pid} ${Date.now()}\n`)
+const deadOut = lane('autoship')
+ok('a lock whose process has died holds nothing', readFileSync(runs, 'utf8').length === lockedBefore + 1 && !/test suite/.test(deadOut), deadOut)
+ok('and the lock is gone once the suite has answered', !existsSync(suiteLock))
 
 // -------------------------------------------------- a lane that fixes what master breaks
 //
