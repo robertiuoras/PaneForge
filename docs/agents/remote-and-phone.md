@@ -23,6 +23,8 @@ same headings as `docs/design-notes.md` (the why). Paths: `shared/` = `src/share
 - Peer jobs (`shared/backJobs.ts`, `main/backJobs.ts`, `jobs`/`jobslist`, `PeerJobs`): `agent`,
   `dev`, `loop` (`LOOP_MIN_SECONDS`); own tree excluded; `Remote.jobsOn` rejects when
   disconnected (`test:backjobs`).
+- PC: plain `pf` on PATH (`~\.local\bin\pf.cmd`) is PaneForge Next's; PaneForge's own is
+  `%APPDATA%\claude-orchestrator\bin\pf.cmd` (panes get it via env). Over ssh use that one.
 - Handoff moves WORK not pty (`HandoffDialog.tsx`, `shared/handoff.ts`): repo as `auto-sync:`
   commit, conversation, screen, dev servers; mid-turn queued; sender closes on ack, becomes
   mirror; dirty/unpushed refused by name; paths grafted (`test:handoff`, `test:handofffit`).

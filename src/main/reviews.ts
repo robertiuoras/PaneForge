@@ -120,6 +120,8 @@ function publishReview(record: ReviewRecord): void {
     }
   }
 }
+/** How old a peer's close may be and still raise a GuardDeck card here (`storeRemoteReview`). */
+export const PEER_NOTICE_MAX_AGE_MS = 12 * 60 * 60_000;
 const kinds: ReviewKind[] = ["result", "decision", "blocked", "closed"],
   proofs: ReviewProof[] = ["measured", "claimed", "unverified"];
 const fileExt = new Set([
@@ -284,6 +286,12 @@ export function storeRemoteReview(
   atomic(jsonPath(localId), JSON.stringify(record, null, 2));
   atomic(htmlPath(localId), page(record));
   changedReview(record);
+  // The other desk's chat closed itself into Review. Only the Mac writes GuardDeck notices
+  // (`spoolNotice`), so a PC close had a Review row here and no card (2026-10-02). Once: on
+  // the replica that first carries the close. And only a recent close, or the first
+  // reconnect replaying a peer's whole history would raise a card per old chat.
+  if (v.notify === true && record.closedAt && !old?.closedAt && Date.now() - Date.parse(record.closedAt) < PEER_NOTICE_MAX_AGE_MS)
+    return spoolNotice({ ...record, notify: true });
   return record;
 }
 /** A bounded, portable review payload for the encrypted peer link. */
@@ -453,9 +461,9 @@ function spoolNotice(record: ReviewRecord, looked = false): ReviewRecord {
             resumeId: record.provider === "shell" ? undefined : record.nativeSessionId,
             cwd: record.cwd,
             agent: record.provider,
-            // The gate above lets only the Mac app write notices; the field is here so a
-            // PC notice, when there is one, needs no new reader.
-            machine: "mac",
+            // The Mac app writes every notice; a PC chat's (`storeRemoteReview`) names the PC,
+            // where its conversation is continued.
+            machine: record.origin?.platform === "win32" ? "pc" : "mac",
             // Finished-chat report contract v1: optional, absent when unknown.
             paneNumber: record.paneNumber,
             app: record.app,

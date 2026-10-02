@@ -36,7 +36,7 @@ async function bundle(entry, name) {
   await build({ absWorkingDir: root, entryPoints: [entry], outfile: out, bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent', plugins: [stubs] })
   return require(out)
 }
-const { doneVerdict, folderLeftover, whyNotDone, doneReviewId, doneQuietMs, personLooking, replyFinished, closeHeldBy, wasRead, AUTO_CLOSE_QUIET_MS, READ_QUIET_MS } = await bundle('src/shared/doneClose.ts', 'shared.cjs')
+const { seedTurnEnd, doneVerdict, folderLeftover, whyNotDone, doneReviewId, doneQuietMs, personLooking, replyFinished, closeHeldBy, wasRead, AUTO_CLOSE_QUIET_MS, READ_QUIET_MS } = await bundle('src/shared/doneClose.ts', 'shared.cjs')
 const { handoffOpenAfter } = await bundle('src/shared/handoffSteps.ts', 'handoffsteps.cjs')
 const digest = await bundle('src/shared/finishedDigest.ts', 'digest.cjs')
 const main = await bundle('src/main/doneClose.ts', 'main.cjs')
@@ -552,7 +552,7 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
 // 4c. Why a pane stayed lands in a log, once per change of reason.
 {
   const lines = []
-  const readings = [{ id: 'sel', ...finished({ focused: true }) }, { id: 'mid', ...finished({ turnEndedAt: 0 }) }]
+  const readings = [{ id: 'sel', ...finished({ focused: true }) }, { id: 'mid', ...finished({ turnEndedAt: 0, status: 'working', runSince: NOW - 60_000 }) }]
   const deps = {
     enabled: () => true, readings: () => readings, transcriptFor: () => null, resumeIdFor: () => undefined,
     history: () => [], titleOf: () => undefined, otherwiseBusy: () => null, record: () => { throw new Error('no') },
@@ -702,4 +702,49 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
   const index = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
   assert.match(index, /manager\.replyFor = /, 'index.ts gives the sweep the transcript')
   console.log('done-close: finished card word ok')
+}
+
+// A pane started ON a conversation whose last turn had already ended never flips busy, so
+// nothing ever gave it a turn end and every close rule skipped it without a word. PC,
+// 2026-10-02: s8/s9/s10/s12 finished on the Mac, were handed to the PC and sat 1-3 hours,
+// `finished` undefined, done-close.log silent. Its transcript's end row seeds the turn end.
+{
+  const handedIn = { agent: 'claude', status: 'idle', resumed: true, sawFooter: false, turnEndedAt: 0, turnPending: false, transcriptTurnEndedAt: NOW - 3_600_000 }
+  assert.equal(seedTurnEnd(handedIn), true, 'handed in / reopened / restored finished: seeded')
+  assert.equal(seedTurnEnd({ ...handedIn, transcriptTurnEndedAt: undefined }), false, 'the transcript says a turn is still open')
+  assert.equal(seedTurnEnd({ ...handedIn, resumed: false }), false, 'a fresh pane waiting for its first prompt')
+  assert.equal(seedTurnEnd({ ...handedIn, sawFooter: true }), false, 'a pane that showed its own footer has its own turn ends')
+  assert.equal(seedTurnEnd({ ...handedIn, turnEndedAt: NOW }), false, 'already has one')
+  assert.equal(seedTurnEnd({ ...handedIn, turnPending: true }), false, 'a prompt went in this run')
+  assert.equal(seedTurnEnd({ ...handedIn, runSince: NOW }), false, 'a run is counting')
+  assert.equal(seedTurnEnd({ ...handedIn, status: 'starting' }), false, 'not idle yet')
+  assert.equal(seedTurnEnd({ ...handedIn, ask: { q: 1 } }), false, 'a question on screen')
+  assert.equal(seedTurnEnd({ ...handedIn, asleep: true }), false, 'asleep')
+  assert.equal(seedTurnEnd({ ...handedIn, agent: 'shell' }), false, 'a shell')
+  assert.equal(seedTurnEnd({ ...handedIn, agent: 'codex' }), true, 'codex resumes too')
+  const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
+  assert.match(sessions, /seedTurnEnd\(\{[\s\S]{0,400}transcriptTurnEndedAt: this\.replyFor\(meta\.id, meta\.agent\)\?\.turnEndedAt[\s\S]{0,200}live\.footerEndedAt = now/, 'the sweep seeds footerEndedAt from it (a decision nothing calls closes nothing)')
+
+  // ...and once seeded, the ordinary rules decide: quiet window from the seed, not from the
+  // transcript's hour-old end row.
+  assert.equal(doneVerdict(finished({ turnEndedAt: NOW - 1000, lastKeyboard: NOW - 3_600_000 }), NOW).reason, 'not quiet long enough', 'seeded now: waits the quiet window')
+  assert.equal(doneVerdict(finished({ turnEndedAt: NOW - AUTO_CLOSE_QUIET_MS - 1000, lastKeyboard: NOW - 3_600_000 }), NOW).close, true, 'then closes')
+
+  // A pane with NO turn end used to say nothing at all in done-close.log. One line, once.
+  const lines = []
+  const deps = {
+    enabled: () => true, now: () => NOW, log: (l) => lines.push(l),
+    readings: () => [
+      { id: 'unseeded', ...finished({ turnEndedAt: 0 }) },
+      { id: 'working', ...finished({ turnEndedAt: 0, status: 'working' }) },
+      { id: 'sleeping', ...finished({ turnEndedAt: 0, asleep: true }) },
+      { id: 'kept', ...finished({ turnEndedAt: 0, kept: true }) },
+      { id: 'shellpane', ...finished({ turnEndedAt: 0, agent: 'shell' }) }
+    ],
+    transcriptFor: () => null, resumeIdFor: () => 'r', history: () => [], titleOf: () => undefined, otherwiseBusy: () => null,
+    record: () => { throw new Error('no row') }, notify: () => {}, close: () => ({ closed: false }), noteClose: () => {}, writeNotice: () => {}, activity: () => {}
+  }
+  for (let i = 0; i < 3; i++) assert.deepEqual(main.sweepDoneClose(deps), [])
+  assert.deepEqual(lines, ['unseeded stays - no finished turn: it never showed a turn ending here, and its conversation does not say one ended'], 'an idle agent pane with no turn end says why, once; working, asleep, kept and shell panes add nothing')
+  console.log('done-close: a pane that arrives finished gets its turn end, and a pane without one says so ok')
 }
