@@ -462,8 +462,9 @@ manager.kill(cmd.id)
 // `Model 'opus\n\nContinue the handoff...' not found`. The clear happened, the handover did
 // not. So the proof is the command's ANSWER, not the silence around it.
 // Answers the moment the return this queuePrompt sends was written, so a case can be
-// judged against the confirm window rather than against a wall-clock sleep.
-async function sentReturnAt(proc, waitMs = 3000) {
+// judged against the confirm window rather than against a wall-clock sleep. 6s: a throw
+// here ends the whole file, and the PC's full-suite pool stalled past 3s (2026-10-02).
+async function sentReturnAt(proc, waitMs = 6000) {
   const until = Date.now() + waitMs
   while (Date.now() < until) {
     if (proc.firstReturnAt !== undefined) return proc.firstReturnAt
@@ -1289,9 +1290,14 @@ const ANSWERING =
   }
   received('sess-review-restored')
   await logSays(restored.id, /Claude transcript receipt/)
-  // The receipt is logged a few ms before the follower is typed: wait for the paste itself.
-  for (const until = Date.now() + 1500; Date.now() < until && !restoredLive.proc.writes.some(data => data.includes(follower)); ) await sleep(5)
-  ok(rowsFor(restored.id).length === 0 && restoredLive.proc.writes.filter(data => data.includes(follower)).length === 1 && !restoredLive.proc.writes.some(data => data.includes(BRIEF)),
+  // Waits for the follower's own settle, not the first receipt line: the receipt is logged a few
+  // ms before the follower is typed, and when the 1s idle sweep reads the receipt before the
+  // follower's 40ms poll does, `retained prompt submitted` is logged first and the follower is
+  // typed a tick later (2026-10-02, PC: this and the close below read red;
+  // `manager.sweepIdle()` right after `received` reproduces it every time).
+  const released = () => rowsFor(restored.id).length === 0 && restoredLive.proc.writes.some(data => data.includes(follower))
+  for (const until = Date.now() + 6000; !released() && Date.now() < until;) await sleep(40)
+  ok(released() && restoredLive.proc.writes.filter(data => data.includes(follower)).length === 1 && !restoredLive.proc.writes.some(data => data.includes(BRIEF)),
     'only the entire native payload releases the retained owner and permits one follower paste', logOf(restored.id))
   const oldReply = manager.replyFor
   manager.replyFor = id => id === restored.id ? { text: 'Completed the requested recovery and verified it.' } : undefined
@@ -1454,7 +1460,12 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
 {
   let fixture = 0
   const payload = 'first line: preserve this newline\n  indented second line\n\nlast line'
-  const waitFor = async (test, ms = 2400) => {
+  // A ceiling, not a stopwatch: every wait below answers the moment its condition holds, so
+  // only a failing run pays it. 6s because the PC's loaded pool stalled this process past
+  // 2.4s mid-case (2026-10-01 98c30508; 2026-10-02 master 913bcdd8: the unknown owner's
+  // budget, the stale turn's follow-up and the Ctrl-C follow-up each read red once). A 2.5s
+  // stall after the queue reproduces each on the Mac.
+  const waitFor = async (test, ms = 6000) => {
     const until = Date.now() + ms
     while (!test() && Date.now() < until) await sleep(20)
     return test()
@@ -1711,10 +1722,7 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
     'a follow-up behind a held prompt that is then accepted waits for that prompt’s turn', logOf(unknown.pane.id))
   unknown.live.meta.runSince = undefined
   unknown.live.busyUntil = 0
-  // 6s, not the block's 2.4s: the paste, return and receipt take ~300ms, but on the PC's
-  // full-suite pool (2026-10-01, 98c30508) the paste landed and the 60ms return timer had
-  // still not run 2.3s later. A 2.5s stall after the paste reproduces that on the Mac.
-  ok(await waitFor(() => pasted(unknown.p, later) && ledger(unknown.pane.id).length === 0, 6000) && blockedNext() === 1,
+  ok(await waitFor(() => pasted(unknown.p, later) && ledger(unknown.pane.id).length === 0) && blockedNext() === 1,
     'a late exact receipt promotes the retained second prompt without another queue call',
     `pasted=${pasted(unknown.p, later)}, rows=${ledger(unknown.pane.id).length}\n${logOf(unknown.pane.id)}`)
   manager.kill(unknown.pane.id)
