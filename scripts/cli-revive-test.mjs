@@ -76,6 +76,7 @@ if (mod) {
     no('the app quitting', { quitting: true }, /closing/)
     no('a pane put to sleep', { asleep: true }, /sleep/)
     no('a pane being moved to the other machine', { handingOff: true }, /other machine/)
+    no('a pane that died while still starting', { starting: true }, /before it was ready/)
     no('a process a newer one already replaced', { superseded: true }, /replaced/)
     no('no conversation id to reopen it on', { resumeId: undefined }, /conversation/)
     no('an empty conversation id', { resumeId: '' }, /conversation/)

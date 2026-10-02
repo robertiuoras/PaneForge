@@ -42,6 +42,8 @@ export interface ReviveReading {
   handingOff?: boolean
   /** A newer process already owns this pane; this exit belongs to the old one. */
   superseded?: boolean
+  /** It died while still `starting`, never once idle or working. */
+  starting?: boolean
   /** `claude`, `codex`, `shell`... */
   agent: string
   /** The conversation to reopen on, when there is one the CLI will accept. */
@@ -75,6 +77,9 @@ export function reviveVerdict(p: ReviveReading): ReviveVerdict {
   if (p.quitting) return no('the app is closing')
   if (p.asleep) return no('the pane was put to sleep')
   if (p.handingOff) return no('the pane is being moved to the other machine')
+  // A CLI that dies before it is ready is broken, not cut off: `exitClose` keeps its card as
+  // the evidence (`failedStart`), and reopening it would only hide that behind a retry.
+  if (p.starting) return no('it stopped before it was ready')
   if (p.agent === 'shell') return no('a shell has no conversation to reopen')
   if (!p.resumeId) return no('there is no conversation to reopen it on')
   if (!p.midTurn) return no('it was not mid-turn')

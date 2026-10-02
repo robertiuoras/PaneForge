@@ -4200,6 +4200,7 @@ export class SessionManager extends EventEmitter {
         quitting: this.down,
         asleep: !!meta.asleep,
         handingOff: !!meta.handingOff,
+        starting: wasStarting,
         agent: meta.agent,
         resumeId: resumeId && resumableTranscript(live.req.resumeCwd ?? meta.cwd, resumeId, meta.agent) ? resumeId : undefined,
         midTurn,
