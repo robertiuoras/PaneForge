@@ -1257,7 +1257,14 @@ const ANSWERING =
     ok(/UNSENT/.test(logOf(pane.id)) && !/LOST/.test(qpNow()) && live.meta.owedPrompt,
       'a typed Claude prompt left UNSENT stays owed and is not logged LOST', `${logOf(pane.id)}\n${qpNow()}`)
     received('sess-late')
+    // Its own return's draft hold goes with it, read in the sweep's own tick (`confirmDraft`
+    // may drop it later from the screen). Left up, it outlived the turn the prompt started and
+    // `endRun` queued the next automatic clear behind it for good (s19-muqs9nqa, 2026-10-02).
+    const heldBefore = Boolean(live.draftConfirmation)
     manager.sweepIdle()
+    const heldAfter = Boolean(live.draftConfirmation) || Boolean(live.meta.drafting)
+    ok(heldBefore && !heldAfter, 'the receipt drops the draft hold its own return set',
+      `hold before ${heldBefore}, after ${heldAfter}\n${logOf(pane.id)}`)
     await logSays(pane.id, /retained prompt submitted - Claude transcript receipt/)
     ok(/retained prompt submitted - Claude transcript receipt/.test(logOf(pane.id)) && /queued prompt submitted/.test(qpNow()) &&
       !/LOST/.test(qpNow()) && !live.meta.owedPrompt,
