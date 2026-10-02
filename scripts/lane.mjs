@@ -3458,8 +3458,8 @@ function waitPcJob(id, seconds = PC_WAIT_S) {
   }
 }
 
-/** A PC suite sentence that is not a verdict on the code: still queued, or the runner failed. */
-const PC_UNSETTLED = /test suite (is still waiting its turn on|could not (run on|be sent to)) the PC/
+/** A suite sentence that is not a verdict on the code: queued on the PC, already running here, or the runner failed. */
+const SUITE_UNSETTLED = /test suite (is already running|(is still waiting its turn on|could not (run on|be sent to)) the PC)/
 
 const pcWaiting = (what, id) =>
   `${MB}'s ${what} is still waiting its turn on the PC (job ${id.slice(0, 8)}), so nothing was released yet. ` +
@@ -3674,8 +3674,81 @@ function typecheckFailure(state) {
   return `${MB} does not typecheck, so it was not released${detail ? ` - ${detail}` : ''}. Fix it and it goes out by itself.`
 }
 
-// A suite that has not finished in this long is not going to.
-const SUITE_TIMEOUT_MS = 20 * 60 * 1000
+// A suite that has not finished in this long is not going to. (PF_SUITE_TIMEOUT_MS: tests only.)
+const SUITE_TIMEOUT_MS = Number(process.env.PF_SUITE_TIMEOUT_MS) || 20 * 60 * 1000
+
+/**
+ * `npm test` in `dir`, and when it is killed for time, everything it started is killed too.
+ *
+ * spawnSync's timeout kills the one process it started. On Windows that is cmd.exe, and
+ * npm, test-all and every suite under them run on with nobody reading the answer. Measured
+ * on the PC 2026-10-02 10:28pm: 10 full suites at once, 4 of them orphans of a timed-out
+ * gate, CPU ~70%, and each new gate run then timed out too because of the others. Windows
+ * keeps a dead parent's id on its children, so they are found by it and killed whole.
+ */
+function runNpmTest(dir) {
+  const r = spawnSync('npm test --silent', { windowsHide: true, cwd: dir, encoding: 'utf8', timeout: SUITE_TIMEOUT_MS, shell: true })
+  if (r.pid && (r.error || r.signal)) killChildrenOf(r.pid)
+  return r
+}
+
+/** Windows: kill every process tree whose parent was `parent` (dead or alive). Elsewhere a no-op. */
+function killChildrenOf(parent) {
+  if (process.platform !== 'win32') return
+  const kids = spawnSync(
+    'powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-Command', `Get-CimInstance Win32_Process -Filter "ParentProcessId=${parent}" | ForEach-Object { $_.ProcessId }`],
+    { windowsHide: true, encoding: 'utf8', timeout: 60_000 }
+  )
+  for (const pid of (kids.stdout ?? '').split(/\s+/).filter((p) => /^\d+$/.test(p))) {
+    spawnSync('taskkill', ['/PID', pid, '/T', '/F'], { windowsHide: true, timeout: 60_000 })
+  }
+}
+
+/**
+ * Whether another process is running `npm test` in `dir` on `commit` right now.
+ *
+ * The verdict is only written when a run ENDS, so without this every caller during a run -
+ * each `ready`, every ending chat's `release`, the retry timer - missed the cache and started
+ * a full suite of its own on the same tree (the 10 above). A live pid on the same commit is
+ * the answer "wait for it"; a record older than two passes is a run that died unrecorded.
+ *
+ * A record whose process is gone was KILLED mid-run (lane-cron SIGKILLs its tick at 4
+ * minutes, the app's retry has its own timeout). Node's kill-on-close job usually takes the
+ * suite down with it; anything that escaped the job is killed here before another starts.
+ */
+function suiteRunning(dir, commit) {
+  const run = read().suiteRun?.[dir]
+  if (!run || run.pid === process.pid) return false
+  let alive
+  try {
+    process.kill(run.pid, 0)
+    alive = true
+  } catch (e) {
+    alive = e.code !== 'ESRCH'
+  }
+  if (!alive) {
+    killChildrenOf(run.pid)
+    const fresh = read()
+    if (fresh.suiteRun?.[dir]?.pid === run.pid) {
+      delete fresh.suiteRun[dir]
+      write(fresh)
+    }
+  }
+  if (!commit || run.commit !== commit || now() - run.at > 2 * SUITE_TIMEOUT_MS + 5 * 60_000) return false
+  return alive
+}
+
+/** `judge()` with `dir`'s run on `commit` written down for `suiteRunning`, and taken off after. */
+function withSuiteRun(state, dir, commit, judge) {
+  if (!commit) return judge()
+  remember(state, ['suiteRun', dir], { commit, pid: process.pid, at: now() })
+  try {
+    return judge()
+  } finally {
+    if (read().suiteRun?.[dir]?.pid === process.pid) remember(state, ['suiteRun', dir], null)
+  }
+}
 
 /**
  * Empty when the release branch's own test suite passes, a sentence when it does not.
@@ -3731,9 +3804,14 @@ function suiteFailure(state) {
 
   const head = gitSafe(MAIN, 'rev-parse', 'HEAD')
   const commit = head.ok ? head.out : null
-  if (commit && state.suite?.commit === commit &&
-      (state.suite.ok || !cannotRun(state.suite.reason ?? ''))) {
-    return state.suite.ok ? null : state.suite.reason
+  // A fresh read, not `state`: that copy can predate a run another process just finished.
+  const cached = read().suite
+  if (commit && cached?.commit === commit && (cached.ok || !cannotRun(cached.reason ?? ''))) {
+    state.suite = cached
+    return cached.ok ? null : cached.reason
+  }
+  if (suiteRunning(MAIN, commit)) {
+    return `${MB}'s test suite is already running on this commit for another check, so nothing was released yet. The next try reads its answer rather than starting another.`
   }
 
   if (dependenciesMissing(pkg)) {
@@ -3741,13 +3819,7 @@ function suiteFailure(state) {
     if (failed) return failed
   }
   // One string + shell, same as the typecheck above: npm on Windows is npm.cmd.
-  const runSuite = () =>
-    spawnSync('npm test --silent', { windowsHide: true,
-      cwd: MAIN,
-      encoding: 'utf8',
-      timeout: SUITE_TIMEOUT_MS,
-      shell: true
-    })
+  const runSuite = () => runNpmTest(MAIN)
   /**
    * The verdict, written onto the ledger AS IT IS NOW rather than onto the copy this
    * process read minutes ago.
@@ -3771,55 +3843,64 @@ function suiteFailure(state) {
     cacheSuite({ commit, ok: true, at: now() })
     return true
   }
-  let r = runSuite()
-  if (pass(r)) return null
-  /**
-   * A red answer is CONFIRMED before it is written down, because the verdict is cached on
-   * the commit and the retry timer never asks again - so one flaky run pins a green tree
-   * as broken until somebody hand-edits `.git/paneforge-lanes.json`, which nobody would
-   * ever guess to do.
-   *
-   * Measured 2026-08-22 on the commit below this one: the gate failed twice, once as
-   * `could not run` and once as `FAIL conflict / the lane is stuck`, while the same suite
-   * passed standalone twice in a row (91 tests, exit 0). The conflict test drives real git
-   * repositories and is timing-sensitive on a loaded machine.
-   *
-   * Only the second run's answer counts, so a genuinely red suite costs one extra pass
-   * (~2 min) and a flake costs the release nothing. `cannotRun` is judged on the LAST run
-   * for the same reason: missing tooling does not repair itself between two runs, but a
-   * spawn that lost a race does.
-   */
-  const first = `${r.stdout ?? ''}${r.stderr ?? ''}`
-  if (!cannotRun(first)) {
-    r = runSuite()
+  return withSuiteRun(state, MAIN, commit, () => {
+    let r = runSuite()
     if (pass(r)) return null
-  }
-  const all = `${r.stdout ?? ''}${r.stderr ?? ''}`
-  if (cannotRun(all)) {
-    return (
-      `${MB}'s test suite could not run, so nothing was released - ${firstLine(all)}. ` +
-      `Required tooling or remote transport is unavailable; this is not a code verdict.`
-    )
-  }
-  // A suite with some other shape than test-all.mjs falls back to its first real line.
-  const failed = failLines(all)
-  const reason =
-    r.signal || (r.status == null && !all.trim())
-      ? `${MB}'s test suite did not finish within ${Math.round(SUITE_TIMEOUT_MS / 60000)} minutes, so nothing was released. Run \`npm test\` and see what hangs.`
-      : `${MB} fails its own test suite, so it was not released${failed ? ` - ${failed}` : ` - ${firstLine(all)}`}. Fix it and it goes out by itself.`
-  cacheSuite({ commit, ok: false, at: now(), reason })
-  return reason
+    /**
+     * A red answer is CONFIRMED before it is written down, because the verdict is cached on
+     * the commit and the retry timer never asks again - so one flaky run pins a green tree
+     * as broken until somebody hand-edits `.git/paneforge-lanes.json`, which nobody would
+     * ever guess to do.
+     *
+     * Measured 2026-08-22 on the commit below this one: the gate failed twice, once as
+     * `could not run` and once as `FAIL conflict / the lane is stuck`, while the same suite
+     * passed standalone twice in a row (91 tests, exit 0). The conflict test drives real git
+     * repositories and is timing-sensitive on a loaded machine.
+     *
+     * Only the second run's answer counts, so a genuinely red suite costs one extra pass
+     * (~2 min) and a flake costs the release nothing. `cannotRun` is judged on the LAST run
+     * for the same reason: missing tooling does not repair itself between two runs, but a
+     * spawn that lost a race does.
+     */
+    const first = `${r.stdout ?? ''}${r.stderr ?? ''}`
+    if (!cannotRun(first)) {
+      r = runSuite()
+      if (pass(r)) return null
+    }
+    const all = `${r.stdout ?? ''}${r.stderr ?? ''}`
+    if (cannotRun(all)) {
+      return (
+        `${MB}'s test suite could not run, so nothing was released - ${firstLine(all)}. ` +
+        `Required tooling or remote transport is unavailable; this is not a code verdict.`
+      )
+    }
+    // A suite with some other shape than test-all.mjs falls back to its first real line.
+    const failed = failLines(all)
+    const reason =
+      r.signal || (r.status == null && !all.trim())
+        ? `${MB}'s test suite did not finish within ${Math.round(SUITE_TIMEOUT_MS / 60000)} minutes, so nothing was released. Run \`npm test\` and see what hangs.`
+        : `${MB} fails its own test suite, so it was not released${failed ? ` - ${failed}` : ` - ${firstLine(all)}`}. Fix it and it goes out by itself.`
+    cacheSuite({ commit, ok: false, at: now(), reason })
+    return reason
+  })
 }
+
+/** What `suiteFailureInLane` says while another process is testing that same tree. */
+const LANE_SUITE_RUNNING = 'already being tested by another check'
 
 /**
  * The same run/retry/classify `suiteFailure` does, aimed at a lane's OWN checkout instead
  * of master, and never touching `state.suite` - that cache is keyed on master's commit and
  * would otherwise hold a verdict about a tree that was never master's.
  *
- * Returns null when green (or the checkout has no suite), a short reason when red. Never
- * shown to a person on its own - see `readyLaneFix`, which is what asks.
+ * Returns null when green (or the checkout has no suite), a short reason when red, and
+ * `LANE_SUITE_RUNNING` while another process is testing the same tree. Never shown to a
+ * person on its own - see `readyLaneFix`, which is what asks.
+ *
+ * Cached on the lane's commit (`state.laneSuite`), like master's verdict and for the same
+ * reason: while master is red every try asked every ready lane again, twice each, uncached.
  */
-function suiteFailureInLane(dir) {
+function suiteFailureInLane(state, dir) {
   let pkg
   try {
     pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'))
@@ -3828,21 +3909,31 @@ function suiteFailureInLane(dir) {
   }
   const script = pkg.scripts?.test
   if (!script || /no test specified/i.test(script)) return null
-  const runSuite = () =>
-    spawnSync('npm test --silent', { windowsHide: true, cwd: dir, encoding: 'utf8', timeout: SUITE_TIMEOUT_MS, shell: true })
-  let r = runSuite()
-  if (r.status === 0) return null
-  const first = `${r.stdout ?? ''}${r.stderr ?? ''}`
-  if (!cannotRun(first)) {
-    r = runSuite()
+  const head = gitSafe(dir, 'rev-parse', 'HEAD')
+  const commit = head.ok ? head.out : null
+  const cached = read().laneSuite?.[dir]
+  if (commit && cached?.commit === commit) return cached.ok ? null : cached.reason
+  if (suiteRunning(dir, commit)) return LANE_SUITE_RUNNING
+  const reason = withSuiteRun(state, dir, commit, () => {
+    let r = runNpmTest(dir)
     if (r.status === 0) return null
+    const first = `${r.stdout ?? ''}${r.stderr ?? ''}`
+    if (!cannotRun(first)) {
+      r = runNpmTest(dir)
+      if (r.status === 0) return null
+    }
+    const all = `${r.stdout ?? ''}${r.stderr ?? ''}`
+    if (cannotRun(all)) return `could not run - ${firstLine(all)}`
+    const failed = failLines(all)
+    return r.signal || (r.status == null && !all.trim())
+      ? `did not finish within ${Math.round(SUITE_TIMEOUT_MS / 60000)} minutes`
+      : failed || firstLine(all)
+  })
+  // Tooling that could not start is fixed outside this file; the next try should find out.
+  if (commit && !reason?.startsWith('could not run')) {
+    remember(state, ['laneSuite', dir], { commit, ok: !reason, reason, at: now() })
   }
-  const all = `${r.stdout ?? ''}${r.stderr ?? ''}`
-  if (cannotRun(all)) return `could not run - ${firstLine(all)}`
-  const failed = failLines(all)
-  return r.signal || (r.status == null && !all.trim())
-    ? `did not finish within ${Math.round(SUITE_TIMEOUT_MS / 60000)} minutes`
-    : failed || firstLine(all)
+  return reason
 }
 
 /**
@@ -3859,7 +3950,7 @@ function suiteFailureInLane(dir) {
  *
  * Returns the id of the first ready lane whose own suite passes, or null when none does
  * (with `tried` naming whether one was even eligible to ask, so the refusal can say so, and
- * `pending` whether one is still being tested on the PC).
+ * `pending` whether one is still being tested, on the PC or by another check here).
  *
  * On the Mac each lane's tree is one remembered PC job, like master's (`state.pcLaneSuite`).
  * Every job is queued before any is waited on: the PC runs several at once, and a local
@@ -3876,8 +3967,13 @@ function readyLaneFix(state) {
   )
   const tried = lanes.length > 0
   if (!onPc()) {
-    for (const id of lanes) if (!suiteFailureInLane(laneDir(id))) return { lane: id, tried }
-    return { lane: null, tried }
+    let pending = false
+    for (const id of lanes) {
+      const v = suiteFailureInLane(state, laneDir(id))
+      if (!v) return { lane: id, tried }
+      if (v === LANE_SUITE_RUNNING) pending = true
+    }
+    return { lane: null, tried, pending }
   }
   const ask = (id, opts) =>
     pcSuite(laneDir(id), read().pcLaneSuite?.[id], (rec) => remember(state, ['pcLaneSuite', id], rec), opts)
@@ -4009,9 +4105,9 @@ function autoshipRun(kind = 'auto', session = 'auto') {
   // is ten times the cost and a tree that does not compile cannot pass it anyway.
   const red = suiteFailure(state)
   if (red) {
-    // No verdict yet - master's suite is still queued on the PC, or the runner failed.
-    // Testing every finished lane now would only queue more jobs behind it.
-    if (PC_UNSETTLED.test(red)) return { shipped: false, reason: red }
+    // No verdict yet - master's suite is still queued on the PC, already running in another
+    // check, or the runner failed. Testing every finished lane now would only stack more runs.
+    if (SUITE_UNSETTLED.test(red)) return { shipped: false, reason: red }
     // The lane that fixes a red master can never merge if the gate only ever asks
     // master, because master stays red until the merge that only happens once the gate
     // says yes - the deadlock this exists for. A ready lane already carries master's
@@ -4022,7 +4118,7 @@ function autoshipRun(kind = 'auto', session = 'auto') {
       return {
         shipped: false,
         reason: fix.pending
-          ? `${red} The finished work waiting to ship is still being tested on the PC; the next try waits on the same jobs.`
+          ? `${red} The finished work waiting to ship is still being tested${onPc() ? ' on the PC' : ''}; the next try waits on the same ${onPc() ? 'jobs' : 'runs'}.`
           : fix.tried
             ? `${red} The finished work waiting to ship was tried the same way and it still fails.`
             : red
