@@ -677,8 +677,11 @@ interface Live {
    * handed to the window as `typed` when it did not come from the window itself.
    */
   draft: DraftState
-  /** Enter is an attempt, not proof that the CLI emptied its composer. */
-  draftConfirmation?: { prompt: string; since: number; afterPaint: number; checkedPaint?: number; checking?: boolean }
+  /**
+   * Enter is an attempt, not proof that the CLI emptied its composer. `key` names the queued
+   * prompt whose own return set it, so that prompt's late receipt can drop it (`sweepIdle`).
+   */
+  draftConfirmation?: { prompt: string; since: number; afterPaint: number; checkedPaint?: number; checking?: boolean; key?: string }
   /** When `recheckDraft` last read the box for a stale draft flag (`draftRecheckDue`). */
   draftRecheckAt?: number
   /** When a slash command was submitted; 0 outside one. See SLASH_TURN_MS. */
@@ -4408,6 +4411,9 @@ export class SessionManager extends EventEmitter {
       if (after) mark = Math.max(mark, after.meta.lastKeyboard ?? 0)
       if (after?.draftConfirmation && after.draftConfirmation !== priorHold) {
         ownHold = after.draftConfirmation
+        // Named, because the receipt that proves a prompt left UNSENT went in after all is
+        // read by the idle sweep once this wait is over, and only this hold is its to drop.
+        ownHold.key = key
         // A retained Codex prompt is promoted by whichever prompt queues behind it,
         // so that wait has to be able to drop this hold too.
         if (owner) owner.hold = ownHold
@@ -5420,15 +5426,26 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
+   * A prompt of this app's already in the composer or on its way in: a ledger row marked
+   * typed (`noteTyped` is written before the first byte) or an answer being typed. One only
+   * accepted is not - while a draft flag is up it waits behind that flag, so it cannot also
+   * be what keeps the flag from being rechecked: s19-muqs9nqa, 2026-10-02 11:03Z, a queued
+   * prompt sat "waiting behind you" on a stale flag over an empty box.
+   */
+  private promptInFlight(live: Live): boolean {
+    return this.pendingAnswers.has(live.meta.id) || typedOwed(live.meta.id).length > 0
+  }
+
+  /**
    * A draft flag nothing has touched for a minute, held against the screen. An empty box
    * clears it - only when nothing moved while the box was read (same process, same draft,
    * no paint, no key), the same rule `confirmDraft` keeps, and never under a submission
-   * hold or a prompt still owed. `draftRecheckDue` says when.
+   * hold or a prompt this app has typed (`promptInFlight`). `draftRecheckDue` says when.
    */
   private async recheckDraft(live: Live): Promise<void> {
     const { draft, paintSeq: paint } = live
     const keyboard = live.meta.lastKeyboard
-    if (live.draftConfirmation || live.meta.owedPrompt) return
+    if (live.draftConfirmation || this.promptInFlight(live)) return
     live.draftRecheckAt = Date.now()
     let box
     try {
@@ -5438,7 +5455,7 @@ export class SessionManager extends EventEmitter {
     }
     if (!box || box.text.trim()) return
     if (this.sessions.get(live.meta.id) !== live || live.draft !== draft || live.paintSeq !== paint ||
-        live.meta.lastKeyboard !== keyboard || live.draftConfirmation || live.meta.owedPrompt || !live.meta.drafting) return
+        live.meta.lastKeyboard !== keyboard || live.draftConfirmation || this.promptInFlight(live) || !live.meta.drafting) return
     live.draft = newDraft()
     live.typed = ''
     live.meta.drafting = undefined
@@ -5537,6 +5554,12 @@ export class SessionManager extends EventEmitter {
           if (row.typed?.proof === 'receipt' && !this.promptWaits.has(row.key) &&
             claudeAcceptedPrompt(live.proc.pid, row.text, row.typed.at - 1000)) {
             noteSubmitted(row.key)
+            // ...and the hold its own return set goes with it, as `settle('sent')` drops it.
+            // Left up, it outlived the whole turn the prompt started (`confirmDraft` waits for
+            // an idle pane), so `endRun` re-asked the next automatic clear over it, read
+            // 'drafting' and queued it for good: s19-muqs9nqa and s17-muqs9hui, 2026-10-02.
+            // A later Enter's hold is somebody else's and stays.
+            if (live.draftConfirmation?.key === row.key) this.releaseDraftHold(live, live.draftConfirmation)
             this.setOwedPrompt(meta.id, owedCount(meta.id) > 0)
             acLog(`${meta.id} retained prompt submitted - Claude transcript receipt`)
             changed = true
@@ -5547,9 +5570,21 @@ export class SessionManager extends EventEmitter {
       if (live.draftConfirmation && meta.status === 'idle' && !meta.runSince && quiet >= 1000 &&
           now - live.paintedAt >= 1000 && now - meta.lastKeyboard >= 1000) void this.confirmDraft(live)
       // Never under a hold: a submission in flight is `confirmDraft`'s, and a prompt this app
-      // still owes is its queue's. This is only the flag left once both are gone.
-      if (!live.draftConfirmation && !meta.owedPrompt && draftRecheckDue(meta, live.draftRecheckAt ?? 0, now) &&
+      // has typed is its queue's. This is only the flag left once both are gone.
+      if (!live.draftConfirmation && !this.promptInFlight(live) && draftRecheckDue(meta, live.draftRecheckAt ?? 0, now) &&
           now - live.paintedAt >= 1000) void this.recheckDraft(live)
+      // A CLEAR QUEUED FOR A TURN END ON A PANE WITH NO TURN LEFT. `endRun` re-asks a queued
+      // clear the moment a turn ends, and a draft flag still up then - the hold of the prompt
+      // that started the turn, a line somebody later deleted - queues it again for a turn end
+      // that never comes: 2026-10-02, s19-muqs9nqa and s17-muqs9hui sat idle over an empty box
+      // owed a clear for 15+ minutes. Asked again here once nothing holds the pane; a prompt
+      // this app still owes goes first, and its own turn's end asks again.
+      if (this.autoClearPending.has(meta.id) && meta.status === 'idle' && !live.draftConfirmation &&
+          !meta.owedPrompt && !meta.autoClearAt && !this.autoClearArmTimers.has(meta.id) &&
+          now - meta.lastKeyboard >= 1000 && !dropFor({ ...meta, typed: live.typed })) {
+        acLog(`${meta.id} queued clear asked again - the pane is idle and its box is empty`)
+        this.resumePendingAutoClear(meta.id)
+      }
       if (this.markCwdGone(live, now)) changed = true
       // A dead pty whose folder has also gone is a card about nothing: no process to
       // go back to, and no directory left to resume in. Only that PAIR reaps. A live

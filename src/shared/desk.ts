@@ -32,7 +32,11 @@ import type { RemotePaneInfo, RemotePeerState, Session } from './types'
 export interface DeskRow extends FleetPane {
   /** React key, and the id `fleetOrder` sorts on. Never a session id for a listed pane. */
   key: string
-  /** Ctrl+N. 0 for a listed pane - there is nothing on this machine to switch to yet. */
+  /**
+   * Ctrl+N. A listed pane's number follows this desk's own, in the order the devices
+   * list them, so the key reaches a pane on the other machine as well - pressing its
+   * number opens it here the way pressing its row does.
+   */
   number: number
   session?: Session
   listed?: { pane: RemotePaneInfo; device: { id: string; name: string } }
@@ -76,10 +80,10 @@ function fromSession(s: Session, number: number): DeskRow {
   }
 }
 
-function fromListed(pane: RemotePaneInfo, device: { id: string; name: string }): DeskRow {
+function fromListed(pane: RemotePaneInfo, device: { id: string; name: string }, number: number): DeskRow {
   return {
     key: `${device.id}:${pane.id}`,
-    number: 0,
+    number,
     listed: { pane, device },
     status: pane.status,
     // A question over there cannot be ANSWERED from a row - the buttons need the frame
@@ -116,20 +120,47 @@ export function deskRows(
   const number = new Map(all.map((s, i) => [s.id, i + 1]))
   const rows = shown.map((s) => fromSession(s, number.get(s.id) ?? 0))
   if (deviceFilter === 'local') return rows
+  // Numbered off the FULL list, like a local row: every online device's unmirrored panes
+  // in device order, whatever the filter is drawing. A number that depended on the filter
+  // would move the Ctrl key under somebody's finger when they changed the view.
+  let next = all.length
   for (const peer of peers) {
     // A device that is off or reconnecting is reporting a pane list from before it went,
     // and drawing that as live work is worse than drawing nothing at all.
     if (peer.status !== 'online') continue
-    if (deviceFilter !== 'all' && deviceFilter !== peer.id) continue
+    const drawn = deviceFilter === 'all' || deviceFilter === peer.id
     for (const pane of peer.panes) {
       // A mirrored pane is already in the list above, as a session like any other. Both
       // halves are true at once for a beat while a mirror attaches, and a pane drawn
       // twice - once live, once as an invitation to open it - is the bug this prevents.
       if (pane.watched) continue
-      rows.push(fromListed(pane, { id: peer.id, name: peer.name }))
+      next++
+      if (drawn) rows.push(fromListed(pane, { id: peer.id, name: peer.name }, next))
     }
   }
   return rows
+}
+
+/**
+ * The listed pane Ctrl+N names, when N is past this desk's own panes - the same numbering
+ * `deskRows` draws, so the key and the row agree. null when N is a local pane or nothing.
+ */
+export function listedByNumber(
+  localCount: number,
+  peers: RemotePeerState[],
+  n: number
+): { device: string; pane: string } | null {
+  if (n <= localCount) return null
+  let next = localCount
+  for (const peer of peers) {
+    if (peer.status !== 'online') continue
+    for (const pane of peer.panes) {
+      if (pane.watched) continue
+      next++
+      if (next === n) return { device: peer.id, pane: pane.id }
+    }
+  }
+  return null
 }
 
 /**

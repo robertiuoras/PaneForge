@@ -515,6 +515,54 @@ regression here gets waved through.
 
 ## Two machines, one desk
 
+### 2026-10-02: a mirror's font is chosen off the cell the renderer really draws, and re-chosen when that cell changes
+
+Robert, 2026-10-02, with a screenshot of a Mac pane on the PC (text pushed right behind an
+empty band, lines cut off at the right edge): "you got to fix remoteviewing as well display
+broken on both mac and pc and need this full fixed 100% so it fits same size and works
+properly without breaking".
+
+Measured in a dev copy against a fake owner desk (`scripts/mirror-view-test.mjs`), card 909px,
+usable box 861x632 (the fit addon's: less `.xterm`'s 32px right padding and the 17px scrollbar):
+
+- **Renderer swap.** xterm's WebGL renderer rounds the cell to whole device pixels, the DOM
+  renderer does not: on a 1.25 screen 13px is 7.2px (WebGL) or 7.61px (DOM), and 12px and 11px
+  are BOTH 6.4px on WebGL. A pane hidden and shown, or one whose GPU context is lost, swaps
+  renderer under an unchanged font, and only the HOST was observed - so nothing re-ran the fit.
+  The owner holding 121x37: 31.6px / 5 columns off the right edge, 19px empty on the left.
+  Fix: the ResizeObserver also watches `.xterm-screen`. Local panes had the same hole: fitted
+  119 columns on WebGL, 12.6px under the scrollbar on the DOM renderer, pty never told; now
+  they refit to 113 and the pty follows.
+- **Font by ratio.** The walk and the borrow ask both converted measurements by font RATIO,
+  which non-proportional cells make wrong: 121x37 settled at 12 on one run and at 13 cut off
+  on another; the lend asked 119x41 then 123x39 (the ratio of a 12px measurement), which does
+  not fit at 13 - two owner pty resizes and a lent grid drawn at 11px. Fix: `bestFont`, the
+  largest font whose room (the fit addon's arithmetic over that font's measured cell, cached
+  per renderer + pixel ratio + face) holds the grid; the ask is that room at the user's font.
+  `borrowAsk`'s deadband is one-sided: a host grid one cell BIGGER than the room is an ask.
+- **Centring** used the host's whole width, so the scrollbar's slack sat on the left too.
+  `placeGrid` centres in the usable box, and not at all under two cells of slack.
+- **The window's ask had no viewer**, so main filed it as a phone's and a real phone's
+  `pty:return` dropped it. `askBorrow` names its screen.
+
+Before -> after (mirror grid = owner grid in every row, before and after):
+
+| dpr | step | before | after |
+|---|---|---|---|
+| 1.25 | owner lends | 123x39 @13 WebGL, 2 owner resizes | 119x41 @13, 1 resize, gapRight 4px |
+| 1.25 | owner holds 160x45 | @9, left 71px / right 22px | @9, 46 / 47px (centred) |
+| 1.25 | owner resizes to 121x37 | @13, 29px past the usable box | @12, 43 / 44px |
+| 1.25 | renderer swap | @13 DOM, 31.6px / 5 cols clipped | @12 DOM, 0 clipped, flush (left 0) |
+| 1.25 | owner holds 100x30 | left 74 / right 25px | 49 / 50px |
+| 1.25 | owner lends again | 123x39 @11 | 112x41 @13 |
+| 2 | owner lends | 114x40 @12, left 56px | 114x40 @13, flush, gapRight 6px |
+| 2 | owner holds 160x45 | left 55 / right 6px | 30 / 31px |
+| 2 | renderer swap | left 31 / 21px past the box | flush, gapRight 10px |
+| 2 | owner holds 100x30 | left 74 / right 25px | 49 / 50px |
+
+`test:mirrorview` (window suite, PF_PORT) pins all of it at dpr 1.25 and 2; `test:mirrorfit`
+pins `bestFont`/`placeGrid` with the measured cells; `test:borrowask` the one-sided deadband.
+
 `src/main/remote/` lets a second device drive this one's panes. Both ends are peers -
 each can host and each can connect out - so there is no setting deciding which machine
 you have to be sitting at.
@@ -855,6 +903,32 @@ a drag now opens the row from `pointerup`, which no scroll heuristic gets to vet
 `pointercancel` is the browser taking the gesture away to scroll with it and opens nothing,
 and neither does a finger that travelled more than `TAP_SLOP`. Mouse presses are untouched:
 a click is reliable there, and `onClick` is also what catches keyboard activation.
+
+A phone on the tailnet needs no code, and the rule is built on what was measured, not assumed.
+`tailscale serve` OVERWRITES `X-Forwarded-For` with the caller's exact tailnet address and
+sets/strips `Tailscale-User-Login` and `Tailscale-Funnel-Request`; `CF-Connecting-IP` passes
+straight through serve, so it is forgeable and is never read as an address (any `cf-connecting-ip`
+or `cf-ray` refuses). Tailscale user ids and node ids are compared as text, since they pass 2^53
+and a number would round them. On 14 Aug 2026 the lockdown turned phone access off; a leftover
+`tailscale serve :443 -> 7312` would still deliver a tailnet request to the loopback-only listener
+`pf` uses, so `tailnetVerdict` refuses (`phone access is switched off`, before any whois) whenever
+`localOnly`. Caveat: the `ts-<StableID>` Devices row is an approved device whose cookie survives
+`New code`, so locking out a lost phone means `Sign out` on the row AND removing it from the tailnet;
+Sign out alone lets it back in by its identity. Measured on the PC serve 2026-10-02 (Mac on the
+tailnet and a public Funnel request, forged headers on both): forged login/name replaced on the
+tailnet and dropped on Funnel, `Tailscale-Funnel-Request: ?1` on Funnel and stripped on the
+tailnet, `X-Forwarded-For` exactly the caller's tailnet address (a forged one gone). NOT measured:
+a tagged node sending no login (no tagged client to hand); the rule refuses it twice anyway (no
+login header, and whois `Tags`). The Mac's lost :443 the same day was 0.8.232's `Funnel.stop()`
+turning 443 off whenever any copy quit (fixed by 56286cf0 in 0.8.233), not this feature.
+
+A second listener on the phone port is refused before it binds, because the OS does not refuse
+it. On 2026-10-02 a headless dev copy (phone access off, so `127.0.0.1:7312`) bound beside the
+installed app's `0.0.0.0:7312` on the PC; loopback goes to the more specific address, so every
+`pf` call on the PC paired with the copy and got 403 (wrong code) then 429, the try-reaper's
+`pf list` failed, and `tailscale serve :443 -> 127.0.0.1:7312` delivered Robert's phone to the
+copy. macOS allows the same bind (Node sets SO_REUSEADDR). A refused loopback connect measured
+4 ms on the PC, so the probe costs nothing on a free port.
 
 ## Every colour is derived, and every pane says which project it is in
 
@@ -2798,6 +2872,43 @@ Verified in a live window on :9334: one chip per pane, `1s` with the full title,
 `rgb(160,151,143)` at 10px, ticking 2s -> 5s across three seconds.
 
 ## The sessions list is the whole desk, both machines
+
+### 2026-09-23: PC rows open at once, carry a number, close, and never say `closes now` for a close that is not coming
+
+Robert, 2026-09-23: "i dont think we need watch button on remote sessison its just extra step
+and takes longer to view right? and says closes now but its not closing? and also they dont
+even have a number on them which is bad u need to fix them and close as well."
+
+Four things, one brief (`docs/superpowers/specs/2026-09-23-remote-rows-brief.md`):
+
+- **No extra step.** Every pane of a paired device is mirrored by default
+  (`RemoteClient.mirrorsAll()` is `mirrorAll !== false`; `Remote.start` switches every saved
+  peer over once and records `mirrorAllDefaulted`), so a PC pane is an ordinary card on the
+  Mac the moment the link is up. Cost, measured on the PC 2026-09-23 before deciding: the
+  renderer went 109 MB (no panes) -> 128 MB (four empty panes) -> 137 MB (four panes holding
+  ~3,000 lines each), so 5-7 MB per mirrored pane; the link carries 0 bytes for an idle pane
+  and 1.0-1.5 KB/s for a Claude pane printing tool output (0.2 KB/s averaged over 49 min).
+  Eight PC panes are ~55 MB on the Mac. Pre-warming on hover was the fallback and was not
+  needed.
+- **A number on every row.** A row still listed (attach in flight, or a peer somebody turned
+  down by hand in Devices) is numbered after this desk's own panes off the FULL list
+  (`deskRows`), and `listedByNumber` gives Ctrl+N the same answer, so the key opens it.
+- **Close works.** The listed row has the local card's `x`; it goes through `sessions:kill`
+  -> `Remote.closeOn`, and `state()` drops a closing id from `panes` as well as `sessions`,
+  so the row leaves both halves of the list at once.
+- **`closes now` that never closes.** Two causes, both fixed. (1) The chip counts WALL time
+  on every screen, but the deadline was computed on the desk's own clock, which
+  `shared/away.ts` freezes when the last person leaves - so a PC nobody was sitting at
+  published a wall-clock moment that arrived on schedule and then sat in the past for as
+  long as nobody came back; the sweep, on the frozen clock, never considered the pane due.
+  `chipCloseAt` publishes nothing while the clock is frozen. (2) A mirror's borrow said
+  `person = sawPerson`, which is true for a whole run once anybody touched the Mac, for every
+  mirrored pane whether drawn or not - with everything mirrored that would have held every PC
+  pane off its idle clock for as long as the Mac was awake. `person` is now "somebody at that
+  desk NOW and that screen is drawing this pane": `pty:visible` reaches
+  `Remote.visibleOn` -> `client.setVisible`, re-stated only when the answer changes.
+  `test:reclaim` pins the frozen case; `test:remote` pins the visibility re-statement.
+
 
 Two changes, and the second is only possible because of what the first one found.
 

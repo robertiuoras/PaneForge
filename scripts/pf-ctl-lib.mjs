@@ -424,6 +424,17 @@ export function moveRefusal(p, { now = Date.now(), self } = {}) {
   return null
 }
 
+/**
+ * A folder or file argument as Windows wants it. The `pf` shim switches Git Bash's argument
+ * rewriting off (so `/clear` stays `/clear`), which also leaves `$(pwd)` as `/c/Users/x`.
+ * Only for path arguments, never prompt text.
+ */
+export function pathArg(p, platform = process.platform) {
+  if (platform !== 'win32' || typeof p !== 'string') return p
+  const m = /^\/([a-zA-Z])(\/|$)/.exec(p)
+  return m ? `${m[1].toUpperCase()}:/${p.slice(m[0].length)}` : p
+}
+
 /** Two spellings of one folder (`/tmp` is `/private/tmp` on a Mac, a Windows drive in any case). */
 export function samePath(a, b) {
   const norm = (p) => {

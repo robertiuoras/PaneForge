@@ -68,6 +68,13 @@ export interface AskOut {
 }
 
 const near = (a: number, b: number): boolean => Math.abs(a - b) <= BORROW_DEADBAND
+/**
+ * The host's grid is close enough to the one wanted: no bigger, and smaller by no more than
+ * the deadband. One-sided on purpose (2026-10-02): a grid one cell SMALLER than the room is
+ * a column of slack nobody sees, but one cell BIGGER does not fit, and the mirror then has
+ * to draw it a whole font size smaller - 12px for a pane that had room at 13.
+ */
+const settled = (want: number, host: number): boolean => host <= want && want - host <= BORROW_DEADBAND
 
 /**
  * One decision, and the state to carry to the next one.
@@ -78,7 +85,7 @@ const near = (a: number, b: number): boolean => Math.abs(a - b) <= BORROW_DEADBA
 export function shouldAsk(i: AskIn): AskOut {
   // Already drawn at the grid we want, to within the same slack the deadband allows.
   // Asking for a cell the host is only rounding away is the storm's first step.
-  if (near(i.cols, i.hostCols) && near(i.rows, i.hostRows)) return { ask: false, state: i.state }
+  if (settled(i.cols, i.hostCols) && settled(i.rows, i.hostRows)) return { ask: false, state: i.state }
 
   const prev = i.state
   const recent = (prev?.recent ?? []).filter((t) => i.now - t < BORROW_WINDOW_MS)

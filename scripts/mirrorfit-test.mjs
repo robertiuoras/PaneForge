@@ -10,7 +10,7 @@
 // far too wide simply cut off at the pane edge.
 
 import { strict as assert } from 'node:assert'
-import { borrowGrid, mirrorFit, MIN_FONT } from '../src/shared/mirrorFit.ts'
+import { bestFont, borrowGrid, mirrorFit, MIN_FONT, placeGrid, roomFor } from '../src/shared/mirrorFit.ts'
 
 let pass = 0
 const t = (name, fn) => {
@@ -242,6 +242,91 @@ t('the ask is font-independent: the same room asks for the same grid', () => {
 t('the ask never goes below the floors the caller applies', () => {
   const tiny = borrowGrid({ fitCols: 4, fitRows: 2, font: 6, maxFont: 13 })
   assert.deepEqual(tiny, { cols: 20, rows: 5 })
+})
+
+// THIRD: cells that are NOT proportional to the font. These are the cells xterm really drew,
+// read in a dev copy on a 1.25 screen on 2026-10-02 (`_renderService.dimensions.css.cell`):
+// WebGL rounds the cell to whole device pixels, so 12 and 11 share a width, and the DOM
+// renderer draws a different cell at every font. The box is the 909px card less the 32px
+// terminal padding and the 17px scrollbar, as the fit addon reads it.
+const BOX = { w: 861, h: 632 }
+const GL = { 13: { w: 7.2, h: 15.2 }, 12: { w: 6.4, h: 14.4 }, 11: { w: 6.4, h: 13.6 }, 10: { w: 5.6, h: 11.2 }, 9: { w: 4.8, h: 10.4 }, 8: { w: 4, h: 9.6 }, 7: { w: 4, h: 8 } }
+const DOM = { 13: { w: 7.613, h: 15.209 }, 12: { w: 7.034, h: 14.395 }, 11: { w: 6.445, h: 13.605 }, 10: { w: 5.857, h: 11.209 }, 9: { w: 5.277, h: 10.395 }, 8: { w: 4.689, h: 9.605 }, 7: { w: 4.1, h: 8.4 } }
+const roomAt = (cells) => (font) => roomFor(BOX, cells[font] ?? { w: font * 0.55, h: font * 1.2 })
+const brute = (cells, cols, rows) => {
+  for (let f = 13; f > MIN_FONT; f--) {
+    const r = roomAt(cells)(f)
+    if (r.cols >= cols && r.rows >= rows) return f
+  }
+  return MIN_FONT
+}
+
+t('the room at a font is the fit addon arithmetic over the cell drawn at that font', () => {
+  assert.deepEqual(roomFor(BOX, GL[13]), { cols: 119, rows: 41 })
+  assert.deepEqual(roomFor(BOX, DOM[13]), { cols: 113, rows: 41 })
+  assert.deepEqual(roomFor(BOX, GL[12]), { cols: 134, rows: 43 })
+})
+
+t('the font is the largest that holds the grid, whatever font the pane is at now', () => {
+  // 121x37: does not fit at 13 on either renderer, does at 12. The ratio walk measured
+  // this at 13 and stopped at 12 on one run and 13 (cut off) on another.
+  assert.equal(bestFont({ hostCols: 121, hostRows: 37, maxFont: 13, roomAt: roomAt(GL) }), 12)
+  assert.equal(bestFont({ hostCols: 121, hostRows: 37, maxFont: 13, roomAt: roomAt(DOM) }), 12)
+  for (const cells of [GL, DOM])
+    for (const [cols, rows] of [[80, 24], [119, 41], [120, 41], [134, 43], [160, 45], [200, 60], [100, 30]])
+      assert.equal(bestFont({ hostCols: cols, hostRows: rows, maxFont: 13, roomAt: roomAt(cells) }), brute(cells, cols, rows), `${cols}x${rows}`)
+})
+
+t('CONTROL: the font-ratio conversion asks for a grid that does not fit at the user font', () => {
+  // Measured at 12 on WebGL the room is 134x43; converting by 12/13 asks 123x39. At 13 the
+  // real room is 119x41: 123 columns never fit, so the mirror shrinks, re-measures, asks
+  // again - the 117x43 / 123x41 / 117x43 wobble.
+  const ratio = borrowGrid({ fitCols: 134, fitRows: 43, font: 12, maxFont: 13 })
+  assert.deepEqual(ratio, { cols: 123, rows: 39 })
+  assert.ok(ratio.cols > roomFor(BOX, GL[13]).cols, 'the ratio ask is wider than the room at 13')
+})
+
+t('the exact ask is a grid drawn at the user font with nothing to shrink', () => {
+  for (const cells of [GL, DOM]) {
+    const ask = roomFor(BOX, cells[13])
+    assert.equal(bestFont({ hostCols: ask.cols, hostRows: ask.rows, maxFont: 13, roomAt: roomAt(cells) }), 13)
+  }
+})
+
+t('a renderer swap under the same font gets a new answer, not the old cut', () => {
+  // Lent 119x41 on WebGL at 13; the pane falls back to the DOM renderer, whose 13px cell
+  // is 7.613px: 119 columns are 906px in an 861px box.
+  assert.ok(119 * DOM[13].w > BOX.w, 'CONTROL: the old font now overflows')
+  const font = bestFont({ hostCols: 119, hostRows: 41, maxFont: 13, roomAt: roomAt(DOM) })
+  assert.equal(font, 12)
+  assert.ok(119 * DOM[font].w <= BOX.w)
+})
+
+t('nothing fits: the floor font, and scaling takes over', () => {
+  assert.equal(bestFont({ hostCols: 400, hostRows: 120, maxFont: 13, roomAt: roomAt(DOM) }), MIN_FONT)
+  assert.equal(bestFont({ hostCols: 80, hostRows: 24, maxFont: 13, roomAt: () => null }), null)
+})
+
+t('left-over room is split, measured in the usable box', () => {
+  const p = placeGrid({ box: BOX, cols: 100, rows: 30, cell: DOM[13] })
+  const slackX = BOX.w - 100 * DOM[13].w
+  assert.equal(p.scale, 1)
+  assert.equal(p.x, Math.floor(slackX / 2))
+  assert.ok(slackX - p.x - p.x >= 0 && slackX - p.x - p.x < 2, `${p.x} of ${slackX}`)
+  assert.ok(p.y > 0)
+})
+
+t('under two cells of slack nothing moves: a grid of whole cells is full', () => {
+  const p = placeGrid({ box: BOX, cols: 112, rows: 41, cell: DOM[13] })
+  assert.deepEqual(p, { scale: 1, x: 0, y: 0 })
+})
+
+t('a grid too big even at the floor is scaled to fit both ways, then centred', () => {
+  const cell = { w: 3.2, h: 7.2 }
+  const p = placeGrid({ box: BOX, cols: 300, rows: 100, cell })
+  assert.ok(p.scale < 1)
+  assert.ok(300 * cell.w * p.scale <= BOX.w + 0.01 && 100 * cell.h * p.scale <= BOX.h + 0.01)
+  assert.ok(p.x >= 0 && p.x * 2 <= BOX.w - 300 * cell.w * p.scale + 1)
 })
 
 console.log(`\nmirrorfit: ${pass} cases passed`)

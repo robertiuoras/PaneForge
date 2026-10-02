@@ -28,6 +28,9 @@ const api={pathKind:async(cwd,text)=>(questions++,resolveRevealTarget(cwd,text))
 const wrapper={buffer:t.buffer,cols:t.cols,registerLinkProvider:p=>{provider=p}}
 install(wrapper,api,{current:scratch},findPathTokens,wrappedPath.wrappedPathLinks,wrappedPath.continues,wrappedPath.MAX_RUN_ROWS)
 const links = row => new Promise(resolve=>provider.provideLinks(row,x=>resolve(x??[])))
+// Cold questions a prose row below a path may cost. Measured 2026-10-02: 10 under a missing
+// file, 4 under a found one (before the fix: 48 and 39, the whole budget).
+const PROSE_COLD_MAX = 10
 const write = data => new Promise(resolve=>t.write(data,resolve))
 const file = join(scratch,'output','pdf','bmk','bmk-social-concept.png')
 mkdirSync(join(scratch,'output','pdf','bmk'),{recursive:true});writeFileSync(file,'fixture')
@@ -109,5 +112,42 @@ try {
     assert.equal((await links(rowOf(prose))).length,0,`prose row "${prose}" below a path is not part of it`)
     assert(questions<=wrappedPath.MAX_QUESTIONS,`prose hover asked ${questions}`)
   }
+
+  // Cold hovers (an empty cache, as on the first pass of the mouse) over a path whose last
+  // row also names a file that is NOT there, and prose rows below. The missing file used to
+  // walk word by word into the prose and spend every question the hover had before the
+  // real path was reached, so the real path lost its link on its own last row.
+  const cold=async(row)=>{install(wrapper,api,{current:scratch},findPathTokens,wrappedPath.wrappedPathLinks,wrappedPath.continues,wrappedPath.MAX_RUN_ROWS);questions=0;return links(row)}
+  mkdirSync(join(scratch,'cfg'),{recursive:true})
+  const missing=join(scratch,'cfg','x.json')
+  const proseRows=['  then lots of more words on this prose line here ok','  and another line of plain prose words to walk into','  and a third prose line that keeps on going and going']
+  const starved=cutAt(png,[[`packages${sep}01`,false],['Kitchen to',true]])
+  await write(`\x1bc⏺ Saved ${starved[0]}\r\n  ${starved[1]}\r\n  ${starved[2]} and ${missing}\r\n${proseRows.join('\r\n')}\r\n`)
+  const sFirst=rowOf(starved[0].slice(0,12)),sLast=rowOf('Preview.png and')
+  for(let r=sFirst;r<=sLast;r++){
+    const found=await cold(r)
+    assert(found.length===1&&found[0].text===png,`missing file on the last row: the path is still the one link on row ${r}, got ${found.map(l=>l.text)} after ${questions} questions`)
+  }
+  for(const prose of proseRows){
+    const found=await cold(rowOf(prose.trim()))
+    assert.equal(found.length,0,`prose row "${prose.trim()}" under a missing file is not a link`)
+    assert(questions<=PROSE_COLD_MAX,`prose under a missing file: cold hover asked ${questions}, want <= ${PROSE_COLD_MAX}`)
+  }
+  // A file that ends exactly where its row does is finished: the prose below is not walked.
+  const ends=cutAt(png,[[`packages${sep}01`,false]])
+  await write(`\x1bc⏺ Saved ${ends[0]}\r\n  ${ends[1]}\r\n${proseRows.join('\r\n')}\r\n`)
+  for(const prose of proseRows){
+    const found=await cold(rowOf(prose.trim()))
+    assert.equal(found.length,0,`prose row "${prose.trim()}" under a found file is not a link`)
+    assert(questions<=PROSE_COLD_MAX,`prose under a found file: cold hover asked ${questions}, want <= ${PROSE_COLD_MAX}`)
+  }
+
+  // A network share (`\\server\share\...`) starts a path like a drive letter does.
+  const share=String.raw`\\nas\work\Client Files\Pizza Ovens R Us\report final.pdf`
+  const known=new Map([[String.raw`\\nas\work\Client Files`,{abs:'x',kind:'dir'}],[String.raw`\\nas\work\Client Files\Pizza Ovens R Us`,{abs:'x',kind:'dir'}],[share,{abs:share,kind:'file'}]])
+  const shareRows=[String.raw`Wrote \\nas\work\Client Files\Pizza Ovens`,'  R Us\\report final.pdf']
+  const asLine=(text,y)=>({text,cells:[...text].map((_,i)=>({x:i+1,endX:i+1,y}))})
+  const shareLinks=await wrappedPath.wrappedPathLinks(shareRows.map(asLine).map((l,i)=>({...l,cells:l.cells.map(c=>({...c,y:i+1}))})),1,2,async(tok)=>known.get(tok)??null)
+  assert.deepEqual(shareLinks.map(l=>l.text),[share],'a wrapped network-share path is one link')
   console.log('terminal path links: hard and soft wraps, 3- and 4-row wrapped paths on every row, cell coordinates, file reveal, missing targets passed')
 } finally {t.dispose();rmSync(scratch,{recursive:true,force:true})}

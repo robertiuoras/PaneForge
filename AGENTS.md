@@ -75,14 +75,14 @@ drawn.
 
 ## Checks
 
-On the PC in one command: `node scripts/pc-check.mjs typecheck <suite...>` (rbuild, retries,
+On the PC in one command: `node scripts/pc-check.mjs typecheck <suite...>` (rbuild; on the PC itself its GuardDeck queue; retries,
 failures + totals only). `npm run typecheck`, `npm test` (`scripts/test-all.mjs`, no
 window/network/CLI; `node scripts/test-all.mjs <name...>` runs a subset). Off Windows it runs
 on the PC via `scripts/test-remote.mjs`; exit 3 `Tests deferred:` = PC unreachable, no local
 fallback, not a pass. Pins:
 `docs/design-notes.md` **Checks — what each suite pins**. Window (`test:x`): autoclearlag,
 view, restorefix, askclick, askrender, devicesfit, phoneview, contrast, renderwatchlive,
-panefit, railtrack. Network: `test:discordbrand`,
+panefit, railtrack, mirrorview. Network: `test:discordbrand`,
 `node scripts/mac-update-test.mjs --live <v>`. `npm run competitors` (`test:competitors`).
 
 ## Checking a layout change without screenshots

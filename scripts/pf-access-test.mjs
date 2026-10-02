@@ -13,8 +13,8 @@
 //
 //   node scripts/pf-access-test.mjs
 import { execFile } from 'node:child_process'
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
-import { connect } from 'node:net'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { connect, createServer as createNetServer } from 'node:net'
 import { networkInterfaces, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -78,6 +78,44 @@ const A = await load('src/shared/pfAccess.ts', 'pfaccess')
   ok(wApp.map((f) => f.name).join() === 'pf.ps1,pf.cmd,pf', 'Windows without Node: all three hand to pf.ps1')
   ok(/\| Write-Output\r\nexit \$LASTEXITCODE/.test(wApp[0].body), 'pf.ps1 pipes so PowerShell waits and keeps the exit code')
   ok(wApp[1].body.includes('-File "C:\\U\\bin\\pf.ps1" %*'), 'pf.cmd names pf.ps1 once, no doubled separator', wApp[1].body)
+  // Git Bash rewrites a leading-slash argument (`/clear`) into a Windows path on exec.
+  const EXPORT = "export MSYS2_ARG_CONV_EXCL='*'\n"
+  for (const [what, f] of [['Node', wNode[1]], ['Node-less', wApp[2]]]) {
+    const at = f.body.indexOf(EXPORT)
+    ok(at > 0 && at < f.body.indexOf('exec '), `win32 ${what} pf shim turns MSYS argument conversion off before exec`, f.body)
+  }
+  ok(!mNode[0].body.includes('MSYS2_ARG_CONV_EXCL'), 'POSIX shim is unchanged')
+}
+
+// ---- real Git Bash: "/clear" must reach pf-ctl as typed ----------------------------------
+if (process.platform === 'win32') {
+  const sh = ['C:/Program Files/Git/usr/bin/sh.exe', 'C:/Program Files/Git/bin/sh.exe'].find((p) => existsSync(p))
+  if (!sh) console.log('  (Git Bash not found - real-shell argument check skipped)')
+  else {
+    const dir = join(work, 'gb')
+    mkdirSync(dir, { recursive: true })
+    const script = join(dir, 'argv.mjs')
+    writeFileSync(script, 'console.log(JSON.stringify(process.argv.slice(2)))\n')
+    const shim = A.pfShimFiles('win32', process.execPath, process.execPath, script, dir).find((f) => f.name === 'pf')
+    writeFileSync(join(dir, 'pf'), shim.body)
+    const got = await new Promise((res) =>
+      execFile(sh, [join(dir, 'pf').replace(/\\/g, '/'), '/clear', '/c/Users'], { encoding: 'utf8', timeout: 20_000 }, (e, o, se) =>
+        res(e ? `error: ${e.message} ${se}` : o.trim())
+      )
+    )
+    ok(got === JSON.stringify(['/clear', '/c/Users']), 'Git Bash: "/clear" arrives unchanged through the pf shim', got)
+  }
+}
+
+// ---- pf-ctl path arguments: an MSYS drive path becomes a Windows one on win32 only --------
+{
+  const { pathArg } = await import(pathToFileURL(join(root, 'scripts', 'pf-ctl-lib.mjs')).href)
+  ok(pathArg('/c/Users/x', 'win32') === 'C:/Users/x', 'MSYS /c/Users/x -> C:/Users/x', String(pathArg('/c/Users/x', 'win32')))
+  ok(pathArg('/D', 'win32') === 'D:/', 'bare MSYS drive /D -> D:/', String(pathArg('/D', 'win32')))
+  ok(pathArg('/clear', 'win32') === '/clear', '/clear is not a drive path')
+  ok(pathArg('/cx/y', 'win32') === '/cx/y', '/cx/y is not a drive path')
+  ok(pathArg('C:\\x', 'win32') === 'C:\\x', 'a Windows path is left alone')
+  ok(pathArg('/c/Users/x', 'darwin') === '/c/Users/x', 'other platforms never convert')
 }
 
 // ---- local-only listener + the real pf-ctl through a real shim -------------------------
@@ -132,6 +170,33 @@ if (process.platform !== 'win32') {
 
 const back = await server.start(port)
 ok(back.on === true && !server.localOnly, 'switching phone access on turns the same port into a real phone server')
+await server.stop()
+
+// Another program already on the port (the installed app, as a dev copy starts): binding
+// 127.0.0.1 beside its 0.0.0.0 succeeds on Windows and macOS, and loopback - `pf`, the
+// tunnel, `tailscale serve` - would then reach the newcomer. The newcomer must stand back.
+// The probe connects and hangs up at once, so the held side's write can meet a reset.
+const held = createNetServer((s) => {
+  s.on('error', () => {})
+  s.end('held\n')
+})
+await new Promise((res) => held.listen(port, '0.0.0.0', res))
+const shadow = await server.start(port, LOCAL_ONLY)
+ok(!server.running, 'a port another program answers on is not taken as a local-only listener', JSON.stringify(shadow))
+const shadowOn = await server.start(port)
+ok(!server.running && /already used/.test(shadowOn.error ?? ''), 'nor as a phone server, and the panel says why', JSON.stringify(shadowOn))
+const reply = await new Promise((res) => {
+  let text = ''
+  const s = connect({ host: '127.0.0.1', port })
+  s.setEncoding('utf8')
+  s.on('data', (c) => (text += c))
+  s.on('close', () => res(text))
+  s.on('error', () => res(''))
+})
+ok(reply === 'held\n', 'loopback still reaches the program that held the port first', JSON.stringify(reply))
+await new Promise((res) => held.close(res))
+const freed = await server.start(port, LOCAL_ONLY)
+ok(server.running && server.localOnly, 'and the port is taken once it is free again', JSON.stringify(freed))
 await server.stop()
 
 console.log(fail ? `\npf-access-test: ${fail} of ${pass + fail} failed` : `\npf-access-test: ${pass} checks passed`)

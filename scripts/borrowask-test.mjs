@@ -103,6 +103,28 @@ const is = (a, b, what) => {
   is(shouldAsk({ cols: 153, rows: 51, hostCols: 153, hostRows: 51, now: 5000, state: null }).ask, false, 'exact match')
 }
 
+// ...but only one way. A host grid one cell BIGGER than the room does not fit, and the
+// mirror would draw it a whole font size smaller (12 for a pane with room at 13), so that
+// is an ask. Measured 2026-10-02: a lend settled at 123x39 against room for 119x41.
+{
+  is(shouldAsk({ cols: 152, rows: 51, hostCols: 153, hostRows: 51, now: 5000, state: null }).ask, true, 'one column too wide is an ask')
+  is(shouldAsk({ cols: 153, rows: 50, hostCols: 153, hostRows: 51, now: 5000, state: null }).ask, true, 'one row too tall is an ask')
+  // ...and it still settles: the host lends what is asked, a wobbling room is answered once.
+  let state = null
+  let host = { cols: 160, rows: 51 }
+  let asks = 0
+  for (let i = 0; i < 200; i++) {
+    const want = { cols: i % 2 ? 153 : 152, rows: 51 }
+    const out = shouldAsk({ cols: want.cols, rows: want.rows, hostCols: host.cols, hostRows: host.rows, now: i * 40, state })
+    state = out.state
+    if (out.ask) {
+      asks++
+      host = { ...want }
+    }
+  }
+  is(asks <= 2, true, `a one-cell wobble against a lending host asked ${asks} times`)
+}
+
 // A target the host can NEVER grant - a second viewer is smaller, so `smallestBorrow`
 // wins - gives up after the tries cap rather than asking for ever.
 {

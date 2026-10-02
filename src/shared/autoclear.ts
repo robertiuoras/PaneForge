@@ -537,7 +537,8 @@ export function armDecision(why: DropReason | null): 'arm' | 'queue' | 'refuse' 
   if (!why) return 'arm'
   // 'drafting' queues for the same reason 'working' does: the line is submitted or
   // abandoned within the turn, so the ask is still good afterwards. Refusing would throw
-  // away a clear that is genuinely due; clearing would eat the draft.
+  // away a clear that is genuinely due; clearing would eat the draft. A pane left idle with
+  // its box emptied has no turn end to wait for, so the idle sweep asks again (`sweepIdle`).
   return why === 'working' || why === 'drafting' ? 'queue' : 'refuse'
 }
 

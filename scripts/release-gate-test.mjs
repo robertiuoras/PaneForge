@@ -32,7 +32,17 @@ const here = dirname(fileURLToPath(import.meta.url))
 // as "the suite could not run", about a suite that is green standalone.
 const root = mkdtempSync(join(tmpdir(), 'paneforge-release-gate-test-'))
 process.on('exit', (code) => {
-  if (!code) rmSync(root, { recursive: true, force: true })
+  if (code) return
+  // Windows keeps the fixture repos' pack files open for a moment after the last child
+  // exits, so this delete answers EPERM - and a throw inside an `exit` handler turns a
+  // suite that just printed "all passed" into exit 1, which the release gate reads as a
+  // red suite. Leaving a temp folder behind is the smaller lie: say so, and keep the
+  // verdict the checks earned.
+  try {
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+  } catch (err) {
+    console.log(`(left ${root} behind: ${err.code ?? err.message})`)
+  }
 })
 
 let failed = 0

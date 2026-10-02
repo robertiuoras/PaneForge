@@ -69,6 +69,7 @@ import {
   findTranscript,
   folderRefusal,
   helpText,
+  pathArg,
   isCommand,
   isFinishedPane,
   lastExchange,
@@ -220,7 +221,7 @@ function flag(argv, name) {
 export function readOpenManyPlan(path) {
   let rows
   try {
-    rows = JSON.parse(readFileSync(path, 'utf8'))
+    rows = JSON.parse(readFileSync(pathArg(path), 'utf8'))
   } catch (e) {
     throw new Error(`could not read plan ${path} - ${e instanceof Error ? e.message : e}`)
   }
@@ -230,7 +231,7 @@ export function readOpenManyPlan(path) {
       throw new Error(`row ${n} in ${path} has no "cwd"`)
     if (row.prompt && row.task) throw new Error(`row ${n} in ${path} has both "prompt" and "task"`)
     return {
-      cwd: row.cwd,
+      cwd: pathArg(row.cwd),
       title: row.title,
       prompt: row.prompt,
       task: row.task,
@@ -397,7 +398,7 @@ if (cmd === 'tell') {
 // pressed Send, so a bad id or an empty file is refused here, before any pane is touched.
 let continueArgs = null
 if (cmd === 'continue') {
-  const promptFile = flag(rest, '--prompt-file')
+  const promptFile = pathArg(flag(rest, '--prompt-file'))
   const json = rest.includes('--json')
   const [resumeId, ...stray] = rest.filter((a) => a !== '--json')
   if (!resumeId || !promptFile)
@@ -761,7 +762,7 @@ if (cmd === 'list') {
   // by name is refused by name, never silently opened here instead (see offloadFirst.ts).
   const device = flag(rest, '--on')
   if (device && here) fail(1, 'open takes --here or --on <device>, not both')
-  const cwd = rest[0]
+  const cwd = pathArg(rest[0])
   if (!cwd) fail(1, 'open needs a cwd: pf-ctl open <cwd> [--title T] [--prompt P]')
   const computeId = flag(rest, '--compute-job'), computeOwner = flag(rest, '--compute-owner')
   if ((computeId || computeOwner) && (!computeId || !computeOwner || agent !== 'shell' || closeWhenDone || prompt)) fail(1, 'compute observer requires --agent shell --compute-job ID --compute-owner native-ID, without --prompt or --close-when-done; submit the job first')
@@ -806,7 +807,7 @@ if (cmd === 'list') {
   // the words saying why that folder got none - so a refusal prints its own reason rather
   // than `see the app for why`. Matched back by POSITION, never by folder: a pane that
   // lands in a lane comes back with a different `cwd` (the worktree).
-  const planPath = rest[0]
+  const planPath = pathArg(rest[0])
   if (!planPath) fail(1, 'open-many needs a plan file: pf-ctl open-many <plan.json>')
   let plan
   try {
@@ -861,7 +862,7 @@ if (cmd === 'list') {
   if (!pane || !job || !owner) fail(1, 'watch-job requires job ID, --owner native session ID, and --pane exact local shell ID; run on the job device')
   console.log(JSON.stringify(await call('sessions:watchCompute', [pane, job, owner])))
 } else if (cmd === 'review') {
-  const path = rest[0]
+  const path = pathArg(rest[0])
   if (!path) fail(1, 'review needs a JSON file with id, sessionId, kind, report, and proof')
   let input
   try { input = JSON.parse(readFileSync(path, 'utf8')) } catch (e) { fail(1, `could not read review JSON - ${e instanceof Error ? e.message : e}`) }

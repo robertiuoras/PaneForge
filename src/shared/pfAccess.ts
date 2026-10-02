@@ -79,11 +79,15 @@ export function pfShimFiles(
     return [{ name: 'pf', body: `#!/bin/sh\n# PaneForge control command - written by the app, rewritten on every start.\n${run}\n`, exec: true }]
   }
   const fwd = (p: string): string => p.replace(/\\/g, '/')
+  // Git Bash rewrites a leading-slash argument like /clear into a Windows path
+  // (C:/Program Files/Git/clear) when it execs a native program; '*' turns that off.
+  // pf-ctl converts its own folder/file arguments instead (`pathArg`).
+  const noConv = "export MSYS2_ARG_CONV_EXCL='*'\n"
   const cmdQ = (p: string): string => `"${p.replace(/"/g, '')}"`
   if (node) {
     return [
       { name: 'pf.cmd', body: `@${cmdQ(node)} ${cmdQ(script)} %*\r\n@exit /b %ERRORLEVEL%\r\n`, exec: false },
-      { name: 'pf', body: `#!/bin/sh\nexec ${sh(fwd(node))} ${sh(fwd(script))} "$@"\n`, exec: true }
+      { name: 'pf', body: `#!/bin/sh\n${noConv}exec ${sh(fwd(node))} ${sh(fwd(script))} "$@"\n`, exec: true }
     ]
   }
   const psQ = (p: string): string => `'${p.replace(/'/g, "''")}'`
@@ -101,7 +105,7 @@ export function pfShimFiles(
     },
     {
       name: 'pf',
-      body: `#!/bin/sh\nexec powershell.exe -NoProfile -ExecutionPolicy Bypass -File ${sh(fwd(ps1))} "$@"\n`,
+      body: `#!/bin/sh\n${noConv}exec powershell.exe -NoProfile -ExecutionPolicy Bypass -File ${sh(fwd(ps1))} "$@"\n`,
       exec: true
     }
   ]

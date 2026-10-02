@@ -68,6 +68,7 @@ import { LOCAL_ONLY, PhoneServer, newPhoneCode } from './phone'
 import { installPf } from './pfAccess'
 import { ownerAccess, ownerStats } from './ownerStats'
 import { Tunnel } from './tunnel'
+import { TailnetIdentity } from './tailnetIdentity'
 import { callInvoke, callSend, tapIpc } from './ipcTap'
 import { surfaceChannels } from '../shared/surface'
 import { startDisplayAwake } from './awake'
@@ -833,6 +834,8 @@ const phone = new PhoneServer({
   isKeepOpen: keptOpen,
   wakeSession: (id) => manager.wake(id, 'phone'),
   sendNativePrompt: (id, text) => manager.sendNativePrompt(id, text),
+  tailnet: new TailnetIdentity(),
+  trustLog: (line) => appendLog(join(app.getPath('userData'), 'phone-trust.log'), `${line}\n`, { rotateAt: 200_000 }),
   onIdle: () => manager.returnSizes(),
   onChange: () => send('phone:changed', phoneState())
 })
@@ -1628,13 +1631,25 @@ manager.deskWatched = (): boolean => {
   return !!win && !win.isDestroyed() && win.isVisible() && !win.isMinimized()
 }
 manager.windowFocused = (): boolean => focused
+/**
+ * Whether a person is at this desk NOW - the reading a borrow carries to the other machine.
+ *
+ * `sawPerson` alone is "somebody has touched this machine this run", which stays true for
+ * the whole run: a Mac left for the night kept telling the PC somebody was looking at
+ * every pane it mirrored. Away is the other half, and a desk nobody has touched is not a
+ * person either.
+ */
+function personHereNow(): boolean {
+  const a = away()
+  return a.sawPerson && a.awaySince === null
+}
 startAway((a) => {
   send('system:away', a)
   manager.presenceChanged()
   // ...and the other desk is told too. A pane of theirs that this machine is mirroring is
   // held off their idle clock while they believe somebody here is looking at it, and this
   // is the only thing that ever says otherwise - see `Borrow.person`.
-  remote.presenceChanged(a.sawPerson)
+  remote.presenceChanged(a.sawPerson && a.awaySince === null)
 })
 
 // On the PC, an empty desk nobody is using puts its window away after three minutes and
@@ -2928,7 +2943,7 @@ ipcMain.on(
     // window's and nothing ever put it back.
     if (remote.owns(id)) {
       if (borrowed === true) borrowedRemote(who).add(id)
-      remote.resizeOn(id, cols, rows, who, away().sawPerson)
+      remote.resizeOn(id, cols, rows, who, personHereNow())
     }
     // A borrowed resize over this channel is a PHONE drawing the pane - the desk window
     // never borrows, it owns. Named so a mirror watching the same pane is a separate
@@ -2982,7 +2997,11 @@ ipcMain.on('pty:visible', (_e, client: string, ids: string[], viewer?: string) =
   // panes it has renews its lease on those, and every borrow whose screen has gone
   // quiet expires here. That is what gives the desk its pane back when a phone locks,
   // backgrounds or walks out of range without ever saying `pty:return`.
-  manager.touchBorrows(typeof viewer === 'string' && viewer ? viewer : 'window', ids)
+  const who = typeof viewer === 'string' && viewer ? viewer : 'window'
+  manager.touchBorrows(who, ids)
+  // ...and the other desk: a mirrored pane this screen is not drawing is not one anybody
+  // here is looking at, so it may go back on its owner's idle clock.
+  remote.visibleOn(who, ids.filter((id) => typeof id === 'string' && remote.owns(id)))
 })
 /**
  * The owner takes one pane's size back - the other half of `pty:return`, and the only

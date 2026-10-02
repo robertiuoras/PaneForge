@@ -30,15 +30,17 @@ const base = (path: string): string => path.replace(/[\\/]+$/, '').split(/[\\/]/
 /**
  * One push per row, or null. Null for: a row that asked for no notice, a row already reviewed
  * or already pushed, a copy of another machine's row (the owner pushes it), a shell, a chat
- * the person was looking at when it finished (`looked`), and a result with nothing left for
+ * the person was looking at when it finished (`looked`), a chat another pane opened and
+ * collects the summary of (`opener` reports its steps itself, one push not two), and a result with nothing left for
  * the person - a finished chat with nothing to do is a Review row, not a buzz in a pocket.
  */
 export function reviewPush(
   r: ReviewRecord & { pushSentAt?: string },
   machine: 'mac' | 'pc',
-  looked = false
+  looked = false,
+  opener?: string
 ): ReviewPush | null {
-  if (!r.notify || r.reviewedAt || r.pushSentAt || r.origin || looked || r.provider === 'shell') return null
+  if (!r.notify || r.reviewedAt || r.pushSentAt || r.origin || looked || opener || r.provider === 'shell') return null
   const steps = stepsForPerson(r)
   if (!steps.length) return null
   const project = base(r.cwd)
