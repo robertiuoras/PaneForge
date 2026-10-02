@@ -57,10 +57,11 @@ from the clock's OWN start; not in `Elapsed.tsx`; `formatElapsed` carries days. 
 ## The sessions list is the whole desk, both machines
 
 Your move / Running / Ready / Ended (`shared/fleet.ts`), Ctrl+Shift+F dragged order;
-`shared/desk.ts`; `test:desk`. Listing (`remote:changed`) vs mirroring; `openListed`. Listed
-row has no NUMBER; real panes all wear one (`.num.far`); grid fits 440x240 tiles
-(`gridRoom`/`gridPick`: needs-you first, asleep last, active always), counts the rest. Mirror
-listed once; device off/connecting/error = nothing; badge counts both. `Running` = `runSince`
+`shared/desk.ts`; `test:desk`; `openListed`. A peer's panes are ALL mirrored by default
+(`mirrorsAll()`); a still-LISTED row is numbered (`listedByNumber`, Ctrl+N) and closable
+(`closeOn`); chip = `chipCloseAt`, nothing while `away`. Every row is numbered (`.num.far`);
+grid fits 440x240 tiles (`gridRoom`/`gridPick`: needs-you first, asleep last, active always),
+counts the rest. Mirror listed once; device not online = nothing; badge counts both. `Running` = `runSince`
 (submit, busy footer, shell command) until `endRun`, or `FleetPane.backJob`; never `status ===
 'working'`. `Ready` ≠ `!engaged` (`/clear` drops it; `/compact`/`/resume` don't). Empty Return
 engages nothing (`slashTurn.isBareReturn`, `test:slash`). Shell turn ends with its COMMAND,

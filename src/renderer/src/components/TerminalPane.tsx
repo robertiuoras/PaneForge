@@ -1,6 +1,17 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useQuietState } from '../quietState'
-import { borrowGrid, mirrorFit as mirrorSize } from '@shared/mirrorFit'
+import {
+  bestFont,
+  borrowGrid,
+  MIN_COLS,
+  MIN_FONT,
+  MIN_ROWS,
+  mirrorFit as mirrorSize,
+  placeGrid,
+  roomFor,
+  type Box,
+  type Cell
+} from '@shared/mirrorFit'
 import { shouldAsk, type BorrowAsk } from '@shared/borrowAsk'
 import { Terminal, type ILink, type IMarker } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -636,8 +647,129 @@ function refit(t: Terminal, f: FitAddon, pinned: boolean): boolean {
  */
 
 /**
- * A mirrored pane's version of the same thing: take the host's grid exactly, and pick
- * the largest font at or below the user's own at which that grid still fits here.
+ * The cells this pane's renderer draws, per font - measured once each, because measuring
+ * one means setting that font. Keyed by everything that changes a cell without changing
+ * the font: the renderer (WebGL rounds the cell to whole device pixels, the DOM renderer
+ * does not), the screen's pixel ratio, and the font face. See `bestFont` in
+ * shared/mirrorFit.ts for the numbers that made this necessary.
+ */
+/** renderer + screen + face -> font -> cell. Every key is kept: a pane swaps renderer on every
+ *  hide and show, and re-measuring each font after each swap is a font set per font per show. */
+type CellCache = Map<string, Map<number, Cell>>
+
+/**
+ * The cell the renderer is drawing at right now, CSS px - the very number the fit addon
+ * divides by (`proposeDimensions` reads the same private field). null if a later xterm
+ * renames it, and then a mirror falls back to the ratio walk below rather than failing.
+ */
+function cellNow(t: Terminal): Cell | null {
+  const c = (t as unknown as { _core?: { _renderService?: { dimensions?: { css?: { cell?: { width: number; height: number } } } } } })
+    ._core?._renderService?.dimensions?.css?.cell
+  return c && c.width > 0 && c.height > 0 ? { w: c.width, h: c.height } : null
+}
+
+/**
+ * The box the fit addon would fill: the host's width less the terminal's padding and the
+ * scrollbar, its height less the padding. Same reads, same `parseInt`, so the room this
+ * gives a mirror is the grid a local pane of this size is given.
+ */
+function usableBox(t: Terminal): Box | null {
+  const el = t.element
+  const parent = el?.parentElement
+  if (!el || !parent) return null
+  const ps = getComputedStyle(parent)
+  const es = getComputedStyle(el)
+  const px = (v: string): number => parseInt(v) || 0
+  const sb =
+    t.options.scrollback === 0
+      ? 0
+      : ((t as unknown as { _core?: { viewport?: { scrollBarWidth?: number } } })._core?.viewport?.scrollBarWidth ?? 0)
+  const w = Math.max(0, px(ps.width)) - px(es.paddingLeft) - px(es.paddingRight) - sb
+  const h = px(ps.height) - px(es.paddingTop) - px(es.paddingBottom)
+  return w > 0 && h > 0 ? { w, h } : null
+}
+
+/**
+ * A mirrored pane: take the host's grid exactly, draw it at the largest font at or below
+ * the user's own at which it fits HERE, and centre what is left over.
+ *
+ * Exact, not walked. The room at a font is the fit addon's arithmetic over the cell this
+ * renderer really draws at that font (`cells`), so the answer is the same from whatever
+ * font the pane happens to be at, and a renderer swap or a move to another screen - both
+ * change the cell without changing the font - is a new key and a fresh answer. The ask to
+ * the owner is that same room at the user's font, so a lent grid needs no shrinking at all.
+ * Falls back to the ratio walk (`ratioFit`) only when the cell cannot be read.
+ */
+function mirrorFit(
+  t: Terminal,
+  f: FitAddon,
+  pinned: boolean,
+  mirror: { cols: number; rows: number },
+  maxFont: number,
+  host: HTMLElement | null,
+  cells: CellCache,
+  gl: boolean,
+  ask?: (cols: number, rows: number) => void
+): boolean {
+  const cols = t.cols
+  const rows = t.rows
+  const entry = t.options.fontSize ?? maxFont
+  const box = usableBox(t)
+  const now = cellNow(t)
+  if (!host || !box || !now) return ratioFit(t, f, pinned, mirror, maxFont, host, ask)
+  const o = t.options
+  const key = [gl ? 'gl' : 'dom', window.devicePixelRatio, o.fontFamily, o.fontWeight, o.lineHeight, o.letterSpacing].join('|')
+  let at = cells.get(key)
+  if (!at) cells.set(key, (at = new Map()))
+  // A face that finished loading, or anything else the key cannot see, shows up here first:
+  // the cell at the font that is set right now is not the one on record.
+  const had = at.get(entry)
+  if (had && (Math.abs(had.w - now.w) > 0.001 || Math.abs(had.h - now.h) > 0.001)) at.clear()
+  at.set(entry, now)
+  const known = at
+  const cellAt = (font: number): Cell | null => {
+    const hit = known.get(font)
+    if (hit) return hit
+    t.options.fontSize = font
+    const c = cellNow(t)
+    if (c) known.set(font, c)
+    return c
+  }
+  const roomAt = (font: number): { cols: number; rows: number } | null => {
+    const c = cellAt(font)
+    return c ? roomFor(box, c) : null
+  }
+  const hostCols = Math.max(MIN_COLS, mirror.cols)
+  const hostRows = Math.max(MIN_ROWS, mirror.rows)
+  // The grid to ask the owner for: exactly what fits here at the user's font. Unconditional;
+  // whether it is worth asking for is `shouldAsk`'s question.
+  if (ask) {
+    // At the font `bestFont` would start from, and never under the floors main records a
+    // borrow at (20x5): an ask below them is never "settled" and would be re-sent every fit.
+    const want = roomAt(Math.max(MIN_FONT, Math.floor(maxFont)))
+    if (want) ask(Math.max(MIN_COLS, want.cols), Math.max(MIN_ROWS, want.rows))
+  }
+  const font = bestFont({ hostCols, hostRows, maxFont, roomAt }) ?? entry
+  // Measuring may have left another font set; this is the one that is drawn.
+  if (t.options.fontSize !== font) t.options.fontSize = font
+  t.resize(hostCols, hostRows)
+  const place = placeGrid({ box, cols: hostCols, rows: hostRows, cell: cellAt(font) ?? now })
+  const move = place.x || place.y ? `translate(${place.x}px, ${place.y}px)` : ''
+  const zoom = place.scale < 1 ? `scale(${place.scale.toFixed(3)})` : ''
+  const want = [move, zoom].filter(Boolean).join(' ')
+  let moved = false
+  if (host.style.transform !== want) {
+    host.style.transformOrigin = 'top left'
+    host.style.transform = want
+    moved = true
+  }
+  if (pinned) t.scrollToBottom()
+  return t.cols !== cols || t.rows !== rows || font !== entry || moved
+}
+
+/**
+ * The fallback walk, for an xterm whose cell cannot be read: pick the largest font at or
+ * below the user's own at which the host's grid still fits here, one ratio step at a time.
  *
  * Self-correcting rather than exact. `proposeDimensions()` answers for the font that is
  * set right now, so the ratio it implies is one step towards the right size, not the
@@ -645,7 +777,7 @@ function refit(t: Terminal, f: FitAddon, pinned: boolean): boolean {
  * two converge in a frame or two. Solving it in one go would mean reading xterm's
  * internal cell metrics, which are stale for a frame after any font change anyway.
  */
-function mirrorFit(
+function ratioFit(
   t: Terminal,
   f: FitAddon,
   pinned: boolean,
@@ -1084,6 +1216,8 @@ function TerminalPane({
    * and the measurement behind them are in `shared/borrowAsk.ts`.
    */
   const borrowRef = useRef<BorrowAsk | null>(null)
+  /** the cell each font draws at, for a pane drawn at somebody else's grid - see `mirrorFit` */
+  const cells = useRef<CellCache>(new Map())
   const askBorrow = (cols: number, rows: number): void => {
     const m = mirrorRef.current
     const out = shouldAsk({
@@ -1095,7 +1229,9 @@ function TerminalPane({
       state: borrowRef.current
     })
     borrowRef.current = out.state
-    if (out.ask) api.resize(sessionId, cols, rows, true)
+    // Named, like every other borrow: a mirror's ask with no viewer was filed as a PHONE's,
+    // so the real phone putting the pane down (`pty:return`) took the window's borrow too.
+    if (out.ask) api.resize(sessionId, cols, rows, true, viewerName())
   }
   /**
    * The phone's shape of the same ask, while a person at the desk is holding the pty at
@@ -1144,7 +1280,7 @@ function TerminalPane({
     if (replaying.current) return false
     const m = mirrorRef.current
     if (m && m.cols > 0 && m.rows > 0)
-      return mirrorFit(t, f, pinned.current, m, fontRef.current, host.current, askBorrow)
+      return mirrorFit(t, f, pinned.current, m, fontRef.current, host.current, cells.current, glRef.current !== null, askBorrow)
     // A phone is holding this pane's size. Same drawing as a mirror - take the grid, fit
     // the font to it - and no resize is reported, because reporting one is exactly what
     // used to pull the pty out from under the phone.
@@ -1159,6 +1295,8 @@ function TerminalPane({
         g,
         fontRef.current,
         host.current,
+        cells.current,
+        glRef.current !== null,
         isPhoneClient() ? askHeld : undefined
       )
     // No longer drawn at somebody else's grid: drop any scale a mirror left behind,
@@ -4774,6 +4912,15 @@ function TerminalPane({
       queueResizeRepaint(rewrapped)
     })
     ro.observe(host.current)
+    // ...and the screen, which changes size with NOTHING about the box moving: a renderer
+    // swap (a pane hidden and shown, a lost GPU context) or a move to a screen with another
+    // pixel ratio changes the cell under an unchanged font. A mirror's font, scale and
+    // centring are all read off that cell, and with only the host watched none of them was
+    // re-read - 75px empty on the left and two columns off the right, measured 2026-10-02.
+    // A local pane the same: fitted at WebGL's 7.2px cell, drawn at the DOM's 7.6px, its
+    // last two columns sat under the scrollbar until the window next moved.
+    const screenEl = t.element?.querySelector('.xterm-screen')
+    if (screenEl) ro.observe(screenEl)
 
     // Whether the agent's own footer still says it is running. The main process cannot see
     // the rendered frame, and without this a long silent tool call looks exactly like a

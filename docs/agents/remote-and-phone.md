@@ -13,9 +13,13 @@ same headings as `docs/design-notes.md` (the why). Paths: `shared/` = `src/share
 (`test:peerchrome`). Pty never moves; id `@<device>/<id>`, `remote.owns(id)`.
 
 - Borrow carries `Borrow.person` (`shared/paneSize.ts`); `watched` counts only those; absent =
-  yes; `Remote.presenceChanged` on `away`. OWNER publishes `closingAt`.
+  yes; `person` = at that desk NOW and that screen DRAWS the pane (`Remote.visibleOn`,
+  `Remote.presenceChanged` on `away`). OWNER publishes `closingAt`.
 - Mirror borrows size (`resize(borrowed)`, `returnSize(id)` never `returnSizes()`); smallest
-  grid per axis; lease by 30s `pty:visible`, `BORROW_TTL_MS` 90s (`test:panesize`).
+  grid per axis; lease by 30s `pty:visible`, `BORROW_TTL_MS` 90s (`test:panesize`). Mirror
+  font = `bestFont` over the cell the renderer REALLY draws (WebGL rounds to device px), cached
+  per renderer + dpr; ask = that room at the user's font; `.xterm-screen` observed (renderer
+  swap); `placeGrid` centres in the fit addon's box (`test:mirrorview`, `test:mirrorfit`).
 - `Remote.closeOn` hides a closed row, `CLOSE_ACK_MS` 3s; `proveAlive` uses an unanswered press
   over `DEAD_MS` 45s. Mirror never reports busy footer.
 - Pairing code proved never sent (scrypt, AES-256-GCM); hosting off; UDP discovery; or six

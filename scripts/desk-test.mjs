@@ -120,10 +120,21 @@ const peer = (over = {}) => ({
   is(rows.length, 3, "a connected device's panes are listed beside this desk's")
   const listed = rows.filter((r) => r.listed)
   is(listed.length, 2, 'both of them')
+  // Numbered after this desk's own panes, so Ctrl+N reaches them too - a row with no
+  // number was a row you could not get to from the keyboard. Robert, 2026-09-23: "they
+  // dont even have a number on them which is bad".
+  is(listed.map((r) => r.number), [2, 3], 'and each carries the next pane number after the panes on this desk')
   is(
-    listed.map((r) => r.number),
-    [0, 0],
-    'and neither has a pane number - there is nothing here for Ctrl+N to reach'
+    deskRows([local], [local], [p], 'pc')
+      .filter((r) => r.listed)
+      .map((r) => r.number),
+    [2, 3],
+    'a device filter changes what is drawn, never which number a row wears'
+  )
+  is(
+    deskRows([local], [], [p], 'all').map((r) => r.number),
+    [2, 3],
+    'and hiding the panes on this desk does not renumber the other machine'
   )
   is(listed[0].listed.device.name, 'Gamer-PC', 'the row knows which machine it is on')
   ok(
@@ -243,7 +254,7 @@ const peer = (over = {}) => ({
   const info = types.slice(types.indexOf('export interface RemotePaneInfo'))
   const infoBody = info.slice(0, info.indexOf('\n}'))
   const remote = readFileSync(join(root, 'src/main/remote/index.ts'), 'utf8')
-  const map = remote.slice(remote.indexOf('panes: (client?.panes() ?? []).map'))
+  const map = remote.slice(remote.indexOf('panes: (client?.panes() ?? [])'))
   const mapBody = map.slice(0, map.indexOf('})),'))
 
   for (const f of fields) {
