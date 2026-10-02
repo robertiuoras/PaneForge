@@ -20,8 +20,8 @@
  * Exit code is the PC's.
  */
 import { spawnSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { readFileSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -47,7 +47,23 @@ env.CLAUDE_SESSION_ID ||= env.CODEX_THREAD_ID || env.PF_SESSION_ID || env.PF_PAN
 
 const SSH_DROPPED = 3 // rbuild: "cannot reach <host>"
 let run
-for (let attempt = 1; attempt <= 3; attempt++) {
+// ON the PC there is no rbuild (it is the Mac's ssh client: `Cannot find module
+// ...\.claude\rbuild.mjs`, exit 1, 2026-10-02) - the PC's own GuardDeck queue admits the job
+// instead, the route PC chats use by hand. `wait --log` streams the job's output and exits
+// with its code (75 = still queued when the wait ran out).
+if (process.platform === 'win32') {
+  const queue = join(homedir(), 'Desktop', 'Projects', 'guarddeck', 'compute', 'cli.mjs')
+  const id = `pc-check-${process.pid}-${Date.now()}`
+  const request = join(tmpdir(), `${id}.json`)
+  writeFileSync(request, JSON.stringify({
+    id, session: env.CLAUDE_SESSION_ID, cwd: root, command: argv.join(' '), memoryMB: 8192, timeoutSeconds: 7200
+  }))
+  const submitted = spawnSync(process.execPath, [queue, 'submit', request], { encoding: 'utf8' })
+  run = submitted.status === 0
+    ? spawnSync(process.execPath, [queue, 'wait', id, '7200', '--log'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+    : submitted
+}
+if (!run) for (let attempt = 1; attempt <= 3; attempt++) {
   // rbuild's 30 min default killed test:lanes part way twice (2026-10-02, 42 files, lane-heal
   // alone takes 7 min on the PC); 7200 is rbuild's ceiling.
   run = spawnSync(process.execPath, [join(homedir(), '.claude', 'rbuild.mjs'), '--repo', root, '--timeout-seconds', '7200', '--', ...argv], {
