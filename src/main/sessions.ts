@@ -26,8 +26,8 @@ import { memoryPrelude } from './board'
 import { endAll, gistFor, noteCols, recordData, recordEnd, recordStart, sizeOf, tail, titleOf } from './history'
 import { jobTable } from './backJobs'
 import { backJobInfo, backJobWaitOnly } from './usage'
-import { forgetHandoff, handoffFor, verifiedPaneHandoff } from './handoffSteps'
-import { handoffOpenAfter } from '../shared/handoffSteps'
+import { forgetHandoff, handoffFor, ownHandoffFor, verifiedPaneHandoff } from './handoffSteps'
+import { handoffIsPanes, handoffOpenAfter } from '../shared/handoffSteps'
 import { workShot } from './changedNothing'
 import { changedNothingWhy, changedNothingWords } from '../shared/changedNothing'
 import { clientForCwd, clientForTexts } from './clients'
@@ -462,6 +462,9 @@ interface Live {
   meta: Session
   /** When the newest prompt its transcript holds was written - see the handoff read in the sweep. */
   promptAt?: number
+  /** The native conversation id the sweep last saw, and when it last changed (a `/clear`). */
+  nativeSeen?: string
+  clearedAt?: number
   /** A refused idle sweep may retry, but must not keep printing into the terminal. */
   sleepRefusalShown?: boolean
   /** When the unverified-conversation refusal was last written to reclaim.log. */
@@ -861,12 +864,13 @@ export class SessionManager extends EventEmitter {
         backWaitOnly: backJobWaitOnly(m.id),
         lastKeyboard: m.lastKeyboard,
         turnEndedAt: live.footerEndedAt,
-        // Only while a pane it opened is still open or their summary is still on its way.
+        // Only while a pane it opened is still WORKING or their summary is still on its way.
         // This was a Set kept for the pane's whole life, and done-close.log (27 Sep, from
         // 08:00Z) had it holding 8 finished panes for good - 27 lines, more than any other
-        // reason. Once the summary has landed and been answered, the opener is a pane
-        // like any other.
-        openedOthers: this.openChildrenOf(m.id) > 0 || this.digestPending(m.id),
+        // reason. Then any open child held it, and a child idle or waiting on Robert held
+        // its opener for good too (Mac s15-murh3a5m, 2026-10-02). Once the summary has
+        // landed and been answered, the opener is a pane like any other.
+        openedOthers: this.workingChildrenOf(m.id) > 0 || this.digestPending(m.id),
         owedPrompt: this.owesPrompt(live),
         handingOff: m.handingOff,
         handoffQueuedAt: m.handoffQueuedAt,
@@ -914,6 +918,26 @@ export class SessionManager extends EventEmitter {
     let n = 0
     for (const live of this.sessions.values())
       if (live.meta.id !== openerId && this.openerOf(live.meta.id) === openerId) n++
+    return n
+  }
+
+  /**
+   * How many panes that `openerId` opened are still WORKING: a turn running, a prompt
+   * owed, or work going on in the background. Only these hold the opener and its digest
+   * (Robert, 2026-10-03): a child that is idle, finished or waiting on him leaves the
+   * opener nothing to collect, and the digest's 30-minute cap stays for the rest.
+   */
+  workingChildrenOf(openerId: string, now = Date.now()): number {
+    let n = 0
+    for (const live of this.sessions.values()) {
+      if (live.meta.id === openerId || this.openerOf(live.meta.id) !== openerId) continue
+      const m = live.meta
+      if (m.status === 'exited') continue
+      const working =
+        m.status === 'working' || !!m.runSince || (live.busyUntil ?? 0) > now || !!m.job || this.owesPrompt(live) ||
+        !!m.subagent || (!!m.backJob && !backJobWaitOnly(m.id)) || this.hasPendingBackground(live)
+      if (working) n++
+    }
     return n
   }
 
@@ -3858,6 +3882,12 @@ export class SessionManager extends EventEmitter {
     // Before the pty dies, while its pid still names a group and a tree. What the pane
     // started detached is not reachable from either, which is what strays.ts is for.
     if (s.proc) killPaneStrays(id, s.proc.pid)
+    // Every close of a pane that names its opener leaves its note in the opener's digest,
+    // not only the done-close sweep's: Mac s19, closed by Review at 22:24:13 on 2026-10-02,
+    // told its opener s15-murh3a5m nothing. `add` keeps one note per pane, so a close that
+    // already left one adds nothing. Not while the app quits: the digest dies with it.
+    const opener = this.down ? undefined : this.openerOf(id)
+    if (opener && this.onFinished) this.onFinished(s.meta, opener)
     try {
       s.proc?.kill()
     } catch {
@@ -5723,9 +5753,17 @@ export class SessionManager extends EventEmitter {
       // the pane's word on what is left. Kept as the newest seen so a working pane, which
       // is not read, does not flicker back.
       if (reply?.promptAt && reply.promptAt > (live.promptAt ?? 0)) live.promptAt = reply.promptAt
-      const hand = handoffFor(meta.cwd, meta.id, now)
-      const open = handoffOpenAfter(hand, live.promptAt)
+      // A new native conversation id is a `/clear` (automatic or typed): from here on, a
+      // handoff that is not this pane's own and is older than that says nothing about it.
       const nativeId = resumeIdFor(meta.id)
+      if (nativeId && live.nativeSeen && nativeId !== live.nativeSeen) live.clearedAt = now
+      if (nativeId) live.nativeSeen = nativeId
+      // The pane's own handoff, when it has one, is its word - not a newer one another
+      // chat wrote to the project's unscoped file (`ownHandoffFor`).
+      const found = handoffFor(meta.cwd, meta.id, now)
+      const mine = handoffIsPanes(found, meta.id) ? found : ownHandoffFor(meta.cwd, meta.id)
+      const hand = mine.path ? mine : found
+      const open = handoffOpenAfter(hand, live.promptAt, { id: meta.id, since: Math.max(meta.openedAt ?? meta.createdAt, live.clearedAt ?? 0) })
       const verified = !!nativeId && !!verifiedPaneHandoff(meta.cwd, meta.id, meta.agent, nativeId, now)?.open
       if (meta.handoffVerified !== verified) { meta.handoffVerified = verified; changed = true }
       if (open !== meta.handoffOpen) {

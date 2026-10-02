@@ -1847,7 +1847,7 @@ setInterval(() => measureMainTask('done-close', () => {
   } catch (e) {
     console.warn(`done-close: sweep failed - ${(e as Error).message}`)
   }
-  for (const opener of finishedDigest.flush((o) => manager.openChildrenOf(o), (o, text) => manager.tellPane(o, text)))
+  for (const opener of finishedDigest.flush((o) => manager.workingChildrenOf(o), (o, text) => manager.tellPane(o, text), Date.now(), (o) => manager.openChildrenOf(o)))
     console.info(`done-close: told ${opener} what the panes it opened did`)
 }), 15_000).unref()
 /**

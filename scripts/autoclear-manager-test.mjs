@@ -12,7 +12,7 @@ const work = mkdtempSync(join(tmpdir(), 'pf-autoclear-manager-'))
 mkdirSync(join(work, 'userData'), { recursive: true })
 writeFileSync(join(work, 'electron.cjs'), `const p=require('node:path'); module.exports={app:{isPackaged:true,getVersion:()=> '1',getPath:()=>p.join(__dirname,'userData')},BrowserWindow:{getAllWindows:()=>[]},shell:{openPath:()=>{}},dialog:{}}`)
 writeFileSync(join(work, 'pty.cjs'), `const off={dispose(){}}; module.exports={spawn:()=>({pid:1,writes:[],onData(cb){this.data=cb;return off},onExit(){return off},write(v){this.writes.push(v)},kill(){},resize(){}})}`)
-writeFileSync(join(work, 'handoff.cjs'), `module.exports={handoffFor:()=>global.__pfHandoff,forgetHandoff(){},clearHandoffCache(){}}`)
+writeFileSync(join(work, 'handoff.cjs'), `module.exports={handoffFor:()=>global.__pfHandoff,ownHandoffFor:()=>({path:null,open:0,steps:[],mtimeMs:0}),forgetHandoff(){},clearHandoffCache(){}}`)
 await build({
   absWorkingDir: root, entryPoints: ['src/main/sessions.ts'], bundle: true, format: 'cjs', platform: 'node',
   outfile: join(work, 'sessions.cjs'), logLevel: 'silent',

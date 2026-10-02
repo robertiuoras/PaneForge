@@ -69,7 +69,7 @@ export const nativeClaim = (value: string | undefined) => { native = value }
 export class Harness {
   sessions = new Map(); activeId = null; killed: unknown[] = []
   windowFocused = () => false; deskWatched = () => false
-  openChildrenOf = () => 0; digestPending = () => false; owesPrompt = () => false
+  openChildrenOf = () => 0; workingChildrenOf = () => 0; digestPending = () => false; owesPrompt = () => false
   kill(id: string, by: string) { this.killed.push([id, by]); this.sessions.delete(id); return true }
   replyFor = null; turnOpenFor = () => null
 ${method('doneReadings', 'turnRead')}
@@ -759,6 +759,11 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
   assert.match(sent[1][1], /^The pane you opened for "idea 3".* 1 other pane is still open\.$/)
   d.add('gone', note('d', 'x'), NOW)
   assert.deepEqual(d.flush(() => 0, () => false, NOW), [], 'an opener that has gone is dropped, not retried')
+  // Told once nothing is working, and the text still counts the idle panes left open.
+  d.add('boss', { id: 'c1', title: 'one', project: 'p', summary: 'Did it.', personSteps: [] }, NOW)
+  let said = ''
+  assert.deepEqual(d.flush(() => 0, (_o, text) => { said = text; return true }, NOW + 1, () => 1), ['boss'], 'an idle child does not hold the summary')
+  assert.match(said, /1 other pane is still open/, 'and the summary says it is still open')
   assert.equal(d.size(), 0)
   const index = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
   assert.ok(index.includes('finishedDigest.flush('), 'index.ts flushes the digest')
@@ -783,7 +788,7 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
   assert.equal(doneVerdict(finished({ openedOthers: false, owedPrompt: false }), NOW).close, true, 'after that it closes like any finished pane')
   const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
   assert.doesNotMatch(sessions, /private openers = new Set/, 'no life-long set of openers')
-  assert.match(sessions, /openedOthers: this\.openChildrenOf\(m\.id\) > 0 \|\| this\.digestPending\(m\.id\)/, 'open children or a waiting summary')
+  assert.match(sessions, /openedOthers: this\.workingChildrenOf\(m\.id\) > 0 \|\| this\.digestPending\(m\.id\)/, 'WORKING children or a waiting summary')
   assert.match(sessions, /owedPrompt: this\.owesPrompt\(live\)/, 'a prompt being delivered is in the reading')
   assert.match(sessions, /\(live\.meta\.handoverUntil \?\? 0\) > Date\.now\(\)/, '...the handover between /clear and its resume included')
   const index = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
@@ -796,6 +801,55 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
   const reading = { agent: s44.agent, printed: s44.printed, status: s44.status, lastKeyboard: s44.lastKeyboard, turnEndedAt: s44.lastOutput, openedOthers: false, reply: 'Done.\n\nNext steps: None', runningAgents: 0 }
   assert.equal(doneVerdict(reading, at).close, true, 's44 as it stood, with no pane of its own open, closes')
   console.log('done-close: an opener holds only until its summary lands ok')
+}
+
+// 5c. Round 2 of the stuck chats (2026-10-03). An opener waits only while a pane it opened
+// is WORKING; every close of a child feeds the digest; the reply classifier stops reading
+// automatic, another chat's and dated steps as work.
+{
+  const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
+  const from = sessions.indexOf('  workingChildrenOf(')
+  const to = sessions.indexOf('\n  }\n', from)
+  assert.ok(from > 0 && to > from, 'workingChildrenOf exists')
+  const fixture = join(work, 'working-children.ts')
+  writeFileSync(fixture, `
+const backJobWaitOnly = (id: string) => id === 'waitonly'
+export class H {
+  sessions = new Map<string, any>()
+  openers = new Map<string, string>()
+  openerOf(id: string) { return this.openers.get(id) }
+  owesPrompt(live: any) { return !!live.owed }
+  hasPendingBackground(live: any) { return !!live.pending }
+${sessions.slice(from, to + 4)}
+}
+`)
+  const { H } = await bundle(fixture, 'working-children.cjs')
+  const h = new H()
+  const child = (id, meta = {}, live = {}) => { h.sessions.set(id, { meta: { id, status: 'idle', ...meta }, ...live }); h.openers.set(id, 'boss') }
+  h.sessions.set('boss', { meta: { id: 'boss', status: 'idle' } })
+  child('done', {}, {})
+  child('asks', { ask: { kind: 'question' } })
+  child('dead', { status: 'exited', runSince: 1 })
+  child('waitonly', { backJob: 'sleep 60' })
+  assert.equal(h.workingChildrenOf('boss', NOW), 0, 'idle, finished, waiting on Robert, exited, only waiting: none holds (Mac s15-murh3a5m)')
+  for (const [id, meta, live] of [['w1', { status: 'working' }, {}], ['w2', { runSince: NOW - 5_000 }, {}], ['w3', {}, { busyUntil: NOW + 5_000 }], ['w4', {}, { owed: true }], ['w5', { subagent: 'a background agent (x)' }, {}], ['w6', { backJob: 'npm test' }, {}], ['w7', {}, { pending: true }], ['w8', { job: 'npm run build' }, {}]]) {
+    child(id, meta, live)
+    assert.equal(h.workingChildrenOf('boss', NOW), 1, `${id} working holds`)
+    h.sessions.delete(id)
+  }
+  assert.match(sessions, /const opener = this\.down \? undefined : this\.openerOf\(id\)\r?\n\s+if \(opener && this\.onFinished\) this\.onFinished\(s\.meta, opener\)/, 'every child close feeds the opener digest (Mac s19, 22:24:13Z)')
+  const index = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
+  assert.ok(index.includes('finishedDigest.flush((o) => manager.workingChildrenOf(o)'), 'the digest goes once no child is working')
+  // The replies that held for nothing (real text), and the one that must still hold.
+  const { replyLeaves } = await bundle('src/shared/doneClose.ts', 'shared-r2.cjs')
+  const steps = (x) => `Done.\n\n**Next steps:**\n${x}`
+  for (const [chat, step] of [
+    ['Mac s15-murh3a5m', '- Chat 6 reports when the new GuardDeck is installed and the 5-second test passes.'],
+    ['PC s25-murguhxd', "- The Mac's sync pulls the fix by itself. The check booked for 7:50am Sun will confirm the Mac has it and that its tests pass."],
+    ['PC s26-muriaoad', '- On or after 5 Oct 2026, run the two checks: whether re-reported fixes are below the baseline of 10.5 per 100 fix claims, and how often agents reopen a trimmed result. Both are carried in the updated handoff file.']
+  ]) assert.equal(replyLeaves(steps(step)), null, `${chat} leaves nothing for now`)
+  assert.equal(replyLeaves(steps('1. Fix the Background workers panel, with a test for each change and a check of the page in light and dark themes.\n2. Make the four review changes and commit them with the settings text change.\n3. Run the full check again, merge into master, then send the report to the assistant chat and write the `.DONE.md` copy.')), '3 steps an agent could take', 'PC s22-murfd10o still holds')
+  console.log('done-close: an opener waits only on working children; dated, automatic and other chats\' steps hold nothing ok')
 }
 
 {
