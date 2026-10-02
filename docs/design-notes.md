@@ -2799,6 +2799,43 @@ Verified in a live window on :9334: one chip per pane, `1s` with the full title,
 
 ## The sessions list is the whole desk, both machines
 
+### 2026-09-23: PC rows open at once, carry a number, close, and never say `closes now` for a close that is not coming
+
+Robert, 2026-09-23: "i dont think we need watch button on remote sessison its just extra step
+and takes longer to view right? and says closes now but its not closing? and also they dont
+even have a number on them which is bad u need to fix them and close as well."
+
+Four things, one brief (`docs/superpowers/specs/2026-09-23-remote-rows-brief.md`):
+
+- **No extra step.** Every pane of a paired device is mirrored by default
+  (`RemoteClient.mirrorsAll()` is `mirrorAll !== false`; `Remote.start` switches every saved
+  peer over once and records `mirrorAllDefaulted`), so a PC pane is an ordinary card on the
+  Mac the moment the link is up. Cost, measured on the PC 2026-09-23 before deciding: the
+  renderer went 109 MB (no panes) -> 128 MB (four empty panes) -> 137 MB (four panes holding
+  ~3,000 lines each), so 5-7 MB per mirrored pane; the link carries 0 bytes for an idle pane
+  and 1.0-1.5 KB/s for a Claude pane printing tool output (0.2 KB/s averaged over 49 min).
+  Eight PC panes are ~55 MB on the Mac. Pre-warming on hover was the fallback and was not
+  needed.
+- **A number on every row.** A row still listed (attach in flight, or a peer somebody turned
+  down by hand in Devices) is numbered after this desk's own panes off the FULL list
+  (`deskRows`), and `listedByNumber` gives Ctrl+N the same answer, so the key opens it.
+- **Close works.** The listed row has the local card's `x`; it goes through `sessions:kill`
+  -> `Remote.closeOn`, and `state()` drops a closing id from `panes` as well as `sessions`,
+  so the row leaves both halves of the list at once.
+- **`closes now` that never closes.** Two causes, both fixed. (1) The chip counts WALL time
+  on every screen, but the deadline was computed on the desk's own clock, which
+  `shared/away.ts` freezes when the last person leaves - so a PC nobody was sitting at
+  published a wall-clock moment that arrived on schedule and then sat in the past for as
+  long as nobody came back; the sweep, on the frozen clock, never considered the pane due.
+  `chipCloseAt` publishes nothing while the clock is frozen. (2) A mirror's borrow said
+  `person = sawPerson`, which is true for a whole run once anybody touched the Mac, for every
+  mirrored pane whether drawn or not - with everything mirrored that would have held every PC
+  pane off its idle clock for as long as the Mac was awake. `person` is now "somebody at that
+  desk NOW and that screen is drawing this pane": `pty:visible` reaches
+  `Remote.visibleOn` -> `client.setVisible`, re-stated only when the answer changes.
+  `test:reclaim` pins the frozen case; `test:remote` pins the visibility re-statement.
+
+
 Two changes, and the second is only possible because of what the first one found.
 
 **Why the Fleet dialog is gone.** It was a modal listing every pane sorted by who needs a

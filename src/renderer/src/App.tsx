@@ -55,7 +55,7 @@ import GitBadge from './components/GitBadge'
 import HistoryDialog from './components/HistoryDialog'
 import ReviewDialog from './components/ReviewDialog'
 import { finishedTurn, fleetRow, fleetWaiting, idleShell } from '@shared/fleet'
-import { deskGroups, deskRows as buildDeskRows, type DeskRow } from '@shared/desk'
+import { deskGroups, deskRows as buildDeskRows, listedByNumber, type DeskRow } from '@shared/desk'
 import {
   ToolsIcon,
   UsersIcon,
@@ -132,6 +132,7 @@ import {
   type SleepPressure,
   sameDeadline,
   idleCloseAt,
+  chipCloseAt,
   quietSince,
   readStamp,
   reclaimPlan,
@@ -661,6 +662,12 @@ export default function App(): JSX.Element {
   useHeaderFits([sessions])
 
   const [activeId, setActiveId] = useState<string | null>(null)
+  /**
+   * Ctrl+N for a number past this desk's own panes: the pane on the other machine that
+   * `deskRows` gave that number. A ref because the key handler above is wired before
+   * `openListed` exists, and the answer must be the same numbering the list draws.
+   */
+  const listedKeyRef = useRef<(n: number) => boolean>(() => false)
   /**
    * What the desk draws: every pane but a shell sitting at its prompt (`idleShell`), which
    * still exists - its number switches to it, and then it is the active pane and drawn.
@@ -3485,6 +3492,8 @@ export default function App(): JSX.Element {
         if (target) {
           e.preventDefault()
           setActiveId(target.id)
+        } else if (listedKeyRef.current(Number(k))) {
+          e.preventDefault()
         }
       }
     }
@@ -4806,9 +4815,12 @@ export default function App(): JSX.Element {
   useEffect(() => {
     const run = (): void => {
       const cfg = config?.reclaim ?? DEFAULT_RECLAIM
-      // The same frozen clock the sweep reads, or a card counts down to a close that is
-      // not coming.
-      const now = deskNow(Date.now(), awayRef.current)
+      // WALL time, because that is what every chip drawing the answer counts - this desk's
+      // card and the paired desk's row alike. While the sweep's clock is frozen (nobody at
+      // this desk) `chipCloseAt` publishes nothing: a deadline computed on a stopped clock
+      // is a moment that arrives on schedule and is then simply past, which was a PC row
+      // on the Mac reading `closes now` for a pane the sweep was not going to touch.
+      const now = Date.now()
       const live = new Set<string>()
       // Every local pane, read once, so the chip can refuse the pane the last-pane rule
       // holds back. Without it that card wore `closes now` and nothing ever closed it.
@@ -4826,10 +4838,11 @@ export default function App(): JSX.Element {
       for (const s of sessions) {
         if (s.remote) continue
         live.add(s.id)
-        const due = idleCloseAt(
+        const due = chipCloseAt(
           localPanes.find((p) => p.id === s.id) as ReclaimPane,
           cfg,
           now,
+          awayRef.current,
           personHere,
           localPanes
         )
@@ -5141,16 +5154,14 @@ export default function App(): JSX.Element {
    * Devices, so "is anything running over there" was a question you had to go and ask -
    * which is no way to watch a machine that is meant to be doing the work. Everything
    * needed to answer it already crosses the link (`RemotePaneInfo` rides the
-   * `remote:changed` message), so the sidebar draws them all and mirrors none of them.
+   * `remote:changed` message), so the sidebar draws them all.
    *
-   * That split is the whole design. LISTING a remote pane costs a few fields in a message
-   * that is already sent whenever anything over there moves; MIRRORING one costs a live
-   * byte stream and an xterm buffer on this laptop, per pane. Pressing the row is what
-   * turns one into the other, so a desk showing fifty PC panes costs what showing none
-   * used to.
-   *
-   * A listed row has no pane NUMBER: there is nothing on this machine for Ctrl+N to
-   * switch to until it has been opened.
+   * LISTING a remote pane costs a few fields in a message that is already sent whenever
+   * anything over there moves; MIRRORING one costs a live byte stream and an xterm buffer
+   * on this laptop (5-7 MB per pane, measured 2026-09-23). A paired device's panes are all
+   * mirrored by default (`RemoteClient.mirrorsAll`), so a listed row is the beat before a
+   * mirror attaches, or a device somebody turned down to a hand-picked few. It wears the
+   * next pane NUMBER after this desk's own (`listedByNumber` gives Ctrl+N the same one).
    */
   const deskRows = useMemo(
     () => buildDeskRows(deskSessions, shownSessions, remote?.peers ?? [], deviceFilter),
@@ -5190,6 +5201,12 @@ export default function App(): JSX.Element {
     },
     [remote]
   )
+  listedKeyRef.current = (n) => {
+    const hit = listedByNumber(deskSessions.length, remote?.peers ?? [], n)
+    if (!hit) return false
+    openListed(hit.device, hit.pane)
+    return true
+  }
   useEffect(() => {
     const want = pendingOpen.current
     if (!want) return
@@ -5203,27 +5220,29 @@ export default function App(): JSX.Element {
   }, [rawSessions])
 
   /**
-   * A pane running on another machine, drawn without being mirrored.
+   * A pane running on another machine, drawn before its screen has arrived here.
    *
-   * Deliberately thinner than a local row: there is no git badge (the repo is on that
-   * disk), no resource chip (the agent is that machine's process), no close button (it
-   * is not ours to end from a list) and no rename. What it keeps is the four things that
-   * make it worth pressing - which machine, what it is, what it is doing, and for how
-   * long.
+   * With every pane of a paired device mirrored by default this row is a BEAT long - the
+   * moment between the device listing a pane and its bytes attaching - or the state of a
+   * device somebody turned down to a hand-picked few in Devices. Thinner than a local row
+   * (no git badge, no resource chip, no rename: all readings of this disk), but it wears
+   * the same NUMBER and the same close as a local card. Robert, 2026-09-23: "they dont
+   * even have a number on them which is bad u need to fix them and close as well". The
+   * close ends the pane on the machine that owns it (`Remote.closeOn`).
    */
   const listedRow = (row: DeskRow): JSX.Element => {
     const { pane, device } = row.listed!
     const place = describePlace({ cwd: pane.cwd, lane: pane.lane })
     const state = fleetRow(row)
     const agent = agents.find((a) => a.id === pane.agent)
+    const remoteId = `@${device.id}/${pane.id}`
     return (
       <div
         key={row.key}
         className={'row listed' + (pane.asking ? ' asking' : '')}
         title={
           `${pane.title} - running on ${device.name}.\n\n` +
-          'Nothing of it is on this machine yet. Click to watch it here; the agent, the ' +
-          'folder and the transcript stay over there.'
+          `Click to open it here; the agent, the folder and the transcript stay on ${device.name}.`
         }
         onClick={() => openListed(device.id, pane.id)}
       >
@@ -5247,6 +5266,17 @@ export default function App(): JSX.Element {
                   pty and cannot call the close off. */}
               {row.closingAt ? <CloseClock at={row.closingAt} /> : null}
             </span>
+            {/* The same number a local card wears, so Ctrl+N reaches it too (`listedByNumber`). */}
+            {row.number > 0 && (
+              <span className="num-wrap">
+                <span
+                  className={'num' + (pane.status === 'working' ? ' live' : '') + (row.number > 9 ? ' far' : '')}
+                  title={row.number <= 9 ? keyLabel(`Ctrl ${row.number}`) : `Pane ${row.number}`}
+                >
+                  {row.number}
+                </span>
+              </span>
+            )}
             <span className="row-remote">
               <RemoteIcon size={13} />
             </span>
@@ -5266,6 +5296,17 @@ export default function App(): JSX.Element {
             )}
           </div>
         </div>
+        <button
+          className="x"
+          title={`Close this pane on ${device.name}`}
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation()
+            void api.killSession(remoteId, 'user')
+          }}
+        >
+          x
+        </button>
       </div>
     )
   }

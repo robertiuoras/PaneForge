@@ -130,6 +130,14 @@ export class Remote extends EventEmitter {
     // that now; this line clears the ones already saved, because the config outlives the
     // bug and nothing else would ever take it back out.
     c.peers = dropSelf(c.peers, c.id)
+    // Every pane a paired device has is mirrored by default (2026-09-23) - a peer saved
+    // before that carries `mirrorAll: false` from when connecting meant picking, and is
+    // switched over once. The flag, not the peers, records that it happened, so a peer
+    // turned back down by hand afterwards stays down.
+    if (!c.mirrorAllDefaulted) {
+      c.peers = c.peers.map((p) => ({ ...p, mirrorAll: true }))
+      c.mirrorAllDefaulted = true
+    }
     setConfig({ remote: c })
     if (c.host) this.host.start(c.port)
     this.discovery.update({ port: c.port, hosting: c.host && c.discoverable })
@@ -241,6 +249,22 @@ export class Remote extends EventEmitter {
     const cut = splitId(id)
     if (!cut) return
     this.clients.get(cut.peer)?.resizeOn(cut.local, cols, rows, viewer, person)
+  }
+
+  /**
+   * One screen here says which panes it is drawing. Each device is told about its own,
+   * so a mirror that is off screen stops counting as somebody looking over there.
+   */
+  visibleOn(viewer: string, ids: string[]): void {
+    const per = new Map<string, string[]>()
+    for (const id of ids) {
+      const cut = splitId(id)
+      if (!cut) continue
+      const list = per.get(cut.peer) ?? []
+      list.push(cut.local)
+      per.set(cut.peer, list)
+    }
+    for (const [peer, client] of this.clients) client.setVisible(viewer, per.get(peer) ?? [])
   }
 
   /**
@@ -473,7 +497,10 @@ export class Remote extends EventEmitter {
           // no way to say that a PC pane was mid-turn or owed an answer. None of it costs
           // anything: it rides the `remote:changed` message that is already sent whenever
           // anything over there moves.
-          panes: (client?.panes() ?? []).map((s) => ({
+          // ...less any pane this desk has just asked it to close: the mirrored row goes
+          // the moment the frame is on the link (`closeOn`), and the listed one must go
+          // with it, or the close button on a listed row looks like it did nothing.
+          panes: (client?.panes() ?? []).filter((s) => !this.closing.has(`@${p.id}/${s.id}`)).map((s) => ({
             id: s.id,
             title: s.title,
             cwd: s.cwd,
@@ -781,7 +808,7 @@ export class Remote extends EventEmitter {
     if (!client) return
     if (all) client.setMirrorAll(true)
     else client.setWatch(ids)
-    this.savePeer({ ...client.peer, watch: client.watched(), mirrorAll: all })
+    this.savePeer({ ...client.peer, watch: client.watched(), mirrorAll: client.mirrorsAll() })
     this.changed()
   }
 

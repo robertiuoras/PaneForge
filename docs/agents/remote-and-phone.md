@@ -13,7 +13,8 @@ same headings as `docs/design-notes.md` (the why). Paths: `shared/` = `src/share
 (`test:peerchrome`). Pty never moves; id `@<device>/<id>`, `remote.owns(id)`.
 
 - Borrow carries `Borrow.person` (`shared/paneSize.ts`); `watched` counts only those; absent =
-  yes; `Remote.presenceChanged` on `away`. OWNER publishes `closingAt`.
+  yes; `person` = at that desk NOW and that screen DRAWS the pane (`Remote.visibleOn`,
+  `Remote.presenceChanged` on `away`). OWNER publishes `closingAt`.
 - Mirror borrows size (`resize(borrowed)`, `returnSize(id)` never `returnSizes()`); smallest
   grid per axis; lease by 30s `pty:visible`, `BORROW_TTL_MS` 90s (`test:panesize`).
 - `Remote.closeOn` hides a closed row, `CLOSE_ACK_MS` 3s; `proveAlive` uses an unanswered press
