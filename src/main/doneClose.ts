@@ -157,17 +157,32 @@ export interface DoneCloseDeps {
  * Should this pane carry `waitsForYou`, and why? Asked for every agent pane on every tick,
  * before any gate that skips a pane (looking at it, asleep, not quiet yet), because the idle
  * clock and the asleep sweep read it whatever this sweep decides. A running turn or a turn
- * still open in the transcript clears it. An asleep pane restored with no screen turn end
- * takes its turn end from the transcript (`ReplyRead.turnEndedAt`).
+ * still open in the transcript clears it. Any idle pane with no screen turn end (restored
+ * asleep, handed in, never painted one) takes its turn end from the transcript
+ * (`ReplyRead.turnEndedAt`).
+ *
+ * It fails CLOSED: no transcript, or one that will not read, is no evidence the chat stopped
+ * waiting, so the flag published before stays. Clearing it there let the next automatic
+ * closer take a chat that had asked a question (review of e7965562, 2026-10-03).
  */
 function waitingOf(r: DoneReading, now: number, reply: () => ReplyRead | undefined): string | undefined {
   if (r.agent === 'shell' || r.runSince || (r.busyUntil ?? 0) > now || r.status === 'working') return undefined
-  if (!r.turnEndedAt && !r.asleep) return undefined
+  // A program that really exited (a sleeping pane is `exited` too, with `asleep`): no change.
+  if (r.status === 'exited' && !r.asleep) return r.waitsForYou
   const read = reply()
-  if (!r.turnEndedAt && !read?.turnEndedAt) return undefined
+  if (!read) return r.waitsForYou
+  if (!r.turnEndedAt && !read.turnEndedAt) return undefined
   if (openTurnOf(read, now)) return undefined
-  return waitsForYou({ ...r, reply: read?.text, runningAgents: read?.runningAgents }, now) ?? undefined
+  return waitsForYou({ ...r, reply: read.text, runningAgents: read.runningAgents }, now) ?? undefined
 }
+
+/**
+ * How early the close may land before its published deadline. The sweep runs every 15 s
+ * and the countdown is 15 s, and `now` is read after the readings are built, so the next
+ * tick's `now` landed a few ms short of the deadline and the close slid a whole tick, to
+ * about 30 s (review of e7965562). Within this much of it, the deadline has come.
+ */
+export const DEADLINE_SLACK_MS = 1_000
 
 /** The last thing logged per pane, so a pane that stays for an hour is one line, not 240. */
 const said = new Map<string, string>()
@@ -262,7 +277,7 @@ export function sweepDoneClose(d: DoneCloseDeps): string[] {
         warnings.set(id, warning)
         d.setClosing(id, warning.at)
       }
-      if (now < warning.at) continue
+      if (now + DEADLINE_SLACK_MS < warning.at) continue
     }
     // A read still in flight when the countdown began has usually landed by its end: ask once
     // more, and say nothing if it still has not.

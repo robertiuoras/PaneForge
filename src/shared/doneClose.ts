@@ -238,7 +238,7 @@ export function waitsForYou(
   now = Date.now()
 ): string | null {
   if (p.openedOthers) return 'it opened other panes and collects their summary'
-  if (closeHeldBy(p, now).includes('a handoff with open steps')) return 'a handoff with open steps'
+  if (p.handoffOpen) return 'a handoff with open steps'
   return p.reply === undefined ? null : replyLeaves(p.reply, p.runningAgents)
 }
 

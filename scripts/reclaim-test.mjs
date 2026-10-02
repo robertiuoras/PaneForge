@@ -1202,7 +1202,9 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   for (const [what, re] of [
     ['the pane went back to work at the deadline', /skipGone\(ids, 'it went back to work during the countdown'\)/],
     ['one pane of a plan was spared', /skipGone\(\s*ids\.filter\(\(id\) => !live\.includes\(id\)\),\s*'it went back to work during the countdown'/],
-    ['the countdown was dropped mid-flight', /skipGone\(\s*woke\.flatMap[^]*?'it went back to work while the countdown was running'/],
+    ['the countdown was dropped mid-flight', /const stopped = woke\.flatMap[^]*?skipGone\(\s*stopped\.filter[^]*?'it went back to work while the countdown was running'/],
+    // A chat that started waiting for its person did not go back to work (2026-10-03).
+    ['a chat that waits for you, mid-flight or at the deadline', /if \(waiting\.length\) skipClose\(waiting, WAITING_FOR_YOU\)[^]*?skipClose\(waiting, WAITING_FOR_YOU\)|skipClose\(waiting, WAITING_FOR_YOU\)[^]*?if \(waiting\.length\) skipClose\(waiting, WAITING_FOR_YOU\)/],
     ['a sleep card whose pane stopped being sleepable', /skipGone\(\[id\], 'it went back to work during the countdown'\)/],
     ['somebody pressed Keep it open', /skipClose\(ids, 'you kept it open'\)/]
   ]) {

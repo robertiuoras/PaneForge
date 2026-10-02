@@ -621,6 +621,9 @@ const GRID_RANK: Record<FleetState, number> = {
   needsYou: 0, stalled: 1, working: 1, starting: 1, ready: 2, exited: 3
 }
 
+/** Why a countdown let a finished chat stay: it expects its person (`Session.waitsForYou`). */
+const WAITING_FOR_YOU = 'it is waiting for you to answer or act on what it said'
+
 /**
  * How long a countdown has to survive before it is worth a sound.
  *
@@ -2407,7 +2410,7 @@ export default function App(): JSX.Element {
    * once however often this component re-renders.
    */
   const [acted, setActed] = useState<
-    | { what: 'closed' | 'moved' | 'trimmed'; panes: ActedPane[]; mb?: number; at: number; where?: string }
+    | { what: 'closed' | 'moved' | 'trimmed' | 'kept'; panes: ActedPane[]; mb?: number; at: number; where?: string }
     | undefined
   >(undefined)
   /**
@@ -4396,6 +4399,8 @@ export default function App(): JSX.Element {
     if (s.owedPrompt) return false
     if (s.runSince !== undefined) return false
     if (s.handingOff) return false
+    // A finished chat that expects its person: main refuses its close (`closeIntoReview`).
+    if (s.waitsForYou) return false
     const st = fleetState(s)
     return st === 'ready' || st === 'exited' || st === 'needsYou'
   }, [])
@@ -4450,6 +4455,19 @@ export default function App(): JSX.Element {
         skipClose(held, 'it was kept open or started serving during the countdown')
         mb = Math.round((mb * (ids.length - held.length)) / ids.length)
         ids = ids.filter((id) => !held.includes(id))
+        if (!ids.length) return
+      }
+      // A chat that waits for its person is refused by main, which answers nothing either
+      // way, so "Do it now" said "Closed" over a pane still on the desk (review of
+      // e7965562). Skipped here and said in plain words; the person is told why.
+      const waiting = ids.filter((id) => sessionsRef.current.find((x) => x.id === id)?.waitsForYou)
+      if (waiting.length) {
+        skipClose(waiting, WAITING_FOR_YOU)
+        if (byPerson)
+          setActed({ what: 'kept', panes: waiting.map((id) => paneActedRef.current(id)), at: Date.now(),
+            where: waiting.length === 1 ? sessionsRef.current.find((x) => x.id === waiting[0])?.waitsForYou : undefined })
+        mb = Math.round((mb * (ids.length - waiting.length)) / ids.length)
+        ids = ids.filter((id) => !waiting.includes(id))
         if (!ids.length) return
       }
       const live = ids.filter((id) => stillCloseable(id))
@@ -4776,9 +4794,13 @@ export default function App(): JSX.Element {
     const woke = closeSoons.filter((s) => !s.move && !s.ids.every((id) => stillCloseable(id)))
     if (!woke.length) return
     // Named, not counted: this is the line that answers "why was my pane armed twice and
-    // never closed" a week later. See `skipClose`.
+    // never closed" a week later. See `skipClose`. A chat that started waiting for its person
+    // did not go back to work, and the line says which it was.
+    const stopped = woke.flatMap((s) => s.ids).filter((id) => !stillCloseable(id))
+    const waiting = stopped.filter((id) => sessionsRef.current.find((x) => x.id === id)?.waitsForYou)
+    if (waiting.length) skipClose(waiting, WAITING_FOR_YOU)
     skipGone(
-      woke.flatMap((s) => s.ids).filter((id) => !stillCloseable(id)),
+      stopped.filter((id) => !waiting.includes(id)),
       'it went back to work while the countdown was running'
     )
     const gone = new Set(woke.map((s) => soonKey(s)))

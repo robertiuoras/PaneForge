@@ -3944,6 +3944,9 @@ export class SessionManager extends EventEmitter {
     if (this.keptOpen?.(id)) return { closed: false, reason: 'kept open by hand' }
     if (m.status !== 'idle' || m.runSince || live.busyUntil > Date.now() || m.job || (m.backJob && !backJobWaitOnly(id)) || m.subagent) return { closed: false, reason: 'session is busy or has a background job' }
     if (m.serving) return { closed: false, reason: `session is serving (${m.serving})` }
+    // No automatic closer (done-close, `reviews:record` and its arm) takes a chat that waits
+    // for its person. A person's own close is `kill(id, 'user')` and never asks this.
+    if (m.waitsForYou) return { closed: false, reason: 'waits for you' }
     const held = closeHeldBy({ ...m, ask: m.ask || heldByGuardDeck(id, readGuardDeckQuestions(), Date.now(), m.agent === 'codex' ? resumeIdFor(id) : undefined) })
     if (held.length) return { closed: false, reason: `session has ${held.join(', ')}` }
     if (m.lastKeyboard > reportedAt) return { closed: false, reason: 'newer user input exists' }

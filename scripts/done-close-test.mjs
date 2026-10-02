@@ -507,12 +507,12 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
     setClosing: (id, deadline) => deadlines.push([id, deadline]) }
   assert.deepEqual(main.sweepDoneClose(warned), [])
   assert.deepEqual(deadlines.at(-1), ['warning', at + 15_000])
-  clock += 14_000
+  clock += 13_000
   focused = true
   const published = deadlines.length
-  assert.deepEqual(main.sweepDoneClose(warned), [], 'going into the pane with 1 s left')
+  assert.deepEqual(main.sweepDoneClose(warned), [], 'going into the pane with 2 s left')
   assert.equal(deadlines.length, published, 'looking neither cancels nor restarts the countdown')
-  clock += 1_000
+  clock += 2_000
   assert.deepEqual(main.sweepDoneClose(warned), ['warning'], 'it closes on time while somebody is looking')
   assert.deepEqual(deadlines.at(-1), ['warning', undefined])
   const stop = { ...warned, readings: () => [{ ...readings[0], id: 'stop', kept }] }
@@ -528,6 +528,30 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
   assert.deepEqual(deadlines.at(-1), ['stop', clock + 15_000], 'unkept: a fresh countdown')
   main.sweepDoneClose({ ...stop, enabled: () => false })
   assert.equal(deadlines.at(-1)[1], undefined, 'disabling cancels published clock')
+
+  // The close lands on the published deadline, not a tick later (review of e7965562). The
+  // sweep runs every 15 s (index.ts) and reads `now` after building its readings, so on a
+  // fake clock: tick 0 reads 40 ms in, tick 1 reads 3 ms in - 37 ms short of the deadline.
+  // Before: tick 1 refused, the close came at tick 2, 14,963 ms late.
+  const TICK = 15_000
+  const t0 = at + 200_000
+  let t = t0 + 40
+  const lands = { ...warned, readings: () => [{ ...readings[0], id: 'lands' }], now: () => t }
+  assert.deepEqual(main.sweepDoneClose(lands), [], 'tick 0 publishes the deadline')
+  const deadline = deadlines.at(-1)[1]
+  assert.equal(deadline, t0 + 40 + DONE_COUNTDOWN_MS)
+  let closedAt
+  for (let k = 1; k <= 3 && closedAt === undefined; k++) {
+    t = t0 + k * TICK + 3
+    if (main.sweepDoneClose(lands).includes('lands')) closedAt = t
+  }
+  assert.ok(closedAt !== undefined && Math.abs(closedAt - deadline) <= 1_000, `the close landed ${closedAt - deadline} ms from its deadline`)
+  console.log(`done-close: the close landed ${closedAt - deadline} ms from its published deadline (a whole tick late before)`)
+  t = t0 + 10 * TICK
+  const early = { ...lands, readings: () => [{ ...readings[0], id: 'early' }] }
+  main.sweepDoneClose(early)
+  t += DONE_COUNTDOWN_MS - 1_500
+  assert.deepEqual(main.sweepDoneClose(early), [], 'a second and a half early is still counting')
 
   // (d) What held s93-muk43els at 17:52:44Z on 27 Sep (done-close.log 258): `handoffOpen` -
   // /Users/robertiuoras/Projects/assistant's session-handoff.md, another chat's, five steps
@@ -644,6 +668,19 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
     ['busy', undefined],
     ['open', undefined]
   ], 'published with the close off, not yet quiet, looked at, asleep; cleared by a running or open turn; only on a change')
+  // Fails CLOSED (review of e7965562): a transcript that is gone or will not read is no
+  // evidence the chat stopped waiting, so the flag stays; a pane whose program really
+  // exited keeps it too. Any idle pane with no screen turn end reads the transcript's.
+  published.length = 0
+  const unread = [
+    { id: 'gone', ...finished({ waitsForYou: asked, reply: undefined }) },
+    { id: 'unreadable', ...finished({ waitsForYou: asked, reply: undefined }) },
+    { id: 'quit', ...finished({ status: 'exited', waitsForYou: asked, reply: undefined }) },
+    { id: 'handedIn', ...finished({ turnEndedAt: 0, reply: undefined }) }
+  ]
+  main.sweepDoneClose({ ...deps, readings: () => unread,
+    transcriptFor: (id) => (id === 'gone' ? null : id === 'unreadable' ? join(work, 'no-such-transcript.jsonl') : files.slept) })
+  assert.deepEqual(published, [['handedIn', asked]], 'an unreadable transcript keeps the flag; an idle pane with no screen turn end takes the transcript\'s')
   console.log('done-close: waits-for-you is read and published ok')
 }
 
@@ -852,6 +889,32 @@ ${sessions.slice(from, to + 4)}
   console.log('done-close: an opener waits only on working children; dated, automatic and other chats\' steps hold nothing ok')
 }
 
+// 5d. Review of e7965562 (2026-10-03): every automatic closer honours waitsForYou, and a
+// person pressing "Do it now" on one is told why nothing closed.
+{
+  const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
+  const car = sessions.slice(sessions.indexOf('  closeAfterResult('), sessions.indexOf('  killAll('))
+  assert.match(car, /if \(m\.waitsForYou\) return \{ closed: false, reason: 'waits for you' \}/, 'closeAfterResult refuses a chat that waits for you')
+  assert.ok(car.indexOf('m.waitsForYou') < car.indexOf("this.kill(id, 'review', why)"), 'before it closes')
+  const shared = readFileSync(join(root, 'src/shared/doneClose.ts'), 'utf8')
+  assert.ok(shared.includes("if (p.handoffOpen) return 'a handoff with open steps'"), 'waitsForYou reads the field, not the display words')
+  assert.equal(waitsForYou({ reply: 'Done.', handoffOpen: 2 }), 'a handoff with open steps')
+  const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
+  const still = app.slice(app.indexOf('const stillCloseable = useCallback('), app.indexOf('const skipClose = useCallback('))
+  assert.match(still, /if \(s\.waitsForYou\) return false/, 'the countdown never closes a chat that waits for you')
+  const doClose = app.slice(app.indexOf('const doClose = useCallback('), app.indexOf('[stillCloseable, dropSoon, skipClose, skipGone]'))
+  assert.match(doClose, /skipClose\(waiting, WAITING_FOR_YOU\)/, 'skipped in plain words')
+  assert.match(doClose, /if \(byPerson\)\s+setActed\(\{ what: 'kept'/, '"Do it now" says it did not close')
+  assert.ok(doClose.indexOf("what: 'kept'") < doClose.indexOf("what: 'closed'"), 'and never says "closed" for it')
+  const { actedWords } = await bundle('src/shared/mascot.ts', 'mascot-kept.cjs')
+  assert.equal(actedWords('kept', [{ word: 'claude-memory pane 1' }], undefined, 0, 'the reply ends in a question'),
+    'Did not close claude-memory pane 1 - it is waiting for you (the reply ends in a question). Answer it, or close it yourself.')
+  const contract = readFileSync(join(root, 'docs/reviews-runtime-contract.md'), 'utf8')
+  assert.ok(!/nobody is looking at|quiet three minutes/.test(contract), 'the contract no longer says three minutes or nobody looking')
+  assert.ok(contract.includes('`closeAfterResult` refuses it with `waits for you`'), 'and says what holds')
+  console.log('done-close: no automatic closer takes a chat that waits for you; "Do it now" says why ok')
+}
+
 {
   // 5c. s77-mujwno51 on 27 Sep (`desk-2026-09-28-sessions.json`): finished, `backJob:
   // bg-wait.mjs`, its shell waiting on a CI run under `--label release-check-4dd8e6bd`.
@@ -991,7 +1054,7 @@ ${sessions.slice(from, to + 4)}
   const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
   assert.match(sessions, /kill\(id: string, by: CloseBy, why\?: string\)[\s\S]{0,900}closedBecause\(by, why,[\s\S]{0,400}action: 'close-request'[\s\S]{0,200}why: because[\s\S]{0,200}action: 'close-open-turn'[\s\S]{0,1500}recordEnd\(id, resumeIdFor\(id\), because\)/)
   assert.match(sessions, /closeRefusedFor\(id: string, by: CloseBy\)[\s\S]{0,600}closeRefused\(by, 'working'\)[\s\S]{0,200}turnOpenFor/)
-  assert.match(sessions, /closeAfterResult\(id: string, reportedAt: number, why\?: string\)[\s\S]{0,1200}turnOpenFor[\s\S]{0,200}its turn is still open[\s\S]{0,100}this\.kill\(id, 'review', why\)/)
+  assert.match(sessions, /closeAfterResult\(id: string, reportedAt: number, why\?: string\)[\s\S]{0,1500}turnOpenFor[\s\S]{0,200}its turn is still open[\s\S]{0,100}this\.kill\(id, 'review', why\)/)
   const history = readFileSync(join(root, 'src/main/history.ts'), 'utf8')
   assert.match(history, /if \(closedBecause\) entry\.closedBecause = closedBecause/)
   console.log('done-close: s105 - a turn still open in its transcript is never closed, and every close says why ok')
