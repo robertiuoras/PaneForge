@@ -307,6 +307,83 @@ check(
   check('...and submits nothing', r.submitted.length === 0)
 }
 
+// A stale unsent-draft flag, checked against the screen. `certain` goes false on any arrow,
+// Home/End or Alt chord and only Enter, Ctrl-C or Ctrl-U reset it, so a draft cleared any
+// other way held its pane open for good: s42 on 1 Oct, finished 11:53pm Thu, the flag held
+// its auto-close until Robert came back at 1:13am Fri.
+{
+  const { draftRecheckDue } = createRequire(import.meta.url)(out)
+  const T = 1_800_000_000_000
+  const pane = (over = {}) => ({ drafting: true, status: 'idle', agent: 'claude', lastKeyboard: T - 61_000, ...over })
+  check('a minute-old draft flag on an idle pane is rechecked', draftRecheckDue(pane(), 0, T) === true)
+  check('...not while somebody typed in the last minute', draftRecheckDue(pane({ lastKeyboard: T - 59_000 }), 0, T) === false)
+  check('...not twice in 30 s', draftRecheckDue(pane(), T - 29_000, T) === false && draftRecheckDue(pane(), T - 30_000, T) === true)
+  check('...not mid-turn', draftRecheckDue(pane({ runSince: T - 5000 }), 0, T) === false && draftRecheckDue(pane({ status: 'working' }), 0, T) === false)
+  check('...not a shell', draftRecheckDue(pane({ agent: 'shell' }), 0, T) === false)
+  check('...not without a flag', draftRecheckDue(pane({ drafting: undefined }), 0, T) === false)
+}
+
+// The recheck itself: the real `recheckDraft` out of sessions.ts, on the real composer read,
+// with s42's own parked-caret screen (`scripts/fixtures/claude-hint-parked-caret.bin`).
+{
+  const { readFileSync, writeFileSync } = await import('node:fs')
+  const source = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
+  const from = source.indexOf('  private async recheckDraft(')
+  const to = source.indexOf('  private async confirmDraft(', from)
+  check('sessions.ts has a recheckDraft method', from >= 0 && to > from)
+  check('...and sweepIdle calls it when draftRecheckDue says so, never under a hold', /!live\.draftConfirmation && !meta\.owedPrompt && draftRecheckDue\([^)]*\)[^\n]*\n?[^\n]*this\.recheckDraft\(live\)/.test(source))
+  if (from >= 0 && to > from) {
+    const harness = join(work, 'recheck.ts')
+    writeFileSync(harness, `
+import { composerOf } from ${JSON.stringify(join(root, 'src/main/composerRead.ts'))}
+import { newDraft } from ${JSON.stringify(join(root, 'src/shared/draft.ts'))}
+export const logs: string[] = []
+const acLog = (s: string) => { logs.push(s) }
+export class Harness {
+  sessions = new Map<string, any>(); emitted = 0
+  emitSessions() { this.emitted++ }
+${source.slice(from, to)}
+}
+`)
+    const bundled = join(work, 'recheck.cjs')
+    buildSync({ absWorkingDir: root, entryPoints: [harness], bundle: true, format: 'cjs', platform: 'node', outfile: bundled, logLevel: 'silent' })
+    const { Harness, logs } = createRequire(import.meta.url)(bundled)
+    const parked = readFileSync(join(root, 'scripts/fixtures/claude-hint-parked-caret.bin'), 'utf8')
+    const NB = String.fromCharCode(0xa0)
+    const typedBox = `${'─'.repeat(60)}\r\n❯${NB}half a prompt\r\n${'─'.repeat(60)}\r\n${ESC}[2;16H`
+    const run = async (raw, during) => {
+      const h = new Harness()
+      const live = {
+        meta: { id: 'p1', agent: 'claude', drafting: true, lastKeyboard: 1 }, typed: 'gone', paintSeq: 5,
+        draft: { text: 'gone', certain: false, inPaste: false }, draftConfirmation: undefined,
+        cols: raw === parked ? 134 : 60, rows: raw === parked ? 53 : 12,
+        buffer: { read: () => { during?.(live); return raw } }
+      }
+      h.sessions.set('p1', live)
+      await h.recheckDraft(live)
+      return { h, live }
+    }
+    let r = await run(parked)
+    check('s42: an empty box on screen clears the stale flag', r.live.meta.drafting === undefined && r.live.draft.certain === true && r.live.draft.text === '' && r.live.typed === '', JSON.stringify(r.live.meta))
+    check('...tells the window', r.h.emitted === 1)
+    check('...and says so in the autoclear log', logs.some((l) => /^p1 .*draft/.test(l)), JSON.stringify(logs))
+    r = await run(typedBox)
+    check('words in the box keep the flag', r.live.meta.drafting === true && r.h.emitted === 0)
+    r = await run('')
+    check('an unreadable box keeps the flag', r.live.meta.drafting === true)
+    r = await run(parked, (l) => { l.paintSeq++ })
+    check('a paint during the read keeps the flag', r.live.meta.drafting === true)
+    r = await run(parked, (l) => { l.meta.lastKeyboard++ })
+    check('a key during the read keeps the flag', r.live.meta.drafting === true)
+    r = await run(parked, (l) => { l.draft = { text: 'new', certain: true, inPaste: false } })
+    check('a draft changed during the read keeps the flag', r.live.meta.drafting === true)
+    r = await run(parked, (l) => { l.draftConfirmation = { prompt: 'x', since: 1, afterPaint: 5 } })
+    check('a submission hold set during the read keeps the flag', r.live.meta.drafting === true)
+    r = await run(parked, (l) => { l.meta.owedPrompt = true })
+    check('a prompt owed during the read keeps the flag', r.live.meta.drafting === true)
+  }
+}
+
 rmSync(work, { recursive: true, force: true })
 console.log(failed ? `\n${failed} failing` : '\nall good')
 process.exit(failed ? 1 : 0)

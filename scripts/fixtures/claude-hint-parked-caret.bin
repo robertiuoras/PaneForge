@@ -1,0 +1,993 @@
+[?25l[2D[5B[12A [3G[38;2;153;153;153mXxxx [1m1[22m xxxx (xxxx+x xx xxxxxx)[39m[K[1B[K[1B[38;2;255;255;255m⏺[3G[39mX[5Gxxx'x[11Gxxxxxxx[19Gxxxx[24Gxxx[28Gxxxxxx:[36Gxxx[40Gxxxxxx[47Gxxxxx[53Gxxxxx[59Gxx[62Gx[64Gxxxxxxxxxx[75Gxxxxxx[82Gxxxx[87Gxxxxxxx[95Gxxxx'x[102Gxxxx.[108GXxx[112GXxx[116Gxxxxxx[123Gxxxx[128Gxx[2C[1Bxxxxxx[10Gxxxx[15Gxxxx[20G([38;2;177;185;249m488x80xx[39m,[31Gxxxxxx[38Gxxxxx[44G10:52xx[52GXxx)[57Gxxx[61Gxxxxxxx[69Gxx[72Gxxx[76GXX[79Gxxx[83Gxxxxxx.[91GXxx[95Gxxxxxxxxxx[106Gxxxxxx[113Gxxx[117Gxxxx[122Gxxx[126Gxxx[1B [3G"xxxxxxx".[K[2B  Xxx xxxxxx xxxxx xxxx:[K[1B[K[1B  [2m▎[22m [3mxxxx xxxxxxx xxxxxxxxxx.xx: xxxxx/xxxx/xxxxxxxx xxxxxxx xxxx xxx (xxxxxxxx 2026-09-25)[23m[K[2C[1B[K[2C[1BXxxx xxxxxx xx [38;2;177;185;249m7x396191[39m, xxxxxxx xxxx'x xxx xxxx xxxxx Xxxxxxxxxx[69Gxxxxxxxxx[79Gxxxxx[85Gxxxxxxxxx[95Gxxxx[100Gxxx[104Gxxx'x[110Gxxxxx.[117GXx[120Gxxxx[125Gxx[128Gxxx[2C[1Bxxxx xxxxx xx xxx Xxx xxxx, xx xxxxxxx xxxxx xxxxx xxx xxx xx.[K
+
+[3G[1mXxxx[8GX[10Gxxx[14Gxxxx[19Gxxxxxxx:[22m
+
+[3G-[5G[1mXxxxxx[12Gxxxxx:[19G[22mxxxxxxx[27Gxxx[31Gxxxxx[37Gxxxxxx'x[46Gxxxxx[52Gxxx[56Gxxxx,[62Gxxxx[67Gxxxx[72Gxxxx[77Gxxxx[82Gx[84Gxxxxxx[91Gxxxxxx.[99GXxx[103Gxxxxxx[110Gxxxxxxxx[119Gxxxxx[125Gxxxxxxx
+[5Gxxxx[10Gxxxxx.[17GXxx[21Gxxxxxxx[29Gxxxx[34Gxxxxxx[41Gxxxx:
+[5G-[7G[1mXxxxx[13Gxxxxxxx[21Gxxxxx:[28G[22mxxxxx[34Gxxxx[39Gxxxxxx[46Gxxx[50Gxxxxx[56Gx[58Gxxxxxxx[66Gxx[69Gxxxxxx[76Gxxxx[81Gxxx[85Gxx[88Gx[90Gxxxxxx[97Gxxxx.[103GX[105Gxxxxxxx[113Gxxx[117Gxxxxxxxx[126Gxxxxxxxx
+[7Gxxxxxx[14Gxx[17G(xxxx[23Gxx[26Gxxxxx[32G9:44xx[39GXxx)[44Gxxx[48Gxxxxxx[55Gxx[58Gxx[61Gxxxxxxxxxx[72Gxxxx[77Gx[79Gxxxx[84Gxxxx[89Gxxxx[94Gxx[97Gxxxx[102Gxxxxxx:[110Gxx[113Gxxxxx[119Gxxxx[124Gxxxx[129Gxxx
+[7GXX$0,[13Gx[15Gxxxxx[21Gxxx[25GXX$0.25,[34Gxxx[38Gxxxx[43Gxxxxx[49Gxxxxxxx[57Gxx[60Gxxx[64Gxxx[68G(XX$0.75).
+[5G-[7G[1mXxx[11Gxxxxxxx[19Gxxxxxxx[27Gxx[30Gxxxx:[36G[22mx[38Gxxxxx[44Gxxxxxxx[52Gxx[55Gxxxxxxx[63Gxxxx[68Gxxxxx[74Gxx[77Gxxx[81Gxxxxxxx,[90Gxxxxxxx[98Gxx[101Gxxxxx[107Gxxxx[112Gxx[115Gxxxx.[121GXxxxxx,[129Gxxxx
+[7Gxxxxx[13Gxxxx[18Gx[20Gxxxxx[26G"xxxxx"[34Gxxxx,[40Gxx[43Gxxxxx[49Gxxxxx[55Gxx[58Gxxxx[63Gxx[66Gxxx[70Gxxx-xxxxxxx[82Gxxxx[87Gxxxxx[93Gxxxxx.
+[5G-[7G[1mXxxxxx[14Gxxxxxx[21Gxxxx[26Gxxxxxx:[34G[22mx[36Gxxxxxx[43GXxx[47Gxxxxxx[54Gxxxxx[60Gxxx[64Gxxxxx[70Gxxx[74Gxx[77G[38;2;177;185;249m/xxxxxxx[39m.
+[3G-[5G[1mXxxxx-xxxx[16Gxxxxxxx[24Gxxx:[29G[22mxxxx[34Gxxx[38Gxxx[42Gxxxxx[48Gxxx[52Gxxxxxxx.
+[3G-[5G[1mXxx-xxxxx[15Gxxx[19G(xxxxxxx):[30G[22mxxx[34Gxxxxx[40Gxxxxx[46Gxxxxxx[53Gxx[56G[38;2;177;185;249mxxxx:xxxxxxxx-xxx-xxx[39m.[79GXx[82Gxxxx[87Gxxxxx[93Gxxx[97Gxxxxxxxx[106Gxxx[110G2,000[116Gxxxx[121Gxxxx[126Gxx[129Gxxxx
+[5Gxx[8G1,000[14Gxxx[18Gxxxxx[24Gxxx[28Gxxxx[33Gxxxxxxx[41Gxx[44Gxxxxx.[51GXxxxx.
+[3G-[5G[1mXxxxxx:[22m
+[5G-[7Gxxxx[12Gxxxxx[18Gxx[21Gxxx[25GXX:[29Gxxxxxx;
+[5G-[7Gxxxxxxx[15Gxxxxx[21Gxxx[25G[38;2;177;185;249m488x80xx[39m:[35Gxxxxx;
+[5G-[7GXxx[11Gxxx[15Gxxxxx-xxxxxx[28Gxxxxx:[35G13,[39G7,[42G5[44Gxxx[48G10[51Gxxxxxxx.
+[3G-[5G[1mXxxx[10Gxx[13Gxxx[17Gxxx[21Gxxxxxx:[29G[22mxxxxxxx[37G[38;2;177;185;249m/xxxxx/xxx#xxx[52G[39mxxx[56G[38;2;177;185;249m/xxxxx/xxxxxxx[71G[39mxx[74Gxxxxx[80Gxxx[84Gxxxxxxx[92Gxxxxx,[99Gxxxxx[105Gxxx[109Gxxxx.[115GXxx[119Gxxxxxx:[127Gxx
+
+[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
+[38;2;153;153;153m❯ [39m
+[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
+[3G[35m◆[5GXxxx[10G5.5[38;2;153;153;153m [2m|[22m [36mxxxxxxxxxx.xx-x[38;2;153;153;153m [2m|[22m [34m xxxx-x[38;2;153;153;153m [2m|[22m [32m✓[46Gxxxxxx[38;2;153;153;153m [2m|[22m [32m██░░░░░░░░[66G20%[38;2;153;153;153m [2m199.4x[22m [2m|[22m [32m+16[38;2;153;153;153m/[31m-0[38;2;153;153;153m [2m|[22m [2m⬢[90Gxxx:[95Gxxxxxxxxxx[106G(XX)[22m[39m
+[3G[32m5x[6G33%[38;2;153;153;153m [2m·[22m [32mxx[15G45%[38;2;153;153;153m [2m·[22m [32mXxxxx[27G0%[38;2;153;153;153m [2m·[22m [36mΣ[34G17.9X[38;2;153;153;153m [2m·[22m [2m$7.12[48Gxxx[52G(97%[57Gxxxxxx)[22m[39m
+[3G[38;2;255;107;128m⏵⏵[6Gxxxxxx[13Gxxxxxxxxxxx[25Gxx[38;2;153;153;153m (xxxxx+xxx[39Gxx[42Gxxxxx)[49G·[51G/xxxxx[58Gxx[61Gxxx[65Gxxxxxxxxx[75G·[77G←[79Gxxx[83Gxxxxxx[39m
+[2C[5A[?25h[?25l[2D[5B[4C[7Axxxxxxxx[14Gxxxxxxxxx,[25Gxx[28Gxxxxxxx[36Gxxxx,[42Gxx[45Gxxx-xxxxxxxx[58Gxxxx[63Gxx[66Gxxx[70Gxxxx.[76GXxxx[81Gxxxxxxx[89Gxx[92G[38;2;177;185;249m/xxxxx/xxxxxxx[107G[39mxx[110Gxxxxx[116Gxxxxx[122Gxx[125G0.000,[1B    xxxx xxxx 0.28 xxxxxx xxxx xxxxxx.[K[1B  -[1B[K[1B[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[1B[38;2;153;153;153m❯ [39m[K[1B[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
+[3G[35m◆[5GXxxx[10G5.5[38;2;153;153;153m [2m|[22m [36mxxxxxxxxxx.xx-x[38;2;153;153;153m [2m|[22m [34m xxxx-x[38;2;153;153;153m [2m|[22m [32m✓[46Gxxxxxx[38;2;153;153;153m [2m|[22m [32m██░░░░░░░░[66G20%[38;2;153;153;153m [2m199.4x[22m [2m|[22m [32m+16[38;2;153;153;153m/[31m-0[38;2;153;153;153m [2m|[22m [2m⬢[90Gxxx:[95Gxxxxxxxxxx[106G(XX)[22m[39m
+[3G[32m5x[6G33%[38;2;153;153;153m [2m·[22m [32mxx[15G45%[38;2;153;153;153m [2m·[22m [32mXxxxx[27G0%[38;2;153;153;153m [2m·[22m [36mΣ[34G17.9X[38;2;153;153;153m [2m·[22m [2m$7.12[48Gxxx[52G(97%[57Gxxxxxx)[22m[39m
+[3G[38;2;255;107;128m⏵⏵[6Gxxxxxx[13Gxxxxxxxxxxx[25Gxx[38;2;153;153;153m (xxxxx+xxx[39Gxx[42Gxxxxx)[49G·[51G/xxxxx[58Gxx[61Gxxx[65Gxxxxxxxxx[75G·[77G←[79Gxxx[83Gxxxxxx[39m
+[2C[5A[?25h[?25l[2D[5B[69C[3A[38;2;153;153;153m[2m200[74G2[22m[39m
+
+
+[2C[5A[?25h[?25l[2D[5B[4C[8A[1mXxxxxxxxxx xxxxxxxxx:[27G[22mxxx[31Gxxxx[36Gxxxx[41Gxxx[45Gx[47Gxxxxxx,[55Gxx[58GXxxxxx[65Gxxxxxxxxx[75Gxxxx[80Gxxxxx[86G(`xxxx[93G$0.01[99G0.2[103Gxxx[107Gxxx[111G->[114G1[116Gxxxxxx[123Gx[125G4[127Gxxxxx[133Gx
+
+
+
+
+
+
+
+[2C[5A[?25h[?25l[2D[5B[86C[8A[38;2;177;185;249mxxxx $0.01 0.2 xxx xxx -> 1 xxxxxx x 4 xxxxx x [39m
+
+
+
+
+
+
+
+[2C[5A[?25h[?25l[2D[5B[4C[7A[38;2;177;185;249m$0.0035/XXX-xxx[39m).[23GXxx[27GXxx[31Gxxxxx[37Gxx[40Gxxx.xxxxxxxxxx.xx[58Gxxxxx[64Gxxxxxxx 404.[1B  -[K[1B[K[2B[38;2;153;153;153m❯ [39m[K[1B[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[2C[1B[35m◆ Xxxx 5.5[38;2;153;153;153m [2m|[22m [36mxxxxxxxxxx.xx-x[38;2;153;153;153m [2m|[22m [34m xxxx-x[42G[38;2;153;153;153m[2m|[22m [32m✓ xxxxxx[38;2;153;153;153m [2m|[22m [32m██░░░░░░░░ 20%[38;2;153;153;153m [2m200.2x[77G|[79G[22m[32m+16[38;2;153;153;153m/[31m-0[38;2;153;153;153m [2m|[22m [2m⬢ xxx: xxxxxxxxxx (XX)[22m[39m
+[3G[32m5x[6G33%[38;2;153;153;153m [2m·[22m [32mxx[15G45%[38;2;153;153;153m [2m·[22m [32mXxxxx[27G0%[38;2;153;153;153m [2m·[22m [36mΣ[34G17.9X[38;2;153;153;153m [2m·[22m [2m$7.12[48Gxxx[52G(97%[57Gxxxxxx)[22m[39m
+[3G[38;2;255;107;128m⏵⏵[6Gxxxxxx[13Gxxxxxxxxxxx[25Gxx[38;2;153;153;153m (xxxxx+xxx[39Gxx[42Gxxxxx)[49G·[51G/xxxxx[58Gxx[61Gxxx[65Gxxxxxxxxx[75G·[77G←[79Gxxx[83Gxxxxxx[39m
+[2C[5A[?25h[?25l[2D[5B[2C[29A-[5G[1mXxxxxx xxxxx:[19G[22mxxxxxxx[27Gxxx[31Gxxxxx[37Gxxxxxx'x[46Gxxxxx[52Gxxx[56Gxxxx,[62Gxxxx[67Gxxxx[72Gxxxx[77Gxxxx[82Gx[84Gxxxxxx[91Gxxxxxx.[99GXxx[103Gxxxxxx[110Gxxxxxxxx[119Gxxxxx[125Gxxxxxxx[2C[1B [5Gxxxx xxxxx. Xxx xxxxxxx xxxx xxxx[39Gx xxxx:[K[4C[1B- [1mXxxxx xxxxxxx xxxxx:[22m xxxxx[36Gxx xxx[43Gxx xxx[50Gxxxxx[56Gx[58Gxxxxxxx[66Gxx[69Gxxxxxx[76Gxxxx[81Gxxx[85Gxx[88Gx[90Gxxxxxx[97Gxxxx.[103GX[105Gxxxxxxx[113Gxxx[117Gxxxxxxxx[126Gxxxxxxxx[4C[1B [7Gxxxxxx xx (xxxx xx xxxxx 9:44xx[39GXxx) xxx xxxxxx xx[58Gxx xxxxxxxxxx xxxx x xxxx xxxx xxxx [95Gx[97Gxxxx xxxxxx: xx[113Gxxxxx x[121Gxx xxxx xxx[K[6C[1BXX$0, x xxxxx xxx XX$0.25, xxx xxxx xxxxx x[51Gxxxxx xx xxx [65Gxx (XX$0.75).[79G[K[4C[1B-[7G[1mXxx xxxxxxx xxxxxxx xx xxxx:[22m x[39Gxxxx xx[47Gxx[50Gx xx xxxxxxx xxxx[68Gxxxxx xx xxx[81Gxxxxxxx,[90Gxxxxxxx[98Gxx[101Gxxxxx[107Gxxxx[112Gxx[115Gxxxx.[121GXxxxxx,[129Gxxxx[4C[1B [7Gxxxxx xxxx x xxxxx "xxxxx" xxxx, xx xxxxx [50Gxxxx[55Gxx xxxx[63Gxx xxx xxx-xxxxxxx xxxx xxxxx xxxxx.[K[4C[1B-[7G[1mXxxxxx xxxxxx xxxx xxxxxx:[34G[22mx xxxxxx[43GXxx xxxxxx xxxxx xxx xxxxx[70Gx[72Gx xx [38;2;177;185;249m/xxxxxxx[39m.[87G[K[2C[1B-[5G[1mXxxxx-xxxx xxxxxx[23G xxx:[22m xxxx[34Gxxx xxx xxxxx xxx xxxxx[58Gx.[K[4C[1B[1mXxx-xxxxx xxx (xxxxxxx):[22m xxx[34Gxxxxx xx[43Gxx xxxx[51Gx xx [38;2;177;185;249mxxxx:xxxxxxxx-xxx-xxx[39m.[79GXx[82Gxxxx[87Gxxxxx[93Gxxx[97Gxxxxxxxx[106Gxxx[110G2,000[116Gxxxx[121Gxxxx[126Gxx[129Gxxxx[2C[1B [5Gxx 1,000 xxx xxxxx xxx xxxx xxxxxxx xx xxxxx. Xxxxx.[K[2C[1B-[5G[1mXxxxxx:[22m[K[2C[1B [5G- xxxx xxxxx[18Gxx[21Gxxx[25GXX:[29Gxxxxxx;[6C[1Bxxx[11Gxxx [16Gxxxx[21Gxxx[25G[38;2;177;185;249m488x80xx[39m: xxxxx;[6C[1BX[9Gx [12Gxx[15Gxxxxx-x[23Gxxxx xxxxx[35G13, 7,[42G5[44Gxxx[48G10[51Gxxxxxxx.[2C[1B-[5G[1mXxxx xx xxx xxx xxxxxx:[22m xxxxxxx [38;2;177;185;249m/xxxxx/xxx#xxx[39m [53Gxx [38;2;177;185;249m/xxxxx/xxxxxxx[71G[39mxx[74Gxxxxx[80Gxxx[84Gxxxxxxx[92Gxxxxx,[99Gxxxxx[105Gxxx[109Gxxxx.[115GXxx[119Gxxxxxx:[127Gxx[2C[1B [5Gxxxxxxxx xxxxxxxxx, xx xxxxxxx xxxx, xx xxx-xxxxxxxx xxxx xx xxx x[72Gxx. Xxxx xxxxxxx [90Gx[92G[38;2;177;185;249m/xxxxx/xxxxxxx[39m xx xxxxx xxxxx xx 0.000,[4C[1Bxxxx xxxx 0.28 xxxxxx xxxx xxxxx[38G.[K[2C[1B-[5G[1mXxxxxxxxxx xxxxxxxxx:[29G[22mx xxxx xxxx[41Gxxx[45Gx[47Gxxxxxx,[55Gxx[58GXxxxxx[65Gxxxxxxxxx[75Gxxxx[80Gxxxxx[86G([38;2;177;185;249mxxxx $0.01 0.2 xxx xxx -> 1 xxxxxx x 4 xxxxx x [2C[1B[39m [5G[38;2;177;185;249m$0.0035/XXX-xxx[39m). Xxx[27GXxx[31Gxxxxx xx xxx.x[46Gxxxxxxxx.xx[58Gxxxxx xxxxxxx 404.[K[2C[1B-[5G[1mXxxx xxxxxxx:[22m xxx[23G[38;2;177;185;249mxxxxxxxxxx-xxxxx[40G[39mxxxx xxxxx xxx xxxx. Xx[64Gxxxxxxxx xxxx[78Gxx[81G0.1–0.18x[91Gxxx[95Gxxxx[100Gxxxxx[106Gxxxx[111Gxxx[115GXxx[119Gxx[122Gxxxxx[128Gxx[2C[1B [5Gxxxxxx,[13Gxx[16GX[18Gxxxxxxx[26Gxxxxxxx.[2B[K[1B[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[1B[38;2;153;153;153m❯ [39m[K[1B[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[2C[1B[35m◆ Xxxx 5.5[38;2;153;153;153m [2m|[22m [36mxxxxxxxxxx.xx-x[32G[38;2;153;153;153m[2m|[22m [34m xxxx-x[42G[38;2;153;153;153m[2m|[22m [32m✓ xxxxxx[38;2;153;153;153m [2m|[22m [32m██░░░░░░░░ 20%[38;2;153;153;153m [2m200.2x[22m [2m|[22m [32m+16[38;2;153;153;153m/[31m-0[38;2;153;153;153m [2m|[22m [2m⬢ xxx: xxxxxxxxxx (XX)[2C[1B[22m[32m5x 33%[38;2;153;153;153m [2m·[22m [32mxx 45%[38;2;153;153;153m [2m·[22m [32mXxxxx 0%[38;2;153;153;153m [2m·[22m [36mΣ 17.9X[38;2;153;153;153m [2m·[42G$7.12 xxx (97% xxxxxx)[22m[39m[K
+[3G[38;2;255;107;128m⏵⏵[6Gxxxxxx[13Gxxxxxxxxxxx[25Gxx[38;2;153;153;153m (xxxxx+xxx[39Gxx[42Gxxxxx)[49G·[51G/xxxxx[58Gxx[61Gxxx[65Gxxxxxxxxx[75G·[77G←[79Gxxx[83Gxxxxxx[39m
+[2C[5A[?25h[?25l[2D[5B[2C[7A[1mXxxx xxxxx:[1B[22m[K[1B  1.[1B[K[1B[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[1B[38;2;153;153;153m❯ [39m[K[1B[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
+[3G[35m◆[5GXxxx[10G5.5[38;2;153;153;153m [2m|[22m [36mxxxxxxxxxx.xx-x[38;2;153;153;153m [2m|[22m [34m xxxx-x[38;2;153;153;153m [2m|[22m [32m✓[46Gxxxxxx[38;2;153;153;153m [2m|[22m [32m██░░░░░░░░[66G20%[38;2;153;153;153m [2m200.2x[22m [2m|[22m [32m+16[38;2;153;153;153m/[31m-0[38;2;153;153;153m [2m|[22m [2m⬢[90Gxxx:[95Gxxxxxxxxxx[106G(XX)[22m[39m
+[3G[32m5x[6G33%[38;2;153;153;153m [2m·[22m [32mxx[15G45%[38;2;153;153;153m [2m·[22m [32mXxxxx[27G0%[38;2;153;153;153m [2m·[22m [36mΣ[34G17.9X[38;2;153;153;153m [2m·[22m [2m$7.12[48Gxxx[52G(97%[57Gxxxxxx)[22m[39m
+[3G[38;2;255;107;128m⏵⏵[6Gxxxxxx[13Gxxxxxxxxxxx[25Gxx[38;2;153;153;153m (xxxxx+xxx[39Gxx[42Gxxxxx)[49G·[51G/xxxxx[58Gxx[61Gxxx[65Gxxxxxxxxx[75G·[77G←[79Gxxx[83Gxxxxxx[39m
+[2C[5A[?25h[?25l[2D[5B[5C[8AXxx[10G"xxxxxxx"[20Gxx[23Gxxxx[28Gxxxx[33G[38;2;177;185;249m488x80xx[39m,[43Gxxxxx[49Gxxxxxxxx[58G[38;2;177;185;249m7x396191[39m.[68GX'xx[73Gxxxx[78Gxxx[82Gxxx[86Gxxxxxxx[94Gxxxxxx,[102Gxxxxx[108Gxxx[112Gxxxx[117Gxxxx,[123Gxxx[127Gxxx[131Gxxx
+
+
+
+
+
+
+
+[2C[5A[?25h[?25l[2D[5B[5C[7Axxxxxxxxxx[17Gxxxxxx:[1B     -[K[1B[K[2B[38;2;153;153;153m❯ [39m[K[1B[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[2C[1B[35m◆ Xxxx 5.5[38;2;153;153;153m [2m|[22m [36mxxxxxxxxxx.xx-x[38;2;153;153;153m [2m|[22m [34m xxxx-x[42G[38;2;153;153;153m[2m|[22m [32m✓ xxxxxx[38;2;153;153;153m [2m|[22m [32m██░░░░░░░░ 20%[38;2;153;153;153m [2m200.2x[77G|[79G[22m[32m+16[38;2;153;153;153m/[31m-0[38;2;153;153;153m [2m|[22m [2m⬢ xxx: xxxxxxxxxx (XX)[22m[39m
+[3G[32m5x[6G33%[38;2;153;153;153m [2m·[22m [32mxx[15G45%[38;2;153;153;153m [2m·[22m [32mXxxxx[27G0%[38;2;153;153;153m [2m·[22m [36mΣ[34G17.9X[38;2;153;153;153m [2m·[22m [2m$7.12[48Gxxx[52G(97%[57Gxxxxxx)[22m[39m
+[3G[38;2;255;107;128m⏵⏵[6Gxxxxxx[13Gxxxxxxxxxxx[25Gxx[38;2;153;153;153m (xxxxx+xxx[39Gxx[42Gxxxxx)[49G·[51G/xxxxx[58Gxx[61Gxxx[65Gxxxxxxxxx[75G·[77G←[79Gxxx[83Gxxxxxx[39m
+[2C[5A[?25h[?25l[2D[5B[7C[8Axxxxxx[15Gx[17Gxxxx[22Gxxxx[27Gxxx[31Gxxxxxx[38Gx[40Gxxxx[45Gxx[48GXX$0.000012;[5C[1B-[8Gxxxx[13Gxxxxx'x[21Gxxx[25Gxxxx;[1B     -[K[1B[K[2B[38;2;153;153;153m❯ [39m[K[1B[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[2C[1B[35m◆ Xxxx 5.5[38;2;153;153;153m [2m|[22m [36mxxxxxxxxxx.xx-x[38;2;153;153;153m [2m|[22m [34m xxxx-x[42G[38;2;153;153;153m[2m|[22m [32m✓ xxxxxx[38;2;153;153;153m [2m|[22m [32m██░░░░░░░░ 20%[38;2;153;153;153m [2m200.2x[77G|[79G[22m[32m+16[38;2;153;153;153m/[31m-0[38;2;153;153;153m [2m|[22m [2m⬢ xxx: xxxxxxxxxx (XX)[22m[39m
+[3G[32m5x[6G33%[38;2;153;153;153m [2m·[22m [32mxx[15G45%[38;2;153;153;153m [2m·[22m [32mXxxxx[27G0%[38;2;153;153;153m [2m·[22m [36mΣ[34G17.9X[38;2;153;153;153m [2m·[22m [2m$7.12[48Gxxx[52G(97%[57Gxxxxxx)[22m[39m
+[3G[38;2;255;107;128m⏵⏵[6Gxxxxxx[13Gxxxxxxxxxxx[25Gxx[38;2;153;153;153m (xxxxx+xxx[39Gxx[42Gxxxxx)[49G·[51G/xxxxx[58Gxx[61Gxxx[65Gxxxxxxxxx[75G·[77G←[79Gxxx[83Gxxxxxx[39m
+[2C[5A[?25h[?25l[2D[5B[7C[8Axxxxx[14Gxxx[18Gxxxxx[24Gxxx-xxxxxxx[36Gxxxx[41Gxxxx[46Gxxxxx[52Gxxxxx[58Gxxx.[2C[1B2.[1B[K[1B[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[1B[38;2;153;153;153m❯ [39m[K[1B[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[2C[1B[35m◆ Xxxx 5.5[38;2;153;153;153m [2m|[22m [36mxxxxxxxxxx.xx-x[32G[38;2;153;153;153m[2m|[22m [34m xxxx-x[42G[38;2;153;153;153m[2m|[22m [32m✓ xxxxxx[38;2;153;153;153m [2m|[22m [32m██░░░░░░░░ 20%[38;2;153;153;153m [2m200.2x[22m [2m|[22m [32m+16[38;2;153;153;153m/[31m-0[38;2;153;153;153m [2m|[22m [2m⬢ xxx: xxxxxxxxxx (XX)[2C[1B[22m[32m5x 33%[38;2;153;153;153m [2m·[22m [32mxx 45%[38;2;153;153;153m [2m·[22m [32mXxxxx 0%[38;2;153;153;153m [2m·[22m [36mΣ 17.9X[38;2;153;153;153m [2m·[42G$7.12 xxx (97% xxxxxx)[22m[39m[K
+[3G[38;2;255;107;128m⏵⏵[6Gxxxxxx[13Gxxxxxxxxxxx[25Gxx[38;2;153;153;153m (xxxxx+xxx[39Gxx[42Gxxxxx)[49G·[51G/xxxxx[58Gxx[61Gxxx[65Gxxxxxxxxx[75G·[77G←[79Gxxx[83Gxxxxxx[39m
+[2C[5A[?25h[?25l[2D[5B[5C[8AXxxxx[12Gxxx[16Gxxxxxxx,[25Gxxxx[30Gxxx.xxxxxxxxxx.xx/xxxxx/xxx#xxx[62Gxxx[66Gxxxx[71Gxxx[75Gxxxxxxx[83Gxxxx[88Gxxxxxxx.xxxxxxxx.xx[108Gxxxx[113Gxxx[117G"Xxxxxxx[126Gxxxxx[132Gxx
+
+
+
+
+
+
+
+[2C[5A[?25h[?25l[2D[5B[2C[14A1.[6GXxx[10G"xxxxxxx"[20Gxx[23Gxxxx[28Gxxxx[33G[38;2;177;185;249m488x80xx[39m,[43Gxxxxx[49Gxxxxxxxx[58G[38;2;177;185;249m7x396191[39m.[68GX'xx[73Gxxxx[78Gxxx[82Gxxx[86Gxxxxxxx[94Gxxxxxx,[102Gxxxxx[108Gxxx[112Gxxxx[117Gxxxx,[123Gxxx[127Gxxx[131Gxxx[2C[1B  [6Gxxxxxxxxxx xxxxxx:[K[5C[1B- xxxxxx x[17Gxxxx xxxx[27Gxxx[31Gxxxxxx[38Gx[40Gxxxx[45Gxx[48GXX$0.000012;[9C[1Bxx xxxxx'[20G xxx xxxx;[31G[K[7C[1Bxxxxx xxx xxxxx xxx-xxxxxxx[36Gxxxx[41Gxxxx[46Gxxxxx[52Gxxxxx[58Gxxx.[2C[1B2.[6GXxxxx [13Gxx xxxx[21Gxx, [26Gxxx xxx.xxxxxxxxxx.xx/xxxxx/x[56Gx#x[60Gx xxx[66Gxxxx[71Gxxx[75Gxxxxxxx[83Gxxxx[88Gxxxxxxx.xxxxxxxx.xx[108Gxxxx[113Gxxx[117G"Xxxxxxx[126Gxxxxx[132Gxx[2C[1B  [6Gxxxxxxx.xxx[18Gxxxx.xx" xxx. Xxx "Xxxx (xxx[47Gx[49Gxx)" xxxx xxxxx[67Gxxx[71Gx[73Gxx [77G xxxxxx xxxxxx xxxxxxx xx "xxx[108Gx[110Gxxx". Xx'x xxxxx xxxxxxx[5C[1Bxxx[10Gxxxxxxx[18Gxxxx[23Gxxxxxx[30Gxxxx[35GXxxxxx[42Gxxxx-xx.[1B[K[1B[K[2B[38;2;153;153;153m❯ [39m[K[1B[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[2C[1B[35m◆ Xxxx 5.5[38;2;153;153;153m [2m|[22m [36mxxxxxxxxxx.xx-x[38;2;153;153;153m [2m|[22m [34m xxxx-x[42G[38;2;153;153;153m[2m|[22m [32m✓ xxxxxx[38;2;153;153;153m [2m|[22m [32m██░░░░░░░░ 20%[38;2;153;153;153m [2m200.2x[77G|[79G[22m[32m+16[38;2;153;153;153m/[31m-0[38;2;153;153;153m [2m|[22m [2m⬢ xxx: xxxxxxxxxx (XX)[22m[39m
+[3G[32m5x[6G33%[38;2;153;153;153m [2m·[22m [32mxx[15G45%[38;2;153;153;153m [2m·[22m [32mXxxxx[27G0%[38;2;153;153;153m [2m·[22m [36mΣ[34G17.9X[38;2;153;153;153m [2m·[22m [2m$7.12[48Gxxx[52G(97%[57Gxxxxxx)[22m[39m
+[3G[38;2;255;107;128m⏵⏵[6Gxxxxxx[13Gxxxxxxxxxxx[25Gxx[38;2;153;153;153m (xxxxx+xxx[39Gxx[42Gxxxxx)[49G·[51G/xxxxx[58Gxx[61Gxxx[65Gxxxxxxxxx[75G·[77G←[79Gxxx[83Gxxxxxx[39m
+[2C[5A[?25h[?25l[2D[5B[2C[7AXXX[7GXXXXXXXX:[17G32[20Gxxxxxxx[28Gxx[31Gxxxx-x[38Gxxxxx[44Gxxxxxxx[52G43x212x5[61G(7.2x[67Gxxx).[1B[K[1B[K[2B[38;2;153;153;153m❯ [39m[K[1B[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[2C[1B[35m◆ Xxxx 5.5[38;2;153;153;153m [2m|[22m [36mxxxxxxxxxx.xx-x[38;2;153;153;153m [2m|[22m [34m xxxx-x[42G[38;2;153;153;153m[2m|[22m [32m✓ xxxxxx[38;2;153;153;153m [2m|[22m [32m██░░░░░░░░ 20%[38;2;153;153;153m [2m200.2x[77G|[79G[22m[32m+16[38;2;153;153;153m/[31m-0[38;2;153;153;153m [2m|[22m [2m⬢ xxx: xxxxxxxxxx (XX)[22m[39m
+[3G[32m5x[6G33%[38;2;153;153;153m [2m·[22m [32mxx[15G45%[38;2;153;153;153m [2m·[22m [32mXxxxx[27G0%[38;2;153;153;153m [2m·[22m [36mΣ[34G17.9X[38;2;153;153;153m [2m·[22m [2m$7.12[48Gxxx[52G(97%[57Gxxxxxx)[22m[39m
+[3G[38;2;255;107;128m⏵⏵[6Gxxxxxx[13Gxxxxxxxxxxx[25Gxx[38;2;153;153;153m (xxxxx+xxx[39Gxx[42Gxxxxx)[49G·[51G/xxxxx[58Gxx[61Gxxx[65Gxxxxxxxxx[75G·[77G←[79Gxxx[83Gxxxxxx[39m
+[2C[5A[?25h[?25l[2D[5B[2C[7AXxx[7Gxxxx[12Gxx[15Gxxxxxxxxxx.xx-x:[32G10[35Gxxxxxxx,[44G7[46Gxxxx-xxxxxx[58Gxx[61G6[63Gxxxxx[69G—[71GXxx[75Gxxxxxx[82Gxxxx,[88Gxxxx[93Gxxxxxxxxx,[104Gxxxx[109Gxxxxxxxxx[119Gxx[122Gxxx[126Gxxxxx.[1B[K[1B[38;2;215;119;87m✶[39m [38;2;215;119;87mXxxxxxxxxxxxx… [38;2;153;153;153m(xxxxxxx Xxxx xxxxx… 0/2 · 23x · ↓[53G1.9x xxxxxx)[1B[39m[K[1B[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[1B[38;2;153;153;153m❯ [39m[K[1B[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
+[3G[35m◆[5GXxxx[10G5.5[38;2;153;153;153m [2m|[22m [36mxxxxxxxxxx.xx-x[38;2;153;153;153m [2m|[22m [34m xxxx-x[38;2;153;153;153m [2m|[22m [32m✓[46Gxxxxxx[38;2;153;153;153m [2m|[22m [32m██░░░░░░░░[66G20%[38;2;153;153;153m [2m200.2x[22m [2m|[22m [32m+16[38;2;153;153;153m/[31m-0[38;2;153;153;153m [2m|[22m [2m⬢[90Gxxx:[95Gxxxxxxxxxx[106G(XX)[22m[39m
+[3G[32m5x[6G33%[38;2;153;153;153m [2m·[22m [32mxx[15G45%[38;2;153;153;153m [2m·[22m [32mXxxxx[27G0%[38;2;153;153;153m [2m·[22m [36mΣ[34G17.9X[38;2;153;153;153m [2m·[22m [2m$7.12[48Gxxx[52G(97%[57Gxxxxxx)[22m[39m
+[3G[38;2;255;107;128m⏵⏵[6Gxxxxxx[13Gxxxxxxxxxxx[25Gxx[38;2;153;153;153m (xxxxx+xxx[39Gxx[42Gxxxxx)[49G·[51G/xxxxx[58Gxx[61Gxxx[65Gxxxxxxxxx[75G·[77G←[79Gxxx[83Gxxxxxx[39m
+[2C[5A[?25h[?25l[2D[5B[8A[38;2;215;119;87m✳[39m
+
+
+
+
+
+
+
+[2C[5A[?25h[?25l[2D[5B[8A[38;2;215;119;87m✢[3G[38;2;218;124;92mXxxxxxxxxxxxx…[39m
+
+
+
+
+
+
+
+[2C[5A[?25h[?25l[2D[5B[8A[38;2;215;119;87m·[3G[38;2;220;129;97mXxxxxxxxxxxxx…[39m
+
+
+
+
+
+
+
+[2C[5A[?25h[?25l[2D[5B[2C[8A[38;2;223;134;102mXxxxxxxxxxxxx…[39m
+
+
+
+
+
+
+
+[2C[5A[?25h[?25l[2D[5B[38C[8A[38;2;153;153;153m1[39m
+
+
+
+
+
+
+
+[2C[5A[?25h[?25l[2D[5B[2C[8A[38;2;225;139;107mXxxxxxxxxxxxx…[39m
+
+
+
+
+
+
+
+[2C[5A[?25h[?25l[2D[5B[8A⏺[3GXxx [1m2[22m xxxx xxxxx [38;2;153;153;153m(xxxx+x [30G xxxxxx)[39m[K[2C[1B[38;2;153;153;153m⎿  [39mXxxx[11Gxxxx[16Gxxxxx:[23GXXXX-XXXXX:[35Gxxxxxxx[43Gxx[46G~200x[52Gxxxxxx,[60Gxxxx[65Gxxx[69G150x[74Gxxxx,[80Gxxx[84Gxxxxx[90Gxx[93Gxx[96Gxxxxxxx[104Gxx[107Gxxxx.[113GXxxxx[119Gxx[122Gxxx[1B  xx /Xxxxx/xxxxxxxxxxxx/.xxxxxx/xxxxxxxx/-Xxxxx-xxxxxxxxxxxx-Xxxxxxxx-xxxxxxxxxx-xx-x/xxxxxx/xxxxxxx-xxxxxxx.xxxx-x42-xxxxxxx[K[1B  x.xx[8G(xxx[13G`xxxxxxx`[23Gxxxxx[29Gxxx[33Gxxx[37Gxxxxx),[45Gxxxx[50Gx[52Gxxxx[57G`##[61GXxxx[66Gxxxxx`[73Gxxxx[78Gxx[81Gxxxx[86Gxx[89Gxxxxxxxxx[99Gxxxxx[105Gxxxx.[111GXxxx[116Gxxx[120Gxxx[1B  xxxx: xxxx xxxxxxx xxxx xxxx /xxxxx xxxx xxx xxx XxxxXxxxx xxxx xxx xxx xxxxx xxxxxxx xxxxx xxx xxxxxxx xx xxx xxxxxxxxx[K[2C[1Bxxxxx xxxxx. Xx xxxxxxx xx xxxxxxxx xxxx, xxx xxxxx xxxx xx xxxx `## Xxxx xxxxx` xxx `Xxxx` (xxxx xxxxx xxxxx[113Gxxxxxxx)[122G—[2C[1Bxxxx xx xxxxxxxxx xxx xx xxxxx xxxxxxx. X xxxx xxxx xx xxxxxxx[66Gxx[69Gxx[72Gxxxxx[78G("xxxx[85Gxxxxx[91Gxxx[95Gxxxxxxx[103Gxxxxxxxx")[114Gxx[117Gxxxxx[123Gxx[2C[1BXxxxxx ("xxxx xxxx") xxxx xxxxxx xx xxxxxxx xx xx: x xxxxx xxxxxx xx XXXXXXXX xxxx, xx[90Gxx[93Gxxxxx[99Gxxxx[104Gxxx[108Gxxxx[113Gx[115Gxxxxx
+[3Gxxxxxxx[11Gxxx[15Gxxxxx.
+
+[3GXxx[7Gxxxxx[13Gxxxxxxx[21Gxxxx[26GXXXX[31Gxxxx[36Gxxxx[41G—[43Gxxxxxxx[51Gxxxx[56Gxxxxxxxx.[66GXxxxxx,[74Gxxxxxxxxxxx[86Gxxxxx,[93Gxxxxxxxx[102Gxxxxxxx[110Gxxx[114Gxxxxxxxxxx
+[3Gxxxx[8Gxxx[12Gxxxxxxxx[21Gxxx[25Gxxxxxxxx[34Gxxx[38Gxxx,[43Gxx[46Gxx[49Gxxx[53Gxxxxx[59Gxxxx.[65GXxxx[70Gxx[73Gxxxxxxxxxxx[85Gxxx[89Gxxxxxxx,[98Gxxx[102Gxxxx[107Gxxx[111Gxxxx[116Gxxxxx,[123Gxx:
+[3G`##[7GXxxxx`[14G(xxxx[20Gxx[23Gxxxx[28Gxxx[32Gxxxxxxx[40Gxx[43Gxx[46GXXXXXXXX[55Gxx[58Gxxxxxxxxxx,[70Gxxx[74Gxxxx[79Gxx[82Gxxx-xxxxxx),[95G`##[99GXxxxxxxxx`[110G(xxxxxxx[119Gx[121Gxxxxx
+[3Gxxxxxxx[11Gxxxx[16Gxxx[20Gxx-xxxxxxxx),[34G`##[38GXxxxxxx`[47G(xxxx[53Gxxxx[58Gxxxxx[64Gxxxx[69Gxxxxxxx,[78Gxx[81Gxxxx[86Gxxx[90Gxxx[94Gxxxxx[100Gxxxxx)[107Gxxx[111G`##[115GXxx[119Gxxxxx`
+[3G(xxx[8Gxxxxx,[15Gxx[18Gxxx[22Gxxxx[27Gxxxxxxx[35Gxxxx[40Gxxx[44Gxx-xxxxxx[54Gxxxx[59Gxxx[63Gxxxxx[69Gxxx[73Gxxxxx[79Gxxxx[84Gxxxxx[90Gxx[93Gxxxxxx).
+[3GXxxx[8Gxxxxx[14Gxx[17Gxxxxxxx[25Gxx[28GXxxxxx'x[37Gxxxxxx[44Gxxx[48Gxxxxx[54Gxxxxx.[61GXx[64Gxxxx[69Gxxxx[74Gxxxx,[80Gxxxx[85Gxxxxx[91Gxxxx[96Gxxxx[101Gxxxx[106Gxxxxxxx,[115Gxx[118Gxxx[122Gxx
+[3Gxxx[7Gxxxxx;[14Gxxxxx[20Gxxxxxx[27Gxxxx[32Gxxxxx,[39Gxxx[43Gxxxxxxx[51Gxx[54Gxx[57Gxxxxxxxxx[67GXxxx[72Gxxxxx[78Gxxxx.
+
+[38;2;215;119;87m·[3G[38;2;225;139;107mXxxxxxxxxxxxx…[38;2;215;119;87m [38;2;153;153;153m(23x[23G·[25G↓[27G1.9x[32Gxxxxxx)[39m
+
+[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
+[38;2;153;153;153m❯ [39m
+[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
+[3G[35m◆[5GXxxx[10G5.5[38;2;153;153;153m [2m|[22m [36mxxxxxxxxxx.xx-x[38;2;153;153;153m [2m|[22m [34m xxxx-x[38;2;153;153;153m [2m|[22m [32m✓[46Gxxxxxx[38;2;153;153;153m [2m|[22m [32m██░░░░░░░░[66G20%[38;2;153;153;153m [2m200.2x[22m [2m|[22m [32m+16[38;2;153;153;153m/[31m-0[38;2;153;153;153m [2m|[22m [2m⬢[90Gxxx:[95Gxxxxxxxxxx[106G(XX)[22m[39m
+[3G[32m5x[6G33%[38;2;153;153;153m [2m·[22m [32mxx[15G45%[38;2;153;153;153m [2m·[22m [32mXxxxx[27G0%[38;2;153;153;153m [2m·[22m [36mΣ[34G17.9X[38;2;153;153;153m [2m·[22m [2m$7.12[48Gxxx[52G(97%[57Gxxxxxx)[22m[39m
+[3G[38;2;255;107;128m⏵⏵[6Gxxxxxx[13Gxxxxxxxxxxx[25Gxx[38;2;153;153;153m (xxxxx+xxx[39Gxx[42Gxxxxx)[49G·[51G/xxxxx[58Gxx[61Gxxx[65Gxxxxxxxxx[75G·[77G←[79Gxxx[83Gxxxxxx[39m
+[93G[38;2;153;153;153mXxxx[98Gxxxx[103Gxxxxx[109Gxxxxxxxx[118G·[120Gxxxx+x[127Gxx[130Gxxx[39m
+[2C[6A[?25h[?25l[2D[6B[2C[9A[38;2;230;149;117mXxxxxxxxxxxxx…[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[9A[38;2;215;119;87m✢[3G[38;2;233;154;122mXxxxxxxxxxxxx…[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[2C[9A[38;2;235;159;127mXxxxxxxxxxxxx…[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[9A[38;2;215;119;87m✳[20G[38;2;153;153;153m4[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[9A[38;2;215;119;87m✶[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[9A[38;2;215;119;87m✻[3G[38;2;233;154;122mXxxxxxxxxxxxx…[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[9A[38;2;215;119;87m✽[3G[38;2;230;149;117mXxxxxxxxxxxxx…[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[2C[9A[38;2;228;144;112mXxxxxxxxxxxxx…[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[2C[9A[38;2;223;134;102mXxxxxxxxxxxxx…[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[2C[9A[38;2;215;119;87mXxxxxxxxxxxxx…[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[37C[9A[38;2;153;153;153m · [38;2;173;173;173mxxxxxxxx xxxx xxxxx xxxxxx[38;2;153;153;153m)[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[40C[9A[38;2;177;177;177mxxxxxxxx xxxx xxxxx xxxxxx[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[9A[38;2;215;119;87m✻[41G[38;2;181;181;181mxxxxxxxx xxxx xxxxx xxxxxx[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[9A[38;2;215;119;87m✶[41G[38;2;185;185;185mxxxxxxxx xxxx xxxxx xxxxxx[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[19C[9A[38;2;153;153;153m5[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[9A[38;2;215;119;87m✳[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[9A[38;2;215;119;87m✢[41G[38;2;181;181;181mxxxxxxxx xxxx xxxxx xxxxxx[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[9A[38;2;215;119;87m·[41G[38;2;177;177;177mxxxxxxxx xxxx xxxxx xxxxxx[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[40C[9A[38;2;173;173;173mxxxxxxxx xxxx xxxxx xxxxxx[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[15C[9A[38;2;235;159;127m…[41G[38;2;165;165;165mxxxxxxxx xxxx xxxxx xxxxxx[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[40C[9A[38;2;161;161;161mxxxxxxxx xxxx xxxxx xxxxxx[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[9A[38;2;215;119;87m✢[15G[38;2;235;159;127mx[41G[38;2;157;157;157mxxxxxxxx xxxx xxxxx xxxxxx[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[9A[38;2;215;119;87m✳[41G[38;2;153;153;153mxxxxxxxx xxxx xxxxx xxxxxx[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[13C[9A[38;2;235;159;127mx[20G[38;2;153;153;153m6[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[9A[38;2;215;119;87m✶[13G[38;2;235;159;127mx[16G[38;2;215;119;87m…[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[9A[38;2;215;119;87m✻[41G[38;2;157;157;157mxxxxxxxx xxxx xxxxx xxxxxx[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[9A[38;2;215;119;87m✽[12G[38;2;235;159;127mx[15G[38;2;215;119;87mx[27G[38;2;153;153;153m2[29G0[41G[38;2;161;161;161mxxxxxxxx xxxx xxxxx xxxxxx[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[40C[9A[38;2;165;165;165mxxxxxxxx xxxx xxxxx xxxxxx[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[40C[9A[38;2;153;153;153mxxxxxxx xxx 2x)[39m[K
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[10C[9A[38;2;235;159;127mx[14G[38;2;215;119;87mx[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[71C[4A[38;2;153;153;153m[2m3[74G1[22m[39m
+
+
+
+[2C[6A[?25h[?25l[2D[6B[28C[9A[38;2;153;153;153m1[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[9A[38;2;215;119;87m✻[10G[38;2;235;159;127mx[13G[38;2;215;119;87mx[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[9A[38;2;215;119;87m✶[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[9A[38;2;215;119;87m✳[9G[38;2;235;159;127mx[12G[38;2;215;119;87mx[20G[38;2;153;153;153m7[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[7C[9A[38;2;235;159;127mx[11G[38;2;215;119;87mx[29G[38;2;153;153;153m2[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[9A[38;2;215;119;87m✢[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[9A[38;2;215;119;87m·[7G[38;2;235;159;127mx[10G[38;2;215;119;87mx[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[5C[9A[38;2;235;159;127mx[9G[38;2;215;119;87mx[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[9A[38;2;215;119;87m✢[5G[38;2;235;159;127mx[8G[38;2;215;119;87mx[29G[38;2;153;153;153m3[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[9A[38;2;215;119;87m✳[4G[38;2;235;159;127mx[7G[38;2;215;119;87mx[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[9A[38;2;215;119;87m✶[20G[38;2;153;153;153m8[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[2C[9A[38;2;235;159;127mX[6G[38;2;215;119;87mx[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[9A[38;2;215;119;87m✻[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[9A[38;2;215;119;87m✽[5Gx[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[37C[9A[38;2;153;153;153m)[39m[K
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[3C[9A[38;2;215;119;87mx[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[9A[38;2;215;119;87m✻[3GX[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[9A[38;2;215;119;87m✶[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[9A[38;2;215;119;87m✳[20G[38;2;153;153;153m9[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[9A[38;2;215;119;87m✢[29G[38;2;153;153;153m4[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[9A[38;2;215;119;87m·[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[9A[38;2;215;119;87m✢[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[9A[38;2;215;119;87m✳[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[9A[38;2;215;119;87m✶[19G[38;2;153;153;153m30[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[9A[38;2;215;119;87m✻[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[9A[38;2;215;119;87m✽[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[28C[9A[38;2;153;153;153m5[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[50C[2A[38;2;153;153;153m← xxx xxxxxx[39m[K
+
+[2C[6A[?25h[?25l[2D[6B[9A[38;2;215;119;87m✻[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[9A[38;2;215;119;87m✶[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[9A[38;2;215;119;87m✳[20G[38;2;153;153;153m1[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[9A[38;2;215;119;87m✢[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[9A[38;2;215;119;87m·[39m
+
+
+
+
+
+
+
+
+[2C[6A[?25h[?25l[2D[6B[2K[G[1A[K[2C[5A[?25h[?25l[2D[5B[8A[38;2;153;153;153m⏺[3G[39m[1mXxxx[22m(x=~/.xxxxxx/xxxxxxxx/-Xxxxx-xxxxxxxxxxxx-Xxxxxxxx-xxxxxxxxxx-xx/xxxxxx/xxxxxxx_xxx_xxxxxx_2026-10-01.xx;[113Gxxx[117G>>[120G$x[123G<<'XXX'…)[1B[38;2;153;153;153m  ⎿  Xxxxxxx…[1B[39m[K[1B[38;2;215;119;87m·[39m [38;2;215;119;87mXxxxxxxxxxxxx… [38;2;153;153;153m(xxxxxxx XxxXxxxXxx xxxxx… 0/2 · 31x · ↓[59G2.5x xxxxxx)[1B[39m[K[1B[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[1B[38;2;153;153;153m❯ [39m[K[1B[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
+[3G[35m◆[5GXxxx[10G5.5[38;2;153;153;153m [2m|[22m [36mxxxxxxxxxx.xx-x[38;2;153;153;153m [2m|[22m [34m xxxx-x[38;2;153;153;153m [2m|[22m [32m✓[46Gxxxxxx[38;2;153;153;153m [2m|[22m [32m██░░░░░░░░[66G20%[38;2;153;153;153m [2m203.1x[22m [2m|[22m [32m+16[38;2;153;153;153m/[31m-0[38;2;153;153;153m [2m|[22m [2m⬢[90Gxxx:[95Gxxxxxxxxxx[106G(XX)[22m[39m
+[3G[32m5x[6G33%[38;2;153;153;153m [2m·[22m [32mxx[15G45%[38;2;153;153;153m [2m·[22m [32mXxxxx[27G0%[38;2;153;153;153m [2m·[22m [36mΣ[34G17.9X[38;2;153;153;153m [2m·[22m [2m$7.12[48Gxxx[52G(97%[57Gxxxxxx)[22m[39m
+[3G[38;2;255;107;128m⏵⏵[6Gxxxxxx[13Gxxxxxxxxxxx[25Gxx[38;2;153;153;153m (xxxxx+xxx[39Gxx[42Gxxxxx)[49G·[51G←[53Gxxx[57Gxxxxxx[39m
+[2C[5A[?25h[?25l[2D[5B[2C[8A[38;2;228;144;112mXxxxxxxxxxxxx…[39m
+
+
+
+
+
+
+
+[2C[5A[?25h[?25l[2D[5B[8A[38;2;215;119;87m✢[3G[38;2;230;149;117mXxxxxxxxxxxxx…[39m
+
+
+
+
+
+
+
+[2C[5A[?25h[?25l[2D[5B[44C[8A[38;2;153;153;153m1[39m
+
+
+
+
+
+
+
+[2C[5A[?25h[?25l[2D[5B[2C[8A[38;2;233;154;122mXxxxxxxxxxxxx…[39m
+
+
+
+
+
+
+
+[2C[5A[?25h[?25l[2D[5B[5C[10A[38;2;153;153;153mXxxx[18C[2B31x · ↓[39m [38;2;153;153;153m2.5x xxxxxx)[39m[K
+
+
+
+
+
+
+
+[2C[5A[?25h[?25l[2D[5B[8A[38;2;215;119;87m✳[3G[38;2;235;159;127mXxxxxxxxxxxxx…[29G[38;2;153;153;153m6[39m
+
+
+
+
+
+
+
+[2C[5A[?25h[?25l[2D[5B[18C[8A[38;2;153;153;153mxxxxxxx XxxxXx[34GxXxx xxxx · 32x · ↓[54G2.6x xxxxxx)[39m
+
+
+
+
+
+
+
+[2C[5A[?25h[?25l[2D[5B[8A[38;2;215;119;87m✶[39m
+
+
+
+
+
+
+
+[2C[5A[?25h[?25l[2D[5B[8A[38;2;215;119;87m✻[39m
+
+
+
+
+
+
+
+[2C[5A[?25h[?25l[2D[5B[11A[38;2;78;186;101m⏺[5C[1B[39mxx[K[18C[2B[38;2;153;153;153m32x · ↓[39m [38;2;153;153;153m2.6x x[34Gxxxx)[39m[K
+
+
+
+
+
+
+
+[2C[5A[?25h[?25l[2D[5B[2C[8A[38;2;233;154;122mXxxxxxxxxxxxx…[39m
+
+
+
+
+
+
+
+[2C[5A[?25h[?25l[2D[5B[8A[38;2;215;119;87m✽[3G[38;2;228;144;112mXxxxxxxxxxxxx…[29G[38;2;153;153;153m7[39m
+
+
+
+
+
+
+
+[2C[5A[?25h[?25l[2D[5B[2C[8A[38;2;225;139;107mXxxxxxxxxxxxx…[39m
+
+
+
+
+
+
+
+[2C[5A[?25h[?25l[2D[5B[2C[8A[38;2;223;134;102mXxxxxxxxxxxxx…[39m
+
+
+
+
+
+
+
+[2C[5A[?25h[?25l[2D[5B[8A[38;2;215;119;87m✻[3G[38;2;218;124;92mXxxxxxxxxxxxx…[29G[38;2;153;153;153m8[39m
+
+
+
+
+
+
+
+[2C[5A[?25h[?25l[2D[5B[34C[2A[36m8[37G3[45G[38;2;153;153;153m[2m26[22m[39m
+
+[2C[5A[?25h[?25l[2D[5B[8A[38;2;215;119;87m✶[3GXxxxxxxxxxxxx…[39m
+
+
+
+
+
+
+
+[2C[5A[?25h[?25l[2D[5B[8A[38;2;215;119;87m✳[20G[38;2;153;153;153m3[39m
+
+
+
+
+
+
+
+[2C[5A[?25h[?25l[2D[5B[8A[38;2;215;119;87m✢[3G[38;2;218;124;92mXxxxxxxxxxxxx…[39m
+
+
+
+
+
+
+
+[2C[5A[?25h[?25l[2D[5B[8A[38;2;215;119;87m·[3G[38;2;223;134;102mXxxxxxxxxxxxx…[39m
+
+
+
+
+
+
+
+[2C[5A[?25h[?25l[2D[5B[2C[8A[38;2;225;139;107mXxxxxxxxxxxxx…[39m
+
+
+
+
+
+
+
+[2C[5A[?25h[?25l[2D[5B[2C[8A[38;2;228;144;112mXxxxxxxxxxxxx…[39m
+
+
+
+
+
+
+
+[2C[5A[?25h[?25l[2D[5B[8A[38;2;215;119;87m✢[3G[38;2;233;154;122mXxxxxxxxxxxxx…[39m
+
+
+
+
+
+
+
+[2C[5A[?25h[?25l[2D[5B[8A[38;2;215;119;87m✳[3G[38;2;235;159;127mXxxxxxxxxxxxx…[39m
+
+
+
+
+
+
+
+[2C[5A[?25h[?25l[2D[5B[8A[38;2;255;255;255m⏺[3G[39mXxx xxxxxxx xxxx xxxx "Xxxx xxxxx: Xxxx",[45Gxxxxx[51Gxxxxxxxxxx[62Gxxxx[67Gxxxxx[73Gxx[76Gxxxx[81G"xxxxxxx".[92GX[94Gxxxxx[100Gxxx[104Gxxxx-xxxxxxx[117Gxxxxxxxxxx[128Gxxxxxx[2C[1Bxxxx[8Gxxx[12GXxx[16Gxxxxxx[23Gxxxxxx[30Gxxxx[35G([38;2;177;185;249mxxxxxxx_xxx_xxxxxx_2026-10-01.xx[39m)[70Gxx[73Gxxxxxxxxx[83Gxxxx[88Gxxxx[93Gxxx[97Gxxxxxxx[105Gxxxx[110Gxxxx.[1B[K[1B[38;2;215;119;87m✳[39m [38;2;235;159;127mXxxxxxxxxxxxx…[38;2;215;119;87m [38;2;153;153;153m(xxxxxxx Xxxx xxxxx… 0/2 · 34x · ↓[53G2.8x xxxxxx)[1B[39m[K[1B[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[1B[38;2;153;153;153m❯ [39m[K[1B[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
+[3G[35m◆[5GXxxx[10G5.5[38;2;153;153;153m [2m|[22m [36mxxxxxxxxxx.xx-x[38;2;153;153;153m [2m|[22m [34m xxxx-x[38;2;153;153;153m [2m|[22m [32m✓[46Gxxxxxx[38;2;153;153;153m [2m|[22m [32m██░░░░░░░░[66G20%[38;2;153;153;153m [2m203.1x[22m [2m|[22m [32m+16[38;2;153;153;153m/[31m-0[38;2;153;153;153m [2m|[22m [2m⬢[90Gxxx:[95Gxxxxxxxxxx[106G(XX)[22m[39m
+[3G[32m5x[6G33%[38;2;153;153;153m [2m·[22m [32mxx[15G45%[38;2;153;153;153m [2m·[22m [32mXxxxx[27G0%[38;2;153;153;153m [2m·[22m [36mΣ[34G18.3X[38;2;153;153;153m [2m·[22m [2m$7.26[48Gxxx[52G(97%[57Gxxxxxx)[22m[39m
+[3G[38;2;255;107;128m⏵⏵[6Gxxxxxx[13Gxxxxxxxxxxx[25Gxx[38;2;153;153;153m (xxxxx+xxx[39Gxx[42Gxxxxx)[49G·[51G←[53Gxxx[57Gxxxxxx[39m
+[2C[5A[?25h[?25l[2D[5B[8A[38;2;215;119;87m✶[39m
+
+
+
+
+
+
+
+[2C[5A[?25h[?25l[2D[5B[8A[38;2;215;119;87m✻[3G[38;2;233;154;122mXxxxxxxxxxxxx…[39m
+
+
+
+
+
+
+
+[2C[5A[?25h[?25l[2D[5B[54C[8A[38;2;153;153;153m9[39m
+
+
+
+
+
+
+
+[2C[5A[?25h[?25l[2D[5B[8A[38;2;215;119;87m✽[3G[38;2;228;144;112mXxxxxxxxxxxxx…[39m
+
+
+
+
+
+
+
+[2C[5A[?25h[?25l[2D[5B[38C[8A[38;2;153;153;153m1[39m
+
+
+
+
+
+
+
+[2C[5A[?25h[?25l[2D[5B[2C[8A[38;2;225;139;107mXxxxxxxxxxxxx…[39m
+
+
+
+
+
+
+
+[2C[5A[?25h]0;✳ Xxx xxxxxx xxxx xxxxxxx: xxxx xxxxx[?25l[2D[5B[8A[38;2;153;153;153m✻[3GXxxxxx xxx 27x 17x · xxxx 11:53 XX[39m[K[3B❯ 
+
+
+
+
+[2C[5A[?25h[?25l[2D[5B[71C[3A[38;2;153;153;153m[2m4[22m[39m
+
+
+[2C[5A[?25h[?25l[2D[5B[112C[3A[38;2;153;153;153mXxxxxxxx xxx xxxxxxx[39m
+
+
+[2C[5A[?25h[?25l[2D[5B[112C[3A[K
+
+
+[2C[5A[?25h[?25l[2D[5B[112C[3A[38;2;153;153;153mXxxxxxxx xxx xxxxxxx[39m
+
+
+[2C[5A[?25h[?25l[2D[5B[112C[3A[K
+
+
+[2C[5A[?25h[?25l[2D[5B[6C[2A[32m9[16G6[39m
+
+[2C[5A[?25h[?25l[2D[5B[95G[38;2;153;153;153mxxx[99Gxxxx?[105G[38;2;177;185;249m/xxxxx[38;2;153;153;153m xx[115Gxxxx[120G[38;2;177;185;249m204.2x[127Gxxxxxx[39m
+[2C[6A[?25h[?25l[2D[6B[94C[1A                  [38;2;153;153;153mXxxxxxxx xxx xxxxxxx[39m
+[95G[38;2;153;153;153mxxx[99Gxxxx?[105G[38;2;177;185;249m/xxxxx[38;2;153;153;153m xx[115Gxxxx[120G[38;2;177;185;249m204.2x[127Gxxxxxx[39m
+[2C[7A[?25h[?25l[2D[7B[2K[G[1A[94C[1A[38;2;153;153;153mxxx xxxx? [38;2;177;185;249m/xxxxx[38;2;153;153;153m xx xxxx [38;2;177;185;249m204.2x xxxxxx[1B[39m[K[2C

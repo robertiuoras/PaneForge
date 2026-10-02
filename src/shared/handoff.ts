@@ -98,6 +98,8 @@ export interface HandoffPayload {
 /** What the handoff chooser is allowed to move. No ids is the deliberate bulk action. */
 export interface HandoffRequest {
   ids?: string[]
+  /** App-decided transfer: completion must cancel it, including after queueing. */
+  automatic?: boolean
   closeReceiverWhenDone?: boolean
   /**
    * A pane that is mid-turn is queued and moved when the turn ends, rather than refused.

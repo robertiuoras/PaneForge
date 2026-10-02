@@ -36,6 +36,7 @@ export type Surface = { readonly [K in keyof Api]: SurfaceEntry }
 
 export const SURFACE: Surface = {
   listReviews: ['invoke', 'reviews:list'],
+  onReviewsChanged: ['on', 'reviews:changed'],
   recordReview: ['invoke', 'reviews:record'],
   acknowledgeReview: ['invoke', 'reviews:ack'],
   openReview: ['invoke', 'reviews:open'],
@@ -48,6 +49,7 @@ export const SURFACE: Surface = {
   createProject: ['invoke', 'projects:create'],
   routeProjects: ['invoke', 'projects:route'],
   listAgents: ['invoke', 'agents:list', true],
+  includedAccounts: ['invoke', 'agents:includedAccounts'],
   listSessions: ['invoke', 'sessions:list'],
   contextUsage: ['invoke', 'sessions:contextUsage'],
   prepareContinuation: ['invoke', 'sessions:prepareContinuation'],

@@ -42,6 +42,7 @@ const TESTS = [
   ['freshreplay', 'fresh-replay-test.mjs'],
   ['codexworkers', 'codex-workers-test.mjs'],
   ['paneanswer', 'pane-answer-test.mjs'],
+  ['includedaccounts', 'included-accounts-test.mjs'],
   ['remotesuite', 'test-remote-test.mjs'],
   ['testchrome', 'test-chrome-test.mjs'],
   ['promptreview', 'prompt-review-test.mjs'],
@@ -213,6 +214,8 @@ const TESTS = [
   // A cleared pane keeps its lane; an unrecorded open merge can be resolved; identical
   // dirt in main does not hold a merge (2026-09-28).
   ['lanecleared', 'lane-cleared-test.mjs'],
+  // A chat inside a lane copy of claude-memory holds it; a claim never undoes an open merge (2026-10-02).
+  ['lanenevercopy', 'lane-never-copy-test.mjs'],
   // A copy missing most of its files is damaged, never handed to a chat (2026-10-01).
   ['lanedamaged', 'lane-damaged-test.mjs'],
   // taskdriver.ai's PC-proof gate; a ready lane's own check is what `ready` reports (macOS only).

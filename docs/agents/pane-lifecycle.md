@@ -91,8 +91,9 @@ quiet `doneQuietMs` (3 min, 1 min tight, 30s over) past turn end AND last key, O
 `READ_QUIET_MS` 30s past max(look, key); `doneEnough`, no prompt owed, opener only while its
 children are open or their digest pending, reply read off transcript (`shared/replyRead.ts`,
 `test:replyread`), no running subagent, reply not ending `?`, `actionableNextSteps` empty,
-folder clean + pushed (`gitCached`: no upstream counts `rev-list HEAD --not --remotes`; a
-failed read or one started before the turn ended is `'unread'` and refuses); a background job only WAITING
+the folder NEVER holds it (Robert 2026-10-02): `gitCached` changed files / unpushed commits (a failed or pre-turn read
+is `'unread'`, asked again at the close, else silent) go into the Review row's `evidence` as `Left in <folder>: ...`
+(`folderLeftover`) and the done-close.log close line; a background job only WAITING
 (`isWaitScript`: sleep loops, `gh run watch`, `tail -f`, `bg-wait.mjs` minus its
 label/done/fail words) holds nothing. Writes `result`/`unverified` review
 `done_<pane>_<turn s>` with `hold` (row, no card), then `closeAfterResult` (refusal names each
@@ -116,6 +117,9 @@ sweep over `Session.finished` panes, quiet 0, `dry` touches nothing. Opener told
 result, expand = full reply + Reopen (`--resume`) + Copy; shell/bare-slash rows hidden. Idle
 shell undrawn (`fleet.ts` `idleShell`) till pressed/run; idle countdown still takes it.
 
+Explicit agent `closeWhenDone` arms use the same Review-first sweep and its safety gates,
+even when automatic closure is disabled. Shell closure retains its existing command semantics.
+
 Finished-turn sweeps publish a 30-second `doneClosingAt` before closing, rechecking every
 refusal on expiry; Keep open persists the pin. Local/remote pins also cancel an armed
 clear and refuse new automatic clears. Cancelling a clear holds the same native conversation
@@ -129,6 +133,13 @@ foreign autoclear left alone) -> `<userData>/autoclear-requests/<pane>.json` ->
 `Keep this session`/`Clear now`; unattended proceeds (`test:autoclear`).
 `shared/autoclear.ts` refusals; `main/sessions.ts` re-checks (`dropFor`) each tick. `## Next steps:
 None` respected. Resume: `queuePrompt` on IDLE COMPOSER; `keep.arm()` 120ms.
+
+The quiet floor (`ARM_QUIET_MS`, at arm, expiry and the arm lead) reads `Live.contentAt`, not
+`meta.lastOutput`: every pty byte EXCEPT a digits-only footer counter tick on a pane not mid-turn
+(`contentStampAfter`/`isCounterRepaint`). A finished pane carrying a background agent repaints
+its timer every second and was held 115 times, never cleared (s72, 2026-10-02). Anything not
+provably a tick still stamps, so a second Stop-hook reply still holds. `test:autoclear`,
+`node scripts/test-all.mjs autoclearmanager`.
 
 ## The screen stays on while a pane works
 

@@ -1,4 +1,4 @@
-// Moving a finished pane to a paired device when this machine is out of room.
+// Moving unfinished work to a paired device when this machine is out of room.
 //
 // As with reclaim-test, the refusals are the file. This is more destructive than reclaim
 // (it kills a pty rather than trimming a buffer) so the weight is on every case that must
@@ -9,7 +9,7 @@
 
 import { buildSync } from 'esbuild'
 import { strict as assert } from 'node:assert'
-import { mkdirSync, rmSync } from 'node:fs'
+import { mkdirSync, rmSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -19,6 +19,20 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const work = join(tmpdir(), 'pf-autohandoff-test')
 rmSync(work, { recursive: true, force: true })
 mkdirSync(work, { recursive: true })
+
+// Exercise the actual main-process gate, including completion bells from Codex.
+{
+  const source = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
+  const gate = source.match(/function paneBusy\(s: Session\): boolean \{[\s\S]*?\n\}/)?.[0]
+  assert.ok(gate, 'the handoff busy gate exists')
+  const file = join(work, 'busy.cjs')
+  buildSync({ stdin: { contents: `${gate}\nexport { paneBusy }`, loader: 'ts' }, format: 'cjs', platform: 'node', outfile: file })
+  const { paneBusy } = createRequire(import.meta.url)(file)
+  assert.equal(paneBusy({ status: 'idle', finished: true, bell: true }), false, 'an unread completed reply may transfer')
+  for (const held of [{ status: 'working' }, { status: 'starting' }, { status: 'idle', bell: true }, { status: 'idle', finished: true, ask: {} }, { status: 'idle', finished: true, stalledSince: 1 }]) {
+    assert.equal(paneBusy(held), true, 'active, unresolved or asking panes remain held')
+  }
+}
 
 const outfile = join(work, 'autohandoff.bundle.cjs')
 buildSync({
@@ -49,6 +63,8 @@ const {
   TURNS_BEFORE_MOVE,
   endsOnArrival,
   travels,
+  automaticWork,
+  automaticQueueable,
   BUDGET_QUIET_MS,
   sweepBlockers,
   sweepLine,
@@ -72,7 +88,8 @@ const ok = { ...over, level: 'ok' }
 
 const pane = (o) => ({
   id: 'p',
-  agent: 'shell',
+  agent: 'codex',
+  resumeId: 'test-conversation',
   state: 'ready',
   lastKeyboard: NOW - 20 * MIN,
   focused: false,
@@ -81,11 +98,27 @@ const pane = (o) => ({
   handingOff: false,
   asking: false,
   projectName: 'proj',
+  shareable: true,
+  handoffOpen: 1,
+  handoffVerified: true,
   ...o
 })
 const ids = (plan) => plan.map((p) => p.id).join(',')
 
 const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name: 'proj', path: '/pc/proj' }] }]
+
+{
+  for (const stopped of [{ agent: 'shell' }, { handoffVerified: false }, { finished: true }, { handoffOpen: 0 }, { handoffOpen: undefined }, { state: 'exited' }]) {
+    const p = pane({ ...stopped, memMb: 500 })
+    eq('completed or unproven work stays local', automaticWork(p), false)
+    eq('budget never sends completed work', budgetPlan([p], peers, { ...DEFAULT_AUTO_HANDOFF, keepLocal: 0, budgetMinMb: 1 }, {}, NOW, 1), [])
+    eq('queued automatic move cancels on completion', queueVerdict({ id: 'p', device: 'pc', since: NOW, automatic: true }, p, DEFAULT_AUTO_HANDOFF, NOW), 'drop')
+  }
+  eq('ongoing portable turn may queue', automaticQueueable(pane({ state: 'working', handoffOpen: undefined })), true)
+  for (const hold of [{ backJob: 'build' }, { subagent: 'review' }, { owedPrompt: true }, { shareable: undefined }])
+    eq('background work and unproven portability stay', automaticQueueable(pane({ state: 'working', ...hold })), false)
+  eq('background work blocks armed move', queueVerdict({ id: 'p', device: 'pc', since: NOW, goAt: NOW - 1 }, pane({ backJob: 'build' }), DEFAULT_AUTO_HANDOFF, NOW), 'wait')
+}
 
 {
   // An agent pane travels only with a conversation to resume (`travels`). With a resumeId
@@ -101,7 +134,7 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
   // ...and one with nothing to resume, or an agent nobody named, stays: it would arrive as
   // a fresh agent wearing the old title.
   for (const agent of ['claude', 'codex', undefined]) {
-    const panes = [pane({ id: 'candidate', agent }), pane({ id: 'keep', agent })]
+    const panes = [pane({ id: 'candidate', agent, resumeId: undefined }), pane({ id: 'keep', agent, resumeId: undefined })]
     eq(`automatic pressure refuses ${agent ?? 'unknown'} agent identity`, ids(autoHandoffPlan(panes, over, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), '')
     eq(`automatic budget refuses ${agent ?? 'unknown'} agent identity`, ids(budgetPlan(panes, peers, { ...DEFAULT_AUTO_HANDOFF, budgetMinMb: 1 }, {}, NOW, 1)), '')
     eq(`automatic idle clock refuses ${agent ?? 'unknown'} agent identity`, ids(idleOffloadPlan(panes, peers, { ...DEFAULT_AUTO_HANDOFF, offloadIdleMinutes: 1 }, {}, NOW)), '')
@@ -435,7 +468,7 @@ const peers = [{ device: 'pc', deviceName: 'PC', online: true, projects: [{ name
       // eligible panes and an overshoot of three is what makes the ORDER the assertion.
       big({ id: 'me', focused: true })
     ]
-    eq('quiet and off-screen first, then on-screen, and never the one mid-turn', ids(autoHandoffPlan(panes, budget, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'quiet,seen')
+    eq('quiet panes first, ongoing work queues after them', ids(autoHandoffPlan(panes, budget, peers, DEFAULT_AUTO_HANDOFF, {}, NOW)), 'quiet,seen,busy')
   }
 
   // ...and a pane that has only just been typed into is somebody's attention: the budget
@@ -1087,11 +1120,11 @@ checks += 3
     pane('cm', 'claude-memory', 160, { turnsHere: 3 })
   ]
   const plan = (panes, v = desk0535, blocked = {}, cfg = DEFAULT_AUTO_HANDOFF) => turnsPlan(panes, v, peers, cfg, blocked, now)
-  const ready = (panes, ...ids) => panes.map((p) => (ids.includes(p.id) ? { ...p, state: 'ready' } : p))
+  const ready = (panes, ...ids) => panes.map((p) => (ids.includes(p.id) ? { ...p, state: 'ready', shareable: true, handoffOpen: 1, handoffVerified: true } : p))
   const withTd = (panes, extra) => ready(panes, 'td').map((p) => (p.id === 'td' ? { ...p, ...extra } : p))
 
   // 2. Every pane mid-turn: nothing, and nothing mid-turn is ever picked.
-  assert.deepEqual(plan(desk), [], 'eight working panes arm nothing')
+  assert.deepEqual(plan(desk), [], 'eight panes without proven portability arm nothing')
   // 3. taskdriver.ai finishes its 3rd turn: armed for the PC.
   const one = plan(ready(desk, 'td'))
   assert.equal(one.length, 1, 'one pane armed')

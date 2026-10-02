@@ -148,3 +148,25 @@ const asyncResult = (toolUseId) => user([{ tool_use_id: toolUseId, type: 'tool_r
   assert.equal(machineOf('Restart it on the Windows machine'), 'pc')
   console.log('reply-read: machine words ok')
 }
+
+// 7. A Stop hook's feedback is not the person, and its reply is not the report. s42 on 1 Oct
+// (`fixtures/claude-stophook-followup.jsonl`, its own rows trimmed): the full report with
+// `**Next steps:**`, then the AUTO-CLEAR hook's `isMeta` row, then a two-line follow-up.
+// The Review row and the GuardDeck card carried the follow-up alone, and the hook's words
+// were read as what Robert last typed.
+{
+  const { readFileSync } = await import('node:fs')
+  const s42 = readClaudeReply(readFileSync(join(root, 'scripts/fixtures/claude-stophook-followup.jsonl'), 'utf8'))
+  assert.ok(s42.text.startsWith("I can't release this one myself"), 'the report comes first')
+  assert.ok(s42.text.includes('**Next steps:**\n1. Say "release"'), 'with its own steps')
+  assert.ok(s42.text.endsWith('so whichever chat cuts the release runs them.'), 'and the follow-up after it')
+  assert.ok(!/Stop hook feedback|AUTO-CLEAR/.test(s42.text), 'the hook is in neither')
+  assert.equal(s42.prompt, undefined, 'a hook row is never the typed prompt')
+  // A follow-up with its own steps is the report now; one with no hook before it stays alone.
+  const hook = row({ type: 'user', isMeta: true, message: { role: 'user', content: 'Stop hook feedback:\nwrite a handoff' }, timestamp: '2026-09-22T20:29:55.000Z' })
+  const said = (t) => assistant([{ type: 'text', text: t }])
+  assert.equal(readClaudeReply([said('Report.\n\n**Next steps:**\n- None'), hook, said('New report.\n\n## Next steps\n- None')].join('\n')).text, 'New report.\n\n## Next steps\n- None')
+  assert.equal(readClaudeReply([said('Report.\n\nNext steps: None'), user('go on'), said('Short answer.')].join('\n')).text, 'Short answer.', 'a typed prompt ends the old report')
+  assert.equal(readClaudeReply([said('Report.\n\nNext steps: None'), hook, said('Wrote it.'), hook, said('Done.')].join('\n')).text, 'Report.\n\nNext steps: None\n\nDone.', 'two hooks: still the report first')
+  console.log('reply-read: stop-hook follow-up keeps the report ok')
+}

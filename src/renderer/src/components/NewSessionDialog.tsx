@@ -58,6 +58,7 @@ export default function NewSessionDialog({
   const [resume, setResume] = useState(false)
   const [agent, setAgent] = useState<Agent>(defaultAgent)
   const [model, setModel] = useState(defaultModels[defaultAgent] ?? '')
+  const [modelSelected, setModelSelected] = useState(false)
   const [prompt, setPrompt] = useState('')
   const [promptCopied, setPromptCopied] = useState(false)
   // Which machine. Offered only while a paired one is online; `auto` leaves it to the
@@ -265,7 +266,7 @@ export default function NewSessionDialog({
         // behaviour, because two panes on one project is an ordinary thing to want.
         reuse: proj?.client ? true : undefined,
         agent,
-        model: model || undefined,
+        model: modelSelected ? model || undefined : undefined,
         resume: resume && canResume,
         prompt: prompt.trim() || undefined,
         // The saved default decides WHERE it opens; only a picker pressed THIS time pins the
@@ -567,6 +568,7 @@ export default function NewSessionDialog({
                 const nextModel = a === agent || m ? m : defaultModels[a] ?? ''
                 setAgent(a)
                 setModel(nextModel)
+                setModelSelected(Boolean(m))
                 onDefaultsChange(a, nextModel)
               }}
             />

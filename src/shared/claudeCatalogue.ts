@@ -66,3 +66,18 @@ export function mergeClaudeModels(curated: ModelChoice[], live: string[]): Model
   if (!fresh.length) return curated
   return [...fresh, ...curated]
 }
+
+/**
+ * The newest catalogued id of a family: the first non-alias row whose id starts with
+ * `claude-<family>`. Every list here runs newest first (the hand list is written that
+ * way and `mergeClaudeModels` puts newer CLI ids on top), so the first hit is the newest.
+ * A family nothing catalogues answers the bare alias word - the CLI accepts it.
+ */
+export function newestOf(family: string, models: ModelChoice[]): string {
+  const prefix = `claude-${family}`
+  for (const m of models) {
+    const value = typeof m === 'string' ? m : m.value
+    if (value.startsWith(prefix)) return value
+  }
+  return family
+}

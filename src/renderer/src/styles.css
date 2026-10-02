@@ -3078,6 +3078,11 @@ input[type='range']::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px var(--ac
 .review-tabs { display: flex; gap: 5px; }
 .review-tabs button { background: transparent; color: var(--muted); border: 1px solid var(--line); border-radius: 7px; padding: 5px 10px; }
 .review-tabs button.on { color: var(--text); border-color: var(--accent); background: color-mix(in oklab, var(--accent) 12%, transparent); }
+.review-days { display: flex; gap: 5px; margin-top: -6px; }
+.review-days button { background: transparent; color: var(--muted); border: 1px solid var(--line); border-radius: 7px; padding: 4px 9px; }
+.review-days button.on { color: var(--text); border-color: var(--accent); background: color-mix(in oklab, var(--accent) 12%, transparent); }
+.review-day-heading { margin: 14px 10px 5px; color: var(--muted); font-size: 12px; font-weight: 700; }
+.review-origin { color: var(--muted); font-size: 11px; white-space: nowrap; }
 .review-scroll { min-height: 0; overflow-y: auto; padding-right: 3px; }
 /* One list container, hairline-divided rows - not a stack of separately-radiused cards.
    Following the design vault's linear.app entry: hairline borders instead of shadows, a

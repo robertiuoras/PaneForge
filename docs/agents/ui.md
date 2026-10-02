@@ -41,6 +41,12 @@ card still on its project name takes the newest work title of the conversations 
 process ran before it (`main/cliChain.ts` `earlierTitles`: the CLI stamps its start id as
 `session_id` on records of every conversation after a `/clear`; `startedAs`). Read once per
 conversation, never over an earned, person, opener or client name.
+No ids on a card: `humanTitle` (`shared/cliTitle.ts`, `test:clititle`) takes pane ids
+(`s42-mupfazgj`), uuids, 7-40 hex with a digit+letter, 12+ digit numbers and the words that only
+pointed at them out of every title - CLI `ai-title`/`custom-title` (`cardTitle`/`nextTitle`),
+birth/`pf open --title`, `rename`/`pf rename`, History rows and `chatNameFor` (read-time). Another
+chat by id = `the <its title> chat` (live pane, else History; never itself; dropped if > MAX_TITLE).
+Never a card number: they change. A title with no id comes back byte-identical.
 
 ## A pane says how long it has been open
 
@@ -127,6 +133,13 @@ job (`noteAskInto`); three shown, WORK asks counted, twelve chapters; `recordSta
 Transcript RENDERED (`renderer/src/termRender.ts`). `Open again` is never refused by the closed
 pane's own leftover ledger hold: `holdIsOver` (`shared/laneTaken.ts`) = off the desk + History
 `endedAt`, or on the desk exited-not-asleep; unknown pane keeps it (`test:reopenhold`).
+
+## Review starts with today
+
+`ReviewDialog.tsx` opens on today's completed work, with `All dates` grouping rows by day.
+Peer rows show their `origin` device and are readable/copyable, but omit `Continue`: their
+conversation and working folder remain on the owner. `test:review-list` pins the date controls
+and replica affordance.
 
 ## The app remembers what has been asked
 

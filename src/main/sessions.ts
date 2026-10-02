@@ -23,10 +23,10 @@ import { which } from './which'
 import { specFor } from './agents'
 import { pfEnv, pfPrimerArgs } from './pfAccess'
 import { memoryPrelude } from './board'
-import { endAll, gistFor, noteCols, recordData, recordEnd, recordStart, sizeOf, tail } from './history'
+import { endAll, gistFor, noteCols, recordData, recordEnd, recordStart, sizeOf, tail, titleOf } from './history'
 import { jobTable } from './backJobs'
 import { backJobInfo, backJobWaitOnly } from './usage'
-import { forgetHandoff, handoffFor } from './handoffSteps'
+import { forgetHandoff, handoffFor, verifiedPaneHandoff } from './handoffSteps'
 import { handoffOpenAfter } from '../shared/handoffSteps'
 import { workShot } from './changedNothing'
 import { changedNothingWhy, changedNothingWords } from '../shared/changedNothing'
@@ -35,7 +35,7 @@ import { trustAgyWorkspace } from './agyTrust'
 import { trustCodexFolder } from './codexTrust'
 import { ASK_WINDOW, CLIENTS_DIR, clientLabel, mayRename } from '../shared/clientName'
 import { appNamedTitle } from './activity'
-import { nextTitle, titlesIn, type CliTitles } from '../shared/cliTitle'
+import { humanTitle, nextTitle, titlesIn, type CliTitles } from '../shared/cliTitle'
 import { earlierTitles } from './cliChain'
 import { chromeCdpFor } from '../shared/peerChrome'
 import type { ClientNamed } from '../shared/types'
@@ -66,7 +66,7 @@ import { dropStale, lentGrid, watchedBorrow, type Borrow } from '../shared/paneS
 import { START_COLS, START_ROWS } from '../shared/paneGrid'
 import { LIVE_REPLAY_LIMIT } from '../shared/freshReplay'
 import { paintedWidth, RESTORE_MARK_TEXT } from '../shared/replayWidth'
-import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, SUBMIT_GAP_MS, armDecision, clearChunks, hasFreshPaneHandoff, resumeOf, dropFor, dropWords, expiryDecision, queuedPromptDecision, quietEnoughToArm, standDownFor, type DropReason, type QueuedPromptVerdict } from '../shared/autoclear'
+import { ARM_CLEAR_LEAD_MS, ARM_QUIET_MS, CLEAR_PROMPT_START_MS, DRAFT_RETRY_MS, SUBMIT_GAP_MS, armDecision, clearChunks, contentStampAfter, hasFreshPaneHandoff, resumeOf, dropFor, dropWords, expiryDecision, queuedPromptDecision, quietEnoughToArm, standDownFor, type DropReason, type QueuedPromptVerdict } from '../shared/autoclear'
 import { acLog } from './autoclearLog'
 import { dropAllFor, noteAccepted, noteNativeAccepted, noteTyped, noteDropped, noteSubmitted, noteWithheld, owedAfterRestore, owedCount, stillOwed, typedOwed } from './queuedPrompts'
 import type { QueueDrop } from '../shared/queuedPrompts'
@@ -96,7 +96,7 @@ export interface AutoClearArm {
   tokens?: number
 }
 import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from './pipe'
-import { claimFromCli, claimCodexFromProcess, claudeAcceptedPrompt, claudeReceiptReadable, claudeStartup, codexAcceptedPrompt, codexConversationReceipt, codexPromptReceipt, codexQuestionPending, forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeEvidence, resumeIdFor, transcriptFor, transcriptPath } from './transcripts'
+import { claimFromCli, claimCodexFromProcess, claudeAcceptedPrompt, claudeReceiptReadable, claudeStartup, codexAcceptedPrompt, codexConversationReceipt, codexPromptReceipt, codexQuestionPending, forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeEvidence, resumeIdFor, transcriptFor, transcriptPath, watchClaudeHooks } from './transcripts'
 import { recordPromptReview } from './promptReview'
 import { liveModelFor } from './paneModel'
 import { backgroundAgentsFor, backgroundWorkerReadingFor, forgetBackgroundAgents, noteBackgroundAgents, pendingBackgroundFor } from './runningAgents'
@@ -106,6 +106,7 @@ import { codexWorkersFor, forgetCodexWorkers } from './codexWorkers'
 import {
   EFFORT_PRESS_GAP_MS,
   EFFORT_SETTLE_MS,
+  classifyEffort,
   confirmEffort,
   decideBeforeTurn,
   planEffortKeys,
@@ -127,7 +128,9 @@ import { continueAfterRestore, restoredClock } from '../shared/restoreTurn'
  * transcript can be quiet-then-busy several times before it really settles.
  */
 const RESTORE_CONTINUE_MS = Number(process.env.PF_RESTORE_CONTINUE_MS ?? 8000)
-import { killPaneStrays, trackStrays } from './strays'
+import { killPaneStrays, trackStrays, type ProcRecord, type StrayRecord } from './strays'
+import { listeningPids } from './deadDev'
+import { servingPanes } from '../shared/serving'
 import {
   clearsConversation,
   feedSubmitLine,
@@ -137,7 +140,7 @@ import {
   newSubmitLine,
   typeLine
 } from '../shared/slashTurn'
-import { feedDraft, newDraft, type DraftState } from '../shared/draft'
+import { draftRecheckDue, feedDraft, newDraft, type DraftState } from '../shared/draft'
 import { OutBuffer } from './outBuffer'
 import { allAgents, buildArgs, colourEnv, continuesOnBackslash, hasAgent, modelValue, resolveEnv } from '../shared/agents'
 import { homedir } from 'node:os'
@@ -282,6 +285,9 @@ const PROMPT_ENTER_TRIES = ms('PF_PROMPT_ENTER_TRIES', 6)
  * +9-15s, and 12-45s on a loaded desk. Past either, the prompt is typed as before.
  * The short wait also covers a pid file whose transcript is not on disk yet, which on
  * Claude Code 2.1.281-2.1.283 can stay missing until the first prompt (`claudeStartup`).
+ * Off Windows the process tree answers first (`hookState`, transcripts.ts): hooks seen to
+ * run and end open the gate ~0.5s after the last one, hooks seen still running hold it up to
+ * PROMPT_STARTUP_MS, and hooks this desk runs but not started yet hold it too (`hooksAwaited`).
  * A prompt that goes in while the hooks still run is one bracketed paste (see `tick`),
  * and that is delivered: dev probe 2026-09-27, 2.1.283 with a 15s SessionStart hook, typed
  * at +6s - one user row, whole, written the moment the hooks ended. Typed raw, the same
@@ -417,6 +423,11 @@ export function setSilenceAlert(minutes: number | undefined): void {
 /** What a new Codex pane is launched thinking at, when the reading is on for it. */
 const EFFORT_START = 'medium'
 
+function startEffort(req: StartSessionRequest): string {
+  if (req.effort?.mode === 'manual' && req.effort.manual) return req.effort.manual
+  return req.prompt ? classifyEffort(req.prompt).level : EFFORT_START
+}
+
 /**
  * The card's half of a pane's effort state: the level the rollout has CONFIRMED, the plain
  * words for why, and the levels this model offers so the right-click menu can list them.
@@ -441,7 +452,7 @@ function effortStart(req: StartSessionRequest, agent: Agent): EffortState | unde
     manual: req.effort.manual,
     // What the `-c model_reasoning_effort` flag on the spawn asked for. It is a starting
     // point for the arithmetic and not a claim: the first rollout line confirms it.
-    launched: EFFORT_START,
+    launched: startEffort(req),
     reason: "waiting for Codex's first reply"
   }
 }
@@ -559,6 +570,14 @@ interface Live {
   /** When the newest data event arrived, grace repaints included. */
   paintedAt: number
   /**
+   * When this pane last SAID something: `meta.lastOutput` minus the once-a-second tick of a
+   * footer counter on a pane that is not mid-turn (`contentStampAfter`). Read by the three
+   * autoclear quiet gates and nothing else - a finished pane carrying a background agent
+   * repaints its timer for ever, and `lastOutput` on it is never 10s old (s72, 2026-10-02:
+   * 115 holds in 20 minutes, no clear). Reset wherever `lastOutput` is.
+   */
+  contentAt: number
+  /**
    * When this pane was WOKEN, until its CLI prints something. 0 the rest of the time.
    *
    * Only there to be subtracted: `wake-printed` in reclaim.log is the gap between the
@@ -660,6 +679,8 @@ interface Live {
   draft: DraftState
   /** Enter is an attempt, not proof that the CLI emptied its composer. */
   draftConfirmation?: { prompt: string; since: number; afterPaint: number; checkedPaint?: number; checking?: boolean }
+  /** When `recheckDraft` last read the box for a stale draft flag (`draftRecheckDue`). */
+  draftRecheckAt?: number
   /** When a slash command was submitted; 0 outside one. See SLASH_TURN_MS. */
   slashAt: number
   /**
@@ -731,6 +752,7 @@ export class SessionManager extends EventEmitter {
    */
   private autoClearPending = new Map<string, AutoClearArm>()
   private tableJobsBusy = false
+  private servingBusy = false
   private seq = 0
   /** The app is quitting: no more IPC, no more idle sweeps, teardown runs once. */
   private down = false
@@ -746,7 +768,8 @@ export class SessionManager extends EventEmitter {
     setInterval(() => this.sweepTableJobs(), TABLE_JOB_MS).unref()
     // Write down what the panes have started, while their parent links still say so.
     // Asked for the pids each sample rather than handed them: see strays.ts.
-    trackStrays(() => this.roots())
+    // ...and, off the same table, which panes are serving something. See `sweepServing`.
+    trackStrays(() => this.roots(), (procs, ledger) => this.sweepServing(procs, ledger))
   }
 
   /**
@@ -830,6 +853,7 @@ export class SessionManager extends EventEmitter {
         drafting: m.drafting,
         job: m.job,
         backJob: m.backJob,
+        serving: m.serving,
         backWaitOnly: backJobWaitOnly(m.id),
         focused: personLooking(m.id === this.activeId, this.windowFocused(), this.deskWatched()),
         lastKeyboard: m.lastKeyboard,
@@ -895,6 +919,8 @@ export class SessionManager extends EventEmitter {
    * the old one-line notice.
    */
   onFinished: ((meta: Session, opener: string) => void) | null = null
+  /** Agent closure must persist its report through the normal Review sweep. */
+  onCloseWhenDone: ((id: string) => void) | null = null
   /** A person kept this pane open (`config.pinnedPanes`); `--close-when-done` leaves it. Set by index.ts. */
   keptOpen: ((id: string) => boolean) | null = null
   /** The last reply in a pane's transcript, for `Session.finished`. Set by index.ts, which knows where transcripts live. */
@@ -1059,7 +1085,8 @@ export class SessionManager extends EventEmitter {
       // still working on PaneForge, and the `-a` is a slot id this app invented. The
       // copy is already said by the chip beside the name (`copy 2`), so the folder
       // spelling here was the machinery leaking onto the card twice.
-      title: req.title && !oldGuess ? req.title : projectOf(req.cwd, req.lane),
+      // An opener's name (`pf open --title`, a saved desk) loses its ids like every other one.
+      title: (req.title && !oldGuess && humanTitle(req.title, this.chatTitles(id))) || projectOf(req.cwd, req.lane),
       autoTitled: oldGuess ? undefined : req.autoTitled,
       cwd: req.cwd,
       agent,
@@ -1129,6 +1156,7 @@ export class SessionManager extends EventEmitter {
       repaintUntil: 0,
       paintSeq: 0,
       paintedAt: 0,
+      contentAt: Date.now(),
       wokeAt: 0,
       turnPending: false,
       footerEndedAt: 0,
@@ -1186,6 +1214,14 @@ export class SessionManager extends EventEmitter {
       // be resumed" on a pane that had only ever slept). One restart with the pane asleep
       // was enough to lose it for good.
       noteSession(id, req.resumeCwd ?? req.cwd, agent, req.resume ? req.resumeId : undefined)
+      // ...and it gets its History row now. This branch used to return before `recordStart`,
+      // so a pane that stayed asleep until the idle countdown closed it had no row for
+      // `recordEnd` to stamp: its `resumeId` was never saved and `pf continue` answered "no
+      // chat <id> ... History has no record of it" (2026-10-02: after a crash 0.8.232 restored
+      // 11 panes asleep, s3-mupvhztd..s11-mupvhzza; history/ held s3-mupvhztd.log and no .json).
+      // `recordStart` keeps an earlier row's gist and asks, and `wake()` calling it again is the
+      // same rewrite a restarted live pane gets.
+      recordStart(meta)
       this.emitSessions()
       return meta
     }
@@ -1267,6 +1303,14 @@ export class SessionManager extends EventEmitter {
           : undefined
     if (!found || found.slug === s.clientSlug) return
     this.nameTo(live, clientLabel(found), 'client', from, found.slug)
+  }
+
+  /**
+   * Another chat's name, for `humanTitle` to put where a title says its id: a pane on this
+   * desk, else one History remembers. Never `self` - a chat is not named after itself.
+   */
+  private chatTitles(self: string): (paneId: string) => string | undefined {
+    return (paneId) => (paneId === self ? undefined : (this.sessions.get(paneId)?.meta.title ?? titleOf(paneId)))
   }
 
   /** Whether a pane still wears the name the app gave it at birth: its folder or project. */
@@ -1431,6 +1475,7 @@ export class SessionManager extends EventEmitter {
     live.meta.lastRunMs = undefined
     live.meta.createdAt = Date.now()
     live.meta.lastOutput = Date.now()
+    live.contentAt = live.meta.lastOutput
     live.meta.lastKeyboard = Date.now()
     live.repaintUntil = 0
     this.emit('data', id, RESET)
@@ -1750,6 +1795,7 @@ export class SessionManager extends EventEmitter {
     // `openedAt` is the pane's own age and a sleep does not interrupt it.
     live.meta.createdAt = Date.now()
     live.meta.lastOutput = Date.now()
+    live.contentAt = live.meta.lastOutput
     live.meta.lastKeyboard = Date.now()
     live.repaintUntil = 0
     // Not a caption: the pane says "Starting <agent>..." over the terminal already
@@ -1760,6 +1806,10 @@ export class SessionManager extends EventEmitter {
     live.buffer.push(clean)
     this.attach(live)
     recordStart(live.meta)
+    // The rows a pane restored ASLEEP was carried (`deliverOwed(old, new, false)`) are typed
+    // now that it has a composer, exactly as `restart()` does. Without this the pane wore
+    // `owedPrompt` for good once woken and its prompt was never typed (2026-10-02 review).
+    this.deliverOwed(id, id)
     this.emitSessions()
     return live.meta
   }
@@ -1872,8 +1922,10 @@ export class SessionManager extends EventEmitter {
 
   rename(id: string, title: string): void {
     const s = this.sessions.get(id)
-    if (!s || !title.trim()) return
-    s.meta.title = title.trim().slice(0, 60)
+    // `pf rename` is mostly another chat naming this one, and chats write ids.
+    const named = s ? humanTitle(title.trim(), this.chatTitles(id)) : ''
+    if (!s || !named) return
+    s.meta.title = named.slice(0, 60)
     // A manual name is authoritative even when it happens to equal the folder label.
     s.meta.autoTitled = undefined
     this.emitSessions()
@@ -1944,7 +1996,8 @@ export class SessionManager extends EventEmitter {
   deliverOwed(oldId: string, newId: string, queue = true): number {
     const owed = owedAfterRestore(oldId, newId)
     // A pane that came back ASLEEP has no composer to type into, so the rows are carried
-    // onto its new id and left there: `wake()` calls this again with `queue` on. Typing
+    // onto its new id and left there: `wake()` calls this again with `queue` on (it did not
+    // until 2026-10-02 - the comment said so, the code never did). Typing
     // into a pane with no process is how a recovered prompt would be lost a second time.
     if (queue) {
       for (const row of owed) {
@@ -1969,8 +2022,11 @@ export class SessionManager extends EventEmitter {
         }
         this.queuePrompt(newId, row.text, 0, PROMPT_START_MS, undefined, PROMPT_WAIT_MAX_MS, 'turn', row.key)
       }
-      this.setOwedPrompt(newId, owedCount(newId) > 0)
     }
+    // Asleep or not: a pane carrying owed rows says so, so every sweep and reclaim refusal
+    // sees it. Before, an asleep pane held rows with `owedPrompt` false and was closed
+    // (2026-10-02 18:44Z, six prompts LOST).
+    this.setOwedPrompt(newId, owedCount(newId) > 0)
     return owed.length
   }
 
@@ -2692,6 +2748,10 @@ export class SessionManager extends EventEmitter {
     // Startup output and an unsent composer are not a completed agent response either.
     if (this.owesPrompt(live) || (meta.agent !== 'shell' && meta.finished !== true)) return
     if (!doneEnough({ ...meta, busyUntil: live.busyUntil }, quiet, now)) return
+    if (meta.agent !== 'shell') {
+      this.onCloseWhenDone?.(meta.id)
+      return
+    }
     const told = live.req.reportTo
     const opener = this.openerOf(meta.id)
     if (opener) {
@@ -3366,7 +3426,7 @@ export class SessionManager extends EventEmitter {
     // countdown over that and requeueing it a second later, the arm waits out the
     // remainder and asks again - by which time `dropFor` sees the new turn and queues it
     // properly. Re-entering here is safe: a pane that stayed quiet arms on the second pass.
-    const quiet = Date.now() - s.meta.lastOutput
+    const quiet = Date.now() - s.contentAt
     if (!quietEnoughToArm(quiet)) {
       const wait = Math.max(250, ARM_QUIET_MS - quiet)
       const prev = this.autoClearArmTimers.get(id)
@@ -3439,7 +3499,7 @@ export class SessionManager extends EventEmitter {
         armedAt,
         now: Date.now(),
         drop: live ? dropFor({ ...live.meta, typed: live.typed }) : 'gone',
-        quietMs: live ? Date.now() - live.meta.lastOutput : undefined
+        quietMs: live ? Date.now() - live.contentAt : undefined
       })
       acLog(
         `${id} expiry: ${verdict} (armed ${armedAt}, meta ${live?.meta.autoClearAt ?? 'none'})`
@@ -3464,7 +3524,7 @@ export class SessionManager extends EventEmitter {
       if (verdict === 'settling') {
         const next = Date.now() + DRAFT_RETRY_MS
         live!.meta.autoClearAt = next
-        acLog(`${id} waiting: the pane printed ${Date.now() - live!.meta.lastOutput}ms ago and may not be finished - asking again at ${new Date(next).toISOString()}`)
+        acLog(`${id} waiting: the pane printed ${Date.now() - live!.contentAt}ms ago and may not be finished - asking again at ${new Date(next).toISOString()}`)
         this.emitSessions()
         const again = setTimeout(() => fire(next), DRAFT_RETRY_MS)
         again.unref?.()
@@ -3525,7 +3585,7 @@ export class SessionManager extends EventEmitter {
         // before writing: a person may submit, open a question, or recall a history line
         // in this window. The clear is not complete until its command reaches the pty.
         const late = dropFor({ ...current.meta, typed: current.typed })
-        const lateQuiet = Date.now() - current.meta.lastOutput
+        const lateQuiet = Date.now() - current.contentAt
         if (!late && !quietEnoughToArm(lateQuiet)) {
           const next = Date.now() + DRAFT_RETRY_MS
           current.meta.autoClearAt = next
@@ -3818,6 +3878,7 @@ export class SessionManager extends EventEmitter {
     const m = live.meta
     if (this.keptOpen?.(id)) return { closed: false, reason: 'kept open by hand' }
     if (m.status !== 'idle' || m.runSince || live.busyUntil > Date.now() || m.job || (m.backJob && !backJobWaitOnly(id)) || m.subagent) return { closed: false, reason: 'session is busy or has a background job' }
+    if (m.serving) return { closed: false, reason: `session is serving (${m.serving})` }
     const held = closeHeldBy({ ...m, ask: m.ask || heldByGuardDeck(id, readGuardDeckQuestions(), Date.now(), m.agent === 'codex' ? resumeIdFor(id) : undefined) })
     if (held.length) return { closed: false, reason: `session has ${held.join(', ')}` }
     if (m.lastKeyboard > reportedAt) return { closed: false, reason: 'newer user input exists' }
@@ -3915,7 +3976,7 @@ export class SessionManager extends EventEmitter {
         resume: req.resume,
         resumeId: req.resumeId,
         model: req.model,
-        effort: req.effort ? EFFORT_START : undefined
+        effort: req.effort ? startEffort(req) : undefined
       }),
       ...pfPrimerArgs(spec.id)
     ]
@@ -4044,6 +4105,9 @@ export class SessionManager extends EventEmitter {
       // own banner is not working for you. Submitting a prompt starts it, and the
       // agent's busy footer starts one this app never saw typed.
       meta.lastOutput = now
+      // The autoclear quiet floor's own reading: every byte, EXCEPT a footer counter ticking
+      // on a pane that is not mid-turn. See `contentStampAfter`.
+      live.contentAt = contentStampAfter({ stamp: live.contentAt, now, idle: wasIdle, chunk: data })
       // Output alone is not work either, and the status used to say it was: eight panes
       // relaunched at startup all painted their own banner within a second and the whole
       // sidebar went green - running clocks, lit Ctrl-N keys - while every one of them was
@@ -4483,7 +4547,8 @@ export class SessionManager extends EventEmitter {
     const deferring = (live: Live): boolean => {
       if (proof === 'idle' || live.meta.agent !== 'claude') return false
       const born = live.proc ? procStarted.get(live.proc) : undefined
-      if (born === undefined || Date.now() - born >= PROMPT_STARTUP_MS || claudeStartup(live.proc?.pid) === 'started') return false
+      const resumed = live.req.resume ? { cwd: live.req.resumeCwd ?? live.meta.cwd, id: live.req.resumeId } : undefined
+      if (born === undefined || Date.now() - born >= PROMPT_STARTUP_MS || claudeStartup(live.proc?.pid, born, resumed) === 'started') return false
       // With no pid file there is no receipt to wait for. One is born 3-19s after spawn on
       // this Mac (2026-10-01; none yet at +10s in the dev proof), so a process past twice
       // the pid-file wait without one - a CLI that writes none for this pid - gets its
@@ -4847,12 +4912,14 @@ export class SessionManager extends EventEmitter {
       if (gateOpen) return false
       const born = live.proc ? procStarted.get(live.proc) : undefined
       const age = born === undefined ? Infinity : Date.now() - born
-      const now = live.meta.agent === 'claude' && age < PROMPT_STARTUP_MS ? claudeStartup(live.proc?.pid) : 'none'
-      const hold = now === 'starting' || (now === 'unknown' && age < PROMPT_PIDFILE_MS)
+      const resumed = live.req.resume ? { cwd: live.req.resumeCwd ?? live.meta.cwd, id: live.req.resumeId } : undefined
+      const now = live.meta.agent === 'claude' && born !== undefined && age < PROMPT_STARTUP_MS ? claudeStartup(live.proc?.pid, born, resumed) : 'none'
+      const hold = now === 'starting' || now === 'awaiting' || (now === 'unknown' && age < PROMPT_PIDFILE_MS)
       if (hold) {
         if (!startWait) {
           startWait = now
-          acLog(`${id} queued prompt waiting for Claude Code to finish starting (${now === 'unknown' ? 'no pid file or transcript yet' : 'SessionStart hooks running'})`)
+          const why = now === 'unknown' ? 'no pid file or transcript yet' : now === 'awaiting' ? 'its SessionStart hooks have not started yet' : 'SessionStart hooks running'
+          acLog(`${id} queued prompt waiting for Claude Code to finish starting (${why})`)
         }
         return true
       }
@@ -5050,6 +5117,10 @@ export class SessionManager extends EventEmitter {
       acLog(`${id} prompt typed (${prompt.length} chars), return in ${PROMPT_ENTER_MS}ms${typedIntoTurn ? ' (a turn is running)' : ''}`)
       setTimeout(() => submit(0), PROMPT_ENTER_MS)
     }
+    // A fresh Claude Code's hooks can be over before that first look: watch them from now.
+    const first = this.sessions.get(id)
+    const firstBorn = first?.proc ? procStarted.get(first.proc) : undefined
+    if (first?.meta.agent === 'claude' && firstBorn !== undefined && Date.now() - firstBorn < PROMPT_STARTUP_MS) watchClaudeHooks(first.proc?.pid, firstBorn)
     setTimeout(tick, Math.max(0, startMs) + Math.max(0, extraDelay))
   }
 
@@ -5268,7 +5339,14 @@ export class SessionManager extends EventEmitter {
     live.titleRead = { path, offset, at: now, seen: read }
     const s = live.meta
     const pane = { title: s.title, autoTitled: s.autoTitled, appDefault: this.appDefault(s) }
-    const next = nextTitle(pane, read, prev?.seen, projectOf(s.cwd, s.lane), s.clientOff ? undefined : () => earlierTitles(path))
+    const next = nextTitle(
+      pane,
+      read,
+      prev?.seen,
+      projectOf(s.cwd, s.lane),
+      s.clientOff ? undefined : () => earlierTitles(path),
+      this.chatTitles(s.id)
+    )
     if (!next) return
     // A person's `/rename` is theirs to make; an old save's "do not name this pane" only
     // holds the app's own naming back.
@@ -5341,6 +5419,33 @@ export class SessionManager extends EventEmitter {
     this.emitSessions()
   }
 
+  /**
+   * A draft flag nothing has touched for a minute, held against the screen. An empty box
+   * clears it - only when nothing moved while the box was read (same process, same draft,
+   * no paint, no key), the same rule `confirmDraft` keeps, and never under a submission
+   * hold or a prompt still owed. `draftRecheckDue` says when.
+   */
+  private async recheckDraft(live: Live): Promise<void> {
+    const { draft, paintSeq: paint } = live
+    const keyboard = live.meta.lastKeyboard
+    if (live.draftConfirmation || live.meta.owedPrompt) return
+    live.draftRecheckAt = Date.now()
+    let box
+    try {
+      box = await composerOf(live.buffer.read(), live.cols, live.rows, live.meta.agent)
+    } catch {
+      return
+    }
+    if (!box || box.text.trim()) return
+    if (this.sessions.get(live.meta.id) !== live || live.draft !== draft || live.paintSeq !== paint ||
+        live.meta.lastKeyboard !== keyboard || live.draftConfirmation || live.meta.owedPrompt || !live.meta.drafting) return
+    live.draft = newDraft()
+    live.typed = ''
+    live.meta.drafting = undefined
+    this.emitSessions()
+    acLog(`${live.meta.id} unsent-draft flag cleared - its prompt box is empty on screen`)
+  }
+
   private async confirmDraft(live: Live): Promise<void> {
     const pending = live.draftConfirmation
     // Paints, not `lastOutput`: the redraw a cancel key causes stamps no output.
@@ -5375,6 +5480,44 @@ export class SessionManager extends EventEmitter {
     }
   }
 
+  /**
+   * Which panes are serving something, off the strays sampler's table (`shared/serving.ts`).
+   *
+   * The sampler runs every 30 s whether or not the window can be seen - unlike the usage
+   * sampler behind `backJob`, which stops with a hidden window, and a hidden window is how
+   * the other desk spends its day. One `lsof`/`netstat` per sample on top of a table that
+   * was being read anyway. A socket reading that came back empty is a FAILED reading - no
+   * machine listens on nothing - so it leaves every pane as it was rather than calling
+   * every server stopped.
+   */
+  private sweepServing(procs: ProcRecord[], ledger: ReadonlyMap<string, StrayRecord[]>): void {
+    if (this.servingBusy) return
+    this.servingBusy = true
+    void listeningPids()
+      .then((listening) => {
+        if (!listening.size) return
+        const serving = servingPanes(
+          procs,
+          listening,
+          [...this.sessions.values()]
+            .filter((l) => l.meta.status !== 'exited' && l.proc)
+            .map((l) => ({ id: l.meta.id, pid: l.proc?.pid ?? 0, recorded: ledger.get(l.meta.id) ?? [] }))
+        )
+        let changed = false
+        for (const live of this.sessions.values()) {
+          const next = serving.get(live.meta.id)
+          if (live.meta.serving === next) continue
+          live.meta.serving = next
+          changed = true
+        }
+        if (changed) this.emitSessions()
+      })
+      .catch(() => {})
+      .finally(() => {
+        this.servingBusy = false
+      })
+  }
+
   private sweepIdle(): void {
     let changed = false
     const now = Date.now()
@@ -5403,6 +5546,10 @@ export class SessionManager extends EventEmitter {
       // Quiet by paint as well: a grace repaint stamps no output and may still be arriving.
       if (live.draftConfirmation && meta.status === 'idle' && !meta.runSince && quiet >= 1000 &&
           now - live.paintedAt >= 1000 && now - meta.lastKeyboard >= 1000) void this.confirmDraft(live)
+      // Never under a hold: a submission in flight is `confirmDraft`'s, and a prompt this app
+      // still owes is its queue's. This is only the flag left once both are gone.
+      if (!live.draftConfirmation && !meta.owedPrompt && draftRecheckDue(meta, live.draftRecheckAt ?? 0, now) &&
+          now - live.paintedAt >= 1000) void this.recheckDraft(live)
       if (this.markCwdGone(live, now)) changed = true
       // A dead pty whose folder has also gone is a card about nothing: no process to
       // go back to, and no directory left to resume in. Only that PAIR reaps. A live
@@ -5493,6 +5640,9 @@ export class SessionManager extends EventEmitter {
       if (reply?.promptAt && reply.promptAt > (live.promptAt ?? 0)) live.promptAt = reply.promptAt
       const hand = handoffFor(meta.cwd, meta.id, now)
       const open = handoffOpenAfter(hand, live.promptAt)
+      const nativeId = resumeIdFor(meta.id)
+      const verified = !!nativeId && !!verifiedPaneHandoff(meta.cwd, meta.id, meta.agent, nativeId, now)?.open
+      if (meta.handoffVerified !== verified) { meta.handoffVerified = verified; changed = true }
       if (open !== meta.handoffOpen) {
         meta.handoffOpen = open
         changed = true

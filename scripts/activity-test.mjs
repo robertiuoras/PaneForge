@@ -251,7 +251,8 @@ const css = readFileSync(join(root, 'src/renderer/src/styles.css'), 'utf8')
   // The rename itself still happens, and is still written down.
   check('an automatic rename still emits', /this\.emit\('clientNamed'/.test(sessions))
   check('...and still lands in the Activity list', /manager\.on\('clientNamed'[\s\S]{0,200}activityEntry\('named'/.test(main))
-  check('a hand rename still sets the title', /rename\(id: string, title: string\): void \{[\s\S]{0,200}s\.meta\.title = title\.trim\(\)/.test(sessions))
+  // (its ids come out first - `humanTitle` - so the name it sets is `named`, 2026-10-02)
+  check('a hand rename still sets the title', /rename\(id: string, title: string\): void \{[\s\S]{0,400}s\.meta\.title = named\.slice\(0, 60\)/.test(sessions))
 }
 
 rmSync(work, { recursive: true, force: true })

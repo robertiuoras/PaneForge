@@ -4,6 +4,7 @@
     "composite": true,
     "module": "ESNext",
     "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
     "target": "ES2022",
     "types": ["node", "electron-vite/node"],
     "strict": true,

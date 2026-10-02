@@ -110,6 +110,24 @@ eq('a boxed answer is not a composer', readComposer(QUOTED, 1), null)
 eq('a caret outside the box is refused', readComposer(BARE, 6), null)
 eq('a caret past the rows is refused', readComposer(BARE, 99), null)
 
+// ...except where Claude Code itself parks it. Past ~200k of context it draws a right-aligned
+// `new task? /clear to save 204.2k tokens` row under its footer and leaves the caret on the
+// empty row under THAT (2.1.286, pane s42 on 1 Oct: five rows below the closing rule). The
+// box was unreadable for 77 minutes, so an unsent-draft flag that only an empty-box read
+// could clear held a finished pane open until Robert came back.
+const HINT = PAD('new task? /clear to save 204.2k tokens'.padStart(50))
+const PARKED = [...BARE, '  ⏵⏵ bypass permissions on (shift+tab to cycle)', HINT, '']
+got = readComposer(PARKED, PARKED.length - 1)
+eq('a caret parked under the footer reads the box above it', got?.text, 'tax return for last year, where did I file it\nand what did it come to')
+eq('and says where the box starts', got?.top, 3)
+eq('an empty box above a parked caret is an empty box', readComposer([RULE, PAD(`❯${NB}`), RULE, '  ? for shortcuts', HINT, ''], 5)?.text, '')
+// Only footer rows (indented, or blank) may sit between the box and the caret, and the
+// caret's own row must be empty: a shell prompt under a dead CLI's last screen, or reply
+// text, is something else on screen now.
+eq('a shell prompt under an old footer is refused', readComposer([...BARE, 'robert@mac PaneForge % '], 7), null)
+eq('reply text under the box is refused', readComposer([...BARE, 'and then it printed this', ''], 8), null)
+eq('a caret far below the box is refused', readComposer([...BARE, ...Array(9).fill('  .'), ''], 16), null)
+
 // -------------------------------------------------------------- through a terminal ---
 // The half that matters: bytes, not rows.
 let Terminal
@@ -164,6 +182,15 @@ const emptyRaw =
 const emptyOut = await composerOf(emptyRaw, cols, rows)
 check('an untouched box still answers', emptyOut !== null)
 eq('with nothing typed', emptyOut?.text, '')
+
+// The real bytes: s42's last 48 KB before 11:56pm Thu (1 Oct), one frame boundary to the
+// end, letters outside escape sequences replaced with x so no words of that session are
+// kept - widths, rules, caret moves and frames are the CLI's own. 134x53, caret at col 2
+// under the hint row. The composer is empty; this read null for the whole idle window.
+const parked = readFileSync(join(root, 'scripts/fixtures/claude-hint-parked-caret.bin'), 'utf8')
+const parkedOut = await composerOf(parked, 134, 53, 'claude')
+check('s42 parked caret: the box is found', parkedOut !== null)
+eq('s42 parked caret: and it is empty', parkedOut?.text, '')
 
 // No bytes at all is a pane that has printed nothing - nothing to read, and saying so.
 eq('an empty stream is refused', await composerOf('', cols, rows), null)

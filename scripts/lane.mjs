@@ -50,11 +50,13 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
   rmdirSync,
+  rmSync,
   statSync,
   symlinkSync,
   unlinkSync,
@@ -64,7 +66,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { fileURLToPath } from 'node:url'
 import { homedir, hostname, tmpdir } from 'node:os'
 import { closeTestApps } from './test-app.mjs'
-import { mergeAutoConflicts, mergeImportConflicts } from './lane-merge.mjs'
+import { countedSuffixes, maskCounts, mergeAutoConflicts, mergeImportConflicts, mergeJsonListAdds, mergeListAddConflicts, recount } from './lane-merge.mjs'
 import {
   CLAIM_NS,
   LOCK_REF,
@@ -1464,13 +1466,66 @@ function autoResolve(dir, files) {
     } catch {
       return []
     }
-    const merged = mergeAutoConflicts(text, f)
+    const merged = mergeFromSides(dir, f, text)
     if (merged === null) return []
     writes.push([join(dir, f), merged])
   }
   if (!writes.length) return []
   for (const [p, text] of writes) writeFileSync(p, text)
   return files
+}
+
+/**
+ * The marker rules (`mergeAutoConflicts`), plus the rules that need the three whole versions
+ * rather than the markers: a generated JSON list (git cuts its hunks mid-entry), and markdown
+ * list items (only the base tells an added row from a rewritten one) under count lines both
+ * sides bumped (`countedSuffixes`). Read from the index stages an open merge holds - 1 base,
+ * 2 ours, 3 theirs - so it is the same on the lane side and the release side. Markdown tries
+ * the sides first: the marker rule joins two bullet lists and leaves the count above them one
+ * short. null = not settled.
+ */
+function mergeFromSides(dir, f, text) {
+  const marked = () => mergeAutoConflicts(text, f)
+  const json = f.endsWith('.json')
+  if (!json && !f.endsWith('.md')) return marked()
+  const run = (args) =>
+    execFileSync('git', args, { windowsHide: true,
+      cwd: dir,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: hookTimeout(GIT_TIMEOUT_MS),
+      killSignal: 'SIGKILL',
+      maxBuffer: 64 * 1024 * 1024
+    })
+  let base, ours, theirs
+  try {
+    // Raw, not through git(): its trim() would eat the file's last newline.
+    ;[base, ours, theirs] = [1, 2, 3].map((n) => run(['show', `:${n}:${f}`]))
+  } catch {
+    return marked() // added on both sides, deleted on one: no base for these rules
+  }
+  if (json) return marked() ?? mergeJsonListAdds(base, ours, theirs)
+  const counted = countedSuffixes([base, ours, theirs])
+  const tmp = mkdtempSync(join(tmpdir(), 'pf-merge-'))
+  try {
+    const paths = [['ours', ours], ['base', base], ['theirs', theirs]].map(([name, side]) => {
+      writeFileSync(join(tmp, name), maskCounts(side, counted))
+      return join(tmp, name)
+    })
+    let listed = null
+    try {
+      // Exit 0: with the counts set aside nothing conflicts at all.
+      listed = run(['merge-file', '-p', '--diff3', '-L', 'ours', '-L', 'base', '-L', 'theirs', ...paths])
+    } catch (e) {
+      // It exits with the number of conflicts, and that is the case this is for.
+      const diff3 = e.status > 0 && e.status < 128 && typeof e.stdout === 'string' ? e.stdout : null
+      listed = diff3 === null ? null : mergeListAddConflicts(diff3)
+    }
+    const settled = listed ?? marked()
+    return settled === null ? null : recount(settled, counted)
+  } finally {
+    rmSync(tmp, { recursive: true, force: true })
+  }
 }
 
 /**
@@ -1640,12 +1695,31 @@ function commitMachineWritten(dir) {
 }
 
 /**
+ * The git operation a checkout is in the middle of - merge, rebase, cherry-pick or revert -
+ * or null. Everything a half-done operation keeps (MERGE_HEAD, the rebase folders, the
+ * staged resolution) lives in the checkout's own git folder, so one lookup answers all four.
+ * A folder git will not answer about reads as "in the middle of something": the caller is
+ * deciding whether it may undo work, and "unknown" is not permission.
+ */
+function openOperation(dir) {
+  const g = gitSafe(dir, 'rev-parse', '--absolute-git-dir')
+  if (!g.ok || !g.out) return 'unknown'
+  const found = ['MERGE_HEAD', 'REBASE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'rebase-merge', 'rebase-apply'].find((n) =>
+    existsSync(join(g.out, n))
+  )
+  return found ?? null
+}
+
+/**
  * Make a free lane safe to hand to a new chat.
  *
- * A lane released by a chat that stopped mid-merge used to stay conflicted forever: no chat
- * owned it, so nobody resolved it, and every auto-sync run tripped over it. Nothing here can
- * lose work - it only touches a lane no live session holds, only aborts a merge that was
- * never finished, and only resets a branch whose commits master already has.
+ * Nothing here can lose work - it only touches a lane no live session holds, and only resets
+ * a branch whose commits master already has. A checkout with a merge, rebase, cherry-pick or
+ * revert open is not touched at all (2026-10-02, claude-memory lane b: a claim aborted the
+ * merge a chat was finishing and reset the folder, its staged resolution gone). The chooser
+ * never hands out a lane with uncommitted work on its own, so the only claim that reaches
+ * a half-done operation is one that asked for that exact folder - a chat protecting the work
+ * in it - and undoing the operation is the one thing that chat cannot be given back.
  */
 function healLane(id) {
   const dir = laneDir(id)
@@ -1654,15 +1728,8 @@ function healLane(id) {
   // is what made a broken lane look like one with uncommitted work in it. ensureWorktree
   // owns that repair; every caller here has already been through it.
   if (!isWorktree(dir)) return null
+  if (openOperation(dir)) return null
   const did = []
-  if (gitSafe(dir, 'rev-parse', '--verify', '--quiet', 'MERGE_HEAD').ok) {
-    gitSafe(dir, 'merge', '--abort')
-    did.push('aborted an unfinished merge')
-  }
-  if (gitSafe(dir, 'rev-parse', '--verify', '--quiet', 'REBASE_HEAD').ok) {
-    gitSafe(dir, 'rebase', '--abort')
-    did.push('aborted an unfinished rebase')
-  }
   const clean = !gitSafe(dir, ...WORK_STATUS).out
   if (clean && aheadOf(laneBranch(id)) === 0) {
     // Every change in this lane is already in master: start the next chat from master
@@ -5057,6 +5124,12 @@ function statusOf(state, session, held) {
         // purpose (see holdGivenUp, reap), a press away from being what it was.
         asleep: state.lanes[id]?.asleep ?? null,
         from: state.lanes[id]?.cwd ?? null,
+        // Which pane the holder lives in, and when its chat ended: the two facts `claim`
+        // uses to hand a hold to the same pane's next chat after a /clear. A caller that
+        // must not start a new copy for a chat (the prompt hook, in a repo that never gets
+        // lanes) reads them to tell "that pane's earlier chat" from "somebody else".
+        pane: state.lanes[id]?.pane ?? null,
+        ended: state.lanes[id]?.ended ?? null,
         // When the HOLD was last refreshed - a heartbeat bumped by that chat's turns
         // ending, so it says how long ago the chat was last alive rather than anything
         // about work. Without it every hold reads the same: taskdriver.ai printed five
@@ -5766,25 +5839,61 @@ function sweepOne(w) {
   if (newestTouch(w.dir, started, false) > started) throw new Error('kept at the last moment: something in it changed while it was being saved')
   if (git(w.dir, 'rev-parse', 'HEAD') !== head || workTree(w.dir, `${name}-again`) !== tree)
     throw new Error('kept at the last moment: its work changed while it was being saved')
-  // Windows has no lsof. A folder any program has open (as its folder, or a file in it)
-  // cannot be renamed there, so a rename there and back is the question asked instead.
-  if (process.platform === 'win32') {
-    const probe = `${w.dir}.sweep-probe`
-    try {
-      renameSync(w.dir, probe)
-    } catch {
-      throw new Error('kept at the last moment: a program has something in it open')
-    }
-    renameSync(probe, w.dir)
-  }
-
-  dropModulesLink(w.dir)
-  const removed = gitSafe(MAIN, 'worktree', 'remove', '--force', w.dir)
-  if (!removed.ok) throw new Error(`git would not remove it: ${firstLine(removed.out)}`)
-
   const on = /github\.com/i.test(gitSafe(MAIN, 'remote', 'get-url', 'origin').out) ? 'GitHub' : 'the server'
-  const saved = savedAs.length ? `its work is on ${on} as ${savedAs.join(' and ')}` : `everything in it was already on ${on}`
-  return `Removed the ${folderWords(w.dir)} folder (${saved}${archive ? `; files git does not keep are in ${archive}` : ''}).`
+  const saved = `${savedAs.length ? `its work is on ${on} as ${savedAs.join(' and ')}` : `everything in it was already on ${on}`}${archive ? `; files git does not keep are in ${archive}` : ''}`
+
+  // Moved aside whole, then deleted. `git worktree remove` ran under git()'s 20-second limit
+  // and was killed part way through a big folder: taskdriver.ai-c lost 36 of its 45 top-level
+  // entries at 6:23am on 2 Oct, kept its name and its registration, and a chat was then sent
+  // into the half-empty copy. A move is all or nothing, so the copy's own folder is either
+  // whole or gone, and whatever a stopped delete leaves sits under a name nothing opens
+  // until the next sweep finishes it. On Windows the move also answers what lsof answers
+  // elsewhere: a folder a program has something open in cannot be moved there.
+  dropModulesLink(w.dir)
+  if (isLink(join(w.dir, 'node_modules'))) throw new Error("its link to the main copy's dependencies could not be taken out, and deleting through it would delete those")
+  const aside = `${w.dir}${ASIDE}${Date.now()}`
+  try {
+    renameSync(w.dir, aside)
+  } catch (e) {
+    throw new Error(process.platform === 'win32' ? 'kept at the last moment: a program has something in it open' : `it could not be moved out of the way to be removed (${e.code ?? e.message})`)
+  }
+  // Written down before the delete starts: a sweep that dies part way still leaves the
+  // next one a note of what to finish.
+  const state = read()
+  state.leftovers = [...(state.leftovers ?? []), aside]
+  write(state)
+  // Its pointer into this project's git goes first, so nothing left behind can reach a copy
+  // git later gives the same name; then git forgets the folder, which frees its branch.
+  rmSync(join(aside, '.git'), { force: true })
+  gitSafe(MAIN, 'worktree', 'prune')
+  const stopped = deleteAside(aside)
+  if (stopped) {
+    const e = new Error(`the delete stopped part way (${stopped})`)
+    e.record = `Could not finish removing the ${folderWords(w.dir)} folder (${saved}). The delete stopped part way (${stopped}); what is left is in ${aside}, and the next clean-up tries again.`
+    throw e
+  }
+  return `Removed the ${folderWords(w.dir)} folder (${saved}).`
+}
+
+/** The ending a folder gets while it is being deleted (`sweepOne`). */
+const ASIDE = '.removing-'
+
+function isLink(p) {
+  try {
+    return lstatSync(p).isSymbolicLink()
+  } catch {
+    return false
+  }
+}
+
+/** Delete a folder moved aside by `sweepOne`. Null when it is gone, else why it stopped. */
+function deleteAside(dir) {
+  try {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 3 })
+    return null
+  } catch (e) {
+    return e.code ?? e.message
+  }
 }
 
 /**
@@ -5859,6 +5968,9 @@ function sweepSoon() {
   try {
     spawn(process.execPath, [fileURLToPath(import.meta.url), 'sweep', '--repo', MAIN], {
       cwd: MAIN,
+      // A hook's deadline is the hook's: inherited, it cuts every git call in a sweep that
+      // runs on long after the hook has returned.
+      env: { ...process.env, PANEFORGE_HOOK_DEADLINE: '' },
       detached: true,
       stdio: 'ignore',
       windowsHide: true
@@ -5877,6 +5989,25 @@ function sweepOnce({ dryRun }) {
   const all = worktreesOf()
   const ctx = { all, panes, procs: undefined }
   const removed = []
+  // What a stopped delete left (`sweepOne`) goes first. Its work was proven on origin before
+  // it was moved aside, and nothing opens a folder by that name, so no keep question applies.
+  for (const dir of read().leftovers ?? []) {
+    if (!existsSync(dir)) continue
+    const name = folderWords(dir).replace(/\.removing-\d+$/, '')
+    if (dryRun) {
+      out.push(`Would finish removing the ${name} folder: an earlier clean-up had to leave it part way.`)
+      continue
+    }
+    const stopped = deleteAside(dir)
+    if (stopped) {
+      // Written down once, by the sweep that moved it aside, with where its work went.
+      out.push(`Could not finish removing the ${name} folder: the delete stopped part way (${stopped}). What is left is in ${dir}, and the next clean-up tries again.`)
+      continue
+    }
+    const text = `Finished removing the ${name} folder, which an earlier clean-up had to leave part way.`
+    out.push(text)
+    removed.push(text)
+  }
   for (const w of all) {
     const name = folderWords(w.dir)
     if (w.prunable || !existsSync(w.dir)) continue
@@ -5893,13 +6024,18 @@ function sweepOnce({ dryRun }) {
       removed.push(sweepOne(w))
       out.push(removed[removed.length - 1])
     } catch (e) {
-      out.push(`Kept ${name}: ${e.message}.`)
+      out.push(e.record ?? `Kept ${name}: ${e.message}.`)
+      // A delete that started and stopped is written down: unrecorded, the half-empty
+      // taskdriver.ai-c of 2 Oct could only be traced back to a sweep by guesswork.
+      if (e.record) removed.push(e.record)
     }
   }
   if (!dryRun) {
     gitSafe(MAIN, 'worktree', 'prune')
-    if (removed.length) {
-      const state = read()
+    const state = read()
+    const left = (state.leftovers ?? []).filter((dir) => existsSync(dir))
+    if (removed.length || left.length !== (state.leftovers ?? []).length) {
+      state.leftovers = left
       state.swept = [...(state.swept ?? []), ...removed.map((text) => ({ at: now(), text }))].slice(-SWEEP_KEEP)
       write(state)
     }
