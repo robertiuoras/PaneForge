@@ -3459,7 +3459,7 @@ function waitPcJob(id, seconds = PC_WAIT_S) {
 }
 
 /** A suite sentence that is not a verdict on the code: queued on the PC, already running here, or the runner failed. */
-const SUITE_UNSETTLED = /test suite (is already running|(is still waiting its turn on|could not (run on|be sent to)) the PC)/
+const SUITE_UNSETTLED = /test suite (is already running|ended without an answer|(is still waiting its turn on|could not (run on|be sent to)) the PC)/
 
 const pcWaiting = (what, id) =>
   `${MB}'s ${what} is still waiting its turn on the PC (job ${id.slice(0, 8)}), so nothing was released yet. ` +
@@ -3751,6 +3751,99 @@ function withSuiteRun(state, dir, commit, judge) {
 }
 
 /**
+ * Whether this command waits for a suite it started. A clock tick does not: lane-cron
+ * SIGKILLs `retry` at 4 minutes (scripts/lane-cron.mjs) and the app kills `retry` and
+ * `release --gone` at 10 (src/main/laneBoard.ts RETRY_TIMEOUT), each far inside one 20-minute
+ * run, so the tick says "already running" and the next tick reads the answer. A chat's
+ * `ready`, `release` or `autoship` waits for it, as it always did.
+ */
+const suiteWaits = () => !(cmd === 'retry' || (cmd === 'release' && argv.includes('--gone')))
+
+/**
+ * Run `dir`'s suite on `commit` as a process of its own (`suite-job`) and return its pid,
+ * recorded in `state.suiteRun` before this returns. Null when it could not be started.
+ *
+ * The suite used to run inside whoever asked, and two of the askers are clocks with a time
+ * limit (`suiteWaits`). A killed tick took its suite down with it - libuv puts a node
+ * process's children in a kill-on-close job - so every tick burned up to 10 minutes of a
+ * full suite and never produced a verdict, and the tick after started another (2026-10-02,
+ * PC). Detached, the job leaves that job object, finishes, and writes the verdict where every
+ * later try reads it (`state.suite` / `state.laneSuite`) plus its own answer
+ * (`state.suiteLast`) for the one caller that waits on it.
+ *
+ * The record is written FIRST, under this process's pid, so nothing starts a second run in
+ * the moment before the job writes its own; it is then handed to the job's pid unless the
+ * job already did (or already finished).
+ */
+function startSuiteJob(state, dir, commit, kind) {
+  remember(state, ['suiteRun', dir], { commit, pid: process.pid, at: now() })
+  let pid
+  try {
+    const child = spawn(
+      process.execPath,
+      [fileURLToPath(import.meta.url), 'suite-job', '--repo', MAIN, '--dir', dir, '--commit', commit, '--kind', kind],
+      { detached: true, stdio: 'ignore', windowsHide: true, cwd: dir }
+    )
+    child.on('error', () => {})
+    child.unref()
+    pid = child.pid
+  } catch {
+    /* no pid: handled below */
+  }
+  const fresh = read()
+  if (fresh.suiteRun?.[dir]?.pid === process.pid) {
+    if (pid) fresh.suiteRun[dir] = { commit, pid, at: now() }
+    else delete fresh.suiteRun[dir]
+    write(fresh)
+  }
+  syncSuiteKeys(state)
+  return pid ?? null
+}
+
+/** The suite keys of `state` as the ledger has them now: another process (`suite-job`) wrote them. */
+function syncSuiteKeys(state) {
+  const fresh = read()
+  for (const key of ['suite', 'laneSuite', 'suiteRun', 'suiteLast']) {
+    if (fresh[key] === undefined) delete state[key]
+    else state[key] = fresh[key]
+  }
+}
+
+/**
+ * Wait for the suite job `pid` on `dir` to answer: its `state.suiteLast` entry, or null when
+ * it ended without one (killed, crashed) or ran past two full passes.
+ */
+function awaitSuiteJob(state, dir, pid) {
+  const until = now() + 2 * SUITE_TIMEOUT_MS + 5 * 60_000
+  for (;;) {
+    const s = read()
+    const last = s.suiteLast?.[dir]
+    if (last?.pid === pid) {
+      syncSuiteKeys(state)
+      return last
+    }
+    const run = s.suiteRun?.[dir]
+    if (run?.pid !== pid || !processAlive(pid) || now() > until) {
+      // A job killed mid-run leaves its record and maybe a suite with nobody reading it.
+      if (run?.pid === pid) suiteRunning(dir, run.commit)
+      syncSuiteKeys(state)
+      return null
+    }
+    sleep(5000)
+  }
+}
+
+/** `suite-job`: the run itself, in its own process (`startSuiteJob`), answer written down. */
+function runSuiteJob(state, dir, commit, kind) {
+  return withSuiteRun(state, dir, commit, () => {
+    const reason = kind === 'lane' ? laneVerdict(state, dir, commit) : masterVerdict(state, commit)
+    // Before the record comes off, so a caller that sees the record gone finds the answer.
+    remember(state, ['suiteLast', dir], { commit, pid: process.pid, ok: !reason, reason: reason ?? undefined, at: now() })
+    return reason
+  })
+}
+
+/**
  * Empty when the release branch's own test suite passes, a sentence when it does not.
  *
  * The typecheck above was the ONLY thing between a commit and a tag, and a typecheck
@@ -3810,14 +3903,27 @@ function suiteFailure(state) {
     state.suite = cached
     return cached.ok ? null : cached.reason
   }
-  if (suiteRunning(MAIN, commit)) {
-    return `${MB}'s test suite is already running on this commit for another check, so nothing was released yet. The next try reads its answer rather than starting another.`
-  }
+  const running = `${MB}'s test suite is already running on this commit for another check, so nothing was released yet. The next try reads its answer rather than starting another.`
+  if (suiteRunning(MAIN, commit)) return running
 
   if (dependenciesMissing(pkg)) {
     const failed = installDeps()
     if (failed) return failed
   }
+  if (!commit) return masterVerdict(state, null)
+  const pid = startSuiteJob(state, MAIN, commit, 'master')
+  if (!pid) return runSuiteJob(state, MAIN, commit, 'master')
+  if (!suiteWaits()) return running
+  const answer = awaitSuiteJob(state, MAIN, pid)
+  if (answer) return answer.ok ? null : answer.reason
+  return `${MB}'s test suite ended without an answer on this commit, so nothing was released yet. The next try runs it again.`
+}
+
+/**
+ * Run master's suite and return the verdict: null when green, a sentence when not. A green
+ * or red answer on `commit` is written to `state.suite`; one that could not run is not.
+ */
+function masterVerdict(state, commit) {
   // One string + shell, same as the typecheck above: npm on Windows is npm.cmd.
   const runSuite = () => runNpmTest(MAIN)
   /**
@@ -3843,46 +3949,44 @@ function suiteFailure(state) {
     cacheSuite({ commit, ok: true, at: now() })
     return true
   }
-  return withSuiteRun(state, MAIN, commit, () => {
-    let r = runSuite()
+  let r = runSuite()
+  if (pass(r)) return null
+  /**
+   * A red answer is CONFIRMED before it is written down, because the verdict is cached on
+   * the commit and the retry timer never asks again - so one flaky run pins a green tree
+   * as broken until somebody hand-edits `.git/paneforge-lanes.json`, which nobody would
+   * ever guess to do.
+   *
+   * Measured 2026-08-22 on the commit below this one: the gate failed twice, once as
+   * `could not run` and once as `FAIL conflict / the lane is stuck`, while the same suite
+   * passed standalone twice in a row (91 tests, exit 0). The conflict test drives real git
+   * repositories and is timing-sensitive on a loaded machine.
+   *
+   * Only the second run's answer counts, so a genuinely red suite costs one extra pass
+   * (~2 min) and a flake costs the release nothing. `cannotRun` is judged on the LAST run
+   * for the same reason: missing tooling does not repair itself between two runs, but a
+   * spawn that lost a race does.
+   */
+  const first = `${r.stdout ?? ''}${r.stderr ?? ''}`
+  if (!cannotRun(first)) {
+    r = runSuite()
     if (pass(r)) return null
-    /**
-     * A red answer is CONFIRMED before it is written down, because the verdict is cached on
-     * the commit and the retry timer never asks again - so one flaky run pins a green tree
-     * as broken until somebody hand-edits `.git/paneforge-lanes.json`, which nobody would
-     * ever guess to do.
-     *
-     * Measured 2026-08-22 on the commit below this one: the gate failed twice, once as
-     * `could not run` and once as `FAIL conflict / the lane is stuck`, while the same suite
-     * passed standalone twice in a row (91 tests, exit 0). The conflict test drives real git
-     * repositories and is timing-sensitive on a loaded machine.
-     *
-     * Only the second run's answer counts, so a genuinely red suite costs one extra pass
-     * (~2 min) and a flake costs the release nothing. `cannotRun` is judged on the LAST run
-     * for the same reason: missing tooling does not repair itself between two runs, but a
-     * spawn that lost a race does.
-     */
-    const first = `${r.stdout ?? ''}${r.stderr ?? ''}`
-    if (!cannotRun(first)) {
-      r = runSuite()
-      if (pass(r)) return null
-    }
-    const all = `${r.stdout ?? ''}${r.stderr ?? ''}`
-    if (cannotRun(all)) {
-      return (
-        `${MB}'s test suite could not run, so nothing was released - ${firstLine(all)}. ` +
-        `Required tooling or remote transport is unavailable; this is not a code verdict.`
-      )
-    }
-    // A suite with some other shape than test-all.mjs falls back to its first real line.
-    const failed = failLines(all)
-    const reason =
-      r.signal || (r.status == null && !all.trim())
-        ? `${MB}'s test suite did not finish within ${Math.round(SUITE_TIMEOUT_MS / 60000)} minutes, so nothing was released. Run \`npm test\` and see what hangs.`
-        : `${MB} fails its own test suite, so it was not released${failed ? ` - ${failed}` : ` - ${firstLine(all)}`}. Fix it and it goes out by itself.`
-    cacheSuite({ commit, ok: false, at: now(), reason })
-    return reason
-  })
+  }
+  const all = `${r.stdout ?? ''}${r.stderr ?? ''}`
+  if (cannotRun(all)) {
+    return (
+      `${MB}'s test suite could not run, so nothing was released - ${firstLine(all)}. ` +
+      `Required tooling or remote transport is unavailable; this is not a code verdict.`
+    )
+  }
+  // A suite with some other shape than test-all.mjs falls back to its first real line.
+  const failed = failLines(all)
+  const reason =
+    r.signal || (r.status == null && !all.trim())
+      ? `${MB}'s test suite did not finish within ${Math.round(SUITE_TIMEOUT_MS / 60000)} minutes, so nothing was released. Run \`npm test\` and see what hangs.`
+      : `${MB} fails its own test suite, so it was not released${failed ? ` - ${failed}` : ` - ${firstLine(all)}`}. Fix it and it goes out by itself.`
+  cacheSuite({ commit, ok: false, at: now(), reason })
+  return reason
 }
 
 /** What `suiteFailureInLane` says while another process is testing that same tree. */
@@ -3914,21 +4018,33 @@ function suiteFailureInLane(state, dir) {
   const cached = read().laneSuite?.[dir]
   if (commit && cached?.commit === commit) return cached.ok ? null : cached.reason
   if (suiteRunning(dir, commit)) return LANE_SUITE_RUNNING
-  const reason = withSuiteRun(state, dir, commit, () => {
-    let r = runNpmTest(dir)
-    if (r.status === 0) return null
+  if (!commit) return laneVerdict(state, dir, null)
+  const pid = startSuiteJob(state, dir, commit, 'lane')
+  if (!pid) return runSuiteJob(state, dir, commit, 'lane')
+  if (!suiteWaits()) return LANE_SUITE_RUNNING
+  const answer = awaitSuiteJob(state, dir, pid)
+  // Ended without an answer: still to be tested, and the next try runs it again.
+  if (!answer) return LANE_SUITE_RUNNING
+  return answer.ok ? null : answer.reason
+}
+
+/** Run a lane's suite and return its reason (null when green), cached on `commit` unless it could not run. */
+function laneVerdict(state, dir, commit) {
+  let r = runNpmTest(dir)
+  let reason = null
+  if (r.status !== 0) {
     const first = `${r.stdout ?? ''}${r.stderr ?? ''}`
-    if (!cannotRun(first)) {
-      r = runNpmTest(dir)
-      if (r.status === 0) return null
-    }
+    if (!cannotRun(first)) r = runNpmTest(dir)
+  }
+  if (r.status !== 0) {
     const all = `${r.stdout ?? ''}${r.stderr ?? ''}`
-    if (cannotRun(all)) return `could not run - ${firstLine(all)}`
     const failed = failLines(all)
-    return r.signal || (r.status == null && !all.trim())
-      ? `did not finish within ${Math.round(SUITE_TIMEOUT_MS / 60000)} minutes`
-      : failed || firstLine(all)
-  })
+    reason = cannotRun(all)
+      ? `could not run - ${firstLine(all)}`
+      : r.signal || (r.status == null && !all.trim())
+        ? `did not finish within ${Math.round(SUITE_TIMEOUT_MS / 60000)} minutes`
+        : failed || firstLine(all)
+  }
   // Tooling that could not start is fixed outside this file; the next try should find out.
   if (commit && !reason?.startsWith('could not run')) {
     remember(state, ['laneSuite', dir], { commit, ok: !reason, reason, at: now() })
@@ -3971,7 +4087,12 @@ function readyLaneFix(state) {
     for (const id of lanes) {
       const v = suiteFailureInLane(state, laneDir(id))
       if (!v) return { lane: id, tried }
-      if (v === LANE_SUITE_RUNNING) pending = true
+      if (v === LANE_SUITE_RUNNING) {
+        pending = true
+        // A tick that does not wait stops at the one run it found or started: the next tick
+        // reads that verdict and goes on, rather than one suite per ready lane at once.
+        if (!suiteWaits()) break
+      }
     }
     return { lane: null, tried, pending }
   }
@@ -6459,6 +6580,9 @@ try {
   } else if (cmd === 'sweep') {
     if (argv.includes('--if-due') && !sweepDue()) process.exit(0)
     for (const line of sweep({ dryRun: argv.includes('--dry-run') })) console.log(line)
+  } else if (cmd === 'suite-job') {
+    // Never typed: `startSuiteJob` starts it, detached, and it outlives whoever started it.
+    runSuiteJob(read(), arg('dir'), arg('commit'), arg('kind'))
   } else if (cmd === 'doctor') console.log(doctor())
   else if (cmd === 'status') console.log(JSON.stringify(status(session, { held: argv.includes('--held') }), null, 2))
   else {
