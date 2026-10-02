@@ -95,6 +95,10 @@ opened; unpaired = pairing page; wrong codes lock; cookie `hmac(deviceId, code)`
   `dedupe_key` `paneforge-review-<mac|pc>-<id>`, `pushSentAt` only after a 2xx, retries
   +30s/+120s, none when looked at / reviewed / a replica / packaged-off. `phone-push.log`,
   `test:reviewpush`.
+- Robert's phone on Tailscale signs in with no code: `shared/tailnetIdentity.ts` rule (serve's
+  `X-Forwarded-For` + `tailscale whois`, same Tailscale user as the desk, iOS/android, never Funnel or
+  cloudflared, never with phone access off), `POST /pf/native/v1/auth/tailnet`, trusted `/pf/ask` and
+  control unlock; grants slide 30 days while in use; `phone-trust.log`; `test:tailnettrust`.
 - `test:phone`, `test:phoneview`; `window.__pf[id].term.buffer`. Not built: B1, H2.
 
 ## The other machine's screen is one click away

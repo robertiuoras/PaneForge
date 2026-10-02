@@ -856,6 +856,18 @@ a drag now opens the row from `pointerup`, which no scroll heuristic gets to vet
 and neither does a finger that travelled more than `TAP_SLOP`. Mouse presses are untouched:
 a click is reliable there, and `onClick` is also what catches keyboard activation.
 
+A phone on the tailnet needs no code, and the rule is built on what was measured, not assumed.
+`tailscale serve` OVERWRITES `X-Forwarded-For` with the caller's exact tailnet address and
+sets/strips `Tailscale-User-Login` and `Tailscale-Funnel-Request`; `CF-Connecting-IP` passes
+straight through serve, so it is forgeable and is never read as an address (any `cf-connecting-ip`
+or `cf-ray` refuses). Tailscale user ids and node ids are compared as text, since they pass 2^53
+and a number would round them. On 14 Aug 2026 the lockdown turned phone access off; a leftover
+`tailscale serve :443 -> 7312` would still deliver a tailnet request to the loopback-only listener
+`pf` uses, so `tailnetVerdict` refuses (`phone access is switched off`, before any whois) whenever
+`localOnly`. Caveat: the `ts-<StableID>` Devices row is an approved device whose cookie survives
+`New code`, so locking out a lost phone means `Sign out` on the row AND removing it from the tailnet;
+Sign out alone lets it back in by its identity.
+
 ## Every colour is derived, and every pane says which project it is in
 
 Two rules that touch nearly every file in the renderer, both added 2026-08-01.

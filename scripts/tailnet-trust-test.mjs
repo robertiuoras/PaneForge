@@ -31,7 +31,7 @@ writeFileSync(
     `export * from '${root}/src/shared/tailnetIdentity.ts'`,
     `export { TailnetIdentity } from '${root}/src/main/tailnetIdentity.ts'`,
     `export { NativeAuth } from '${root}/src/main/nativeAuth.ts'`,
-    `export { PhoneServer } from '${root}/src/main/phone.ts'`
+    `export { PhoneServer, LOCAL_ONLY } from '${root}/src/main/phone.ts'`
   ].join('\n')
 )
 const bundle = join(work, 'bundle.mjs')
@@ -194,7 +194,7 @@ const nodes = {
   [MAC_IP]: T.parseWhois(whoisJson({ os: 'macOS', name: 'roberts-macbook-pro', stable: 'n5PJtFLT7U11CNTRL' }))
 }
 let whoisCalls = 0
-const server = new T.PhoneServer({
+const phoneDeps = {
   staticDir,
   code: () => code,
   secret: () => 'device-secret',
@@ -216,7 +216,8 @@ const server = new T.PhoneServer({
   isKeepOpen: () => false,
   tailnet: { whois: async (ip) => { whoisCalls++; return nodes[ip] ?? null }, selfUser: async () => ME },
   trustLog: (line) => logs.push(line)
-})
+}
+const server = new T.PhoneServer(phoneDeps)
 await server.start(0, '127.0.0.1')
 const port = server.server.address().port
 
@@ -329,6 +330,33 @@ try {
   let last = 0
   for (let i = 0; i < 11; i++) last = (await grantFor(served(MAC_IP, { 'x-forwarded-for': '100.64.0.9' }))).status
   ok(last === 429, 'the eleventh try in a minute is 429', String(last))
+  // Phone access switched off: the loopback-only listener never trusts a tailnet request,
+  // even when a leftover `tailscale serve` forwards one to it.
+  const locked = new T.PhoneServer(phoneDeps)
+  await locked.start(0, T.LOCAL_ONLY)
+  try {
+    const lport = locked.server.address().port
+    const lcall = (method, path, headers, body) => new Promise((resolve, reject) => {
+      const req = httpRequest({ host: '127.0.0.1', port: lport, method, path, headers: { host: 'desktop-cmsucm1.tail6c8b58.ts.net', ...headers, ...(body ? { 'content-type': 'application/json' } : {}) } }, (res) => {
+        let text = ''
+        res.setEncoding('utf8')
+        res.on('data', (c) => (text += c))
+        res.on('end', () => { let json = null; try { json = JSON.parse(text) } catch { /* plain */ } resolve({ status: res.statusCode, text, json }) })
+      })
+      req.on('error', reject)
+      req.end(body ? JSON.stringify(body) : undefined)
+    })
+    const devBefore = devices.length, grantBefore = grants.length, logBefore = logs.length, whoisBefore = whoisCalls
+    const lg = await lcall('POST', '/pf/native/v1/auth/tailnet', served(), app)
+    ok(lg.status === 403, 'phone access off: tailnet sign-in refused', `${lg.status} ${lg.text}`)
+    const la = await lcall('POST', '/pf/ask', { ...served(), 'user-agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) Safari/604.1' })
+    ok(!la.json?.trusted, 'phone access off: /pf/ask not trusted', `${la.status} ${la.text}`)
+    ok(logs.slice(logBefore).some((l) => l.includes('phone access is switched off')), 'phone access off: refusal logged', logs.at(-1))
+    ok(devices.length === devBefore && grants.length === grantBefore, 'phone access off: no device or grant written')
+    ok(whoisCalls === whoisBefore, 'phone access off: Tailscale never asked')
+  } finally {
+    await locked.stop()
+  }
 } finally {
   await server.stop()
   rmSync(work, { recursive: true, force: true })

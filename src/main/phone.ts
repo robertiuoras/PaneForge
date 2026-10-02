@@ -1019,7 +1019,10 @@ b.onclick=async()=>{
   private async tailnetVerdict(req: IncomingMessage, what: string, always = false): Promise<TailnetVerdict> {
     const source = tailnetSource({ socket: normalise(req.socket.remoteAddress ?? ''), headers: req.headers })
     let verdict: TailnetVerdict
-    if ('refused' in source) verdict = judgeTailnet(source, null, '')
+    // Phone access off = the loopback-only listener. A leftover `tailscale serve` can still
+    // forward a tailnet request here; it must not be trusted on a locked-down desk.
+    if (this.localOnly) verdict = { trusted: false, reason: 'phone access is switched off', ip: 'refused' in source ? '' : source.ip }
+    else if ('refused' in source) verdict = judgeTailnet(source, null, '')
     else if (!this.deps.tailnet) verdict = { trusted: false, reason: 'Tailscale identity is not wired in', ip: source.ip }
     else {
       const [node, self] = await Promise.all([this.deps.tailnet.whois(source.ip), this.deps.tailnet.selfUser()])
