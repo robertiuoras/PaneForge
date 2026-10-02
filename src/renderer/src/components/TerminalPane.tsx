@@ -1,6 +1,7 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useQuietState } from '../quietState'
 import { borrowGrid, mirrorFit as mirrorSize } from '@shared/mirrorFit'
+import { busyWindowStart } from '@shared/busyWindow'
 import { shouldAsk, type BorrowAsk } from '@shared/borrowAsk'
 import { Terminal, type ILink, type IMarker } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -768,7 +769,7 @@ function screenText(t: Terminal, rows: number): string {
   let last = t.rows - 1
   while (last > 0 && !read(last).trim()) last--
   let out = ''
-  for (let i = Math.max(0, last - rows + 1); i <= last; i++) out += read(i) + '\n'
+  for (let i = busyWindowStart(read, last, rows); i <= last; i++) out += read(i) + '\n'
   return out
 }
 
