@@ -180,6 +180,10 @@ export function sweepDoneClose(d: DoneCloseDeps): string[] {
     if (!verdict.close && verdict.reason !== 'reply not read') {
       if (!d.dry && warnings.delete(id)) d.setClosing?.(id, undefined)
       if (r.turnEndedAt && verdict.reason !== 'not quiet long enough' && verdict.reason !== 'shell pane') say(id, `stays - ${verdict.reason}`)
+      // An idle agent pane with NO turn end is the one no rule can ever close, and it used to
+      // say nothing: four handed-in PC panes sat 1-3 hours with not one line here (2026-10-02).
+      else if (verdict.reason === 'no finished turn' && r.status === 'idle' && !r.asleep && !r.runSince)
+        say(id, 'stays - no finished turn: it never showed a turn ending here, and its conversation does not say one ended')
       continue
     }
     const agent = r.agent

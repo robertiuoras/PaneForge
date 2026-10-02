@@ -311,3 +311,34 @@ export function replyFinished(p: { agent: string; status: string; ask?: unknown;
 export function doneReviewId(paneId: string, turnEndedAt: number): string {
   return `done_${String(paneId).replace(/[^A-Za-z0-9_-]/g, '_')}_${Math.floor(turnEndedAt / 1000)}`
 }
+
+/**
+ * Should a pane that has never shown a turn ending take its turn end from its transcript?
+ *
+ * The footer is the only thing that sets `turnEndedAt`, and only on a busy -> idle flip. A
+ * pane started ON a conversation whose last turn had already ended - handed in from the
+ * other machine, reopened from Review, restored with the desk - never flips, so every close
+ * rule skipped it in silence: 2026-10-02 the PC held s8/s9/s10/s12 for 1-3 hours, all
+ * finished on the Mac before the handoff. Seeded with the moment it is seen (never the
+ * transcript's own time), the normal rules still decide: quiet window, looked at, Keep
+ * open, owed prompt, steps left. Anything this pane did itself this run outranks it.
+ */
+export function seedTurnEnd(p: {
+  agent: string
+  status: string
+  asleep?: boolean
+  ask?: unknown
+  /** Started with `--resume` (or Codex's resume) onto an existing conversation. */
+  resumed: boolean
+  /** This run has read the agent's running footer at least once. */
+  sawFooter: boolean
+  turnEndedAt: number
+  turnPending: boolean
+  runSince?: number
+  /** `ReplyRead.turnEndedAt`: the transcript's last turn is over. */
+  transcriptTurnEndedAt?: number
+}): boolean {
+  if (p.agent === 'shell' || p.status !== 'idle' || p.asleep || p.ask) return false
+  if (!p.resumed || p.sawFooter || p.turnEndedAt || p.turnPending || p.runSince) return false
+  return Boolean(p.transcriptTurnEndedAt)
+}

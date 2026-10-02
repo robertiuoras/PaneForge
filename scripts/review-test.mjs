@@ -433,6 +433,32 @@ cardAfterClose('pane_1')(true)
 assert.equal(heldCards.has('pane_1'), false, 'an old turn is dropped without delivery')
 assert.ok(!existsSync(join(temp, '.claude', 'guarddeck', 'notices', 'paneforge-review-notice_stale.json')))
 
+// A PC chat that closed itself into Review: the PC writes no GuardDeck notice (Mac-only
+// gate), so the Mac writes the card when the replica first carries the close - once, naming
+// the PC, and never for a peer's old history replayed on reconnect (2026-10-02).
+{
+  const pc = { id: 'pc_9', name: 'PC', platform: 'win32' }
+  const cardOf = (id) => join(temp, '.claude', 'guarddeck', 'notices', `paneforge-review-remote_pc_9_${id}.json`)
+  const owner = { ...portable, id: 'pc_done', notify: true, closedAt: undefined, reviewedAt: undefined }
+  prod.storeRemoteReview(owner, pc)
+  assert.ok(!existsSync(cardOf('pc_done')), 'a held PC row (not closed yet) raises no card')
+  const closedAt = new Date().toISOString()
+  prod.storeRemoteReview({ ...owner, closedAt }, pc)
+  assert.ok(existsSync(cardOf('pc_done')), 'the PC close raises a Mac GuardDeck card')
+  assert.equal(JSON.parse(readFileSync(cardOf('pc_done'), 'utf8')).result.machine, 'pc', 'continued on the PC')
+  rmSync(cardOf('pc_done'))
+  prod.storeRemoteReview({ ...owner, closedAt }, pc)
+  assert.ok(!existsSync(cardOf('pc_done')), 'a replay of the same close raises no second card')
+  prod.storeRemoteReview({ ...owner, id: 'pc_old', closedAt: new Date(Date.now() - prod.PEER_NOTICE_MAX_AGE_MS - 60_000).toISOString() }, pc)
+  assert.ok(!existsSync(cardOf('pc_old')), 'an old close replayed on reconnect raises no card')
+  prod.storeRemoteReview({ ...owner, id: 'pc_quiet', notify: undefined, closedAt }, pc)
+  assert.ok(!existsSync(cardOf('pc_quiet')), 'a row that asked for no card gets none')
+  prod.storeRemoteReview({ ...owner, id: 'pc_read', closedAt, reviewedAt: closedAt }, pc)
+  assert.ok(!existsSync(cardOf('pc_read')), 'a row already reviewed on the PC gets none')
+  api.storeRemoteReview({ ...owner, id: 'pc_dev', closedAt }, pc)
+  assert.ok(!existsSync(cardOf('pc_dev')), 'a dev build writes no card')
+}
+
 // ---- finished-chat report contract v1: card number, app, context, session tokens ----------
 // The maths on its own, over transcripts copied from real ones (every word redacted). The
 // expected numbers were measured with an independent Python pass over the same fixtures.
