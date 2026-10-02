@@ -22,22 +22,24 @@
 //      try does not run the lane's suite again, and a new commit on the lane does
 //   E. while master is red, a ready lane another process is already testing is "still being
 //      tested", not tested a second time
+//   G. a `retry` tick (lane-cron SIGKILLs it at 4 minutes, the app at 10) does not run the suite
+//      inside itself: the suite is its own job, finishes after the tick is gone and writes its
+//      verdict, and the next tick ships on that verdict without starting another run
 //
 // Real git, real lane.mjs, no network: `npm` is stubbed on PATH (same stub as lane-heal-test).
 //
 //   node scripts/lane-suite-run-test.mjs
 
 import { execFileSync, spawn } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { installLane } from './lane-fixture.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const root = join(tmpdir(), 'paneforge-lane-suite-run-test')
-rmSync(root, { recursive: true, force: true })
-mkdirSync(root, { recursive: true })
+// Its own folder per run: in `npm test` two gates (master's and a lane's) can run it at once.
+const root = realpathSync(mkdtempSync(join(tmpdir(), 'pf-lane-suite-run-')))
 
 let failed = 0
 const ok = (name, cond, detail) => {
@@ -68,7 +70,7 @@ const norm = (p) => resolve(p).toLowerCase()
  * the repo (an untracked file inside it would make master dirty), and a second file gets the
  * ledger's in-flight record as the suite sees it. `hang` sleeps instead of finishing.
  */
-function makeRepo({ code = 0, hang = false } = {}) {
+function makeRepo({ code = 0, hang = false, slowMs = 0 } = {}) {
   blocks++
   repo = join(root, `demo${blocks}`)
   laneA = `${repo}-a`
@@ -85,7 +87,11 @@ function makeRepo({ code = 0, hang = false } = {}) {
     `const fs = require('node:fs')\n` +
       `fs.appendFileSync(${JSON.stringify(runsFile)}, process.cwd() + ' ' + process.pid + '\\n')\n` +
       `try { fs.appendFileSync(${JSON.stringify(`${runsFile}.ledger`)}, JSON.stringify(JSON.parse(fs.readFileSync(${JSON.stringify(ledgerPath())}, 'utf8')).suiteRun ?? null) + '\\n') } catch {}\n` +
-      (hang ? `setTimeout(() => {}, 120000)\n` : `console.log('FAIL  fixture suite'); process.exit(${code})\n`)
+      (hang
+        ? `setTimeout(() => {}, 120000)\n`
+        : slowMs
+          ? `setTimeout(() => process.exit(${code}), ${slowMs})\n`
+          : `console.log('FAIL  fixture suite'); process.exit(${code})\n`)
   )
   installLane(here, repo)
   git(repo, 'init', '-q', '-b', 'master')
@@ -129,9 +135,9 @@ const seen = () =>
   existsSync(`${runsFile}.ledger`) ? readFileSync(`${runsFile}.ledger`, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []
 
 /** Write an in-flight record for `dir` into the ledger, as another process running its suite would. */
-const seedRun = (dir, commit, pid, at = Date.now()) => {
+const seedRun = (dir, commit, pid, at = Date.now(), extra = {}) => {
   const l = ledger()
-  l.suiteRun = { ...l.suiteRun, [dir]: { commit, pid, at } }
+  l.suiteRun = { ...l.suiteRun, [dir]: { commit, pid, at, ...extra } }
   writeFileSync(ledgerPath(), JSON.stringify(l))
 }
 
@@ -369,6 +375,79 @@ const pending = lane('ready', '--session', 's1')
 ok('a lane another process is already testing is reported as still being tested', /still being tested/.test(pending) && /same runs/.test(pending), pending)
 ok('and its suite was not run a second time', runsIn(laneA).length === 0 && runsIn(repo).length === 2, JSON.stringify(runs()))
 ok('and nothing is cached for it', ledger().laneSuite?.[laneA] === undefined, JSON.stringify(ledger().laneSuite))
+
+// ---------------------------------------------------------------- G: the tick is killed, the run is not
+
+// A `retry` is a clock tick with a time limit far inside one suite. When the suite ran inside the
+// tick, killing the tick took the suite with it (libuv's kill-on-close job on Windows; on a Mac it
+// ran on with nobody left to write the answer), so every tick burned a run and none produced a verdict.
+{
+  makeRepo({ slowMs: 20000 })
+  claimLaneA('s1')
+  workInLaneA()
+  const head = git(repo, 'rev-parse', 'HEAD')
+  // Marked ready while another check holds the suite, so nothing has run when the tick starts.
+  const holderG = liveProcess()
+  spawned.push(holderG)
+  seedRun(repo, head, holderG.pid)
+  lane('ready', '--session', 's1')
+  holderG.kill()
+  await new Promise((r) => holderG.on('exit', r))
+  const env = { ...process.env, PATH: stubDir + delimiter + process.env.PATH, Path: stubDir + delimiter + (process.env.Path ?? process.env.PATH) }
+  const tick = spawn(process.execPath, [join(repo, 'scripts', 'lane.mjs'), 'retry', '--repo', repo, '--session', 'lane-cron'], { cwd: repo, env, stdio: 'ignore', windowsHide: true })
+  spawned.push(tick)
+  let tickEnded = false
+  tick.on('exit', () => (tickEnded = true))
+  for (let i = 0; i < 60 && !runs().length; i++) await sleep(250)
+  // The suite sleeps 20 s. A tick that runs it inside itself is still waiting 12 s in (room for
+  // a loaded machine under npm test), and is killed then, as lane-cron's limit would.
+  for (let i = 0; i < 48 && !tickEnded; i++) await sleep(250)
+  const endedBySelf = tickEnded
+  if (!tickEnded) {
+    tick.kill('SIGKILL')
+    await new Promise((r) => tick.on('exit', r))
+  }
+  ok('a retry tick started the suite', runs().length === 1, JSON.stringify(runs()))
+  ok('and did not sit waiting for it', endedBySelf, 'still running 12 s into the suite, killed')
+  for (let i = 0; i < 200 && ledger().suite?.commit !== head; i++) await sleep(250)
+  ok('the suite finished with the tick gone and its verdict is written on the commit', ledger().suite?.commit === head && ledger().suite.ok === true, JSON.stringify(ledger().suite))
+  for (let i = 0; i < 20 && ledger().suiteRun?.[repo]; i++) await sleep(250)
+  ok('and its run record came off', ledger().suiteRun?.[repo] === undefined, JSON.stringify(ledger().suiteRun))
+  const next = lane('retry', '--session', 'lane-cron')
+  ok('the next tick ships on that verdict', /merged into master/i.test(next), next)
+  ok('without running the suite again', runs().length === 1, JSON.stringify(runs()))
+}
+
+// ---------------------------------------------------------------- H: a job on an older commit
+
+// Master moved while a suite job was still testing the commit before. Its verdict answers a
+// question nobody will ask and it holds the one-suite-per-computer lock for up to two passes,
+// so it is killed whole and the new commit runs once. A record that is NOT a job is a chat's own
+// lane.mjs running the suite in-process: never killed.
+{
+  makeRepo()
+  const detachedLive = () => spawn(process.execPath, ['-e', 'setTimeout(()=>{},120000)'], { stdio: 'ignore', windowsHide: true, detached: true })
+  const chat = detachedLive()
+  spawned.push(chat)
+  claimLaneA('s1')
+  workInLaneA()
+  seedRun(repo, 'f'.repeat(40), chat.pid)
+  lane('ready', '--session', 's1')
+  ok('a chat running the suite on an older commit is left alone', alive(chat.pid), JSON.stringify(ledger().suiteRun))
+  ok('and the current commit is tested anyway', runsIn(repo).length === 1, JSON.stringify(runs()))
+  chat.kill()
+
+  workInLaneA('lane work, more\n')
+  const head = git(repo, 'rev-parse', 'HEAD')
+  const job = detachedLive()
+  spawned.push(job)
+  seedRun(repo, 'e'.repeat(40), job.pid, Date.now(), { job: true })
+  const out = lane('ready', '--session', 's1')
+  for (let i = 0; i < 20 && alive(job.pid); i++) await sleep(250)
+  ok('a suite job still testing an older commit is killed', !alive(job.pid), out)
+  ok('and the new commit runs once', runsIn(repo).length === 2, JSON.stringify(runs()))
+  ok('and its verdict is written on the new commit', ledger().suite?.commit === head && ledger().suite.ok === true, JSON.stringify(ledger().suite))
+}
 
 console.log(failed ? `\n${failed} failed` : '\nall passed')
 process.exit(failed ? 1 : 0)

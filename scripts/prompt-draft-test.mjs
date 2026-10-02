@@ -319,6 +319,11 @@ check(
   check('...not while somebody typed in the last minute', draftRecheckDue(pane({ lastKeyboard: T - 59_000 }), 0, T) === false)
   check('...not twice in 30 s', draftRecheckDue(pane(), T - 29_000, T) === false && draftRecheckDue(pane(), T - 30_000, T) === true)
   check('...not mid-turn', draftRecheckDue(pane({ runSince: T - 5000 }), 0, T) === false && draftRecheckDue(pane({ status: 'working' }), 0, T) === false)
+  // A pane owed an automatic clear waits on exactly this flag: 10 s of no keys, then every 5 s.
+  check('owed a clear: an 11 s old flag is rechecked, a 9 s old one is not', draftRecheckDue(pane({ lastKeyboard: T - 11_000 }), 0, T, true) === true && draftRecheckDue(pane({ lastKeyboard: T - 9_000 }), 0, T, true) === false)
+  check('...not twice in 4 s, again after 5', draftRecheckDue(pane({ lastKeyboard: T - 11_000 }), T - 4_000, T, true) === false && draftRecheckDue(pane({ lastKeyboard: T - 11_000 }), T - 5_000, T, true) === true)
+  check('...an 11 s old flag is NOT rechecked when no clear is owed', draftRecheckDue(pane({ lastKeyboard: T - 11_000 }), 0, T) === false && draftRecheckDue(pane({ lastKeyboard: T - 11_000 }), 0, T, false) === false)
+  check('...a hold still wins when owed', draftRecheckDue(pane({ lastKeyboard: T - 11_000, runSince: T - 5000 }), 0, T, true) === false && draftRecheckDue(pane({ lastKeyboard: T - 11_000, agent: 'shell' }), 0, T, true) === false)
   check('...not a shell', draftRecheckDue(pane({ agent: 'shell' }), 0, T) === false)
   check('...not without a flag', draftRecheckDue(pane({ drafting: undefined }), 0, T) === false)
 }

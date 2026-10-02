@@ -5597,7 +5597,9 @@ export class SessionManager extends EventEmitter {
           now - live.paintedAt >= 1000 && now - meta.lastKeyboard >= 1000) void this.confirmDraft(live)
       // Never under a hold: a submission in flight is `confirmDraft`'s, and a prompt this app
       // has typed is its queue's. This is only the flag left once both are gone.
-      if (!live.draftConfirmation && !this.promptInFlight(live) && draftRecheckDue(meta, live.draftRecheckAt ?? 0, now) &&
+      // A pane owed an automatic clear waits on exactly this flag: read it sooner.
+      const clearOwed = this.autoClearPending.has(meta.id)
+      if (!live.draftConfirmation && !this.promptInFlight(live) && draftRecheckDue(meta, live.draftRecheckAt ?? 0, now, clearOwed) &&
           now - live.paintedAt >= 1000) void this.recheckDraft(live)
       // A CLEAR QUEUED FOR A TURN END ON A PANE WITH NO TURN LEFT. `endRun` re-asks a queued
       // clear the moment a turn ends, and a draft flag still up then - the hold of the prompt
