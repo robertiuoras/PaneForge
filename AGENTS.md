@@ -82,7 +82,7 @@ on the PC via `scripts/test-remote.mjs`; exit 3 `Tests deferred:` = PC unreachab
 fallback, not a pass. Pins:
 `docs/design-notes.md` **Checks — what each suite pins**. Window (`test:x`): autoclearlag,
 view, restorefix, askclick, askrender, devicesfit, phoneview, contrast, renderwatchlive,
-panefit, railtrack. Network: `test:discordbrand`,
+panefit, railtrack, mirrorview. Network: `test:discordbrand`,
 `node scripts/mac-update-test.mjs --live <v>`. `npm run competitors` (`test:competitors`).
 
 ## Checking a layout change without screenshots

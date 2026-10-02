@@ -30,7 +30,7 @@ buildSync({
   platform: 'node',
   outfile
 })
-const { reclaimPlan, idleClosePlan, idleSleepPlan, idleCloseAt, sameDeadline, unread, readStamp, reclaimedMb, pressureSleepMs, sleepPressureOf, sleepHoldMs, SLEEP_HOLD_MS, SLEEP_HOLD_MAX_MS, DEFAULT_RECLAIM, IDLE_CLOSE_MINUTES, IDLE_SLEEP_MINUTES, migrateReclaimV5 } = createRequire(import.meta.url)(outfile)
+const { reclaimPlan, idleClosePlan, idleSleepPlan, idleCloseAt, chipCloseAt, sameDeadline, unread, readStamp, reclaimedMb, pressureSleepMs, sleepPressureOf, sleepHoldMs, SLEEP_HOLD_MS, SLEEP_HOLD_MAX_MS, DEFAULT_RECLAIM, IDLE_CLOSE_MINUTES, IDLE_SLEEP_MINUTES, migrateReclaimV5 } = createRequire(import.meta.url)(outfile)
 
 let checks = 0
 function check(what, ok, detail) {
@@ -806,10 +806,25 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
     'the frozen clock does not',
     idleClosePlan([p, pane({ id: 'other', lastKeyboard: NOW })], CLOCKED, deskNow(NOW, left)).length === 0
   )
+  // The chip is drawn against WALL time on every screen that shows it - this desk's own
+  // card and the paired desk's row - so a deadline computed on the frozen clock is a
+  // moment already in the past by the time a person has been gone a while: the row reads
+  // `closes now` and the sweep, on the frozen clock, will not touch the pane until they
+  // come back. Robert, 2026-09-23, PC rows on the Mac: "says closes now but its not
+  // closing". A desk whose clock is frozen publishes no deadline at all.
+  eq('a desk nobody is at publishes no countdown', chipCloseAt(p, CLOCKED, NOW, left), null)
   eq(
-    'and the card counts down to the same frozen moment',
-    idleCloseAt(p, CLOCKED, deskNow(NOW, left)),
-    left - 5 * 60_000 + 10 * 60_000
+    'CONTROL: with somebody there the chip is the idle deadline',
+    chipCloseAt(p, CLOCKED, NOW, null),
+    idleCloseAt(p, CLOCKED, NOW)
+  )
+  check(
+    'a published deadline is never already in the past',
+    (chipCloseAt(p, CLOCKED, NOW, left) ?? NOW) >= NOW
+  )
+  check(
+    'a pane the clock refuses stays refused however the desk is',
+    chipCloseAt(pane({ id: 'busy', asking: true }), CLOCKED, NOW, null) === null
   )
   // The pause holds a pane that was still counting; it does not undo a decision.
   const overdue = pane({ id: 'overdue', lastKeyboard: left - 60 * 60_000 })

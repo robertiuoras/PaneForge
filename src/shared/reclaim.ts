@@ -999,6 +999,34 @@ export function idleCloseAt(
 }
 
 /**
+ * The deadline a CHIP may count down to, or null for no chip.
+ *
+ * `idleCloseAt` answers on the desk's own clock, which `shared/away.ts` freezes at the
+ * moment the last person left. The chip that draws the answer - this desk's card and,
+ * forwarded, the paired desk's row - counts WALL time, because a chip on the other
+ * machine has no way of knowing this one's clock has stopped. So a deadline computed
+ * while frozen is a wall-clock moment that arrives on schedule and is then simply past:
+ * the row reads `closes now` and stays there, while the sweep, on the frozen clock, does
+ * not consider the pane due until somebody comes back to this desk. Robert, 2026-09-23,
+ * PC rows on the Mac: "says closes now but its not closing".
+ *
+ * A frozen clock has no moment anybody can count down to, so a frozen desk publishes no
+ * deadline at all; the chip returns, counting from where the clock resumes, when a person
+ * does. The sweep itself is untouched - it was already frozen, which is the point.
+ */
+export function chipCloseAt(
+  pane: ReclaimPane,
+  cfg: ReclaimConfig,
+  wallNow: number,
+  awaySince: number | null,
+  personHere = true,
+  all?: ReclaimPane[]
+): number | null {
+  if (awaySince !== null) return null
+  return idleCloseAt(pane, cfg, wallNow, personHere, all)
+}
+
+/**
  * Whether a freshly computed deadline is the same FACT as the one already published.
  *
  * `idleCloseAt` clamps an overdue pane to `now` so its chip cannot count up from zero, and

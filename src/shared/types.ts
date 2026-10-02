@@ -1967,6 +1967,14 @@ export interface RemoteConfig {
    */
   pairByAsking?: boolean
   peers: RemotePeer[]
+  /**
+   * Set once every saved peer has been switched to mirroring all of its panes
+   * (2026-09-23). A peer saved before then carried `mirrorAll: false` from the days when
+   * connecting meant picking, and a flag here rather than a look at the peers is what
+   * lets somebody turn a peer's mirroring back down afterwards without it coming back on
+   * at the next launch.
+   */
+  mirrorAllDefaulted?: boolean
 }
 
 export interface Config {

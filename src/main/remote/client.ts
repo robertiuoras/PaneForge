@@ -110,7 +110,7 @@ export class RemoteClient extends EventEmitter {
    * changes: an idle mirrored pane repaints never, so without a stored frame the owner
    * would keep whatever presence it was told the first time - see `restatePresence`.
    */
-  private lent = new Map<string, { localId: string; cols: number; rows: number; viewer?: string }>()
+  private lent = new Map<string, { localId: string; cols: number; rows: number; viewer?: string; person?: boolean }>()
 
   private conn: Conn | null = null
   private socket: Socket | null = null
@@ -152,6 +152,18 @@ export class RemoteClient extends EventEmitter {
   }
 
   /**
+   * Whether every pane that device has is mirrored, now and as it opens more.
+   *
+   * ON unless this device chose otherwise. A peer that never said (`undefined`) mirrors
+   * everything: a pane over there is then already a card here, and pressing it shows its
+   * screen with no wait for a mirror to attach. Only a peer that picked panes by hand
+   * (`setWatch`, which writes `false`) mirrors just its pick.
+   */
+  mirrorsAll(): boolean {
+    return this.peer.mirrorAll !== false
+  }
+
+  /**
    * Choose what to mirror. Ids are the OTHER device's, as `panes()` reports them.
    *
    * Streams follow the pick both ways: a newly watched pane is attached (its scrollback
@@ -166,7 +178,7 @@ export class RemoteClient extends EventEmitter {
       this.conn?.send({ t: 'detach', id })
     }
     this.watching = next
-    if (this.peer.mirrorAll) this.peer = { ...this.peer, mirrorAll: false }
+    if (this.mirrorsAll()) this.peer = { ...this.peer, mirrorAll: false }
     this.applyWatch()
   }
 
@@ -181,7 +193,7 @@ export class RemoteClient extends EventEmitter {
   }
 
   private applyWatch(): void {
-    if (this.peer.mirrorAll) for (const s of this.available) this.watching.add(s.id)
+    if (this.mirrorsAll()) for (const s of this.available) this.watching.add(s.id)
     const live = new Set(this.available.map((s) => s.id))
     for (const id of [...this.watching]) if (!live.has(id)) this.watching.delete(id)
     for (const id of this.watching) this.attach(id)
@@ -262,6 +274,30 @@ export class RemoteClient extends EventEmitter {
   }
 
   /**
+   * Which of the mirrored panes each screen here is actually DRAWING, by viewer key.
+   *
+   * A screen that has never said is absent, and absent means everything it borrowed is
+   * on it - the reading an older window or a phone that says nothing gets.
+   */
+  private shown = new Map<string, Set<string>>()
+  /** Whether a person is at this desk, as last stated - see `restatePresence`. */
+  private person: boolean | undefined = undefined
+
+  /**
+   * What the far end is told about who is behind a borrow: somebody, when a person is at
+   * this desk AND the screen holding it is drawing that pane. With every pane of a device
+   * mirrored, each hidden mirror still holds a borrow over there, and a borrow with a
+   * person behind it keeps that pane off the owner's idle clock - eight hidden mirrors
+   * would have held eight PC panes open for as long as the Mac was awake.
+   */
+  private personBehind(localId: string, viewer?: string): boolean | undefined {
+    if (this.person === false) return false
+    const drawn = this.shown.get(viewer ?? '')
+    if (drawn && !drawn.has(localId)) return false
+    return this.person
+  }
+
+  /**
    * Ask the host to draw one of its panes at OUR grid, as a borrow it can undo.
    *
    * Only for a pane we are watching: a resize is the one message that changes something
@@ -270,8 +306,29 @@ export class RemoteClient extends EventEmitter {
    */
   resizeOn(localId: string, cols: number, rows: number, viewer?: string, person?: boolean): void {
     if (!this.watching.has(localId)) return
-    this.lent.set(`${localId} ${viewer ?? ''}`, { localId, cols, rows, viewer })
-    this.conn?.send({ t: 'resize', id: localId, cols, rows, borrowed: true, viewer, person })
+    if (person !== undefined) this.person = person
+    const behind = this.personBehind(localId, viewer)
+    this.lent.set(`${localId} ${viewer ?? ''}`, { localId, cols, rows, viewer, person: behind })
+    this.conn?.send({ t: 'resize', id: localId, cols, rows, borrowed: true, viewer, person: behind })
+  }
+
+  /**
+   * One screen here says which of its panes are on it. Only a borrow whose answer CHANGED
+   * is re-stated, so a window repeating itself every few seconds sends nothing.
+   */
+  setVisible(viewer: string, localIds: string[]): void {
+    this.shown.set(viewer, new Set(localIds))
+    this.restate()
+  }
+
+  private restate(): void {
+    for (const l of this.lent.values()) {
+      if (!this.watching.has(l.localId)) continue
+      const behind = this.personBehind(l.localId, l.viewer)
+      if (behind === l.person) continue
+      l.person = behind
+      this.conn?.send({ t: 'resize', id: l.localId, cols: l.cols, rows: l.rows, borrowed: true, viewer: l.viewer, person: behind })
+    }
   }
 
   /**
@@ -284,10 +341,8 @@ export class RemoteClient extends EventEmitter {
    * An older host ignores the extra field, which leaves exactly what shipped before it.
    */
   restatePresence(person: boolean): void {
-    for (const l of this.lent.values()) {
-      if (!this.watching.has(l.localId)) continue
-      this.conn?.send({ t: 'resize', id: l.localId, cols: l.cols, rows: l.rows, borrowed: true, viewer: l.viewer, person })
-    }
+    this.person = person
+    this.restate()
   }
 
   /**

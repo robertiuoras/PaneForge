@@ -151,8 +151,8 @@ function backend() {
         if (data.endsWith('\r')) for (const cb of listeners.typed) cb(id, data.trim(), 'phone')
       },
       sendPrompt: (id, text) => submitted.push([id, text]),
-      resize: (id, cols, rows, borrowed, viewer) =>
-        resized.push([id, cols, rows, borrowed === true, viewer]),
+      resize: (id, cols, rows, borrowed, viewer, _mirror, person) =>
+        resized.push([id, cols, rows, borrowed === true, viewer, person]),
       returnSize: (id, viewer) => returned.push([id, viewer]),
       redraw: () => {},
       setBusy: () => {},
@@ -400,13 +400,35 @@ async function main() {
   const guestOf = () => [...(host.guests ?? [])][0]?.conn?.peer
   ok('a guest desk going empty reaches the host', await until(() => guestOf()?.person === false), JSON.stringify(guestOf()))
 
-  // Connecting is permission to watch, not a decision to watch everything.
+  // Connecting IS watching, unless this device has chosen otherwise: a pane over there is
+  // a card here the moment the link is up, so pressing it shows its screen with no wait
+  // for a mirror to attach. Robert, 2026-09-23: "i dont think we need watch button on
+  // remote sessison its just extra step and takes longer to view right?". A peer saved
+  // with `mirrorAll: false` (one that picked panes by hand) still mirrors nothing until
+  // it is picked.
   ok('both panes are offered', await until(() => client.panes().length === 2))
-  ok('nothing is mirrored until it is picked', client.list().length === 0, JSON.stringify(client.list()))
-  ok('and nothing is attached either', await until(() => (host.list()[0]?.watching ?? 0) === 0))
-  ok('so no scrollback was fetched for an unwatched pane', client.buffer('s1') === '')
+  ok('a peer that never chose mirrors everything', await until(() => client.list().length === 2), JSON.stringify(client.list()))
+  ok('and both are attached over there', await until(() => (host.list()[0]?.watching ?? 0) === 2))
+  {
+    const chosen = new RemoteClient({ ...peer, id: 'HOSTID', mirrorAll: false }, () => ({ id: 'GUEST2', name: 'Phone', platform: 'ios', version: '0' }))
+    ok('a peer that chose its panes mirrors nothing until picked', chosen.list().length === 0 && chosen.mirrorsAll() === false)
+  }
 
   client.setWatch(['s1'])
+  ok('picking narrows the mirror to the pick', await until(() => client.list().length === 1), JSON.stringify(client.list()))
+  ok('and detaches the rest over there', await until(() => (host.list()[0]?.watching ?? 0) === 1))
+  ok('so no scrollback is kept for an unwatched pane', client.buffer('s2') === '')
+  // What the old press paid before the screen could be shown: an attach round trip plus
+  // the scrollback fetch. Printed, not asserted - it is the number the default above buys
+  // back (on a loopback socket; a tailnet adds its own round trip on top).
+  {
+    client.setWatch([])
+    await until(() => (host.list()[0]?.watching ?? 0) === 0 && client.buffer('s1') === '')
+    const t0 = performance.now()
+    client.setWatch(['s1'])
+    await until(() => client.buffer('s1') === 'SECRET-SCROLLBACK-s1')
+    console.log(`  note attach-on-press cost ${Math.round(performance.now() - t0)}ms on loopback before its screen could be shown`)
+  }
   ok('a picked pane is mirrored', await until(() => client.list().length === 1), JSON.stringify(client.list()))
   const mirrored = client.list()
   ok('ids are namespaced by device', mirrored[0].id === '@HOSTID/s1', mirrored[0].id)
@@ -490,6 +512,32 @@ async function main() {
     [...keys].every((k) => /\/(window|phone)$/.test(String(k))),
     JSON.stringify([...keys])
   )
+  // A mirror that is not on screen is not somebody looking. With every pane of a device
+  // mirrored, each one holds a borrow on the far end, and a borrow with a person behind it
+  // holds that pane off the far end's idle clock - so eight hidden mirrors would have kept
+  // eight PC panes open for as long as the Mac was awake. The screen says which of its
+  // panes are drawn; a borrow for one that is not is re-stated with nobody at it, and
+  // stated with somebody there again when it comes back on screen.
+  client.setVisible('window', ['s2'])
+  ok(
+    'a mirrored pane hidden on this screen is re-stated with nobody looking',
+    await until(() => be.resized.some(([id, , , , v, person]) => id === 's1' && /\/window$/.test(String(v)) && person === false)),
+    JSON.stringify(be.resized.filter(([id]) => id === 's1'))
+  )
+  ok(
+    'the phone, which said nothing about what it shows, is left as it was',
+    !be.resized.some(([id, , , , v, person]) => id === 's1' && /\/phone$/.test(String(v)) && person === false),
+    JSON.stringify(be.resized.filter(([id]) => id === 's1'))
+  )
+  const restated = be.resized.length
+  client.setVisible('window', ['s1', 's2'])
+  ok(
+    'and back on screen it is somebody looking again',
+    await until(() => be.resized.slice(restated).some(([id, , , , v, person]) => id === 's1' && /\/window$/.test(String(v)) && person !== false)),
+    JSON.stringify(be.resized.slice(restated))
+  )
+  client.setVisible('window', ['s1', 's2'])
+  ok('saying the same thing twice sends nothing', be.resized.length === restated + 1, String(be.resized.length - restated))
   // The phone goes back to its list while the window is still mirroring the pane. Only the
   // phone's borrow ends: returning the whole connection's here is what left the desk
   // holding a grid nobody asked for.
