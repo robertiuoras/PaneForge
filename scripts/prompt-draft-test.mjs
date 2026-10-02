@@ -331,7 +331,7 @@ check(
   const from = source.indexOf('  private async recheckDraft(')
   const to = source.indexOf('  private async confirmDraft(', from)
   check('sessions.ts has a recheckDraft method', from >= 0 && to > from)
-  check('...and sweepIdle calls it when draftRecheckDue says so, never under a hold', /!live\.draftConfirmation && !meta\.owedPrompt && draftRecheckDue\([^)]*\)[^\n]*\n?[^\n]*this\.recheckDraft\(live\)/.test(source))
+  check('...and sweepIdle calls it when draftRecheckDue says so, never under a hold', /!live\.draftConfirmation && !this\.promptInFlight\(live\) && draftRecheckDue\([^)]*\)[^\n]*\n?[^\n]*this\.recheckDraft\(live\)/.test(source))
   if (from >= 0 && to > from) {
     const harness = join(work, 'recheck.ts')
     writeFileSync(harness, `
@@ -342,6 +342,7 @@ const acLog = (s: string) => { logs.push(s) }
 export class Harness {
   sessions = new Map<string, any>(); emitted = 0
   emitSessions() { this.emitted++ }
+  promptInFlight(live: any) { return Boolean(live.inFlight) }
 ${source.slice(from, to)}
 }
 `)
@@ -379,8 +380,12 @@ ${source.slice(from, to)}
     check('a draft changed during the read keeps the flag', r.live.meta.drafting === true)
     r = await run(parked, (l) => { l.draftConfirmation = { prompt: 'x', since: 1, afterPaint: 5 } })
     check('a submission hold set during the read keeps the flag', r.live.meta.drafting === true)
+    r = await run(parked, (l) => { l.inFlight = true })
+    check('a prompt typed during the read keeps the flag', r.live.meta.drafting === true)
+    // s19-muqs9nqa, 2026-10-02 11:03Z: a queued prompt accepted and NOT yet typed waited
+    // "behind you" on this very flag over an empty box, and its owed flag kept the recheck off.
     r = await run(parked, (l) => { l.meta.owedPrompt = true })
-    check('a prompt owed during the read keeps the flag', r.live.meta.drafting === true)
+    check('a prompt owed but still waiting to be typed does not keep the flag', r.live.meta.drafting === undefined, JSON.stringify(r.live.meta))
   }
 }
 
