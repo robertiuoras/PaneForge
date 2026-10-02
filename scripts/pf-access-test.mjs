@@ -13,7 +13,7 @@
 //
 //   node scripts/pf-access-test.mjs
 import { execFile } from 'node:child_process'
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { connect } from 'node:net'
 import { networkInterfaces, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -78,6 +78,44 @@ const A = await load('src/shared/pfAccess.ts', 'pfaccess')
   ok(wApp.map((f) => f.name).join() === 'pf.ps1,pf.cmd,pf', 'Windows without Node: all three hand to pf.ps1')
   ok(/\| Write-Output\r\nexit \$LASTEXITCODE/.test(wApp[0].body), 'pf.ps1 pipes so PowerShell waits and keeps the exit code')
   ok(wApp[1].body.includes('-File "C:\\U\\bin\\pf.ps1" %*'), 'pf.cmd names pf.ps1 once, no doubled separator', wApp[1].body)
+  // Git Bash rewrites a leading-slash argument (`/clear`) into a Windows path on exec.
+  const EXPORT = "export MSYS2_ARG_CONV_EXCL='*'\n"
+  for (const [what, f] of [['Node', wNode[1]], ['Node-less', wApp[2]]]) {
+    const at = f.body.indexOf(EXPORT)
+    ok(at > 0 && at < f.body.indexOf('exec '), `win32 ${what} pf shim turns MSYS argument conversion off before exec`, f.body)
+  }
+  ok(!mNode[0].body.includes('MSYS2_ARG_CONV_EXCL'), 'POSIX shim is unchanged')
+}
+
+// ---- real Git Bash: "/clear" must reach pf-ctl as typed ----------------------------------
+if (process.platform === 'win32') {
+  const sh = ['C:/Program Files/Git/usr/bin/sh.exe', 'C:/Program Files/Git/bin/sh.exe'].find((p) => existsSync(p))
+  if (!sh) console.log('  (Git Bash not found - real-shell argument check skipped)')
+  else {
+    const dir = join(work, 'gb')
+    mkdirSync(dir, { recursive: true })
+    const script = join(dir, 'argv.mjs')
+    writeFileSync(script, 'console.log(JSON.stringify(process.argv.slice(2)))\n')
+    const shim = A.pfShimFiles('win32', process.execPath, process.execPath, script, dir).find((f) => f.name === 'pf')
+    writeFileSync(join(dir, 'pf'), shim.body)
+    const got = await new Promise((res) =>
+      execFile(sh, [join(dir, 'pf').replace(/\\/g, '/'), '/clear', '/c/Users'], { encoding: 'utf8', timeout: 20_000 }, (e, o, se) =>
+        res(e ? `error: ${e.message} ${se}` : o.trim())
+      )
+    )
+    ok(got === JSON.stringify(['/clear', '/c/Users']), 'Git Bash: "/clear" arrives unchanged through the pf shim', got)
+  }
+}
+
+// ---- pf-ctl path arguments: an MSYS drive path becomes a Windows one on win32 only --------
+{
+  const { pathArg } = await import(pathToFileURL(join(root, 'scripts', 'pf-ctl-lib.mjs')).href)
+  ok(pathArg('/c/Users/x', 'win32') === 'C:/Users/x', 'MSYS /c/Users/x -> C:/Users/x', String(pathArg('/c/Users/x', 'win32')))
+  ok(pathArg('/D', 'win32') === 'D:/', 'bare MSYS drive /D -> D:/', String(pathArg('/D', 'win32')))
+  ok(pathArg('/clear', 'win32') === '/clear', '/clear is not a drive path')
+  ok(pathArg('/cx/y', 'win32') === '/cx/y', '/cx/y is not a drive path')
+  ok(pathArg('C:\\x', 'win32') === 'C:\\x', 'a Windows path is left alone')
+  ok(pathArg('/c/Users/x', 'darwin') === '/c/Users/x', 'other platforms never convert')
 }
 
 // ---- local-only listener + the real pf-ctl through a real shim -------------------------
