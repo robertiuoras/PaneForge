@@ -42,6 +42,7 @@ import {
 } from './passkey'
 import { createReadStream, existsSync, statSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+import { connect } from 'node:net'
 import { networkInterfaces } from 'node:os'
 import { extname, join, normalize, sep } from 'node:path'
 import { markFor } from '../shared/deviceWatch'
@@ -433,6 +434,24 @@ function askView(a: PhoneAsk & { token?: string }): PhoneAsk {
  */
 export const LOCAL_ONLY = 'local-only'
 
+/**
+ * Whether something already accepts connections on 127.0.0.1:port. Both a listener and a
+ * closed port answer in about 4 ms (measured on the PC, 2026-10-02); silence past `ms` counts
+ * as free, so a firewall that drops loopback cannot hold the phone server off.
+ */
+function answersOnLoopback(port: number, ms = 400): Promise<boolean> {
+  return new Promise((resolve) => {
+    const s = connect({ host: '127.0.0.1', port })
+    const done = (yes: boolean): void => {
+      s.destroy()
+      resolve(yes)
+    }
+    s.once('connect', () => done(true))
+    s.once('error', () => done(false))
+    s.setTimeout(ms, () => done(false))
+  })
+}
+
 export class PhoneServer {
   private server: Server | null = null
   private clients = new Set<Client>()
@@ -508,6 +527,15 @@ export class PhoneServer {
     this.tidyDevices()
     this.lastError = ''
     this.bound = bind
+    // A port another program already answers on is not ours. Windows (and macOS, where Node
+    // sets SO_REUSEADDR) let 127.0.0.1:7312 bind beside another app's 0.0.0.0:7312, and
+    // loopback then reaches the newcomer: on 2026-10-02 a headless dev copy with phone access
+    // off took `pf` and the tunnel's 127.0.0.1:7312 from the installed app (pairing 403).
+    if (port && (await answersOnLoopback(port))) {
+      this.lastError = `port ${port} is already used by another program`
+      this.deps.onChange?.()
+      return this.state()
+    }
     const server = createServer((req, res) => {
       void this.route(req, res).catch((err) => {
         this.plain(res, 500, String(err instanceof Error ? err.message : err))
@@ -1019,7 +1047,10 @@ b.onclick=async()=>{
   private async tailnetVerdict(req: IncomingMessage, what: string, always = false): Promise<TailnetVerdict> {
     const source = tailnetSource({ socket: normalise(req.socket.remoteAddress ?? ''), headers: req.headers })
     let verdict: TailnetVerdict
-    if ('refused' in source) verdict = judgeTailnet(source, null, '')
+    // Phone access off = the loopback-only listener. A leftover `tailscale serve` can still
+    // forward a tailnet request here; it must not be trusted on a locked-down desk.
+    if (this.localOnly) verdict = { trusted: false, reason: 'phone access is switched off', ip: 'refused' in source ? '' : source.ip }
+    else if ('refused' in source) verdict = judgeTailnet(source, null, '')
     else if (!this.deps.tailnet) verdict = { trusted: false, reason: 'Tailscale identity is not wired in', ip: source.ip }
     else {
       const [node, self] = await Promise.all([this.deps.tailnet.whois(source.ip), this.deps.tailnet.selfUser()])

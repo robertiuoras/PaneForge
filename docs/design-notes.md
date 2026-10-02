@@ -904,6 +904,32 @@ a drag now opens the row from `pointerup`, which no scroll heuristic gets to vet
 and neither does a finger that travelled more than `TAP_SLOP`. Mouse presses are untouched:
 a click is reliable there, and `onClick` is also what catches keyboard activation.
 
+A phone on the tailnet needs no code, and the rule is built on what was measured, not assumed.
+`tailscale serve` OVERWRITES `X-Forwarded-For` with the caller's exact tailnet address and
+sets/strips `Tailscale-User-Login` and `Tailscale-Funnel-Request`; `CF-Connecting-IP` passes
+straight through serve, so it is forgeable and is never read as an address (any `cf-connecting-ip`
+or `cf-ray` refuses). Tailscale user ids and node ids are compared as text, since they pass 2^53
+and a number would round them. On 14 Aug 2026 the lockdown turned phone access off; a leftover
+`tailscale serve :443 -> 7312` would still deliver a tailnet request to the loopback-only listener
+`pf` uses, so `tailnetVerdict` refuses (`phone access is switched off`, before any whois) whenever
+`localOnly`. Caveat: the `ts-<StableID>` Devices row is an approved device whose cookie survives
+`New code`, so locking out a lost phone means `Sign out` on the row AND removing it from the tailnet;
+Sign out alone lets it back in by its identity. Measured on the PC serve 2026-10-02 (Mac on the
+tailnet and a public Funnel request, forged headers on both): forged login/name replaced on the
+tailnet and dropped on Funnel, `Tailscale-Funnel-Request: ?1` on Funnel and stripped on the
+tailnet, `X-Forwarded-For` exactly the caller's tailnet address (a forged one gone). NOT measured:
+a tagged node sending no login (no tagged client to hand); the rule refuses it twice anyway (no
+login header, and whois `Tags`). The Mac's lost :443 the same day was 0.8.232's `Funnel.stop()`
+turning 443 off whenever any copy quit (fixed by 56286cf0 in 0.8.233), not this feature.
+
+A second listener on the phone port is refused before it binds, because the OS does not refuse
+it. On 2026-10-02 a headless dev copy (phone access off, so `127.0.0.1:7312`) bound beside the
+installed app's `0.0.0.0:7312` on the PC; loopback goes to the more specific address, so every
+`pf` call on the PC paired with the copy and got 403 (wrong code) then 429, the try-reaper's
+`pf list` failed, and `tailscale serve :443 -> 127.0.0.1:7312` delivered Robert's phone to the
+copy. macOS allows the same bind (Node sets SO_REUSEADDR). A refused loopback connect measured
+4 ms on the PC, so the probe costs nothing on a free port.
+
 ## Every colour is derived, and every pane says which project it is in
 
 Two rules that touch nearly every file in the renderer, both added 2026-08-01.
