@@ -14,7 +14,7 @@
 //   node scripts/pf-access-test.mjs
 import { execFile } from 'node:child_process'
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
-import { connect } from 'node:net'
+import { connect, createServer as createNetServer } from 'node:net'
 import { networkInterfaces, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -132,6 +132,33 @@ if (process.platform !== 'win32') {
 
 const back = await server.start(port)
 ok(back.on === true && !server.localOnly, 'switching phone access on turns the same port into a real phone server')
+await server.stop()
+
+// Another program already on the port (the installed app, as a dev copy starts): binding
+// 127.0.0.1 beside its 0.0.0.0 succeeds on Windows and macOS, and loopback - `pf`, the
+// tunnel, `tailscale serve` - would then reach the newcomer. The newcomer must stand back.
+// The probe connects and hangs up at once, so the held side's write can meet a reset.
+const held = createNetServer((s) => {
+  s.on('error', () => {})
+  s.end('held\n')
+})
+await new Promise((res) => held.listen(port, '0.0.0.0', res))
+const shadow = await server.start(port, LOCAL_ONLY)
+ok(!server.running, 'a port another program answers on is not taken as a local-only listener', JSON.stringify(shadow))
+const shadowOn = await server.start(port)
+ok(!server.running && /already used/.test(shadowOn.error ?? ''), 'nor as a phone server, and the panel says why', JSON.stringify(shadowOn))
+const reply = await new Promise((res) => {
+  let text = ''
+  const s = connect({ host: '127.0.0.1', port })
+  s.setEncoding('utf8')
+  s.on('data', (c) => (text += c))
+  s.on('close', () => res(text))
+  s.on('error', () => res(''))
+})
+ok(reply === 'held\n', 'loopback still reaches the program that held the port first', JSON.stringify(reply))
+await new Promise((res) => held.close(res))
+const freed = await server.start(port, LOCAL_ONLY)
+ok(server.running && server.localOnly, 'and the port is taken once it is free again', JSON.stringify(freed))
 await server.stop()
 
 console.log(fail ? `\npf-access-test: ${fail} of ${pass + fail} failed` : `\npf-access-test: ${pass} checks passed`)

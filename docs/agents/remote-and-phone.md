@@ -99,6 +99,9 @@ opened; unpaired = pairing page; wrong codes lock; cookie `hmac(deviceId, code)`
   `X-Forwarded-For` + `tailscale whois`, same Tailscale user as the desk, iOS/android, never Funnel or
   cloudflared, never with phone access off), `POST /pf/native/v1/auth/tailnet`, trusted `/pf/ask` and
   control unlock; grants slide 30 days while in use; `phone-trust.log`; `test:tailnettrust`.
+- The phone server never starts on a port something already answers on at 127.0.0.1
+  (`answersOnLoopback` in `PhoneServer.start`, `test:pfaccess`): a copy would otherwise shadow
+  the installed app's loopback for `pf`, the tunnel and `tailscale serve`.
 - `test:phone`, `test:phoneview`; `window.__pf[id].term.buffer`. Not built: B1, H2.
 
 ## The other machine's screen is one click away
