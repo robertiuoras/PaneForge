@@ -1592,6 +1592,8 @@ export interface RemotePaneInfo {
   finished?: boolean
   /** when THAT desk's idle clock will close it - its decision, forwarded, never ours */
   closingAt?: number
+  /** when THAT desk's finished-chat close countdown ends - forwarded so the row says `closing` */
+  doneClosingAt?: number
   /** Persistent Keep open preference, read and changed on the device that owns the pane. */
   keepOpen?: boolean
 }

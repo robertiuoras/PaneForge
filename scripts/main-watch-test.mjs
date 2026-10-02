@@ -203,11 +203,17 @@ try {
   // Compile the real child with only its message port replaced. The mark function remains
   // private in production; the source substitution exposes it only inside this test bundle.
   const childOut = join(work, 'watchdog-child.cjs')
-  const childSource = readFileSync(join(root, 'src/main/watchdog-child.ts'), 'utf8')
-    .replace("const port = process.parentPort", 'const port = { on(_name, fn) { globalThis.__childOnMessage = fn } }')
-    .replace("import { readPressure } from './memory'", "const readPressure = () => { globalThis.__pressureReads = (globalThis.__pressureReads ?? 0) + 1; return globalThis.__pressure ?? 'normal' }")
-    .replace('async function markDeskForRestart(', 'export async function markDeskForRestart(')
-    .replace('function relaunch(', 'export function relaunch(')
+  // A patch that stops matching (the source line moved) must fail the run, not silently test the
+  // real thing: String.replace returns the input unchanged when nothing matches.
+  const patch = (source, from, to) => {
+    if (!source.includes(from)) throw new Error(`watchdog-child.ts no longer contains the text this test patches: ${from}`)
+    return source.replace(from, to)
+  }
+  let childSource = readFileSync(join(root, 'src/main/watchdog-child.ts'), 'utf8')
+  childSource = patch(childSource, "const port = process.parentPort", 'const port = { on(_name, fn) { globalThis.__childOnMessage = fn } }')
+  childSource = patch(childSource, "import { readPressure } from './memory'", "const readPressure = () => { globalThis.__pressureReads = (globalThis.__pressureReads ?? 0) + 1; return globalThis.__pressure ?? 'normal' }")
+  childSource = patch(childSource, 'async function markDeskForRestart(', 'export async function markDeskForRestart(')
+  childSource = patch(childSource, 'function relaunch(', 'export function relaunch(')
   await build({
     stdin: { contents: childSource, resolveDir: join(root, 'src/main'), sourcefile: 'watchdog-child.ts', loader: 'ts' },
     bundle: true, platform: 'node', format: 'cjs', outfile: childOut
@@ -216,10 +222,13 @@ try {
   const execCalls = []
   // The machine as the child saw it at 6:25:54pm: 196 MB free of 16384 MB.
   const osAtCrash = { ...nativeLoad('node:os', null, false), freemem: () => 196 * 1048576, totalmem: () => 16384 * 1048576 }
-  Module._load = (request, parent, isMain) => request === 'node:child_process'
+  // The child's view of the machine: no real ps, no real spawn, 196 MB free. Every require of
+  // the child bundle (the first below and each loadChild replay) must run under this loader.
+  const childLoad = (request, parent, isMain) => request === 'node:child_process'
     ? { execFile(command) { execCalls.push(command) }, spawn(command, args, options) { spawnCalls.push({ command, args, options }); return { once() {}, unref() {} } } }
     : request === 'node:os' ? osAtCrash
     : nativeLoad(request, parent, isMain)
+  Module._load = childLoad
   const { markDeskForRestart, relaunch } = requireOut(childOut)
   const hello = (userData) => ({ t: 'hello', pid: 1, exe: 'pf', appPath: 'pf', userData, platform: 'darwin', argv: [], packaged: false })
   const caseDir = (name) => mkdtempSync(join(work, `${name}-`))
@@ -278,6 +287,9 @@ try {
   // Replay of 6:25:54pm through the real child: silence while the machine is short of memory
   // waits and says so, a beat afterwards says every pane was kept, and only ten minutes of
   // silence acts. execFile('ps') is the first thing act() runs, so it marks an act.
+  // The desk-restore cases above swapped Module._load for an electron-only stub; put the child's
+  // loader back, or the replay below reads this machine's real memory and runs the real ps.
+  Module._load = childLoad
   const settle = async (file, text) => {
     for (let i = 0; i < 5000; i++) {
       if (existsSync(file) && readFileSync(file, 'utf8').includes(text)) return true
