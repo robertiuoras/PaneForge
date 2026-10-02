@@ -143,18 +143,19 @@ c=sqlite3.connect(sys.argv[1]);c.execute('create table threads(id text,rollout_p
   const { render } = createRequire(import.meta.url)(uiOut)
   globalThis.window = { api: { onLinkState() {} } }
   const session = { id: 'fixture', title: 'Worker proof', agent: 'codex' }
-  assert.match(render(session), /Count unavailable/)
-  assert.match(render({ ...session, codexWorkers: { status: 'fresh', workers: [] } }), /0 running/)
+  assert.equal(render(session), '', 'no reading yet draws nothing')
+  assert.equal(render({ ...session, codexWorkers: { status: 'fresh', workers: [] } }), '', 'zero running draws nothing')
   const ui = render({ ...session, codexWorkers: { status: 'fresh', workers: [{ id: 'one', name: 'Build & verify', model: 'gpt-6.1-sol', state: 'running', startedAt: fixtureNow - 90_000 }] } })
   assert.match(ui, /1 running/)
   assert.match(ui, /Build &amp; verify/)
   assert.match(ui, /gpt-6.1-sol/)
   assert.match(ui, /1m 30s/)
-  assert.match(render({ ...session, codexWorkers: { status: 'unknown', workers: [{ id: 'one', name: 'Build', state: 'stale' }] } }), /0 confirmed running/)
+  assert.equal(render({ ...session, codexWorkers: { status: 'unknown', workers: [{ id: 'one', name: 'Build', state: 'stale' }] } }), '', 'only stopped/stale workers draws nothing')
+  assert.match(render({ ...session, codexWorkers: { status: 'unknown', workers: [{ id: 'one', name: 'Build', state: 'running', startedAt: fixtureNow - 1000 }, { id: 'two', name: 'Old', state: 'stale' }] } }), /1 confirmed running/)
   assert.equal(render({ ...session, agent: 'shell' }), '', 'unsupported provider does not claim zero')
   delete globalThis.window
   console.log('Codex workers: event ordering, incremental reads, partial writes, stale/unknown states, read-only DB and identity checks passed')
-  console.log('Worker display: native timing, Claude background completion/unknown model, persistent zero/unavailable counts and escaped task labels passed')
+  console.log('Worker display: native timing, Claude background completion/unknown model, hidden when nothing runs and escaped task labels passed')
 } finally {
   Date.now = realNow
   childProcess.execFile = realExec

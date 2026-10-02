@@ -8,6 +8,10 @@ export default function Workers({ session, spec }: { session: Session; spec?: Pi
   const reading = session.agent === 'codex' ? session.codexWorkers : session.claudeWorkers
   const workers = reading?.workers ?? []
   const running = workers.filter(w => w.state === 'running')
+  // Nothing running = nothing to show. A standing "0 running" / "Count unavailable" strip
+  // on every pane was noise (Robert 2026-10-03: "showing background workers even when 0
+  // running ... no point").
+  if (!running.length) return null
   const uncertain = !reading || reading.status !== 'fresh' || workers.some(w => w.state === 'unknown' || w.state === 'stale')
   const stopped = workers.length - running.length
   const summary = !reading || (reading.status === 'unknown' && !workers.length)
