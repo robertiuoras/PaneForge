@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import {
-  appendFileSync,
   closeSync,
   existsSync,
   mkdirSync,
@@ -13,17 +12,18 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { homedir, hostname } from "node:os";
+import { homedir } from "node:os";
 import { extname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { app } from "electron";
 import { profileName } from "./profile";
+import { appendLog } from "./logWrite";
 import { postPush } from "./limitWaves";
+import { reviewPush } from "../shared/reviewPush";
 import { codexTranscriptPath, transcriptPath } from "./transcripts";
 import { cardNumber } from "../../scripts/pf-ctl-lib.mjs";
 import type { HistoryEntry } from "../shared/types";
 import { renderReviewMarkdown, reviewMarkdownLinks } from "../shared/reviewMarkdown";
-import { deliverReviewPush, reviewPush, type PushedReview } from "../shared/reviewPush";
 import {
   FULL_ADVICE,
   contextLevel,
@@ -120,6 +120,8 @@ function publishReview(record: ReviewRecord): void {
     }
   }
 }
+/** How old a peer's close may be and still raise a GuardDeck card here (`storeRemoteReview`). */
+export const PEER_NOTICE_MAX_AGE_MS = 12 * 60 * 60_000;
 const kinds: ReviewKind[] = ["result", "decision", "blocked", "closed"],
   proofs: ReviewProof[] = ["measured", "claimed", "unverified"];
 const fileExt = new Set([
@@ -284,6 +286,12 @@ export function storeRemoteReview(
   atomic(jsonPath(localId), JSON.stringify(record, null, 2));
   atomic(htmlPath(localId), page(record));
   changedReview(record);
+  // The other desk's chat closed itself into Review. Only the Mac writes GuardDeck notices
+  // (`spoolNotice`), so a PC close had a Review row here and no card (2026-10-02). Once: on
+  // the replica that first carries the close. And only a recent close, or the first
+  // reconnect replaying a peer's whole history would raise a card per old chat.
+  if (v.notify === true && record.closedAt && !old?.closedAt && Date.now() - Date.parse(record.closedAt) < PEER_NOTICE_MAX_AGE_MS)
+    return spoolNotice({ ...record, notify: true });
   return record;
 }
 /** A bounded, portable review payload for the encrypted peer link. */
@@ -331,7 +339,7 @@ function page(r: ReviewRecord) {
     items.length ? `<h2>${title}</h2><ul>${items.join("")}</ul>` : "";
   return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${r.paneNumber ? `${esc(String(r.paneNumber))} ` : ""}${esc(r.title)}</title><style>:root{color-scheme:dark}body{max-width:820px;margin:60px auto;padding:0 28px;background:#121416;color:#e9e9e6;font:16px/1.65 -apple-system,BlinkMacSystemFont,sans-serif}h1{font-size:32px;line-height:1.2;letter-spacing:-.025em;font-weight:800}.num{display:inline-block;min-width:1.4em;padding:0 .3em;margin-right:.15em;border-radius:8px;background:#f0a868;color:#121416;text-align:center;font-variant-numeric:tabular-nums}.meta{color:#adb0ac}.ctx{margin-top:-6px}h2{margin-top:32px;font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:#adb0ac}pre,.report{font:inherit;overflow-wrap:anywhere;background:#1c1f21;border:1px solid #303437;border-radius:12px;padding:20px}.report strong{color:#fff}.report :is(h1,h2,h3,h4,h5,h6){font-size:1.15em;text-transform:none;letter-spacing:normal;color:#f0a868;margin:24px 0 10px}.report p{margin:0 0 14px}.report>:first-child{margin-top:0}.report>:last-child{margin-bottom:0}.report blockquote{margin:14px 0;padding-left:16px;border-left:3px solid #f0a868;color:#adb0ac}.report pre{white-space:pre;overflow-x:auto;padding:14px}.report pre code{padding:0;background:none}.report table{border-collapse:collapse;display:block;overflow-x:auto}.report :is(th,td){padding:6px 10px;border:1px solid #303437;text-align:left}body>pre{white-space:pre-wrap}code{font:14px ui-monospace,Menlo,monospace;background:#2a2e31;border-radius:5px;padding:1px 5px}a{color:#d6e5ec;text-underline-offset:4px}li{margin:8px 0}</style><h1>${num}${esc(r.title)}</h1><p class="meta">${esc(r.kind)} · ${esc(r.proof)} · finished ${esc(when(r.completedAt ?? r.createdAt))}</p>${contextLine(r)}<div class="report">${renderReviewMarkdown(r.report)}</div><h2>Original prompt</h2><pre>${esc(r.prompt)}</pre>${list("Evidence", (r.evidence ?? []).map((e) => `<li>${esc(e)}</li>`))}${list("Links", (r.links ?? []).map((l) => `<li><a href="${esc(l.url)}">${esc(l.label)}</a></li>`))}`;
 }
-function immutable(r: PushedReview) {
+function immutable(r: ReviewRecord) {
   const {
     createdAt,
     closedAt,
@@ -341,7 +349,7 @@ function immutable(r: PushedReview) {
     reportPath,
     payloadHash,
     noticeSentAt,
-    pushedAt,
+    pushSentAt,
     // Read off the desk and the transcript at the moment of recording: a retry of the same
     // report is the same report even when the card has moved or the chat has said more.
     paneNumber,
@@ -376,51 +384,44 @@ function receipt(id: string) {
     return undefined;
   }
 }
+/** Rows whose push is on its way, so a re-spooled row does not post twice. */
+const pushing = new Set<string>();
+/** When each try after the first goes: a phone that is offline for a minute still gets it. */
+const PUSH_RETRY_MS = [30_000, 120_000];
 /**
- * The installed app pushes from either machine; a copy only when given its own endpoint
- * (`PF_TASKDRIVER_NOTIFY_URL`, the dev-copy proof), so a plain dev copy never does.
+ * The phone push for a row that left something for the person, on EITHER machine - unlike
+ * the GuardDeck card below, which only the Mac reads. Packaged and unprofiled only, so a
+ * `npm run try` copy never buzzes the phone. `pushSentAt` is written only after TaskDriver
+ * accepted it; its `dedupe_key` makes a retry after a crash a no-op there.
  */
-function mayPush() {
-  return (app.isPackaged && !profileName()) || Boolean(process.env.PF_TASKDRIVER_NOTIFY_URL);
-}
-/** The person's phone hears about a row that needs them, once (`shared/reviewPush.ts`). */
-function pushNotice(record: PushedReview, looked: boolean, opener?: string) {
-  if (!mayPush()) return;
-  const payload = reviewPush(
-    { ...record, reviewedAt: receipt(record.id) ?? iso(record.reviewedAt) },
-    {
-      read: looked,
-      opener,
-      machine: process.platform === "win32" ? "PC" : "Mac",
-      host: () => process.env.PF_DEVICE || hostname().replace(/\.local$/, ""),
-    },
-  );
+function pushOnce(record: ReviewRecord, looked: boolean): void {
+  if (!app.isPackaged || profileName() || pushing.has(record.id)) return;
+  const machine = process.platform === "win32" ? "pc" : "mac";
+  const payload = reviewPush({ ...record, reviewedAt: receipt(record.id) ?? record.reviewedAt }, machine, looked);
   if (!payload) return;
-  void deliverReviewPush(record.id, payload, {
-    post: (p) => postPush(p),
-    wait: (ms) => new Promise((done) => setTimeout(done, ms)),
-    pushedAt: (id) => (read(id) as PushedReview | null)?.pushedAt,
-    // Re-read: the row may have gained `closedAt` while the post was in flight.
-    markPushed: (id, at) => {
-      const now = read(id) as PushedReview | null;
-      if (!now) return;
-      now.pushedAt = at;
-      atomic(jsonPath(id), JSON.stringify(now, null, 2));
-    },
-    log: (line) => {
-      try {
-        appendFileSync(join(app.getPath("userData"), "phone-push.log"), `${line}\n`);
-      } catch {
-        /* the push itself is what matters */
+  pushing.add(record.id);
+  const log = (line: string) =>
+    appendLog(join(app.getPath("userData"), "phone-push.log"), `[${new Date().toISOString()}] ${record.id} ${line}\n`, { rotateAt: 64 * 1024 });
+  const attempt = (n: number): void => {
+    void postPush(payload).then((ok) => {
+      if (ok) {
+        const now = read(record.id);
+        if (now) atomic(jsonPath(record.id), JSON.stringify({ ...now, pushSentAt: new Date().toISOString() }, null, 2));
+        pushing.delete(record.id);
+        log(`pushed: ${payload.title}`);
+      } else if (n < PUSH_RETRY_MS.length) {
+        log(`push refused or no token, try ${n + 2} in ${PUSH_RETRY_MS[n] / 1000}s`);
+        setTimeout(() => attempt(n + 1), PUSH_RETRY_MS[n]).unref();
+      } else {
+        pushing.delete(record.id);
+        log("push NOT sent after 3 tries");
       }
-    },
-    now: () => new Date(),
-  });
+    });
+  };
+  attempt(0);
 }
-/** `looked`/`opener`: the done-close reading (`doneClose.ts`), for the phone push only. */
-function spoolNotice(record: ReviewRecord, looked = false, opener?: string): ReviewRecord {
-  // Before the Mac-only GuardDeck gate: the phone hears from both machines.
-  pushNotice(record, looked, opener);
+function spoolNotice(record: ReviewRecord, looked = false): ReviewRecord {
+  pushOnce(record, looked);
   if (
     !record.notify ||
     iso(record.reviewedAt) ||
@@ -460,9 +461,9 @@ function spoolNotice(record: ReviewRecord, looked = false, opener?: string): Rev
             resumeId: record.provider === "shell" ? undefined : record.nativeSessionId,
             cwd: record.cwd,
             agent: record.provider,
-            // The gate above lets only the Mac app write notices; the field is here so a
-            // PC notice, when there is one, needs no new reader.
-            machine: "mac",
+            // The Mac app writes every notice; a PC chat's (`storeRemoteReview`) names the PC,
+            // where its conversation is continued.
+            machine: record.origin?.platform === "win32" ? "pc" : "mac",
             // Finished-chat report contract v1: optional, absent when unknown.
             paneNumber: record.paneNumber,
             app: record.app,
@@ -669,13 +670,11 @@ export function recordReview(
   changedReview(saved);
   return saved;
 }
-/**
- * The GuardDeck card and phone push of a row recorded with `hold`, under the row's own
- * `notify` and gate. `looked`: the pane was looked at; `opener`: a pane collects its summary.
- */
-export function sendReviewNotice(id: string, looked = false, opener?: string): void {
+/** The GuardDeck card of a row recorded with `hold`, under the row's own `notify` and gate. */
+/** `looked`: the person was reading the chat when it finished, so the phone is not told. */
+export function sendReviewNotice(id: string, looked = false): void {
   const r = validId(id) ? read(id) : null;
-  if (r) spoolNotice(r, looked, opener);
+  if (r) spoolNotice(r, looked);
 }
 export function listReviews(history: HistoryEntry[] = []): ReviewRecord[] {
   const saved = existsSync(root())

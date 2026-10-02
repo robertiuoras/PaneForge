@@ -170,3 +170,24 @@ const asyncResult = (toolUseId) => user([{ tool_use_id: toolUseId, type: 'tool_r
   assert.equal(readClaudeReply([said('Report.\n\nNext steps: None'), hook, said('Wrote it.'), hook, said('Done.')].join('\n')).text, 'Report.\n\nNext steps: None\n\nDone.', 'two hooks: still the report first')
   console.log('reply-read: stop-hook follow-up keeps the report ok')
 }
+
+// When the transcript's last turn ended - the only turn end a pane resumed onto a finished
+// conversation ever gets (`seedTurnEnd`). Row shapes from a real Claude jsonl (PC s8,
+// 2026-10-02: ... stop_hook_summary, turn_duration, cost-state) and a real Codex rollout.
+{
+  const sys = (subtype, timestamp) => row({ parentUuid: 'p', isSidechain: false, type: 'system', subtype, durationMs: 1200, timestamp, uuid: 's' })
+  const cost = row({ type: 'cost-state', sessionId: 's' })
+  const done = [user('fix it'), assistant([{ type: 'text', text: 'Fixed.' }]), sys('stop_hook_summary', '2026-10-02T06:52:30.816Z'), sys('turn_duration', '2026-10-02T06:52:30.838Z'), cost]
+  assert.equal(readClaudeReply(done.join('\n')).turnEndedAt, Date.parse('2026-10-02T06:52:30.838Z'), 'turn_duration ends it, bookkeeping after it does not reopen it')
+  assert.equal(readClaudeReply(done.slice(0, 3).join('\n')).turnEndedAt, Date.parse('2026-10-02T06:52:30.816Z'), 'a stop_hook_summary alone ends it')
+  assert.equal(readClaudeReply(done.slice(0, 2).join('\n')).turnEndedAt, undefined, 'a reply with no end row is still a turn in flight')
+  const hook = row({ type: 'user', isMeta: true, message: { role: 'user', content: 'Stop hook feedback:\nwrite a handoff' }, timestamp: '2026-10-02T06:52:31.000Z' })
+  assert.equal(readClaudeReply([...done, hook].join('\n')).turnEndedAt, undefined, 'a Stop hook answer reopens the turn')
+  assert.equal(readClaudeReply([...done, user('and the next thing')].join('\n')).turnEndedAt, undefined, 'a new prompt reopens it')
+  assert.equal(readClaudeReply([...done, row({ ...JSON.parse(sys('turn_duration', '2026-10-02T07:00:00.000Z')), isSidechain: true })].join('\n')).turnEndedAt, Date.parse('2026-10-02T06:52:30.838Z'), 'a subagent turn is not the pane turn')
+  const ev = (type, timestamp) => row({ timestamp, type: 'event_msg', payload: { type, turn_id: 't' } })
+  const codex = [ev('task_started', '2026-10-02T09:30:00.000Z'), row({ type: 'response_item', timestamp: '2026-10-02T09:39:20.000Z', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Reviewed.' }] } }), ev('task_complete', '2026-10-02T09:39:22.068Z'), row({ timestamp: '2026-10-02T09:39:22.100Z', type: 'event_msg', payload: { type: 'token_count' } })]
+  assert.equal(readCodexReply(codex.join('\n')).turnEndedAt, Date.parse('2026-10-02T09:39:22.068Z'), 'codex task_complete ends it')
+  assert.equal(readCodexReply([...codex, ev('task_started', '2026-10-02T09:40:00.000Z')].join('\n')).turnEndedAt, undefined, 'codex task_started reopens it')
+  console.log('reply-read: last turn end ok')
+}

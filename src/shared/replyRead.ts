@@ -29,6 +29,14 @@ export interface ReplyRead {
    * its steps are no longer this pane's word on what is left (`sessions.ts`).
    */
   promptAt?: number
+  /**
+   * When the transcript's LAST turn ended, by the CLI's own word: Claude's `turn_duration` /
+   * `stop_hook_summary` system row, Codex's `task_complete`, with nothing after it but
+   * bookkeeping. Unset while a turn is open. A pane resumed onto a finished conversation
+   * never shows a running footer, so this is the only turn end it has (`sessions.ts`
+   * `seedTurnEnd`); without it done-close never saw the pane at all (PC, 2026-10-02).
+   */
+  turnEndedAt?: number
 }
 
 function textOf(content: unknown): string {
@@ -76,11 +84,20 @@ export function readClaudeReply(jsonl: string): ReplyRead {
   let report: string | undefined
   let prompt: string | undefined
   let promptAt: number | undefined
+  let turnEndedAt: number | undefined
   const launched = new Set<string>()
   const answered = new Set<string>()
   const notified = new Set<string>()
   for (const line of String(jsonl || '').split('\n')) {
     if (!line) continue
+    if (line.includes('"type":"system"') && /"subtype":"(turn_duration|stop_hook_summary)"/.test(line)) {
+      try {
+        const row = JSON.parse(line) as { type?: string; subtype?: string; isSidechain?: boolean; timestamp?: unknown }
+        if (row.type === 'system' && !row.isSidechain && (row.subtype === 'turn_duration' || row.subtype === 'stop_hook_summary'))
+          turnEndedAt = stampOf(row.timestamp) ?? turnEndedAt
+      } catch { /* half a record at the head of the tail */ }
+      continue
+    }
     // The notification arrives as a queued command (`attachment` / `queue-operation` rows),
     // never inside a tool result - a tool result QUOTING one (a grep over this very code)
     // must not count, or a pane would close on top of the agent it was waiting for.
@@ -95,6 +112,9 @@ export function readClaudeReply(jsonl: string): ReplyRead {
       continue
     }
     if (j.isSidechain) continue
+    // Anything the agent or the harness said after the turn's end row opened another one -
+    // a Stop hook's feedback, a queued notification, a new prompt.
+    turnEndedAt = undefined
     const content = j.message?.content
     // The harness talking (a Stop hook's feedback, a command caveat) - never the person.
     if (j.type === 'user' && (j as { isMeta?: boolean }).isMeta) {
@@ -142,7 +162,7 @@ export function readClaudeReply(jsonl: string): ReplyRead {
   let runningAgents = 0
   for (const id of answered) if (!notified.has(id)) runningAgents++
   if (report !== undefined && report !== text) text = `${report}\n\n${text}`
-  return { text, runningAgents, prompt, promptAt }
+  return { text, runningAgents, prompt, promptAt, turnEndedAt }
 }
 
 /** A Codex rollout: `response_item` rows whose payload is an assistant message. */
@@ -150,7 +170,16 @@ export function readCodexReply(jsonl: string): ReplyRead {
   let text = ''
   let prompt: string | undefined
   let promptAt: number | undefined
+  let turnEndedAt: number | undefined
   for (const line of String(jsonl || '').split('\n')) {
+    if (line.includes('"event_msg"') && /"type":"task_(complete|started)"/.test(line)) {
+      try {
+        const row = JSON.parse(line) as { type?: string; timestamp?: unknown; payload?: { type?: string } }
+        if (row.type === 'event_msg' && row.payload?.type === 'task_complete') turnEndedAt = stampOf(row.timestamp) ?? turnEndedAt
+        else if (row.type === 'event_msg' && row.payload?.type === 'task_started') turnEndedAt = undefined
+      } catch { /* half a record */ }
+      continue
+    }
     if (!line.includes('"response_item"')) continue
     let row: { type?: string; timestamp?: unknown; payload?: { type?: string; role?: string; content?: unknown } }
     try {
@@ -170,7 +199,7 @@ export function readCodexReply(jsonl: string): ReplyRead {
       promptAt = stampOf(row.timestamp) ?? promptAt
     }
   }
-  return { text, runningAgents: 0, prompt, promptAt }
+  return { text, runningAgents: 0, prompt, promptAt, turnEndedAt }
 }
 
 /** Which machine a step happens on, read off its own words. `null` = not said. */

@@ -60,7 +60,7 @@ export const NOTHING_OPEN = 'the handoff lists nothing still open'
 import { jobFromTable, paneJob, programName, SHELLS } from '../shared/paneJob'
 import { canSleep, sleepRefusal } from '../shared/sleep'
 import { closeRefused, doneEnough, type CloseBy } from '../shared/closeWhenDone'
-import { closeHeldBy, personLooking, replyFinished, wasRead, type DoneReading } from '../shared/doneClose'
+import { closeHeldBy, personLooking, replyFinished, seedTurnEnd, wasRead, type DoneReading } from '../shared/doneClose'
 import { folderName, laneOfCheckout, projectOf } from '../shared/place'
 import { dropStale, lentGrid, watchedBorrow, type Borrow } from '../shared/paneSize'
 import { START_COLS, START_ROWS } from '../shared/paneGrid'
@@ -924,7 +924,7 @@ export class SessionManager extends EventEmitter {
   /** A person kept this pane open (`config.pinnedPanes`); `--close-when-done` leaves it. Set by index.ts. */
   keptOpen: ((id: string) => boolean) | null = null
   /** The last reply in a pane's transcript, for `Session.finished`. Set by index.ts, which knows where transcripts live. */
-  replyFor: ((id: string, agent: string) => { text: string; runningAgents?: number; promptAt?: number } | undefined) | null = null
+  replyFor: ((id: string, agent: string) => { text: string; runningAgents?: number; promptAt?: number; turnEndedAt?: number } | undefined) | null = null
 
   resumeOrigin(id: string): string | undefined {
     const live = this.sessions.get(id)
@@ -5627,6 +5627,22 @@ export class SessionManager extends EventEmitter {
       //
       // The reply is the transcript, read through `replyFor` (index.ts, cached on
       // size+mtime), and only for an idle agent pane whose footer has said the turn is over.
+      // A pane started on a conversation that had already finished - handed in, reopened,
+      // restored - never shows a running footer, so nothing would ever end its turn. Its
+      // transcript says the turn is over; that moment (now, not the transcript's) is its
+      // turn end, and the ordinary close rules take it from there (`seedTurnEnd`).
+      if (!live.footerEndedAt && !live.sawFooter && live.req.resume && meta.agent !== 'shell' && meta.status === 'idle' && this.replyFor) {
+        const seen = seedTurnEnd({
+          agent: meta.agent, status: meta.status, asleep: Boolean(meta.asleep), ask: meta.ask, resumed: true,
+          sawFooter: live.sawFooter, turnEndedAt: live.footerEndedAt, turnPending: live.turnPending, runSince: meta.runSince,
+          transcriptTurnEndedAt: this.replyFor(meta.id, meta.agent)?.turnEndedAt
+        })
+        if (seen) {
+          live.footerEndedAt = now
+          audit('turn-end-seeded', { title: meta.title, agent: meta.agent, resumeId: live.req.resumeId ?? null })
+          changed = true
+        }
+      }
       const reply =
         meta.agent !== 'shell' && meta.status === 'idle' && live.footerEndedAt && !meta.ask && this.replyFor
           ? this.replyFor(meta.id, meta.agent)

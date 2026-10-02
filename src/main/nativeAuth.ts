@@ -50,6 +50,11 @@ const UNLOCK_MS = 15 * 60_000
 const MAX_PENDING = 32
 const MAX_GRANTS = 32
 const MAX_PROMPT_RECEIPTS = 5_000
+const DEVICE_ID = /^[-_A-Za-z0-9]{22,128}$/
+const DEVICE_NAME = /^[A-Za-z0-9][A-Za-z0-9 .()_'/-]{0,79}$/
+/** The app's own id and label for itself - the same check `start` makes. */
+export const nativeDeviceValid = (deviceId: string, deviceName: string): boolean => DEVICE_ID.test(deviceId) && DEVICE_NAME.test(deviceName)
+export interface NativeTokenResponse { accessToken: string; expiresAt: string; unlockedUntil: string; deviceId: string; grantId: string; hostName: string }
 const b64 = (bytes: number): string => randomBytes(bytes).toString('base64url')
 const hash = (value: string): string => createHash('sha256').update(value).digest('hex')
 const challengeFor = (value: string): string => createHash('sha256').update(value).digest('base64url')
@@ -77,8 +82,8 @@ export class NativeAuth {
     this.sweep()
     if (!/^[-_A-Za-z0-9]{43}$/.test(input.codeChallenge)) throw new Error('invalid PKCE challenge')
     if (!/^[-_A-Za-z0-9]{22,128}$/.test(input.state)) throw new Error('invalid state')
-    if (!/^[-_A-Za-z0-9]{22,128}$/.test(input.deviceId)) throw new Error('invalid device id')
-    if (!/^[A-Za-z0-9][A-Za-z0-9 .()_'/-]{0,79}$/.test(input.deviceName)) throw new Error('invalid device name')
+    if (!DEVICE_ID.test(input.deviceId)) throw new Error('invalid device id')
+    if (!DEVICE_NAME.test(input.deviceName)) throw new Error('invalid device name')
     if (input.grantId && !/^[A-Za-z0-9_-]{22,128}$/.test(input.grantId)) throw new Error('invalid grant id')
     for (const [id, pending] of this.pending) {
       if (pending.deviceId === input.deviceId && !pending.code && pending.source === source) this.pending.delete(id)
@@ -116,7 +121,7 @@ export class NativeAuth {
     return { code: p.code, state: p.state }
   }
 
-  exchange(code: string, verifier: string, deviceId: string): { accessToken: string; expiresAt: string; unlockedUntil: string; deviceId: string; grantId: string; hostName: string } {
+  exchange(code: string, verifier: string, deviceId: string): NativeTokenResponse {
     if (!/^[-_A-Za-z0-9]{43}$/.test(code) || !/^[A-Za-z0-9._~-]{43,128}$/.test(verifier) || !/^[-_A-Za-z0-9]{22,128}$/.test(deviceId)) throw new Error('invalid exchange')
     this.sweep()
     const p = [...this.pending.values()].find((x) => x.code && equal(x.code, code))
@@ -140,13 +145,57 @@ export class NativeAuth {
     return { accessToken: token, expiresAt: new Date(grant.expiresAt).toISOString(), unlockedUntil: new Date(grant.unlockedUntil).toISOString(), deviceId: grant.deviceId, grantId: grant.id, hostName: this.hostName() }
   }
 
+  /**
+   * A grant for a device Tailscale has already named (`shared/tailnetIdentity.ts`): no
+   * browser page, no code, no PKCE - the tailnet identity IS the approval. Bound to the
+   * device row the caller made for that node, so `Sign out` on the row ends it, and to
+   * the current code, so `New code` ends it. One grant per app install, as `exchange`.
+   */
+  grantDirect(input: { deviceId: string; deviceName: string }, browserDevice: string, hostName: string): NativeTokenResponse {
+    this.sweep()
+    const deviceName = input.deviceName.trim()
+    if (!nativeDeviceValid(input.deviceId, deviceName)) throw new Error('invalid device')
+    if (!this.browserExists(browserDevice)) throw new Error('device row missing')
+    const now = Date.now()
+    const token = b64(32)
+    const prior = this.grants().find((g) => g.deviceId === input.deviceId && g.browserDevice === browserDevice)
+    const grant: NativeGrant = {
+      id: prior?.id || b64(24), deviceId: input.deviceId, deviceName, browserDevice,
+      scopes: ['read', 'control'], tokenHash: hash(token), createdAt: now, expiresAt: now + GRANT_MS,
+      unlockedUntil: now + UNLOCK_MS, codeVersion: this.codeVersion()
+    }
+    const list = this.grants().filter((g) => g.id !== grant.id && g.deviceId !== grant.deviceId)
+    if (list.length >= MAX_GRANTS) throw new Error('native device limit reached')
+    this.save([...list, grant])
+    return { accessToken: token, expiresAt: new Date(grant.expiresAt).toISOString(), unlockedUntil: new Date(grant.unlockedUntil).toISOString(), deviceId: grant.deviceId, grantId: grant.id, hostName }
+  }
+
+  /**
+   * The grant this bearer token names, or null.
+   *
+   * A grant in USE never lapses: past half its life, accepting it slides `expiresAt` a full
+   * term on and persists that. One that is not used still expires at its date, and `New
+   * code` / `Sign out` still end every one of them - neither is a clock.
+   */
   bearer(value: string | undefined, scope: NativeScope): NativeGrant | null {
     this.sweep()
     if (!value || !/^[-_A-Za-z0-9]{43}$/.test(value)) return null
     const now = Date.now()
     const grant = this.grants().find((g) => g.tokenHash === hash(value) && g.expiresAt > now && g.codeVersion === this.codeVersion() && g.scopes.includes(scope))
     if (!grant || !this.browserExists(grant.browserDevice)) return null
-    return grant
+    if (grant.expiresAt - now >= GRANT_MS / 2) return grant
+    const renewed = { ...grant, expiresAt: now + GRANT_MS }
+    this.save(this.grants().map((g) => (g.id === grant.id ? renewed : g)))
+    return renewed
+  }
+
+  /** Control without a passkey for a request Tailscale vouched for; persisted only when it moves. */
+  unlock(grant: NativeGrant): NativeGrant {
+    const now = Date.now()
+    if (grant.unlockedUntil - now >= UNLOCK_MS / 2) return grant
+    const next = { ...grant, unlockedUntil: now + UNLOCK_MS }
+    this.save(this.grants().map((g) => (g.id === grant.id ? next : g)))
+    return next
   }
 
   revoke(value: string | undefined): boolean {

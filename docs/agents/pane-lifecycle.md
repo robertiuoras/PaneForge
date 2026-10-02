@@ -117,6 +117,15 @@ sweep over `Session.finished` panes, quiet 0, `dry` touches nothing. Opener told
 result, expand = full reply + Reopen (`--resume`) + Copy; shell/bare-slash rows hidden. Idle
 shell undrawn (`fleet.ts` `idleShell`) till pressed/run; idle countdown still takes it.
 
+A pane started ON a finished conversation (handed in, reopened, restored) never flips busy, so
+its turn end is seeded from the transcript's end row (`ReplyRead.turnEndedAt`: Claude
+`turn_duration`/`stop_hook_summary`, Codex `task_complete`) at the moment it is seen
+(`seedTurnEnd`, `attention-audit.log` `turn-end-seeded`); the rules above then decide. An idle
+agent pane with no turn end logs `stays - no finished turn: ...` once (`test:doneclose`,
+`test:replyread`). A PC close reaches the Mac as a Review row AND a GuardDeck card naming the
+PC, written by the Mac on the replica that first carries `closedAt`, never for a close older
+than `PEER_NOTICE_MAX_AGE_MS` 12h (`storeRemoteReview`, `test:review`).
+
 Explicit agent `closeWhenDone` arms use the same Review-first sweep and its safety gates,
 even when automatic closure is disabled. Shell closure retains its existing command semantics.
 
