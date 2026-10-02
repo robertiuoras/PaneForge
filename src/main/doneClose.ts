@@ -8,7 +8,7 @@ import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { app } from 'electron'
 import { profileName } from './profile'
-import { doneReviewId, doneVerdict, type DoneReading } from '../shared/doneClose'
+import { doneReviewId, doneVerdict, folderLeftover, type DoneReading } from '../shared/doneClose'
 import { machineOf, readClaudeReply, readCodexReply, type ReplyRead } from '../shared/replyRead'
 import { summaryOf, type FinishedNote } from '../shared/finishedDigest'
 import type { ReviewInput, ReviewRecord } from '../shared/reviews'
@@ -127,7 +127,8 @@ export interface DoneCloseDeps {
   now?: () => number
   /**
    * The pane's folder as `DoneReading.folder` has it (`gitCached`). Asked only for a pane
-   * past every cheap gate, so an idle desk reads no git at all.
+   * past every cheap gate, so an idle desk reads no git at all. It never holds a pane; it
+   * only fills the Review row's `Left in <folder>: ...` line.
    */
   folderOf?: (id: string, since: number) => DoneReading['folder']
   /** How long a finished reply sits first (`doneQuietMs`); unset, `AUTO_CLOSE_QUIET_MS`. */
@@ -184,7 +185,7 @@ export function sweepDoneClose(d: DoneCloseDeps): string[] {
     const agent = r.agent
     const file = d.transcriptFor(id)
     const reply = file ? readReply(agent, file, now) : undefined
-    verdict = doneVerdict({ ...r, reply: reply?.text, runningAgents: reply?.runningAgents, folder: d.folderOf?.(id, r.turnEndedAt) }, now, quietMs)
+    verdict = doneVerdict({ ...r, reply: reply?.text, runningAgents: reply?.runningAgents }, now, quietMs)
     if (!verdict.close) {
       say(id, `stays - ${verdict.reason}`)
       continue
@@ -208,6 +209,8 @@ export function sweepDoneClose(d: DoneCloseDeps): string[] {
       closed.push(id)
       continue
     }
+    // The folder never holds the pane. Asked now so a read has started by the close below.
+    let folder = d.folderOf?.(id, r.turnEndedAt)
     // Quiet eligibility is not a visible warning. Start a fresh 30-second deadline
     // only after every refusal passes, and recheck them on every sweep.
     if (d.setClosing && quietMs !== 0) {
@@ -219,6 +222,10 @@ export function sweepDoneClose(d: DoneCloseDeps): string[] {
       }
       if (now < warning.at) continue
     }
+    // A read still in flight when the countdown began has usually landed by its end: ask once
+    // more, and say nothing if it still has not.
+    if (folder === 'unread') folder = d.folderOf?.(id, r.turnEndedAt)
+    const left = folderLeftover(folder, basename(native.cwd))
     const reviewId = doneReviewId(id, r.turnEndedAt)
     const h = d.history().find((e) => e.id === id)
     const prompt = h?.askLines?.[0] || h?.gist || reply.prompt || ''
@@ -233,7 +240,7 @@ export function sweepDoneClose(d: DoneCloseDeps): string[] {
           proof: 'unverified',
           report: reply.text,
           prompt: prompt || '(nothing typed - the pane was opened with a prompt)',
-          evidence: [],
+          evidence: left ? [left] : [],
           completedAt: new Date(r.turnEndedAt).toISOString(),
           capturedAt: new Date(now).toISOString(),
           closeSession: true,
@@ -276,7 +283,7 @@ export function sweepDoneClose(d: DoneCloseDeps): string[] {
         })
       d.noteClose(reviewId, undefined, new Date(now).toISOString())
       d.activity(native.title, verdict.personSteps.length ? `finished, ${verdict.personSteps.length} thing${verdict.personSteps.length === 1 ? '' : 's'} left for you` : 'finished')
-      say(id, `finished and closed itself into Review (${reviewId})${verdict.read ? ', looked at' : ''}`)
+      say(id, `finished and closed itself into Review (${reviewId})${verdict.read ? ', looked at' : ''}${left ? ` - ${left}` : ''}`)
       closed.push(id)
       said.delete(id)
     } else {

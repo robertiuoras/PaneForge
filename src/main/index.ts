@@ -23,7 +23,7 @@ import {
   shell } from 'electron'
 import { startMainWatch, stopMainWatch } from './mainWatch'
 import { SessionManager, setSilenceAlert, type WriteOrigin } from './sessions'
-import { acknowledgeReview, listReviews, noteReviewClose, recordReview, reviewCloseArmAction, reviewOpenTarget, sendReviewNotice, setReviewDesk, type ReviewCloseArm } from './reviews'
+import { onReviewChanged, onReviewRecorded, reviewForPeer, reviewsForPeer, storeRemoteReview, acknowledgeReview, listReviews, noteReviewClose, recordReview, reviewCloseArmAction, reviewOpenTarget, sendReviewNotice, setReviewDesk, type ReviewCloseArm } from './reviews'
 import { ComputeReviews, computeResult } from './computeReviews'
 import { mayNotify, noticesDir, readReply, sweepDoneClose, type DoneCloseDeps } from './doneClose'
 import { doneQuietMs, doneReviewId } from '../shared/doneClose'
@@ -72,17 +72,18 @@ import { surfaceChannels } from '../shared/surface'
 import { startDisplayAwake } from './awake'
 import { attachGlass, glassSupported } from './glass'
 import { invalidateAgents, listAgents, specFor } from './agents'
+import { includedAccounts } from './includedAccounts'
 import { codexInstalledVersion, codexLatest, forgetCodexVersion } from './codexModels'
 import { isOutdated, versionOf } from '../shared/codexCatalogue'
 import { gitCached, gitInfo } from './git'
 import { projectRoot } from './projectRoot'
 import { diffFiles, diffPatch } from './diff'
-import { withDefaultModel } from '../shared/startModel'
+import { routeCodexStart, withDefaultModel } from '../shared/startModel'
 import type { ClientNamed, DiffScope, EffortChoice, PhoneState , LaneBoard} from '../shared/types'
 import { detectLane, isWorktreeOf, laneExtras, LANE_LABELS, resolveLane, seedLane } from './lanes'
 import { hideCopyFolder } from './hideCopy'
 import { gitRun, isRead } from './gitRun'
-import { inspectLaneFolders, laneWork, returnToBase, trackTyped } from './laneWork'
+import { inspectLaneFolders, laneWork, returnToBase, samePath, trackTyped } from './laneWork'
 import { attachLaneOwners, laneBoards, laneEngine, laneReclaim, laneRetry, ledgerRepos, mainCheckout, markGone } from './laneBoard'
 import type { LanePane } from './laneBoard'
 import { resolveRevealTarget } from './revealPath'
@@ -1125,7 +1126,7 @@ const limitWaves = startLimitWaves({
     void (async () => {
       // Placed again before it wakes, exactly as a press on its sleep chip does.
       try {
-        await manager.rehome(id, (req) => laneFor(req, ledgerTakenFolders(id, holdOver), id))
+        await manager.rehome(id, (req) => laneFor(req, [], id))
       } catch {
         /* the folder it slept in is still there */
       }
@@ -1242,6 +1243,8 @@ function raiseAttention(s: Session): void {
 // machines involved.
 
 const remote = new Remote({
+  listReviews: (cursor) => reviewsForPeer(cursor),
+  onReview: (listener) => onReviewRecorded((record) => listener(reviewForPeer(record))),
   list: () => localSessions(),
   buffer: (id) => manager.buffer(id),
   log: (id, bytes) => freshReplay(history.tail(id, bytes), manager.buffer(id)),
@@ -1285,9 +1288,8 @@ const remote = new Remote({
   // in one repo must not share a checkout just because one of them is remote.
   sendPrompt: (id, text) => manager.sendPrompt(id, text),
   startSession: async (req) => {
-    // A request that named no model starts on the configured default, as the New Session
-    // dialog always did (`shared/startModel.ts`), same as the other start path below.
-    return startComputeAware(withDefaultModel(await laneFor(req), getConfig().defaultModels))
+    // Give unpinned new Codex work a task-sized model and effort before applying defaults.
+    return startComputeAware(withDefaultModel(routeCodexStart(await laneFor(req)), getConfig().defaultModels))
   },
   // A pane handed here from another device: pull its branch, drop its transcript
   // where the CLI will look, start it as an ordinary local pane. The lane split
@@ -1340,6 +1342,16 @@ const remote = new Remote({
     return () => manager.off('attention', cb)
   }
 })
+// A reconnect replays every peer report in pages, one change per record: tell an open
+// Review list once per burst instead of reloading it per record.
+let reviewsChangedSoon: NodeJS.Timeout | null = null
+onReviewChanged(() => {
+  if (reviewsChangedSoon) return
+  reviewsChangedSoon = setTimeout(() => {
+    reviewsChangedSoon = null
+    send('reviews:changed')
+  }, 250)
+})
 
 /**
  * The other machine's screen in a pane (src/main/screenStream.ts): sink panes this desk
@@ -1355,6 +1367,11 @@ const screenViews = new ScreenViews(
 )
 screenViews.on('sessions', () => send('sessions:changed', allSessions()))
 remote.on('screen', (e) => screenViews.onRemote(e))
+const receivePeerReview = (peer: { id: string; name: string; platform: string }, review: unknown) => {
+  try { storeRemoteReview(review, peer) } catch (err) { console.warn(`remote review rejected - ${(err as Error).message}`) }
+}
+remote.on('reviews', ({ peer, reviews }) => { for (const review of reviews) receivePeerReview(peer, review) })
+remote.on('review', ({ peer, review }) => receivePeerReview(peer, review))
 
 function localSessions(): Session[] {
   return manager.list().map(s => ({ ...s, keepOpen: keptOpen(s.id) }))
@@ -1641,6 +1658,7 @@ ipcMain.handle('projects:sessionFolders', () => listSessionFolders())
 ipcMain.handle('projects:create', (_e, name: string) => createProject(name))
 ipcMain.handle('projects:route', (_e, text: string) => routeText(text))
 ipcMain.handle('agents:list', (_e, force?: boolean) => listAgents(force))
+ipcMain.handle('agents:includedAccounts', (_e, target, change) => includedAccounts(target, change))
 ipcMain.handle('sessions:list', () => allSessions())
 ipcMain.handle('reviews:list', () => ({ reviews: listReviews(history.list()), persistent: true as const }))
 let computeReviews: ComputeReviews | undefined
@@ -1733,6 +1751,10 @@ manager.onFinished = (meta, opener) => {
     summary: reply?.text ? summaryOf(reply.text) : '',
     personSteps: []
   })
+}
+manager.onCloseWhenDone = (id) => {
+  const deps = doneCloseDeps()
+  sweepDoneClose({ ...deps, enabled: () => true, readings: () => deps.readings().filter(r => (r as typeof r & { id: string }).id === id) })
 }
 function doneCloseDeps(): DoneCloseDeps {
   return {
@@ -2033,12 +2055,43 @@ async function laneFor(
   // whether or not auto-laning is on. See detectLane: git proves it, the name never does.
   const known = async (r: StartSessionRequest): Promise<StartSessionRequest> =>
     r.lane ? r : { ...r, lane: await detectLane(r.cwd) }
-  if (!getConfig().autoLane) return known(req)
+  if (!getConfig().autoLane && !(req.resume && req.resumeId)) return known(req)
+  // Older relocated panes retain the folder where their exact conversation was
+  // verified. New exact resumes below must keep their requested physical checkout.
+  const resumeCwd = req.resume && req.resumeId ? req.resumeCwd ?? req.cwd : undefined
   // An asleep pane wears `status: 'exited'` but is one press from being an agent in
   // that folder again. Two client chats were restored asleep into `clients` and a
   // third opened from History landed there too, because neither counted (2026-09-04):
   // all three woke into one checkout. A folder with a sleeping pane in it is taken.
-  const taken = [...takenFolders(manager.list(), except), ...ledgerTakenFolders(except ?? '', holdOver), ...extraTaken]
+  // A pane's own earlier claim is not another chat's: restore issues new pane ids, so the
+  // ledger row from before a restart names an id nobody has any more but the SAME
+  // conversation. Pane 2 was moved into taskdriver.ai-b by its own claim (2026-10-02 18:34Z).
+  const conversation = req.resumeId ?? (except ? resumeIdFor(except) ?? manager.list().find((s) => s.id === except)?.resumeId : undefined)
+  const taken = [...takenFolders(manager.list(), except), ...ledgerTakenFolders(except ?? '', holdOver, conversation), ...extraTaken]
+
+  if (req.resume && req.resumeId) {
+    const other = manager.list().find((s) => s.id !== except && s.resumeId === req.resumeId && (s.status !== 'exited' || s.asleep))
+    if (other) throw new Error(`This conversation is already open in ${other.title || other.id}. Continue that chat instead.`)
+    // Copies turned off: two chats sharing one folder is what the person chose, so another
+    // chat there is no reason to refuse this one (it was never refused before 2026-10-02).
+    if (!getConfig().autoLane) return known(req)
+    // Exact continuation owns its existing files. A spare checkout cannot replace
+    // uncommitted work, even when the transcript can be read from the old folder.
+    const checkoutOf = async (folder: string): Promise<string> => {
+      let at = resolve(folder)
+      while (!existsSync(at) && dirname(at) !== at) at = dirname(at)
+      const top = await landGit(at, ['rev-parse', '--show-toplevel'])
+      return top.ok && top.out ? top.out : folder
+    }
+    const [original, occupied] = await Promise.all([checkoutOf(req.cwd), Promise.all(taken.map(checkoutOf))])
+    if (occupied.some((folder) => samePath(folder, original))) {
+      throw new Error(`This conversation's folder is still in use: ${req.cwd}. Finish the occupying chat before continuing here. No replacement copy was opened.`)
+    }
+    const originalReq = await known(req)
+    return originalReq.lane
+      ? { ...originalReq, laneEnv: originalReq.laneEnv ?? (await laneExtras(req.cwd, originalReq.lane)).env }
+      : originalReq
+  }
 
   // Reopening a pane that was in a lane, when the lane turned out to hold nothing and
   // the project folder is free again: the lane was only ever there to keep two agents
@@ -2049,6 +2102,7 @@ async function laneFor(
     return {
       ...req,
       cwd: home,
+      resumeCwd,
       lane: undefined,
       laneEnv: undefined,
       laneNote: `Nobody else is in ${basename(home)} - back in the project's own folder`
@@ -2067,6 +2121,7 @@ async function laneFor(
   return {
     ...req,
     cwd: lane.cwd,
+    resumeCwd,
     lane: lane.lane,
     laneEnv: lane.env,
     // The card is read by somebody who has never used git: a copy NUMBER, never the slot
@@ -2224,10 +2279,9 @@ async function startOrSend(
     const began = Date.now()
     const lane = await laneFor(req, claimed)
     const decided = Date.now() - began
-    // A request that named no model starts on the configured default, as the New Session
-    // dialog always did (`shared/startModel.ts`). Here, not at the top of `startOrSend`:
-    // a pane handed to the other desk takes THAT desk's defaults.
-    const session = await startComputeAware(withDefaultModel(lane, getConfig().defaultModels))
+    // Route unpinned new Codex work here, after the placement decision: a pane handed
+    // to the other desk takes that desk's launch rule and saved defaults.
+    const session = await startComputeAware(withDefaultModel(routeCodexStart(lane), getConfig().defaultModels))
     logOffload({ event: 'started', id: session.id, cwd: lane.cwd, decidedMs: decided, openMs: Date.now() - began })
     return session
   }
@@ -2433,7 +2487,7 @@ ipcMain.handle('sessions:wake', async (_e, id: string) => {
   if (continuationOwnsSource(id)) return null
   // A sleeping pane is placed again before it wakes: the folder it slept in may now be
   // another pane's (two client chats restored asleep into one checkout, 2026-09-04).
-  await manager.rehome(id, (req) => laneFor(req, ledgerTakenFolders(id, holdOver), id))
+  await manager.rehome(id, (req) => laneFor(req, [], id))
   return manager.wake(id)
 })
 ipcMain.handle('sessions:switchAgent', (_e, id: string, agent: string, model?: string) => {
@@ -2510,7 +2564,9 @@ function exitedFacts(): ExitedFact[] {
     ask: s.ask,
     handingOff: s.handingOff,
     lastKeyboard: Math.max(s.lastKeyboard ?? 0, touchedAt.get(s.id) ?? 0) || undefined,
-    keepOpen: s.keepOpen || keptOpen(s.id)
+    keepOpen: s.keepOpen || keptOpen(s.id),
+    // A pane the app still owes a prompt is not finished, asleep or not (2026-10-02).
+    owed: Boolean(s.owedPrompt)
   }))
 }
 /**
@@ -2570,6 +2626,13 @@ function removeFinished(removals: { id: string; reason: string }[]): void {
 // quiet pane "just close sessions after a bit of time", with Review as the way back.
 ipcMain.handle('sessions:closeIntoReview', (_e, id: string, reason: string) => {
   if (keptOpen(id)) return
+  // 2026-10-02 18:44Z: six crash-restored panes, each still owed its "continue", were closed
+  // by this countdown ("queued prompt LOST ... the pane closed before it was typed" x6).
+  // A pane that owes a prompt is not quiet; the countdown has no say over it.
+  if (manager.list().find((s) => s.id === id)?.owedPrompt || owedCount(id) > 0) {
+    logReclaim({ action: 'close-refused', pane: id, reason: 'owed-prompt' })
+    return
+  }
   // Only a local agent pane has a conversation to keep; a screen view, a mirror or a stale
   // id is closed exactly the way `sessions:kill` closes it.
   if (!remote.owns(id) && !screenViews.owns(id) && manager.list().some((s) => s.id === id)) {
@@ -3574,7 +3637,9 @@ function paneBusy(s: Session): boolean {
     s.status === 'working' ||
     s.status === 'starting' ||
     s.stalledSince !== undefined ||
-    !!s.bell ||
+    // Codex also rings on a completed reply. An unread completion is not a live
+    // question; retaining that bell used to hold finished transfers indefinitely.
+    (!!s.bell && !s.finished) ||
     !!s.ask
   )
 }
@@ -3660,7 +3725,7 @@ function runHandoff(device: string, request: HandoffRequest): Promise<HandoffIte
       deviceName: (dev) => remote.peerName(dev),
       selfDevice: () => getConfig().remote.id,
       busy: paneBusy,
-      queue: (id, dev, closeAfter) => handoffQueue.add(id, dev, closeAfter),
+      queue: (id, dev, closeAfter, automatic) => handoffQueue.add(id, dev, closeAfter, automatic),
       interrupt: (id) => interruptTurn(id),
       stage: (id, stage) => manager.setHandoffStage(id, stage),
       log: logHandoff,
@@ -3688,8 +3753,8 @@ function runHandoff(device: string, request: HandoffRequest): Promise<HandoffIte
 const handoffQueue = new HandoffQueue({
   list: () => manager.list(),
   busy: paneBusy,
-  send: (id, device, closeAfter) =>
-    runHandoff(device, { ids: [id], closeReceiverWhenDone: closeAfter, waitForTurn: false }),
+  send: (id, device, closeAfter, automatic) =>
+    runHandoff(device, { ids: [id], closeReceiverWhenDone: closeAfter, waitForTurn: false, automatic }),
   mark: (id, on, queuedAt) => manager.setHandingOff(id, on, queuedAt),
   deviceName: (dev) => remote.peerName(dev),
   config: () => getConfig().autoHandoff ?? DEFAULT_AUTO_HANDOFF,
@@ -3743,7 +3808,7 @@ manager.on('sessions', () => queueMicrotask(() => {
 
 ipcMain.handle(
   'remote:handoff',
-  (_e, device: string, ids?: string[], closeReceiverWhenDone?: boolean, waitForTurn?: boolean, now?: boolean) => {
+  (_e, device: string, ids?: string[], closeReceiverWhenDone?: boolean, waitForTurn?: boolean, now?: boolean, automatic?: boolean) => {
     // A script that packs every argument into one array reaches here with `device` as
     // that array. `String()` turned it into "id,pane,false,true", which queued a pane for
     // a machine that does not exist and tried every other pane on the desk (ids undefined
@@ -3754,7 +3819,8 @@ ipcMain.handle(
       ids: Array.isArray(ids) && ids.length ? ids.map(String) : undefined,
       closeReceiverWhenDone: closeReceiverWhenDone === true,
       waitForTurn: waitForTurn !== false && now !== true,
-      now: now === true
+      now: now === true,
+      automatic: automatic === true
     })
   }
 )
@@ -4950,7 +5016,12 @@ function restorePanes(specs: StartSessionRequest[], previous = false): void {
         // only a verified conversation; explicit sleep remains authoritative below.
         const restored = { ...req, wasWorking: named && req.agent === 'codex'
           ? rolloutTurn(file).inProgress ?? req.wasWorking : req.wasWorking }
-        const asleep = unavailable || req.asleep || clash[i] || restoreAsleep(restored, i, recoverOn) || awake >= MAX_RESTORE
+        // Rows this pane is still owed, read from the OLD id before `deliverOwed` re-keys them.
+        // Owed work overrides every reason to sleep: asleep has no composer to type into, and
+        // a pane put asleep by an earlier restore keeps `asleep: true` in the next desk snapshot
+        // (2026-10-02: six panes woke mid-turn, were restored asleep, and lost their prompt).
+        const owed = req.scrollbackId ? owedCount(req.scrollbackId) : 0
+        const asleep = unavailable || (req.asleep && !owed) || clash[i] || restoreAsleep(restored, i, recoverOn, owed) || awake >= MAX_RESTORE
         if (!asleep) awake++
         const meta = manager.start({
           ...restored,

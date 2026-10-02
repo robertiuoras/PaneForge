@@ -36,7 +36,7 @@ async function bundle(entry, name) {
   await build({ absWorkingDir: root, entryPoints: [entry], outfile: out, bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent', plugins: [stubs] })
   return require(out)
 }
-const { doneVerdict, doneReviewId, doneQuietMs, personLooking, replyFinished, closeHeldBy, wasRead, AUTO_CLOSE_QUIET_MS, READ_QUIET_MS } = await bundle('src/shared/doneClose.ts', 'shared.cjs')
+const { doneVerdict, folderLeftover, whyNotDone, doneReviewId, doneQuietMs, personLooking, replyFinished, closeHeldBy, wasRead, AUTO_CLOSE_QUIET_MS, READ_QUIET_MS } = await bundle('src/shared/doneClose.ts', 'shared.cjs')
 const { handoffOpenAfter } = await bundle('src/shared/handoffSteps.ts', 'handoffsteps.cjs')
 const digest = await bundle('src/shared/finishedDigest.ts', 'digest.cjs')
 const main = await bundle('src/main/doneClose.ts', 'main.cjs')
@@ -182,20 +182,48 @@ ${method('closeAfterResult', 'killAll')}
   assert.equal(refuse({ kept: true, lookedAt: NOW - 60_000, turnEndedAt: NOW - 90_000 }), 'kept open by hand', 'read does not undo a keep')
   assert.equal(refuse({ lastKeyboard: NOW - 10_000 }), 'not quiet long enough', 'typing restarts the clock')
   assert.equal(refuse({ turnEndedAt: NOW - 30_000 }), 'not quiet long enough')
-  assert.match(refuse({ ask: { q: 'which?' } }), /busy, asking/)
-  assert.match(refuse({ drafting: true }), /busy, asking/)
-  assert.match(refuse({ backJob: 'npm run build' }), /busy, asking/)
-  assert.match(refuse({ backJob: 'npm run build', backWaitOnly: false }), /busy, asking/)
+  assert.equal(refuse({ ask: { q: 'which?' } }), 'a question on screen')
+  assert.equal(refuse({ drafting: true }), 'an unsent draft in its prompt box')
+  assert.equal(refuse({ backJob: 'npm run build' }), 'a background job (npm run build)')
+  assert.equal(refuse({ backJob: 'npm run build', backWaitOnly: false }), 'a background job (npm run build)')
   assert.equal(doneVerdict(finished({ backJob: 'gh', backWaitOnly: true }), NOW).close, true, 'a pane only waiting on CI closes')
   assert.match(refuse({ backJob: 'gh', backWaitOnly: true, reply: 'Which branch?' }), /question/, 'a wait never excuses a question')
-  assert.match(refuse({ runSince: NOW - 1000 }), /busy, asking/)
-  assert.match(refuse({ status: 'exited' }), /busy, asking/)
-  assert.match(refuse({ asleep: NOW - 1000 }), /busy, asking/)
+  assert.equal(refuse({ runSince: NOW - 1000 }), 'a turn running')
+  assert.equal(refuse({ busyUntil: NOW + 1000 }), 'a turn running', 'the footer still saying so')
+  assert.equal(refuse({ status: 'exited' }), 'its program has exited')
+  assert.equal(refuse({ asleep: NOW - 1000, status: 'exited' }), 'asleep')
+  assert.equal(refuse({ printed: 0 }), 'not started')
+  assert.equal(refuse({ job: 'vim' }), 'busy or running something')
+  // Quiet past the three-minute wait but printed in the last 8 s cannot happen through
+  // doneVerdict (the same clock), so the 8 s refusal is asked of whyNotDone directly.
+  assert.equal(whyNotDone(finished(), 3000, NOW), 'printed in the last 8 s')
+  assert.equal(whyNotDone(finished(), 9000, NOW), null)
   assert.equal(refuse({ reply: undefined }), 'reply not read')
   assert.equal(refuse({ runningAgents: 2 }), '2 subagents still running')
   assert.equal(refuse({ reply: 'Which port should it use?' }), 'the reply ends in a question')
   assert.equal(refuse({ reply: 'Done.\n\n## Next steps\n- Wire the PC watcher\n- Robert: approve' }), '1 step an agent could take')
   console.log('done-close: refusals ok')
+}
+
+// 2b. s42 on 1 Oct, finished 11:53pm Thu: its real report, read the way the sweep reads it
+// (`main/doneClose.ts` `readReply` over `fixtures/claude-stophook-followup.jsonl`). Its
+// steps sit under `**Next steps:**`, a label and not a heading, so none were read: the
+// GuardDeck card never got 'Say "release"', and step 1 read as nobody's.
+{
+  const s42 = main.readReply('claude', join(root, 'scripts/fixtures/claude-stophook-followup.jsonl'))
+  const v = doneVerdict(finished({ reply: s42.text, runningAgents: s42.runningAgents }), NOW)
+  assert.equal(v.close, true, JSON.stringify(v))
+  assert.match(v.personSteps[0] ?? '', /^Say "release" to ship main/, 'the release is Robert\'s step')
+  assert.ok(!v.personSteps.some((x) => /^record a test call|^read today/.test(x)), 'sub-bullets under a step are not steps')
+  // The same label shapes, on their own.
+  const steps = (reply) => doneVerdict(finished({ reply }), NOW)
+  assert.equal(steps('Done.\n\n**Next steps:**\n1. Wire the PC watcher').reason, '1 step an agent could take', 'a label line is a heading')
+  assert.equal(steps('Done.\n\nNext steps: wire the PC watcher').reason, '1 step an agent could take', 'a step on the label line itself')
+  assert.equal(steps('Done.\n\n**Next steps:** None').close, true)
+  assert.equal(steps('Done.\n\n**Next steps:**\n- None\n\n**Notes:**\n- the PC was slow').close, true, 'a bold label ends the steps')
+  assert.deepEqual(steps('Done.\n\n**Next steps:**\n1. Tell me which port to use').personSteps, ['Tell me which port to use'])
+  assert.deepEqual(steps('Done.\n\n## Next steps\n- Reply "yes" to merge').personSteps, ['Reply "yes" to merge'])
+  console.log('done-close: s42 report read, its release step is Robert\'s ok')
 }
 
 // 2a. A machine short of memory waits less. Robert 2026-09-28: "id rather they close than
@@ -230,47 +258,73 @@ ${method('closeAfterResult', 'killAll')}
   console.log('done-close: a short machine waits less ok')
 }
 
-// 2b. Finished means a clean, pushed folder too (Robert's brief, 2026-09-28: "no open ask,
-// clean tree/pushed, no live background job"). The read is the badge's cached one.
+// 2b. A folder with work left NEVER holds a finished pane (Robert, 2026-10-02: "we dont need
+// that guard anymore since we have reports"). The pane closes into Review and the Review record
+// says what it left behind. 748 of ~950 holds on 1-2 Oct were the folder.
 {
   const v = (folder) => doneVerdict(finished({ folder }), NOW)
-  assert.equal(v(undefined).close, true, 'not asked: nothing checked')
-  assert.equal(v(null).close, true, 'not a repo: nothing to lose')
-  assert.equal(v({ dirty: 0, ahead: 0 }).close, true, 'clean and pushed closes')
-  assert.equal(v({ dirty: 3, ahead: 0 }).reason, 'its folder has uncommitted or unpushed work')
-  assert.equal(v({ dirty: 0, ahead: 2 }).reason, 'its folder has uncommitted or unpushed work')
-  assert.equal(v('unread').reason, 'its folder has not been read yet')
-  assert.equal(doneVerdict(finished({ folder: { dirty: 3, ahead: 0 }, reply: 'Which port?' }), NOW).reason, 'the reply ends in a question', 'the reply speaks first')
-  // The sweep asks for the folder only for a pane past every cheap gate.
+  for (const folder of [undefined, null, { dirty: 0, ahead: 0 }, { dirty: 3, ahead: 0 }, { dirty: 0, ahead: 2 }, 'unread'])
+    assert.equal(v(folder).close, true, `closes whatever its folder holds: ${JSON.stringify(folder)}`)
+  assert.equal(doneVerdict(finished({ folder: { dirty: 3, ahead: 0 }, reply: 'Which port?' }), NOW).reason, 'the reply ends in a question', 'the reply still speaks first')
+  // The words a person reads: plain, singular and plural right, nothing for a clean or unknown folder.
+  assert.equal(folderLeftover(undefined, 'site'), undefined, 'not asked')
+  assert.equal(folderLeftover(null, 'site'), undefined, 'not a repo')
+  assert.equal(folderLeftover('unread', 'site'), undefined, 'no read yet: say nothing rather than guess')
+  assert.equal(folderLeftover({ dirty: 0, ahead: 0 }, 'site'), undefined, 'clean and pushed')
+  assert.equal(folderLeftover({ dirty: 1, ahead: 0 }, 'site'), 'Left in site: 1 changed file')
+  assert.equal(folderLeftover({ dirty: 6, ahead: 0 }, 'site'), 'Left in site: 6 changed files')
+  assert.equal(folderLeftover({ dirty: 0, ahead: 1 }, 'site'), 'Left in site: 1 commit not pushed')
+  assert.equal(folderLeftover({ dirty: 0, ahead: 2 }, 'site'), 'Left in site: 2 commits not pushed')
+  assert.equal(folderLeftover({ dirty: 6, ahead: 2 }, 'toolstash'), 'Left in toolstash: 6 changed files, 2 commits not pushed')
+  assert.equal(folderLeftover({ dirty: 1, ahead: 1 }, 'toolstash'), 'Left in toolstash: 1 changed file, 1 commit not pushed')
+  assert.doesNotMatch(folderLeftover({ dirty: 6, ahead: 2 }, 'x'), /dirty|ahead|worktree|lane|uncommitted/i, 'no git words')
+  // The sweep reads the folder only for a pane past every cheap gate, never holds for it,
+  // and writes what was left into the Review row and the close log line.
   const transcript = join(work, 'folder.jsonl')
   writeFileSync(transcript, JSON.stringify({ type: 'assistant', isSidechain: false, message: { role: 'assistant', content: [{ type: 'text', text: 'Done.\n\n## Next steps\n- None' }] } }))
   const asked = []
   const lines = []
-  let folder = { dirty: 1, ahead: 0 }
+  const records = []
+  let answers = [{ dirty: 6, ahead: 2 }]
   const deps = {
     enabled: () => true,
     readings: () => [{ id: 'f1', ...finished({ reply: undefined, runningAgents: undefined }) }, { id: 'f2', ...finished({ turnEndedAt: NOW - 10_000 }) }, { id: 'f3', ...finished({ focused: true }) }],
-    folderOf: (id) => { asked.push(id); return folder },
+    folderOf: (id) => { asked.push(id); return answers.length > 1 ? answers.shift() : answers[0] },
     transcriptFor: () => transcript, resumeIdFor: () => 'native-f', history: () => [],
-    titleOf: () => ({ title: 'folder', cwd: '/Users/r/Projects/site', agent: 'claude' }), otherwiseBusy: () => null,
-    record: (input, native) => ({ ...input, ...native, provider: 'claude', reportPath: '/x', createdAt: 'now', attention: false }),
+    titleOf: () => ({ title: 'folder', cwd: '/Users/r/Projects/toolstash', agent: 'claude' }), otherwiseBusy: () => null,
+    record: (input, native) => { records.push(input); return { ...input, ...native, provider: 'claude', reportPath: '/x', createdAt: 'now', attention: false } },
     notify: () => {}, markRead: () => {},
     close: () => ({ closed: true }), noteClose: () => {}, writeNotice: () => {}, activity: () => {},
     now: () => NOW, log: (l) => lines.push(l)
   }
-  assert.deepEqual(main.sweepDoneClose(deps), [])
-  assert.deepEqual(asked, ['f1'], 'a pane mid-quiet or looked at never costs a folder read')
-  assert.equal(lines.find((l) => l.startsWith('f1')), 'f1 stays - its folder has uncommitted or unpushed work')
-  folder = { dirty: 0, ahead: 0 }
-  assert.deepEqual(main.sweepDoneClose(deps), ['f1'], 'committed and pushed: it goes')
+  assert.deepEqual(main.sweepDoneClose(deps), ['f1'], 'changed files and unpushed commits no longer hold it')
+  assert.ok(asked.length >= 1 && asked.every((id) => id === 'f1'), 'a pane mid-quiet or looked at never costs a folder read')
+  assert.deepEqual(records[0].evidence, ['Left in toolstash: 6 changed files, 2 commits not pushed'], 'the Review row says what was left')
+  assert.match(lines.find((l) => l.startsWith('f1')), /^f1 finished and closed itself into Review \(done_f1_\d+\) - Left in toolstash: 6 changed files, 2 commits not pushed$/, 'done-close.log says it too')
+  // A clean folder, not a repo, and a read still in flight: closes, writes no line.
+  for (const [what, answer] of [['clean', { dirty: 0, ahead: 0 }], ['not a repo', null], ['unread', 'unread']]) {
+    records.length = 0; lines.length = 0; asked.length = 0
+    answers = [answer]
+    assert.deepEqual(main.sweepDoneClose(deps), ['f1'], `${what}: closes`)
+    assert.deepEqual(records[0].evidence, [], `${what}: no leftover line in the row`)
+    assert.doesNotMatch(lines.find((l) => l.startsWith('f1')), / - Left in/, `${what}: no leftover in the log`)
+  }
+  // 'unread' on the first ask (a read was started) is asked again at the real close.
+  records.length = 0; lines.length = 0; asked.length = 0
+  answers = ['unread', { dirty: 1, ahead: 0 }]
+  assert.deepEqual(main.sweepDoneClose(deps), ['f1'])
+  assert.ok(asked.length >= 2, 'asked again at the close')
+  assert.deepEqual(records[0].evidence, ['Left in toolstash: 1 changed file'], 'the second answer is the one written')
   const git = readFileSync(join(root, 'src/main/git.ts'), 'utf8')
   assert.match(git, /export function gitCached\(/, 'the cached read exists')
   const index = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
   assert.match(index, /folderOf: \(id, since\) => \{[\s\S]{0,160}gitCached\(cwd, since\)/, 'index.ts feeds the sweep the cached read, never a spawn, no older than the turn')
   const since = []
-  main.sweepDoneClose({ ...deps, folderOf: (id, t) => { since.push([id, t]); return folder } })
-  assert.deepEqual(since, [['f1', deps.readings()[0].turnEndedAt]], 'the sweep hands the folder read its turn end')
-  console.log('done-close: a folder with work left keeps its pane ok')
+  answers = [{ dirty: 0, ahead: 0 }]
+  main.sweepDoneClose({ ...deps, folderOf: (id, t) => { since.push([id, t]); return answers[0] } })
+  assert.equal(since[0][0], 'f1')
+  assert.equal(since[0][1], deps.readings()[0].turnEndedAt, 'the sweep hands the folder read its turn end')
+  console.log('done-close: a folder with work left no longer holds its pane, the review says what was left ok')
 }
 
 // 3. One id per finished turn.
@@ -625,7 +679,7 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
   const at = s77.lastOutput + 10 * 60_000
   const reading = { agent: s77.agent, printed: s77.printed, status: s77.status, lastKeyboard: s77.lastKeyboard, turnEndedAt: s77.lastOutput, backJob: s77.backJob, backWaitOnly: isWaitScript(shell), reply: 'Merged.\n\nNext steps: None', runningAgents: 0 }
   assert.equal(doneVerdict(reading, at).close, true, 's77 waiting on CI through bg-wait closes')
-  assert.match(doneVerdict({ ...reading, backWaitOnly: false }, at).reason, /busy/, 'the same pane running real work stays')
+  assert.equal(doneVerdict({ ...reading, backWaitOnly: false }, at).reason, 'a background job (bg-wait.mjs)', 'the same pane running real work stays')
   console.log('done-close: a pane only waiting through bg-wait closes (s77) ok')
 }
 

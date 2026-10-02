@@ -107,6 +107,8 @@ ok(
 // restore lag (measured 4.1-14.3s to a composer against 1.4s for one alone), and a
 // sleeping pane keeps its card, its place and its screen for nothing.
 ok('the pane being looked at comes back running', restoreAsleep({}, 0, true) === false)
+ok('a pane still owed a prompt is woken', restoreAsleep({}, 3, true, 1) === false)
+ok('...even with auto-continue off: a person or the app already queued those rows', restoreAsleep({}, 3, false, 1) === false)
 ok('every other pane comes back asleep', restoreAsleep({}, 1, true) === true)
 ok('...however many there are', restoreAsleep({}, 7, true) === true)
 // The refusals, which are the feature: a pane asleep must not be one with work in it.
@@ -163,7 +165,9 @@ ok(
 ok('a pane slept on purpose comes back asleep', /asleep: Boolean\(s\.meta\.asleep\)/.test(sessions))
 
 const index = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
-ok('the restore asks restoreAsleep with reconciled state, per pane, in order', /restoreAsleep\(restored, i, recoverOn\)/.test(index))
+ok('the restore asks restoreAsleep with reconciled state and the rows it still owes, per pane, in order', /restoreAsleep\(restored, i, recoverOn, owed\)/.test(index))
+ok('...the owed count is read from the old pane id BEFORE deliverOwed re-keys the rows',
+  index.indexOf('owedCount(req.scrollbackId') > 0 && index.indexOf('owedCount(req.scrollbackId') < index.indexOf('manager.deliverOwed(req.scrollbackId') && /req\.asleep && !owed/.test(index))
 // "Keep this pane open" is a promise about a pane, and a restored pane is a NEW session
 // with a new id - so the promise is carried across by the one field that names the pane
 // being replaced. Without this the pin was renderer state and every restart dropped it.
@@ -196,6 +200,34 @@ ok('offer up, a pane opened over it: offered panes first, then the live one',
 ok('offer up, that pane closed again: the offered panes still stand', deskToWrite(offered, []).length === 2)
 ok('no offer: the live desk is written as it is, empty included', deskToWrite(null, []).length === 0)
 ok('no offer: live panes pass through untouched', deskToWrite(null, opened) === opened)
+
+// Review fixes 2026-10-02: a woken pane types what it was carried; laneFor skips its own claim.
+const wakeStart = sessions.indexOf('  wake(id: string)')
+const wakeBody = sessions.slice(wakeStart, sessions.indexOf('\n  /**', wakeStart))
+ok('wake() types the rows the pane was carried (deliverOwed(id, id))', wakeStart > 0 && wakeBody.includes('this.deliverOwed(id, id)'))
+const doStart = sessions.indexOf('  deliverOwed(oldId: string, newId: string, queue = true)')
+const doBody = sessions.slice(doStart, sessions.indexOf('\n  /**', doStart))
+const queueOpen = doBody.indexOf('if (queue) {')
+const queueClose = doBody.indexOf('\n    }\n', queueOpen)
+const owedAt = doBody.indexOf('this.setOwedPrompt(newId, owedCount(newId) > 0)')
+const returnAt = doBody.indexOf('return owed.length')
+ok('deliverOwed marks owedPrompt outside the queue block (asleep panes too)',
+  queueOpen > 0 && queueClose > queueOpen && owedAt > queueClose && owedAt < returnAt)
+ok('laneFor derives the pane conversation from req.resumeId', /const conversation = req\.resumeId \?\?/.test(index))
+ok('laneFor passes it to the ledger read', index.includes('ledgerTakenFolders(except ?? \'\', holdOver, conversation)'))
+ok('no rehome caller reads the ledger itself any more', index.split('laneFor(req, ledgerTakenFolders(').length - 1 === 0)
+ok('both rehome callers use laneFor(req, [], id)', index.split('laneFor(req, [], id)').length - 1 === 2)
+
+// A pane restored ASLEEP must get its History row (2026-10-02: 11 panes restored asleep after a
+// crash, closed by the idle countdown, and `pf continue` refused every one - their history/
+// folders held s3-...log but no s3-...json, because the `born` branch returned before recordStart).
+const bornAt = sessions.indexOf('    if (born) {\n')
+const bornEnd = sessions.indexOf('      return meta\n', bornAt)
+const bornBody = sessions.slice(bornAt, bornEnd)
+ok('the asleep (born) branch exists and returns meta', bornAt > 0 && bornEnd > bornAt)
+ok('the asleep branch writes its History row before returning', /recordStart\(meta\)/.test(bornBody))
+ok('the asleep branch claims the conversation before the row is written',
+  bornBody.indexOf('noteSession(') > 0 && bornBody.indexOf('noteSession(') < bornBody.indexOf('recordStart(meta)'))
 
 rmSync(work, { recursive: true, force: true })
 console.log(`restore-turn: ${n} checks passed`)

@@ -47,6 +47,7 @@ function run({ failures = [], stagger = false, inProgress, asleep = false, wasWo
     rolloutTurn: () => ({ inProgress }),
     heldElsewhere: () => false,
     restoreAsleep: req => !req.wasWorking,
+    owedCount: () => 0,
     basename: path => path,
     setConfig: () => {},
     send: () => {},

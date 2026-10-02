@@ -170,7 +170,8 @@ const CLAUDE_MODELS: ModelChoice[] = [
   { value: 'claude-opus-4-8', label: 'Opus 4.8' },
   { value: 'claude-opus-4-7', label: 'Opus 4.7' },
   { value: 'claude-opus-4-6', label: 'Opus 4.6' },
-  { value: 'claude-sonnet-5', label: 'Sonnet 5', hint: 'fast, cheaper' },
+  { value: 'claude-sonnet-5-5', label: 'Sonnet 5.5', hint: 'fast, cheaper' },
+  { value: 'claude-sonnet-5', label: 'Sonnet 5' },
   // The API id carries the minor version (`claude-fable-5-1`); a bare `claude-fable-5`
   // was what the chip trimmed the live id down to, so a pane running 5.1 wore "Fable 5".
   { value: 'claude-fable-5-1', label: 'Fable 5.1', hint: 'heaviest' },

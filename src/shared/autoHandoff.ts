@@ -11,14 +11,20 @@
 //
 //   1. trim scrollback            (capacity.ts)  - gives back ~5%, costs nothing
 //   2. start the NEXT pane there  (capacity.ts)  - stops it getting worse
-//   3. MOVE a finished pane there (this file)    - the work continues, on the other desk
+//   3. MOVE an unfinished agent pane (this file) - the work continues, on the other desk
 //   4. close a finished pane      (reclaim.ts)   - the last resort, and only with no peer
 //
-// Rung 3 moves what `travels` says can exist over there: a shell, or a Claude/Codex pane
-// with a conversation id to resume (since 2026-09-08; the sender keeps the pane until the
-// far end proves the resume, `main/handoff.ts`). This header said "shell panes only" until
-// 2026-09-23, and so did the Settings switch - a sentence that was false for two weeks,
-// on the switch that was then found turned off.
+// Rung 3 moves only a Claude/Codex pane whose work is still going (`automaticWork`): a turn
+// running now, or an idle conversation with a fresh, verified handoff of its own that still
+// lists open steps (`Session.handoffVerified`/`handoffOpen`). It must also `travel`: a
+// conversation id to resume (the sender keeps the pane until the far end proves the resume,
+// `main/handoff.ts`). A finished, stopped, exited, shell or unverified idle pane is never
+// moved automatically, however full this desk is; freeing memory from those is rung 4's job.
+// Robert, 2026-09-29: "stop sending a session to the remote PC after it's finished or
+// stopped". Until 2026-10-02 rung 3 moved FINISHED panes (and shells), which is exactly how
+// finished sessions kept turning up on the PC; the person's latest word replaced that design.
+// A move queued automatically (`HandoffRequest.automatic`) is dropped if the pane finishes
+// before it runs (`queueVerdict`), and rechecked before delivery and before the source ends.
 //
 // Two refusals decide whether this is safe rather than merely clever:
 //
@@ -48,7 +54,7 @@ import { quietSince } from './reclaim'
 import { pinnedByPrompt, type PreferRemote } from './offloadFirst'
 
 export interface AutoHandoffConfig {
-  /** Move finished panes to a paired device when this machine runs out of memory. */
+  /** Move unfinished agent work to a paired device when this machine runs out of memory. Finished panes stay. */
   enabled: boolean
   /** How long a pane must have been quiet first, in minutes. */
   minIdleMinutes: number
@@ -218,7 +224,11 @@ export function offloadMinutes(cfg: Pick<AutoHandoffConfig, 'offloadIdleMinutes'
 
 export interface AutoPane {
   id: string
-  /** Actual local agent kind. Automatic plans fail closed unless this is `shell`. */
+  /** Completion and explicit remaining work, read from the owner's latest turn. */
+  finished?: boolean
+  handoffOpen?: number
+  handoffVerified?: boolean
+  /** Actual local agent kind. Only supported conversation providers move automatically. */
   agent?: string
   /**
    * The conversation this pane can be resumed into on another machine. A Claude or Codex
@@ -433,6 +443,18 @@ export function travels(p: Pick<AutoPane, 'agent' | 'resumeId' | 'movedTo'>): bo
   if (p.agent === 'shell') return true
   if (p.agent === 'claude' || p.agent === 'codex') return !!p.resumeId
   return false
+}
+
+/** Automatic moves need ongoing work, not merely a resumable idle conversation. */
+export function automaticWork(p: Pick<AutoPane, 'agent' | 'finished' | 'handoffOpen' | 'handoffVerified' | 'state'>): boolean {
+  return (p.agent === 'claude' || p.agent === 'codex') && p.state !== 'exited' && p.finished !== true &&
+    (p.state === 'working' || (p.handoffVerified === true && (p.handoffOpen ?? 0) > 0))
+}
+
+/** Select during a turn, but let the owner queue the transfer until it is safe. */
+export function automaticQueueable(p: AutoPane): boolean {
+  if (!automaticWork(p) || p.shareable !== true) return false
+  return queueable({ ...p, state: p.state === 'working' ? 'ready' : p.state })
 }
 
 /** States a pane may be moved out of. Everything else is a turn in flight. */
@@ -669,12 +691,12 @@ export function budgetPlan(
 ): AutoHandoff[] {
   if (!cfg.enabled || over <= 0) return []
   const eligible = panes
-    .filter((p) => travels(p) && !p.focused && !p.remote && !p.handingOff && queueable(p))
+    .filter((p) => travels(p) && !p.focused && !p.remote && !p.handingOff && automaticQueueable(p))
     // Mac-only work, per `AutoHandoffConfig.keepHere`. Before the cost gate on purpose: the
     // dearest pane on the desk is exactly the one this list exists to hold back.
     .filter((p) => !staysHere(cfg, p.projectName))
     .filter((p) => !((blocked[p.id] ?? 0) > now))
-    .filter((p) => now - quietSince(p) >= BUDGET_QUIET_MS)
+    .filter((p) => now - (p.state === 'working' ? p.lastKeyboard : quietSince(p)) >= BUDGET_QUIET_MS)
     // The sleep rung is about to take it, and sleeping is the cheaper way to give the same
     // memory back. See `AutoPane.sleepsSoon`.
     .filter((p) => !p.sleepsSoon)
@@ -847,7 +869,7 @@ export function turnsPlan(
   if (agentsHere <= budget) return []
   const eligible = panes
     .filter((p) => (p.turnsHere ?? 0) >= TURNS_BEFORE_MOVE)
-    .filter((p) => travels(p) && !p.focused && !p.remote && !p.handingOff && queueable(p))
+    .filter((p) => travels(p) && !p.focused && !p.remote && !p.handingOff && automaticQueueable(p))
     .filter((p) => !staysHere(cfg, p.projectName))
     .filter((p) => !((blocked[p.id] ?? 0) > now))
     // The sleep rung is about to take it, and sleeping is the cheaper way to give the same
@@ -985,7 +1007,7 @@ function pick(
 
   const out: AutoHandoff[] = []
   const eligible = panes
-    .filter((p) => travels(p) && !p.focused && !p.remote && !p.handingOff && movable(p))
+    .filter((p) => travels(p) && !p.focused && !p.remote && !p.handingOff && automaticWork(p) && p.shareable === true && movable(p))
     .filter((p) => !staysHere(cfg, p.projectName))
     .filter((p) => !(screen && p.visible))
     .filter((p) => now - quietSince(p) >= minIdle)
@@ -1026,6 +1048,7 @@ export interface Queued {
   /** epoch ms it was asked for */
   since: number
   closeReceiverWhenDone?: boolean
+  automatic?: boolean
   /**
    * Set once the turn has ended and the move is counting down rather than happening
    * outright - `undefined` while still working. Robert, 2026-09-04: "it shouldnt have
@@ -1054,11 +1077,12 @@ export type QueueVerdict =
 
 export function queueVerdict(
   q: Queued,
-  pane: Pick<AutoPane, 'state' | 'asking' | 'subagent' | 'owedPrompt'> | undefined,
+  pane: Pick<AutoPane, 'state' | 'asking' | 'subagent' | 'backJob' | 'owedPrompt' | 'agent' | 'finished' | 'handoffOpen' | 'handoffVerified'> | undefined,
   cfg: AutoHandoffConfig = DEFAULT_AUTO_HANDOFF,
   now = 0
 ): QueueVerdict {
   if (!pane || pane.state === 'exited') return 'drop'
+  if (q.automatic && !automaticWork(pane)) return 'drop'
   if (movable(pane)) {
     if (q.goAt == null) return 'soon'
     return now >= q.goAt ? 'go' : 'wait'

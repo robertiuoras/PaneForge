@@ -8,7 +8,7 @@
 //                               the CLI's own SessionEnd hook parks it instead of releasing
 //                               it, and the idle sweep leaves it alone.
 //   ledgerWake(cwd, paneId)   - after the CLI is spawned again: the mark comes off.
-//   ledgerTakenFolders(paneId, over) - folders the ledger says ANOTHER chat holds right
+//   ledgerTakenFolders(paneId, over, conversation?) - folders the ledger says ANOTHER chat holds right
 //                               now, handed to `laneFor` as extra taken folders on wake, so
 //                               a pane never wakes into a checkout somebody else took. A
 //                               hold whose pane this app closed (`over`) holds nothing.
@@ -53,9 +53,33 @@ function mainCheckoutOf(dir: string): string | null {
   }
 }
 
-/** Where a lane's checkout lives, the same shape `laneDir` in `scripts/lane.mjs` builds. */
+/** Where a lane's checkout lives, for legacy ledger entries without a recorded folder. */
 function laneDirOf(main: string, laneId: string): string {
   return laneId === 'main' ? main : join(dirname(main), `${basename(main)}-${laneId}`)
+}
+
+/** The checkout (main folder or copy) `dir` sits in: the nearest folder above it with a `.git`. */
+function checkoutOf(dir: string): string | null {
+  let at = resolve(dir)
+  for (;;) {
+    if (existsSync(join(at, '.git'))) return at
+    const up = dirname(at)
+    if (up === at) return null
+    at = up
+  }
+}
+
+/**
+ * The checkout a hold keeps, from its stored cwd when that still belongs to this ledger's
+ * repository. The CHECKOUT, not the cwd itself: a chat in `clients-a/clients/alison` holds
+ * all of copy a, and the copies board matches holds by exact copy folder (`inUse`).
+ */
+function heldFolder(main: string, laneId: string, cwd?: string): string {
+  if (cwd) {
+    const heldMain = mainCheckoutOf(cwd)
+    if (heldMain && resolve(heldMain) === resolve(main)) return checkoutOf(cwd) ?? cwd
+  }
+  return laneDirOf(main, laneId)
 }
 
 /** Every repo on this machine with a lane ledger - same roots `laneBoard.ts` scans. */
@@ -134,18 +158,25 @@ export function ledgerWake(cwd: string, paneId: string): void {
  * `over` says a hold's pane is already closed (`holdIsOver` in `shared/laneTaken.ts`): its
  * folder is free for the next pane now, not when the gone-sweep gets to it 15 minutes on.
  */
-export function ledgerTakenFolders(paneId: string, over: (pane: string) => boolean): string[] {
+export function ledgerTakenFolders(
+  paneId: string,
+  over: (pane: string) => boolean,
+  conversation?: string
+): string[] {
   try {
     const out: string[] = []
     for (const main of ledgerRepos()) {
-      let state: { lanes?: Record<string, { pane?: string }> }
+      let state: { lanes?: Record<string, { pane?: string; cwd?: string; session?: string }> }
       try {
         state = JSON.parse(readFileSync(join(main, '.git', 'paneforge-lanes.json'), 'utf8'))
       } catch {
         continue
       }
       for (const [id, c] of Object.entries(state.lanes ?? {})) {
-        if (c.pane && c.pane !== paneId && !over(c.pane)) out.push(laneDirOf(main, id))
+        // A restored pane gets a new id, so its own pre-restart claim must not push it into
+        // a copy (pane 2, 2026-10-02 18:34Z). The claim's `session` is the conversation.
+        if (conversation && c.session === conversation) continue
+        if (c.pane && c.pane !== paneId && !over(c.pane)) out.push(heldFolder(main, id, c.cwd))
       }
     }
     return out

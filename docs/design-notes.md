@@ -2034,7 +2034,7 @@ It is also the gate's third step: `agentGate.ts` looks for a script called exact
 | `npm run test:recover` | finishing a turn the transport cut in half: every real error string this desk has logged, and the refusals - a rate limit or an auth failure is never continued, and an error somebody QUOTED at an agent (which the CLI echoes back with no box around it) is a question about the bug, not the bug |
 | `npm run test:reclaim` | closing idle panes to give a full machine its memory back: pressure is the trigger and never a clock, a pane WAITING FOR A PERSON is never closed however quiet it looks, and the window is never emptied |
 | `npm run test:mascot` | what the mascot may do to somebody's panes: a number naming no pane closes nothing, a name contained in a longer one is dropped (`service` inside `service-a`), a count is not a pane number, and every suggestion is drawn from `reclaim.ts`'s own refusal set. The weight is in the four silences - it says nothing when the app's own clock is on, when one pane is stale, when the panes are cheap, or when they are minutes rather than hours old |
-| `npm run test:autohandoff` | moving a finished pane to the other machine instead of closing it — and the refusals that decide whether that is safe: a pane mid-turn is QUEUED rather than killed, a pane holding a live question is not moved at all, and a queue that runs out of patience expires rather than interrupting anything |
+| `npm run test:autohandoff` | moving unfinished agent work to the other machine (never a finished, stopped or shell pane, since 2026-10-02) — and the refusals that decide whether that is safe: a pane mid-turn is QUEUED rather than killed, a pane holding a live question is not moved at all, and a queue that runs out of patience expires rather than interrupting anything |
 | `npm run test:devlist` | what is serving right now, and which one a sentence names: a server and the child it spawned counted as ONE, a heap-size flag that is not a port, and the refusal that carries the feature - "close the dev" with three running picks none and prints the list |
 | `npm run test:devservers` | turning a running dev server back into the package.json script that started it, so it can be started again over there: the two real command shapes measured on this desk, and the drops — an ambiguous tool, a script the receiving repo does not have, and anything a shell would read |
 | `npm run test:macsign` | the signing that stops TCC resetting permissions every release |
@@ -3024,7 +3024,7 @@ runs) stays there.
 | `npm run test:handofffit` | that the hand-off box can still be answered with real machine names in it |
 | `npm run test:theme` | palette derivation + contrast (358 assertions) |
 | `npm run test:contrast` | that every word DRAWN in the window reaches its ratio, in both themes - the backdrop sampled out of a screenshot rather than walked, so a gradient cannot report as the solid colour three ancestors up |
-| `npm run test:autoclear` | the countdown in front of an automatic /clear, every refusal, and that Cancel types NOTHING |
+| `npm run test:autoclear` | the countdown in front of an automatic /clear, every refusal, that Cancel types NOTHING, and that a ticking footer counter (real s72 pty chunks) is not output the quiet floor waits on while a reply 2s ago still is |
 | `npm run test:devkeep` | that closing test copies never takes the window a person is watching, and that `try --close` only says "closed" once the copy is gone - a copy that ignores the ask (a headless one used to refuse the quit over a mid-turn pane) is killed and reported as such |
 | `npm run test:awake` | holding the display awake, letting go, and the CAP on one busy stretch |
 | `npm run test:stashtheme` | that the Stash picks no colour of its own and asks the theme, not the OS |
@@ -5261,6 +5261,18 @@ flag was `handoffOpen` from another chat's handoff in `/Users/robertiuoras/Proje
 already removes, and the refusal now names each flag. Rows are written first and held; the
 card, the to-dos and the read mark go only after the pane really closed. `pf tidy` asks the
 same sweep without the wait: somebody asking to tidy is the wait.
+
+### ...and its folder never holds it (2026-10-02)
+
+Robert: "we dont need that guard anymore since we have reports". The 2026-09-28 folder check
+(clean + pushed) was dropped: a finished chat closes into Review even with changed files or
+unpushed commits, and the Review row's `evidence` plus the done-close.log close line say
+`Left in toolstash: 6 changed files, 2 commits not pushed` (`folderLeftover`). Nothing on disk
+is touched. Evidence: done-close.log 1 Oct 19:12Z-22:40Z, 748 of ~950 "stays" lines were the
+folder (`not read yet` / `uncommitted or unpushed work`); chats in shared folders
+(claude-memory, which every chat and the timed autosync write to; toolstash main) sat 2.5 h
+until closed by hand, held by other chats' changes. A read still in flight is asked again at
+the close; still unread = no line, never a hold.
 
 ### ...and the chat that opened them hears once
 

@@ -5,7 +5,8 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { BUILTIN_AGENTS, findAgent, modelValue, type ModelChoice } from '../shared/agents'
+import { listAgents } from './agents'
+import { newestOf } from '../shared/claudeCatalogue'
 import type { ModelFamily } from '../shared/modelAdvice'
 
 /** Same override Claude Code itself honours - `claudeTrust.ts` reads the same folder. */
@@ -56,21 +57,15 @@ export function currentClaudeEffort(launchEffort: string | undefined, now = Date
   return launch || currentEffortLevel(now)
 }
 
-/** Claude Code's own model catalogue, `shared/agents.ts` `CLAUDE_MODELS`. */
-const CLAUDE_MODELS: ModelChoice[] = findAgent(BUILTIN_AGENTS, 'claude').models ?? []
-
 /**
- * The concrete catalogue id a family resolves to, so the card can say "Sonnet 5" rather
+ * The concrete catalogue id a family resolves to, so the card can say "Sonnet 5.5" rather
  * than the bare word "sonnet" - and so `/model <id>` lands on the same model the card
  * named, never a different one picked by a CLI alias behind the person's back.
  *
- * The first non-alias entry for that family: `CLAUDE_MODELS` lists newest first, so this
- * is always the newest dated model of the family, exactly what a fresh switch should
- * mean. Falls back to the alias word itself for a family this build has never catalogued
- * (a future model, or 'other') - the CLI accepts a bare model string it does not list.
+ * Read off the SAME list the model picker shows: the hand list plus every newer id the
+ * installed CLI names (`main/agents.ts`). The hand list alone went stale - the CLI knew
+ * Sonnet 5.5 and the picker showed it while this card still said "Sonnet 5" (2026-10-01).
  */
 export function catalogueIdFor(family: ModelFamily): string {
-  const prefix = `claude-${family}`
-  const found = CLAUDE_MODELS.find((m) => modelValue(m).startsWith(prefix))
-  return found ? modelValue(found) : family
+  return newestOf(family, listAgents().find((a) => a.id === 'claude')?.models ?? [])
 }

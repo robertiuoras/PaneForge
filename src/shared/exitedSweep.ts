@@ -47,6 +47,13 @@ export interface ExitedFact {
   lastKeyboard?: number
   /** The person asked for this pane to stay (the card's Keep open). */
   keepOpen?: boolean
+  /**
+   * The app still owes this pane a prompt (`Session.owedPrompt`). 2026-10-02 4:44am: six
+   * panes a crash had cut mid-turn came back asleep holding their "continue", and the
+   * close sweep took all six ten minutes later - `queued-prompts.log` "LOST (gone: the pane
+   * closed before it was typed)" six times. A card holding unfinished work is never swept.
+   */
+  owed?: boolean
 }
 
 export interface ExitedRemoval {
@@ -69,6 +76,7 @@ function isFinished(p: ExitedFact): boolean {
   if (p.keepOpen) return false
   if (p.ask) return false
   if (p.handingOff) return false
+  if (p.owed) return false
   if (!p.exitedAt) return false
   // Touched (typed into, clicked) after it died holds the clock, the same way
   // `closeAfterResult` refuses a pane with newer user input than the moment it judged.
@@ -115,7 +123,7 @@ export const ASLEEP_REMOVE_MS = 30 * 60_000
 export function asleepSweep(panes: ExitedFact[], now: number): ExitedRemoval[] {
   const out: ExitedRemoval[] = []
   for (const p of panes) {
-    if (p.remote || !p.asleep || p.keepOpen || p.ask || p.handingOff) continue
+    if (p.remote || !p.asleep || p.keepOpen || p.ask || p.handingOff || p.owed) continue
     const since = typeof p.asleep === 'number' ? p.asleep : 0
     if (!since || now - since < ASLEEP_REMOVE_MS) continue
     if (p.lastKeyboard && p.lastKeyboard > since) continue

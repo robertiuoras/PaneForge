@@ -173,9 +173,19 @@ export class Discovery extends EventEmitter {
  * Ethernet (or with WSL and Docker adapters, which is most of them) would only ever
  * announce on whichever one won.
  */
+// Windows can throw ERR_SYSTEM_ERROR while an adapter changes. Discovery is
+// best-effort; an address refresh must not tear down an established device link.
+function interfaces(): ReturnType<typeof networkInterfaces> {
+  try {
+    return networkInterfaces()
+  } catch {
+    return {}
+  }
+}
+
 export function broadcastAddresses(): string[] {
   const out = new Set<string>(['255.255.255.255'])
-  for (const list of Object.values(networkInterfaces())) {
+  for (const list of Object.values(interfaces())) {
     for (const net of list ?? []) {
       if (net.family !== 'IPv4' || net.internal) continue
       const ip = net.address.split('.').map(Number)
@@ -196,7 +206,7 @@ export function broadcastAddresses(): string[] {
  */
 export function localAddresses(): string[] {
   const out: string[] = []
-  for (const list of Object.values(networkInterfaces())) {
+  for (const list of Object.values(interfaces())) {
     for (const net of list ?? []) {
       if (net.family === 'IPv4' && !net.internal) out.push(net.address)
     }

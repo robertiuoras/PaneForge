@@ -23,6 +23,7 @@ import type { BusyReason } from '../../shared/busy'
 import { readDeskReport, type DeskReport } from '../../shared/discordRpc'
 import type { Project, Session, StartSessionRequest, TurnClock } from '../../shared/types'
 import { WireBatch, type WireFrame } from '../../shared/wireBatch'
+import type { ReviewRecord } from '../../shared/reviews'
 import { Conn, deriveKey, type Msg, type PeerIdentity } from './wire'
 
 /** Four MiB raw stays comfortably below wire.ts's eight MiB encrypted frame once base64 encoded. */
@@ -95,6 +96,9 @@ export interface HostBackend {
   onTyped(cb: (id: string, line: string, origin: string) => void): () => void
   onSessions(cb: (sessions: Session[]) => void): () => void
   onAttention(cb: (s: Session) => void): () => void
+  /** Saved completion reports replicated to authenticated peers. */
+  listReviews?: (cursor?: string) => { list: ReviewRecord[]; cursor?: string }
+  onReview?: (cb: (review: ReviewRecord) => void) => () => void
 }
 
 /** A device currently connected to this one, as the Remote dialog lists it. */
@@ -312,11 +316,28 @@ export class RemoteHost extends EventEmitter {
         for (const g of this.guests) g.conn.send({ t: 'attention', session: s })
       })
     )
+    if (this.backend.onReview) this.unhook.push(this.backend.onReview((review) => {
+      for (const g of this.guests) g.conn.send({ t: 'review', review })
+    }))
   }
 
   /** Keep-open belongs to this device's config, so publish its reading with each pane. */
   private withKeepOpen(sessions = this.backend.list()): Session[] {
     return sessions.map((s) => ({ ...s, keepOpen: this.backend.isKeepOpen?.(s.id) ?? s.keepOpen ?? false }))
+  }
+
+  /** Reviews can be numerous after an offline day, so send one bounded page at a time. */
+  private sendReviews(conn: Conn, cursor?: unknown): void {
+    const after = typeof cursor === 'string' && /^[A-Za-z0-9_-]{1,120}$/.test(cursor) ? cursor : undefined
+    try {
+      const page = this.backend.listReviews?.(after) ?? { list: [] }
+      conn.send({ t: 'reviews', list: page.list, cursor: page.cursor })
+    } catch (err) {
+      // Review catch-up is supplementary: a damaged old record must not reject a paired
+      // device's whole connection or prevent its sessions from arriving.
+      console.warn(`review peer page failed - ${(err as Error).message}`)
+      conn.send({ t: 'reviews', list: [] })
+    }
   }
 
   private publishSessions(): void {
@@ -414,6 +435,8 @@ export class RemoteHost extends EventEmitter {
     this.guests.add(guest)
     conn.on('msg', (m: Msg) => this.handle(guest, m))
     conn.send({ t: 'sessions', list: this.withKeepOpen() })
+    // A reconnect receives durable records written while the link was down.
+    this.sendReviews(conn)
     if (this.desk) conn.send({ t: 'desk', report: this.desk })
     this.emit('changed')
   }
@@ -640,6 +663,9 @@ export class RemoteHost extends EventEmitter {
           }
           return
         }
+        case 'reviews':
+          this.sendReviews(conn, m.cursor)
+          return
         case 'projects':
           this.answer(conn, m, this.backend.projects(), 'projects', (list) => ({ t: 'projects', list }))
           return

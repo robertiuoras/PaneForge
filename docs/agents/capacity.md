@@ -80,7 +80,10 @@ normal/warn/critical, never zero (`test:capacity`).
 
 ## ...and before it closes one, it tries to move it
 
-Rungs: trim -> start next pane there -> move finished pane -> close. `shared/autoHandoff.ts`
+Rungs: trim -> start next pane there -> move UNFINISHED agent work -> close. `shared/autoHandoff.ts`
+(`automaticWork`: Claude/Codex, a turn running or a verified pane-bound handoff with open steps;
+finished/stopped/exited/shell/unverified idle panes never move automatically - Robert 2026-09-29,
+replacing the move-finished-panes rule on 2026-10-02)
 (`test:autohandoff`). `Machine.keepLocal` (`autoHandoff.keepLocal` 2) budget, `Verdict.over`,
 `budgetPlan`. Cost decides: `expensive()` = `AutoPane.job`, `budgetMinMb` 500, `budgetMinCpu`
 50%; dearest first; unmeasured = cheap; holds at `ok`. Only rule moving ON SCREEN; busy LAST
@@ -106,6 +109,12 @@ Turn rung `turnsPlan` (3 turns here, verdict not `ok`, past `keepLocal`, `queuea
 ONE per sweep. Mac verdict adds `compressorLevel`, stray `next dev` = `PaneUsage.devMb`
 in `paneCost`, dirty same-name copy -> `landingCopy` takes a clean free one. `overlap()` reads
 `origin/lane-*`.
+
+Automatic handoff only selects supported Claude/Codex conversations with proven portable
+folders and unfinished work. Running turns may queue; delivery waits for drafts, subagents
+and background jobs. Idle work requires a fresh pane/native-conversation-bound handoff;
+finished, exited, shell and unverified idle panes stay local. Main rechecks that handoff
+and new activity before delivery and before ending the source. Receiver closure saves Review first.
 
 ## Logs to read when the desk is slow
 

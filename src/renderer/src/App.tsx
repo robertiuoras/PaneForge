@@ -143,6 +143,7 @@ import {
 import { deskNow } from '../../shared/away'
 import {
   autoHandoffPlan,
+  automaticQueueable,
   sweepBlockers,
   sweepLine,
   sweepLogDue,
@@ -152,7 +153,6 @@ import {
   idleOffloadPlan,
   offloadMinutes,
   movable as handoffMovable,
-  queueable as handoffQueueable,
   DEFAULT_AUTO_HANDOFF,
   endsOnArrival,
   staysHere,
@@ -352,6 +352,9 @@ function reclaimPaneOf(
     // A Claude background agent still running inside the CLI dies with a close or a sleep
     // exactly as a background shell does. See `Session.subagent`.
     backJob: backJob ?? s.subagent ?? null,
+    // ...and a server any of it is running, which is quiet on purpose. Read in main off
+    // the process table, so a hidden window still knows. See `ReclaimPane.serving`.
+    serving: s.serving ?? null,
     focused: s.id === activeId,
     // Only the pressure sweep refuses a pane for being on screen; the clock deliberately
     // does not, or a desk with the grid on could never close anything.
@@ -2666,6 +2669,9 @@ export default function App(): JSX.Element {
         id: s.id,
         agent: s.agent,
         state: fleetState(s),
+        finished: s.finished,
+        handoffOpen: s.handoffOpen,
+        handoffVerified: s.handoffVerified,
         lastKeyboard: s.lastKeyboard,
         lastOutput: s.lastOutput,
         // Looking at a pane is using it, for a move exactly as for a close.
@@ -2676,7 +2682,7 @@ export default function App(): JSX.Element {
         handingOff: !!s.handingOff,
         // A live question is drawn on a screen and lives in no transcript: resuming over
         // there comes back with the question gone and nobody asked. Never moved.
-        asking: !!s.ask || !!s.bell,
+        asking: !!s.ask || !!s.bell || !!s.drafting,
         // The app itself owes this pane a prompt - see `AutoPane.owedPrompt`.
         owedPrompt: !!s.owedPrompt,
         // Only the budget rule reads this, and only to pick a busy pane LAST. When one is
@@ -2821,7 +2827,7 @@ export default function App(): JSX.Element {
       // Both rungs below refuse it, so asking the peers about it is a round trip over the
       // link for an empty plan. See `AutoPane.sleepsSoon`.
       if (p.sleepsSoon) return false
-      if (over) return handoffQueueable(p)
+      if (over) return automaticQueueable(p)
       return (
         !p.visible &&
         handoffMovable(p) &&
@@ -2884,7 +2890,7 @@ export default function App(): JSX.Element {
         !p.focused &&
         !p.remote &&
         !p.handingOff &&
-        handoffQueueable(p) &&
+        automaticQueueable(p) &&
         !((handoffBlocked.current[p.id] ?? 0) > now)
     )
     if (!worthAsking) return
@@ -2962,6 +2968,8 @@ export default function App(): JSX.Element {
         // A Claude background agent still running - closing the pane ends it. See
         // `Session.subagent`.
         backJob: s.subagent ?? null,
+        // A server this pane runs dies with it. See `ReclaimPane.serving`.
+        serving: s.serving ?? null,
         focused: s.id === activeId,
         visible: visibleIds.has(s.id),
         remote: !!s.remote,
@@ -4366,6 +4374,8 @@ export default function App(): JSX.Element {
     // closed). Same failure as the two readings of the close clock on 2026-09-01.
     if (s.ask) return false
     if (s.drafting) return false
+    // The app still owes this pane a prompt (2026-10-02: six restored panes closed here, prompt LOST).
+    if (s.owedPrompt) return false
     if (s.runSince !== undefined) return false
     if (s.handingOff) return false
     const st = fleetState(s)
@@ -4410,8 +4420,20 @@ export default function App(): JSX.Element {
   )
 
   const doClose = useCallback(
-    (ids: string[], mb: number, why?: CloseSoon['why']) => {
+    (ids: string[], mb: number, why?: CloseSoon['why'], byPerson = false) => {
       dropSoon(ids)
+      // Re-read at the deadline, not only at the arm: a Keep or a server that arrived during
+      // the count reaches this closure through refs, and the effect that drops the card
+      // may not have run yet. Only the clock is refused: "Do it now" is a person choosing
+      // this close on the card that names the pane, and refusing it would just make the
+      // card vanish with nothing closed.
+      const held = byPerson ? [] : ids.filter((id) => pinnedRef.current[id] || sessionsRef.current.find((x) => x.id === id)?.serving)
+      if (held.length) {
+        skipClose(held, 'it was kept open or started serving during the countdown')
+        mb = Math.round((mb * (ids.length - held.length)) / ids.length)
+        ids = ids.filter((id) => !held.includes(id))
+        if (!ids.length) return
+      }
       const live = ids.filter((id) => stillCloseable(id))
       if (!live.length) {
         skipGone(ids, 'it went back to work during the countdown')
@@ -4468,11 +4490,12 @@ export default function App(): JSX.Element {
           // and the close was the handoff taking the copy here down, but this file never
           // said so.
           const live = sessionsRef.current.find((x) => x.id === move.id)
-          if (!live || live.remote) {
-            api.logReclaim({ event: 'move-skipped', id: move.id, device: move.deviceName, reason: live ? 'it is already on another machine' : 'the pane was gone by the deadline' })
+          const fresh = handoffPanesRef.current().find((p) => p.id === move.id)
+          if (!live || live.remote || !fresh || fresh.focused || fresh.handingOff || !automaticQueueable(fresh)) {
+            api.logReclaim({ event: 'move-skipped', id: move.id, device: move.deviceName, reason: live ? 'the pane is no longer safe or unfinished work to move' : 'the pane was gone by the deadline' })
             continue
           }
-          const items = await api.handoffToDevice(move.device, [move.id], false, true).catch((error) => [{
+          const items = await api.handoffToDevice(move.device, [move.id], true, true, false, true).catch((error) => [{
             id: move.id,
             title: live.title,
             ok: false,
@@ -4745,6 +4768,28 @@ export default function App(): JSX.Element {
   }, [closeSoons, sessions, stillCloseable, skipGone])
 
   /**
+   * ...and so does Keep it open, wherever it was pressed.
+   *
+   * Pressed on this desk, `savePins` drops the countdown itself. Pressed on the phone or on
+   * the other desk it arrives as a config broadcast, and nothing dropped the count: on the
+   * PC 2026-09-29 `dev: dev` was kept from the Mac before 9:02am and a pressure sweep closed
+   * it at 9:09:33am (reclaim.log `armed` why=pressure, `closed` 15 s later). A kept pane is
+   * never closed. It may still be SLEPT under pressure (`sleepable`), so that countdown runs.
+   */
+  useEffect(() => {
+    const kept = closeSoons.filter(
+      (s) => !s.move && !(s.sleep && s.why === 'pressure') && s.ids.some((id) => pinned[id])
+    )
+    if (!kept.length) return
+    skipClose(
+      kept.flatMap((s) => s.ids).filter((id) => pinned[id]),
+      'Keep it open was turned on during the countdown'
+    )
+    const gone = new Set(kept.map((s) => soonKey(s)))
+    setCloseSoons((list) => list.filter((s) => !gone.has(soonKey(s))))
+  }, [closeSoons, pinned, skipClose])
+
+  /**
    * Put each local pane's closing deadline on the session, where the card reads it.
    *
    * The decision has to be made HERE - it needs which pane has focus and the config this
@@ -4897,7 +4942,7 @@ export default function App(): JSX.Element {
       }
       const mb = pendingMb.current[key] ?? 0
       delete pendingMb.current[key]
-      doClose(ids, mb, soon?.why)
+      doClose(ids, mb, soon?.why, true)
     },
     [doClose, doMove, dropSoon]
   )
@@ -6866,6 +6911,9 @@ export default function App(): JSX.Element {
         <ReviewDialog
           onHistory={() => { setReview(false); setHistory(true) }}
           onReopen={(r) => {
+            // A report copied from the other machine: its conversation lives over there, and
+            // resuming its id here would open a chat this desk has no transcript for.
+            if (r.origin) return
             setReview(false)
             start([{ cwd: r.cwd, title: r.title.replace(/ \(closed session\)$/, ''), agent: r.provider as Agent, resume: true, resumeId: r.nativeSessionId, where: 'local' }])
           }}

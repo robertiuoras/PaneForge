@@ -17,7 +17,8 @@ import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname } from 'node:path'
 import { createServer } from 'node:net'
-import { createRequire } from 'node:module'
+import { createRequire, syncBuiltinESMExports } from 'node:module'
+import os from 'node:os'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const out = mkdtempSync(join(tmpdir(), 'pf-remote-'))
@@ -50,6 +51,7 @@ function bundle() {
   writeFileSync(
     entry,
     [
+      `export { localAddresses, broadcastAddresses } from ${JSON.stringify(join(root, 'src/main/remote/discover.ts').replace(/\\/g, '/'))}`,
       `export { RemoteHost } from ${JSON.stringify(join(root, 'src/main/remote/host.ts').replace(/\\/g, '/'))}`,
       `export { RemoteClient } from ${JSON.stringify(join(root, 'src/main/remote/client.ts').replace(/\\/g, '/'))}`,
       `export { newCode } from ${JSON.stringify(join(root, 'src/main/remote/wire.ts').replace(/\\/g, '/'))}`,
@@ -75,7 +77,7 @@ function bundle() {
 
 /** A stand-in for the session manager: two panes, one of which can be made to talk. */
 function backend() {
-  const listeners = { data: [], typed: [], sessions: [], attention: [] }
+  const listeners = { data: [], typed: [], sessions: [], attention: [], review: [] }
   const sessions = [
     { id: 's1', title: 'assistant', cwd: '/w/assistant', agent: 'claude', status: 'idle', lastOutput: 0, createdAt: 0, cols: 100, rows: 28 },
     { id: 's2', title: 'jarvis', cwd: '/w/jarvis', agent: 'codex', status: 'working', lastOutput: 0, createdAt: 0, cols: 80, rows: 24 }
@@ -91,6 +93,12 @@ function backend() {
   const submitted = []
   const kept = new Set()
   const closeDone = []
+  const reviews = Array.from({ length: 21 }, (_, index) => ({
+    id: `done_${index + 1}`, sessionId: 's1', nativeSessionId: 'chat_1', kind: 'result', proof: 'measured',
+    report: 'completed', prompt: 'do it', evidence: ['synthetic proof'], links: [], title: 'jarvis',
+    provider: 'claude', cwd: '/w/assistant', reportPath: '/private/review.html',
+    createdAt: '2026-09-29T00:00:00.000Z', attention: true
+  }))
   // What a guest asked this desk to hand BACK, and what this desk answers with. The
   // answer is settable because the interesting cases are the ones that are not a plain
   // yes: a pane mid-turn (queued over there), a refusal, and a backend too old to know
@@ -127,6 +135,9 @@ function backend() {
     },
     emitAttention(s) {
       for (const cb of listeners.attention) cb(s)
+    },
+    emitReview(review) {
+      for (const cb of listeners.review) cb(review)
     },
     api: {
       list: () => sessions,
@@ -173,7 +184,17 @@ function backend() {
       onData: (cb) => (listeners.data.push(cb), () => {}),
       onTyped: (cb) => (listeners.typed.push(cb), () => {}),
       onSessions: (cb) => (listeners.sessions.push(cb), () => {}),
-      onAttention: (cb) => (listeners.attention.push(cb), () => {})
+      onAttention: (cb) => (listeners.attention.push(cb), () => {}),
+      listReviews: (cursor) => {
+        const previous = cursor === undefined ? -1 : reviews.findIndex((review) => review.id === cursor)
+        if (cursor !== undefined && previous < 0) return { list: [] }
+        const list = reviews.slice(previous + 1, previous + 21)
+        return { list, cursor: previous + 1 + list.length < reviews.length ? list[list.length - 1].id : undefined }
+      },
+      onReview: (cb) => {
+        listeners.review.push(cb)
+        return () => {}
+      }
     }
   }
 }
@@ -192,6 +213,23 @@ async function until(fn, ms = 8000) {
 
 async function main() {
   const mod = await import(pathToFileURL(bundle()).href)
+  const originalInterfaces = os.networkInterfaces
+  try {
+    os.networkInterfaces = () => { throw new Error('ERR_SYSTEM_ERROR: adapter changing') }
+    syncBuiltinESMExports()
+    ok('adapter enumeration failure leaves local addresses unavailable', mod.localAddresses().length === 0)
+    ok('adapter enumeration failure keeps global discovery broadcast', JSON.stringify(mod.broadcastAddresses()) === '["255.255.255.255"]')
+    os.networkInterfaces = () => ({ test: [
+      { family: 'IPv4', internal: false, address: '192.168.1.8', netmask: '255.255.255.0' },
+      { family: 'IPv4', internal: false, address: '100.78.1.77', netmask: '255.255.255.255' }
+    ] })
+    syncBuiltinESMExports()
+    ok('address enumeration recovers on the next refresh with Tailnet first', mod.localAddresses().join(',') === '100.78.1.77,192.168.1.8')
+    ok('subnet discovery recovers on the next refresh', mod.broadcastAddresses().includes('192.168.1.255'))
+  } finally {
+    os.networkInterfaces = originalInterfaces
+    syncBuiltinESMExports()
+  }
   const { RemoteHost, RemoteClient, newCode, makeInvite, readInvite, INVITE_MINUTES, isSelfPeer, dropSelf, liveWatch } =
     mod
 
@@ -332,11 +370,19 @@ async function main() {
   client.on('reset', () => resets++)
   client.on('data', (id, data) => { seen.push([id, data]); ordered.push(['data', data]) })
   client.on('typed', (id, line, origin) => { prompts.push([id, line, origin]); ordered.push(['typed', line]) })
+  const reviewCatchup = []
+  let reviewLive = null
+  client.on('reviews', (reviews) => { reviewCatchup.push(...reviews) })
+  client.on('review', (review) => { reviewLive = review })
   client.connect()
 
   ok('the right code connects', await until(() => client.status === 'online'), client.error)
   ok('legacy peer cannot receive agent conversations without an advertised capability', !client.canResumeHandoff('claude') && !client.canResumeHandoff('codex'))
   ok('the host lists the guest', await until(() => host.list().length === 1))
+  ok('a reconnect catch-up receives every bounded review page', await until(() => reviewCatchup.length === 21), JSON.stringify(reviewCatchup))
+  ok('catch-up retains page order', reviewCatchup[0]?.id === 'done_1' && reviewCatchup[20]?.id === 'done_21', JSON.stringify(reviewCatchup.map((review) => review.id)))
+  be.emitReview({ ...reviewCatchup[0], id: 'done_2', report: 'completed later' })
+  ok('a new owner review crosses the authenticated link', await until(() => reviewLive?.id === 'done_2'), JSON.stringify(reviewLive))
   ok('the guest is named', host.list()[0]?.name === 'Laptop', JSON.stringify(host.list()[0]))
 
   // ------------------------------------------------- is anybody at that machine

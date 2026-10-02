@@ -35,6 +35,8 @@ export interface DonePane {
    * would take that build with it.
    */
   backJob?: string
+  /** A process closing it would stop is listening on a port (`shared/serving.ts`). */
+  serving?: string
 }
 
 /**
@@ -55,6 +57,6 @@ export function doneEnough(p: DonePane, quietMs: number, now = Date.now()): bool
   if (!p.printed) return false
   if (p.status === 'exited' || p.asleep) return false
   if (p.runSince || (p.busyUntil ?? 0) > now) return false
-  if (p.ask || p.drafting || p.job || p.backJob) return false
+  if (p.ask || p.drafting || p.job || p.backJob || p.serving) return false
   return quietMs >= CLOSE_DONE_QUIET_MS
 }

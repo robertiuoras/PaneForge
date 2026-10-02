@@ -24,6 +24,11 @@ there, PreToolUse refuses elsewhere. `node scripts/lane.mjs status --repo <dir>`
   ordinary claimed lane and its normal validation before `ready` (`node scripts/lane-parked-test.mjs`).
 - Shipped once `landedOnOrigin` proves it; failed lane out of `lastShip.lanes`; `state.passed`.
 - ONE PANE, ONE LANE: a claim drops other holds with the same `PF_PANE`; no pane id = kept.
+- An exact native resume stays in its original checkout. If another chat holds that
+  checkout, refuse before allocating a replacement. Preserve dirty files and coordinate
+  release at the occupying chat's task boundary. Never use `moveTo` to recover a
+  conversation: it starts fresh. Duplicate live native owners must be reconciled before
+  `pf continue` sends anything (`test:reopenhold`, `test:pfcontinue`).
 - Trunk = `.lanes.json` `branch`, else origin/HEAD, else main/master, never the root's
   checkout (`trunkName`); `trunkHome` moves a parked root back or ship refuses (`test:lanetrunk`).
 - `sweep [--dry-run]` removes a copy ONLY when `unmergedWork` is null (0 ahead of

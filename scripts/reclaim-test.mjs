@@ -1251,6 +1251,11 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
     asking: false,
     projectName: 'proj',
     memMb: 300,
+    // Unfinished work, the only kind rung 3 moves (`automaticWork`, Robert 2026-09-29):
+    // an idle conversation with a verified handoff that still lists open steps.
+    shareable: true,
+    handoffOpen: 1,
+    handoffVerified: true,
     ...extra
   })
   const soon = (quietMs, pressure) =>
@@ -1319,6 +1324,106 @@ const ids = (plan) => plan.map((p) => p.id).join(',')
   check('the pressure sweep does too', /backJob: s\.subagent \?\? null/.test(app))
   const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
   check('main refuses a sleep while an agent runs', /backJob: live\.meta\.backJob \?\? live\.meta\.subagent/.test(sessions))
+}
+
+{
+  // A pane that is SERVING something is never taken by a clock. Robert, 2026-09-29: "why
+  // guarddeck showing chat 11 closes dev:dev isnt that our dev server on remote pc session
+  // that shouldn't close". A dev server prints its banner and then says nothing for hours,
+  // which is exactly what every idle reading calls a finished pane - so the refusal is the
+  // listening socket (`shared/serving.ts`), not the quiet.
+  const servingOut = join(work, 'serving.bundle.cjs')
+  buildSync({ absWorkingDir: root, entryPoints: ['src/shared/serving.ts'], bundle: true, format: 'cjs', platform: 'node', outfile: servingOut })
+  const { servingPanes } = createRequire(import.meta.url)(servingOut)
+
+  // The PC's own shape, measured 2026-09-29 (`Get-CimInstance Win32_Process`): the pty pid
+  // IS the powershell, `npm run dev` through npm.ps1 puts node npm-cli.js straight under
+  // it, and the socket is held three levels down by next's start-server.js.
+  const proc = (pid, ppid, name, started = `t${pid}`) => ({ pid, ppid, name, started })
+  const win = [
+    proc(36756, 1, 'PaneForge.exe'),
+    proc(87240, 36756, 'powershell.exe'),
+    proc(5100, 87240, 'node.exe'), // npm-cli.js run dev
+    proc(5101, 5100, 'cmd.exe'), // cmd /d /s /c next dev
+    proc(5102, 5101, 'node.exe'), // next dev
+    proc(5103, 5102, 'node.exe'), // start-server.js - holds :3000
+    proc(2000, 36756, 'claude.exe'),
+    proc(2001, 2000, 'node.exe'), // an MCP server on stdio
+    proc(9999, 1, 'svchost.exe')
+  ]
+  const listening = new Set([5103, 9999])
+  const panes = [
+    { id: 'dev', pid: 87240, recorded: [] },
+    { id: 'agent', pid: 2000, recorded: [] }
+  ]
+  const got = servingPanes(win, listening, panes)
+  eq('the dev server three levels under the shell is seen', got.get('dev'), 'node')
+  check('an agent pane whose children only talk over stdio is not serving', !got.has('agent'), [...got])
+  check('a machine listener outside every pane is nobody\'s', got.size === 1, [...got])
+
+  // `next dev` whose npm parent exited: a dead ppid on Windows, ppid 1 on a Mac. The live
+  // tree no longer reaches it; the strays ledger that closing the pane kills from does.
+  const orphaned = [proc(87240, 36756, 'powershell.exe'), proc(5103, 4242, 'node.exe')]
+  eq(
+    'a server that has left the tree still counts while the ledger says the pane started it',
+    servingPanes(orphaned, new Set([5103]), [{ id: 'dev', pid: 87240, recorded: [{ pid: 5103, started: 't5103' }] }]).get('dev'),
+    'node'
+  )
+  check(
+    '...but a reused pid - same number, different creation time - is somebody else\'s server',
+    !servingPanes(orphaned, new Set([5103]), [{ id: 'dev', pid: 87240, recorded: [{ pid: 5103, started: 'earlier' }] }]).has('dev')
+  )
+  check(
+    'the pane\'s own process listening is plumbing, not a server it runs',
+    !servingPanes([proc(2000, 1, 'claude')], new Set([2000]), [{ id: 'agent', pid: 2000, recorded: [{ pid: 2000, started: 't2000' }] }]).has('agent')
+  )
+  check('the moment the server stops, the pane is not serving', !servingPanes(win, new Set([9999]), panes).has('dev'))
+  check('no socket reading, no claim', servingPanes(win, new Set(), panes).size === 0)
+  check('a POSIX path name reads as its program', servingPanes([proc(10, 1, 'zsh'), proc(11, 10, '/usr/local/bin/node')], new Set([11]), [{ id: 'm', pid: 10, recorded: [] }]).get('m') === 'node')
+
+  // The refusal, on every rung that closes or sleeps a pane by itself.
+  const five = { ...DEFAULT_RECLAIM, idleCloseMinutes: 5, idleSleepMinutes: 5 }
+  const desk = (serving) => [
+    pane({ id: 'x', agent: 'shell', serving, lastOutput: NOW - 4 * HOUR }),
+    pane({ id: 'keep', lastOutput: NOW - HOUR })
+  ]
+  check('the idle clock never closes a pane that is serving', !ids(idleClosePlan(desk('node'), five, NOW, false)).includes('x'))
+  eq('...and its card is given no deadline, so GuardDeck draws no close', idleCloseAt(desk('node')[0], five, NOW, false, desk('node')), null)
+  check('the idle clock never sleeps it', !ids(idleSleepPlan(desk('node'), five, NOW, true, 'tight')).includes('x'))
+  check('...not even under memory pressure - sleeping stops the server', !ids(idleSleepPlan(desk('node'), five, NOW, true, 'over')).includes('x'))
+  eq('the pressure sweep closes something else', ids(reclaimPlan(desk('node'), over, DEFAULT_RECLAIM, NOW)), 'keep')
+  // The control: the same pane with nothing listening is an ordinary quiet pane.
+  check('once it stops serving it closes like any other quiet pane', ids(idleClosePlan(desk(null), five, NOW, false)).includes('x'))
+  check('...and has a deadline again', typeof idleCloseAt(desk(null)[0], five, NOW, false, desk(null)) === 'number')
+
+  // The wiring: every rung reads it, main takes it off the table, and a Keep pressed on
+  // another device reaches the window that runs the clock.
+  const app = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
+  eq('reclaimPaneOf and the pressure sweep both feed it in', (app.match(/serving: s\.serving \?\? null/g) ?? []).length, 2)
+  const sessions = readFileSync(join(root, 'src/main/sessions.ts'), 'utf8')
+  check('main reads it off the strays sampler', /trackStrays\(\(\) => this\.roots\(\), \(procs, ledger\) => this\.sweepServing\(procs, ledger\)\)/.test(sessions))
+  check('done-close is handed it', /serving: m\.serving,/.test(sessions))
+  check('closing after a result refuses it', /if \(m\.serving\) return \{ closed: false/.test(sessions))
+  const index = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
+  eq(
+    'a Keep from the phone or the other desk is told to the window, not only saved',
+    (index.match(/setKeepOpen: \(id, keepOpen\) => \{[\s\S]{0,400}?send\('config:changed', getConfig\(\)\)/g) ?? []).length,
+    2
+  )
+  // ...and a Keep that lands DURING a countdown stops it. On the PC 2026-09-29 `dev: dev`
+  // was kept from the Mac, then armed by a pressure sweep at 9:09:18am and closed at
+  // 9:09:33am: a Keep pressed elsewhere reached no countdown, and the deadline re-checked
+  // only whether the pane had gone back to work.
+  check('a Keep from elsewhere drops the countdown naming that pane',
+    /s\.ids\.some\(\(id\) => pinned\[id\]\)[\s\S]{0,300}'Keep it open was turned on during the countdown'[\s\S]{0,200}setCloseSoons\([\s\S]{0,120}\}, \[closeSoons, pinned, skipClose\]\)/.test(app))
+  check('...but a kept pane may still be slept under pressure', /!\(s\.sleep && s\.why === 'pressure'\)/.test(app))
+  const doClose = app.slice(app.indexOf('const doClose = useCallback'), app.indexOf('const live = ids.filter((id) => stillCloseable(id))'))
+  check('the close at the deadline refuses a kept or serving pane',
+    /pinnedRef\.current\[id\] \|\| sessionsRef\.current\.find\(\(x\) => x\.id === id\)\?\.serving/.test(doClose) && /ids = ids\.filter\(\(id\) => !held\.includes\(id\)\)/.test(doClose))
+  // ...the CLOCK's close, that is. "Do it now" is a person choosing it on that card: refusing
+  // it made the card vanish and nothing close (review of the recovered lane-b work, 2026-10-02).
+  check('...but Do it now still closes what the person chose',
+    /const held = byPerson \? \[\] :/.test(doClose) && /doClose\(ids, mb, soon\?\.why, true\)/.test(app) && /doClose\(soon\.ids, mb, soon\.why\)\r?\n/.test(app))
 }
 
 console.log(`reclaim: ${checks} checks passed`)

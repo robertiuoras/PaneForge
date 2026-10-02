@@ -224,6 +224,14 @@ ok('a copy a chat is working in says nothing', notice({ lanes: [entry({ held: tr
 const clash = notice({ lanes: [entry({ conflicted: true })] })
 ok('a clash no chat has taken is one line with a button', Boolean(clash?.fix) && clash.text === 'Two chats changed the same lines in demo.', JSON.stringify(clash))
 ok('a clash a chat is already fixing says nothing', notice({ lanes: [entry({ conflicted: true, resolver: 'abc' })] }) === null)
+// The app hands every clash to a chat by itself (LaneStrip), so a fresh one on screen was
+// a button for a job already being done - two of them at 3:49am on 2026-10-02, Robert:
+// "would rather fixed permanently than see these alerts ... but no silent failures". A
+// clash is the person's only once no chat has taken it for CLASH_QUIET_MS.
+const now = Date.now()
+ok('a clash that just happened says nothing while a chat is handed it', notice({ lanes: [entry({ conflicted: true, conflictSince: now - 60_000 })] }, now) === null)
+const ignored = notice({ lanes: [entry({ conflicted: true, conflictSince: now - words.CLASH_QUIET_MS })] }, now)
+ok('...and one no chat took in that time is said, with the button', Boolean(ignored?.fix) && /^Two chats changed the same lines/.test(ignored.text), JSON.stringify(ignored))
 const stale = notice({ lanes: [entry({ ready: true })], hold: { reason: 'the typecheck fails on master', at: Date.now() - 7 * 3600_000 } })
 ok('finished work held back for hours is one line, with nothing to press', Boolean(stale) && !stale.fix && /^One chat's finished work has waited 7h to go into demo: /.test(stale.text), JSON.stringify(stale))
 for (const n of [clash, stale])
