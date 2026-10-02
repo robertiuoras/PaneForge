@@ -75,7 +75,7 @@ drawn.
 
 ## Checks
 
-On the PC in one command: `node scripts/pc-check.mjs typecheck <suite...>` (rbuild, retries,
+On the PC in one command: `node scripts/pc-check.mjs typecheck <suite...>` (rbuild; on the PC itself its GuardDeck queue; retries,
 failures + totals only). `npm run typecheck`, `npm test` (`scripts/test-all.mjs`, no
 window/network/CLI; `node scripts/test-all.mjs <name...>` runs a subset). Off Windows it runs
 on the PC via `scripts/test-remote.mjs`; exit 3 `Tests deferred:` = PC unreachable, no local
