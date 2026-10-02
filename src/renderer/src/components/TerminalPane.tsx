@@ -66,6 +66,7 @@ import {
 import { chipSpot, type ChipBox } from '../../../shared/copyChip'
 import { composerAt, composerText, frameAt, inputEnd, inputStart, leadingBlanks, pickerBelow, promptTop } from '../../../shared/promptBox'
 import { findPathTokens } from '../../../shared/pathToken'
+import { continues, MAX_RUN_ROWS, wrappedPathLinks } from '../wrappedPath'
 import { completedSlash, seedPrompts, promptRow } from '../../../shared/promptEcho'
 import { START_COLS, START_ROWS } from '../../../shared/paneGrid'
 import { fixSignature } from '../../../shared/fixSign'
@@ -2351,37 +2352,44 @@ function TerminalPane({
           return { text: text.trimEnd(), cells, first, last }
         }
         const line = logicalLine(row - 1)
-        const candidates = [{ ...line, joinedAt: -1 }]
-        // A hard-wrapped continuation is indented by Codex. Try both a word break and
-        // a split inside a filename; only an exact existing target may win this guess.
-        for (const [before, after] of [
-          line.first > 0 ? [logicalLine(line.first - 1), line] : [],
-          line.last + 1 < buffer.length ? [line, logicalLine(line.last + 1)] : []
-        ]) {
-          if (!before || !after) continue
-          const indent = after.text.length - after.text.trimStart().length
-          if (!indent) continue
-          for (const separator of ['', ' ']) candidates.push({
-            ...before,
-            text: before.text + separator + after.text.slice(indent),
-            cells: [...before.cells.slice(0, before.text.length), ...(separator ? [before.cells[before.text.length - 1]] : []), ...after.cells.slice(indent)],
-            joinedAt: before.text.length
-          })
+        // Claude Code and Codex hard-wrap a long path onto indented rows, as many as it
+        // takes. Gather the indented run around this line - the lines above while this one
+        // is a continuation, the indented ones below - and let `wrappedPathLinks` rebuild
+        // the path across every cut, the disk picking each join. Hovering ANY row of it
+        // gathers the same run, so every row offers the same link.
+        const run = [line]
+        while (run.length < MAX_RUN_ROWS && continues(run[0]) && run[0].first > 0) {
+          const above = logicalLine(run[0].first - 1)
+          if (!above.text.trim()) break
+          run.unshift(above)
         }
-        void Promise.all(
-          candidates.flatMap(candidate => findPathTokens(candidate.text).map(async (tok): Promise<ILink | null> => {
+        const hovered = run.length - 1
+        while (run.length - hovered < MAX_RUN_ROWS && run[run.length - 1].last + 1 < buffer.length) {
+          const below = logicalLine(run[run.length - 1].last + 1)
+          if (!continues(below)) break
+          run.push(below)
+        }
+        const wrapped = wrappedPathLinks(run, hovered, row, (token) => kindOf(dir, token)).then((links) =>
+          links.map((l): ILink => ({
+            range: { start: { x: l.start.x, y: l.start.y }, end: { x: l.end.endX, y: l.end.y } },
+            text: l.text,
+            activate: () => api.reveal(l.target.abs)
+          }))
+        )
+        void Promise.all([
+          wrapped,
+          ...findPathTokens(line.text).map(async (tok): Promise<ILink | null> => {
             // A filename with spaces in it has no shape prose does not also have, so the
             // token arrives as several readings of the same run, longest first, and the
             // DISK picks: the first one that is really there wins. `~/Work/Clients/Sonia/
             // Sonia 21st Birthday V9.mp4` used to link only as far as the folder, because
             // the matcher stopped at the first space and the folder happens to exist.
             for (const reading of [tok, ...(tok.alts ?? [])]) {
-              if (candidate.joinedAt >= 0 && (reading.start >= candidate.joinedAt || reading.end <= candidate.joinedAt || !/^(?:[\\/]|~[\\/]|\.{1,2}[\\/]|[A-Za-z]:[\\/])/.test(reading.text))) continue
-              const start = candidate.cells[reading.start]
-              const end = candidate.cells[reading.end - 1]
+              const start = line.cells[reading.start]
+              const end = line.cells[reading.end - 1]
               if (!start || !end || row < start.y || row > end.y) continue
               const target = await kindOf(dir, reading.text)
-              if (!target || (candidate.joinedAt >= 0 && target.ancestor)) continue
+              if (!target) continue
               return {
                 // xterm columns are 1-based and its end is inclusive.
                 range: {
@@ -2393,14 +2401,15 @@ function TerminalPane({
               }
             }
             return null
-          }))
-        ).then((found) => {
+          })
+        ]).then((found) => {
           // Candidates starting at different words can cover the same cells - "Ignore
           // Sonia 21st Birthday final V9.mp4" offers a reading from every word in it, and
           // more than one of them can be a file that exists. Longest wins, and anything
           // overlapping what has already been taken is dropped: two links on one cell is
           // xterm picking for us, at random.
           const links = found
+            .flat()
             .filter((l): l is ILink => l !== null)
             .sort((a, b) => b.text.length - a.text.length)
           const taken: ILink[] = []
