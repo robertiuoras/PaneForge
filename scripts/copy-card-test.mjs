@@ -64,6 +64,10 @@ ok('the Api names it', read('src/shared/types.ts').includes('onCopyMade(fn: (e: 
 const app = read('src/renderer/src/App.tsx')
 ok('App listens and draws the card', app.includes('api.onCopyMade(setCopyMade)') && app.includes('<CopyToast made={copyMade}'))
 const card = read('src/renderer/src/components/CopyToast.tsx')
+ok(
+  'the card says "two chats" only for copy 2, and the copy number otherwise',
+  /made\.copy === 2 \?[\s\S]*two chats[\s\S]*copy \{made\.copy\}/.test(card)
+)
 for (const word of ['lane', 'worktree', 'branch', 'checkout', 'merge', 'trunk']) {
   const visible = card.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '').match(/>[^<{]*</g)?.join(' ') ?? ''
   ok(`the card never says "${word}"`, !new RegExp(`\\b${word}`, 'i').test(visible), visible)

@@ -36,8 +36,19 @@ export default function CopyToast({ made, onDone }: CopyToastProps): React.JSX.E
         }}
       />
       <div className="copy-toast-say">
-        You now have two chats on <strong>{made.project}</strong>, so the second one works
-        in its own copy of the folder.
+        {/* "Two chats" is only true for copy 2: a desk that already had copies before
+            this card existed is told about whichever copy comes next. */}
+        {made.copy === 2 ? (
+          <>
+            You now have two chats on <strong>{made.project}</strong>, so the second one works
+            in its own copy of the folder.
+          </>
+        ) : (
+          <>
+            Another chat is already on <strong>{made.project}</strong>, so this one works in
+            copy {made.copy} of the folder.
+          </>
+        )}
       </div>
       <div className="copy-toast-where">{made.path}</div>
       <div className="copy-toast-why">
