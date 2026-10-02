@@ -437,7 +437,6 @@ if (event === 'prompt') {
   let roster = []
   let others = []
   let stuck = null
-  let orphan = null
   try {
     // Held lanes only (`status --held`): only held lanes are printed, so only held lanes
     // are measured. Carried on the claim's own answer, so no second engine start.
@@ -483,21 +482,11 @@ if (event === 'prompt') {
         `Run: node ${ENGINE} resolve --repo ${repo} --session ${session} - it opens the merge in ${mineNow.dir}, ` +
         `then resolve, git commit, and node ${ENGINE} ready --repo ${repo} --session ${session}.`
     }
-    // A conflict whose own chat has gone quiet is what stalls a release indefinitely - it
-    // is nobody's job, so nobody does it. Any chat may take it over, so every chat that
-    // turns up here is told which one, and the exact command.
-    const abandoned = s.lanes.filter((l) => l.conflict?.adoptable && !l.mine && !l.conflict.resolver)
-    if (abandoned.length) {
-      orphan = abandoned
-        .map(
-          (l) =>
-            `Lane ${l.lane} has been conflicting with ${s.branch} for ${Math.round((Date.now() - l.conflict.since) / 3600000)}h ` +
-            `and its chat has stopped answering, so its finished work is in no release. ` +
-            `You can finish it from here: node ${ENGINE} resolve --repo ${repo} --session ${session} --lane ${l.lane} ` +
-            `(opens the merge in ${l.dir}), resolve, commit, then node ${ENGINE} ready --repo ${repo} --session ${session} --lane ${l.lane}.`
-        )
-        .join('\n')
-    }
+    // A conflict whose own chat has gone quiet used to be told to every chat that turned
+    // up in this repo ("You can finish it from here"), and the app typed the same job into
+    // any idle pane - so client and toolstash chats were handed another repo's merge. Only
+    // the lane's own chat is told now (`stuck` above); a quiet one gets ONE card for a
+    // person instead (lane.mjs clashCards).
   } catch {
     /* status is a nicety - never block the claim on it */
   }
@@ -506,7 +495,7 @@ if (event === 'prompt') {
   // every prompt; every other project gets silence unless there is something to act on -
   // a worktree it must work in, another chat in here, or a stuck lane. A line about lanes
   // on every prompt in every repo on the machine is how a useful line stops being read.
-  const quiet = !info.own && info.lane === 'main' && !others.length && !stuck && !orphan
+  const quiet = !info.own && info.lane === 'main' && !others.length && !stuck
   if (quiet) process.exit(0)
 
   const name = repo.split(/[\\/]/).pop()
@@ -549,7 +538,7 @@ if (event === 'prompt') {
       ? `Every ${name} checkout in use right now (same table in every chat):\n${roster.join('\n')}`
       : `No chat holds a ${name} lane right now.`
   )
-  const text = [...lines, stuck, orphan].filter(Boolean).join('\n')
+  const text = [...lines, stuck].filter(Boolean).join('\n')
   // The same ~1,900 chars were injected on every prompt of a lane chat, task notifications
   // included (agent setup audit 2026-09-26). Print when the text changes, or again after
   // 30 minutes so a compacted chat gets it back; otherwise stay silent.

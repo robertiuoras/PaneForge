@@ -518,11 +518,6 @@ const ADOPT_MS = 45 * 60 * 1000
 // already knows the answer to a good few of the rest. Retrying costs one merge attempt
 // that is aborted on failure, so the cheap half of "resolve it permanently" is free.
 const RETRY_MS = 10 * 60 * 1000
-// A resolver chat opened for an abandoned conflict (dispatchResolvers) gets this long to
-// settle it before another is opened, and only DISPATCH_TRIES are ever opened for one
-// conflict: a chat that fails three times is a conflict a person has to read.
-const DISPATCH_AGAIN_MS = 2 * 60 * 60 * 1000
-const DISPATCH_TRIES = 3
 
 // ---------------------------------------------------------------- state file
 // Lives in .git/, which is shared by every worktree and never committed.
@@ -1544,6 +1539,81 @@ function ownsNothing(dir) {
 }
 
 /**
+ * Two chats that each add "the next" database migration both pick the same number, and
+ * git merges the two files without a word - they have different names - so the clash only
+ * shows when the migrations run. taskdriver.ai's history has it done by hand ("Renumber
+ * client-emails migration to 210 (main took 209 for x-monitor)"). So right after a merge
+ * commit lands in `dir`, a file `mine` added under a `migrations` folder that has the same
+ * number as one `other` added in that folder is given the next free number there, and the
+ * merge commit is amended to carry the rename. Only `mine`'s file moves: the other side's
+ * may already have run somewhere.
+ *
+ * Numbers are 1-6 digits followed by - or _ (`supabase-migration-210-x.sql`, `0012_add.sql`);
+ * timestamps (8+ digits) never collide this way and are left alone. Returns ['old -> new'].
+ */
+const MIGRATION_NAME = /^(.*?)(?<!\d)(\d{1,6})([-_].+)$/
+
+function renumberMigrations(dir, mine, other) {
+  if (!gitSafe(dir, 'rev-parse', '--verify', '-q', 'HEAD^2').ok) return []
+  const base = gitSafe(dir, 'merge-base', mine, other)
+  if (!base.ok || !base.out) return []
+  const parse = (path) => {
+    const parts = path.split('/')
+    if (!parts.slice(0, -1).some((p) => p.toLowerCase() === 'migrations')) return null
+    const m = MIGRATION_NAME.exec(parts[parts.length - 1])
+    return m && { path, dir: parts.slice(0, -1).join('/'), name: parts[parts.length - 1], prefix: m[1], n: Number(m[2]), width: m[2].length, rest: m[3] }
+  }
+  const added = (side) => {
+    const r = gitSafe(dir, 'diff', '--name-only', '--no-renames', '--diff-filter=A', base.out, side)
+    return r.ok ? r.out.split('\n').filter(Boolean).map(parse).filter(Boolean) : []
+  }
+  const theirs = added(other)
+  if (!theirs.length) return []
+  const renamed = []
+  for (const f of added(mine)) {
+    const clash = theirs.some((o) => o.dir === f.dir && o.prefix === f.prefix && o.n === f.n && o.name !== f.name)
+    if (!clash) continue
+    // The index, not HEAD: a rename made a moment ago in this loop has taken its number.
+    const inDir = gitSafe(dir, 'ls-files', '--', `${f.dir}/`).out.split('\n').filter(Boolean).map(parse)
+    const top = Math.max(...inDir.filter((x) => x && x.dir === f.dir && x.prefix === f.prefix).map((x) => x.n))
+    const name = `${f.prefix}${String(top + 1).padStart(f.width, '0')}${f.rest}`
+    const to = `${f.dir}/${name}`
+    if (gitSafe(dir, 'mv', '--', f.path, to).ok) renamed.push([f.path, to])
+  }
+  if (!renamed.length) return []
+  if (!gitSafe(dir, 'commit', '-q', '--amend', '--no-edit', '--no-verify').ok) {
+    // Put the names back rather than leave renames staged on top of a finished merge.
+    for (const [from, to] of renamed) gitSafe(dir, 'mv', '--', to, from)
+    return []
+  }
+  return renamed.map(([from, to]) => `${from} -> ${to}`)
+}
+
+/**
+ * The lane's own typecheck, run in the lane folder after it took in master's newer work.
+ * Two sides that each compile can stop compiling together (2026-10-02: a "clean" merge of
+ * master into a lane left three PC suites red, because nothing re-checked after it). null
+ * means pass, or nothing to say: no typecheck script, a run that never started (no
+ * node_modules in the lane folder), a timeout, or the taskdriver PC proof owning it.
+ */
+function laneTypecheckFailure(dir) {
+  if (TASKDRIVER_PC) return null
+  let pkg
+  try {
+    pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'))
+  } catch {
+    return null
+  }
+  if (!pkg.scripts?.typecheck) return null
+  const r = spawnSync('npm run --silent typecheck', { cwd: dir, shell: true, timeout: 150_000, windowsHide: true, encoding: 'utf8' })
+  if (r.status === 0 || r.signal || r.error) return null
+  const all = `${r.stdout ?? ''}\n${r.stderr ?? ''}`
+  if (cannotRun(all)) return null
+  const errors = all.split('\n').map((l) => l.trim()).filter((l) => /error TS/.test(l)).slice(0, 3)
+  return errors.length ? errors.join('; ') : firstLine(all)
+}
+
+/**
  * Bring one lane up to master.
  *
  * Conflicts are cheap here and expensive later: in the lane, the chat that wrote the code is
@@ -1568,7 +1638,7 @@ function catchUp(id, { keepConflict = false } = {}) {
   }
   enableRerere()
   const m = gitSafe(dir, 'merge', '--no-edit', MB)
-  if (m.ok) return { moved: true, conflicts: [], dirty: false }
+  if (m.ok) return { moved: true, conflicts: [], dirty: false, renamed: renumberMigrations(dir, 'HEAD^1', 'HEAD^2') }
   // A lock that outlived the retry in gitSafe is a live git somewhere else, not a
   // disagreement: report "not now" so the caller leaves the lane alone and tries again,
   // instead of recording a conflict that no amount of resolving would ever clear.
@@ -1589,7 +1659,7 @@ function catchUp(id, { keepConflict = false } = {}) {
       .out.split('\n')
       .filter(Boolean)
     if (!left.length && gitSafe(dir, 'commit', '--no-edit').ok) {
-      return { moved: true, conflicts: [], dirty: false, healed }
+      return { moved: true, conflicts: [], dirty: false, healed, renamed: renumberMigrations(dir, 'HEAD^1', 'HEAD^2') }
     }
     conflicts = left
   }
@@ -1762,9 +1832,9 @@ function noteConflict(bag, id, detail, previous) {
     detail,
     resolver: was?.resolver ?? null,
     resolverAt: was?.resolverAt ?? null,
-    // The resolver chat this conflict already had opened for it (see dispatchResolvers).
-    // Kept across re-records so a second tick never opens a second pane.
-    dispatch: was?.dispatch ?? null,
+    // The card this conflict episode already raised (see clashCards). Kept across
+    // re-records - a release rebuilds the whole conflict list - so no tick raises a second.
+    card: was?.card ?? null,
     master: gitSafe(MAIN, 'rev-parse', MB).out,
     retryAt: now() + RETRY_MS
   }
@@ -1920,73 +1990,84 @@ function seedTrust(dir) {
   }
 }
 
-/** What the resolver chat is told: everything it needs, nothing it has to ask for. */
-function resolverBrief(id, c) {
-  const dir = laneDir(id)
-  const engine = join(here, 'lane.mjs')
-  const hours = Math.max(1, Math.round((now() - (c.since ?? now())) / 3600000))
-  const s = '<this chat\'s session id, printed in the lane line at the top of this chat>'
-  return (
-    `Lane ${id} of ${basename(MAIN)} (${dir}) has conflicted with ${MB} for about ${hours}h and the chat that wrote it has stopped answering, ` +
-    `so its finished work is in no release. The automatic merge could not settle it: both sides changed the same lines of ${c.detail}. Settle it yourself, now:\n` +
-    `1. node "${engine}" resolve --repo "${MAIN}" --session ${s} --lane ${id}   (opens the merge in ${dir})\n` +
-    `2. In ${dir}, read what each side meant (git log -p ${MB} -3 -- <file> and git log -p HEAD -3 -- <file>) and rewrite every conflicted file so BOTH changes survive. No conflict markers left.\n` +
-    `3. git add those files, git commit --no-edit, then run the repo's typecheck/tests if it has them.\n` +
-    `4. node "${engine}" ready --repo "${MAIN}" --session ${s} --lane ${id}\n` +
-    `Never cut or publish a release. If the two changes genuinely cannot both be kept, stop and say which lines disagree and why.`
-  )
+/** The number a person sees for a lane's folder: copy 2 is lane a (see place.ts copyNumber). */
+function copyName(id) {
+  return /^[a-z]$/.test(id) ? `copy ${id.charCodeAt(0) - 97 + 2}` : `copy ${id}`
 }
 
 /**
- * Open ONE resolver chat for each conflict nobody is going to settle.
+ * A repository in the OS temp folder is a test fixture, never a person's project. The suites
+ * build real repos there and run the real engine, and a card from one of them reached
+ * GuardDeck for real ("Two chats changed the same lines in demo", 2026-10-02), so no card is
+ * ever sent for one - tests that want to see a card set LANE_DISPATCH_LOG.
+ */
+function inTempFolder(dir) {
+  try {
+    const t = realpathSync(tmpdir())
+    const d = realpathSync(dir)
+    return d === t || d.startsWith(t + sep)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Raise ONE card for each conflict nobody is going to settle.
  *
- * Everything before this - the retry, rerere, autoResolve, adoption - still left a real
- * disagreement waiting for a person: the prompt hook only tells a chat about it when
- * somebody next types into that chat, so in practice Robert pasted "lane a is
- * conflicted ... take it over" by hand, about twenty times between 2026-08-18 and
- * 2026-09-24. So the timer opens the chat itself.
+ * This used to open a resolver chat of its own ("Settle lane X"). Measured from the
+ * transcripts: 11 of those in the week of 21 Sep and 4 more in the next five days, plus the
+ * take-over nudges that landed in unrelated chats - 162 minutes of chat time since 31 Aug,
+ * for conflicts the retry, rerere and autoResolve below had already failed to settle, i.e.
+ * the ones that need somebody who knows what both sides meant. A card says so once, to a
+ * person, with the one line to paste into whichever chat they pick.
  *
  * Only for a conflict that is adoptable (its chat is quiet or gone and no resolver holds
- * it), in a lane that is clean or mid-merge (resolve refuses other uncommitted work), with no chat opened for it in
- * the last DISPATCH_AGAIN_MS, and at most DISPATCH_TRIES times. Runs after
- * retryConflicts, so anything autoResolve settles is already gone. Needs pf-ctl beside
- * this file and a PaneForge to answer it; without either it opens nothing and records
- * nothing, so the next tick tries again. `LANE_DISPATCH_LOG` stands in for the app in
- * tests: each request is appended to it as one JSON line.
+ * it), and once per conflict episode: `c.card.since` remembers which `since` it was raised
+ * for, so a conflict still sitting there hours later is not raised again, and one that
+ * cleared and came back is. Runs after retryConflicts, so anything autoResolve settles is
+ * already gone. Never opens a pane and never asks pf-ctl, so it runs with no app as well
+ * (PF_CTL_NO_APP). Delivered through GuardDeck's notifier; when that is not on this
+ * machine nothing is recorded, so the next tick tries again. `LANE_DISPATCH_LOG` stands in
+ * for the notifier in tests: each card is appended to it as one JSON line.
  */
-function dispatchResolvers(state) {
-  const opened = []
-  const ctl = join(here, 'pf-ctl.mjs')
+function clashCards(state) {
+  const raised = []
   const log = process.env.LANE_DISPATCH_LOG
-  if (!log && (process.env.PF_CTL_NO_APP || !existsSync(ctl))) return opened
+  const notify = [
+    join(homedir(), 'Projects', 'claude-memory', 'claude-config', 'notify.mjs'),
+    ...(process.platform === 'win32' ? [join(homedir(), 'Desktop', 'Projects', 'claude-memory', 'claude-config', 'notify.mjs')] : [])
+  ].find((p) => existsSync(p))
+  if (!log && (!notify || inTempFolder(MAIN))) return raised
+  const engine = join(here, 'lane.mjs')
   for (const [id, c] of Object.entries(state.conflicts)) {
     if (id === 'main' || !existsSync(laneDir(id)) || !adoptable(state, id)) continue
-    const d = c.dispatch
-    if (d && (d.tries >= DISPATCH_TRIES || now() - d.at < DISPATCH_AGAIN_MS)) continue
-    // Uncommitted work is refused by `resolve`; a merge `ready` left open is what it
-    // resumes, so that one is fine.
+    if (c.card?.since === c.since) continue
     const dir = laneDir(id)
-    if (gitSafe(dir, ...WORK_STATUS).out && !gitSafe(dir, 'rev-parse', '--verify', '--quiet', 'MERGE_HEAD').ok) continue
-    const prompt = resolverBrief(id, c)
-    let pane = null
-    seedTrust(dir)
+    const title = `Two chats changed the same lines in ${basename(MAIN)}`
+    const detail =
+      `${basename(MAIN)} ${copyName(id)} (${dir}) and the main copy both changed ${c.detail || 'the same files'}, ` +
+      `and the chat that wrote ${copyName(id)} has gone quiet. Its finished work waits until somebody keeps both changes. ` +
+      `Paste this into any chat: Settle the clash in ${dir}: run node "${engine}" resolve --repo "${MAIN}" ` +
+      `--session <that chat's id> --lane ${id}, keep both changes, commit, then ready --lane ${id}.`
+    let via = null
     if (log) {
-      appendFileSync(log, JSON.stringify({ lane: id, dir, prompt }) + '\n')
-      pane = 'logged'
+      appendFileSync(log, JSON.stringify({ lane: id, dir, card: true, title, detail }) + '\n')
+      via = 'logged'
     } else {
-      // Same launch as openPaneDirs: the app's timer runs this under Electron-as-node.
-      const r = spawnSync(
-        process.execPath,
-        [ctl, 'open', dir, '--here', '--close-when-done', '--title', `Settle lane ${id}`, '--prompt', prompt],
-        { encoding: 'utf8', timeout: 60_000, windowsHide: true }
-      )
+      // The app's timer runs this under Electron-as-node; the notifier is plain node.
+      const r = spawnSync(process.execPath, [notify, '--title', title, '--detail', detail, '--actor', 'paneforge'], {
+        encoding: 'utf8',
+        timeout: 20_000,
+        windowsHide: true,
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
+      })
       if (r.status !== 0) continue
-      pane = /(?:opened|sent to) (\S+)/.exec(r.stdout ?? '')?.[1] ?? '?'
+      via = 'GuardDeck'
     }
-    c.dispatch = { at: now(), pane, tries: (d?.tries ?? 0) + 1 }
-    opened.push({ id, pane })
+    c.card = { at: now(), since: c.since, via }
+    raised.push({ id, via })
   }
-  return opened
+  return raised
 }
 
 // ---------------------------------------------------------------- worktree setup
@@ -4123,6 +4204,15 @@ function ready(session, wanted) {
         `\`git add\` them, \`git commit\`, then run ready again - the release then merges by itself.`
     )
   }
+  // A merge that went in cleanly is not proof the two sides still work together, so the
+  // lane is checked again on the merged tree before it is called finished.
+  if (caught.moved) {
+    const red = laneTypecheckFailure(laneDir(id))
+    if (red) {
+      write(state)
+      throw new Error(`lane ${id} took in ${MB}'s latest work and no longer typechecks: ${red}. Fix it, commit, and run ready again.`)
+    }
+  }
 
   const marked = markReady(state, id)
   if (recovery) {
@@ -4139,7 +4229,7 @@ function ready(session, wanted) {
   closeLaneApps(laneDir(id))
   // Last one out cuts the release. If another chat is still mid-edit this is a no-op
   // and THEIR `ready` (or the end of their session) will cut it instead.
-  return { ...marked, release: autoship('auto', session) }
+  return { ...marked, renamed: caught.renamed ?? [], release: autoship('auto', session) }
 }
 
 /**
@@ -4446,6 +4536,9 @@ function ship(kind, session) {
     // successful merge look identical from every other chat, which is how a fix sat on an
     // unmerged lane while the ship reported it as gone out.
     const skipped = []
+    // Migration files a lane added under a number master took meanwhile, renumbered on
+    // the way in (renumberMigrations), as 'old -> new'.
+    const renamed = []
     for (const [id, mark] of Object.entries(state.ready)) {
       if (id === 'main') continue
       const branch = laneBranch(id)
@@ -4489,6 +4582,7 @@ function ship(kind, session) {
           continue
         }
       }
+      renamed.push(...renumberMigrations(MAIN, 'HEAD^2', 'HEAD^1'))
       merged.push({ lane: id, commits: ahead, commit: mark.commit })
     }
 
@@ -4568,7 +4662,7 @@ function ship(kind, session) {
       // used to be noticed, by hand, long after it stopped meaning anything.
       const prunedRemotes = pruneRemoteLanes()
 
-      return { shipped: true, version, merged, rebased, conflicts, blocked, skipped, unproved, built, prunedRemotes }
+      return { shipped: true, version, merged, rebased, conflicts, blocked, skipped, unproved, built, prunedRemotes, renamed }
     }
 
     // A repository that does not cut versions is finished at the merge. It still gets the
@@ -6095,6 +6189,7 @@ try {
         `Lane ${u.lane} is NOT out - ${u.why}. It keeps its ready mark and goes with the next release.`
       )
     for (const k of r.skipped ?? []) console.log(`Lane ${k.lane} had nothing to merge - ${k.why}.`)
+    if (r.renamed?.length) console.log(`Renumbered migration files that took a number ${MB} already used: ${r.renamed.join(', ')}`)
     for (const [id, c] of Object.entries(r.conflicts ?? {})) {
       console.log(
         `Lane ${id} is finished but conflicts with ${MB}, so it was left out of the release. ` +
@@ -6134,6 +6229,7 @@ try {
     let r
     try { r = ready(session, arg('lane')) } finally { unlock?.() }
     console.log(`Lane ${r.lane} marked done${r.commits ? ` (${r.commits} commit${r.commits === 1 ? '' : 's'})` : ''}.`)
+    if (r.renamed?.length) console.log(`Renumbered migration files that took a number ${MB} already used: ${r.renamed.join(', ')}`)
     sayRelease(r.release)
     // Work that just landed leaves a folder with nothing in it; it goes once its chat lets go.
     if (r.release?.shipped) sweepSoon()
@@ -6181,6 +6277,7 @@ try {
         console.log(`Lane ${u.lane} is NOT out - ${u.why}. It keeps its ready mark and goes with the next release.`)
       for (const k of r.skipped ?? []) console.log(`Lane ${k.lane} had nothing to merge - ${k.why}.`)
       if (r.rebased.length) console.log(`Lanes brought up to date: ${r.rebased.join(', ')}`)
+      if (r.renamed?.length) console.log(`Renumbered migration files that took a number ${MB} already used: ${r.renamed.join(', ')}`)
       if (r.version) console.log(sayBuilt(r.built))
     } else {
       console.log(`Not shipped: ${r.reason}`)
@@ -6220,11 +6317,11 @@ try {
     const cleared = before.filter((id) => !state.conflicts[id])
     if (cleared.length) console.log(`Lane${cleared.length === 1 ? '' : 's'} ${cleared.join(', ')} merge cleanly now.`)
     else if (before.length) console.log(`Still conflicted: ${before.join(', ')}.`)
-    // What is left is a real disagreement. One nobody is on gets a chat of its own.
-    const sent = dispatchResolvers(state)
+    // What is left is a real disagreement. One nobody is on gets one card for a person.
+    const sent = clashCards(state)
     if (sent.length) {
       write(state)
-      for (const o of sent) console.log(`Lane ${o.id} still conflicts and nobody is on it - opened a chat to settle it (${o.pane}).`)
+      for (const o of sent) console.log(`Lane ${o.id} still conflicts and nobody is on it - raised one card for a person (${o.via}).`)
     }
     const completion = dispatchCompletion()
     if (completion) console.log(`Preserved work ${completion.key} has one verification owner (${completion.pane}).`)

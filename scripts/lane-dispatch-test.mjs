@@ -1,27 +1,27 @@
-// A conflict nobody is going to settle opens a chat of its own.
+// A conflict nobody is going to settle raises ONE card for a person, and never a chat.
 //
-// Robert pasted "lane a is conflicted ... take it over" about twenty times between
-// 2026-08-18 and 2026-09-24: retry, rerere and autoResolve settle the mechanical conflicts,
-// but a real disagreement only ever reached a chat through the prompt hook, i.e. when
-// somebody next typed. `retry` now opens ONE resolver pane per such conflict
-// (dispatchResolvers). Pinned here, with real git repos and the real lane.mjs:
+// `retry` used to open a resolver pane per such conflict ("Settle lane X"): 11 in the week
+// of 21 Sep, 4 more in the next five days, plus take-over nudges typed into unrelated
+// chats. Now it raises one card per conflict episode (clashCards). Pinned here, with real
+// git repos and the real lane.mjs:
 //
-//   - a real conflict whose chat went quiet: exactly one pane request across many ticks,
-//     briefed with the exact resolve / ready commands for that lane
-//   - a fresh conflict (its chat is still working): no request
-//   - a conflict autoResolve settles on the retry: no request, and the conflict is gone
-//   - a pane that did not settle it gets another after DISPATCH_AGAIN_MS, three at most
-//   - no PaneForge to ask (no pf-ctl beside lane.mjs): nothing requested, nothing recorded
-//   - the lane folder gets the repo's Claude Code trust entry, so the pane does not stop
-//     on the trust prompt - also when Claude Code already wrote its own untrusted entry there
+//   - a fresh conflict (its chat is still working): nothing
+//   - a real conflict whose chat went quiet: exactly one card across many ticks, zero pane
+//     requests, naming the file and the resolve command
+//   - still conflicted hours later: still one card; a new episode (another `since`): one more
+//   - a conflict a resolver adopted: nothing
+//   - no notifier on the machine: nothing recorded, so a later tick still raises it
+//   - a fixture repo in the temp folder never reaches the real notifier
+//   - PF_CTL_NO_APP=1 (no app to ask) still raises the card
+//   - a conflict autoResolve settles on the retry: no card, and the conflict is gone
 //
-// `LANE_DISPATCH_LOG` stands in for the app; CLAUDE_CONFIG_DIR keeps the trust write in
-// the temp folder. `ship` is never reached: a fresh `lastShip` is seeded.
+// `LANE_DISPATCH_LOG` stands in for GuardDeck's notifier. `ship` is never reached: a fresh
+// `lastShip` is seeded.
 //
 //   node scripts/lane-dispatch-test.mjs
 
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -58,15 +58,9 @@ git(repo, 'add', '-A')
 git(repo, 'commit', '-qm', 'first')
 git(repo, 'tag', 'v0.0.1')
 
-// Claude Code's config, trusted for the repo only.
-const claudeHome = join(root, 'claude-home')
-mkdirSync(claudeHome)
-const claudeJson = join(claudeHome, '.claude.json')
-writeFileSync(claudeJson, JSON.stringify({ projects: { [realpathSync(repo)]: { hasTrustDialogAccepted: true, allowedTools: ['Bash(ls:*)'], history: ['private'] } } }))
-
 const dispatchLog = join(root, 'dispatch.jsonl')
 const lane = (args, extraEnv = {}) => {
-  const env = { ...process.env, CLAUDE_CONFIG_DIR: claudeHome, LANE_DISPATCH_LOG: dispatchLog, ...extraEnv }
+  const env = { ...process.env, LANE_DISPATCH_LOG: dispatchLog, ...extraEnv }
   for (const [k, v] of Object.entries(env)) if (v === undefined) delete env[k]
   try {
     return { code: 0, out: execFileSync(process.execPath, [join(repo, 'scripts', 'lane.mjs'), ...args], { cwd: repo, encoding: 'utf8', stdio: 'pipe', env }).trim() }
@@ -103,55 +97,49 @@ ok('the lane that rewrote the same lines is refused', refused.code !== 0 && /pag
 ok('and its conflict is recorded', Boolean(state().conflicts[work.lane]))
 
 retryTimes(2)
-ok('a fresh conflict, its chat still working: no chat opened', requests().length === 0, JSON.stringify(requests()))
+ok('a fresh conflict, its chat still working: no card', requests().length === 0, JSON.stringify(requests()))
 
 // ---------------------------------------------------- ...that chat goes quiet
 
+const panes = () => requests().filter((x) => !x.card || 'prompt' in x)
 quiet(work.lane)
 retryTimes(4)
 const reqs = requests()
-ok('a quiet real conflict opens exactly one chat across four ticks', reqs.length === 1, JSON.stringify(reqs))
+ok('a quiet real conflict raises exactly one card across four ticks', reqs.length === 1 && reqs[0].card === true, JSON.stringify(reqs))
+ok('and asks for zero panes', panes().length === 0, JSON.stringify(panes()))
 const r = reqs[0] ?? {}
-ok('in that lane\'s folder', r.dir === work.dir, r.dir)
-ok('briefed with the exact resolve command for that lane', new RegExp(`resolve --repo "[^"]*demo" --session .* --lane ${work.lane}`).test(r.prompt ?? ''), r.prompt)
-ok('and the ready command that finishes it', new RegExp(`ready --repo .* --lane ${work.lane}`).test(r.prompt ?? ''), r.prompt)
-ok('naming the file that disagrees', /src\/page\.ts/.test(r.prompt ?? ''), r.prompt)
-ok('and forbidding a release', /Never cut or publish a release/.test(r.prompt ?? ''), r.prompt)
-const d = state().conflicts[work.lane]?.dispatch
-ok('the state records the chat, so no tick opens a second', d?.tries === 1 && typeof d.at === 'number', JSON.stringify(d))
-const trust = JSON.parse(readFileSync(claudeJson, 'utf8')).projects[realpathSync(work.dir)]
-ok('the lane folder inherits the repo\'s trust, so the pane does not stop on the trust prompt', trust?.hasTrustDialogAccepted === true && trust.allowedTools?.[0] === 'Bash(ls:*)', JSON.stringify(trust))
-ok('but not the repo\'s prompt history', trust && !('history' in trust), JSON.stringify(trust))
+ok('the title says what happened in plain words', r.title === 'Two chats changed the same lines in demo', r.title)
+ok('the title has no git words in it', !/lane|worktree|branch|merge|conflict/i.test(r.title ?? ''), r.title)
+ok('the card names the copy a person sees', /copy \d/.test(r.detail ?? ''), r.detail)
+ok('naming the file both sides changed', /src\/page\.ts/.test(r.detail ?? ''), r.detail)
+ok('with the exact resolve command for that lane', new RegExp(`resolve --repo "[^"]*demo" --session .* --lane ${work.lane}`).test(r.detail ?? ''), r.detail)
+ok('and the ready step that finishes it', new RegExp(`ready --lane ${work.lane}`).test(r.detail ?? ''), r.detail)
+const card = state().conflicts[work.lane]?.card
+ok('the state records the card for this episode', card?.since === state().conflicts[work.lane]?.since && typeof card.at === 'number', JSON.stringify(card))
 
-// ---------------------------------------------------- the chat did not settle it
+// ---------------------------------------------------- still there hours later
 
-// Meanwhile Claude Code ran in the lane folder and wrote its own untrusted default entry.
-// The repo is trusted, so the next resolver pane must not stop on the trust prompt either,
-// and the folder keeps the rest of its own entry.
-const withCliDefault = JSON.parse(readFileSync(claudeJson, 'utf8'))
-withCliDefault.projects[realpathSync(work.dir)] = { hasTrustDialogAccepted: false, allowedTools: [], enabledMcpServers: ['computer-use'] }
-writeFileSync(claudeJson, JSON.stringify(withCliDefault))
-patchState((s) => { s.conflicts[work.lane].dispatch.at = Date.now() - 3 * 60 * 60 * 1000 })
-retryTimes(2)
-ok('two hours on and still conflicted: one more chat, not two', requests().length === 2, JSON.stringify(requests().map((x) => x.lane)))
-const own = JSON.parse(readFileSync(claudeJson, 'utf8')).projects[realpathSync(work.dir)]
-ok('an untrusted lane entry under a trusted repo becomes trusted', own?.hasTrustDialogAccepted === true, JSON.stringify(own))
-ok('and keeps its own allowedTools and settings', JSON.stringify(own?.allowedTools) === '[]' && own?.enabledMcpServers?.[0] === 'computer-use', JSON.stringify(own))
-patchState((s) => { s.conflicts[work.lane].dispatch.at = Date.now() - 3 * 60 * 60 * 1000 })
-lane(['retry'])
-patchState((s) => { s.conflicts[work.lane].dispatch.at = Date.now() - 3 * 60 * 60 * 1000 })
-retryTimes(2)
-ok('three chats at most, then it is a person\'s to read', requests().length === 3 && state().conflicts[work.lane]?.dispatch?.tries === 3, JSON.stringify(state().conflicts[work.lane]?.dispatch))
+patchState((s) => {
+  s.conflicts[work.lane].card.at = Date.now() - 5 * 60 * 60 * 1000
+  s.conflicts[work.lane].retryAt = 0
+})
+retryTimes(3)
+ok('still conflicted hours later: still one card', requests().length === 1, JSON.stringify(requests()))
+
+// A new episode: the conflict cleared and came back, so its `since` is another one.
+patchState((s) => { s.conflicts[work.lane].since = Date.now() - 60 * 60 * 1000 })
+retryTimes(3)
+ok('a new conflict episode raises one more card, not more', requests().length === 2 && panes().length === 0, JSON.stringify(requests()))
 
 // ---------------------------------------------------- a resolver already holds it
 
 patchState((s) => {
-  s.conflicts[work.lane].dispatch = null
+  s.conflicts[work.lane].since = Date.now() - 30 * 60 * 1000
   s.conflicts[work.lane].resolver = 'sess-fixer'
   s.conflicts[work.lane].resolverAt = Date.now()
 })
 retryTimes(2)
-ok('a conflict a chat already adopted gets no second chat', requests().length === 3, JSON.stringify(requests().map((x) => x.lane)))
+ok('a conflict a chat already adopted raises no card', requests().length === 2, JSON.stringify(requests().map((x) => x.lane)))
 
 // Each invocation is a fresh CLI process, as after an app restart. A resolver that is
 // still editing must renew its lease before the retry clock can abort its open merge.
@@ -167,7 +155,7 @@ const guarded = lane(['guard', '--session', 'sess-fixer', '--path', join(work.di
 ok('authorized resolver edits renew the recovery lease', guarded.code === 0 && Date.now() - state().conflicts[work.lane].resolverAt < 60_000, guarded.err)
 patchState((s) => { s.conflicts[work.lane].retryAt = 0 })
 retryTimes(2)
-ok('retry preserves the active resolver merge and draft', existsSync(git(work.dir, 'rev-parse', '--git-path', 'MERGE_HEAD')) && readFileSync(join(work.dir, 'src/page.ts'), 'utf8') === draft && requests().length === 3)
+ok('retry preserves the active resolver merge and draft', existsSync(git(work.dir, 'rev-parse', '--git-path', 'MERGE_HEAD')) && readFileSync(join(work.dir, 'src/page.ts'), 'utf8') === draft && requests().length === 2)
 patchState((s) => {
   s.lanes[work.lane].session = 'sess-fixer'
   s.conflicts[work.lane].resolverAt = Date.now() - 46 * 60 * 1000
@@ -177,15 +165,33 @@ ok('a resolver that also holds the lane renews both leases', Date.now() - state(
 patchState((s) => { s.lanes[work.lane].session = 'sess-a' })
 quiet(work.lane)
 
-// ---------------------------------------------------- no PaneForge to ask
+// ---------------------------------------------------- nowhere to deliver it
 
 patchState((s) => {
   s.conflicts[work.lane].resolver = null
   s.conflicts[work.lane].resolverAt = null
 })
-retryTimes(2, { LANE_DISPATCH_LOG: undefined })
-ok('with no pf-ctl beside lane.mjs nothing is requested', requests().length === 3)
-ok('and nothing is recorded, so a later tick with an app still opens one', !state().conflicts[work.lane]?.dispatch, JSON.stringify(state().conflicts[work.lane]?.dispatch))
+// A HOME with no GuardDeck notifier in it, so nothing on this machine is called either.
+const bareHome = join(root, 'bare-home')
+mkdirSync(bareHome)
+retryTimes(2, { LANE_DISPATCH_LOG: undefined, HOME: bareHome, USERPROFILE: bareHome })
+ok('with no notifier on the machine nothing is delivered', requests().length === 2)
+ok('and nothing is recorded, so a later tick still raises it', state().conflicts[work.lane]?.card?.since !== state().conflicts[work.lane]?.since, JSON.stringify(state().conflicts[work.lane]?.card))
+// A notifier IS installed here, but the repo is a fixture in the temp folder: a test must
+// never put a real card on GuardDeck (2026-10-02, two leaked).
+const fakeHome = join(root, 'fake-home')
+const notifyDir = join(fakeHome, 'Projects', 'claude-memory', 'claude-config')
+mkdirSync(notifyDir, { recursive: true })
+const notified = join(root, 'notified.txt')
+writeFileSync(join(notifyDir, 'notify.mjs'), `import { appendFileSync } from 'node:fs'\nappendFileSync(${JSON.stringify(notified)}, 'card\\n')\n`)
+retryTimes(2, { LANE_DISPATCH_LOG: undefined, HOME: fakeHome, USERPROFILE: fakeHome })
+ok('a repo in the temp folder never reaches the real notifier', !existsSync(notified) && requests().length === 2, existsSync(notified) ? readFileSync(notified, 'utf8') : '')
+retryTimes(2, { PF_CTL_NO_APP: '1' })
+ok('with no app to ask (PF_CTL_NO_APP) the card is still raised, once', requests().length === 3 && panes().length === 0, JSON.stringify(requests()))
+ok('the old `dispatch` field in a state file is tolerated', (() => {
+  patchState((s) => { s.conflicts[work.lane].dispatch = { at: Date.now(), pane: 'p1', tries: 1 } })
+  return lane(['retry']).code === 0 && requests().length === 3
+})())
 
 // ---------------------------------------------------- a conflict autoResolve settles
 
@@ -201,7 +207,7 @@ patchState((s) => {
 })
 const before = requests().length
 retryTimes(3)
-ok('an import collision autoResolve settles opens no chat', requests().slice(before).filter((x) => x.lane === mech.lane).length === 0, JSON.stringify(requests().map((x) => x.lane)))
+ok('an import collision autoResolve settles raises no card', requests().slice(before).filter((x) => x.lane === mech.lane).length === 0, JSON.stringify(requests().map((x) => x.lane)))
 ok('and the conflict is gone', !state().conflicts[mech.lane], JSON.stringify(state().conflicts[mech.lane]))
 ok('with both imports kept', /import \{ b \}/.test(readFileSync(join(mech.dir, 'src/mod.ts'), 'utf8')) && /import \{ c \}/.test(readFileSync(join(mech.dir, 'src/mod.ts'), 'utf8')), readFileSync(join(mech.dir, 'src/mod.ts'), 'utf8'))
 
