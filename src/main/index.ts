@@ -68,6 +68,7 @@ import { LOCAL_ONLY, PhoneServer, newPhoneCode } from './phone'
 import { installPf } from './pfAccess'
 import { ownerAccess, ownerStats } from './ownerStats'
 import { Tunnel } from './tunnel'
+import { TailnetIdentity } from './tailnetIdentity'
 import { callInvoke, callSend, tapIpc } from './ipcTap'
 import { surfaceChannels } from '../shared/surface'
 import { startDisplayAwake } from './awake'
@@ -833,6 +834,8 @@ const phone = new PhoneServer({
   isKeepOpen: keptOpen,
   wakeSession: (id) => manager.wake(id, 'phone'),
   sendNativePrompt: (id, text) => manager.sendNativePrompt(id, text),
+  tailnet: new TailnetIdentity(),
+  trustLog: (line) => appendLog(join(app.getPath('userData'), 'phone-trust.log'), `${line}\n`, { rotateAt: 200_000 }),
   onIdle: () => manager.returnSizes(),
   onChange: () => send('phone:changed', phoneState())
 })
