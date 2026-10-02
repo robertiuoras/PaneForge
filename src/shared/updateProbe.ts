@@ -68,7 +68,20 @@ export interface HealthReading {
   lastGood: number
   wedges: number
   lastWedge?: string
-  sleeps: number
+  /** When checks were dropped because the machine slept with them in flight. */
+  sleptAt?: number[]
+}
+
+/** A sleep is news for a day. The same cut as the wedge half: history is not a launch line. */
+export const SLEEP_WINDOW_MS = 24 * 3_600_000
+const SLEEP_KEEP = 50
+
+/** The sleep timestamps still worth keeping: the last 24h, newest 50. */
+export function recentSleeps(sleptAt: unknown, now: number): number[] {
+  if (!Array.isArray(sleptAt)) return []
+  return sleptAt
+    .filter((t): t is number => typeof t === 'number' && Number.isFinite(t) && now - t < SLEEP_WINDOW_MS && t <= now + 60_000)
+    .slice(-SLEEP_KEEP)
 }
 
 /**
@@ -80,7 +93,11 @@ export interface HealthReading {
  * wedge half is said only while the last wedge is NEWER than the last good answer.
  */
 export function healthWords(h: HealthReading, now: number): { stale: boolean; line: string } {
-  const slept = h.sleeps ? `, ${h.sleeps} check(s) lost to the machine sleeping` : ''
+  // `sleeps` was a lifetime total with no date: "4 check(s) lost to the machine sleeping"
+  // headed every launch for days (2026-09-30), the same defect as the wedge count below.
+  // Only sleeps inside the last 24h are said, and an old file's `sleeps` is ignored.
+  const nSlept = recentSleeps(h.sleptAt, now).length
+  const slept = nSlept > 0 ? `, ${nSlept} check(s) lost to the machine sleeping in the last 24h` : ''
   if (!h.lastGood) return { stale: false, line: `no good update check on record yet (${h.wedges} wedge(s) recovered${slept})` }
   const hours = Math.round((now - h.lastGood) / 3_600_000)
   // `lastWedge` is "<ISO time> <what>", as `noteWedge` writes it.

@@ -168,6 +168,29 @@ ok(
   ledgerTakenFolders('', over).some((t) => same(t, repo))
 )
 
+// --- a restart renames every pane, and the hold keeps the old name -----------------------
+// 2026-10-01 6:25pm: the watchdog relaunched the app; chat 3's hold on copy b still named
+// `s23-mup2zzuo`, the restored pane was `s3-mup9scda`, and the first press moved the chat
+// out of its own folder into a fresh copy. The conversation is what survived the restart.
+const CHAT = '8acc967e-90f6-400d-a3fc-3dfad7982c14'
+writeFileSync(
+  join(repo, '.git', 'paneforge-lanes.json'),
+  JSON.stringify({ lanes: { b: { session: CHAT, cwd: join(projects, 'clients-b'), pane: 's23-mup2zzuo' } } })
+)
+const restarted = (pane) => holdIsOver(pane, [{ id: 's3-mup9scda', cwd: join(projects, 'clients-b'), status: 'exited', asleep: 1 }], () => false)
+ok(
+  'the old pane id alone still reads as somebody else (unknown pane, History never ended it)',
+  ledgerTakenFolders('s3-mup9scda', restarted).some((t) => same(t, join(projects, 'clients-b')))
+)
+ok(
+  'the restored pane resuming the SAME chat does not count that hold against itself',
+  !ledgerTakenFolders('s3-mup9scda', restarted, CHAT).some((t) => same(t, join(projects, 'clients-b')))
+)
+ok(
+  'a different chat still finds copy b taken by that hold',
+  ledgerTakenFolders('s9-new', restarted, 'another-chat').some((t) => same(t, join(projects, 'clients-b')))
+)
+
 // Execute the real placement entry point against synthetic git checkouts. Exact
 // resumes never call the allocator or return-to-base, including clean checkouts.
 const main = readFileSync(join(repoRoot, 'src/main/index.ts'), 'utf8')

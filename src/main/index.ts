@@ -27,6 +27,7 @@ import { onReviewChanged, onReviewRecorded, reviewForPeer, reviewsForPeer, store
 import { ComputeReviews, computeResult } from './computeReviews'
 import { mayNotify, noticesDir, readReply, sweepDoneClose, type DoneCloseDeps } from './doneClose'
 import { doneQuietMs, doneReviewId } from '../shared/doneClose'
+import { closeByOf, type CloseBy } from '../shared/closeWhenDone'
 import { FinishedDigest, summaryOf } from '../shared/finishedDigest'
 import { DataPump } from './dataPump'
 import { freshReplay } from '../shared/freshReplay'
@@ -107,6 +108,7 @@ import {
   whenClear
 } from './gameMode'
 import { away, startAway, stopAway } from './away'
+import { deskNow } from '../shared/away'
 import { idleHideDeskChanged, idleHideShown, startIdleHide } from './idleHide'
 import { onBatteryNow, watchPower } from './power'
 import {
@@ -120,6 +122,7 @@ import {
 } from './profile'
 import { snapPlan } from '../shared/deskSnap'
 import { crashTestHook, installCrashGuard, logProblem, onCrashReport } from './crash'
+import { startBreathing, lastBreath } from './lastBreath'
 import { onOpenProblem, openLink, openLocal } from './openUrl'
 import { openScreen, screenCan } from './screenView'
 import type { ScreenPeer } from '../shared/screenView'
@@ -212,7 +215,7 @@ import { imagePasteKey, installCommand, pastesClipboardImage, uninstallCommand, 
 import { installLaneHooks } from './laneHooks'
 import { assess, lagLevel, restorePlan, worstPressure, type Pressure } from '../shared/capacity'
 import { sleepPressureOf } from '../shared/reclaim'
-import { restoreAsleep } from '../shared/restoreTurn'
+import { restoreAsleep, deskLeftBy } from '../shared/restoreTurn'
 import { DEFAULT_RECOVER } from '../shared/recover'
 import type { UsageReport } from '../shared/usage'
 import { loadPerCore, readPressure, totalMb, watchPressure } from './memory'
@@ -248,7 +251,7 @@ tapIpc()
 const manager = new SessionManager()
 startWakeQueue({
   list: () => manager.list(),
-  wake: (id) => { if (!continuationOwnsSource(id)) manager.wake(id) },
+  wake: (id) => { if (!continuationOwnsSource(id)) manager.wake(id, 'queue') },
   // The same reading the budget rung takes (`autoHandoff` below): the memory verdict OR
   // the lag band, whichever is worse. A machine that is not lagging and not short of
   // memory is a machine with room, and that is when a queued pane may start.
@@ -373,6 +376,7 @@ function logQuit(): void {
   quitLogged = true
   notePanes()
   updateLog('quit', quitReason(), `${panesAtQuit} pane(s) open`)
+  lastBreath(quitReason())
 }
 /** The words for the log line, including the case where nothing in the app fired. */
 function quitReason(): string {
@@ -827,7 +831,7 @@ const phone = new PhoneServer({
     return true
   },
   isKeepOpen: keptOpen,
-  wakeSession: (id) => manager.wake(id),
+  wakeSession: (id) => manager.wake(id, 'phone'),
   sendNativePrompt: (id, text) => manager.sendNativePrompt(id, text),
   onIdle: () => manager.returnSizes(),
   onChange: () => send('phone:changed', phoneState())
@@ -1280,7 +1284,8 @@ const remote = new Remote({
   },
   isKeepOpen: keptOpen,
   armCloseWhenDone: (id) => manager.armCloseWhenDone(id),
-  kill: (id) => manager.kill(id),
+  // A person closing a pane this desk runs, from the paired machine's mirror of it.
+  kill: (id) => manager.kill(id, 'remote'),
   restart: (id) => continuationOwnsSource(id) ? null : manager.restart(id),
   rename: (id, title) => manager.rename(id, title),
   switchAgent: (id, agent, model) => continuationOwnsSource(id) ? null : manager.switchAgent(id, agent, model),
@@ -1307,7 +1312,7 @@ const remote = new Remote({
         claudeProjectDir: projectDir,
         startDev: (dir, script) => startDevServer(dir, script),
         resumed: (id) => manager.confirmResume(id, RESUME_CONFIRM_MS),
-        kill: (id) => manager.kill(id),
+        kill: (id) => manager.kill(id, 'handoff'),
         list: () => manager.list(),
         log: logHandoff
       },
@@ -1909,7 +1914,7 @@ ipcMain.handle('sessions:continueFresh', (_e, id: string) => {
   const source = manager.list().find((s) => s.id === id)
   if (!source || !['codex', 'claude'].includes(source.agent) || backJobOf(id)) return { ok: false, reason: 'No supported, safe source conversation.' }
   if (continuationOwnsSource(id)) return { ok: false, reason: 'This source already has a live continuation.' }
-  const result = startContinuation({ sleep: (key) => manager.sleep(key, 'continuation', { source: 'continuation' }), wake: (key) => manager.wake(key), session: (key) => manager.list().find((s) => s.id === key), snapshot: () => manager.snapshot(), start: (req) => manager.start(req) }, id)
+  const result = startContinuation({ sleep: (key) => manager.sleep(key, 'continuation', { source: 'continuation' }), wake: (key) => manager.wake(key, 'continuation'), session: (key) => manager.list().find((s) => s.id === key), snapshot: () => manager.snapshot(), start: (req) => manager.start(req) }, id)
   if (result.ok && result.id && result.digest) {
     continuationReceipts.set(result.id, { cwd: source.cwd, digest: result.digest, sourceId: id, deadline: Date.now() + 5 * 60_000 })
     return { ok: true, id: result.id, reason: 'Fresh pane opened; delivery is being checked. Your source is saved asleep.' }
@@ -2482,13 +2487,23 @@ ipcMain.handle('sessions:sleep', (_e, id: string, reason?: import('../shared/typ
   }
   return manager.sleep(id, 'unknown', { source: 'renderer' })
 })
-ipcMain.handle('sessions:wake', async (_e, id: string) => {
+// A wake already under way for a pane. One press reaches this twice (pointer-down and click,
+// log review 2026-10-01), and the second used to run its own folder check and then find the
+// pane already awake. It now gets the first one's answer, so one press is one wake.
+const wakesInFlight = new Map<string, Promise<Session | null>>()
+ipcMain.handle('sessions:wake', (_e, id: string, by?: string) => {
   if (remote.owns(id)) return null
   if (continuationOwnsSource(id)) return null
+  const running = wakesInFlight.get(id)
+  if (running) return running
   // A sleeping pane is placed again before it wakes: the folder it slept in may now be
   // another pane's (two client chats restored asleep into one checkout, 2026-09-04).
-  await manager.rehome(id, (req) => laneFor(req, [], id))
-  return manager.wake(id)
+  const wake = (async (): Promise<Session | null> => {
+    await manager.rehome(id, (req) => laneFor(req, [], id))
+    return manager.wake(id, typeof by === 'string' ? by.slice(0, 24) : 'renderer')
+  })().finally(() => wakesInFlight.delete(id))
+  wakesInFlight.set(id, wake)
+  return wake
 })
 ipcMain.handle('sessions:switchAgent', (_e, id: string, agent: string, model?: string) => {
   if (remote.owns(id)) return remote.send(id, { t: 'switch', agent, model }), null
@@ -2518,7 +2533,7 @@ ipcMain.handle('sessions:setEffort', (_e, id: string, choice: EffortChoice) =>
 ipcMain.handle('model:adviceAnswer', (_e, id: string, doSwitch: boolean) =>
   manager.answerModelAdvice(id, !!doSwitch)
 )
-function closePane(id: string): void {
+function closePane(id: string, by: CloseBy): void {
   if (screenViews.owns(id)) {
     screenViews.close(id)
     return
@@ -2536,11 +2551,10 @@ function closePane(id: string): void {
   // ask with the truth.
   const known = allSessions().some((s) => s.id === id)
   const card = cardAfterClose(id)
-  manager.kill(id)
-  card(known)
+  card(manager.kill(id, by))
   if (!known) send('sessions:changed', allSessions())
 }
-ipcMain.handle('sessions:kill', (_e, id: string) => closePane(id))
+ipcMain.handle('sessions:kill', (_e, id: string, by?: unknown) => closePane(id, closeByOf(Boolean(_e?.processId), by)))
 
 /**
  * A finished pane that closes itself once it has sat dead for a while - see
@@ -2565,6 +2579,7 @@ function exitedFacts(): ExitedFact[] {
     handingOff: s.handingOff,
     lastKeyboard: Math.max(s.lastKeyboard ?? 0, touchedAt.get(s.id) ?? 0) || undefined,
     keepOpen: s.keepOpen || keptOpen(s.id),
+    restored: s.asleepReason === 'restored',
     // A pane the app still owes a prompt is not finished, asleep or not (2026-10-02).
     owed: Boolean(s.owedPrompt)
   }))
@@ -2616,7 +2631,7 @@ function removeFinished(removals: { id: string; reason: string }[]): void {
     const s = manager.list().find((x) => x.id === r.id)
     logReclaim({ action: 'exited-sweep-close', pane: r.id, reason: r.reason })
     reviewBeforeRemove(r.id, r.reason)
-    manager.kill(r.id)
+    manager.kill(r.id, 'exited-sweep')
     noteActivity(activityEntry('closed', s?.title || s?.cwd || 'A finished pane', r.reason))
   }
   send('sessions:changed', allSessions())
@@ -2636,10 +2651,12 @@ ipcMain.handle('sessions:closeIntoReview', (_e, id: string, reason: string) => {
   // Only a local agent pane has a conversation to keep; a screen view, a mirror or a stale
   // id is closed exactly the way `sessions:kill` closes it.
   if (!remote.owns(id) && !screenViews.owns(id) && manager.list().some((s) => s.id === id)) {
+    // Asked before the Review row: a refused close must not leave a row for a pane still open.
+    if (manager.closeRefusedFor(id, 'idle-clock')) return
     logReclaim({ action: 'close-into-review', pane: id, reason })
     reviewBeforeRemove(id, reason)
   }
-  closePane(id)
+  closePane(id, 'idle-clock')
 })
 ipcMain.handle('sessions:clearFinished', () => {
   const removals = clearFinishedNow(exitedFacts())
@@ -2648,11 +2665,15 @@ ipcMain.handle('sessions:clearFinished', () => {
 })
 // The automatic half: the same facts the button reads, checked on its own clock so a
 // pane nobody presses the button on still leaves the sidebar ten minutes after it dies.
+// When a person was first at the window this launch: a restored-asleep pane's clock starts
+// there (`asleepSweep`), and freezes while they are away like the idle clock does.
+let deskSeenAt: number | null = null
 setInterval(() => measureMainTask('exited-close', () => {
   const facts = exitedFacts()
   const now = Date.now()
+  if (deskSeenAt === null && manager.deskWatched?.()) deskSeenAt = now
   // Sleeping panes only when finished panes close themselves at all (Settings).
-  const asleep = getConfig().autoCloseDone !== false ? asleepSweep(facts, now) : []
+  const asleep = getConfig().autoCloseDone !== false ? asleepSweep(facts, deskNow(now, away().awaySince), deskSeenAt) : []
   removeFinished([...exitedSweep(facts, now), ...asleep])
 }), 30_000).unref()
 ipcMain.handle('sessions:buffer', (_e, id: string) =>
@@ -4586,16 +4607,21 @@ function idleInstallCheck(): void {
     return // no reading is not "nobody is here"
   }
   const now = Date.now()
-  const why = idleInstallBlocker({
+  const desk = {
     sessions: manager.list(),
     now,
     personIdleMs,
     restoreAfterUpdate: getConfig().restoreAfterUpdate,
     gameActive: isGameActive()
-  })
+  }
+  const why = idleInstallBlocker(desk)
   if (why) {
     if (shouldLogHold(now, idleHoldLoggedAt)) {
-      updateLog('install', `waiting for a quiet desk: ${why}`)
+      // The person check comes first and used to hide the panes' half: 0.8.231/0.8.232 each
+      // sat ~6h behind twelve "someone used this computer" lines, and only the pane lines
+      // logged in between showed the two halves never cleared together (2026-10-01 review).
+      const panes = why.startsWith('someone used') ? idleInstallBlocker({ ...desk, personIdleMs: Infinity }) : null
+      updateLog('install', `waiting for a quiet desk: ${why}${why.startsWith('someone used') ? `; panes: ${panes ?? 'quiet'}` : ''}`)
       idleHoldLoggedAt = now
     }
     return
@@ -5183,7 +5209,7 @@ function offerRestore(): void {
   }
   updateLog(
     'desk',
-    `${desk.specs.length} pane(s) left ${desk.reason === 'live' ? 'by a crash or a kill' : desk.reason === 'quit' ? 'by a quit' : 'by an update'} ${Math.round((Date.now() - desk.at) / 60_000)} min ago`
+    `${desk.specs.length} pane(s) left ${deskLeftBy(desk)} ${Math.round((Date.now() - desk.at) / 60_000)} min ago`
   )
   // Panes from last week are not the desk anyone remembers leaving.
   if (desk.at && Date.now() - desk.at > MAX_DESK_AGE_MS) {
@@ -5202,7 +5228,7 @@ function offerRestore(): void {
     // times a day, so asking every time costs more than the inconsistency it removes.
     // On, this falls through to the same offer a quit or a crash gets.
     if (!cfg.askAfterUpdate) {
-      updateLog('desk', `reopened ${desk.specs.length} pane(s) after the update without asking`)
+      updateLog('desk', `reopened ${desk.specs.length} pane(s) after the ${desk.relaunch === 'watchdog' ? 'hang restart' : 'update'} without asking`)
       restorePanes(desk.specs)
       return
     }
@@ -5390,6 +5416,13 @@ app.whenReady().then(() => {
     send('update:changed', s)
   }, cfg.autoUpdate)
   setInterval(idleInstallCheck, IDLE_INSTALL_CHECK_MS).unref()
+  // Before the desk line, which can only say "left by a crash or a kill": this one says
+  // which, from the last heartbeat and macOS's own hang/crash reports (shared/lastBreath.ts).
+  if (app.hasSingleInstanceLock())
+    startBreathing((line) => {
+      updateLog('death', line)
+      logProblem('death', line)
+    })
   offerRestore()
   // Only the copy that owns the window: a launch that lost the lock is on its way out,
   // and starting a pane in it puts an agent in a process that is about to exit.

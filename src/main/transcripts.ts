@@ -1352,6 +1352,9 @@ function hasCodexReply(file: string): boolean {
   }
 }
 
+/** Rollouts already proven for an exact id + folder, so the next ask opens one file. */
+const codexProven = new Map<string, string>()
+
 /** The one rollout that metadata proves belongs to this cwd and exact Codex session id. */
 export function codexTranscriptPath(cwd: string, resumeId: string): string | null {
   if (!cwd || !CODEX_ID.test(resumeId)) return null
@@ -1361,8 +1364,22 @@ export function codexTranscriptPath(cwd: string, resumeId: string): string | nul
     const file = claimed.get(pane)
     if (conversation === resumeId && file && codexMatches(file, cwd, resumeId)) return file
   }
-  const matches = codexRollouts().map(codexMeta).filter((row): row is CodexMeta => Boolean(row)).filter((row) => row.id === resumeId && sameCwd(row.cwd, cwd))
-  return matches.length === 1 ? matches[0].file : null
+  const key = `${resumeId}\n${cwd}`
+  const proven = codexProven.get(key)
+  if (proven && codexMatches(proven, cwd, resumeId)) return proven
+  // Codex names every rollout `rollout-<time>-<id>.jsonl` (all 1,827 on this Mac,
+  // 2026-10-01), so only files carrying this id are opened. Opening all of them for their
+  // metadata line - up to 64 KB each, 7.3 GB of rollouts - took 6.7-19 s of the main
+  // thread per call, from callers on a 300 ms tick: the 2026-09-30 hangs.
+  const suffix = `-${resumeId.toLowerCase()}.jsonl`
+  const matches = codexRollouts()
+    .filter((file) => file.toLowerCase().endsWith(suffix))
+    .map(codexMeta)
+    .filter((row): row is CodexMeta => Boolean(row))
+    .filter((row) => row.id === resumeId && sameCwd(row.cwd, cwd))
+  if (matches.length !== 1) return null
+  codexProven.set(key, matches[0].file)
+  return matches[0].file
 }
 
 /**
@@ -1534,6 +1551,15 @@ function tailLines(file: string, bytes: number): string[] | null {
  * pane s9-mujbz9vp's queued prompt got five more returns at 04:55:21-37Z that answered an
  * AskUserQuestion drawn over it, and was logged LOST.
  */
+/**
+ * Can `claudeAcceptedPrompt` answer for this process at all - does Claude Code's pid file
+ * name its conversation? Then a missing user row means the prompt did not go in, whatever
+ * the screen says; without one only the screen is left to read.
+ */
+export function claudeReceiptReadable(pid: number | undefined): boolean {
+  return cliSession(pid) !== null
+}
+
 const PASTE_TAG = /<\/?pasted_content id="[^"]*">/g
 const receiptText = (text: string): string => text.replace(PASTE_TAG, '').replace(/\s+/g, '')
 /**

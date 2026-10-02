@@ -317,8 +317,11 @@ try {
     JSON.stringify({ type: 'session_meta', payload: { id, session_id: id, cwd: folder, timestamp, padding } })
   const codexUser = (text) => JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] } })
   const codexAssistant = () => JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'done' }] } })
+  // Codex names every rollout `rollout-<time>-<id>.jsonl`, and codexTranscriptPath opens only
+  // files named for the id it is asked about (09252fd8), so a fixture is named the same way.
+  const rolloutFile = (id) => join(codexDir, `rollout-2026-09-05T01-02-03-${id}.jsonl`)
   const rollout = (name, id, folder, timestamp, prompt, answered = true, padding = '') =>
-    writeFileSync(join(codexDir, `${name}.jsonl`), [codexRow(id, folder, timestamp, padding), codexUser(prompt), ...(answered ? [codexAssistant()] : [])].join('\n') + '\n', 'utf8')
+    writeFileSync(rolloutFile(id), [codexRow(id, folder, timestamp, padding), codexUser(prompt), ...(answered ? [codexAssistant()] : [])].join('\n') + '\n', 'utf8')
   T.noteSession('pane3', cwd, 'codex')
   T.noteSubmittedPrompt('pane3', 'pane three owns this Codex prompt')
   rollout('one', codexId, cwd, undefined, 'pane three owns this Codex prompt')
@@ -354,7 +357,7 @@ try {
   rollout('large-meta', largeMetaId, cwd, undefined, 'large native metadata is restorable', true, 'x'.repeat(22_000))
   assert.equal(T.resumable(cwd, largeMetaId, 'codex'), true, 'Codex metadata larger than 8KB is read through its complete first line')
   const oversizedMetaId = '13131313-1313-4131-8131-131313131313'
-  writeFileSync(join(codexDir, 'oversized-meta.jsonl'), codexRow(oversizedMetaId, cwd, undefined, 'x'.repeat(70_000)), 'utf8')
+  writeFileSync(rolloutFile(oversizedMetaId), codexRow(oversizedMetaId, cwd, undefined, 'x'.repeat(70_000)), 'utf8')
   assert.equal(T.resumable(cwd, oversizedMetaId, 'codex'), false, 'unterminated oversized metadata is rejected safely')
   const codexTwo = '22222222-2222-4222-8222-222222222222'
   T.noteSession('pane-codex-two', cwd, 'codex')
@@ -429,7 +432,7 @@ try {
   T.noteSubmittedPrompt('pane-codex-dormant', 'dormant Codex prompt')
   rollout('dormant', dormantId, dormantCwd, undefined, 'dormant Codex prompt')
   const dormantAt = new Date(Date.now() - 60 * 60_000)
-  utimesSync(join(codexDir, 'dormant.jsonl'), dormantAt, dormantAt)
+  utimesSync(rolloutFile(dormantId), dormantAt, dormantAt)
   assert.equal(T.resumeIdFor('pane-codex-dormant'), undefined, 'a rollout untouched since the pane started is nobody here')
   T.noteSession('pane-codex-named', cwd, 'codex', codexId)
   assert.equal(T.resumeIdFor('pane-codex-named'), codexId, 'a named Codex resume is accepted only when metadata matches cwd and id')

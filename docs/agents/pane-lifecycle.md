@@ -17,6 +17,8 @@ Busy read = bottom of screen (`shared/busy.ts`). `shared/staleFrame.ts`, `test:s
 `render-process-gone` (`PROBE_DEAD_MS` 20s + 5s). `executeJavaScript('1')` per
 `PROBE_EVERY_MS` 5s, `GRACE_MS` 10s; `RELOAD_COOLDOWN_MS` 60s, `MAX_RELOADS` 3. Dead renderer
 rebuilt; `activate` asks `alive()`; panes return via desk.json + `--resume`, no focus.
+Probe age is AWAKE time (`process.hrtime`); a tick after a `SLEEP_GAP_MS` 30s gap drops the
+probe + unresponsive clock (2026-10-01: two reloads inside a 5h sleep, "1021965ms").
 `paneforge-errors.log`; cpu = `getAppMetrics().cpu.percentCPUUsage` delta. `test:renderwatch`;
 `PF_PORT=9334 npm run test:renderwatchlive`.
 
@@ -35,6 +37,9 @@ stopped, `readsBusy` false, last PAINTED). Return separate; submit confirmed by 
 newer); busy waits; idle with no turn gets another return. `/clear` no boot patience;
 `PROMPT_ENTER_TRIES` 6; `CLEAR_RESUME_BUDGET_MS` 3 min vs 45s; `autoclear-app.log` `UNSENT`;
 `ARM_QUIET_MS` 15s, `ARM_CLEAR_LEAD_MS` 120ms. Codex `gpt-5.1-codex*` = `400 not supported`.
+Claude with a pid file (`claudeReceiptReadable`): ONLY the transcript user row says sent (a paste
+placeholder is still in the box; a `/clear` footer is not a turn). Still starting (`deferring`):
+one return, then wait for the row - more returns become composer characters.
 
 ## A pane says what its handoff has left
 

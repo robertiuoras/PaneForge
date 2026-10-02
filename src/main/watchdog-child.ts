@@ -249,6 +249,8 @@ async function markDeskForRestart(h: Hello): Promise<void> {
     const clearedAt = Number.isFinite(clearValue) && clearValue > 0 ? clearValue : 0
     if (!desk || (clearedAt > 0 && clearedAt >= generation(desk))) return
     desk.reason = 'update'
+    // Wording only: the launch log says "hang restart" rather than "update" (see `Desk.relaunch`).
+    desk.relaunch = 'watchdog'
     desk.clean = true
     desk.at = Date.now()
     desk.writtenAt = Math.max(Date.now(), generation(desk) + 1, clearedAt + 1)

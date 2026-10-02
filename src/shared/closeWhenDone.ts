@@ -56,7 +56,57 @@ export const CLOSE_DONE_QUIET_MS = 8_000
 export function doneEnough(p: DonePane, quietMs: number, now = Date.now()): boolean {
   if (!p.printed) return false
   if (p.status === 'exited' || p.asleep) return false
+  // Mid-turn by status alone, with no turn clock to read (log review 2026-10-01).
+  if (p.status === 'working') return false
   if (p.runSince || (p.busyUntil ?? 0) > now) return false
   if (p.ask || p.drafting || p.job || p.backJob || p.serving) return false
   return quietMs >= CLOSE_DONE_QUIET_MS
+}
+
+/**
+ * Who closed a pane, on the `close-request` line and for the one refusal below: a person
+ * (the window, the phone, a paired machine), a command somebody named the pane in (`pf
+ * close`, `pf move`, a hand-off), or one of the app's own clocks and sweeps. `unnamed` is
+ * a caller from outside that said nothing.
+ */
+export type CloseBy =
+  | 'user'
+  | 'phone'
+  | 'remote'
+  | 'pf'
+  | 'handoff'
+  | 'review'
+  | 'close-when-done'
+  | 'idle-clock'
+  | 'exited-sweep'
+  | 'exit-close'
+  | 'cwd-gone'
+  | 'tidy-dupes'
+  | 'unnamed'
+
+const NAMED_BY_SOMEBODY = new Set<CloseBy>(['user', 'phone', 'remote', 'pf', 'handoff'])
+
+/**
+ * Why this close may not happen, or undefined when it may. Only a close nobody named the
+ * pane in, and only mid-turn. Log review 2026-10-01: s16-munpf9fk (09-30 08:05Z) and
+ * s2-munmghtf (08:47Z) closed while `working` and nothing on disk said who. A person's
+ * close, or `pf close` run by a chat (a chat moving itself is `working` as it asks), is a
+ * decision; a clock's is a guess, and a wrong one loses the turn.
+ */
+export function closeRefused(by: CloseBy, status: string): string | undefined {
+  if (status !== 'working' || NAMED_BY_SOMEBODY.has(by)) return undefined
+  return 'it is mid-turn - only a person or a command naming it closes a working pane'
+}
+
+/**
+ * Who a `sessions:kill` came from. The window's own IPC is a person. Everything else
+ * arrives through `callInvoke` (pf and the phone share that door): the window's code in a
+ * phone's browser says `user`, `pf` says so, and a caller from outside may not claim one
+ * of the app's own names.
+ */
+export function closeByOf(fromWindow: boolean, said: unknown): CloseBy {
+  if (fromWindow) return 'user'
+  if (said === 'user') return 'phone'
+  if (said === 'pf' || said === 'tidy-dupes') return said
+  return 'unnamed'
 }

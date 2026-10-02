@@ -10,8 +10,10 @@ import { logProblem } from './crash'
 import {
   MAX_SPINS,
   PROBE_EVERY_MS,
+  SLEEP_GAP_MS,
   WEDGE_WINDOW_MS,
   afterAct,
+  afterGap,
   afterGiveUp,
   decide,
   fresh,
@@ -41,6 +43,11 @@ let lastPid = 0
 let goneDetail = ''
 /** When the liveness probe was last answered, for main's own vitals. 0 = never. */
 let answeredAt = 0
+
+/** Milliseconds the machine has been awake: `hrtime` does not advance through a sleep on macOS. */
+function awakeMs(): number {
+  return Number(process.hrtime.bigint() / 1_000_000n)
+}
 
 /** For main's beat vitals: how long ago the window last answered anything at all. */
 export function rendererAnsweredAt(): number {
@@ -144,17 +151,25 @@ export function watchRenderer(win: BrowserWindow, recreate: () => void): void {
     state.gone = true
   })
 
+  let lastTickAt = Date.now()
   timer = setInterval(() => {
     if (win.isDestroyed()) return stopRenderWatch()
     const now = Date.now()
+    const awake = awakeMs()
+    const gap = now - lastTickAt
+    lastTickAt = now
+    if (gap >= SLEEP_GAP_MS) {
+      state = afterGap(state, gap)
+      return
+    }
     const alivePid = state.gone ? 0 : pidOf(win)
     if (alivePid > 0) lastPid = alivePid
-    const act = decide(state, now)
+    const act = decide(state, now, awake)
     if (act === 'wait') {
       // Only ever one probe outstanding: the point of the reading is how long the OLDEST
       // unanswered ask has been waiting, and a fresh probe every tick would reset it.
       if (!state.probeSentAt && !state.gone && !win.webContents.isDestroyed()) {
-        const sent = now
+        const sent = awake
         state.probeSentAt = sent
         win.webContents
           // `true` marks it user-gesture-ish, which is irrelevant here; the value is that
@@ -200,7 +215,7 @@ export function watchRenderer(win: BrowserWindow, recreate: () => void): void {
       : state.unresponsiveSince
         ? `unresponsive for ${now - state.unresponsiveSince}ms`
         : state.probeSentAt
-          ? `no answer to the liveness probe for ${now - state.probeSentAt}ms`
+          ? `no answer to the liveness probe for ${awake - state.probeSentAt}ms awake`
           : `${state.spins} spins it recovered from by itself in ${Math.round((now - state.firstSpinAt) / 1000)}s`
     const pid = state.gone ? lastPid : pidOf(win)
     logProblem('renderer', `${act} (${why}) - ${state.gone ? `pid ${pid || '?'}, already exited` : metricsFor(pid)}`)

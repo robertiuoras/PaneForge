@@ -18,7 +18,7 @@
 //   node scripts/lane-owner-test.mjs
 
 import childProcess, { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import os, { tmpdir } from 'node:os'
 import { syncBuiltinESMExports } from 'node:module'
 import { join, resolve } from 'node:path'
@@ -440,7 +440,7 @@ const twoDead = {
     check('restart with no panes resumes every ledger including an empty orphan board', [self, pending, orphan].every((r) => resumed.some((a) => a.repo === r)), JSON.stringify(resumed))
     delete process.env.PANEFORGE_ENGINE
     await tick(restarted, [])
-    check('self recovery actually launches the bundle', attempts().at(-1)?.engine === pathToFileURL(bundled).href)
+    check('self recovery actually launches the bundle', attempts().at(-1)?.engine === pathToFileURL(realpathSync(bundled)).href, attempts().at(-1)?.engine)
     process.env.PANEFORGE_ENGINE = join(pending, 'scripts', 'lane.mjs')
     check('an explicit recovery engine override is retained', restarted.laneEngine(self) === process.env.PANEFORGE_ENGINE)
     delete process.env.PANEFORGE_ENGINE

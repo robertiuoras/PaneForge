@@ -202,7 +202,7 @@ ok('no offer: the live desk is written as it is, empty included', deskToWrite(nu
 ok('no offer: live panes pass through untouched', deskToWrite(null, opened) === opened)
 
 // Review fixes 2026-10-02: a woken pane types what it was carried; laneFor skips its own claim.
-const wakeStart = sessions.indexOf('  wake(id: string)')
+const wakeStart = sessions.indexOf('  wake(id: string')
 const wakeBody = sessions.slice(wakeStart, sessions.indexOf('\n  /**', wakeStart))
 ok('wake() types the rows the pane was carried (deliverOwed(id, id))', wakeStart > 0 && wakeBody.includes('this.deliverOwed(id, id)'))
 const doStart = sessions.indexOf('  deliverOwed(oldId: string, newId: string, queue = true)')

@@ -185,6 +185,10 @@ ok(HOLD_LOG_INTERVAL_MS === 30 * 60_000, 'the interval is named, not written int
   ok(/background/.test(why({ sessions: [{ ...quiet, backJob: 'npm test' }] })), 'a background job holds it')
   ok(/active/.test(why({ sessions: [{ ...quiet, lastOutput: T - 60_000 }] })), 'a pane that printed a minute ago holds it')
   ok(/active/.test(why({ sessions: [{ ...quiet, lastKeyboard: T - 60_000 }] })), 'a pane typed into a minute ago holds it')
+  // 2026-10-01 review: the person line hid the panes' half for ~6h per update. With the
+  // person taken out the same call names what the panes would still hold it on.
+  const busy = { sessions: [{ ...quiet, runSince: T - 60_000 }, { ...quiet, runSince: T - 5000 }], personIdleMs: 60_000 }
+  ok(/computer 1 min/.test(why(busy)) && why({ ...busy, personIdleMs: Infinity }) === '2 pane(s) mid-turn', 'the panes half is still readable behind the person half')
 }
 
 // A ready build installs from exactly two places: Restart now, and the idle check gated on
@@ -199,6 +203,7 @@ ok(HOLD_LOG_INTERVAL_MS === 30 * 60_000, 'the interval is named, not written int
   const idle = main.slice(main.indexOf('function idleInstallCheck('), main.indexOf('\n}\n', main.indexOf('function idleInstallCheck(')))
   ok(idle.length > 0 && idle.indexOf('idleInstallBlocker(') > 0 && idle.indexOf('idleInstallBlocker(') < idle.indexOf('doInstall()'), 'the idle install asks idleInstallBlocker before it installs')
   ok(/phase !== 'ready'/.test(idle) && /installStarted/.test(idle), 'the idle install only acts on a ready build that is not already installing')
+  ok(/personIdleMs: Infinity/.test(idle) && /; panes: \$\{panes \?\? 'quiet'\}/.test(idle), 'a hold on the person also logs what the panes would hold it on')
   // Restart now, "Restart now anyway" (game:installAnyway, also a click) and the idle check.
   const callers = main.split('\n').filter((l) => /doInstall\(\)/.test(l) && !/function doInstall/.test(l))
   ok(callers.length === 3, `doInstall() has exactly its three callers: two clicks and the idle check (found ${callers.length})`)

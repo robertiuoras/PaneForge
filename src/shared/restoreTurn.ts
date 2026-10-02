@@ -157,3 +157,13 @@ export function restoreAsleep(
 export function deskToWrite<T>(pending: T[] | null, live: T[]): T[] {
   return pending?.length ? [...pending, ...live] : live
 }
+
+/**
+ * How the launch log says the last desk was left. The hang watchdog writes `update` so the
+ * panes reopen unasked, which made a freeze read "left by an update" (2026-10-01 08:25:54Z,
+ * 18 panes, same version before and after); its marker gets the true wording.
+ */
+export function deskLeftBy(desk: { reason: 'quit' | 'update' | 'live'; relaunch?: 'watchdog' }): string {
+  if (desk.relaunch === 'watchdog') return 'by a hang restart (the app stopped answering)'
+  return desk.reason === 'live' ? 'by a crash or a kill' : desk.reason === 'quit' ? 'by a quit' : 'by an update'
+}

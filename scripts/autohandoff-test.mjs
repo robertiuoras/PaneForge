@@ -817,9 +817,9 @@ checks += 3
   assert.doesNotMatch(keep, /handoffBlocked\.current\[id\] = until/, 'the ten-minute hold is the close clock\'s, not the move\'s')
   const touchAt = app.indexOf('const touchPane = useCallback')
   const touch = app.slice(touchAt, app.indexOf('\n  }, [', touchAt))
-  assert.match(touch, /\(id: string, wake = true\)/, 'touchPane takes whether this press may wake')
+  assert.match(touch, /\(id: string, wake = true[,)]/, 'touchPane takes whether this press may wake')
   assert.match(touch, /if \(wake && asleepPane\?\.asleep/, 'the wake is behind that flag')
-  assert.equal((app.match(/touchPane\(s\.id, e\.button !== 2\)/g) ?? []).length, 2, 'the sidebar row and the pane itself both refuse to wake on a right-click')
+  assert.equal((app.match(/touchPane\(s\.id, e\.button !== 2[,)]/g) ?? []).length, 2, 'the sidebar row and the pane itself both refuse to wake on a right-click')
   checks += 6
 }
 

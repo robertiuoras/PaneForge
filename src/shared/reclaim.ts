@@ -860,7 +860,14 @@ function onTheClock(p: ReclaimPane, personHere = true, now = 0, idleMs = 0): boo
     // the question like any other pane: it printed what is on its screen during this run,
     // and a turn nobody looked at is not taken off the desk for going quiet. See
     // `bornAsleep`.
-    !(!bornAsleep(p) && unread(p) && (personHere || freshlyRestored)) && keepable(p, personHere)
+    !(!bornAsleep(p) && unread(p) && (personHere || freshlyRestored)) && keepable(p, personHere) &&
+    // A pane BORN asleep is off this clock altogether. It holds no process, so closing it
+    // frees nothing, and its quiet clock started at the relaunch: 2026-09-30 s7/s8 (04:55)
+    // and s6/s8 (11:30) were live chats before the restart and closed ten minutes after it.
+    // It leaves through the asleep sweep instead (`asleepSweep`, thirty minutes from the
+    // first time somebody is at the window), which is what Robert's 2026-09-02 "id rather
+    // them to close than sleep" now rests on.
+    !bornAsleep(p)
   )
 }
 

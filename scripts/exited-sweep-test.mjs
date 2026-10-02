@@ -171,6 +171,27 @@ function dead(overrides = {}) {
   check('and Clear finished leaves it too', clearFinishedNow([dead({ owed: true })]).length === 0)
 }
 
+// --- A pane a restart brought back asleep waits for somebody to be at the window (2026-10-01) ---
+// 2026-09-30: s7/s8 (04:55Z) and s6/s8 (11:30Z) were live before a relaunch and closed 10 min
+// after it, with nobody at the desk. A restored pane's clock starts at `seenAt`, the first
+// time a person is at the window this launch; null = nobody yet.
+{
+  const T = 10_000_000_000
+  const relaunch = T - 5 * 3_600_000 // asleep since the relaunch, hours ago
+  const back = (over) => ({ id: 'r', status: 'exited', asleep: relaunch, restored: true, ...over })
+  check('restored: held while nobody has been at the window, however long since relaunch', asleepSweep([back({})], T, null).length === 0)
+  const seen = T - 10_000
+  check('restored: held just after somebody arrives', asleepSweep([back({})], seen + ASLEEP_REMOVE_MS - 1, seen).length === 0)
+  const out = asleepSweep([back({})], seen + ASLEEP_REMOVE_MS, seen)
+  check('restored: swept once ASLEEP_REMOVE_MS has passed since seenAt', out.length === 1 && out[0].id === 'r')
+  check('restored: a keystroke after seenAt still holds it', asleepSweep([back({ lastKeyboard: seen + 1 })], seen + ASLEEP_REMOVE_MS, seen).length === 0)
+  // Not restored (slept for memory): the clock is its own sleep stamp, seenAt changes nothing.
+  const own = (over) => ({ id: 'n', status: 'exited', asleep: T - ASLEEP_REMOVE_MS, ...over })
+  check('not restored: swept 30 min after it slept', asleepSweep([own({})], T, null).length === 1)
+  check('not restored: swept the same whatever seenAt is', asleepSweep([own({})], T, T - 1000).length === 1)
+  check('not restored: still held under 30 min', asleepSweep([own({ asleep: T - ASLEEP_REMOVE_MS + 1 })], T, null).length === 0)
+}
+
 // --- Keep open holds a dead pane too, against the clock and the button (2026-09-29) ---
 {
   check('a kept dead pane is not swept', exitedSweep([dead({ keepOpen: true })], NOW).length === 0)

@@ -59,7 +59,7 @@ const TITLE_TAIL_BYTES = 256 * 1024
 export const NOTHING_OPEN = 'the handoff lists nothing still open'
 import { jobFromTable, paneJob, programName, SHELLS } from '../shared/paneJob'
 import { canSleep, sleepRefusal } from '../shared/sleep'
-import { doneEnough } from '../shared/closeWhenDone'
+import { closeRefused, doneEnough, type CloseBy } from '../shared/closeWhenDone'
 import { closeHeldBy, personLooking, replyFinished, wasRead, type DoneReading } from '../shared/doneClose'
 import { folderName, laneOfCheckout, projectOf } from '../shared/place'
 import { dropStale, lentGrid, watchedBorrow, type Borrow } from '../shared/paneSize'
@@ -96,7 +96,7 @@ export interface AutoClearArm {
   tokens?: number
 }
 import { feedPipe, startPipe, stopAllPipes, stopPipe, type PipeOptions } from './pipe'
-import { claimFromCli, claimCodexFromProcess, claudeAcceptedPrompt, claudeStartup, codexAcceptedPrompt, codexConversationReceipt, codexPromptReceipt, codexQuestionPending, forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeEvidence, resumeIdFor, transcriptFor, transcriptPath, watchClaudeHooks } from './transcripts'
+import { claimFromCli, claimCodexFromProcess, claudeAcceptedPrompt, claudeReceiptReadable, claudeStartup, codexAcceptedPrompt, codexConversationReceipt, codexPromptReceipt, codexQuestionPending, forgetSession, noteSession, noteSubmittedPrompt, resumableTranscript, resumeEvidence, resumeIdFor, transcriptFor, transcriptPath, watchClaudeHooks } from './transcripts'
 import { recordPromptReview } from './promptReview'
 import { liveModelFor } from './paneModel'
 import { backgroundAgentsFor, backgroundWorkerReadingFor, forgetBackgroundAgents, noteBackgroundAgents, pendingBackgroundFor } from './runningAgents'
@@ -1715,10 +1715,21 @@ export class SessionManager extends EventEmitter {
     return placed.cwd
   }
 
-  wake(id: string): Session | null {
+  wake(id: string, by = 'unknown'): Session | null {
     const live = this.sessions.get(id)
+    // One press can ask twice: the pane's pointer-down AND its click both reach the wake
+    // (log review 2026-10-01: `wake-request -> wake -> process-start`, then a scary
+    // `wake-refused not-asleep` a moment later at 04:45:36Z and 11:20:32Z). Nothing was left
+    // running - the refusal returns before any spawn - but a "refused" line for a wake that
+    // succeeded reads as a fault. A pane that is already awake with its program running has
+    // got what the caller asked for, so that is a success logged as a duplicate, not a
+    // refusal. `wake-refused` stays for a pane that is gone, or awake with nothing running.
+    if (live && !live.meta.asleep && live.proc) {
+      logReclaim({ action: 'wake-duplicate', pane: id, by })
+      return live.meta
+    }
     if (!live || !live.meta.asleep) {
-      logReclaim({ action: 'wake-refused', pane: id, refusal: live ? 'not-asleep' : 'pane-missing' })
+      logReclaim({ action: 'wake-refused', pane: id, by, refusal: live ? 'not-asleep' : 'pane-missing' })
       return null
     }
     const reason = live.meta.asleepReason
@@ -1736,7 +1747,7 @@ export class SessionManager extends EventEmitter {
     // still worth keeping, so it wakes FRESH in its folder and says so once. Nothing is
     // adopted from a sibling: the resume is dropped, not widened to `--continue`.
     const fresh = live.meta.agent !== 'shell' && !resumable
-    logReclaim({ action: 'wake-request', pane: id, previousSleepReason: reason, resumeId, resumable, fresh, agent: live.meta.agent })
+    logReclaim({ action: 'wake-request', pane: id, by, previousSleepReason: reason, resumeId, resumable, fresh, agent: live.meta.agent })
     if (fresh) {
       const note = '\x1b[33mThe saved conversation could not be resumed, so this pane starts a new one in the same folder. Its old screen stays above.\x1b[0m\r\n'
       this.emit('data', id, note)
@@ -1761,7 +1772,7 @@ export class SessionManager extends EventEmitter {
     // conversation state it needs - so the ledger reads asleep for the whole gap between
     // "the app decided to wake this pane" and "the CLI is actually running again".
     ledgerWake(live.meta.cwd, id)
-    logReclaim({ at: Date.now(), action: 'wake', pane: id, previousSleepReason: reason ?? 'unknown', resumeId: live.req.resumeId, fresh, processPid: live.proc?.pid, agent: live.meta.agent, folder: basename(live.meta.cwd) })
+    logReclaim({ at: Date.now(), action: 'wake', pane: id, by, previousSleepReason: reason ?? 'unknown', resumeId: live.req.resumeId, fresh, processPid: live.proc?.pid, agent: live.meta.agent, folder: basename(live.meta.cwd) })
     // Stamped for the `wake-printed` line further down, which is where the seconds are.
     live.wokeAt = Date.now()
     // Stamped on the broadcast Session too, kept (never zeroed on first byte like
@@ -2748,7 +2759,7 @@ export class SessionManager extends EventEmitter {
       else this.queuePrompt(opener, `The pane you opened for "${meta.title}" (${meta.cwd}) has finished and closed itself.`)
     }
     console.info(`close-when-done: ${meta.id} finished and closed itself${told ? ` - told ${told}` : ''}`)
-    this.kill(meta.id)
+    this.kill(meta.id, 'close-when-done')
   }
 
   /** Start a countdown that was queued while the pane was mid-turn. */
@@ -3813,11 +3824,13 @@ export class SessionManager extends EventEmitter {
   /**
    * `by` names the part of the app that closed the pane, for the `close-request` line: on
    * 2026-09-24 the Review auto-close took a pane mid-countdown and nothing on disk said so,
-   * so the countdown was blamed for it.
+   * so the countdown was blamed for it. Required since log review 2026-10-01, where two
+   * working panes closed with no `by` at all. Answers whether the pane closed.
    */
-  kill(id: string, by?: string): void {
+  kill(id: string, by: CloseBy): boolean {
     const s = this.sessions.get(id)
-    if (!s) return
+    if (!s) return false
+    if (this.closeRefusedFor(id, by)) return false
     logReclaim({ action: 'close-request', pane: id, processPid: s.proc?.pid,
       status: s.meta.status, asleep: Boolean(s.meta.asleep), quitting: this.down, by })
     // Before the pty dies, while its pid still names a group and a tree. What the pane
@@ -3841,6 +3854,21 @@ export class SessionManager extends EventEmitter {
     this.sessions.delete(id)
     forgetHandoff(id)
     this.emitSessions()
+    return true
+  }
+
+  /**
+   * Whether `by` may not close this pane now (`shared/closeWhenDone.ts` `closeRefused`),
+   * logged when it may not. Public so a close that writes something first (the idle
+   * clock's Review row) can ask before it does.
+   */
+  closeRefusedFor(id: string, by: CloseBy): boolean {
+    const s = this.sessions.get(id)
+    if (!s) return false
+    const reason = closeRefused(by, s.meta.status)
+    if (!reason) return false
+    logReclaim({ action: 'close-refused', pane: id, processPid: s.proc?.pid, status: s.meta.status, by, reason })
+    return true
   }
 
   /** Close only at a review-safe boundary; records are written before this is called. */
@@ -3859,7 +3887,7 @@ export class SessionManager extends EventEmitter {
   }
 
   killAll(): void {
-    for (const id of [...this.sessions.keys()]) this.kill(id)
+    for (const id of [...this.sessions.keys()]) this.kill(id, 'user')
   }
 
   /**
@@ -4160,7 +4188,7 @@ export class SessionManager extends EventEmitter {
         const now = this.sessions.get(id)
         if (!now || now.proc || now.meta.status !== 'exited' || this.keptOpen?.(id)) return
         this.emit('exit-closed', id, say)
-        this.kill(id)
+        this.kill(id, 'exit-close')
       }
       if (plan.after) setTimeout(go, plan.after).unref?.()
       else go()
@@ -4499,6 +4527,41 @@ export class SessionManager extends EventEmitter {
       proof !== 'idle' &&
       live.meta.agent === 'claude' &&
       claudeAcceptedPrompt(live.proc?.pid, prompt, (typedTextAt || firstReturnAt) - 1000)
+    // ONLY THE RECEIPT SAYS SENT, once there is one to read. A turn clock and an empty-looking
+    // box both said "submitted" over prompts that never went in: 2026-10-01 08:14:53Z, pane
+    // s54-mup9d0za, a 4958-char brief sat in the composer as `[Pasted text #1 +30 lines]` for
+    // 2m47s after the log said it had left; 08:50:43Z, s11-mup9scpm, "a turn started" was the
+    // busy footer of a `/clear` that then wiped the typed resume prompt. With Claude Code's pid
+    // file naming its conversation, no user row is no prompt; the screen is only read without one.
+    const receiptOnly = (live: Live): boolean =>
+      proof !== 'idle' && live.meta.agent === 'claude' && claudeReceiptReadable(live.proc?.pid)
+    // A RETURN TAKEN WHILE CLAUDE CODE STARTS IS HELD, NOT LOST. The CLI runs the submit once
+    // its SessionStart hooks are done - 17s in for s54, 65s in for s27-mupamiv8 (user row at
+    // +72s, with no further key) - and every return sent meanwhile goes INTO the composer as a
+    // character: s54's returns 2-5 came back as "Removed 4 invisible characters - review and
+    // press Enter to send", which stopped the held submit until Robert pressed Enter 3 minutes
+    // later. Of 2026-10-01's fresh panes, the ones given one return landed; the ones given
+    // five or six were logged UNSENT and landed 44-97s later, or sat for minutes. So while a
+    // young process may still be starting, the confirm waits for the receipt and sends nothing.
+    let saidDeferring = false
+    const deferring = (live: Live): boolean => {
+      if (proof === 'idle' || live.meta.agent !== 'claude') return false
+      const born = live.proc ? procStarted.get(live.proc) : undefined
+      const resumed = live.req.resume ? { cwd: live.req.resumeCwd ?? live.meta.cwd, id: live.req.resumeId } : undefined
+      if (born === undefined || Date.now() - born >= PROMPT_STARTUP_MS || claudeStartup(live.proc?.pid, born, resumed) === 'started') return false
+      // With no pid file there is no receipt to wait for. One is born 3-19s after spawn on
+      // this Mac (2026-10-01; none yet at +10s in the dev proof), so a process past twice
+      // the pid-file wait without one - a CLI that writes none for this pid - gets its
+      // returns as before rather than a minute of silence.
+      if (!claudeReceiptReadable(live.proc?.pid) && Date.now() - born >= PROMPT_PIDFILE_MS * 2) return false
+      if (!saidDeferring) {
+        saidDeferring = true
+        acLog(`${id} return taken while Claude Code is still starting - no more returns until it has (up to ${Math.round((born + PROMPT_STARTUP_MS - Date.now()) / 1000)}s)`)
+      }
+      // The window to prove it in starts again once the start is over.
+      confirmUntil = Math.max(confirmUntil, Date.now() + PROMPT_CONFIRM_MS * PROMPT_ENTER_TRIES)
+      return true
+    }
     const codexTook = (): boolean => Boolean(owner?.since && (owner.conversationId ?
       codexConversationReceipt(owner.receiptCwd, owner.conversationId, prompt, owner.since) :
       codexAcceptedPrompt(id, prompt, owner.since)))
@@ -4697,9 +4760,15 @@ export class SessionManager extends EventEmitter {
           // answer, so the turn proof still stands there.
           repaint(still)
           const heldNow = proof !== 'idle' ? promptStillInBox(painted, prompt) : null
-          if (proof !== 'idle' && still.meta.agent === 'shell' && heldNow !== true && (still.meta.runSince ?? 0) >= typedAt) {
-            acLog(`${id} prompt submitted - a turn started`)
-            return settle('sent')
+          if (proof !== 'idle' && still.meta.agent !== 'codex' && heldNow !== true && (still.meta.runSince ?? 0) >= typedAt) {
+            if (!receiptOnly(still)) {
+              acLog(`${id} prompt submitted - a turn started`)
+              return settle('sent')
+            }
+            if (claudeTook(still)) {
+              acLog(`${id} prompt submitted - Claude transcript receipt (its turn had begun)`)
+              return settle('sent')
+            }
           }
           // ...AND SOMEBODY TYPING AFTERWARDS DOES NOT UN-SEND IT. 2026-09-27 05:37Z, pane
           // s27-mujdy58r: the launch prompt is a user row in its transcript at 05:37:06.4, a
@@ -4760,7 +4829,13 @@ export class SessionManager extends EventEmitter {
             // nobody had sent, with the app's own log ending at that write. So a busy pane
             // is now WAITED OUT rather than counted as a submit; only a turn, a person, or
             // the deadline ends this.
-            if (Date.now() >= confirmUntil) {
+            // A receipt is asked for on every tick rather than at the end: a pane painting
+            // its answer is the common case, and the wait it ends can be a minute long.
+            if (claudeTook(still)) {
+              acLog(`${id} prompt submitted - Claude transcript receipt`)
+              return settle('sent')
+            }
+            if (!deferring(still) && Date.now() >= confirmUntil) {
               // ...AND A PANE THAT IS ANSWERING IS NOT A PANE THAT WAS NEVER ASKED. The turn
               // proof above cannot fire for the app's own return - `ourWrite('\r')` runs
               // `beginRun`, which stamps `runSince` a hair BEFORE `typedAt` is read - so it
@@ -4783,7 +4858,8 @@ export class SessionManager extends EventEmitter {
                 acLog(`${id} prompt submitted - Claude transcript receipt`)
                 return settle('sent')
               }
-              if (box === false && !typedIntoTurn && still.meta.agent === 'shell') {
+              const noRecord = receiptOnly(still)
+              if (box === false && !typedIntoTurn && still.meta.agent !== 'codex' && !noRecord) {
                 acLog(`${id} prompt submitted - it is no longer in the composer`)
                 return settle('sent')
               }
@@ -4796,7 +4872,8 @@ export class SessionManager extends EventEmitter {
               }
               acLog(
                 `${id} prompt left UNSENT: still painting ${PROMPT_CONFIRM_MS * PROMPT_ENTER_TRIES}ms after the return` +
-                  (box ? ', and the composer still holds it' : typedIntoTurn ? ', typed over a turn already running' : ', and no composer could be read')
+                  (box ? ', and the composer still holds it' : noRecord ? ', and Claude Code has no record of it' :
+                    typedIntoTurn ? ', typed over a turn already running' : ', and no composer could be read')
               )
               return settle('unsent')
             }
@@ -4808,6 +4885,8 @@ export class SessionManager extends EventEmitter {
             acLog(`${id} prompt submitted - Claude transcript receipt`)
             return settle('sent')
           }
+          // ...or held by a Claude Code still starting, which sends it itself when it is done.
+          if (deferring(still)) return confirm()
           // Otherwise the return was eaten. Send another.
           if (tries + 1 >= PROMPT_ENTER_TRIES) {
             acLog(`${id} prompt left UNSENT: ${PROMPT_ENTER_TRIES} returns were swallowed`)
@@ -5850,7 +5929,7 @@ export class SessionManager extends EventEmitter {
     // After the loop: `kill` mutates the map this was iterating.
     for (const id of reap) {
       audit('reap-cwd-gone', { id, cwd: this.sessions.get(id)?.meta.cwd ?? null })
-      this.kill(id)
+      this.kill(id, 'cwd-gone')
     }
     if (changed) this.emitSessions()
   }

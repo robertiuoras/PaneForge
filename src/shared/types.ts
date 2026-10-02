@@ -2453,7 +2453,8 @@ export interface Api {
   taskBrief(ref: string): Promise<{ prompt: string } | { error: string }>
   /** The list has been opened: everything in it stops counting as new. */
   markActivitySeen(): void
-  killSession(id: string): Promise<void>
+  /** `by` is always `user`: main tells the window from the phone by the door it came in (`closeByOf`). */
+  killSession(id: string, by: 'user'): Promise<void>
   /** Removes every finished-and-untouched pane now, same class as `killSession` - see `shared/exitedSweep.ts`. Returns how many were removed. */
   clearFinished(): Promise<number>
   /** `pf tidy`: closes into Review every finished pane the done-close sweep would, without its quiet wait - see `main/index.ts`. `dry` closes nothing. Returns the pane ids. */
@@ -2475,7 +2476,7 @@ export interface Api {
    */
   sleepSession(id: string, reason?: SleepReason, evidence?: SleepEvidence): Promise<Session | null>
   /** Start a sleeping pane's agent again, back in the conversation it was in. */
-  wakeSession(id: string): Promise<Session | null>
+  wakeSession(id: string, by?: string): Promise<Session | null>
   /**
    * Quit the app because nobody has used it for a while. The renderer owns the clock
    * (it is the side that knows about keyboard input and focus); main only obeys, and

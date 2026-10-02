@@ -31,6 +31,12 @@ export interface Desk {
   reason: DeskReason
   /** Internal ordering generation; unlike `at`, this changes for every disk snapshot. */
   writtenAt?: number
+  /**
+   * Set only by the hang watchdog, which writes `reason: 'update'` on purpose so the panes
+   * reopen unasked. It changes no behaviour: it only lets the launch log say "hang restart"
+   * instead of calling a freeze an update (2026-10-01 08:25:54Z, 18 panes, no update).
+   */
+  relaunch?: 'watchdog'
 }
 
 /** Older than this and those panes are not the desk you remember leaving. */
@@ -121,7 +127,8 @@ export function readDesk(): Desk | null {
         at: typeof raw.at === 'number' ? raw.at : 0,
         clean: Boolean(raw.clean),
         reason: raw.reason === 'quit' || raw.reason === 'update' ? raw.reason : 'live',
-        writtenAt: typeof raw.writtenAt === 'number' && Number.isFinite(raw.writtenAt) ? raw.writtenAt : 0
+        writtenAt: typeof raw.writtenAt === 'number' && Number.isFinite(raw.writtenAt) ? raw.writtenAt : 0,
+        ...(raw.relaunch === 'watchdog' ? { relaunch: 'watchdog' as const } : {})
       }
     } catch {
       return null
@@ -165,7 +172,8 @@ export function readPreviousDesk(): Desk | null {
       at: typeof raw.at === 'number' ? raw.at : 0,
       clean: Boolean(raw.clean),
       reason: raw.reason === 'quit' || raw.reason === 'update' ? raw.reason : 'live',
-      writtenAt: typeof raw.writtenAt === 'number' && Number.isFinite(raw.writtenAt) ? raw.writtenAt : 0
+      writtenAt: typeof raw.writtenAt === 'number' && Number.isFinite(raw.writtenAt) ? raw.writtenAt : 0,
+      ...(raw.relaunch === 'watchdog' ? { relaunch: 'watchdog' as const } : {})
     }
   } catch {
     return null
