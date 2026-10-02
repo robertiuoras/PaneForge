@@ -208,7 +208,7 @@ import {
 } from './updater'
 import * as history from './history'
 import { clashingRestores, holdIsOver, takenFolders } from '../shared/laneTaken'
-import { copyNumber } from '../shared/place'
+import { copyNumber, projectOf } from '../shared/place'
 import { readBoard, writeMemory, writeTasks } from './board'
 import { vaultGraph, vaultInfo, vaultOpen } from './vault'
 import * as voice from './voice'
@@ -2138,6 +2138,7 @@ async function laneFor(
     return known(lane.note ? { ...req, laneNote: lane.note } : req)
   }
   const memory = lane.sharedMemory ? ', sharing this project’s Claude memory' : ''
+  sayFirstCopy(lane)
   return {
     ...req,
     cwd: lane.cwd,
@@ -2148,6 +2149,30 @@ async function laneFor(
     // letter, never the branch. See `shared/place.ts` and `npm run test:laneplain`.
     laneNote: `Opened copy ${(lane.lane && copyNumber(lane.lane)) ?? lane.lane} of ${basename(req.cwd)} - PORT=${lane.port}${memory}`
   }
+}
+
+/**
+ * Say, once ever, that a project now has a second folder.
+ *
+ * A copy appears on disk beside the project the first time two chats open it, and until
+ * now the only sign was a folder in Projects that nobody had asked for and a chip reading
+ * `copy 2`. This is the one sentence explaining it, and it is sent once per MACHINE - the
+ * surprise is the idea, not the repository.
+ *
+ * The flag is written HERE rather than by the card, because a window that never drew it -
+ * minimised, wedged, or closed between the copy and the paint - must still not be told
+ * twice. A card nobody saw is the cost of that, and it is the cheaper failure: the other
+ * way round is the app explaining the same thing every time a project is opened twice.
+ */
+function sayFirstCopy(lane: { cwd: string; lane?: string }): void {
+  if (!lane.lane) return
+  if (getConfig().seenCopyCard) return
+  setConfig({ seenCopyCard: true })
+  send('lanes:copyMade', {
+    project: projectOf(lane.cwd, lane.lane),
+    path: lane.cwd,
+    copy: copyNumber(lane.lane) ?? 2
+  })
 }
 
 /**

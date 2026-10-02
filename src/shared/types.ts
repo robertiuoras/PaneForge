@@ -112,6 +112,16 @@ export interface ActivityFeed {
   seenAt: number
 }
 
+/** The first extra copy of a project has just been made - see `CopyToast.tsx`. */
+export interface CopyMade {
+  /** the project's own name, as the sidebar shows it */
+  project: string
+  /** the copy's folder on disk */
+  path: string
+  /** which copy it is, counting the project's own folder as 1 - so the first is 2 */
+  copy: number
+}
+
 export interface ClientNamed {
   id: string
   /** the client's folder name, so a caller can tell two renames apart */
@@ -2166,6 +2176,15 @@ export interface Config {
    */
   autoLane: boolean
   /**
+   * The one-time card explaining the first copy of a project has been shown.
+   *
+   * Once per machine, not once per project: the surprise is a second folder appearing
+   * beside a project at all, and a person who has read that sentence for one repo does not
+   * need it again for the next. Written by main the moment the card is sent, so a window
+   * that never drew it (minimised, wedged, closed) still cannot be told twice.
+   */
+  seenCopyCard?: boolean
+  /**
    * When this machine is out of memory, start the next pane on a paired device instead.
    * Only fires when the capacity policy already says so AND that device has the same
    * project - never silently, and never onto a machine that cannot open the folder.
@@ -2445,6 +2464,8 @@ export interface Api {
   setEffort(id: string, choice: EffortChoice): Promise<void>
   /** A sleep somebody asked for that main would not do, and the sentence saying why. */
   onSleepRefused(fn: (e: { id: string; why: string }) => void): () => void
+  /** The first extra copy of a project has just been made. Sent once per machine. */
+  onCopyMade(fn: (e: CopyMade) => void): () => void
   onActivity(fn: (feed: ActivityFeed) => void): () => void
   /**
    * The sidebar's order after a card was dragged, newest-first-to-last as displayed.

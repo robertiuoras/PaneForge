@@ -8,6 +8,7 @@ import { composerWipe } from '@shared/draft'
 import type {
   Agent,
   Config,
+  CopyMade,
   DiffScope,
   HistoryEntry,
   Preset,
@@ -184,6 +185,7 @@ import StatusDot from './components/StatusDot'
 import SwarmDialog, { type SwarmStart } from './components/SwarmDialog'
 import SplitDialog from './components/SplitDialog'
 import AutoClearToast from './components/AutoClearToast'
+import CopyToast from './components/CopyToast'
 import UpdateToast from './components/UpdateToast'
 import WhatsNewCard from './components/WhatsNewCard'
 import TourCard from './components/TourCard'
@@ -841,6 +843,8 @@ export default function App(): JSX.Element {
   const [activityAt, setActivityAt] = useState<DOMRect | null>(null)
   // The dev server the app is about to close, published by main every sweep.
   const [stopSoon, setStopSoon] = useState<StopSoon | null>(null)
+  // The first copy of a project, explained once per machine - see CopyToast.
+  const [copyMade, setCopyMade] = useState<CopyMade | undefined>(undefined)
   const [devices, setDevices] = useState(false)
   /** The pane (or its one worktree lane) that is about to move to a paired machine. */
   const [handoff, setHandoff] = useState<HandoffTarget | null>(null)
@@ -1255,11 +1259,13 @@ export default function App(): JSX.Element {
     // reconnect finishing - all of them change what the sidebar says.
     const offR = api.onRemote(setRemote)
     const offP = api.onPhone(setPhone)
+    const offCopy = api.onCopyMade(setCopyMade)
     return () => {
       offS()
       offC()
       offR()
       offP()
+      offCopy()
     }
   }, [])
 
@@ -7640,6 +7646,9 @@ export default function App(): JSX.Element {
       {/* A Claude Code pane's first ask read lighter or harder than its model/effort. */}
       <ModelAdvice sessions={sessions} agents={agents} />
       <QuitGuard />
+      {/* The first copy of a project, explained once. High in the stack: nothing is about
+          to be taken away, so it must never be the card under the hand. */}
+      <CopyToast made={copyMade} onDone={() => setCopyMade(undefined)} />
       <UpdateToast />
       <WhatsNewCard />
       {/* Only ever drawn in a `npm run try` copy - walks through what this build has that
