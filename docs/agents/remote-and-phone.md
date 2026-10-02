@@ -89,6 +89,12 @@ opened; unpaired = pairing page; wrong codes lock; cookie `hmac(deviceId, code)`
   replicas never echo and their file paths never leave the owner. `origin` is display-only,
   so reopening remains an operation on the owning PC. `test:remote` includes multi-page
   catch-up.
+- Phone push (TaskDriver app): a row whose notice goes out (`reviews.ts` `spoolNotice`,
+  BEFORE its Mac-only gate, so the PC pushes its own rows) and that leaves a person step,
+  decision or blocker posts ONCE via `limitWaves.ts` `postPush` (`shared/reviewPush.ts`):
+  `dedupe_key` `paneforge-review-<mac|pc>-<id>`, `pushSentAt` only after a 2xx, retries
+  +30s/+120s, none when looked at / reviewed / a replica / packaged-off. `phone-push.log`,
+  `test:reviewpush`.
 - `test:phone`, `test:phoneview`; `window.__pf[id].term.buffer`. Not built: B1, H2.
 
 ## The other machine's screen is one click away

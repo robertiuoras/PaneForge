@@ -114,8 +114,8 @@ export interface DoneCloseDeps {
   otherwiseBusy: (id: string) => string | null
   /** Writes the Review row WITHOUT its GuardDeck card; `notify` sends that once the pane is gone. */
   record: (input: ReviewInput, native: { title: string; provider: string; cwd: string; nativeSessionId: string }) => ReviewRecord
-  /** The row's GuardDeck card (`reviews.ts` `sendReviewNotice`). */
-  notify: (reviewId: string) => void
+  /** The row's GuardDeck card and phone push (`reviews.ts` `sendReviewNotice`); `looked` = no push. */
+  notify: (reviewId: string, looked?: boolean) => void
   close: (id: string, reportedAt: number) => { closed: boolean; reason?: string }
   noteClose: (reviewId: string, reason?: string, closedAt?: string) => void
   writeNotice: (path: string, body: string) => void
@@ -276,7 +276,7 @@ export function sweepDoneClose(d: DoneCloseDeps): string[] {
         const path = join(noticesDir(), `${notice.id}.json`)
         if (!existsSync(path)) d.writeNotice(path, JSON.stringify(notice, null, 2))
       }
-      d.notify(reviewId)
+      d.notify(reviewId, verdict.read)
       if (opener)
         d.finished?.(opener, {
           id,
