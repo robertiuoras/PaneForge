@@ -467,7 +467,8 @@ manager.kill(cmd.id, 'user')
 // Answers the moment the return this queuePrompt sends was written, so a case can be
 // judged against the confirm window rather than against a wall-clock sleep.
 // 10s, not 3s: on a shared PC (2026-10-01, returns 1.4s apart for a planned 0.2s) a 3s
-// wait threw, and the throw ends the FILE - every case after it never runs.
+// wait threw, and the throw ends the FILE - every case after it never runs. Master's 6s
+// (PC full-suite pool stalled past 3s, 2026-10-02) is the same failure; the longer wait covers both.
 async function sentReturnAt(proc, waitMs = 10_000) {
   const until = Date.now() + waitMs
   while (Date.now() < until) {
@@ -1451,9 +1452,14 @@ const ANSWERING =
   }
   received('sess-review-restored')
   await logSays(restored.id, /Claude transcript receipt/)
-  // The receipt is logged a few ms before the follower is typed: wait for the paste itself.
-  for (const until = Date.now() + 1500; Date.now() < until && !restoredLive.proc.writes.some(data => data.includes(follower)); ) await sleep(5)
-  ok(rowsFor(restored.id).length === 0 && restoredLive.proc.writes.filter(data => data.includes(follower)).length === 1 && !restoredLive.proc.writes.some(data => data.includes(BRIEF)),
+  // Waits for the follower's own settle, not the first receipt line: the receipt is logged a few
+  // ms before the follower is typed, and when the 1s idle sweep reads the receipt before the
+  // follower's 40ms poll does, `retained prompt submitted` is logged first and the follower is
+  // typed a tick later (2026-10-02, PC: this and the close below read red;
+  // `manager.sweepIdle()` right after `received` reproduces it every time).
+  const released = () => rowsFor(restored.id).length === 0 && restoredLive.proc.writes.some(data => data.includes(follower))
+  for (const until = Date.now() + 6000; !released() && Date.now() < until;) await sleep(40)
+  ok(released() && restoredLive.proc.writes.filter(data => data.includes(follower)).length === 1 && !restoredLive.proc.writes.some(data => data.includes(BRIEF)),
     'only the entire native payload releases the retained owner and permits one follower paste', logOf(restored.id))
   const oldReply = manager.replyFor
   manager.replyFor = id => id === restored.id ? { text: 'Completed the requested recovery and verified it.' } : undefined
@@ -1616,7 +1622,12 @@ ok(dead2 === 1, 'a pane that went away settles the curtain rather than stranding
 {
   let fixture = 0
   const payload = 'first line: preserve this newline\n  indented second line\n\nlast line'
-  const waitFor = async (test, ms = 2400) => {
+  // A ceiling, not a stopwatch: every wait below answers the moment its condition holds, so
+  // only a failing run pays it. 6s because the PC's loaded pool stalled this process past
+  // 2.4s mid-case (2026-10-01 98c30508; 2026-10-02 master 913bcdd8: the unknown owner's
+  // budget, the stale turn's follow-up and the Ctrl-C follow-up each read red once). A 2.5s
+  // stall after the queue reproduces each on the Mac.
+  const waitFor = async (test, ms = 6000) => {
     const until = Date.now() + ms
     while (!test() && Date.now() < until) await sleep(20)
     return test()
