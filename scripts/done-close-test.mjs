@@ -357,7 +357,7 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
     close: (id, at) => { closes.push([id, at]); return closeAnswer },
     noteClose: (id, reason, at) => notes.push([id, reason, at]),
     writeNotice: (path, body) => written.push([path, JSON.parse(body)]),
-    notify: (id) => cards.push(id),
+    notify: (id, looked, opener) => { cards.push(id); openers.push(opener) },
     markRead: (id) => reads.push(id),
     activity: (what, why) => activity.push([what, why]),
     openerOf: (id) => (id === 'p1' ? 'boss' : undefined),
@@ -366,6 +366,7 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
   }
   const told = []
   const cards = []
+  const openers = []
   const reads = []
   closeAnswer = { closed: false, reason: 'session is busy or has a background job' }
   assert.deepEqual(main.sweepDoneClose(deps), [])
@@ -377,6 +378,7 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
   assert.deepEqual(main.sweepDoneClose(deps), ['p1'])
   assert.equal(written.length, 2, 'the to-dos go once the pane has closed')
   assert.deepEqual(cards, [doneReviewId('p1', readings[0].turnEndedAt)], 'steps left and nobody read it: one result card, after the close')
+  assert.deepEqual(openers, ['boss'], "the opener reaches the notice, so the phone push is the opener's to send (one push, not two)")
   assert.deepEqual(reads, [], 'unread stays unread in Review')
   const rec = records[0]
   assert.equal(rec.id, doneReviewId('p1', readings[0].turnEndedAt))
