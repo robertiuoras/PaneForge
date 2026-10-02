@@ -486,6 +486,10 @@ export function composerWipe(draft: DraftState | undefined): string {
 export const DRAFT_RECHECK_IDLE_MS = 60_000
 /** ...and how often after that, per pane. */
 export const DRAFT_RECHECK_EVERY_MS = 30_000
+/** A pane owed an automatic clear is waiting on exactly this flag, so it is read sooner (Robert 2026-10-03). */
+export const DRAFT_RECHECK_OWED_IDLE_MS = 10_000
+/** ...and again sooner after that, for the same reason. */
+export const DRAFT_RECHECK_OWED_EVERY_MS = 5_000
 
 /**
  * Is it time to read this pane's prompt box to see whether its draft flag still holds?
@@ -495,13 +499,17 @@ export const DRAFT_RECHECK_EVERY_MS = 30_000
  * the phone) kept `drafting` set for good, and `drafting` holds a finished pane open. s42 on
  * 1 Oct: finished 11:53pm Thu, held until Robert came back at 1:13am Fri. A minute of no
  * keys on an idle agent pane, then a read every 30 s; `main/sessions.ts` `recheckDraft`
- * clears the flag only on an EMPTY box read with nothing changed meanwhile.
+ * clears the flag only on an EMPTY box read with nothing changed meanwhile. A pane owed an
+ * automatic clear (`clearOwed`) is read after 10 s of no keys, then every 5 s.
  */
 export function draftRecheckDue(
   p: { drafting?: boolean; status: string; runSince?: number; agent: string; lastKeyboard: number },
   lastCheck: number,
-  now: number
+  now: number,
+  clearOwed = false
 ): boolean {
+  const idleMs = clearOwed ? DRAFT_RECHECK_OWED_IDLE_MS : DRAFT_RECHECK_IDLE_MS
+  const everyMs = clearOwed ? DRAFT_RECHECK_OWED_EVERY_MS : DRAFT_RECHECK_EVERY_MS
   return Boolean(p.drafting) && p.status === 'idle' && !p.runSince && p.agent !== 'shell' &&
-    now - p.lastKeyboard >= DRAFT_RECHECK_IDLE_MS && now - lastCheck >= DRAFT_RECHECK_EVERY_MS
+    now - p.lastKeyboard >= idleMs && now - lastCheck >= everyMs
 }

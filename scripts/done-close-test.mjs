@@ -227,16 +227,21 @@ ${method('closeAfterResult', 'killAll')}
 }
 
 // 2a. A machine short of memory waits less. Robert 2026-09-28: "id rather they close than
-// sleep" - the pressure sleep's own clocks (1 min tight, 30 s over) move to the close.
+// sleep" - the pressure sleep's own clocks (30 s over) move to the close; 'tight' now equals the one-minute default (Robert 2026-10-03).
 {
   assert.equal(doneQuietMs('ok'), AUTO_CLOSE_QUIET_MS)
+  assert.equal(AUTO_CLOSE_QUIET_MS, 60_000)
   assert.equal(doneQuietMs('tight'), 60_000)
   assert.equal(doneQuietMs('over'), 30_000)
-  const ninety = finished({ turnEndedAt: NOW - 90_000 })
-  assert.equal(doneVerdict(ninety, NOW).reason, 'not quiet long enough', 'the default wait is three minutes')
-  assert.equal(doneVerdict(ninety, NOW, doneQuietMs('ok')).close, false, 'room to spare: still three minutes')
-  assert.equal(doneVerdict(ninety, NOW, doneQuietMs('tight')).close, true, 'tight: ninety seconds is enough')
-  assert.equal(doneVerdict(finished({ turnEndedAt: NOW - 40_000 }), NOW, doneQuietMs('tight')).close, false, 'tight: forty seconds is not')
+  const fiftyNine = finished({ turnEndedAt: NOW - 59_000 })
+  const sixtyOne = finished({ turnEndedAt: NOW - 61_000 })
+  assert.equal(doneVerdict(fiftyNine, NOW).reason, 'not quiet long enough', 'the default wait is one minute: 59 s stays')
+  assert.equal(doneVerdict(fiftyNine, NOW, doneQuietMs('ok')).close, false, 'room to spare: 59 s stays')
+  assert.equal(doneVerdict(sixtyOne, NOW, doneQuietMs('ok')).close, true, 'room to spare: 61 s closes')
+  assert.equal(doneVerdict(sixtyOne, NOW).close, true, 'default: 61 s closes')
+  assert.equal(doneVerdict(fiftyNine, NOW, doneQuietMs('tight')).close, false, 'tight is the default: 59 s stays')
+  assert.equal(doneVerdict(sixtyOne, NOW, doneQuietMs('tight')).close, true, 'tight: 61 s closes')
+  assert.equal(doneVerdict(finished({ turnEndedAt: NOW - 29_000 }), NOW, doneQuietMs('over')).close, false, 'over: 29 s stays')
   assert.equal(doneVerdict(finished({ turnEndedAt: NOW - 40_000 }), NOW, doneQuietMs('over')).close, true, 'over: forty seconds is')
   assert.equal(doneVerdict(finished({ turnEndedAt: NOW - 90_000, focused: true }), NOW, doneQuietMs('over')).close, false, 'pressure never closes the pane somebody is looking at')
   // The sweep passes its dep through to both verdicts; unset is the default wait.
@@ -245,7 +250,7 @@ ${method('closeAfterResult', 'killAll')}
   const shut = []
   const deps = (quietMs) => ({
     enabled: () => true,
-    readings: () => [{ id: 'q1', ...finished({ turnEndedAt: NOW - 90_000, reply: undefined, runningAgents: undefined }) }],
+    readings: () => [{ id: 'q1', ...finished({ turnEndedAt: NOW - 40_000, reply: undefined, runningAgents: undefined }) }],
     transcriptFor: () => transcript, resumeIdFor: () => 'native-q', history: () => [],
     titleOf: () => ({ title: 'quiet', cwd: '/Users/r/Projects/site', agent: 'claude' }), otherwiseBusy: () => null,
     record: (input, native) => ({ ...input, ...native, provider: 'claude', reportPath: '/x', createdAt: 'now', attention: false }),
@@ -253,8 +258,8 @@ ${method('closeAfterResult', 'killAll')}
     close: (id) => { shut.push(id); return { closed: true } }, noteClose: () => {}, writeNotice: () => {}, activity: () => {},
     now: () => NOW, ...(quietMs ? { quietMs } : {})
   })
-  assert.deepEqual(main.sweepDoneClose(deps()), [], 'no quietMs dep: three minutes')
-  assert.deepEqual(main.sweepDoneClose(deps(() => doneQuietMs('tight'))), ['q1'], 'the sweep uses the dep')
+  assert.deepEqual(main.sweepDoneClose(deps()), [], 'no quietMs dep: the one-minute default, 40 s stays')
+  assert.deepEqual(main.sweepDoneClose(deps(() => doneQuietMs('over'))), ['q1'], 'the sweep uses the dep: over (30 s) closes at 40 s')
   console.log('done-close: a short machine waits less ok')
 }
 
@@ -431,7 +436,7 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
   assert.equal(read(31_000).read, true, 'and the verdict says it was read')
   const unread = (at) => doneVerdict(finished({ turnEndedAt: ended, lastKeyboard: ended - 5_000 }), lookEnded + at)
   assert.equal(unread(31_000).close, false, 'unread: 31 s is nothing, the normal wait holds')
-  assert.equal(unread(AUTO_CLOSE_QUIET_MS - 20_000).close, true, 'unread: closes once three minutes since the turn ended')
+  assert.equal(unread(AUTO_CLOSE_QUIET_MS - 20_000).close, true, 'unread: closes once a minute since the turn ended')
   assert.equal(doneVerdict(finished({ turnEndedAt: ended, lookedAt: ended - 1 }), lookEnded + 31_000).close, false, 'a look from before this turn ended is an earlier turn\'s')
   assert.equal(wasRead({ turnEndedAt: ended, lookedAt: ended - 1 }), false)
   assert.equal(wasRead({ turnEndedAt: ended, lookedAt: ended }), true, 'watching it finish is reading it')
@@ -439,7 +444,7 @@ assert.equal(doneReviewId('pane 1', 1_800_000_000_500), 'done_pane_1_1800000000'
   assert.equal(typed.close, false, 'typing after the look restarts the 30 s')
   assert.equal(doneVerdict(finished({ turnEndedAt: ended, lookedAt: lookEnded, focused: true }), lookEnded + 31_000).reason, 'somebody is looking at it')
   assert.equal(doneVerdict(finished({ turnEndedAt: ended, lookedAt: lookEnded, reply: 'Which port?' }), lookEnded + 31_000).reason, 'the reply ends in a question', 'read never excuses a question')
-  assert.equal(doneVerdict(finished({ turnEndedAt: NOW - 90_000, lookedAt: NOW - 85_000 }), NOW, doneQuietMs('tight')).close, true, 'read quiet interval has elapsed under tight pressure')
+  assert.equal(doneVerdict(finished({ turnEndedAt: NOW - 90_000, lookedAt: NOW - 85_000 }), NOW, doneQuietMs('over')).close, true, 'read quiet interval has elapsed under pressure')
   assert.equal(doneVerdict(finished({ lookedAt: NOW - 1_000 }), NOW).close, false, 'old turn cannot override a recent look')
   assert.equal(doneVerdict(finished({ lookedAt: NOW - 1_000 }), NOW, doneQuietMs('over')).close, false, 'pressure cannot override a recent look')
   for (const reply of ['- **Unfinished:** tracking verification.', 'Seven tasks remain open.', 'The client job itself is not finished.', 'The check is queued.']) {

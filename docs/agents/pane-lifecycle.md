@@ -86,7 +86,7 @@ armed one. `shared/markAnchor.ts` re-anchors tags (`test:markanchor`).
 `shared/doneClose.ts` (`test:doneclose`), `main/doneClose.ts`, 15s timer; `config.autoCloseDone`
 on. Never a kept pane (card's Keep open, `config.pinnedPanes`, `keptOpen` in `main/index.ts`: done-close, `pf tidy`,
 `reviews:record` close, exited/asleep sweeps, Clear finished, `--close-when-done`; memory pressure may only sleep it). Closes when: agent pane, turn over (`footerEndedAt`), not LOOKED AT (`personLooking`),
-quiet `doneQuietMs` (3 min, 1 min tight, 30s over) past turn end AND last key, OR read
+quiet `doneQuietMs` (1 min, 30s over) past turn end AND last key, OR read
 (`lookedAt`, stamped each second by `sweepIdle`, older than the turn = unread) and
 `READ_QUIET_MS` 30s past max(look, key); `doneEnough`, no prompt owed, opener only while its
 children are open or their digest pending, reply read off transcript (`shared/replyRead.ts`,
